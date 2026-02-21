@@ -1,0 +1,24 @@
+run = "bash start.sh"
+entrypoint = "start.sh"
+
+[languages.python3]
+pattern = "backend/**/*.py"
+syntax = "python"
+
+[languages.typescript]
+pattern = "frontend/**/*.{ts,tsx}"
+syntax = "typescript"
+
+[nix]
+channel = "stable-24_05"
+
+[env]
+PYTHONPATH = "backend"
+
+[[ports]]
+localPort = 5173
+externalPort = 80
+
+[[ports]]
+localPort = 8000
+externalPort = 8000

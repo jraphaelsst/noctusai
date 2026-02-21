@@ -1,0 +1,204 @@
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import { X, Calendar as CalendarIcon } from 'lucide-react';
+import { useFiltrosStore } from '@/store/filtrosStore';
+import { useProfiles } from '@/hooks/useProfiles';
+import { useUserRole } from '@/hooks/useUserRole';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { cn, getTodayAtMidnight } from '@/lib/utils';
+import { useEffect } from 'react';
+
+export function FiltrosDashboard() {
+  const {
+    periodo,
+    dataInicio,
+    dataFim,
+    filtroCorretor,
+    filtroStatus,
+    filtroTipo,
+    setPeriodo,
+    setDataInicio,
+    setDataFim,
+    setFiltroCorretor,
+    setFiltroStatus,
+    setFiltroTipo,
+    limparFiltros,
+  } = useFiltrosStore();
+
+  const { data: profiles } = useProfiles();
+  const { data: userRole } = useUserRole();
+  const isAdmin = userRole === 'admin';
+
+  useEffect(() => {
+    // Usa data sem horário para garantir comparações consistentes
+    const hoje = getTodayAtMidnight();
+    
+    switch (periodo) {
+      case 'global':
+        setDataInicio(undefined);
+        setDataFim(undefined);
+        break;
+      case 'diario':
+        setDataInicio(startOfDay(hoje));
+        setDataFim(endOfDay(hoje));
+        break;
+      case 'semanal':
+        setDataInicio(startOfWeek(hoje, { weekStartsOn: 0 }));
+        setDataFim(endOfWeek(hoje, { weekStartsOn: 0 }));
+        break;
+      case 'mensal':
+        setDataInicio(startOfMonth(hoje));
+        setDataFim(endOfMonth(hoje));
+        break;
+      case 'anual':
+        setDataInicio(startOfYear(hoje));
+        setDataFim(endOfYear(hoje));
+        break;
+    }
+  }, [periodo, setDataInicio, setDataFim]);
+
+  return (
+    <div className="flex flex-col gap-4 mb-6">
+      <div>
+        <h1 className="text-3xl font-bold">Dashboard</h1>
+        <p className="text-muted-foreground">
+          Acompanhe suas metas e performance
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-4 items-end">
+        <div className="w-48">
+          <Label htmlFor="periodo">Período</Label>
+          <Select value={periodo} onValueChange={setPeriodo}>
+            <SelectTrigger id="periodo">
+              <SelectValue placeholder="Selecione o período" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="global">Global</SelectItem>
+              <SelectItem value="diario">Diário</SelectItem>
+              <SelectItem value="semanal">Semanal</SelectItem>
+              <SelectItem value="mensal">Mensal</SelectItem>
+              <SelectItem value="anual">Anual</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="w-48">
+          <Label htmlFor="data-inicio">Data Início</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                id="data-inicio"
+                variant="outline"
+                className={cn(
+                  "w-full justify-start text-left font-normal",
+                  !dataInicio && "text-muted-foreground"
+                )}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {dataInicio ? format(dataInicio, "PPP", { locale: ptBR }) : <span>Selecione</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={dataInicio}
+                onSelect={setDataInicio}
+                initialFocus
+                className={cn("p-3 pointer-events-auto")}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        <div className="w-48">
+          <Label htmlFor="data-fim">Data Fim</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                id="data-fim"
+                variant="outline"
+                className={cn(
+                  "w-full justify-start text-left font-normal",
+                  !dataFim && "text-muted-foreground"
+                )}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {dataFim ? format(dataFim, "PPP", { locale: ptBR }) : <span>Selecione</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={dataFim}
+                onSelect={setDataFim}
+                initialFocus
+                className={cn("p-3 pointer-events-auto")}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {isAdmin && (
+          <div className="w-48">
+            <Label htmlFor="usuario">Usuário</Label>
+          <Select value={filtroCorretor} onValueChange={setFiltroCorretor}>
+              <SelectTrigger id="usuario">
+                <SelectValue placeholder="Selecione o usuário" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                {profiles?.map((profile) => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    {profile.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        <div className="w-48">
+          <Label htmlFor="status">Status</Label>
+          <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+            <SelectTrigger id="status">
+              <SelectValue placeholder="Selecione o status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="aberta">Aberta</SelectItem>
+              <SelectItem value="concluida">Concluída</SelectItem>
+              <SelectItem value="atrasada">Atrasada</SelectItem>
+              <SelectItem value="no_prazo">No Prazo</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="w-48">
+          <Label htmlFor="tipo">Periodicidade</Label>
+          <Select value={filtroTipo} onValueChange={setFiltroTipo}>
+            <SelectTrigger id="tipo">
+              <SelectValue placeholder="Selecione a periodicidade" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="diaria">Diária</SelectItem>
+              <SelectItem value="semanal">Semanal</SelectItem>
+              <SelectItem value="mensal">Mensal</SelectItem>
+              <SelectItem value="anual">Anual</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Button variant="outline" onClick={limparFiltros}>
+          <X className="w-4 h-4 mr-2" />
+          Limpar Filtros
+        </Button>
+      </div>
+    </div>
+  );
+}

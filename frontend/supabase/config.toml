@@ -1,0 +1,28 @@
+project_id = "cbwkcnskstiathdzwtmn"
+
+[db]
+timezone = "America/Sao_Paulo"
+
+[functions.atualizar-status-metas]
+verify_jwt = false
+
+[functions.criar-meta-hoje]
+verify_jwt = true
+
+[functions.criar-metas-agendadas]
+verify_jwt = false
+
+[functions.requisitar-senha]
+verify_jwt = true
+
+[functions.recuperar-senha]
+verify_jwt = false
+
+[functions.mover-cliente-etapa]
+verify_jwt = true
+
+[functions.registrar-atividade]
+verify_jwt = true
+
+[functions.desativar-metas-inativos]
+verify_jwt = false

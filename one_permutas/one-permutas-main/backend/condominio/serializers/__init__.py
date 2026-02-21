@@ -1,0 +1,1 @@
+from .condominio_serializer import CondominioSerializer
