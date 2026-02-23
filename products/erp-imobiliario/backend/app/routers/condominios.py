@@ -10,27 +10,31 @@ DELETE /api/condominios/{id}  — Delete
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Header, Query
+from pydantic import BaseModel, Field
+
+from app.dependencies import get_current_user, get_user_client
+from app.responses import paginated_response, success_response, ok_response, calculate_pagination
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/condominios", tags=["Condominios"])
 
 
 class CondominioCreate(BaseModel):
-    nome: str
+    nome: str = Field(..., min_length=1, max_length=255)
     endereco: Optional[str] = None
     bairro: Optional[str] = None
     cidade: Optional[str] = None
-    estado: Optional[str] = None
-    cep: Optional[str] = None
-    valor_condominio: Optional[float] = None
+    estado: Optional[str] = Field(default=None, max_length=2)
+    cep: Optional[str] = Field(default=None, max_length=9)
+    valor_condominio: Optional[float] = Field(default=None, ge=0)
     sindico: Optional[str] = None
-    telefone_sindico: Optional[str] = None
+    telefone_sindico: Optional[str] = Field(default=None, max_length=20)
     administradora: Optional[str] = None
-    torres: Optional[int] = None
-    unidades_por_andar: Optional[int] = None
-    total_unidades: Optional[int] = None
+    torres: Optional[int] = Field(default=None, ge=0)
+    unidades_por_andar: Optional[int] = Field(default=None, ge=0)
+    total_unidades: Optional[int] = Field(default=None, ge=0)
     possui_portaria: bool = False
     possui_piscina: bool = False
     possui_academia: bool = False
@@ -41,19 +45,19 @@ class CondominioCreate(BaseModel):
 
 
 class CondominioUpdate(BaseModel):
-    nome: Optional[str] = None
+    nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     endereco: Optional[str] = None
     bairro: Optional[str] = None
     cidade: Optional[str] = None
-    estado: Optional[str] = None
-    cep: Optional[str] = None
-    valor_condominio: Optional[float] = None
+    estado: Optional[str] = Field(default=None, max_length=2)
+    cep: Optional[str] = Field(default=None, max_length=9)
+    valor_condominio: Optional[float] = Field(default=None, ge=0)
     sindico: Optional[str] = None
-    telefone_sindico: Optional[str] = None
+    telefone_sindico: Optional[str] = Field(default=None, max_length=20)
     administradora: Optional[str] = None
-    torres: Optional[int] = None
-    unidades_por_andar: Optional[int] = None
-    total_unidades: Optional[int] = None
+    torres: Optional[int] = Field(default=None, ge=0)
+    unidades_por_andar: Optional[int] = Field(default=None, ge=0)
+    total_unidades: Optional[int] = Field(default=None, ge=0)
     possui_portaria: Optional[bool] = None
     possui_piscina: Optional[bool] = None
     possui_academia: Optional[bool] = None
@@ -63,72 +67,76 @@ class CondominioUpdate(BaseModel):
     observacoes: Optional[str] = None
 
 
-async def _get_user_from_token(authorization: Optional[str]):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token ausente")
-    from app.database import get_supabase_client
-    token = authorization.replace("Bearer ", "")
-    client = get_supabase_client()
-    try:
-        user_response = client.auth.get_user(token)
-        if not user_response or not user_response.user:
-            raise HTTPException(status_code=401, detail="Token inválido")
-        return user_response.user, token
-    except Exception:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-
-
 @router.get("")
-async def listar_condominios(authorization: Optional[str] = Header(None)):
-    user, token = await _get_user_from_token(authorization)
-    from app.database import get_supabase_client
-    client = get_supabase_client(token)
-    res = client.table("condominios").select("*").order("nome").execute()
-    return {"data": res.data or [], "total": len(res.data or [])}
+async def listar_condominios(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
+    authorization: Optional[str] = Header(None),
+):
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    # Calculate pagination
+    validated_page, validated_page_size, offset = calculate_pagination(
+        page, page_size, settings.max_page_size
+    )
+
+    # Count query
+    count_result = db.table("condominios").select("id", count="exact").execute()
+    total = count_result.count if count_result.count is not None else 0
+
+    # Data query with pagination
+    res = db.table("condominios").select("*").order("nome").range(
+        offset, offset + validated_page_size - 1
+    ).execute()
+
+    return paginated_response(res.data or [], total, validated_page, validated_page_size)
 
 
 @router.get("/{condominio_id}")
 async def get_condominio(condominio_id: str, authorization: Optional[str] = Header(None)):
-    _, token = await _get_user_from_token(authorization)
-    from app.database import get_supabase_client
-    client = get_supabase_client(token)
-    res = client.table("condominios").select("*").eq("id", condominio_id).single().execute()
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    res = db.table("condominios").select("*").eq("id", condominio_id).single().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado")
-    return {"data": res.data}
+    return success_response(res.data)
 
 
 @router.post("")
 async def criar_condominio(body: CondominioCreate, authorization: Optional[str] = Header(None)):
-    user, token = await _get_user_from_token(authorization)
-    from app.database import get_supabase_client
-    client = get_supabase_client(token)
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
     data = body.model_dump(exclude_none=True)
     data["owner_id"] = user.id
-    res = client.table("condominios").insert(data).execute()
+
+    res = db.table("condominios").insert(data).execute()
     if not res.data:
         raise HTTPException(status_code=500, detail="Erro ao criar condomínio")
-    return {"data": res.data[0]}
+    return success_response(res.data[0])
 
 
 @router.patch("/{condominio_id}")
 async def atualizar_condominio(condominio_id: str, body: CondominioUpdate, authorization: Optional[str] = Header(None)):
-    _, token = await _get_user_from_token(authorization)
-    from app.database import get_supabase_client
-    client = get_supabase_client(token)
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
     data = body.model_dump(exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
-    res = client.table("condominios").update(data).eq("id", condominio_id).execute()
+
+    res = db.table("condominios").update(data).eq("id", condominio_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado")
-    return {"data": res.data[0]}
+    return success_response(res.data[0])
 
 
 @router.delete("/{condominio_id}")
 async def deletar_condominio(condominio_id: str, authorization: Optional[str] = Header(None)):
-    _, token = await _get_user_from_token(authorization)
-    from app.database import get_supabase_client
-    client = get_supabase_client(token)
-    client.table("condominios").delete().eq("id", condominio_id).execute()
-    return {"ok": True}
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    db.table("condominios").delete().eq("id", condominio_id).execute()
+    return ok_response("Condomínio excluído com sucesso")

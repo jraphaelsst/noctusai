@@ -6,17 +6,46 @@ Run with: uvicorn app.main:app --reload --port 8000
 """
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 
 from app.config import settings
 from app.routers import matching, condominios, ativos, clientes, metas, profiles, atividades, action_log, funil
-
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+from app.exceptions import (
+    AppException,
+    app_exception_handler,
+    http_exception_handler,
+    validation_exception_handler,
+    generic_exception_handler,
 )
+from app.middleware import CorrelationIdMiddleware, RequestLoggingMiddleware
+from app.logging_config import configure_logging
+
+# Configure structured logging
+configure_logging(debug=settings.debug, json_logs=not settings.debug)
+
+# Initialize Sentry for error tracking (optional - only if SENTRY_DSN is set)
+if settings.sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            integrations=[
+                StarletteIntegration(transaction_style="endpoint"),
+                FastApiIntegration(transaction_style="endpoint"),
+            ],
+            traces_sample_rate=0.1 if settings.is_production else 1.0,
+            profiles_sample_rate=0.1 if settings.is_production else 1.0,
+            environment="production" if settings.is_production else "development",
+            send_default_pii=False,
+        )
+        logging.info("Sentry SDK initialized successfully")
+    except ImportError:
+        logging.warning("Sentry SDK not installed. Error tracking disabled.")
 
 # Create app
 app = FastAPI(
@@ -27,14 +56,25 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS — allow the frontend to call the API
+# CORS — restricted methods and headers for security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With", "X-Correlation-ID", "X-Request-ID"],
+    expose_headers=["X-Correlation-ID", "X-Response-Time-Ms"],
 )
+
+# Add request tracking and logging middleware
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
+
+# Register exception handlers for standardized error responses
+app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(ValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
 
 # Register routers
 app.include_router(ativos.router)

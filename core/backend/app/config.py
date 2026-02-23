@@ -3,6 +3,7 @@ NoctusAI Core — Configuration settings.
 """
 from typing import Optional
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -23,9 +24,30 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost:8080"
     debug: bool = True
 
+    # Observability (optional)
+    sentry_dsn: Optional[str] = None
+    redis_url: Optional[str] = None
+
+    @field_validator('jwt_secret')
+    @classmethod
+    def validate_jwt_secret(cls, v, info):
+        """Fail if using default JWT secret in production."""
+        # Access debug from info.data if available
+        debug = info.data.get('debug', True) if info.data else True
+        if v == "noctus-dev-secret-change-in-prod" and not debug:
+            raise ValueError(
+                "SECURITY ERROR: JWT_SECRET must be changed from default value in production. "
+                "Set JWT_SECRET environment variable to a secure random string."
+            )
+        return v
+
     @property
     def cors_origins_list(self) -> list:
         return [o.strip() for o in self.cors_origins.split(",")]
+
+    @property
+    def is_production(self) -> bool:
+        return not self.debug
 
     class Config:
         env_file = ".env"

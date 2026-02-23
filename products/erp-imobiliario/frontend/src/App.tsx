@@ -9,6 +9,7 @@ import { AuthProvider } from "./components/auth/AuthProvider";
 import { LoginForm } from "./components/auth/LoginForm";
 import { useAuthStore } from "./store/authStore";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // Lazy load das páginas para melhor performance inicial
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -82,15 +83,19 @@ function AppContent() {
 }
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <AuthProvider>
-        <AppContent />
-        <Toaster />
-        <Sonner />
-      </AuthProvider>
-    </TooltipProvider>
-  </QueryClientProvider>
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <AuthProvider>
+          <ErrorBoundary>
+            <AppContent />
+          </ErrorBoundary>
+          <Toaster />
+          <Sonner />
+        </AuthProvider>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

@@ -1,6 +1,7 @@
 """
 Configuration settings loaded from environment variables.
 """
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 
@@ -16,9 +17,21 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     debug: bool = True
 
+    # Observability (optional - graceful degradation if not set)
+    sentry_dsn: Optional[str] = None
+    redis_url: Optional[str] = None
+
+    # Pagination defaults
+    default_page_size: int = 50
+    max_page_size: int = 200
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",")]
+
+    @property
+    def is_production(self) -> bool:
+        return not self.debug
 
     class Config:
         env_file = ".env"
