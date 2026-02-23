@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { perfilPermutaSchema, PerfilPermutaFormData } from '@/lib/imovelValidations';
 import { useCreatePerfilPermuta } from '@/hooks/usePermutas';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -22,15 +20,17 @@ export function NovoPerfilPermutaDialog({ open, onOpenChange }: NovoPerfilPermut
   const [regioes, setRegioes] = useState<string[]>([]);
   const [novaRegiao, setNovaRegiao] = useState('');
 
-  const { register, handleSubmit, formState: { errors }, setValue, watch, reset } = useForm<PerfilPermutaFormData>({
-    resolver: zodResolver(perfilPermutaSchema),
+  const { register, handleSubmit, formState: { errors }, setValue, watch, reset } = useForm({
     defaultValues: {
+      natureza: '' as 'permuta_imovel' | 'permuta_automovel',
       aceita_completar_diferenca: false,
-      regiao_preferida: [],
+      regiao_preferida: [] as string[],
+      valor: 0,
+      status: 'ativo',
     },
   });
 
-  const watchedCategoria = watch('categoria');
+  const watchedNatureza = watch('natureza');
   const watchedAceitaCompletar = watch('aceita_completar_diferenca');
 
   const adicionarRegiao = () => {
@@ -48,12 +48,12 @@ export function NovoPerfilPermutaDialog({ open, onOpenChange }: NovoPerfilPermut
     setValue('regiao_preferida', novasRegioes);
   };
 
-  const onSubmit = async (data: PerfilPermutaFormData) => {
+  const onSubmit = async (data: any) => {
     const formData: any = {
       ...data,
       regiao_preferida: regioes,
     };
-    
+
     await createMutation.mutateAsync(formData);
     reset();
     setRegioes([]);
@@ -68,191 +68,195 @@ export function NovoPerfilPermutaDialog({ open, onOpenChange }: NovoPerfilPermut
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          {/* Categoria */}
+          {/* Natureza (discriminator) */}
           <div>
-            <Label htmlFor="categoria">Categoria *</Label>
-            <Select onValueChange={(v) => setValue('categoria', v as any)}>
+            <Label htmlFor="natureza">Tipo de Permuta *</Label>
+            <Select onValueChange={(v) => setValue('natureza', v as any)}>
               <SelectTrigger>
-                <SelectValue placeholder="Selecione o tipo de bem" />
+                <SelectValue placeholder="O que você oferece em troca?" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="imovel">Imóvel</SelectItem>
-                <SelectItem value="movel">Móvel (Carro/Moto)</SelectItem>
+                <SelectItem value="permuta_imovel">Imóvel</SelectItem>
+                <SelectItem value="permuta_automovel">Automóvel</SelectItem>
               </SelectContent>
             </Select>
-            {errors.categoria && <p className="text-sm text-destructive">{errors.categoria.message}</p>}
           </div>
 
-          {/* Campos para Imóvel */}
-          {watchedCategoria === 'imovel' && (
+          {/* Campos para Permuta Imóvel */}
+          {watchedNatureza === 'permuta_imovel' && (
             <div className="space-y-4">
-              <h3 className="font-semibold text-lg">Detalhes do Imóvel Desejado</h3>
-              
+              <h3 className="font-semibold text-lg">Dados do Imóvel Oferecido</h3>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="tipo_imovel">Tipo de Imóvel</Label>
-                  <Select onValueChange={(v) => setValue('tipo_imovel', v as any)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
+                  <Label>Tipo de Imóvel</Label>
+                  <Select onValueChange={(v) => setValue('tipo_imovel', v)}>
+                    <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="casa">Casa</SelectItem>
                       <SelectItem value="apartamento">Apartamento</SelectItem>
                       <SelectItem value="terreno">Terreno</SelectItem>
                       <SelectItem value="comercial">Comercial</SelectItem>
                       <SelectItem value="rural">Rural</SelectItem>
-                      <SelectItem value="outro">Outro</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div>
-                  <Label htmlFor="quartos_min">Quartos Mínimos</Label>
-                  <Input type="number" {...register('quartos_min')} />
+                  <Label>Zona</Label>
+                  <Select onValueChange={(v) => setValue('zona', v)}>
+                    <SelectTrigger><SelectValue placeholder="Zona" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="norte">Norte</SelectItem>
+                      <SelectItem value="sul">Sul</SelectItem>
+                      <SelectItem value="leste">Leste</SelectItem>
+                      <SelectItem value="oeste">Oeste</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-
                 <div>
-                  <Label htmlFor="vagas_min">Vagas Mínimas</Label>
-                  <Input type="number" {...register('vagas_min')} />
+                  <Label>Condomínio</Label>
+                  <Input {...register('condominio_nome')} placeholder="Nome do condomínio" />
                 </div>
-
                 <div>
-                  <Label htmlFor="metragem_min">Metragem Mínima (m²)</Label>
-                  <Input type="number" {...register('metragem_min')} />
+                  <Label>CEP</Label>
+                  <Input {...register('cep')} placeholder="00000-000" />
                 </div>
-
                 <div>
-                  <Label htmlFor="metragem_max">Metragem Máxima (m²)</Label>
-                  <Input type="number" {...register('metragem_max')} />
+                  <Label>Cidade</Label>
+                  <Input {...register('cidade')} />
                 </div>
-
                 <div>
-                  <Label htmlFor="faixa_preco_min">Preço Mínimo</Label>
-                  <Input type="number" step="0.01" {...register('faixa_preco_min')} />
+                  <Label>Estado</Label>
+                  <Input {...register('estado')} placeholder="SP" />
                 </div>
-
                 <div>
-                  <Label htmlFor="faixa_preco_max">Preço Máximo</Label>
-                  <Input type="number" step="0.01" {...register('faixa_preco_max')} />
-                  {errors.faixa_preco_max && <p className="text-sm text-destructive">{errors.faixa_preco_max.message}</p>}
+                  <Label>Bairro</Label>
+                  <Input {...register('bairro')} />
+                </div>
+                <div>
+                  <Label>Valor (R$)</Label>
+                  <Input type="number" step="0.01" {...register('valor', { valueAsNumber: true })} />
+                </div>
+                <div>
+                  <Label>Quartos</Label>
+                  <Input type="number" {...register('quartos', { valueAsNumber: true })} />
+                </div>
+                <div>
+                  <Label>Vagas</Label>
+                  <Input type="number" {...register('vagas', { valueAsNumber: true })} />
                 </div>
               </div>
 
               <div>
                 <Label>Regiões Preferidas</Label>
                 <div className="flex gap-2 mb-2">
-                  <Input
-                    value={novaRegiao}
-                    onChange={(e) => setNovaRegiao(e.target.value)}
-                    placeholder="Digite cidade, estado ou bairro"
-                  />
-                  <Button type="button" variant="outline" onClick={adicionarRegiao}>
-                    Adicionar
-                  </Button>
+                  <Input value={novaRegiao} onChange={(e) => setNovaRegiao(e.target.value)} placeholder="Cidade, estado ou bairro" />
+                  <Button type="button" variant="outline" onClick={adicionarRegiao}>Adicionar</Button>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {regioes.map((regiao, i) => (
-                    <Badge key={i} variant="secondary" className="cursor-pointer" onClick={() => removerRegiao(i)}>
-                      {regiao} ×
-                    </Badge>
+                  {regioes.map((r, i) => (
+                    <Badge key={i} variant="secondary" className="cursor-pointer" onClick={() => removerRegiao(i)}>{r} ×</Badge>
                   ))}
                 </div>
               </div>
             </div>
           )}
 
-          {/* Campos para Móvel */}
-          {watchedCategoria === 'movel' && (
+          {/* Campos para Permuta Automóvel */}
+          {watchedNatureza === 'permuta_automovel' && (
             <div className="space-y-4">
-              <h3 className="font-semibold text-lg">Detalhes do Veículo Desejado</h3>
-              
+              <h3 className="font-semibold text-lg">Dados do Veículo Oferecido</h3>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="tipo_movel">Tipo de Veículo</Label>
-                  <Select onValueChange={(v) => setValue('tipo_movel', v as any)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
+                  <Label>Tipo de Veículo</Label>
+                  <Select onValueChange={(v) => setValue('tipo_veiculo', v)}>
+                    <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="carro">Carro</SelectItem>
                       <SelectItem value="moto">Moto</SelectItem>
+                      <SelectItem value="suv">SUV</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div>
-                  <Label htmlFor="marca">Marca</Label>
-                  <Input {...register('marca')} />
+                  <Label>Marca</Label>
+                  <Input {...register('marca')} placeholder="Ex: Honda" />
                 </div>
-
                 <div>
-                  <Label htmlFor="modelo">Modelo</Label>
-                  <Input {...register('modelo')} />
+                  <Label>Modelo</Label>
+                  <Input {...register('modelo')} placeholder="Ex: Civic" />
                 </div>
-
                 <div>
-                  <Label htmlFor="ano_min">Ano Mínimo</Label>
-                  <Input type="number" {...register('ano_min')} />
+                  <Label>Motor</Label>
+                  <Select onValueChange={(v) => setValue('motor', v)}>
+                    <SelectTrigger><SelectValue placeholder="Combustível" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="gasolina">Gasolina</SelectItem>
+                      <SelectItem value="alcool">Álcool</SelectItem>
+                      <SelectItem value="flex">Flex</SelectItem>
+                      <SelectItem value="eletrico">Elétrico</SelectItem>
+                      <SelectItem value="hibrido">Híbrido</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-
                 <div>
-                  <Label htmlFor="ano_max">Ano Máximo</Label>
-                  <Input type="number" {...register('ano_max')} />
+                  <Label>Ano</Label>
+                  <Input type="number" {...register('ano', { valueAsNumber: true })} />
                 </div>
-
                 <div>
-                  <Label htmlFor="quilometragem_max">KM Máxima</Label>
-                  <Input type="number" {...register('quilometragem_max')} />
+                  <Label>Quilometragem</Label>
+                  <Input type="number" {...register('quilometragem', { valueAsNumber: true })} />
                 </div>
-
                 <div>
-                  <Label htmlFor="faixa_preco_min">Preço Mínimo</Label>
-                  <Input type="number" step="0.01" {...register('faixa_preco_min')} />
-                </div>
-
-                <div>
-                  <Label htmlFor="faixa_preco_max">Preço Máximo</Label>
-                  <Input type="number" step="0.01" {...register('faixa_preco_max')} />
+                  <Label>Valor (R$)</Label>
+                  <Input type="number" step="0.01" {...register('valor', { valueAsNumber: true })} />
                 </div>
               </div>
             </div>
           )}
 
           {/* Flexibilidade */}
-          <div className="space-y-4">
-            <h3 className="font-semibold text-lg">Flexibilidade</h3>
-            
-            <div>
-              <Label htmlFor="valor_estimado">Valor Estimado do Bem Oferecido</Label>
-              <Input type="number" step="0.01" {...register('valor_estimado')} />
-            </div>
+          {watchedNatureza && (
+            <div className="space-y-4">
+              <h3 className="font-semibold text-lg">Flexibilidade</h3>
 
-            <div className="flex items-center space-x-2">
-              <Switch
-                checked={watchedAceitaCompletar}
-                onCheckedChange={(v) => setValue('aceita_completar_diferenca', v)}
-              />
-              <Label>Aceita completar diferença de valores</Label>
-            </div>
-
-            {watchedAceitaCompletar && (
-              <div>
-                <Label htmlFor="limite_complemento">Limite de Complemento</Label>
-                <Input type="number" step="0.01" {...register('limite_complemento')} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label>Faixa de Preço Mínima</Label>
+                  <Input type="number" step="0.01" {...register('faixa_preco_min', { valueAsNumber: true })} />
+                </div>
+                <div>
+                  <Label>Faixa de Preço Máxima</Label>
+                  <Input type="number" step="0.01" {...register('faixa_preco_max', { valueAsNumber: true })} />
+                </div>
               </div>
-            )}
 
-            <div>
-              <Label htmlFor="observacoes">Observações</Label>
-              <Textarea {...register('observacoes')} rows={3} />
+              <div className="flex items-center space-x-2">
+                <Switch
+                  checked={watchedAceitaCompletar}
+                  onCheckedChange={(v) => setValue('aceita_completar_diferenca', v)}
+                />
+                <Label>Aceita completar diferença de valores</Label>
+              </div>
+
+              {watchedAceitaCompletar && (
+                <div>
+                  <Label>Limite de Complemento</Label>
+                  <Input type="number" step="0.01" {...register('limite_complemento', { valueAsNumber: true })} />
+                </div>
+              )}
+
+              <div>
+                <Label>Observações</Label>
+                <Textarea {...register('observacoes')} rows={3} />
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+            <Button type="submit" disabled={createMutation.isPending || !watchedNatureza}>
               {createMutation.isPending ? 'Salvando...' : 'Salvar'}
             </Button>
           </div>

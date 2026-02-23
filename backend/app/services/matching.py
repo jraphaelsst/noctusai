@@ -1,243 +1,302 @@
 """
-Matching algorithm — server-side scoring.
+Matching Algorithm — Unified Ativos Table
 
-This module contains the core business logic for matching
-imóveis with perfis de permuta. It calculates a compatibility
-score from 0-100 based on 4 criteria:
+Scores compatibility between an imovel (ativo natureza='imovel') and a
+permuta (ativo natureza='permuta_imovel' or 'permuta_automovel').
 
-  - Região (0-30 pts): location compatibility
-  - Preço (0-25 pts): price range alignment
-  - Especificações (0-20 pts): property specs match
-  - Qualidade do anúncio (0-10 pts): listing completeness
-
-Ported from the frontend useMatching.ts to run server-side.
+Score breakdown (100 pts max):
+  - Region compatibility:     30 pts
+  - Price compatibility:      25 pts
+  - Specs compatibility:      20 pts
+  - Interest alignment:       15 pts
+  - Listing quality:          10 pts
 """
+import logging
 from typing import Any
 
-from app.schemas.matching import MatchResult, MatchDetails
+logger = logging.getLogger(__name__)
 
 
-def calcular_score_regiao(imovel: dict[str, Any], perfil: dict[str, Any]) -> int:
+def calcular_compatibilidade_regiao(imovel: dict, permuta: dict) -> int:
     """
-    Score based on region compatibility.
-    Returns 0-30 points.
-    """
-    regiao_preferida = perfil.get("regiao_preferida") or []
-
-    if not regiao_preferida:
-        return 20  # No preference = neutral score
-
-    for regiao in regiao_preferida:
-        reg_lower = regiao.lower()
-        cidade = (imovel.get("cidade") or "").lower()
-        estado = (imovel.get("estado") or "").lower()
-        bairro = (imovel.get("bairro") or "").lower()
-
-        if reg_lower in cidade or reg_lower in estado or reg_lower in bairro:
-            return 30  # Region match
-
-    return 10  # Region mismatch
-
-
-def calcular_score_preco(imovel: dict[str, Any], perfil: dict[str, Any]) -> int:
-    """
-    Score based on price range alignment.
-    Returns 0-25 points.
-    """
-    faixa_min = perfil.get("faixa_preco_min")
-    faixa_max = perfil.get("faixa_preco_max")
-
-    if not faixa_min and not faixa_max:
-        return 20  # No price preference
-
-    preco = imovel.get("preco_pedido", 0)
-    min_val = faixa_min or 0
-    max_val = faixa_max or float("inf")
-
-    if min_val <= preco <= max_val:
-        # Score weighted by proximity to center
-        effective_max = max_val if max_val != float("inf") else min_val * 2
-        centro = (min_val + effective_max) / 2
-        amplitude = (effective_max - min_val) / 2
-
-        if amplitude == 0:
-            return 25
-
-        distancia_centro = abs(preco - centro)
-        score_normalizado = 1 - (distancia_centro / amplitude)
-        return round(25 * score_normalizado)
-
-    # Outside range with 10% tolerance
-    tolerancia = 0.1
-    if preco < min_val and preco >= min_val * (1 - tolerancia):
-        return 15
-    if max_val != float("inf") and preco > max_val and preco <= max_val * (1 + tolerancia):
-        return 15
-
-    return 0
-
-
-def calcular_score_especificacoes(imovel: dict[str, Any], perfil: dict[str, Any]) -> int:
-    """
-    Score based on property specification matching.
-    Returns 0-20 points (5 pts each criterion).
+    Compare location fields: cidade, estado, bairro, zona, regiao_preferida.
+    Max 30 pts.
     """
     score = 0
-
-    # Property type
-    if perfil.get("tipo_imovel") and perfil["tipo_imovel"] == imovel.get("tipo"):
-        score += 5
-
-    # Area
-    metragem_min = perfil.get("metragem_min")
-    metragem_max = perfil.get("metragem_max")
-    if metragem_min or metragem_max:
-        area = imovel.get("area_total") or imovel.get("area_privativa") or 0
-        min_m = metragem_min or 0
-        max_m = metragem_max or float("inf")
-        if min_m <= area <= max_m:
+    # Same state
+    if imovel.get('estado') and permuta.get('estado'):
+        if imovel['estado'].lower() == permuta['estado'].lower():
             score += 5
 
-    # Bedrooms
-    quartos_min = perfil.get("quartos_min")
-    quartos_imovel = imovel.get("quartos")
-    if quartos_min and quartos_imovel and quartos_imovel >= quartos_min:
-        score += 5
+    # Same city
+    if imovel.get('cidade') and permuta.get('cidade'):
+        if imovel['cidade'].lower() == permuta['cidade'].lower():
+            score += 10
 
-    # Parking
-    vagas_min = perfil.get("vagas_min")
-    vagas_imovel = imovel.get("vagas")
-    if vagas_min and vagas_imovel and vagas_imovel >= vagas_min:
-        score += 5
+    # Same bairro
+    if imovel.get('bairro') and permuta.get('bairro'):
+        if imovel['bairro'].lower() == permuta['bairro'].lower():
+            score += 10
 
-    return score
+    # Region preference match
+    regioes = permuta.get('regiao_preferida') or []
+    if regioes:
+        imovel_location = ' '.join(filter(None, [
+            imovel.get('cidade', ''),
+            imovel.get('estado', ''),
+            imovel.get('bairro', ''),
+        ])).lower()
+        for regiao in regioes:
+            if regiao.lower() in imovel_location:
+                score += 5
+                break
+
+    # Same zona
+    if imovel.get('zona') and permuta.get('zona'):
+        if imovel['zona'].lower() == permuta['zona'].lower():
+            score += 5
+
+    return min(score, 30)
 
 
-def calcular_qualidade_anuncio(imovel: dict[str, Any]) -> int:
+def calcular_compatibilidade_preco(imovel: dict, permuta: dict) -> int:
     """
-    Score based on listing completeness/quality.
-    Returns 0-10 points.
+    Compare valor of imovel vs permuta's price range.
+    Max 25 pts.
     """
+    valor_imovel = float(imovel.get('valor', 0) or 0)
+    valor_permuta = float(permuta.get('valor', 0) or 0)
+    faixa_min = float(permuta.get('faixa_preco_min', 0) or 0)
+    faixa_max = float(permuta.get('faixa_preco_max', 0) or 0)
+
+    if valor_imovel <= 0:
+        return 0
+
     score = 0
 
-    # Photos
-    fotos = imovel.get("fotos") or []
-    if len(fotos) >= 8:
+    # Check if imovel valor is within permuta's price range
+    if faixa_min > 0 and faixa_max > 0:
+        if faixa_min <= valor_imovel <= faixa_max:
+            score += 15
+        elif valor_imovel < faixa_min:
+            diff_pct = (faixa_min - valor_imovel) / faixa_min
+            if diff_pct < 0.2:
+                score += 8
+        elif valor_imovel > faixa_max:
+            diff_pct = (valor_imovel - faixa_max) / faixa_max
+            if diff_pct < 0.2:
+                score += 8
+
+    # Direct value comparison
+    if valor_permuta > 0:
+        ratio = min(valor_imovel, valor_permuta) / max(valor_imovel, valor_permuta)
+        score += int(ratio * 10)
+
+    # Accepts completing the difference
+    if permuta.get('aceita_completar_diferenca'):
         score += 3
-    elif len(fotos) >= 4:
-        score += 2
-    elif len(fotos) > 0:
-        score += 1
 
-    # Title and description
-    titulo = imovel.get("titulo_anuncio") or ""
-    descricao = imovel.get("descricao_seo") or ""
-    if len(titulo) > 20:
-        score += 2
-    if len(descricao) > 50:
-        score += 2
-
-    # Keywords
-    palavras = imovel.get("palavras_chave") or []
-    if len(palavras) >= 3:
-        score += 1
-
-    # Points of interest
-    pontos = imovel.get("pontos_de_interesse") or []
-    if len(pontos) > 0:
-        score += 1
-
-    # Virtual tour
-    if imovel.get("tour_virtual_url"):
-        score += 1
-
-    return score
+    return min(score, 25)
 
 
-def calcular_match(imovel: dict[str, Any], perfil: dict[str, Any]) -> MatchResult:
+def calcular_compatibilidade_specs(imovel: dict, permuta: dict) -> int:
     """
-    Calculate the compatibility match between an imóvel and a perfil de permuta.
-
-    Returns a MatchResult with score 0-100, justification, and sub-score details.
+    Compare property specs (quartos, vagas, area) or vehicle specs (marca, modelo).
+    Max 20 pts.
     """
-    # Only match imóvel permutas for now
-    if perfil.get("categoria") != "imovel":
-        return MatchResult(
-            imovel_id=imovel["id"],
-            perfil_permuta_id=perfil["id"],
-            score=0,
-            justificativa="Matching de móveis ainda não implementado",
-            detalhes=MatchDetails(),
-        )
+    score = 0
+    natureza_permuta = permuta.get('natureza', '')
 
-    score_regiao = calcular_score_regiao(imovel, perfil)
-    score_preco = calcular_score_preco(imovel, perfil)
-    score_specs = calcular_score_especificacoes(imovel, perfil)
-    score_qualidade = calcular_qualidade_anuncio(imovel)
+    if natureza_permuta == 'permuta_imovel':
+        # Property type match
+        if (imovel.get('tipo_imovel') and permuta.get('tipo_imovel')
+                and imovel['tipo_imovel'] == permuta['tipo_imovel']):
+            score += 5
 
-    score_total = score_regiao + score_preco + score_specs + score_qualidade
+        # Quartos
+        quartos_imovel = imovel.get('quartos', 0) or 0
+        quartos_min = permuta.get('quartos_min', 0) or permuta.get('quartos', 0) or 0
+        if quartos_min > 0 and quartos_imovel >= quartos_min:
+            score += 5
 
-    # Gap calculation
-    gap_valor = imovel.get("preco_pedido", 0) - (perfil.get("valor_estimado") or 0)
-    pode_complementar = (
-        perfil.get("aceita_completar_diferenca")
-        and gap_valor <= (perfil.get("limite_complemento") or 0)
-    )
+        # Vagas
+        vagas_imovel = imovel.get('vagas', 0) or 0
+        vagas_min = permuta.get('vagas_min', 0) or permuta.get('vagas', 0) or 0
+        if vagas_min > 0 and vagas_imovel >= vagas_min:
+            score += 3
 
-    # Build justification
-    justificativa = ""
-    if score_total >= 80:
-        justificativa = "Compatibilidade alta. "
-    elif score_total >= 60:
-        justificativa = "Compatibilidade boa. "
-    elif score_total >= 40:
-        justificativa = "Compatibilidade média. "
-    else:
-        justificativa = "Compatibilidade baixa. "
+        # Area
+        area_imovel = float(imovel.get('area_total', 0) or imovel.get('area_privativa', 0) or 0)
+        metragem_min = float(permuta.get('metragem_min', 0) or 0)
+        metragem_max = float(permuta.get('metragem_max', 0) or 0)
+        if metragem_min > 0 and area_imovel >= metragem_min:
+            score += 4
+        if metragem_max > 0 and area_imovel <= metragem_max:
+            score += 3
 
-    if score_regiao >= 25:
-        justificativa += "Região compatível. "
-    if score_preco >= 20:
-        justificativa += "Preço dentro do esperado. "
-    if gap_valor > 0 and pode_complementar:
-        justificativa += f"Diferença de R$ {gap_valor:.2f} coberta pelo complemento."
+    elif natureza_permuta == 'permuta_automovel':
+        # For auto matching — check interests on the imovel side
+        interesses = imovel.get('interesses') or []
+        for interesse in interesses:
+            if interesse.get('tipo') == 'automovel':
+                if (interesse.get('marca') and permuta.get('marca')
+                        and interesse['marca'].lower() == permuta['marca'].lower()):
+                    score += 10
+                if (interesse.get('modelo') and permuta.get('modelo')
+                        and interesse['modelo'].lower() == permuta['modelo'].lower()):
+                    score += 5
+                valor_min = float(interesse.get('valor_min', 0) or 0)
+                valor_max = float(interesse.get('valor_max', 0) or 0)
+                valor_auto = float(permuta.get('valor', 0) or 0)
+                if valor_min <= valor_auto <= valor_max:
+                    score += 5
+                break
 
-    return MatchResult(
-        imovel_id=imovel["id"],
-        perfil_permuta_id=perfil["id"],
-        score=min(score_total, 100),
-        justificativa=justificativa.strip(),
-        detalhes=MatchDetails(
-            compatibilidade_regiao=score_regiao,
-            compatibilidade_preco=score_preco,
-            compatibilidade_specs=score_specs,
-            qualidade_anuncio=score_qualidade,
-            gap_valor=gap_valor,
-        ),
-    )
+    return min(score, 20)
 
 
-def gerar_matches_para_imovel(
-    imovel: dict[str, Any],
-    perfis: list[dict[str, Any]],
-) -> list[MatchResult]:
-    """Generate matches for one imóvel against all perfis."""
-    matches = [calcular_match(imovel, perfil) for perfil in perfis]
-    return sorted(
-        [m for m in matches if m.score > 0],
-        key=lambda m: m.score,
-        reverse=True,
-    )
+def calcular_alinhamento_interesses(imovel: dict, permuta: dict) -> int:
+    """
+    Check if the imovel's interesses JSON matches the permuta's natureza and attributes.
+    Max 15 pts.
+    """
+    interesses = imovel.get('interesses') or []
+    if not interesses:
+        return 0
+
+    score = 0
+    natureza_permuta = permuta.get('natureza', '')
+
+    for interesse in interesses:
+        tipo_interesse = interesse.get('tipo', '')
+
+        # Match natureza type
+        if ((tipo_interesse == 'imovel' and natureza_permuta == 'permuta_imovel') or
+                (tipo_interesse == 'automovel' and natureza_permuta == 'permuta_automovel')):
+            score += 8
+
+            # Check sub-criteria
+            if tipo_interesse == 'imovel':
+                if (interesse.get('tipo_imovel') and permuta.get('tipo_imovel')
+                        and interesse['tipo_imovel'] == permuta['tipo_imovel']):
+                    score += 4
+                if interesse.get('cidade') and permuta.get('cidade'):
+                    if interesse['cidade'].lower() == permuta['cidade'].lower():
+                        score += 3
+
+            break
+
+    return min(score, 15)
 
 
-def gerar_matches_para_perfil(
-    perfil: dict[str, Any],
-    imoveis: list[dict[str, Any]],
-) -> list[MatchResult]:
-    """Generate matches for one perfil against all imóveis."""
-    matches = [calcular_match(imovel, perfil) for imovel in imoveis]
-    return sorted(
-        [m for m in matches if m.score > 0],
-        key=lambda m: m.score,
-        reverse=True,
-    )
+def calcular_qualidade_anuncio(imovel: dict) -> int:
+    """
+    Score listing quality based on completeness of the imovel record.
+    Max 10 pts.
+    """
+    score = 0
+    if imovel.get('titulo_anuncio'):
+        score += 2
+    if imovel.get('descricao_seo'):
+        score += 2
+    fotos = imovel.get('fotos') or []
+    if len(fotos) >= 3:
+        score += 3
+    elif len(fotos) >= 1:
+        score += 1
+    if imovel.get('tour_virtual_url'):
+        score += 1
+    if imovel.get('pontos_de_interesse'):
+        score += 1
+    if imovel.get('condominio_nome') or imovel.get('condominio_id'):
+        score += 1
+    return min(score, 10)
+
+
+def calcular_score_total(imovel: dict, permuta: dict) -> dict:
+    """
+    Calculate total match score between an imovel and a permuta.
+    Returns dict with score, sub-scores, justificativa.
+    """
+    regiao = calcular_compatibilidade_regiao(imovel, permuta)
+    preco = calcular_compatibilidade_preco(imovel, permuta)
+    specs = calcular_compatibilidade_specs(imovel, permuta)
+    interesses = calcular_alinhamento_interesses(imovel, permuta)
+    qualidade = calcular_qualidade_anuncio(imovel)
+
+    total = regiao + preco + specs + interesses + qualidade
+
+    # Build justificativa
+    justificativa_parts = []
+    if regiao >= 15:
+        justificativa_parts.append("Boa compatibilidade de região")
+    if preco >= 15:
+        justificativa_parts.append("Preço alinhado")
+    if specs >= 10:
+        justificativa_parts.append("Características compatíveis")
+    if interesses >= 8:
+        justificativa_parts.append("Alinhado com interesses")
+
+    valor_imovel = float(imovel.get('valor', 0) or 0)
+    valor_permuta = float(permuta.get('valor', 0) or 0)
+
+    return {
+        'score': total,
+        'justificativa': '. '.join(justificativa_parts) if justificativa_parts else 'Match parcial',
+        'detalhes': {
+            'compatibilidade_regiao': regiao,
+            'compatibilidade_preco': preco,
+            'compatibilidade_specs': specs,
+            'alinhamento_interesses': interesses,
+            'qualidade_anuncio': qualidade,
+            'gap_valor': abs(valor_imovel - valor_permuta),
+        },
+    }
+
+
+def gerar_matches_para_imovel(imovel: dict, permutas: list[dict], score_minimo: int = 20) -> list[dict]:
+    """
+    Generate matches for a single imovel against all permutas.
+    """
+    matches = []
+    for permuta in permutas:
+        if permuta.get('owner_id') == imovel.get('owner_id'):
+            continue
+        if permuta.get('status', 'ativo') != 'ativo':
+            continue
+
+        resultado = calcular_score_total(imovel, permuta)
+        if resultado['score'] >= score_minimo:
+            matches.append({
+                'ativo_origem_id': imovel['id'],
+                'ativo_destino_id': permuta['id'],
+                **resultado,
+            })
+
+    matches.sort(key=lambda m: m['score'], reverse=True)
+    return matches
+
+
+def gerar_matches_para_permuta(permuta: dict, imoveis: list[dict], score_minimo: int = 20) -> list[dict]:
+    """
+    Generate matches for a single permuta against all imoveis (that accept permutas).
+    """
+    matches = []
+    for imovel in imoveis:
+        if imovel.get('owner_id') == permuta.get('owner_id'):
+            continue
+        if not imovel.get('aceita_permutas'):
+            continue
+        if imovel.get('status', 'ativo') != 'ativo':
+            continue
+
+        resultado = calcular_score_total(imovel, permuta)
+        if resultado['score'] >= score_minimo:
+            matches.append({
+                'ativo_origem_id': imovel['id'],
+                'ativo_destino_id': permuta['id'],
+                **resultado,
+            })
+
+    matches.sort(key=lambda m: m['score'], reverse=True)
+    return matches

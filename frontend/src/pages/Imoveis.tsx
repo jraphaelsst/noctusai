@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useImoveis } from '@/hooks/useImoveis';
+import { useImoveis, Imovel } from '@/hooks/useImoveis';
 import { useRecalcularMatches } from '@/hooks/useMatches';
 import { useCondominios } from '@/hooks/useCondominios';
 import { NovoImovelDialog } from '@/components/imoveis/NovoImovelDialog';
@@ -9,7 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Search, Plus, HomeIcon, Sparkles, Building2, MapPin, BedDouble, Car } from 'lucide-react';
-import { formatCurrency } from '@/lib/utils';
+
+const formatCurrency = (v: number) =>
+  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 export default function Imoveis() {
   const { data: imoveis = [], isLoading } = useImoveis();
@@ -26,16 +28,15 @@ export default function Imoveis() {
       imovel.bairro?.toLowerCase().includes(busca.toLowerCase()) ||
       imovel.titulo_anuncio?.toLowerCase().includes(busca.toLowerCase()) ||
       imovel.condominio_nome?.toLowerCase().includes(busca.toLowerCase());
-    const matchTipo = filtroTipo === 'todos' || imovel.tipo === filtroTipo;
+    const matchTipo = filtroTipo === 'todos' || imovel.tipo_imovel === filtroTipo;
     return matchBusca && matchTipo;
   });
 
   const handleGerarMatch = async (imovelId: string) => {
-    await recalcularMutation.mutateAsync({ imovel_id: imovelId });
+    await recalcularMutation.mutateAsync({ ativo_origem_id: imovelId });
   };
 
-  // Find condominio name by ID
-  const getCondominioNome = (imovel: any) => {
+  const getCondominioNome = (imovel: Imovel) => {
     if (imovel.condominio_nome) return imovel.condominio_nome;
     if (imovel.condominio_id) {
       const cond = condominios.find(c => c.id === imovel.condominio_id);
@@ -49,7 +50,7 @@ export default function Imoveis() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Imóveis</h1>
-          <p className="text-muted-foreground">Gerencie seus imóveis e busque matches de permuta</p>
+          <p className="text-muted-foreground">Gerencie imóveis e busque matches de permuta</p>
         </div>
         <Button onClick={() => setDialogAberto(true)}>
           <Plus className="h-4 w-4 mr-2" />Novo Imóvel
@@ -91,23 +92,20 @@ export default function Imoveis() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {imoveisFiltrados.map((imovel) => {
             const condNome = getCondominioNome(imovel);
-
             return (
               <Card key={imovel.id} className="hover:shadow-md transition-shadow">
                 <CardContent className="pt-6 space-y-3">
-                  {/* Header */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <HomeIcon className="h-5 w-5 text-primary" />
-                      <span className="font-semibold capitalize">{imovel.tipo}</span>
+                      <span className="font-semibold capitalize">{imovel.tipo_imovel || 'Imóvel'}</span>
                     </div>
                     <div className="flex gap-1">
-                      <Badge>{imovel.finalidade}</Badge>
+                      <Badge>{imovel.finalidade || 'venda'}</Badge>
                       {imovel.aceita_permutas && <Badge variant="secondary">Permuta</Badge>}
                     </div>
                   </div>
 
-                  {/* Location */}
                   {(imovel.cidade || imovel.bairro) && (
                     <div className="flex items-center gap-1 text-sm text-muted-foreground">
                       <MapPin className="h-3 w-3" />
@@ -115,36 +113,28 @@ export default function Imoveis() {
                     </div>
                   )}
 
-                  {/* Condominio */}
                   {condNome && (
                     <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <Building2 className="h-3 w-3" />
-                      <span>{condNome}</span>
+                      <Building2 className="h-3 w-3" /><span>{condNome}</span>
                     </div>
                   )}
 
-                  {/* Specs */}
                   <div className="flex gap-3 text-sm text-muted-foreground">
-                    {imovel.quartos && (
-                      <span className="flex items-center gap-1"><BedDouble className="h-3 w-3" />{imovel.quartos}q</span>
-                    )}
-                    {imovel.vagas && (
-                      <span className="flex items-center gap-1"><Car className="h-3 w-3" />{imovel.vagas}v</span>
-                    )}
-                    {(imovel.area_total || imovel.area_privativa) && (
-                      <span>{imovel.area_total || imovel.area_privativa}m²</span>
-                    )}
+                    {imovel.quartos && <span className="flex items-center gap-1"><BedDouble className="h-3 w-3" />{imovel.quartos}q</span>}
+                    {imovel.vagas && <span className="flex items-center gap-1"><Car className="h-3 w-3" />{imovel.vagas}v</span>}
+                    {(imovel.area_total || imovel.area_privativa) && <span>{imovel.area_total || imovel.area_privativa}m²</span>}
                   </div>
 
-                  {/* Price */}
-                  <p className="text-lg font-bold text-primary">{formatCurrency(imovel.preco_pedido)}</p>
+                  <p className="text-lg font-bold text-primary">{formatCurrency(imovel.valor)}</p>
 
-                  {/* Title */}
-                  {imovel.titulo_anuncio && (
-                    <p className="text-sm text-muted-foreground truncate">{imovel.titulo_anuncio}</p>
+                  {imovel.titulo_anuncio && <p className="text-sm text-muted-foreground truncate">{imovel.titulo_anuncio}</p>}
+
+                  {imovel.interesses && imovel.interesses.length > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      <strong>Aceita:</strong> {imovel.interesses.length} tipo{imovel.interesses.length !== 1 ? 's' : ''} de permuta
+                    </div>
                   )}
 
-                  {/* Match button */}
                   {imovel.aceita_permutas && (
                     <Button className="w-full" variant="outline" onClick={() => handleGerarMatch(imovel.id)} disabled={recalcularMutation.isPending}>
                       <Sparkles className="h-4 w-4 mr-2" />Gerar Matches

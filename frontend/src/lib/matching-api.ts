@@ -8,8 +8,8 @@ import { supabase } from '@/integrations/supabase/client';
 const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || '';
 
 export async function triggerMatching(params: {
-  imovel_id?: string;
-  perfil_permuta_id?: string;
+  ativo_origem_id?: string;
+  ativo_destino_id?: string;
 }): Promise<{ total: number }> {
   if (BACKEND_API_URL) {
     const { data: { session } } = await supabase.auth.getSession();
