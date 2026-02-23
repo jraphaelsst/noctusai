@@ -1,2 +1,0 @@
-from .permuta_imovel_serializer import PermutaImovelSerializer
-from .permuta_automovel_serializer import PermutaAutomovelSerializer

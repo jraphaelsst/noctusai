@@ -1,2 +1,0 @@
-from .permuta_imovel_model import PermutaImovel
-from .permuta_automovel_model import PermutaAutomovel

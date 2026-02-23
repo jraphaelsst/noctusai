@@ -1,2 +1,0 @@
-from .permuta_imovel_viewset import PermutaImovelViewSet
-from .permuta_automovel_viewset import PermutaAutomovelViewSet

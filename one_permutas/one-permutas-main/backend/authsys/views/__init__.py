@@ -1,1 +1,0 @@
-from .obtain_token_pair_view import ObtainTokenPairView
