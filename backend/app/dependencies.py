@@ -3,8 +3,8 @@ Shared dependencies for FastAPI routers.
 Handles JWT auth token extraction and Supabase client creation.
 """
 from typing import Optional
-from fastapi import Header, HTTPException, Depends
-from app.database import get_supabase_client, supabase_admin
+from fastapi import Header, HTTPException
+from app.database import get_supabase_client
 
 
 async def get_current_user(authorization: Optional[str] = Header(None)):
@@ -39,7 +39,7 @@ def get_admin_client():
 
 
 def log_action(user_id: str, tipo_acao: str, tipo_entidade: str,
-               entidade_id: str = None, descricao: str = "", detalhes: dict = None):
+               entidade_id: Optional[str] = None, descricao: str = "", detalhes: Optional[dict] = None):
     """Server-side action logging. Always runs with service role."""
     admin = get_admin_client()
     try:

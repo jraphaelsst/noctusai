@@ -1,8 +1,8 @@
-"""
-Centralized API client for the frontend.
-All data operations go through the FastAPI backend.
-The only direct Supabase usage is for auth (login/signup/session).
-"""
+/**
+ * Centralized API client for the frontend.
+ * All data operations go through the FastAPI backend.
+ * The only direct Supabase usage is for auth (login/signup/session).
+ */
 import { supabase } from '@/integrations/supabase/client';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000';

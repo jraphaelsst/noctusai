@@ -1,11 +1,12 @@
 """
 Supabase database client setup.
 """
+from typing import Optional
 from supabase import create_client, Client
 from app.config import settings
 
 
-def get_supabase_client(access_token: str | None = None) -> Client:
+def get_supabase_client(access_token: Optional[str] = None) -> Client:
     """
     Create a Supabase client.
 

@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, model_validator
 
+from app.dependencies import get_current_user, get_user_client, get_admin_client
 from app.services.matching import (
     gerar_matches_para_imovel,
     gerar_matches_para_permuta,
@@ -36,32 +37,15 @@ class AtualizarStatusRequest(BaseModel):
     status: str
 
 
-async def _get_user_from_token(authorization: str | None):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token ausente")
-    from app.database import get_supabase_client
-    token = authorization.replace("Bearer ", "")
-    client = get_supabase_client()
-    try:
-        user_response = client.auth.get_user(token)
-        if not user_response or not user_response.user:
-            raise HTTPException(status_code=401, detail="Token inválido")
-        return user_response.user, token
-    except Exception:
-        raise HTTPException(status_code=401, detail="Não autenticado")
-
-
 @router.post("/gerar")
 async def gerar_matches(body: GerarMatchesRequest, authorization: Optional[str] = Header(None)):
     """Generate matches. Provide ativo_origem_id (imovel) or ativo_destino_id (permuta)."""
-    user, token = await _get_user_from_token(authorization)
-    from app.database import get_supabase_service_client
-    db = get_supabase_service_client()
+    user, token = await get_current_user(authorization)
+    db = get_admin_client()
 
     matches = []
 
     if body.ativo_origem_id:
-        # Given an imovel, find matching permutas
         imovel_res = db.table("ativos").select("*").eq("id", body.ativo_origem_id).eq("natureza", "imovel").single().execute()
         if not imovel_res.data:
             raise HTTPException(status_code=404, detail="Imóvel não encontrado")
@@ -73,7 +57,6 @@ async def gerar_matches(body: GerarMatchesRequest, authorization: Optional[str] 
         matches = gerar_matches_para_imovel(imovel, permutas, body.score_minimo)
 
     elif body.ativo_destino_id:
-        # Given a permuta, find matching imoveis
         permuta_res = db.table("ativos").select("*").eq("id", body.ativo_destino_id).single().execute()
         if not permuta_res.data:
             raise HTTPException(status_code=404, detail="Permuta não encontrada")
@@ -111,9 +94,8 @@ async def listar_matches(
     authorization: Optional[str] = Header(None),
 ):
     """List persisted matches with optional filters."""
-    _, token = await _get_user_from_token(authorization)
-    from app.database import get_supabase_client
-    db = get_supabase_client(token)
+    _, token = await get_current_user(authorization)
+    db = get_user_client(token)
 
     query = db.table("matches").select("*").order("score", desc=True)
 
@@ -137,9 +119,8 @@ async def atualizar_status_match(
     authorization: Optional[str] = Header(None),
 ):
     """Update match status (aceito, rejeitado)."""
-    _, token = await _get_user_from_token(authorization)
-    from app.database import get_supabase_client
-    db = get_supabase_client(token)
+    _, token = await get_current_user(authorization)
+    db = get_user_client(token)
 
     valid_statuses = {"aceito", "rejeitado", "pendente", "expirado"}
     if body.status not in valid_statuses:

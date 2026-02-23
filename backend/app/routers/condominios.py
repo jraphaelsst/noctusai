@@ -63,7 +63,7 @@ class CondominioUpdate(BaseModel):
     observacoes: Optional[str] = None
 
 
-async def _get_user_from_token(authorization: str | None):
+async def _get_user_from_token(authorization: Optional[str]):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token ausente")
     from app.database import get_supabase_client
