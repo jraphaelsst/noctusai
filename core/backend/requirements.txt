@@ -6,3 +6,4 @@ supabase==2.7.2
 PyJWT==2.9.0
 python-dotenv==1.0.1
 stripe>=7.0.0
+httpx>=0.27.0

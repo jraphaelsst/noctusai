@@ -28,8 +28,8 @@ from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
-from app.responses import success_response, ok_response
-from app.config import settings
+from app.responses import success_response
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/site", tags=["Site Imóveis"])

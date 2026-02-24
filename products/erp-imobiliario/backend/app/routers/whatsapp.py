@@ -16,7 +16,6 @@ from app.services.whatsapp_service import (
     send_property_card,
     get_message_history,
     get_whatsapp_config_from_env,
-    WhatsAppConfig,
 )
 
 logger = logging.getLogger(__name__)

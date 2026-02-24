@@ -35,7 +35,7 @@ from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, log_action
-from app.responses import paginated_response, success_response, ok_response, calculate_pagination
+from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
 
 logger = logging.getLogger(__name__)

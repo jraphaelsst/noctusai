@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _ts(epoch: Optional[int]) -> Optional[str]:
+def format_stripe_timestamp(epoch: Optional[int]) -> Optional[str]:
     """Convert a Unix epoch (from Stripe) to an ISO-8601 string or None."""
     if epoch is None:
         return None
@@ -238,9 +238,9 @@ def get_billing_status(org_id: str) -> Dict[str, Any]:
                 status["next_invoice"] = {
                     "amount_due": upcoming.amount_due,
                     "currency": upcoming.currency,
-                    "period_start": _ts(upcoming.period_start),
-                    "period_end": _ts(upcoming.period_end),
-                    "next_payment_attempt": _ts(upcoming.next_payment_attempt),
+                    "period_start": format_stripe_timestamp(upcoming.period_start),
+                    "period_end": format_stripe_timestamp(upcoming.period_end),
+                    "next_payment_attempt": format_stripe_timestamp(upcoming.next_payment_attempt),
                 }
             except _stripe.InvalidRequestError:
                 # No upcoming invoice (e.g. free plan, no active sub)
@@ -336,7 +336,7 @@ def handle_subscription_updated(event_data: dict) -> None:
 
     current_period_end = sub_obj.get("current_period_end")
     if current_period_end:
-        update_payload["expires_at"] = _ts(current_period_end)
+        update_payload["expires_at"] = format_stripe_timestamp(current_period_end)
 
     if sub_obj.get("cancel_at_period_end"):
         update_payload["metadata"] = {"cancel_at_period_end": True}

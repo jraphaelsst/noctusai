@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
-from app.services.locacoes_service import calculate_reajuste, generate_monthly_charges
+from app.services.locacoes_service import calculate_reajuste
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/locacoes", tags=["Locações"])

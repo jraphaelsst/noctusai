@@ -26,7 +26,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client
 from app.responses import success_response, paginated_response, calculate_pagination
 from app.config import settings
 from app.services.gamificacao_service import (

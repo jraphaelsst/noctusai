@@ -267,11 +267,11 @@ async def list_invoices(
             "amount_due": inv.amount_due,
             "amount_paid": inv.amount_paid,
             "currency": inv.currency,
-            "period_start": billing_service._ts(inv.period_start),
-            "period_end": billing_service._ts(inv.period_end),
+            "period_start": billing_service.format_stripe_timestamp(inv.period_start),
+            "period_end": billing_service.format_stripe_timestamp(inv.period_end),
             "hosted_invoice_url": inv.hosted_invoice_url,
             "invoice_pdf": inv.invoice_pdf,
-            "created": billing_service._ts(inv.created),
+            "created": billing_service.format_stripe_timestamp(inv.created),
         }
         for inv in invoices
     ]

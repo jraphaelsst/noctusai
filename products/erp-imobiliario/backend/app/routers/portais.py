@@ -10,7 +10,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from app.dependencies import get_current_user, get_user_client, log_action
-from app.responses import success_response, ok_response
+from app.responses import success_response
 from app.services.xml_feeds import generate_zap_xml, generate_olx_xml, generate_vivareal_xml
 
 logger = logging.getLogger(__name__)
