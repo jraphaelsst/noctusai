@@ -123,3 +123,36 @@ export function useImoveisProximos(latitude?: number, longitude?: number, raio_k
     enabled: !!user && latitude !== undefined && longitude !== undefined,
   });
 }
+
+export function useSyncCampo() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { checkins?: any[]; vistorias?: any[] }) => {
+      const result = await api.post('/api/campo/sync', data);
+      return result.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['campo'] });
+      queryClient.invalidateQueries({ queryKey: ['checkins'] });
+      toast.success(`Sincronizado: ${data?.checkins_criados || 0} checkins, ${data?.vistorias_criadas || 0} vistorias`);
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao sincronizar', { description: error.message });
+    },
+  });
+}
+
+export function useOfflineData() {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ['campo-offline-data'],
+    queryFn: async () => {
+      const result = await api.get('/api/campo/offline-data');
+      return result.data;
+    },
+    enabled: !!user,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+}

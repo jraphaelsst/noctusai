@@ -10,15 +10,17 @@ from fastapi.testclient import TestClient
 
 # --- Mock Supabase Response ---
 class MockSupabaseResponse:
-    def __init__(self, data=None, error=None):
+    def __init__(self, data=None, error=None, count=None):
         self.data = data or []
         self.error = error
+        self.count = count
 
 
 class MockQueryBuilder:
     """Chainable mock that simulates Supabase PostgREST query builder."""
     def __init__(self, data=None):
         self._data = data or []
+        self._single_mode = False
 
     def select(self, *a, **k): return self
     def insert(self, *a, **k): return self
@@ -28,15 +30,29 @@ class MockQueryBuilder:
     def eq(self, *a, **k): return self
     def neq(self, *a, **k): return self
     def in_(self, *a, **k): return self
+    def gt(self, *a, **k): return self
+    def lt(self, *a, **k): return self
     def gte(self, *a, **k): return self
     def lte(self, *a, **k): return self
     def ilike(self, *a, **k): return self
     def order(self, *a, **k): return self
     def limit(self, *a, **k): return self
-    def single(self): return self
+    def range(self, *a, **k): return self
+    def is_(self, *a, **k): return self
+
+    def single(self):
+        self._single_mode = True
+        return self
+
+    @property
+    def not_(self): return self
 
     def execute(self):
-        return MockSupabaseResponse(data=self._data)
+        data = self._data
+        if self._single_mode and isinstance(data, list):
+            data = data[0] if data else None
+        self._single_mode = False
+        return MockSupabaseResponse(data=data)
 
 
 class MockSupabaseClient:
@@ -61,6 +77,7 @@ class MockUser:
     def __init__(self, id="test-user-123", email="test@example.com"):
         self.id = id
         self.email = email
+        self.user_metadata = {"org_id": "test-org-123"}
 
 
 class MockUserResponse:

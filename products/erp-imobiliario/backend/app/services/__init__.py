@@ -7,5 +7,6 @@ keeping routers thin and focused on HTTP handling.
 from app.services.clientes_service import ClientesService
 from app.services.ativos_service import AtivosService
 from app.services.comissoes_service import ComissoesService
+from app.services.campo_service import CampoService
 
-__all__ = ["ClientesService", "AtivosService", "ComissoesService"]
+__all__ = ["ClientesService", "AtivosService", "ComissoesService", "CampoService"]

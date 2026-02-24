@@ -19,9 +19,9 @@ class TestListarMetas:
 
 class TestCriarMeta:
     def test_create_meta(self, client):
-        client._mock_supabase.set_table_data("metas", {"id": "m-new", "categoria": "ligacao"})
+        client._mock_supabase.set_table_data("metas", {"id": "m-new", "categoria": "contatos"})
         resp = client.post("/api/metas", json={
-            "categoria": "ligacao",
+            "categoria": "contatos",
             "tipo_meta": "diaria",
             "quantidade_alvo": 10,
             "data_referencia": "2026-02-23",

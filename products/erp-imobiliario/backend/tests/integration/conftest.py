@@ -20,6 +20,12 @@ class StatefulMockResponse:
         self.error = error
 
 
+    # Simulated DB column defaults for known tables
+TABLE_DEFAULTS = {
+    "clientes": {"arquivado": False, "etapa_atual": "novo"},
+}
+
+
 class StatefulQueryBuilder:
     """
     Chainable mock that maintains state across operations.
@@ -134,14 +140,19 @@ class StatefulQueryBuilder:
 
         # Handle INSERT
         if self._pending_insert:
+            inserted = []
+            defaults = TABLE_DEFAULTS.get(self._table, {})
             for item in self._pending_insert:
-                new_item = item.copy()
+                new_item = {**defaults, **item}
                 if "id" not in new_item:
                     new_item["id"] = str(uuid.uuid4())
                 new_item["created_at"] = datetime.utcnow().isoformat()
                 new_item["updated_at"] = datetime.utcnow().isoformat()
                 table_data.append(new_item)
-            return StatefulMockResponse(data=self._pending_insert)
+                inserted.append(new_item)
+            if self._single and inserted:
+                return StatefulMockResponse(data=inserted[0])
+            return StatefulMockResponse(data=inserted)
 
         # Handle UPDATE
         if self._pending_update:
@@ -149,6 +160,8 @@ class StatefulQueryBuilder:
             for item in filtered:
                 item.update(self._pending_update)
                 item["updated_at"] = datetime.utcnow().isoformat()
+            if self._single and filtered:
+                return StatefulMockResponse(data=filtered[0])
             return StatefulMockResponse(data=filtered)
 
         # Handle DELETE

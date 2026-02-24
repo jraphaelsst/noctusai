@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +38,10 @@ import {
   Eye,
   Home,
   AlertTriangle,
+  RefreshCw,
+  Download,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDate } from '@/lib/utils';
@@ -46,6 +50,8 @@ import {
   useCreateCheckin,
   useVistoriaRapida,
   useImoveisProximos,
+  useSyncCampo,
+  useOfflineData,
   Checkin,
 } from '@/hooks/useCampo';
 
@@ -94,6 +100,52 @@ export default function Campo() {
     currentPosition?.lng,
     5
   );
+  const { mutate: syncCampo, isPending: isSyncing } = useSyncCampo();
+  const { data: offlineData, refetch: refetchOffline, isFetching: isDownloadingOffline } = useOfflineData();
+
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(() =>
+    localStorage.getItem('campo_last_sync')
+  );
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Track online/offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const handleSync = () => {
+    const pendingCheckins = JSON.parse(localStorage.getItem('campo_pending_checkins') || '[]');
+    const pendingVistorias = JSON.parse(localStorage.getItem('campo_pending_vistorias') || '[]');
+    syncCampo(
+      { checkins: pendingCheckins, vistorias: pendingVistorias },
+      {
+        onSuccess: () => {
+          localStorage.removeItem('campo_pending_checkins');
+          localStorage.removeItem('campo_pending_vistorias');
+          const now = new Date().toISOString();
+          localStorage.setItem('campo_last_sync', now);
+          setLastSyncTime(now);
+        },
+      }
+    );
+  };
+
+  const handleDownloadOffline = async () => {
+    const { data } = await refetchOffline();
+    if (data) {
+      localStorage.setItem('campo_offline_data', JSON.stringify(data));
+      const now = new Date().toISOString();
+      localStorage.setItem('campo_offline_downloaded_at', now);
+      toast.success('Dados offline salvos com sucesso!');
+    }
+  };
 
   const getLocation = useCallback((): Promise<{ lat: number; lng: number }> => {
     return new Promise((resolve, reject) => {
@@ -216,6 +268,52 @@ export default function Campo() {
           Vistoria Rapida
         </Button>
       </div>
+
+      {/* Sync Toolbar */}
+      <Card className="border-dashed">
+        <CardContent className="py-3 px-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              {isOnline ? (
+                <Badge variant="outline" className="bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300 border-green-200">
+                  <Wifi className="h-3 w-3 mr-1" />
+                  Online
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 border-red-200">
+                  <WifiOff className="h-3 w-3 mr-1" />
+                  Offline
+                </Badge>
+              )}
+              {lastSyncTime && (
+                <span className="text-xs text-muted-foreground">
+                  Ultima sinc.: {formatDate(lastSyncTime, true)}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSync}
+                disabled={isSyncing || !isOnline}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
+                {isSyncing ? 'Sincronizando...' : 'Sincronizar Dados'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadOffline}
+                disabled={isDownloadingOffline || !isOnline}
+              >
+                <Download className={`h-4 w-4 mr-2 ${isDownloadingOffline ? 'animate-bounce' : ''}`} />
+                {isDownloadingOffline ? 'Baixando...' : 'Baixar Dados Offline'}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Check-in Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

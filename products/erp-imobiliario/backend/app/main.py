@@ -19,6 +19,8 @@ from app.routers import (
     locacoes, vistorias, relatorios, distribuicao,
     marketing, agenda, dimob, ai, gamificacao,
     chaves, portal_externo, site_imoveis, campo, analise_credito, filiais,
+    bi, contratos, assinaturas, portal_cliente, manutencao,
+    seguros, impostos, banco, emails,
 )
 from app.exceptions import (
     AppException,
@@ -115,6 +117,15 @@ app.include_router(agenda.router)
 app.include_router(dimob.router)
 app.include_router(ai.router)
 app.include_router(gamificacao.router)
+app.include_router(bi.router)
+app.include_router(contratos.router)
+app.include_router(assinaturas.router)
+app.include_router(portal_cliente.router)
+app.include_router(manutencao.router)
+app.include_router(seguros.router)
+app.include_router(impostos.router)
+app.include_router(banco.router)
+app.include_router(emails.router)
 
 
 @app.get("/health")

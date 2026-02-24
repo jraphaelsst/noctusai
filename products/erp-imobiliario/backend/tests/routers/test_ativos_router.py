@@ -17,7 +17,7 @@ class TestListarAtivos:
         resp = client.get("/api/ativos?natureza=imovel")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] == 2
+        assert data["pagination"]["total"] == 2
 
     def test_listar_permutas(self, client):
         client._mock_supabase.set_table_data("ativos", [
@@ -34,20 +34,20 @@ class TestListarAtivos:
         resp = client.get("/api/ativos?busca=moema")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] == 1
+        assert data["pagination"]["total"] == 1
 
     def test_busca_no_results(self, client):
         client._mock_supabase.set_table_data("ativos", [
             {"id": "1", "natureza": "imovel", "cidade": "São Paulo"},
         ])
         resp = client.get("/api/ativos?busca=inexistente")
-        assert resp.json()["total"] == 0
+        assert resp.json()["pagination"]["total"] == 0
 
     def test_empty_result(self, client):
         client._mock_supabase.set_table_data("ativos", [])
         resp = client.get("/api/ativos")
         assert resp.status_code == 200
-        assert resp.json()["total"] == 0
+        assert resp.json()["pagination"]["total"] == 0
 
 
 class TestCriarAtivo:
@@ -77,7 +77,7 @@ class TestCriarAtivo:
 
     def test_create_invalid_natureza(self, client):
         resp = client.post("/api/ativos", json={"natureza": "invalid", "valor": 100})
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_create_missing_required_field(self, client):
         resp = client.post("/api/ativos", json={"valor": 100})

@@ -13,7 +13,7 @@ class TestListarClientes:
         ])
         resp = client.get("/api/clientes")
         assert resp.status_code == 200
-        assert resp.json()["total"] == 2
+        assert resp.json()["pagination"]["total"] == 2
 
     def test_search_by_name(self, client):
         client._mock_supabase.set_table_data("clientes", [
@@ -21,7 +21,7 @@ class TestListarClientes:
             {"id": "c2", "nome": "Maria Santos", "email": None, "telefone": None},
         ])
         resp = client.get("/api/clientes?busca=joão")
-        assert resp.json()["total"] == 1
+        assert resp.json()["pagination"]["total"] == 1
 
     def test_search_by_email(self, client):
         client._mock_supabase.set_table_data("clientes", [
@@ -29,7 +29,7 @@ class TestListarClientes:
              "telefone": None, "interesse": None, "observacoes": None},
         ])
         resp = client.get("/api/clientes?busca=special")
-        assert resp.json()["total"] == 1
+        assert resp.json()["pagination"]["total"] == 1
 
     def test_search_no_results(self, client):
         client._mock_supabase.set_table_data("clientes", [
@@ -37,7 +37,7 @@ class TestListarClientes:
              "telefone": None, "interesse": None, "observacoes": None},
         ])
         resp = client.get("/api/clientes?busca=xyz999")
-        assert resp.json()["total"] == 0
+        assert resp.json()["pagination"]["total"] == 0
 
     def test_filter_by_etapa(self, client):
         resp = client.get("/api/clientes?etapa=qualificacao")

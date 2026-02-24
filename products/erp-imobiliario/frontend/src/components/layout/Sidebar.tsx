@@ -1,4 +1,4 @@
-import { Home, Target, Users, Building2, Shield, ChevronDown, LayoutDashboard, UserCircle, Wrench, CheckCircle2, HomeIcon, ArrowLeftRight, FileText } from "lucide-react";
+import { Home, Target, Users, Building2, Shield, ChevronDown, LayoutDashboard, UserCircle, Wrench, CheckCircle2, HomeIcon, ArrowLeftRight, FileText, FileSignature, UserCheck, HardHat, ShieldCheck, Receipt, Landmark, Mail, BarChart3 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useUserRoles } from "@/hooks/useUserRoles";
@@ -37,6 +37,15 @@ export function Sidebar() {
     { name: "Condomínios", href: "/condominios", icon: Building2, route: "condominios" },
     { name: "Permutas", href: "/permutas", icon: ArrowLeftRight, route: "permutas" },
     { name: "Negociações", href: "/negociacoes", icon: FileText, route: "negociacoes" },
+    { name: "Contratos", href: "/contratos", icon: FileText, route: "contratos" },
+    { name: "Assinaturas", href: "/assinaturas", icon: FileSignature, route: "assinaturas" },
+    { name: "Portal Cliente", href: "/portal-cliente", icon: UserCheck, route: "portal-cliente" },
+    { name: "Manutenção", href: "/manutencao", icon: HardHat, route: "manutencao" },
+    { name: "Seguros", href: "/seguros", icon: ShieldCheck, route: "seguros" },
+    { name: "Impostos", href: "/impostos", icon: Receipt, route: "impostos" },
+    { name: "Banco", href: "/banco", icon: Landmark, route: "banco" },
+    { name: "Emails", href: "/emails", icon: Mail, route: "emails" },
+    { name: "BI", href: "/bi", icon: BarChart3, route: "bi" },
   ];
 
   // Filtrar navegação baseado nas páginas retornadas pelas políticas RLS

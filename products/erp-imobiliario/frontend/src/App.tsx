@@ -44,6 +44,15 @@ const SiteImoveis = lazy(() => import("./pages/SiteImoveis"));
 const Campo = lazy(() => import("./pages/Campo"));
 const AnaliseCredito = lazy(() => import("./pages/AnaliseCredito"));
 const Filiais = lazy(() => import("./pages/Filiais"));
+const Contratos = lazy(() => import("./pages/Contratos"));
+const Assinaturas = lazy(() => import("./pages/Assinaturas"));
+const PortalCliente = lazy(() => import("./pages/PortalCliente"));
+const Manutencao = lazy(() => import("./pages/Manutencao"));
+const Seguros = lazy(() => import("./pages/Seguros"));
+const Impostos = lazy(() => import("./pages/Impostos"));
+const Banco = lazy(() => import("./pages/Banco"));
+const Emails = lazy(() => import("./pages/Emails"));
+const BI = lazy(() => import("./pages/BI"));
 
 // QueryClient com configurações otimizadas
 const queryClient = new QueryClient({
@@ -111,6 +120,15 @@ function AppContent() {
             <Route path="/campo" element={<Campo />} />
             <Route path="/analise-credito" element={<AnaliseCredito />} />
             <Route path="/filiais" element={<Filiais />} />
+            <Route path="/contratos" element={<Contratos />} />
+            <Route path="/assinaturas" element={<Assinaturas />} />
+            <Route path="/portal-cliente" element={<PortalCliente />} />
+            <Route path="/manutencao" element={<Manutencao />} />
+            <Route path="/seguros" element={<Seguros />} />
+            <Route path="/impostos" element={<Impostos />} />
+            <Route path="/banco" element={<Banco />} />
+            <Route path="/emails" element={<Emails />} />
+            <Route path="/bi" element={<BI />} />
             <Route path="/log-acoes" element={<LogAcoes />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

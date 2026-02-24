@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
+from app.services.campo_service import CampoService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/campo", tags=["Campo"])
@@ -55,6 +56,34 @@ class VistoriaRapidaCreate(BaseModel):
     )
     observacoes: Optional[str] = Field(default=None, max_length=2000)
     fotos: Optional[list[str]] = Field(default_factory=list)
+
+
+class SyncCheckin(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    tipo: Literal["visita", "vistoria", "captacao", "reuniao"]
+    imovel_id: Optional[str] = None
+    observacoes: Optional[str] = Field(default=None, max_length=1000)
+    fotos: Optional[list[str]] = Field(default_factory=list)
+    offline_id: Optional[str] = None
+    created_at_local: Optional[str] = None
+
+
+class SyncVistoria(BaseModel):
+    imovel_id: str
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    estado_geral: Literal["bom", "regular", "ruim", "critico"]
+    itens_checklist: Optional[dict] = Field(default_factory=dict)
+    observacoes: Optional[str] = Field(default=None, max_length=2000)
+    fotos: Optional[list[str]] = Field(default_factory=list)
+    offline_id: Optional[str] = None
+    created_at_local: Optional[str] = None
+
+
+class SyncRequest(BaseModel):
+    checkins: Optional[list[SyncCheckin]] = Field(default_factory=list)
+    vistorias: Optional[list[SyncVistoria]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -231,3 +260,30 @@ async def imoveis_proximos(
     nearby.sort(key=lambda p: p["distancia_km"])
 
     return success_response(nearby[:limit])
+
+
+@router.post("/sync")
+async def sincronizar_dados(body: SyncRequest, authorization: Optional[str] = Header(None)):
+    """Batch sync offline data (checkins, vistorias) collected while offline."""
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    service = CampoService(db, user.id)
+    resultado = await service.processar_sync(body.checkins or [], body.vistorias or [])
+
+    log_action(user.id, "sync", "campo", None,
+               f"Sincronizou {resultado['checkins_criados']} checkins e {resultado['vistorias_criadas']} vistorias")
+    return success_response(resultado)
+
+
+@router.get("/offline-data")
+async def dados_offline(
+    authorization: Optional[str] = Header(None),
+):
+    """Download data pack for offline use: active properties, assigned clients, pending checkins."""
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    service = CampoService(db, user.id)
+    pack = await service.gerar_pacote_offline()
+    return success_response(pack)

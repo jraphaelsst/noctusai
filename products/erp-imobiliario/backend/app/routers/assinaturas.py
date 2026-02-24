@@ -1,0 +1,205 @@
+"""
+Assinatura Digital Router — Digital signature management.
+
+Manages sending documents for signature, tracking signing status,
+processing webhook callbacks from providers, and audit trails.
+
+-- CREATE TABLE assinaturas (
+--   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+--   org_id uuid NOT NULL,
+--   documento_nome text NOT NULL,
+--   documento_url text,
+--   contrato_id uuid,
+--   status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'enviado', 'assinado', 'recusado', 'expirado', 'cancelado')),
+--   provedor text NOT NULL DEFAULT 'interno' CHECK (provedor IN ('interno', 'clicksign', 'docusign', 'd4sign')),
+--   link_assinatura text,
+--   signatarios jsonb NOT NULL DEFAULT '[]',
+--   historico jsonb NOT NULL DEFAULT '[]',
+--   data_envio timestamptz,
+--   data_assinatura timestamptz,
+--   data_expiracao timestamptz,
+--   created_at timestamptz NOT NULL DEFAULT now(),
+--   updated_at timestamptz NOT NULL DEFAULT now()
+-- );
+"""
+import logging
+from typing import Optional, Literal, List
+from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel, Field
+from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
+from app.responses import paginated_response, success_response, ok_response, calculate_pagination
+from app.services.assinatura_service import AssinaturaService
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/assinaturas", tags=["Assinaturas"])
+
+
+# --- Pydantic models ---
+
+class Signatario(BaseModel):
+    nome: str = Field(..., min_length=1, max_length=200)
+    email: str = Field(..., min_length=5, max_length=200)
+    papel: str = Field(..., min_length=1, max_length=100, description="Papel do signatario (ex: comprador, vendedor, testemunha)")
+
+
+class EnviarAssinaturaRequest(BaseModel):
+    documento_nome: str = Field(..., min_length=1, max_length=300)
+    documento_url: Optional[str] = Field(default=None, max_length=1000)
+    contrato_id: Optional[str] = None
+    signatarios: List[Signatario] = Field(..., min_length=1, description="Lista de signatarios (minimo 1)")
+    provedor: Optional[Literal["interno", "clicksign", "docusign", "d4sign"]] = "interno"
+
+
+class WebhookPayload(BaseModel):
+    assinatura_id: str = Field(..., description="ID da assinatura")
+    evento: str = Field(..., min_length=1, max_length=100, description="Tipo do evento (ex: assinado, recusado, expirado)")
+    dados: Optional[dict] = Field(default=None, description="Dados adicionais do evento")
+
+
+class AssinaturaUpdate(BaseModel):
+    documento_nome: Optional[str] = Field(default=None, min_length=1, max_length=300)
+    documento_url: Optional[str] = Field(default=None, max_length=1000)
+    status: Optional[Literal["pendente", "enviado", "assinado", "recusado", "expirado", "cancelado"]] = None
+    signatarios: Optional[List[Signatario]] = None
+    data_expiracao: Optional[str] = None
+
+
+# --- Endpoints ---
+
+@router.post("/enviar")
+async def enviar_assinatura(body: EnviarAssinaturaRequest, authorization: Optional[str] = Header(None)):
+    """Send a document for digital signing."""
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    service = AssinaturaService(db, user.id)
+
+    signatarios_data = [s.model_dump() for s in body.signatarios]
+
+    assinatura = await service.preparar_envio(
+        documento_nome=body.documento_nome,
+        documento_url=body.documento_url,
+        signatarios=signatarios_data,
+        provedor=body.provedor or "interno",
+        contrato_id=body.contrato_id,
+    )
+
+    if not assinatura:
+        raise HTTPException(status_code=500, detail="Erro ao enviar documento para assinatura")
+
+    log_action(user.id, "enviar", "assinatura", assinatura["id"],
+               f"Enviou documento para assinatura: {body.documento_nome}")
+
+    return success_response(assinatura)
+
+
+@router.get("")
+async def listar_assinaturas(
+    status: Optional[str] = Query(None, description="Filtrar por status"),
+    contrato_id: Optional[str] = Query(None, description="Filtrar por contrato"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
+    authorization: Optional[str] = Header(None),
+):
+    """List signature requests with filters and pagination."""
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    validated_page, validated_page_size, offset = calculate_pagination(
+        page, page_size, settings.max_page_size
+    )
+
+    # Build count query
+    count_query = db.table("assinaturas").select("id", count="exact")
+    if status:
+        count_query = count_query.eq("status", status)
+    if contrato_id:
+        count_query = count_query.eq("contrato_id", contrato_id)
+
+    # Build data query
+    query = db.table("assinaturas").select("*").order("created_at", desc=True)
+    if status:
+        query = query.eq("status", status)
+    if contrato_id:
+        query = query.eq("contrato_id", contrato_id)
+
+    query = query.range(offset, offset + validated_page_size - 1)
+
+    result = query.execute()
+    data = result.data or []
+
+    count_result = count_query.execute()
+    total = count_result.count if count_result.count is not None else len(data)
+
+    return paginated_response(data, total, validated_page, validated_page_size)
+
+
+@router.get("/resumo")
+async def resumo_assinaturas(authorization: Optional[str] = Header(None)):
+    """Get signature summary: counts by status."""
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    service = AssinaturaService(db, user.id)
+
+    result = db.table("assinaturas").select("*").execute()
+    assinaturas = result.data or []
+
+    resumo = service.get_resumo(assinaturas)
+    return success_response(resumo)
+
+
+@router.get("/{assinatura_id}")
+async def obter_assinatura(assinatura_id: str, authorization: Optional[str] = Header(None)):
+    """Get signing details including audit trail."""
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    result = db.table("assinaturas").select("*").eq("id", assinatura_id).single().execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Assinatura nao encontrada")
+    return success_response(result.data)
+
+
+@router.post("/webhook")
+async def processar_webhook(body: WebhookPayload):
+    """
+    Callback endpoint for signing provider events.
+
+    This endpoint does not require user authentication since it is called
+    directly by the signing provider (ClickSign, DocuSign, D4Sign, etc.).
+    """
+    db = get_admin_client()
+    service = AssinaturaService(db, user_id="webhook")
+
+    updated = await service.processar_webhook(
+        assinatura_id=body.assinatura_id,
+        evento=body.evento,
+        dados=body.dados,
+    )
+
+    if not updated:
+        raise HTTPException(status_code=404, detail="Assinatura nao encontrada para o webhook")
+
+    logger.info(f"Webhook processado: assinatura={body.assinatura_id}, evento={body.evento}")
+
+    return ok_response("Webhook processado com sucesso")
+
+
+@router.delete("/{assinatura_id}")
+async def cancelar_assinatura(assinatura_id: str, authorization: Optional[str] = Header(None)):
+    """Cancel a signing request."""
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    service = AssinaturaService(db, user.id)
+    cancelled = await service.cancelar(assinatura_id)
+
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="Assinatura nao encontrada")
+
+    log_action(user.id, "cancelar", "assinatura", assinatura_id,
+               f"Cancelou assinatura {assinatura_id}")
+
+    return ok_response("Assinatura cancelada com sucesso")
