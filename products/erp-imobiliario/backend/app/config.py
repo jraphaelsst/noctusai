@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     sentry_dsn: Optional[str] = None
     redis_url: Optional[str] = None
 
+    # AI (optional - graceful degradation if not set)
+    openai_api_key: Optional[str] = None
+
     # Pagination defaults
     default_page_size: int = 50
     max_page_size: int = 200

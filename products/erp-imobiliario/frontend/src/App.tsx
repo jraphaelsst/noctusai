@@ -25,6 +25,25 @@ const Imoveis = lazy(() => import("./pages/Imoveis"));
 const Permutas = lazy(() => import("./pages/Permutas"));
 const Negociacoes = lazy(() => import("./pages/Negociacoes"));
 const Condominios = lazy(() => import("./pages/Condominios"));
+const Comissoes = lazy(() => import("./pages/Comissoes"));
+const Portais = lazy(() => import("./pages/Portais"));
+const Financeiro = lazy(() => import("./pages/Financeiro"));
+const Propostas = lazy(() => import("./pages/Propostas"));
+const Documentos = lazy(() => import("./pages/Documentos"));
+const Locacoes = lazy(() => import("./pages/Locacoes"));
+const Vistorias = lazy(() => import("./pages/Vistorias"));
+const Relatorios = lazy(() => import("./pages/Relatorios"));
+const Distribuicao = lazy(() => import("./pages/Distribuicao"));
+const Marketing = lazy(() => import("./pages/Marketing"));
+const Agenda = lazy(() => import("./pages/Agenda"));
+const Dimob = lazy(() => import("./pages/Dimob"));
+const Gamificacao = lazy(() => import("./pages/Gamificacao"));
+const Chaves = lazy(() => import("./pages/Chaves"));
+const PortalExterno = lazy(() => import("./pages/PortalExterno"));
+const SiteImoveis = lazy(() => import("./pages/SiteImoveis"));
+const Campo = lazy(() => import("./pages/Campo"));
+const AnaliseCredito = lazy(() => import("./pages/AnaliseCredito"));
+const Filiais = lazy(() => import("./pages/Filiais"));
 
 // QueryClient com configurações otimizadas
 const queryClient = new QueryClient({
@@ -73,6 +92,25 @@ function AppContent() {
             <Route path="/metas" element={<Metas />} />
             <Route path="/usuarios" element={<Usuarios />} />
             <Route path="/admin" element={<Admin />} />
+            <Route path="/comissoes" element={<Comissoes />} />
+            <Route path="/portais" element={<Portais />} />
+            <Route path="/financeiro" element={<Financeiro />} />
+            <Route path="/propostas" element={<Propostas />} />
+            <Route path="/documentos" element={<Documentos />} />
+            <Route path="/locacoes" element={<Locacoes />} />
+            <Route path="/vistorias" element={<Vistorias />} />
+            <Route path="/relatorios" element={<Relatorios />} />
+            <Route path="/distribuicao" element={<Distribuicao />} />
+            <Route path="/marketing" element={<Marketing />} />
+            <Route path="/agenda" element={<Agenda />} />
+            <Route path="/dimob" element={<Dimob />} />
+            <Route path="/gamificacao" element={<Gamificacao />} />
+            <Route path="/chaves" element={<Chaves />} />
+            <Route path="/portal" element={<PortalExterno />} />
+            <Route path="/site" element={<SiteImoveis />} />
+            <Route path="/campo" element={<Campo />} />
+            <Route path="/analise-credito" element={<AnaliseCredito />} />
+            <Route path="/filiais" element={<Filiais />} />
             <Route path="/log-acoes" element={<LogAcoes />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

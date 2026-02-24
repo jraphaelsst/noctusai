@@ -11,7 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from app.config import settings
-from app.routers import matching, condominios, ativos, clientes, metas, profiles, atividades, action_log, funil
+from app.routers import (
+    matching, condominios, ativos, clientes, metas, profiles,
+    atividades, action_log, funil,
+    comissoes, portais, whatsapp,
+    financeiro, propostas, documentos,
+    locacoes, vistorias, relatorios, distribuicao,
+    marketing, agenda, dimob, ai, gamificacao,
+    chaves, portal_externo, site_imoveis, campo, analise_credito, filiais,
+)
 from app.exceptions import (
     AppException,
     app_exception_handler,
@@ -86,6 +94,27 @@ app.include_router(action_log.router)
 app.include_router(funil.router)
 app.include_router(matching.router)
 app.include_router(condominios.router)
+app.include_router(comissoes.router)
+app.include_router(portais.router)
+app.include_router(whatsapp.router)
+app.include_router(financeiro.router)
+app.include_router(propostas.router)
+app.include_router(documentos.router)
+app.include_router(locacoes.router)
+app.include_router(vistorias.router)
+app.include_router(relatorios.router)
+app.include_router(distribuicao.router)
+app.include_router(chaves.router)
+app.include_router(portal_externo.router)
+app.include_router(site_imoveis.router)
+app.include_router(campo.router)
+app.include_router(analise_credito.router)
+app.include_router(filiais.router)
+app.include_router(marketing.router)
+app.include_router(agenda.router)
+app.include_router(dimob.router)
+app.include_router(ai.router)
+app.include_router(gamificacao.router)
 
 
 @app.get("/health")
