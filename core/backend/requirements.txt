@@ -5,3 +5,4 @@ pydantic-settings==2.5.2
 supabase==2.7.2
 PyJWT==2.9.0
 python-dotenv==1.0.1
+stripe>=7.0.0

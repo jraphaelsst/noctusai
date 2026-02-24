@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost:8080"
     debug: bool = True
 
+    # Stripe
+    stripe_secret_key: str = ""
+    stripe_publishable_key: str = ""
+    stripe_webhook_secret: str = ""
+    app_base_url: str = "http://localhost:5173"
+
     # Observability (optional)
     sentry_dsn: Optional[str] = None
     redis_url: Optional[str] = None

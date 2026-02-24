@@ -8,10 +8,10 @@ PATCH  /api/organizations/{id}  — Update
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
 class OrgUpdate(BaseModel):
     nome: Optional[str] = None
     plano: Optional[str] = None
+    category: Optional[str] = Field(default=None, pattern="^(normal|test)$")
 
 
 @router.get("")
@@ -27,13 +28,18 @@ async def listar_organizations(authorization: Optional[str] = Header(None)):
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    # Get user's org
+    # Get user's profile to check role
     profile = db.table("noctus_users").select("org_id, role").eq("id", user.id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
-    org_id = profile.data["org_id"]
-    result = db.table("organizations").select("*").eq("id", org_id).execute()
+    # Admin sees all orgs, regular user sees only their own
+    if profile.data.get("role") == "admin":
+        result = db.table("organizations").select("*").order("nome").execute()
+    else:
+        org_id = profile.data["org_id"]
+        result = db.table("organizations").select("*").eq("id", org_id).execute()
+
     return {"data": result.data or []}
 
 

@@ -26,12 +26,30 @@ app.add_middleware(
 
 # Register routers
 from app.routers import auth, organizations, products, licenses, sso
+from app.routers import plans, subscriptions, api_keys, test_accounts, billing
+from app.routers import team, roles
+from app.routers import onboarding, analytics, oauth
+from app.routers import entitlements, notifications, webhooks, audit_logs
 
 app.include_router(auth.router)
 app.include_router(organizations.router)
 app.include_router(products.router)
 app.include_router(licenses.router)
 app.include_router(sso.router)
+app.include_router(plans.router)
+app.include_router(subscriptions.router)
+app.include_router(api_keys.router)
+app.include_router(test_accounts.router)
+app.include_router(billing.router)
+app.include_router(team.router)
+app.include_router(roles.router)
+app.include_router(onboarding.router)
+app.include_router(analytics.router)
+app.include_router(oauth.router)
+app.include_router(entitlements.router)
+app.include_router(notifications.router)
+app.include_router(webhooks.router)
+app.include_router(audit_logs.router)
 
 
 @app.get("/")

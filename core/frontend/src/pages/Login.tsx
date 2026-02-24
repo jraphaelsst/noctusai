@@ -1,6 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, setToken } from '../lib/api';
+
+interface OAuthProvider {
+  id: string;
+  name: string;
+  auth_url: string;
+}
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -10,7 +16,16 @@ export function Login() {
   const [isSignup, setIsSignup] = useState(false);
   const [nome, setNome] = useState('');
   const [empresa, setEmpresa] = useState('');
+  const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
+  const [oauthLoading, setOauthLoading] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // Fetch available OAuth providers
+    api.get('/api/auth/oauth/providers')
+      .then(res => setOauthProviders(res.data || []))
+      .catch(() => {});
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,6 +44,28 @@ export function Login() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  function handleOAuth(provider: OAuthProvider) {
+    setOauthLoading(true);
+    // Redirect to Supabase OAuth URL
+    window.location.href = provider.auth_url;
+  }
+
+  function getOAuthIcon(providerId: string): string {
+    switch (providerId) {
+      case 'google': return 'G';
+      case 'azure': return 'M';
+      default: return providerId[0].toUpperCase();
+    }
+  }
+
+  function getOAuthLabel(providerId: string): string {
+    switch (providerId) {
+      case 'google': return 'Google';
+      case 'azure': return 'Microsoft';
+      default: return providerId;
     }
   }
 
@@ -83,6 +120,29 @@ export function Login() {
             {isSignup ? 'Já tem conta? Entrar' : 'Não tem conta? Criar agora'}
           </button>
         </form>
+
+        {/* OAuth Section */}
+        {oauthProviders.length > 0 && (
+          <div className="oauth-section">
+            <div className="oauth-divider">
+              <span>ou continuar com</span>
+            </div>
+            <div className="oauth-buttons">
+              {oauthProviders.map(provider => (
+                <button
+                  key={provider.id}
+                  type="button"
+                  className={`btn-oauth btn-${provider.id === 'azure' ? 'microsoft' : provider.id}`}
+                  onClick={() => handleOAuth(provider)}
+                  disabled={oauthLoading}
+                >
+                  <span className="oauth-icon">{getOAuthIcon(provider.id)}</span>
+                  {getOAuthLabel(provider.id)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

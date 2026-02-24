@@ -54,6 +54,7 @@ async def signup(body: SignupRequest):
         "slug": body.empresa.strip().lower().replace(" ", "-"),
         "plano": "free",
         "owner_id": user.id,
+        "category": "normal",
     }
     org_result = db.table("organizations").insert(org_data).execute()
     if not org_result.data:

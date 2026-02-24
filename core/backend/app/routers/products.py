@@ -11,7 +11,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["Products"])
@@ -50,7 +50,7 @@ async def get_product(product_id: str, authorization: Optional[str] = Header(Non
 @router.post("")
 async def criar_product(body: ProductCreate, authorization: Optional[str] = Header(None)):
     """Create a new product (platform admin only)."""
-    user, token = await get_current_user(authorization)
+    user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
     data = body.model_dump(exclude_none=True)

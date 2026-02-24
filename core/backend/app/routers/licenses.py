@@ -12,7 +12,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/licenses", tags=["Licenses"])
@@ -41,7 +41,7 @@ async def listar_licenses(authorization: Optional[str] = Header(None)):
 @router.post("")
 async def grant_license(body: LicenseGrant, authorization: Optional[str] = Header(None)):
     """Grant a product license to an organization (platform admin)."""
-    user, token = await get_current_user(authorization)
+    user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
     data = {
@@ -60,7 +60,7 @@ async def grant_license(body: LicenseGrant, authorization: Optional[str] = Heade
 @router.delete("/{license_id}")
 async def revoke_license(license_id: str, authorization: Optional[str] = Header(None)):
     """Revoke a license (set status to revoked)."""
-    user, token = await get_current_user(authorization)
+    user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
     result = db.table("licenses").update(
