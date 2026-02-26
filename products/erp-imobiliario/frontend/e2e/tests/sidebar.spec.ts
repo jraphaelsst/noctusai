@@ -1,0 +1,77 @@
+import { test, expect } from '../fixtures/auth.fixture';
+import { mockDashboardAPIs } from '../fixtures/api-mocks';
+import { mockSupabaseQueries } from '../fixtures/supabase-mocks';
+
+test.describe('Sidebar Navigation', () => {
+  test('regular user sees nav items', async ({ authenticatedPage: page }) => {
+    await mockSupabaseQueries(page, { isAdmin: false });
+    await mockDashboardAPIs(page);
+    await page.goto('/');
+
+    await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Funil' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Clientes' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Metas' })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Imóveis|Imoveis/ })).toBeVisible();
+  });
+
+  test('shows brand header', async ({ authenticatedPage: page }) => {
+    await mockSupabaseQueries(page);
+    await mockDashboardAPIs(page);
+    await page.goto('/');
+
+    await expect(page.getByText('ONE')).toBeVisible();
+  });
+
+  test('admin user sees Painel de Controle section', async ({ authenticatedPage: page }) => {
+    await mockSupabaseQueries(page, { isAdmin: true });
+    await mockDashboardAPIs(page);
+    await page.goto('/');
+
+    await expect(page.getByText('Painel de Controle')).toBeVisible();
+    await expect(page.getByRole('link', { name: /Usuários|Usuarios/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Admin' })).toBeVisible();
+  });
+
+  test('regular user does not see admin section', async ({ authenticatedPage: page }) => {
+    await mockSupabaseQueries(page, { isAdmin: false });
+    await mockDashboardAPIs(page);
+    await page.goto('/');
+
+    await expect(page.getByText('Painel de Controle')).toHaveCount(0);
+  });
+
+  test('active nav item is highlighted on Dashboard', async ({ authenticatedPage: page }) => {
+    await mockSupabaseQueries(page);
+    await mockDashboardAPIs(page);
+    await page.goto('/');
+
+    const dashboardLink = page.getByRole('link', { name: 'Dashboard' });
+    await expect(dashboardLink).toBeVisible();
+    await expect(dashboardLink).toHaveClass(/bg-primary/);
+  });
+
+  test('navigates to Funil when clicked', async ({ authenticatedPage: page }) => {
+    await mockSupabaseQueries(page);
+    await mockDashboardAPIs(page);
+    await page.route('**/api/funil**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[]}' }),
+    );
+    await page.goto('/');
+
+    await page.getByRole('link', { name: 'Funil' }).click();
+    await expect(page).toHaveURL('/funil');
+  });
+
+  test('navigates to Clientes when clicked', async ({ authenticatedPage: page }) => {
+    await mockSupabaseQueries(page);
+    await mockDashboardAPIs(page);
+    await page.route('**/api/clientes**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"total":0,"page":1,"page_size":50}' }),
+    );
+    await page.goto('/');
+
+    await page.getByRole('link', { name: 'Clientes' }).click();
+    await expect(page).toHaveURL('/clientes');
+  });
+});

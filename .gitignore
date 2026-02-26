@@ -24,3 +24,12 @@ build/
 
 # Artifacts (Gemini)
 .gemini/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Benchmark / reference projects
+Benchmark Systems/

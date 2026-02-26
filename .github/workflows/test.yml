@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   erp-backend-tests:
     name: ERP Backend Tests
@@ -76,3 +79,75 @@ jobs:
       - name: Build
         working-directory: core/frontend
         run: npm run build
+
+  core-e2e-tests:
+    name: Core E2E Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: core/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: core/frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: core/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: core/frontend
+        run: npx playwright test
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: core-playwright-report
+          path: core/frontend/playwright-report/
+          retention-days: 14
+
+  erp-e2e-tests:
+    name: ERP E2E Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: products/erp-imobiliario/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: products/erp-imobiliario/frontend
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Playwright browsers
+        working-directory: products/erp-imobiliario/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: products/erp-imobiliario/frontend
+        run: npx playwright test
+        env:
+          VITE_SUPABASE_URL: http://localhost:54321
+          VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+          VITE_BACKEND_API_URL: http://localhost:8001
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: erp-playwright-report
+          path: products/erp-imobiliario/frontend/playwright-report/
+          retention-days: 14
