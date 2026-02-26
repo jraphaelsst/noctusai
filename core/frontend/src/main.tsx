@@ -21,6 +21,7 @@ import { AdminAnalytics } from './pages/admin/AdminAnalytics';
 import { Onboarding } from './pages/Onboarding';
 import { TeamManagement } from './pages/TeamManagement';
 import { AcceptInvite } from './pages/AcceptInvite';
+import { AccountSettings } from './pages/AccountSettings';
 import './index.css';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -48,6 +49,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/checkout/success" element={<ProtectedRoute><CheckoutSuccess /></ProtectedRoute>} />
           <Route path="/checkout/cancel" element={<ProtectedRoute><CheckoutCancel /></ProtectedRoute>} />
           <Route path="/team" element={<ProtectedRoute><TeamManagement /></ProtectedRoute>} />
+          <Route path="/settings" element={<ProtectedRoute><AccountSettings /></ProtectedRoute>} />
           <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
 
           {/* Public route — accept invitation (no ProtectedRoute wrapper) */}

@@ -8,14 +8,19 @@ POST  /api/auth/logout   — Invalidate session
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 
-from app.database import get_admin_client, get_supabase_client
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from supabase import create_client
+from app.config import settings
+from app.database import get_admin_client
 from app.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 class SignupRequest(BaseModel):
@@ -31,7 +36,8 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/signup")
-async def signup(body: SignupRequest):
+@limiter.limit("10/minute")
+async def signup(request: Request, body: SignupRequest):
     """Register a new user and create their organization."""
     db = get_admin_client()
 
@@ -76,9 +82,10 @@ async def signup(body: SignupRequest):
 
 
 @router.post("/login")
-async def login(body: LoginRequest):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest):
     """Login with email/password. Returns Supabase session."""
-    client = get_supabase_client()
+    client = create_client(settings.supabase_url, settings.supabase_anon_key)
     try:
         response = client.auth.sign_in_with_password({
             "email": body.email,
@@ -142,11 +149,36 @@ async def get_me(authorization: Optional[str] = Header(None)):
     }
 
 
+class ProfileUpdate(BaseModel):
+    nome: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+@router.patch("/profile")
+async def update_profile(
+    body: ProfileUpdate,
+    authorization: Optional[str] = Header(None),
+):
+    """Update the current user's profile (name, avatar)."""
+    user, token = await get_current_user(authorization)
+    db = get_admin_client()
+
+    update_data = {k: v for k, v in body.dict().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+    result = db.table("noctus_users").update(update_data).eq("id", user.id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+
+    return {"data": result.data[0]}
+
+
 @router.post("/logout")
 async def logout(authorization: Optional[str] = Header(None)):
     """Sign out the current user."""
     user, token = await get_current_user(authorization)
-    client = get_supabase_client()
+    client = create_client(settings.supabase_url, settings.supabase_anon_key)
     try:
         client.auth.sign_out()
     except Exception:

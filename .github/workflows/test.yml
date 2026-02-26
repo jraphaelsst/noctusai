@@ -1,0 +1,78 @@
+name: Tests & Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  erp-backend-tests:
+    name: ERP Backend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run tests
+        working-directory: products/erp-imobiliario/backend
+        run: pytest --tb=short -q
+
+  erp-frontend-build:
+    name: ERP Frontend Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: products/erp-imobiliario/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: products/erp-imobiliario/frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: products/erp-imobiliario/frontend
+        run: npm run lint
+
+      - name: Build
+        working-directory: products/erp-imobiliario/frontend
+        run: npm run build
+
+  core-frontend-build:
+    name: Core Frontend Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: core/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: core/frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: core/frontend
+        run: npm run build

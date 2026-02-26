@@ -23,15 +23,38 @@ class MockSupabaseResponse:
 
 
 class MockQueryBuilder:
-    """Chainable mock that simulates Supabase PostgREST query builder."""
+    """Chainable mock that simulates Supabase PostgREST query builder.
 
-    def __init__(self, data=None):
-        self._data = data or []
+    When `.single()` is called before `.execute()`, the response data is
+    unwrapped: if the underlying data is a list, the first element (a dict)
+    is returned — matching real Supabase PostgREST behaviour where `single()`
+    returns a single record instead of a list.
+
+    Supports a response queue: if initialized with a list via
+    ``MockQueryBuilder(data, queue=True)``, each ``.execute()`` call pops
+    and returns the next item from the list, allowing different responses
+    for successive queries on the same table.
+    """
+
+    def __init__(self, data=None, queue=False):
+        self._queue = None
+        if queue and isinstance(data, list):
+            self._queue = list(data)  # copy
+            self._data = data[0] if data else []
+        else:
+            self._data = data or []
+        self._single = False
+        self._insert_data = None
 
     def select(self, *a, **k):
         return self
 
-    def insert(self, *a, **k):
+    def insert(self, row_data=None, *a, **k):
+        # Capture the inserted data so execute() can return it when the
+        # table's mock data is empty (simulating a real insert that returns
+        # the newly created row).
+        if row_data is not None:
+            self._insert_data = row_data if isinstance(row_data, list) else [row_data]
         return self
 
     def update(self, *a, **k):
@@ -74,10 +97,31 @@ class MockQueryBuilder:
         return self
 
     def single(self):
+        self._single = True
         return self
 
     def execute(self):
-        return MockSupabaseResponse(data=self._data)
+        # If a response queue is active, pop the next item
+        if self._queue is not None and len(self._queue) > 0:
+            data = self._queue.pop(0)
+        else:
+            data = self._data
+        # If an insert was performed and the table had no data, return the
+        # inserted rows so that router code like ``result.data[0]`` works.
+        if self._insert_data is not None:
+            if not data or (isinstance(data, list) and len(data) == 0):
+                data = self._insert_data
+            self._insert_data = None
+        # Reset _single flag for next query chain on the same builder
+        if self._single:
+            self._single = False
+            # Unwrap: if data is a list with items, return the first element
+            # (mimics Supabase PostgREST .single() which returns a record, not a list)
+            if isinstance(data, list) and len(data) > 0:
+                data = data[0]
+            elif isinstance(data, list) and len(data) == 0:
+                data = None
+        return MockSupabaseResponse(data=data)
 
 
 class MockSupabaseClient:
@@ -97,6 +141,22 @@ class MockSupabaseClient:
     def set_table_data(self, name, data):
         """Set mock data for a specific table."""
         self._tables[name] = MockQueryBuilder(data)
+
+    def set_table_responses(self, name, responses):
+        """Set a queue of mock responses for a specific table.
+
+        Each call to ``.execute()`` on this table will pop the next item
+        from the queue.  When the queue is exhausted, subsequent calls
+        return the last item.
+
+        Example::
+
+            mock_sb.set_table_responses("noctus_users", [
+                {"id": "u1", "org_id": "o1"},   # first execute()
+                [],                               # second execute()
+            ])
+        """
+        self._tables[name] = MockQueryBuilder(responses, queue=True)
 
     def rpc(self, name):
         return MockQueryBuilder(["2026-02-24"])
@@ -207,8 +267,8 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
         ("app.dependencies.get_admin_client", mock_sb),
         # Auth router
         ("app.routers.auth.get_admin_client", mock_sb),
-        ("app.routers.auth.get_supabase_client", mock_sb),
         ("app.routers.auth.get_current_user", mock_get_user),
+        ("app.routers.auth.create_client", mock_sb),
         # Organizations router
         ("app.routers.organizations.get_admin_client", mock_sb),
         ("app.routers.organizations.get_current_user", mock_get_user),
@@ -244,6 +304,7 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
         # SSO router
         ("app.routers.sso.get_admin_client", mock_sb),
         ("app.routers.sso.get_current_user", mock_get_user),
+        ("app.routers.sso.supabase_admin", mock_sb),
         # Onboarding router
         ("app.routers.onboarding.get_admin_client", mock_sb),
         ("app.routers.onboarding.get_current_user", mock_get_user),
@@ -278,22 +339,25 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
     ]
 
 
-def _is_callable_mock(target_name, value):
-    """Determine if a patch target should use return_value or direct replacement."""
-    # Functions (get_current_user, get_current_admin, check_permission) are
-    # replaced directly; everything else (Supabase clients) uses return_value.
-    callable_targets = (
+def _is_direct_replacement(target_name, value):
+    """Determine if a patch target should be replaced directly (no return_value wrapper).
+
+    Functions (get_current_user, etc.) and module-level variables (supabase_admin)
+    are replaced directly; factory functions (get_admin_client, etc.) use return_value.
+    """
+    direct_targets = (
         "get_current_user",
         "get_current_admin",
         "check_permission",
+        "supabase_admin",
     )
-    return any(target_name.endswith(ct) for ct in callable_targets)
+    return any(target_name.endswith(dt) for dt in direct_targets)
 
 
 def _apply_patches(stack, patches):
     """Apply all patches using an ExitStack."""
     for target, value in patches:
-        if _is_callable_mock(target, value):
+        if _is_direct_replacement(target, value):
             stack.enter_context(patch(target, value))
         else:
             stack.enter_context(patch(target, return_value=value))

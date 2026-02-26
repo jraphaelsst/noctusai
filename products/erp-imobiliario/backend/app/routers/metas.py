@@ -14,20 +14,22 @@ router = APIRouter(prefix="/api/metas", tags=["Metas"])
 
 
 class MetaCreate(BaseModel):
-    titulo: Optional[str] = Field(default=None, max_length=255)
-    categoria: Literal["captacao", "visitas", "contatos", "propostas", "fechamento", "outros"]
-    tipo_meta: Literal["diaria", "semanal", "mensal", "anual"]
-    quantidade_alvo: int = Field(..., ge=1, description="Quantidade alvo deve ser >= 1")
-    data_referencia: str  # Server handles timezone
-    corretor_id: Optional[str] = None
-    config_id: Optional[str] = None
+    nome: Optional[str] = Field(default=None, max_length=255)
+    categoria: Literal[
+        "captacao", "visitas", "contatos", "propostas", "fechamento",
+        "captacao_imoveis", "captacao_compradores", "atualizacao_imoveis", "outro"
+    ] = "captacao"
+    tipo: Literal["diaria", "semanal", "mensal", "anual"]
+    meta_pretendida: int = Field(..., ge=1, description="Quantidade alvo deve ser >= 1")
+    data_prazo: str  # Server handles timezone
+    usuario_id: Optional[str] = None
 
 
 class MetaUpdate(BaseModel):
-    titulo: Optional[str] = Field(default=None, max_length=255)
-    quantidade_realizada: Optional[int] = Field(default=None, ge=0)
-    concluida: Optional[bool] = None
-    data_conclusao: Optional[str] = None
+    nome: Optional[str] = Field(default=None, max_length=255)
+    meta_realizada: Optional[int] = Field(default=None, ge=0)
+    status: Optional[Literal["aberta", "concluida", "atrasada", "no_prazo", "vence_amanha"]] = None
+    detalhes: Optional[str] = None
 
 
 @router.get("")
@@ -48,12 +50,12 @@ async def listar_metas(
     # Count query
     count_query = db.table("metas").select("id", count="exact")
     if corretor_id:
-        count_query = count_query.eq("corretor_id", corretor_id)
+        count_query = count_query.eq("usuario_id", corretor_id)
 
     # Data query with pagination
-    query = db.table("metas").select("*").order("data_referencia", desc=True)
+    query = db.table("metas").select("*").order("data_prazo", desc=True)
     if corretor_id:
-        query = query.eq("corretor_id", corretor_id)
+        query = query.eq("usuario_id", corretor_id)
 
     query = query.range(offset, offset + validated_page_size - 1)
 
@@ -75,9 +77,9 @@ async def metas_hoje(authorization: Optional[str] = Header(None)):
     date_result = admin.rpc("get_data_sp").execute()
     data_hoje = date_result.data if date_result.data else None
 
-    query = db.table("metas").select("*").eq("corretor_id", user.id)
+    query = db.table("metas").select("*").eq("usuario_id", user.id)
     if data_hoje:
-        query = query.eq("data_referencia", data_hoje)
+        query = query.eq("data_prazo", data_hoje)
 
     result = query.execute()
     return success_response({"metas": result.data or [], "data_hoje": data_hoje})
@@ -89,8 +91,8 @@ async def criar_meta(body: MetaCreate, authorization: Optional[str] = Header(Non
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
-    if not data.get("corretor_id"):
-        data["corretor_id"] = user.id
+    if not data.get("usuario_id"):
+        data["usuario_id"] = user.id
 
     result = db.table("metas").insert(data).select().single().execute()
     if not result.data:

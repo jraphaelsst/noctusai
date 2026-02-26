@@ -151,11 +151,51 @@ async def stripe_webhook(request: Request):
         billing_service.handle_subscription_deleted(event_data)
     elif event_type == "invoice.payment_failed":
         billing_service.handle_invoice_payment_failed(event_data)
+        _notify_billing_event(event_type, event_data)
     else:
         logger.debug("Unhandled webhook event type: %s", event_type)
 
     # Always return 200 so Stripe does not retry handled events
     return {"received": True}
+
+
+def _notify_billing_event(event_type: str, event_data: dict) -> None:
+    """Send email notification for billing events (best-effort)."""
+    try:
+        from app.services.email_service import send_billing_alert
+
+        session_obj = event_data.get("object", {})
+        stripe_customer_id = session_obj.get("customer")
+        if not stripe_customer_id:
+            return
+
+        db = get_admin_client()
+        sub = (
+            db.table("subscriptions")
+            .select("org_id")
+            .eq("stripe_customer_id", stripe_customer_id)
+            .limit(1)
+            .execute()
+        )
+        if not sub.data:
+            return
+        org_id = sub.data[0]["org_id"]
+
+        org = db.table("organizations").select("nome, owner_id").eq("id", org_id).single().execute()
+        if not org.data:
+            return
+
+        owner = db.table("noctus_users").select("email").eq("id", org.data["owner_id"]).single().execute()
+        if not owner.data:
+            return
+
+        send_billing_alert(
+            to=owner.data["email"],
+            event_type=event_type,
+            org_name=org.data["nome"],
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to send billing notification: {exc}")
 
 
 def _log_billing_event(event_id: str, event_type: str, event_data: dict) -> None:

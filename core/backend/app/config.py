@@ -1,9 +1,12 @@
 """
 NoctusAI Core — Configuration settings.
 """
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
+
+_ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 
 
 class Settings(BaseSettings):
@@ -21,7 +24,7 @@ class Settings(BaseSettings):
     sso_token_expiration_minutes: int = 5  # short-lived
 
     # App
-    cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost:8080"
+    cors_origins: str = "*"
     debug: bool = True
 
     # Stripe
@@ -29,6 +32,9 @@ class Settings(BaseSettings):
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
     app_base_url: str = "http://localhost:5173"
+
+    # Email (optional — Resend)
+    resend_api_key: Optional[str] = None
 
     # Observability (optional)
     sentry_dsn: Optional[str] = None
@@ -49,6 +55,8 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list:
+        if self.cors_origins == "*":
+            return ["*"]
         return [o.strip() for o in self.cors_origins.split(",")]
 
     @property
@@ -56,8 +64,9 @@ class Settings(BaseSettings):
         return not self.debug
 
     class Config:
-        env_file = ".env"
+        env_file = str(_ROOT_ENV)
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 settings = Settings()

@@ -6,9 +6,13 @@ Run with: uvicorn app.main:app --reload --port 8000
 """
 import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.routers import (
@@ -65,6 +69,18 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"error": {"code": "RATE_LIMITED", "message": "Muitas requisições. Tente novamente em breve."}},
+    )
 
 # CORS — restricted methods and headers for security
 app.add_middleware(

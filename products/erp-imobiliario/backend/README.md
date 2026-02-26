@@ -19,11 +19,7 @@ uvicorn app.main:app --reload --port 8000
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in your Supabase credentials:
-
-```bash
-cp .env.example .env
-```
+All backends read from a single `.env` at the **repo root**. See `CLAUDE.md` for the full list of required variables.
 
 ## Project Structure
 
@@ -40,6 +36,5 @@ backend/
 │   └── schemas/
 │       └── matching.py       # Pydantic request/response models
 ├── requirements.txt
-├── .env.example
 └── README.md
 ```

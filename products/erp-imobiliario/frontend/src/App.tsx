@@ -13,6 +13,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // Lazy load das páginas para melhor performance inicial
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const SSOCallback = lazy(() => import("./pages/SSOCallback"));
 const Metas = lazy(() => import("./pages/Metas"));
 const Usuarios = lazy(() => import("./pages/Usuarios"));
 const Admin = lazy(() => import("./pages/Admin"));
@@ -66,6 +67,71 @@ const queryClient = new QueryClient({
   },
 });
 
+const PageSkeleton = () => (
+  <div className="container mx-auto p-6 space-y-4">
+    <Skeleton className="h-12 w-64" />
+    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      <Skeleton className="h-32" />
+      <Skeleton className="h-32" />
+      <Skeleton className="h-32" />
+      <Skeleton className="h-32" />
+    </div>
+    <Skeleton className="h-96" />
+  </div>
+);
+
+function AuthenticatedRoutes() {
+  return (
+    <Layout>
+      <Suspense fallback={<PageSkeleton />}>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/funil" element={<Funil />} />
+          <Route path="/clientes" element={<Clientes />} />
+          <Route path="/clientes/:id" element={<ClienteDetalhes />} />
+          <Route path="/imoveis" element={<Imoveis />} />
+          <Route path="/condominios" element={<Condominios />} />
+          <Route path="/permutas" element={<Permutas />} />
+          <Route path="/negociacoes" element={<Negociacoes />} />
+          <Route path="/metas" element={<Metas />} />
+          <Route path="/usuarios" element={<Usuarios />} />
+          <Route path="/admin" element={<Admin />} />
+          <Route path="/comissoes" element={<Comissoes />} />
+          <Route path="/portais" element={<Portais />} />
+          <Route path="/financeiro" element={<Financeiro />} />
+          <Route path="/propostas" element={<Propostas />} />
+          <Route path="/documentos" element={<Documentos />} />
+          <Route path="/locacoes" element={<Locacoes />} />
+          <Route path="/vistorias" element={<Vistorias />} />
+          <Route path="/relatorios" element={<Relatorios />} />
+          <Route path="/distribuicao" element={<Distribuicao />} />
+          <Route path="/marketing" element={<Marketing />} />
+          <Route path="/agenda" element={<Agenda />} />
+          <Route path="/dimob" element={<Dimob />} />
+          <Route path="/gamificacao" element={<Gamificacao />} />
+          <Route path="/chaves" element={<Chaves />} />
+          <Route path="/portal" element={<PortalExterno />} />
+          <Route path="/site" element={<SiteImoveis />} />
+          <Route path="/campo" element={<Campo />} />
+          <Route path="/analise-credito" element={<AnaliseCredito />} />
+          <Route path="/filiais" element={<Filiais />} />
+          <Route path="/contratos" element={<Contratos />} />
+          <Route path="/assinaturas" element={<Assinaturas />} />
+          <Route path="/portal-cliente" element={<PortalCliente />} />
+          <Route path="/manutencao" element={<Manutencao />} />
+          <Route path="/seguros" element={<Seguros />} />
+          <Route path="/impostos" element={<Impostos />} />
+          <Route path="/banco" element={<Banco />} />
+          <Route path="/emails" element={<Emails />} />
+          <Route path="/bi" element={<BI />} />
+          <Route path="/log-acoes" element={<LogAcoes />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
+    </Layout>
+  );
+}
+
 function AppContent() {
   const { user } = useAuthStore();
   const [isSignUp, setIsSignUp] = useState(false);
@@ -74,81 +140,29 @@ function AppContent() {
     return <LoginForm onToggleMode={() => setIsSignUp(!isSignUp)} isSignUp={isSignUp} />;
   }
 
-  return (
-    <BrowserRouter>
-      <Layout>
-        <Suspense fallback={
-          <div className="container mx-auto p-6 space-y-4">
-            <Skeleton className="h-12 w-64" />
-            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-              <Skeleton className="h-32" />
-              <Skeleton className="h-32" />
-              <Skeleton className="h-32" />
-              <Skeleton className="h-32" />
-            </div>
-            <Skeleton className="h-96" />
-          </div>
-        }>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/funil" element={<Funil />} />
-            <Route path="/clientes" element={<Clientes />} />
-            <Route path="/clientes/:id" element={<ClienteDetalhes />} />
-            <Route path="/imoveis" element={<Imoveis />} />
-            <Route path="/condominios" element={<Condominios />} />
-            <Route path="/permutas" element={<Permutas />} />
-            <Route path="/negociacoes" element={<Negociacoes />} />
-            <Route path="/metas" element={<Metas />} />
-            <Route path="/usuarios" element={<Usuarios />} />
-            <Route path="/admin" element={<Admin />} />
-            <Route path="/comissoes" element={<Comissoes />} />
-            <Route path="/portais" element={<Portais />} />
-            <Route path="/financeiro" element={<Financeiro />} />
-            <Route path="/propostas" element={<Propostas />} />
-            <Route path="/documentos" element={<Documentos />} />
-            <Route path="/locacoes" element={<Locacoes />} />
-            <Route path="/vistorias" element={<Vistorias />} />
-            <Route path="/relatorios" element={<Relatorios />} />
-            <Route path="/distribuicao" element={<Distribuicao />} />
-            <Route path="/marketing" element={<Marketing />} />
-            <Route path="/agenda" element={<Agenda />} />
-            <Route path="/dimob" element={<Dimob />} />
-            <Route path="/gamificacao" element={<Gamificacao />} />
-            <Route path="/chaves" element={<Chaves />} />
-            <Route path="/portal" element={<PortalExterno />} />
-            <Route path="/site" element={<SiteImoveis />} />
-            <Route path="/campo" element={<Campo />} />
-            <Route path="/analise-credito" element={<AnaliseCredito />} />
-            <Route path="/filiais" element={<Filiais />} />
-            <Route path="/contratos" element={<Contratos />} />
-            <Route path="/assinaturas" element={<Assinaturas />} />
-            <Route path="/portal-cliente" element={<PortalCliente />} />
-            <Route path="/manutencao" element={<Manutencao />} />
-            <Route path="/seguros" element={<Seguros />} />
-            <Route path="/impostos" element={<Impostos />} />
-            <Route path="/banco" element={<Banco />} />
-            <Route path="/emails" element={<Emails />} />
-            <Route path="/bi" element={<BI />} />
-            <Route path="/log-acoes" element={<LogAcoes />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-      </Layout>
-    </BrowserRouter>
-  );
+  return <AuthenticatedRoutes />;
 }
 
 const App = () => (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <AuthProvider>
-          <ErrorBoundary>
-            <AppContent />
-          </ErrorBoundary>
-          <Toaster />
-          <Sonner />
-        </AuthProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <ErrorBoundary>
+              <Suspense fallback={<PageSkeleton />}>
+                <Routes>
+                  {/* Public route: SSO callback (must work without auth) */}
+                  <Route path="/sso" element={<SSOCallback />} />
+                  {/* All other routes require authentication */}
+                  <Route path="/*" element={<AppContent />} />
+                </Routes>
+              </Suspense>
+            </ErrorBoundary>
+            <Toaster />
+            <Sonner />
+          </AuthProvider>
+        </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>
   </ErrorBoundary>

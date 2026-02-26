@@ -59,7 +59,17 @@ class TestCreateRole:
             "org_role": "admin",
             "role": "admin",
         })
-        mock_sb.set_table_data("roles", [])
+        # roles is queried multiple times:
+        #   1. existing slug check → empty
+        #   2. slug_check_system → empty
+        #   3. slug_check_org → empty
+        #   4. insert → returns the new role
+        mock_sb.set_table_responses("roles", [
+            [],  # existing
+            [],  # slug_check_system
+            [],  # slug_check_org
+            [{"id": "new-role", "name": "Custom Role", "slug": "custom-role"}],
+        ])
 
         resp = admin_client.post("/api/roles", json={
             "name": "Custom Role",
@@ -219,12 +229,13 @@ class TestUpdateRole:
 class TestDeleteRole:
     def test_delete_custom_role_no_users(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {
-            "id": "admin-user-456",
-            "org_id": "org-1",
-            "org_role": "admin",
-            "role": "admin",
-        })
+        # noctus_users is queried twice:
+        #   1. _get_user_profile (.single) → admin profile
+        #   2. users_with_role check → empty (no users have this role)
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "admin-user-456", "org_id": "org-1", "org_role": "admin", "role": "admin"},
+            [],  # no users with the custom role
+        ])
         mock_sb.set_table_data("roles", {
             "id": "r1",
             "slug": "custom",

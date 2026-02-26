@@ -9,6 +9,8 @@ Plans table fields used:
   - max_products (int, -1 = unlimited)
   - features (jsonb, e.g. {"sso": true, "webhooks": true, "audit_logs": true})
 """
+from __future__ import annotations
+
 import logging
 from app.database import get_admin_client
 

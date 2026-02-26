@@ -182,6 +182,25 @@ async def convidar_membro(
         raise HTTPException(status_code=500, detail="Erro ao criar convite")
 
     logger.info(f"Invitation created for {body.email} to org={org_id}")
+
+    # Send invitation email (best-effort — won't fail the request)
+    try:
+        from app.services.email_service import send_invitation_email
+        from app.config import settings
+        org = db.table("organizations").select("nome").eq("id", org_id).single().execute()
+        org_name = org.data["nome"] if org.data else "NoctusAI"
+        inviter = db.table("noctus_users").select("nome").eq("id", user.id).single().execute()
+        inviter_name = inviter.data["nome"] if inviter.data else "Um membro"
+        send_invitation_email(
+            to=body.email,
+            org_name=org_name,
+            invite_token=invite_token,
+            invited_by=inviter_name,
+            base_url=settings.app_base_url,
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to send invitation email: {exc}")
+
     return {"data": result.data[0]}
 
 

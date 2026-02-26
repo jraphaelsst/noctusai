@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, setToken } from '../lib/api';
+import { useAuth } from '../lib/auth-context';
 
 interface OAuthProvider {
   id: string;
@@ -19,6 +20,7 @@ export function Login() {
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [oauthLoading, setOauthLoading] = useState(false);
   const navigate = useNavigate();
+  const { refresh } = useAuth();
 
   useEffect(() => {
     // Fetch available OAuth providers
@@ -39,6 +41,7 @@ export function Login() {
       }
       const res = await api.post('/api/auth/login', { email, password });
       setToken(res.access_token);
+      await refresh();
       navigate('/');
     } catch (err: any) {
       setError(err.message);

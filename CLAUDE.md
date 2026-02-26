@@ -38,17 +38,29 @@ types/       → TypeScript definitions
 
 State management: **Zustand** for global UI state, **TanStack Query** for server state.
 
+## Python Virtual Environment
+
+A **single root-level venv** (`venv/`) is shared by all backends. The root `requirements.txt` is the merged superset of both per-backend files. Per-backend `requirements.txt` files are kept for independent Docker deploys.
+
+```bash
+# First-time setup (or after pulling new deps)
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
 ## Commands
 
 ### ERP Backend (primary development target)
 
 ```bash
-cd products/erp-imobiliario/backend
+source venv/bin/activate
 
 # Run server
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000 --app-dir products/erp-imobiliario/backend
 
 # Run all tests
+cd products/erp-imobiliario/backend
 pytest
 
 # Run specific test file
@@ -61,8 +73,8 @@ pytest tests/routers/test_matching_service.py::TestCompatibilidadeRegiao::test_e
 ### Core Backend
 
 ```bash
-cd core/backend
-uvicorn app.main:app --reload --port 8001
+source venv/bin/activate
+uvicorn app.main:app --reload --port 8001 --app-dir core/backend
 ```
 
 ### ERP Frontend
@@ -85,7 +97,7 @@ npm run dev      # Vite dev server on port 5173
 ### Full Stack (Replit)
 
 ```bash
-bash start.sh    # Starts both backend (8000) + frontend (5173) with venv setup
+bash start.sh    # Creates root venv, installs deps, starts all backends + frontends
 ```
 
 ## Testing
@@ -102,19 +114,24 @@ Test naming convention: `test_{router_name}_router.py` for router tests, `test_{
 
 ## Environment Variables
 
-Both backends load from `.env` (see `.env.example` files):
+All backends read from a **single `.env` at the repo root**. Each backend's `config.py` resolves the root `.env` via an absolute path computed from `__file__`, so it works regardless of CWD. Pydantic Settings silently ignores a missing `.env` file, so CI/Docker environments that inject env vars directly are unaffected.
+
+Create the root `.env` file with the following key variables:
 
 ```
 SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
-CORS_ORIGINS=http://localhost:5173,http://localhost:8000
+JWT_SECRET=...
+CORS_ORIGINS=http://localhost:5173,http://localhost:8080
 DEBUG=true
+CORE_API_URL=http://localhost:8001
 SENTRY_DSN=          # Optional
 REDIS_URL=           # Optional
+OPENAI_API_KEY=      # Optional (ERP product)
 ```
 
-Frontend uses `VITE_`-prefixed vars for Supabase client configuration.
+Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary — frontend vars end up in browser bundles).
 
 ## Key Patterns
 

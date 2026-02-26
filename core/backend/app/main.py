@@ -2,18 +2,42 @@
 NoctusAI Core — Main FastAPI application.
 """
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.config import settings
+from app.exceptions import (
+    AppException,
+    app_exception_handler,
+    http_exception_handler,
+    validation_exception_handler,
+    generic_exception_handler,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
 app = FastAPI(
     title="NoctusAI Core",
     description="AI-first ERP Platform — Core API",
     version="1.0.0",
 )
+
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"error": {"code": "RATE_LIMITED", "message": "Muitas requisições. Tente novamente em breve."}},
+    )
 
 # CORS — restricted methods and headers for security
 app.add_middleware(
@@ -23,6 +47,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
+
+# Register exception handlers for standardized error responses
+app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(ValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
 
 # Register routers
 from app.routers import auth, organizations, products, licenses, sso
