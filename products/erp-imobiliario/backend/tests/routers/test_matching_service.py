@@ -10,6 +10,7 @@ from app.services.matching import (
     calcular_alinhamento_interesses,
     calcular_qualidade_anuncio,
     calcular_score_total,
+    calcular_score_composto,
     gerar_matches_para_imovel,
     gerar_matches_para_permuta,
 )
@@ -243,6 +244,55 @@ class TestQualidadeAnuncio:
         assert score == 3
 
 
+# ========== COMPOSITE SCORE ==========
+class TestScoreComposto:
+    def test_perfect_composite_score(self):
+        """All components maxed: similarity=1.0, preco=25, specs=20, interesses=15."""
+        score = calcular_score_composto(1.0, 25, 20, 15)
+        assert score == 100.0
+
+    def test_zero_embedding_partial_structured(self):
+        """No embedding similarity, but some structured scores."""
+        score = calcular_score_composto(0.0, 20, 15, 10)
+        assert score > 0
+        assert score < 100
+
+    def test_score_capped_at_100(self):
+        """Even with impossibly high inputs, score should not exceed 100."""
+        score = calcular_score_composto(1.0, 25, 20, 15)
+        assert score <= 100.0
+
+    def test_score_is_float(self):
+        """Composite score should be a float with decimal precision."""
+        score = calcular_score_composto(0.75, 18, 12, 8)
+        assert isinstance(score, float)
+
+    def test_all_zeros(self):
+        """All zeros should yield 0."""
+        score = calcular_score_composto(0.0, 0, 0, 0)
+        assert score == 0.0
+
+    def test_only_embedding(self):
+        """100% embedding, 0 structured → 40% of max."""
+        score = calcular_score_composto(1.0, 0, 0, 0)
+        assert score == 40.0
+
+    def test_only_preco(self):
+        """0 embedding, max price → 25% of max."""
+        score = calcular_score_composto(0.0, 25, 0, 0)
+        assert score == 25.0
+
+    def test_only_specs(self):
+        """0 embedding, max specs → 20% of max."""
+        score = calcular_score_composto(0.0, 0, 20, 0)
+        assert score == 20.0
+
+    def test_only_interesses(self):
+        """0 embedding, max interests → 15% of max."""
+        score = calcular_score_composto(0.0, 0, 0, 15)
+        assert score == 15.0
+
+
 # ========== TOTAL SCORE ==========
 class TestScoreTotal:
     def test_perfect_match(self):
@@ -278,6 +328,10 @@ class TestScoreTotal:
         assert "compatibilidade_specs" in result["detalhes"]
         assert "qualidade_anuncio" in result["detalhes"]
         assert "gap_valor" in result["detalhes"]
+
+    def test_score_is_float(self):
+        result = calcular_score_total({"valor": 100000}, {"natureza": "permuta_imovel", "valor": 100000})
+        assert isinstance(result["score"], float)
 
 
 # ========== MATCH GENERATION ==========

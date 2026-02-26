@@ -4,12 +4,18 @@ Matching Algorithm — Unified Ativos Table
 Scores compatibility between an imovel (ativo natureza='imovel') and a
 permuta (ativo natureza='permuta_imovel' or 'permuta_automovel').
 
-Score breakdown (100 pts max):
+Rule-based score breakdown (100 pts max):
   - Region compatibility:     30 pts
   - Price compatibility:      25 pts
   - Specs compatibility:      20 pts
   - Interest alignment:       15 pts
   - Listing quality:          10 pts
+
+Composite score (when embeddings available):
+  - Embedding similarity:     40%
+  - Price compatibility:      25%
+  - Specs compatibility:      20%
+  - Interest alignment:       15%
 """
 import logging
 from typing import Any
@@ -213,6 +219,23 @@ def calcular_qualidade_anuncio(imovel: dict) -> int:
     return min(score, 10)
 
 
+def calcular_score_composto(similarity: float, preco: int, specs: int, interesses: int) -> float:
+    """
+    Calculate composite score using weighted formula:
+      40% embedding similarity + 25% price + 20% specs + 15% interests.
+
+    Each sub-score is normalized to 0-100 before weighting.
+    Returns a float score capped at 100.0.
+    """
+    score = (
+        0.40 * (similarity * 100)
+        + 0.25 * (preco / 25) * 100
+        + 0.20 * (specs / 20) * 100
+        + 0.15 * (interesses / 15) * 100
+    )
+    return round(min(score, 100.0), 1)
+
+
 def calcular_score_total(imovel: dict, permuta: dict) -> dict:
     """
     Calculate total match score between an imovel and a permuta.
@@ -241,7 +264,7 @@ def calcular_score_total(imovel: dict, permuta: dict) -> dict:
     valor_permuta = float(permuta.get('valor', 0) or 0)
 
     return {
-        'score': total,
+        'score': float(total),
         'justificativa': '. '.join(justificativa_parts) if justificativa_parts else 'Match parcial',
         'detalhes': {
             'compatibilidade_regiao': regiao,
@@ -254,7 +277,7 @@ def calcular_score_total(imovel: dict, permuta: dict) -> dict:
     }
 
 
-def gerar_matches_para_imovel(imovel: dict, permutas: list[dict], score_minimo: int = 20) -> list[dict]:
+def gerar_matches_para_imovel(imovel: dict, permutas: list[dict], score_minimo: float = 20) -> list[dict]:
     """
     Generate matches for a single imovel against all permutas.
     """
@@ -277,7 +300,7 @@ def gerar_matches_para_imovel(imovel: dict, permutas: list[dict], score_minimo: 
     return matches
 
 
-def gerar_matches_para_permuta(permuta: dict, imoveis: list[dict], score_minimo: int = 20) -> list[dict]:
+def gerar_matches_para_permuta(permuta: dict, imoveis: list[dict], score_minimo: float = 20) -> list[dict]:
     """
     Generate matches for a single permuta against all imoveis (that accept permutas).
     """
@@ -299,4 +322,127 @@ def gerar_matches_para_permuta(permuta: dict, imoveis: list[dict], score_minimo:
             })
 
     matches.sort(key=lambda m: m['score'], reverse=True)
+    return matches
+
+
+async def gerar_matches_com_embeddings(
+    source_ativo: dict,
+    db,
+    score_minimo: float = 20.0,
+    match_count: int = 50,
+) -> list[dict]:
+    """
+    Generate matches using embedding similarity + structured sub-scores.
+    Composite: 40% semantic + 25% price + 20% specs + 15% interests.
+
+    Requires the source ativo to have an embedding. Returns empty list if not.
+    """
+    embedding = source_ativo.get("embedding")
+    if not embedding:
+        logger.info(f"Ativo {source_ativo.get('id')} has no embedding, skipping AI matching")
+        return []
+
+    # Call Supabase RPC for semantic similarity search
+    rpc_result = db.rpc(
+        "match_ativos",
+        {
+            "query_embedding": embedding,
+            "match_count": match_count,
+            "similarity_threshold": 0.3,
+            "exclude_id": source_ativo["id"],
+        },
+    ).execute()
+
+    candidates = rpc_result.data or []
+    if not candidates:
+        return []
+
+    matches = []
+    is_imovel = source_ativo.get("natureza") == "imovel"
+
+    for candidate in candidates:
+        candidate_id = candidate["id"]
+        similarity = float(candidate["similarity"])
+
+        # Fetch full ativo data
+        ativo_res = db.table("ativos").select("*").eq("id", candidate_id).single().execute()
+        if not ativo_res.data:
+            continue
+
+        candidate_ativo = ativo_res.data
+
+        # Skip same owner
+        if candidate_ativo.get("owner_id") == source_ativo.get("owner_id"):
+            continue
+        # Skip inactive
+        if candidate_ativo.get("status", "ativo") != "ativo":
+            continue
+
+        # Determine imovel/permuta roles for structured scoring
+        if is_imovel:
+            imovel = source_ativo
+            permuta = candidate_ativo
+            # Skip if candidate is also an imovel (we need a permuta)
+            if candidate_ativo.get("natureza") == "imovel":
+                continue
+        else:
+            permuta = source_ativo
+            imovel = candidate_ativo
+            # Skip if candidate is also a permuta
+            if candidate_ativo.get("natureza") != "imovel":
+                continue
+            # Skip if imovel doesn't accept permutas
+            if not imovel.get("aceita_permutas"):
+                continue
+
+        # Compute structured sub-scores
+        preco = calcular_compatibilidade_preco(imovel, permuta)
+        specs = calcular_compatibilidade_specs(imovel, permuta)
+        interesses = calcular_alinhamento_interesses(imovel, permuta)
+
+        # Composite score
+        score = calcular_score_composto(similarity, preco, specs, interesses)
+
+        if score < score_minimo:
+            continue
+
+        # Build justificativa
+        justificativa_parts = []
+        if similarity >= 0.7:
+            justificativa_parts.append("Alta similaridade semântica")
+        elif similarity >= 0.5:
+            justificativa_parts.append("Boa similaridade semântica")
+        if preco >= 15:
+            justificativa_parts.append("Preço alinhado")
+        if specs >= 10:
+            justificativa_parts.append("Características compatíveis")
+        if interesses >= 8:
+            justificativa_parts.append("Alinhado com interesses")
+
+        matches.append({
+            "ativo_origem_id": imovel["id"],
+            "ativo_destino_id": permuta["id"],
+            "score": score,
+            "justificativa": ". ".join(justificativa_parts) if justificativa_parts else "Match parcial",
+            "detalhes": {
+                "compatibilidade_preco": preco,
+                "compatibilidade_specs": specs,
+                "alinhamento_interesses": interesses,
+                "embedding_similarity": round(similarity, 4),
+            },
+            "score_breakdown": {
+                "embedding": round(similarity * 100, 1),
+                "preco": round((preco / 25) * 100, 1),
+                "specs": round((specs / 20) * 100, 1),
+                "interesses": round((interesses / 15) * 100, 1),
+                "weights": {
+                    "embedding": 0.40,
+                    "preco": 0.25,
+                    "specs": 0.20,
+                    "interesses": 0.15,
+                },
+            },
+        })
+
+    matches.sort(key=lambda m: m["score"], reverse=True)
     return matches
