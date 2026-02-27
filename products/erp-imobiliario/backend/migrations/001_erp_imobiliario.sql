@@ -114,15 +114,24 @@ CREATE OR REPLACE FUNCTION erp.set_timestamps_sp()
 RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'erp', 'public'
 AS $$
+DECLARE
+  has_updated_at boolean;
 BEGIN
+  -- Check if the table has an updated_at column (safe for all tables)
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = TG_TABLE_SCHEMA
+      AND table_name = TG_TABLE_NAME
+      AND column_name = 'updated_at'
+  ) INTO has_updated_at;
+
   IF TG_OP = 'INSERT' THEN
     NEW.created_at := now_sao_paulo();
-    IF TG_TABLE_NAME IN ('clientes', 'imoveis', 'profiles', 'negociacoes', 'metas', 'metas_config') THEN
+    IF has_updated_at THEN
       NEW.updated_at := now_sao_paulo();
     END IF;
-  END IF;
-  IF TG_OP = 'UPDATE' THEN
-    IF TG_TABLE_NAME IN ('clientes', 'imoveis', 'profiles', 'negociacoes', 'metas', 'metas_config') THEN
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF has_updated_at THEN
       NEW.updated_at := now_sao_paulo();
     END IF;
   END IF;
@@ -1434,17 +1443,912 @@ AS $$ SELECT (NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE; $$;
 -- ─────────────────────────────────────────────────────────────────────
 
 INSERT INTO erp.status_pagina (nome_pagina, status, tipo_pagina) VALUES
+  -- Principal
   ('dashboard', 'producao', 'geral'),
+  ('funil', 'producao', 'geral'),
+  ('clientes', 'producao', 'geral'),
   ('metas', 'producao', 'geral'),
+  -- Comercial
+  ('imoveis', 'producao', 'geral'),
+  ('condominios', 'producao', 'geral'),
+  ('permutas', 'producao', 'geral'),
+  ('negociacoes', 'producao', 'geral'),
+  ('propostas', 'producao', 'geral'),
+  ('contratos', 'producao', 'geral'),
+  ('locacoes', 'producao', 'geral'),
+  ('comissoes', 'producao', 'geral'),
+  -- Financeiro
+  ('financeiro', 'producao', 'geral'),
+  ('impostos', 'producao', 'geral'),
+  ('banco', 'producao', 'geral'),
+  ('analise-credito', 'producao', 'geral'),
+  -- Operacional
+  ('agenda', 'producao', 'geral'),
+  ('vistorias', 'producao', 'geral'),
+  ('manutencao', 'producao', 'geral'),
+  ('chaves', 'producao', 'geral'),
+  ('campo', 'producao', 'geral'),
+  ('seguros', 'producao', 'geral'),
+  -- Marketing & Comunicação
+  ('marketing', 'producao', 'geral'),
+  ('emails', 'producao', 'geral'),
+  ('whatsapp', 'producao', 'geral'),
+  ('meta-ads', 'producao', 'geral'),
+  ('notificacoes', 'producao', 'geral'),
+  -- Documentos
+  ('documentos', 'producao', 'geral'),
+  ('assinaturas', 'producao', 'geral'),
+  ('dimob', 'producao', 'geral'),
+  ('relatorios', 'producao', 'geral'),
+  -- Portais & Site
+  ('portal-cliente', 'producao', 'geral'),
+  ('portal', 'producao', 'geral'),
+  ('site', 'producao', 'geral'),
+  -- Analytics & IA
+  ('bi', 'producao', 'geral'),
+  ('matching', 'producao', 'geral'),
+  ('gamificacao', 'producao', 'geral'),
+  -- Standalone
+  ('distribuicao', 'producao', 'geral'),
+  ('filiais', 'producao', 'geral'),
+  ('configuracoes', 'producao', 'geral'),
+  -- Painel de Controle (admin only)
   ('usuarios', 'producao', 'administrativa'),
   ('admin', 'producao', 'administrativa'),
-  ('funil', 'desenvolvimento', 'geral'),
-  ('clientes', 'desenvolvimento', 'geral'),
-  ('condominios', 'producao', 'geral')
+  ('log-acoes', 'producao', 'administrativa')
 ON CONFLICT (nome_pagina) DO NOTHING;
 
+-- ═══════════════════════════════════════════════════════════════════════
+-- 11. MVP EXPANSION TABLES (inline from 004_mvp_expansion.sql)
+-- ═══════════════════════════════════════════════════════════════════════
+-- These tables support all 38 existing routers plus new features
+-- (notifications, WAHA, Meta API).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- ── GROUP A: Sales & Proposals ──────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.propostas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  imovel_id uuid NOT NULL,
+  cliente_id uuid NOT NULL,
+  corretor_id uuid NOT NULL,
+  valor_proposta numeric NOT NULL,
+  valor_contraproposta numeric,
+  status text NOT NULL DEFAULT 'enviada'
+    CHECK (status IN ('enviada','em_analise','contraproposta','aceita','recusada','expirada')),
+  condicoes_pagamento text,
+  prazo_validade date,
+  observacoes text,
+  historico jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.contratos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('venda','locacao')),
+  status text NOT NULL DEFAULT 'rascunho'
+    CHECK (status IN ('rascunho','ativo','concluido','cancelado','distratado')),
+  cliente_id uuid NOT NULL,
+  imovel_id uuid NOT NULL,
+  proposta_id uuid,
+  valor_total numeric NOT NULL,
+  valor_entrada numeric NOT NULL DEFAULT 0,
+  num_parcelas integer NOT NULL DEFAULT 1,
+  data_inicio date NOT NULL,
+  data_fim date,
+  data_assinatura date,
+  observacoes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.parcelas_contrato (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  contrato_id uuid NOT NULL REFERENCES erp.contratos(id) ON DELETE CASCADE,
+  numero integer NOT NULL,
+  valor numeric NOT NULL,
+  data_vencimento date NOT NULL,
+  data_pagamento date,
+  status text NOT NULL DEFAULT 'pendente'
+    CHECK (status IN ('pendente','pago','atrasado','cancelado')),
+  forma_pagamento text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP B: Financial ──────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.lancamentos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('receita','despesa')),
+  categoria text NOT NULL,
+  descricao text NOT NULL,
+  valor numeric NOT NULL,
+  data_vencimento date NOT NULL,
+  data_pagamento date,
+  status text NOT NULL DEFAULT 'pendente'
+    CHECK (status IN ('pendente','pago','atrasado','cancelado')),
+  forma_pagamento text,
+  imovel_id uuid,
+  cliente_id uuid,
+  comissao_id uuid,
+  recorrente boolean NOT NULL DEFAULT false,
+  observacoes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.impostos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  imovel_id uuid NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('iptu','itbi','txa_lixo','contribuicao_melhoria','outro')),
+  ano integer NOT NULL,
+  valor_total numeric NOT NULL,
+  valor_pago numeric NOT NULL DEFAULT 0,
+  num_parcelas integer NOT NULL DEFAULT 1,
+  parcela_atual integer NOT NULL DEFAULT 0,
+  desconto_cota_unica numeric NOT NULL DEFAULT 0,
+  data_vencimento date NOT NULL,
+  status text NOT NULL DEFAULT 'pendente'
+    CHECK (status IN ('pendente','parcial','pago','atrasado','isento')),
+  numero_guia text,
+  comprovante_url text,
+  observacoes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.extratos_bancarios (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  banco text NOT NULL,
+  agencia text,
+  conta text,
+  data_importacao timestamptz NOT NULL DEFAULT now(),
+  arquivo_nome text NOT NULL,
+  periodo_inicio date,
+  periodo_fim date,
+  total_registros integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.movimentacoes_bancarias (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  extrato_id uuid NOT NULL REFERENCES erp.extratos_bancarios(id) ON DELETE CASCADE,
+  data date NOT NULL,
+  descricao text NOT NULL,
+  valor numeric NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('credito','debito')),
+  conciliado boolean NOT NULL DEFAULT false,
+  lancamento_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP C: Commissions ────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.comissoes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  venda_id uuid,
+  imovel_id uuid,
+  valor_venda numeric NOT NULL,
+  percentual_comissao numeric NOT NULL DEFAULT 6.0,
+  valor_comissao numeric NOT NULL,
+  status text NOT NULL DEFAULT 'pendente'
+    CHECK (status IN ('pendente','aprovada','paga','cancelada')),
+  data_venda date,
+  data_pagamento date,
+  observacoes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.comissoes_splits (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  comissao_id uuid NOT NULL REFERENCES erp.comissoes(id) ON DELETE CASCADE,
+  corretor_id uuid NOT NULL,
+  corretor_nome text NOT NULL,
+  percentual numeric NOT NULL,
+  valor numeric NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP D: Rentals ────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.contratos_locacao (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  imovel_id uuid NOT NULL,
+  locatario_id uuid NOT NULL,
+  proprietario_id uuid,
+  valor_aluguel numeric NOT NULL,
+  dia_vencimento int NOT NULL DEFAULT 10,
+  data_inicio date NOT NULL,
+  data_fim date NOT NULL,
+  indice_reajuste text NOT NULL DEFAULT 'IGPM'
+    CHECK (indice_reajuste IN ('IGPM','IPCA','INPC','fixo')),
+  percentual_reajuste numeric,
+  status text NOT NULL DEFAULT 'ativo'
+    CHECK (status IN ('ativo','encerrado','renovado','inadimplente')),
+  taxa_administracao numeric NOT NULL DEFAULT 10.0,
+  valor_caucao numeric,
+  observacoes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP E: Calendar ───────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.eventos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  corretor_id uuid NOT NULL,
+  titulo text NOT NULL,
+  descricao text,
+  tipo text NOT NULL
+    CHECK (tipo IN ('visita','reuniao','ligacao','vistoria','assinatura','outro')),
+  data_inicio timestamptz NOT NULL,
+  data_fim timestamptz NOT NULL,
+  local text,
+  cliente_id uuid,
+  imovel_id uuid,
+  status text NOT NULL DEFAULT 'agendado'
+    CHECK (status IN ('agendado','confirmado','realizado','cancelado')),
+  cor text DEFAULT '#6366f1',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP F: Documents & Signatures ─────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.documentos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  nome text NOT NULL,
+  tipo text NOT NULL
+    CHECK (tipo IN ('contrato','procuracao','laudo','certidao','outro')),
+  arquivo_url text,
+  arquivo_path text,
+  tamanho_bytes bigint,
+  mime_type text,
+  imovel_id uuid,
+  cliente_id uuid,
+  proposta_id uuid,
+  template_id uuid,
+  metadata jsonb NOT NULL DEFAULT '{}',
+  created_by uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.document_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  nome text NOT NULL,
+  tipo text NOT NULL,
+  conteudo text NOT NULL,
+  variaveis text[] NOT NULL DEFAULT '{}',
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.assinaturas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  documento_nome text NOT NULL,
+  documento_url text,
+  contrato_id uuid,
+  status text NOT NULL DEFAULT 'pendente'
+    CHECK (status IN ('pendente','enviado','assinado','recusado','expirado','cancelado')),
+  provedor text NOT NULL DEFAULT 'interno'
+    CHECK (provedor IN ('interno','clicksign','docusign','d4sign')),
+  link_assinatura text,
+  signatarios jsonb NOT NULL DEFAULT '[]',
+  historico jsonb NOT NULL DEFAULT '[]',
+  data_envio timestamptz,
+  data_assinatura timestamptz,
+  data_expiracao timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP G: Email & Marketing ──────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.emails (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  cliente_id uuid,
+  remetente text NOT NULL,
+  destinatario text NOT NULL,
+  assunto text NOT NULL,
+  corpo text NOT NULL,
+  corpo_html text,
+  direcao text NOT NULL CHECK (direcao IN ('enviado','recebido')),
+  status text NOT NULL DEFAULT 'enviado'
+    CHECK (status IN ('rascunho','enviado','entregue','aberto','erro')),
+  template_id uuid,
+  aberturas integer NOT NULL DEFAULT 0,
+  cliques integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.email_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  nome text NOT NULL,
+  assunto text NOT NULL,
+  corpo text NOT NULL,
+  variaveis text[] NOT NULL DEFAULT '{}',
+  ativo boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.campanhas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  nome text NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('email','whatsapp','alerta_imovel')),
+  status text NOT NULL DEFAULT 'rascunho'
+    CHECK (status IN ('rascunho','ativa','pausada','concluida')),
+  template text NOT NULL,
+  filtros jsonb NOT NULL DEFAULT '{}',
+  total_enviados int NOT NULL DEFAULT 0,
+  total_abertos int NOT NULL DEFAULT 0,
+  total_cliques int NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.envios_email (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  campanha_id uuid NOT NULL REFERENCES erp.campanhas(id) ON DELETE CASCADE,
+  cliente_id uuid NOT NULL,
+  email text NOT NULL,
+  status text NOT NULL DEFAULT 'pendente'
+    CHECK (status IN ('pendente','enviado','aberto','clicado','erro')),
+  enviado_at timestamptz,
+  aberto_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP H: WhatsApp ───────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.whatsapp_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  cliente_id uuid,
+  phone text NOT NULL,
+  direction text NOT NULL CHECK (direction IN ('sent','received')),
+  message text NOT NULL,
+  message_type text NOT NULL DEFAULT 'text'
+    CHECK (message_type IN ('text','property_card','image')),
+  metadata jsonb NOT NULL DEFAULT '{}',
+  status text NOT NULL DEFAULT 'sent'
+    CHECK (status IN ('sent','delivered','read','failed')),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP I: Inspections & Maintenance ──────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.vistorias (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  imovel_id uuid NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('entrada','saida','periodica')),
+  data_vistoria date NOT NULL,
+  responsavel_id uuid NOT NULL,
+  responsavel_nome text,
+  status text NOT NULL DEFAULT 'agendada'
+    CHECK (status IN ('agendada','em_andamento','concluida','cancelada')),
+  checklist jsonb NOT NULL DEFAULT '[]',
+  fotos text[] NOT NULL DEFAULT '{}',
+  observacoes_gerais text,
+  assinatura_locatario text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.checkins (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  corretor_id uuid NOT NULL,
+  imovel_id uuid,
+  latitude numeric NOT NULL,
+  longitude numeric NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('visita','vistoria','captacao','reuniao')),
+  observacoes text,
+  fotos text[] NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.vistorias_rapidas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  corretor_id uuid NOT NULL,
+  imovel_id uuid NOT NULL,
+  checkin_id uuid REFERENCES erp.checkins(id),
+  estado_geral text NOT NULL
+    CHECK (estado_geral IN ('bom','regular','ruim','critico')),
+  itens_checklist jsonb NOT NULL DEFAULT '{}',
+  observacoes text,
+  fotos text[] NOT NULL DEFAULT '{}',
+  latitude numeric,
+  longitude numeric,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.ordens_servico (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  imovel_id uuid,
+  cliente_id uuid,
+  titulo text NOT NULL,
+  descricao text NOT NULL,
+  tipo text NOT NULL
+    CHECK (tipo IN ('preventiva','corretiva','emergencial','reforma')),
+  prioridade text NOT NULL DEFAULT 'media'
+    CHECK (prioridade IN ('baixa','media','alta','urgente')),
+  status text NOT NULL DEFAULT 'aberto'
+    CHECK (status IN ('aberto','em_andamento','aguardando','concluido','cancelado')),
+  responsavel text,
+  fornecedor text,
+  custo_estimado numeric,
+  custo_real numeric,
+  data_abertura date NOT NULL,
+  data_previsao date,
+  data_conclusao date,
+  fotos text[] NOT NULL DEFAULT '{}',
+  observacoes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP J: Insurance ──────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.seguros (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  imovel_id uuid NOT NULL,
+  cliente_id uuid,
+  seguradora text NOT NULL,
+  numero_apolice text,
+  tipo_cobertura text NOT NULL
+    CHECK (tipo_cobertura IN ('incendio','completo','responsabilidade_civil','vida','fianca_locaticia','outro')),
+  valor_cobertura numeric NOT NULL,
+  valor_premio numeric NOT NULL,
+  data_inicio date NOT NULL,
+  data_vencimento date NOT NULL,
+  status text NOT NULL DEFAULT 'ativo'
+    CHECK (status IN ('ativo','vencido','cancelado','renovado')),
+  auto_renovar boolean NOT NULL DEFAULT false,
+  observacoes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP K: Credit Analysis ────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.analises_credito (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  cliente_id uuid,
+  cpf text NOT NULL,
+  nome text NOT NULL,
+  score int,
+  status text NOT NULL DEFAULT 'pendente'
+    CHECK (status IN ('pendente','aprovado','reprovado','em_analise')),
+  resultado jsonb NOT NULL DEFAULT '{}',
+  fonte text NOT NULL DEFAULT 'manual'
+    CHECK (fonte IN ('serasa','boa_vista','manual')),
+  validade date,
+  consultado_por uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP L: Key Management ─────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.chaves (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  imovel_id uuid NOT NULL,
+  codigo text NOT NULL,
+  descricao text,
+  status text NOT NULL DEFAULT 'disponivel'
+    CHECK (status IN ('disponivel','emprestada','perdida')),
+  ultima_retirada_por uuid,
+  ultima_retirada_nome text,
+  ultima_retirada_em timestamptz,
+  ultima_devolucao_em timestamptz,
+  observacoes text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.chaves_historico (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  chave_id uuid NOT NULL REFERENCES erp.chaves(id) ON DELETE CASCADE,
+  acao text NOT NULL CHECK (acao IN ('retirada','devolucao')),
+  corretor_id uuid NOT NULL,
+  corretor_nome text NOT NULL,
+  motivo text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP M: Portals & Site ─────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.portal_acessos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  cliente_id uuid NOT NULL,
+  token text NOT NULL UNIQUE,
+  ativo boolean NOT NULL DEFAULT true,
+  data_expiracao timestamptz,
+  ultimo_acesso timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.chamados_portal (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  cliente_id uuid NOT NULL,
+  portal_acesso_id uuid NOT NULL REFERENCES erp.portal_acessos(id) ON DELETE CASCADE,
+  assunto text NOT NULL,
+  descricao text NOT NULL,
+  status text NOT NULL DEFAULT 'aberto'
+    CHECK (status IN ('aberto','em_andamento','resolvido','fechado')),
+  prioridade text NOT NULL DEFAULT 'media'
+    CHECK (prioridade IN ('baixa','media','alta','urgente')),
+  resposta text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.portal_tokens (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('proprietario','locatario')),
+  pessoa_id uuid NOT NULL,
+  token text UNIQUE NOT NULL,
+  nome text NOT NULL,
+  email text,
+  expires_at timestamptz NOT NULL DEFAULT (now() + interval '90 days'),
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.site_config (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL UNIQUE,
+  nome_site text NOT NULL,
+  slug text UNIQUE NOT NULL,
+  logo_url text,
+  cor_primaria text NOT NULL DEFAULT '#6366f1',
+  cor_secundaria text NOT NULL DEFAULT '#1a1a2e',
+  telefone text,
+  whatsapp text,
+  email_contato text,
+  sobre text,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP O: Gamification ───────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.pontuacoes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  acao text NOT NULL,
+  pontos int NOT NULL,
+  referencia_id uuid,
+  referencia_tipo text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.conquistas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  tipo text NOT NULL,
+  nome text NOT NULL,
+  descricao text,
+  icone text NOT NULL DEFAULT '🏆',
+  desbloqueada_em timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── GROUP P: Distribution, Branches & Banking ───────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.distribuicao_config (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL UNIQUE,
+  modo text NOT NULL DEFAULT 'manual'
+    CHECK (modo IN ('manual','round_robin','por_regiao','por_especialidade')),
+  corretores_ativos uuid[] NOT NULL DEFAULT '{}',
+  proximo_corretor_idx int NOT NULL DEFAULT 0,
+  regras jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.filiais (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  nome text NOT NULL,
+  codigo text NOT NULL,
+  endereco text,
+  cidade text,
+  estado text,
+  telefone text,
+  responsavel_id uuid,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.remessas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('cnab240','cnab400')),
+  banco text NOT NULL,
+  arquivo_nome text,
+  total_titulos integer NOT NULL DEFAULT 0,
+  valor_total numeric NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'gerado'
+    CHECK (status IN ('gerado','enviado','processado','erro')),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── Notifications ───────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.notificacoes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  tipo text NOT NULL,
+  titulo text NOT NULL,
+  mensagem text,
+  is_read boolean NOT NULL DEFAULT false,
+  link text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.notificacao_preferencias (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  canal text NOT NULL DEFAULT 'app'
+    CHECK (canal IN ('app','email','whatsapp')),
+  tipo_evento text NOT NULL,
+  ativo boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(user_id, canal, tipo_evento)
+);
+
+-- ── WAHA WhatsApp Config ────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.whatsapp_config (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL UNIQUE,
+  provider text NOT NULL DEFAULT 'meta'
+    CHECK (provider IN ('meta','waha')),
+  meta_api_token text,
+  meta_phone_number_id text,
+  meta_api_version text DEFAULT 'v18.0',
+  waha_api_url text,
+  waha_api_key text,
+  waha_session_name text DEFAULT 'default',
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── Meta API (Facebook/Instagram) ───────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.meta_config (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL UNIQUE,
+  page_id text,
+  access_token text,
+  ad_account_id text,
+  webhook_verify_token text,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.meta_leads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  lead_id text NOT NULL,
+  form_id text,
+  form_name text,
+  campo_data jsonb NOT NULL DEFAULT '{}',
+  cliente_id uuid,
+  importado boolean NOT NULL DEFAULT false,
+  importado_em timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.meta_campanhas_sync (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  campaign_id text NOT NULL,
+  nome text,
+  status text,
+  spend numeric DEFAULT 0,
+  impressions integer DEFAULT 0,
+  clicks integer DEFAULT 0,
+  leads integer DEFAULT 0,
+  cpl numeric,
+  last_sync timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- filial_id on existing tables
+ALTER TABLE erp.ativos ADD COLUMN IF NOT EXISTS filial_id uuid;
+ALTER TABLE erp.clientes ADD COLUMN IF NOT EXISTS filial_id uuid;
+
+-- ── Indexes for expansion tables ────────────────────────────────────
+
+CREATE INDEX IF NOT EXISTS idx_propostas_org ON erp.propostas(org_id);
+CREATE INDEX IF NOT EXISTS idx_propostas_cliente ON erp.propostas(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_propostas_imovel ON erp.propostas(imovel_id);
+CREATE INDEX IF NOT EXISTS idx_propostas_status ON erp.propostas(status);
+CREATE INDEX IF NOT EXISTS idx_contratos_org ON erp.contratos(org_id);
+CREATE INDEX IF NOT EXISTS idx_contratos_cliente ON erp.contratos(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_contratos_status ON erp.contratos(status);
+CREATE INDEX IF NOT EXISTS idx_parcelas_contrato_contrato ON erp.parcelas_contrato(contrato_id);
+CREATE INDEX IF NOT EXISTS idx_lancamentos_org ON erp.lancamentos(org_id);
+CREATE INDEX IF NOT EXISTS idx_lancamentos_status ON erp.lancamentos(status);
+CREATE INDEX IF NOT EXISTS idx_lancamentos_vencimento ON erp.lancamentos(data_vencimento);
+CREATE INDEX IF NOT EXISTS idx_impostos_org ON erp.impostos(org_id);
+CREATE INDEX IF NOT EXISTS idx_impostos_imovel ON erp.impostos(imovel_id);
+CREATE INDEX IF NOT EXISTS idx_extratos_org ON erp.extratos_bancarios(org_id);
+CREATE INDEX IF NOT EXISTS idx_movimentacoes_extrato ON erp.movimentacoes_bancarias(extrato_id);
+CREATE INDEX IF NOT EXISTS idx_comissoes_org ON erp.comissoes(org_id);
+CREATE INDEX IF NOT EXISTS idx_comissoes_status ON erp.comissoes(status);
+CREATE INDEX IF NOT EXISTS idx_comissoes_splits_comissao ON erp.comissoes_splits(comissao_id);
+CREATE INDEX IF NOT EXISTS idx_contratos_locacao_org ON erp.contratos_locacao(org_id);
+CREATE INDEX IF NOT EXISTS idx_contratos_locacao_status ON erp.contratos_locacao(status);
+CREATE INDEX IF NOT EXISTS idx_eventos_org ON erp.eventos(org_id);
+CREATE INDEX IF NOT EXISTS idx_eventos_corretor ON erp.eventos(corretor_id);
+CREATE INDEX IF NOT EXISTS idx_eventos_data ON erp.eventos(data_inicio);
+CREATE INDEX IF NOT EXISTS idx_documentos_org ON erp.documentos(org_id);
+CREATE INDEX IF NOT EXISTS idx_assinaturas_org ON erp.assinaturas(org_id);
+CREATE INDEX IF NOT EXISTS idx_assinaturas_status ON erp.assinaturas(status);
+CREATE INDEX IF NOT EXISTS idx_emails_org ON erp.emails(org_id);
+CREATE INDEX IF NOT EXISTS idx_campanhas_org ON erp.campanhas(org_id);
+CREATE INDEX IF NOT EXISTS idx_envios_email_campanha ON erp.envios_email(campanha_id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_org ON erp.whatsapp_messages(org_id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_phone ON erp.whatsapp_messages(phone);
+CREATE INDEX IF NOT EXISTS idx_vistorias_org ON erp.vistorias(org_id);
+CREATE INDEX IF NOT EXISTS idx_vistorias_imovel ON erp.vistorias(imovel_id);
+CREATE INDEX IF NOT EXISTS idx_checkins_org ON erp.checkins(org_id);
+CREATE INDEX IF NOT EXISTS idx_checkins_corretor ON erp.checkins(corretor_id);
+CREATE INDEX IF NOT EXISTS idx_ordens_servico_org ON erp.ordens_servico(org_id);
+CREATE INDEX IF NOT EXISTS idx_ordens_servico_status ON erp.ordens_servico(status);
+CREATE INDEX IF NOT EXISTS idx_seguros_org ON erp.seguros(org_id);
+CREATE INDEX IF NOT EXISTS idx_seguros_imovel ON erp.seguros(imovel_id);
+CREATE INDEX IF NOT EXISTS idx_analises_credito_org ON erp.analises_credito(org_id);
+CREATE INDEX IF NOT EXISTS idx_analises_credito_cpf ON erp.analises_credito(cpf);
+CREATE INDEX IF NOT EXISTS idx_chaves_org ON erp.chaves(org_id);
+CREATE INDEX IF NOT EXISTS idx_chaves_imovel ON erp.chaves(imovel_id);
+CREATE INDEX IF NOT EXISTS idx_chaves_historico_chave ON erp.chaves_historico(chave_id);
+CREATE INDEX IF NOT EXISTS idx_portal_acessos_org ON erp.portal_acessos(org_id);
+CREATE INDEX IF NOT EXISTS idx_portal_acessos_token ON erp.portal_acessos(token);
+CREATE INDEX IF NOT EXISTS idx_chamados_portal_org ON erp.chamados_portal(org_id);
+CREATE INDEX IF NOT EXISTS idx_portal_tokens_org ON erp.portal_tokens(org_id);
+CREATE INDEX IF NOT EXISTS idx_site_config_slug ON erp.site_config(slug);
+CREATE INDEX IF NOT EXISTS idx_pontuacoes_org ON erp.pontuacoes(org_id);
+CREATE INDEX IF NOT EXISTS idx_pontuacoes_user ON erp.pontuacoes(user_id);
+CREATE INDEX IF NOT EXISTS idx_conquistas_user ON erp.conquistas(user_id);
+CREATE INDEX IF NOT EXISTS idx_filiais_org ON erp.filiais(org_id);
+CREATE INDEX IF NOT EXISTS idx_remessas_org ON erp.remessas(org_id);
+CREATE INDEX IF NOT EXISTS idx_notificacoes_user ON erp.notificacoes(user_id);
+CREATE INDEX IF NOT EXISTS idx_notificacoes_read ON erp.notificacoes(is_read);
+CREATE INDEX IF NOT EXISTS idx_notificacoes_created ON erp.notificacoes(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_meta_leads_org ON erp.meta_leads(org_id);
+CREATE INDEX IF NOT EXISTS idx_meta_leads_lead_id ON erp.meta_leads(lead_id);
+CREATE INDEX IF NOT EXISTS idx_meta_campanhas_org ON erp.meta_campanhas_sync(org_id);
+CREATE INDEX IF NOT EXISTS idx_ativos_filial ON erp.ativos(filial_id);
+CREATE INDEX IF NOT EXISTS idx_clientes_filial ON erp.clientes(filial_id);
+
+-- ── RLS for expansion tables ────────────────────────────────────────
+
+DO $$
+DECLARE
+  tbl text;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY[
+    'propostas','contratos','parcelas_contrato',
+    'lancamentos','impostos','extratos_bancarios','movimentacoes_bancarias',
+    'comissoes','comissoes_splits',
+    'contratos_locacao','eventos',
+    'documentos','document_templates','assinaturas',
+    'emails','email_templates','campanhas','envios_email',
+    'whatsapp_messages',
+    'vistorias','checkins','vistorias_rapidas','ordens_servico',
+    'seguros','analises_credito',
+    'chaves','chaves_historico',
+    'portal_acessos','chamados_portal','portal_tokens','site_config',
+    'pontuacoes','conquistas',
+    'distribuicao_config','filiais','remessas',
+    'notificacoes','notificacao_preferencias',
+    'whatsapp_config','meta_config','meta_leads','meta_campanhas_sync'
+  ])
+  LOOP
+    EXECUTE format('ALTER TABLE erp.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_select_policy', tbl);
+    EXECUTE format(
+      'CREATE POLICY %I ON erp.%I FOR SELECT TO authenticated USING (org_id = (auth.jwt() ->> ''org_id'')::uuid)',
+      tbl || '_select_policy', tbl
+    );
+    EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_insert_policy', tbl);
+    EXECUTE format(
+      'CREATE POLICY %I ON erp.%I FOR INSERT TO authenticated WITH CHECK (org_id = (auth.jwt() ->> ''org_id'')::uuid)',
+      tbl || '_insert_policy', tbl
+    );
+    EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_update_policy', tbl);
+    EXECUTE format(
+      'CREATE POLICY %I ON erp.%I FOR UPDATE TO authenticated USING (org_id = (auth.jwt() ->> ''org_id'')::uuid)',
+      tbl || '_update_policy', tbl
+    );
+    EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_delete_policy', tbl);
+    EXECUTE format(
+      'CREATE POLICY %I ON erp.%I FOR DELETE TO authenticated USING (org_id = (auth.jwt() ->> ''org_id'')::uuid)',
+      tbl || '_delete_policy', tbl
+    );
+    EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_service_role_policy', tbl);
+    EXECUTE format(
+      'CREATE POLICY %I ON erp.%I FOR ALL TO service_role USING (true)',
+      tbl || '_service_role_policy', tbl
+    );
+  END LOOP;
+END $$;
+
+-- Public access for portals
+DROP POLICY IF EXISTS site_config_anon_read ON erp.site_config;
+CREATE POLICY site_config_anon_read ON erp.site_config
+  FOR SELECT TO anon USING (is_active = true);
+DROP POLICY IF EXISTS portal_tokens_anon_read ON erp.portal_tokens;
+CREATE POLICY portal_tokens_anon_read ON erp.portal_tokens
+  FOR SELECT TO anon USING (is_active = true AND expires_at > now());
+DROP POLICY IF EXISTS portal_acessos_anon_read ON erp.portal_acessos;
+CREATE POLICY portal_acessos_anon_read ON erp.portal_acessos
+  FOR SELECT TO anon USING (ativo = true);
+
+-- ── Timestamp triggers for expansion tables ─────────────────────────
+
+DO $$
+DECLARE
+  tbl text;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY[
+    'propostas','contratos','lancamentos','impostos',
+    'comissoes','contratos_locacao','eventos',
+    'assinaturas','email_templates','campanhas',
+    'vistorias','ordens_servico','seguros',
+    'chamados_portal','distribuicao_config',
+    'whatsapp_config','meta_config','meta_campanhas_sync'
+  ])
+  LOOP
+    EXECUTE format(
+      'CREATE TRIGGER IF NOT EXISTS set_timestamps_%I BEFORE INSERT OR UPDATE ON erp.%I FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp()',
+      tbl, tbl
+    );
+  END LOOP;
+END $$;
+
 -- ─────────────────────────────────────────────────────────────────────
--- 11. FINAL GRANTS (ensure all objects have correct permissions)
+-- 12. FINAL GRANTS (ensure all objects have correct permissions)
 -- ─────────────────────────────────────────────────────────────────────
 
 GRANT ALL ON ALL TABLES IN SCHEMA erp TO postgres, service_role;

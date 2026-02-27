@@ -78,7 +78,7 @@ export function useRevogarToken() {
 }
 
 // Public portal hooks (no auth required — uses token in URL)
-const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';
 
 async function fetchPublic(path: string) {
   const response = await fetch(`${BACKEND_URL}${path}`);

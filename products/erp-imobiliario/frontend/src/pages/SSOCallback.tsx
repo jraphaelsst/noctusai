@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
-const CORE_API_URL = import.meta.env.VITE_CORE_API_URL || "http://localhost:8001";
+const CORE_API_URL = import.meta.env.VITE_CORE_API_URL || "http://localhost:8000";
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
 
 type SSOState =

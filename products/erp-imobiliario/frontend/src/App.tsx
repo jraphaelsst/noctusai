@@ -56,6 +56,9 @@ const Emails = lazy(() => import("./pages/Emails"));
 const BI = lazy(() => import("./pages/BI"));
 const Matching = lazy(() => import("./pages/Matching"));
 const Configuracoes = lazy(() => import("./pages/Configuracoes"));
+const MetaAds = lazy(() => import("./pages/MetaAds"));
+const WhatsAppInbox = lazy(() => import("./pages/WhatsAppInbox"));
+const NotificacoesPage = lazy(() => import("./pages/Notificacoes"));
 
 // QueryClient com configurações otimizadas
 const queryClient = new QueryClient({
@@ -128,6 +131,9 @@ function AuthenticatedRoutes() {
           <Route path="/bi" element={<BI />} />
           <Route path="/matching" element={<Matching />} />
           <Route path="/configuracoes" element={<Configuracoes />} />
+          <Route path="/meta-ads" element={<MetaAds />} />
+          <Route path="/whatsapp" element={<WhatsAppInbox />} />
+          <Route path="/notificacoes" element={<NotificacoesPage />} />
           <Route path="/log-acoes" element={<LogAcoes />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

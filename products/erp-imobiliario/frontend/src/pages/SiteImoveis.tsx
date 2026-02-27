@@ -28,7 +28,7 @@ import {
   SiteConfig,
 } from '@/hooks/useSiteImoveis';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';
 
 interface SiteFormData {
   nome_site: string;

@@ -142,7 +142,7 @@ async def enviar_email(body: EnviarEmailRequest, authorization: Optional[str] = 
         if rendered:
             corpo_html = rendered["corpo"]
 
-    email_record = svc.enviar(
+    email_record = await svc.enviar(
         destinatario=body.destinatario,
         assunto=body.assunto,
         corpo=corpo,

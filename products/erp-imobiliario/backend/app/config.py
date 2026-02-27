@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     # AI (optional - graceful degradation if not set)
     openai_api_key: Optional[str] = None
 
+    # Email (optional - dry-run if not set)
+    resend_api_key: Optional[str] = None
+    email_from: str = "noreply@noctus.app"
+    email_from_name: str = "NoctusAI ERP"
+
+    # Digital signatures (optional - internal mock if not set)
+    clicksign_api_token: Optional[str] = None
+    clicksign_environment: str = "sandbox"
+    docusign_integration_key: Optional[str] = None
+    docusign_account_id: Optional[str] = None
+    d4sign_api_token: Optional[str] = None
+    d4sign_crypt_key: Optional[str] = None
+
     # Pagination defaults
     default_page_size: int = 50
     max_page_size: int = 200

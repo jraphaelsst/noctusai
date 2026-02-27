@@ -41,11 +41,11 @@ class AssinaturaService:
         contrato_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Create a signature request and generate a signing link.
+        Create a signature request and send to the configured provider.
 
-        Inserts the record with status 'enviado', generates a placeholder
-        signing link (to be replaced with provider integration), and logs
-        the initial event in the audit trail.
+        When provider credentials are configured (org_settings or env),
+        sends the document to ClickSign/DocuSign/D4Sign. Otherwise falls
+        back to internal mock signing with placeholder links.
 
         Args:
             documento_nome: Name of the document to sign
@@ -57,11 +57,20 @@ class AssinaturaService:
         Returns:
             Created assinatura record or None on failure
         """
+        from app.services.signature_provider import (
+            SignatureProviderConfig, enviar_para_assinatura,
+        )
+
         now = datetime.now(timezone.utc).isoformat()
 
-        # Generate placeholder signing link (replaced by real provider integration)
-        link_token = uuid.uuid4().hex[:16]
-        link_assinatura = f"https://assinaturas.noctus.app/assinar/{link_token}"
+        # Send to external provider (or fall back to internal)
+        provider_config = SignatureProviderConfig(self.db)
+        provider_result = await enviar_para_assinatura(
+            provedor, documento_nome, documento_url, signatarios, provider_config
+        )
+
+        link_assinatura = provider_result.get("link_assinatura", "")
+        external_id = provider_result.get("external_id", "")
 
         # Prepare signatarios with pending status
         signatarios_com_status = []
@@ -78,6 +87,7 @@ class AssinaturaService:
             "descricao": f"Documento enviado para assinatura via {provedor}",
             "usuario_id": self.user_id,
             "data": now,
+            "dry_run": provider_result.get("dry_run", False),
         }]
 
         data = {
@@ -87,6 +97,7 @@ class AssinaturaService:
             "status": "enviado",
             "provedor": provedor,
             "link_assinatura": link_assinatura,
+            "external_id": external_id,
             "signatarios": signatarios_com_status,
             "historico": historico_inicial,
             "data_envio": now,

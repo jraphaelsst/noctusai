@@ -80,6 +80,6 @@ export function useTogglePortal() {
 }
 
 export function usePortalFeedUrl(portal: string) {
-  const backendUrl = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000';
+  const backendUrl = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';
   return `${backendUrl}/api/portais/feed/${portal}`;
 }

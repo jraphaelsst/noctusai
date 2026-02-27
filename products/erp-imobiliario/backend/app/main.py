@@ -25,6 +25,8 @@ from app.routers import (
     chaves, portal_externo, site_imoveis, campo, analise_credito, filiais,
     bi, contratos, assinaturas, portal_cliente, manutencao,
     seguros, impostos, banco, emails,
+    notificacoes, whatsapp_webhook, meta_api,
+    storage, pdf, jobs, recorrencia,
 )
 from app.exceptions import (
     AppException,
@@ -142,6 +144,13 @@ app.include_router(seguros.router)
 app.include_router(impostos.router)
 app.include_router(banco.router)
 app.include_router(emails.router)
+app.include_router(notificacoes.router)
+app.include_router(whatsapp_webhook.router)
+app.include_router(meta_api.router)
+app.include_router(storage.router)
+app.include_router(pdf.router)
+app.include_router(jobs.router)
+app.include_router(recorrencia.router)
 
 
 @app.get("/health")

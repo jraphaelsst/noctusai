@@ -8,6 +8,7 @@ Tables consumed: ativos, clientes, lancamentos, propostas, comissoes,
 contratos_locacao, contratos.
 """
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from app.dependencies import get_current_user, get_user_client
@@ -128,6 +129,120 @@ async def analytics_financeiro(
     return success_response(analytics)
 
 
+@router.get("/dashboard")
+async def dashboard_resumo(
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Comprehensive dashboard summary — aggregates key metrics from all modules.
+
+    Returns a single payload with: sales KPIs, funnel stats, financial summary,
+    property portfolio counts, pending tasks, and recent activity.
+    """
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    # Fetch data in sequence (Supabase client is sync)
+    clientes_result = db.table("clientes").select("id, etapa_funil, created_at, valor_estimado").execute()
+    clientes = clientes_result.data or []
+
+    ativos_result = db.table("ativos").select("id, natureza, status, valor").execute()
+    ativos = ativos_result.data or []
+
+    propostas_result = db.table("propostas").select("id, status, valor_proposta, created_at").execute()
+    propostas = propostas_result.data or []
+
+    lancamentos_result = db.table("lancamentos").select("id, tipo, status, valor, data_vencimento").execute()
+    lancamentos = lancamentos_result.data or []
+
+    contratos_result = db.table("contratos").select("id, status, valor_total").execute()
+    contratos = contratos_result.data or []
+
+    eventos_result = db.table("eventos").select("id, status, data_inicio").execute()
+    eventos = eventos_result.data or []
+
+    negociacoes_result = db.table("negociacoes").select("id, status").execute()
+    negociacoes = negociacoes_result.data or []
+
+    # ── KPIs ──
+    total_clientes = len(clientes)
+    clientes_novos_mes = sum(
+        1 for c in clientes
+        if (c.get("created_at") or "")[:7] == datetime.now(timezone.utc).strftime("%Y-%m")
+    )
+
+    imoveis_ativos = sum(1 for a in ativos if a.get("natureza") == "imovel" and a.get("status") == "ativo")
+    total_imoveis = sum(1 for a in ativos if a.get("natureza") == "imovel")
+
+    propostas_abertas = sum(1 for p in propostas if p.get("status") in ("rascunho", "enviada"))
+    propostas_aceitas = sum(1 for p in propostas if p.get("status") == "aceita")
+    valor_vendas = sum(float(p.get("valor_proposta", 0)) for p in propostas if p.get("status") == "aceita")
+
+    # ── Funil ──
+    etapas_funil = {}
+    for c in clientes:
+        etapa = c.get("etapa_funil") or "sem_etapa"
+        etapas_funil[etapa] = etapas_funil.get(etapa, 0) + 1
+
+    # ── Financeiro ──
+    hoje = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    mes_atual = datetime.now(timezone.utc).strftime("%Y-%m")
+
+    receitas_mes = sum(
+        float(l.get("valor", 0)) for l in lancamentos
+        if l.get("tipo") == "receita" and l.get("status") == "pago"
+        and (l.get("data_vencimento") or "")[:7] == mes_atual
+    )
+    despesas_mes = sum(
+        float(l.get("valor", 0)) for l in lancamentos
+        if l.get("tipo") == "despesa" and l.get("status") == "pago"
+        and (l.get("data_vencimento") or "")[:7] == mes_atual
+    )
+    vencidos = sum(
+        1 for l in lancamentos
+        if l.get("status") == "pendente" and (l.get("data_vencimento") or "") < hoje
+    )
+    a_receber = sum(
+        float(l.get("valor", 0)) for l in lancamentos
+        if l.get("tipo") == "receita" and l.get("status") == "pendente"
+    )
+
+    # ── Contratos ──
+    contratos_ativos = sum(1 for c in contratos if c.get("status") == "ativo")
+
+    # ── Agenda ──
+    eventos_hoje = sum(
+        1 for e in eventos
+        if (e.get("data_inicio") or "")[:10] == hoje and e.get("status") == "agendado"
+    )
+
+    # ── Negociações ──
+    negociacoes_abertas = sum(1 for n in negociacoes if n.get("status") in ("aberta", "em_andamento"))
+
+    return success_response({
+        "kpis": {
+            "total_clientes": total_clientes,
+            "clientes_novos_mes": clientes_novos_mes,
+            "imoveis_ativos": imoveis_ativos,
+            "total_imoveis": total_imoveis,
+            "propostas_abertas": propostas_abertas,
+            "propostas_aceitas": propostas_aceitas,
+            "valor_vendas": round(valor_vendas, 2),
+            "contratos_ativos": contratos_ativos,
+            "negociacoes_abertas": negociacoes_abertas,
+            "eventos_hoje": eventos_hoje,
+        },
+        "funil": etapas_funil,
+        "financeiro": {
+            "receitas_mes": round(receitas_mes, 2),
+            "despesas_mes": round(despesas_mes, 2),
+            "saldo_mes": round(receitas_mes - despesas_mes, 2),
+            "a_receber": round(a_receber, 2),
+            "vencidos": vencidos,
+        },
+    })
+
+
 # --- Helpers ---
 
 def _resolve_periodo(periodo: Optional[str]) -> Optional[str]:
@@ -140,9 +255,7 @@ def _resolve_periodo(periodo: Optional[str]) -> Optional[str]:
     if not periodo or periodo == "total":
         return None
 
-    from datetime import datetime, timedelta
-
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     if periodo == "30d":
         start = now - timedelta(days=30)

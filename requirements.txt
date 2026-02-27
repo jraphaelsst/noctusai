@@ -18,6 +18,8 @@ resend>=2.0.0
 
 # ERP-only
 python-dateutil==2.9.0
+python-multipart>=0.0.9
+reportlab>=4.0.0
 
 # Observability (optional)
 sentry-sdk[fastapi]==1.40.0

@@ -120,14 +120,15 @@ class TestAplicarTemplate:
 
 class TestEnviar:
 
-    def test_creates_email_record(self):
+    @pytest.mark.asyncio
+    async def test_creates_email_record(self):
         record = {"id": "e1", "status": "enviado", "destinatario": "test@x.com"}
         db = MockSupabaseClient(data=record)
 
         from app.services.email_service import EmailService
         svc = EmailService(db, "user-1")
 
-        result = svc.enviar(
+        result = await svc.enviar(
             destinatario="test@x.com",
             assunto="Teste",
             corpo="Corpo do email",
@@ -135,14 +136,15 @@ class TestEnviar:
 
         assert result is not None
 
-    def test_optional_fields(self):
+    @pytest.mark.asyncio
+    async def test_optional_fields(self):
         record = {"id": "e1", "status": "enviado"}
         db = MockSupabaseClient(data=record)
 
         from app.services.email_service import EmailService
         svc = EmailService(db, "user-1")
 
-        result = svc.enviar(
+        result = await svc.enviar(
             destinatario="test@x.com",
             assunto="Teste",
             corpo="Corpo",

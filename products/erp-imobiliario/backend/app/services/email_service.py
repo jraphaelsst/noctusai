@@ -2,10 +2,11 @@
 Email Service — Business logic for email sending, template rendering, and statistics.
 
 Handles email record creation, template variable substitution, client history,
-and aggregate statistics. SMTP sending is a placeholder that logs intent
-without actually dispatching messages (ready for future integration).
+and aggregate statistics. Uses Resend API for actual delivery when configured,
+falls back to dry-run mode when API key is not set.
 """
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,77 @@ logger = logging.getLogger(__name__)
 VARIABLE_PATTERN = re.compile(r"\{\{(\w+)\}\}")
 
 
+def _get_resend_config(db_client) -> Optional[Dict[str, str]]:
+    """
+    Resolve email provider config: org_settings → platform_settings → env.
+    Returns dict with api_key, from_email, from_name or None if unconfigured.
+    """
+    api_key = None
+    from_email = None
+    from_name = None
+
+    # Try org_settings first (via the erp schema — settings may be in public)
+    try:
+        for key in ("resend_api_key", "email_from", "email_from_name"):
+            result = db_client.table("org_settings").select("value").eq("key", key).single().execute()
+            if result.data:
+                val = result.data.get("value", "")
+                if key == "resend_api_key":
+                    api_key = val
+                elif key == "email_from":
+                    from_email = val
+                elif key == "email_from_name":
+                    from_name = val
+    except Exception:
+        pass
+
+    # Fallback to env vars
+    if not api_key:
+        api_key = os.getenv("RESEND_API_KEY", "")
+    if not from_email:
+        from_email = os.getenv("EMAIL_FROM", "noreply@noctus.app")
+    if not from_name:
+        from_name = os.getenv("EMAIL_FROM_NAME", "NoctusAI ERP")
+
+    if not api_key:
+        return None
+
+    return {"api_key": api_key, "from_email": from_email, "from_name": from_name}
+
+
+async def _send_via_resend(
+    config: Dict[str, str],
+    to: str,
+    subject: str,
+    text: str,
+    html: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Send an email via the Resend API. Returns the API response."""
+    import httpx
+
+    payload: Dict[str, Any] = {
+        "from": f"{config['from_name']} <{config['from_email']}>",
+        "to": [to],
+        "subject": subject,
+        "text": text,
+    }
+    if html:
+        payload["html"] = html
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {config['api_key']}",
+                "Content-Type": "application/json",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 class EmailService:
     """Service for CRM email operations."""
 
@@ -22,7 +94,7 @@ class EmailService:
         self.db = db_client
         self.user_id = user_id
 
-    def enviar(
+    async def enviar(
         self,
         destinatario: str,
         assunto: str,
@@ -32,28 +104,32 @@ class EmailService:
         template_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Create an email record with status 'enviado'.
+        Create an email record and send via Resend if configured.
 
-        SMTP sending is a placeholder — logs the intent but does not actually
-        dispatch the message. Replace the logging call with a real SMTP/API
-        integration when ready.
-
-        Args:
-            destinatario: Recipient email address
-            assunto: Email subject
-            corpo: Plain-text body
-            cliente_id: Optional associated client ID
-            corpo_html: Optional HTML body
-            template_id: Optional template used to compose the email
+        When no Resend API key is found (org_settings, platform_settings, or env),
+        operates in dry-run mode — the email is recorded but not dispatched.
 
         Returns:
             Created email record dict, or None on failure.
         """
-        # Placeholder: log intent instead of sending via SMTP
-        logger.info(
-            f"[EMAIL DRY-RUN] Para: {destinatario} | Assunto: {assunto} | "
-            f"Cliente: {cliente_id or 'N/A'}"
-        )
+        config = _get_resend_config(self.db)
+        dry_run = config is None
+        status = "enviado"
+        external_id = None
+
+        if dry_run:
+            logger.info(
+                f"[EMAIL DRY-RUN] Para: {destinatario} | Assunto: {assunto} | "
+                f"Cliente: {cliente_id or 'N/A'}"
+            )
+        else:
+            try:
+                result = await _send_via_resend(config, destinatario, assunto, corpo, corpo_html)
+                external_id = result.get("id")
+                logger.info(f"[EMAIL] Enviado via Resend: {external_id} -> {destinatario}")
+            except Exception as e:
+                logger.error(f"[EMAIL] Falha ao enviar via Resend: {e}")
+                status = "falha"
 
         email_data: Dict[str, Any] = {
             "remetente": self.user_id,
@@ -61,7 +137,7 @@ class EmailService:
             "assunto": assunto,
             "corpo": corpo,
             "direcao": "enviado",
-            "status": "enviado",
+            "status": status,
         }
 
         if cliente_id:
@@ -70,6 +146,8 @@ class EmailService:
             email_data["corpo_html"] = corpo_html
         if template_id:
             email_data["template_id"] = template_id
+        if external_id:
+            email_data["external_id"] = external_id
 
         result = self.db.table("emails").insert(email_data).select().single().execute()
         return result.data
