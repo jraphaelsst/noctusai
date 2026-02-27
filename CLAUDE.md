@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a **multi-tenant, multi-product SaaS monorepo**. Each organization (tenant) signs up once on the core platform and gets access to licensed products. Tenant isolation is enforced at the database level via Supabase RLS policies scoped to `org_id`, so data from one organization is never visible to another. Products are independently deployable but share authentication and tenant context through SSO.
 
 - **`core/`** — NoctusAI Platform foundation: authentication, organizations, products, licenses, SSO. Manages tenants, user-to-org mapping, and cross-product access. Every user belongs to an organization; every product access requires an active license for that org.
-- **`products/erp-imobiliario/`** — Real estate CRM product: client management, property listings (ativos), sales funnel, matching algorithm, goal tracking. All data is scoped to the user's organization.
+- **`products/erp-imobiliario/`** — Real estate CRM product with 46 routers and 37 services: client management, property listings (ativos), sales funnel, AI matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting. All data is scoped to the user's organization.
 
 Both layers follow the same stack: **FastAPI + Supabase** backend, **React + TypeScript + Vite** frontend. Each has independent backend and frontend directories.
 
@@ -125,10 +125,12 @@ SUPABASE_SERVICE_ROLE_KEY=...
 JWT_SECRET=...
 CORS_ORIGINS=http://localhost:5173,http://localhost:8080
 DEBUG=true
-CORE_API_URL=http://localhost:8001
+CORE_API_URL=http://localhost:8000
 SENTRY_DSN=          # Optional
 REDIS_URL=           # Optional
 OPENAI_API_KEY=      # Optional (ERP product)
+RESEND_API_KEY=      # Optional (email delivery)
+CLICKSIGN_API_TOKEN= # Optional (digital signatures)
 ```
 
 Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary — frontend vars end up in browser bundles).
@@ -180,7 +182,7 @@ Tables are separated into **product-scoped PostgreSQL schemas**:
 - **`public`** — Core platform tables (`noctus_users`, `organizations`, `products`, `licenses`, `plans`, `subscriptions`, `api_keys`, etc.) + auth hook functions (`handle_new_user`, `assign_default_corretor_role`, `has_role`)
 - **`erp`** — ERP product tables (`metas`, `clientes`, `ativos`, `profiles`, `user_roles`, `condominios`, etc.) + all ERP business logic functions
 
-The ERP backend's `database.py` uses `ClientOptions(schema="erp")` so all `.table()` and `.rpc()` calls target the `erp` schema automatically. The Core backend defaults to `public`.
+The ERP backend's `database.py` uses `ClientOptions(schema="erp")` so all `.table()` and `.rpc()` calls target the `erp` schema automatically. The ERP frontend's Supabase client uses `db: { schema: 'erp' }` so all direct `.from()` calls also target the `erp` schema. The Core backend defaults to `public`.
 
 **Supabase Dashboard** must have `erp` in the "Exposed schemas" list (Project Settings → API) for PostgREST to accept the `Accept-Profile: erp` header.
 
@@ -188,3 +190,11 @@ Migration files:
 - `001_erp_imobiliario.sql` — Creates `erp` schema + all ERP objects (fresh deploys)
 - `002_ai_matching.sql` — pgvector embeddings in `erp` schema
 - `003_schema_separation.sql` — Moves existing objects from `public` → `erp` (existing databases only)
+- `004_mvp_expansion.sql` — 42 new tables for MVP expansion (existing databases)
+- `005_fix_sidebar_pages.sql` — Fix `set_timestamps_sp()` trigger, seed all sidebar routes, admin role setup
+
+## External Integrations (Dry-Run Pattern)
+
+All external integrations follow a **dry-run pattern**: when API keys/credentials are not configured, services log actions and return mock responses. This allows development and testing without real API keys. Credential resolution chain: `org_settings` table → `platform_settings` table → environment variables.
+
+Integrations: Resend (email), ClickSign/DocuSign/D4Sign (digital signatures), Meta Graph API (Lead Ads, campaign sync), WAHA/Meta Business API (WhatsApp), Supabase Storage (file uploads), reportlab (PDF generation).
