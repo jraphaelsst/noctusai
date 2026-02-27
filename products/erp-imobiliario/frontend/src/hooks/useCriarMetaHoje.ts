@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
 
 export function useCriarMetaHoje() {
@@ -7,11 +7,8 @@ export function useCriarMetaHoje() {
 
   return useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('criar-meta-hoje');
-
-      if (error) throw error;
-      
-      return data;
+      const result = await api.post("/api/metas/criar-hoje");
+      return result.data as { message: string; metas_criadas: number };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });

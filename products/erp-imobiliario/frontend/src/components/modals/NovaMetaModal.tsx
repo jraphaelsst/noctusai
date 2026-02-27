@@ -20,7 +20,7 @@ import {
 import { Plus, Target } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuthStore } from "@/store/authStore";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api-client";
 import { useCreateMeta } from "@/hooks/useMetas";
 import { TipoMeta, CategoriaMeta } from "@/types";
 import { useIsAdmin } from "@/hooks/useUserRole";
@@ -60,11 +60,8 @@ export function NovaMetaModal({ onSuccess }: NovaMetaModalProps) {
       : formData.meta_pretendida;
 
     // Calcular data_prazo automaticamente baseado no tipo de meta
-    const { data: dataHoje } = await supabase.rpc('current_date_sao_paulo');
-    const { data: dataPrazo } = await supabase.rpc('period_end_date', {
-      tipo_meta: formData.tipo,
-      data_ref: dataHoje
-    });
+    const prazoResult = await api.get("/api/metas/data-prazo", { tipo: formData.tipo });
+    const dataPrazo = prazoResult.data.data_prazo;
 
     await createMeta.mutateAsync({
       ...formData,

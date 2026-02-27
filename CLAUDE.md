@@ -172,3 +172,19 @@ SQL for creating these tables is documented as comments in each router file.
 ## Language
 
 The codebase uses **Portuguese (Brazilian)** for business domain terminology (clientes, metas, ativos, funil, etc.) and English for technical/framework concepts. Error messages returned to users are in Portuguese.
+
+## Database Schema Separation
+
+Tables are separated into **product-scoped PostgreSQL schemas**:
+
+- **`public`** — Core platform tables (`noctus_users`, `organizations`, `products`, `licenses`, `plans`, `subscriptions`, `api_keys`, etc.) + auth hook functions (`handle_new_user`, `assign_default_corretor_role`, `has_role`)
+- **`erp`** — ERP product tables (`metas`, `clientes`, `ativos`, `profiles`, `user_roles`, `condominios`, etc.) + all ERP business logic functions
+
+The ERP backend's `database.py` uses `ClientOptions(schema="erp")` so all `.table()` and `.rpc()` calls target the `erp` schema automatically. The Core backend defaults to `public`.
+
+**Supabase Dashboard** must have `erp` in the "Exposed schemas" list (Project Settings → API) for PostgREST to accept the `Accept-Profile: erp` header.
+
+Migration files:
+- `001_erp_imobiliario.sql` — Creates `erp` schema + all ERP objects (fresh deploys)
+- `002_ai_matching.sql` — pgvector embeddings in `erp` schema
+- `003_schema_separation.sql` — Moves existing objects from `public` → `erp` (existing databases only)

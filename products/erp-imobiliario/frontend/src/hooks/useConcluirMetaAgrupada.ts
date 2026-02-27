@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
 
 export function useConcluirMetaAgrupada() {
@@ -7,19 +7,8 @@ export function useConcluirMetaAgrupada() {
 
   return useMutation({
     mutationFn: async (metaId: string) => {
-      const { data, error } = await supabase.rpc('concluir_meta_agrupada', {
-        p_meta_id: metaId
-      });
-
-      if (error) throw error;
-      
-      const result = data as { success: boolean; error?: string; message?: string };
-      
-      if (!result.success) {
-        throw new Error(result.error || 'Erro ao concluir meta');
-      }
-      
-      return result;
+      const result = await api.post(`/api/metas/${metaId}/concluir`);
+      return result.data as { success: boolean; error?: string; message?: string };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });

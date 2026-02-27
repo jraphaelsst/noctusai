@@ -1,15 +1,12 @@
 import { useMutation } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
 
 export function useAtualizarStatusMetas() {
   return useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('atualizar-status-metas');
-
-      if (error) throw error;
-      
-      return data;
+      const result = await api.post("/api/metas/atualizar-status");
+      return result.data as { metas_atualizadas: number };
     },
     onSuccess: (data) => {
       toast({

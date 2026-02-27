@@ -6,7 +6,22 @@
 
 ---
 
-## Core Platform Tables
+## Schema Architecture
+
+Tables are separated into **product-scoped PostgreSQL schemas**:
+
+| Schema | Purpose | Backend |
+|--------|---------|---------|
+| `public` | Core platform tables + auth hook functions | `core/backend` (default) |
+| `erp` | ERP product tables + business logic functions | `products/erp-imobiliario/backend` (`ClientOptions(schema="erp")`) |
+
+The ERP backend's `database.py` uses `ClientOptions(schema="erp")` so all `.table()` and `.rpc()` calls target the `erp` schema via PostgREST's `Accept-Profile` / `Content-Profile` headers.
+
+**Auth hook functions** (`handle_new_user`, `assign_default_corretor_role`, `has_role`) stay in `public` because they are triggered by `auth.users` (a platform-level table). Their bodies reference `erp.*` tables with schema-qualified names.
+
+---
+
+## Core Platform Tables (`public` schema)
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
@@ -30,63 +45,49 @@
 
 ---
 
-## ERP Tables
+## ERP Tables (`erp` schema)
 
 ### Core Domain
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
-| `ativos` | Unified properties + exchange profiles | `id`, `org_id`, `natureza` (imovel/permuta_imovel/permuta_automovel), `tipo`, `titulo`, `valor`, `cidade`, `estado`, `bairro`, `embedding` (vector), `status` |
-| `clientes` | Clients/leads | `id`, `org_id`, `nome`, `email`, `telefone`, `etapa_funil`, `responsavel_id`, `probabilidade`, `valor_estimado` |
-| `matches` | Property-permuta match results | `imovel_id`, `permuta_id`, `score`, `score_regiao`, `score_preco`, `score_specs`, `score_interesses`, `embedding_similarity` |
-| `negociacoes` | Active negotiations | `id`, `org_id`, `cliente_id`, `ativo_id`, `status`, `valor` |
+| `erp.ativos` | Unified properties + exchange profiles | `id`, `org_id`, `natureza` (imovel/permuta_imovel/permuta_automovel), `tipo`, `titulo`, `valor`, `cidade`, `estado`, `bairro`, `embedding` (vector), `status` |
+| `erp.clientes` | Clients/leads | `id`, `org_id`, `nome`, `email`, `telefone`, `etapa_funil`, `responsavel_id`, `probabilidade`, `valor_estimado` |
+| `erp.matches` | Property-permuta match results | `imovel_id`, `permuta_id`, `score`, `score_regiao`, `score_preco`, `score_specs`, `score_interesses`, `embedding_similarity` |
+| `erp.negociacoes` | Active negotiations | `id`, `org_id`, `cliente_id`, `ativo_id`, `status`, `valor` |
+| `erp.profiles` | ERP user profiles (linked to auth.users) | `id`, `nome`, `email`, `telefone`, `last_activity_at` |
+| `erp.user_roles` | ERP role assignments | `user_id`, `role` (admin/corretor/coordenador/dev) |
 
-### Sales & Financial
+### Goals & Tracking
 
 | Table | Purpose |
 |-------|---------|
-| `funil_etapas` | Sales funnel stage definitions |
-| `metas` | Goals/targets with deadlines |
-| `financeiro` | Financial transactions |
-| `comissoes` | Commission records |
-| `banco` | Bank accounts |
-| `impostos` | Tax records |
+| `erp.metas` | Goals/targets with deadlines |
+| `erp.metas_config` | Monthly target configurations |
+
+### Sales & CRM
+
+| Table | Purpose |
+|-------|---------|
+| `erp.funil_movimentos` | Sales funnel stage movements |
+| `erp.atividades` | Client activity records |
 
 ### Real Estate Operations
 
 | Table | Purpose |
 |-------|---------|
-| `condominios` | Condominium data |
-| `locacoes` | Leases/rentals |
-| `contratos` | Contracts |
-| `propostas` | Proposals |
-| `vistorias` | Property inspections |
-| `chaves` | Key custody records |
-| `documentos` | Document metadata |
-| `assinaturas` | Digital signatures |
+| `erp.condominios` | Condominium data |
+| `erp.imoveis` | Property listings (legacy) |
+| `erp.perfis_permutas` | Exchange profiles (legacy) |
+| `erp.imoveis_perfis_permutas` | Property-permuta N:N join |
 
-### Communication & Marketing
+### System
 
 | Table | Purpose |
 |-------|---------|
-| `whatsapp_messages` | WhatsApp message log (`org_id`, `phone`, `direction`, `message`, `status`) |
-| `emails` | Email records |
-| `marketing` | Marketing campaigns |
-| `portais` | Portal integrations |
-
-### Organization & Compliance
-
-| Table | Purpose |
-|-------|---------|
-| `filiais` | Branch/subsidiary records |
-| `distribuicao` | Lead/asset distribution rules |
-| `campo` | Custom field definitions |
-| `agenda` | Calendar events |
-| `seguros` | Insurance policies |
-| `manutencao` | Maintenance records |
-| `dimob` | DIMOB compliance data |
-| `gamificacao` | Gamification scores |
-| `status_pagina` | Page visibility per role (controls sidebar) |
+| `erp.status_pagina` | Page visibility per role (controls sidebar) |
+| `erp.user_actions_log` | Audit trail for ERP actions |
+| `erp.password_request_codes` | Admin temporary passwords |
 
 ---
 
@@ -95,7 +96,7 @@
 All ERP tables enforce tenant isolation:
 
 ```sql
-CREATE POLICY "org_isolation" ON ativos
+CREATE POLICY "org_isolation" ON erp.ativos
   FOR ALL
   USING (org_id = auth.jwt() ->> 'org_id');
 ```
@@ -106,7 +107,7 @@ CREATE POLICY "org_isolation" ON ativos
 
 ---
 
-## Key Field: `ativos.natureza`
+## Key Field: `erp.ativos.natureza`
 
 The `ativos` table is **unified** — it stores three entity types:
 
@@ -122,4 +123,14 @@ Matching algorithm pairs `imovel` entries with `permuta_*` entries.
 
 ## Embeddings
 
-The `ativos` table has an `embedding` column (vector, 1536 dimensions) populated by the embedding service using OpenAI `text-embedding-3-small`. Used for semantic similarity in the matching algorithm.
+The `erp.ativos` table has an `embedding` column (vector, 1536 dimensions) populated by the embedding service using OpenAI `text-embedding-3-small`. Used for semantic similarity in the matching algorithm.
+
+---
+
+## Migration Files
+
+| File | Purpose |
+|------|---------|
+| `products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql` | Full ERP schema (fresh deploys) — creates `erp` schema + all objects |
+| `products/erp-imobiliario/backend/migrations/002_ai_matching.sql` | pgvector embeddings + `match_ativos` function |
+| `products/erp-imobiliario/backend/migrations/003_schema_separation.sql` | Moves objects from `public` → `erp` (existing databases only) |

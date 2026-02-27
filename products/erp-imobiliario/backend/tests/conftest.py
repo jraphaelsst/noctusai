@@ -60,6 +60,7 @@ class MockSupabaseClient:
         self._data = data
         self.auth = MagicMock()
         self._tables = {}
+        self._rpcs = {}
 
     def table(self, name):
         if name not in self._tables:
@@ -69,8 +70,12 @@ class MockSupabaseClient:
     def set_table_data(self, name, data):
         self._tables[name] = MockQueryBuilder(data)
 
-    def rpc(self, name):
-        return MockQueryBuilder(["2026-02-23"])
+    def set_rpc_data(self, name, data):
+        self._rpcs[name] = data
+
+    def rpc(self, name, params=None):
+        data = self._rpcs.get(name, ["2026-02-23"])
+        return MockQueryBuilder(data)
 
 
 class MockUser:
