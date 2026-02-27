@@ -2,17 +2,17 @@
 
 > Path: `products/erp-imobiliario/backend/app/`
 > Server: FastAPI on port **8001**
-> Tests: `products/erp-imobiliario/backend/tests/` (56 test files)
+> Tests: `products/erp-imobiliario/backend/tests/` (63 test files, 959 tests)
 
 ---
 
 ## Overview
 
-Full real estate CRM backend with 39 routers and 30 services. Handles property management, client CRM, sales funnel, AI-powered matching, financial operations, WhatsApp messaging, and compliance reporting.
+Full real estate CRM backend with 47 routers and 37 services. Handles property management, client CRM, sales funnel, AI-powered matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting.
 
 ---
 
-## Routers (40)
+## Routers (47)
 
 ### Core Domain
 
@@ -86,6 +86,18 @@ Full real estate CRM backend with 39 routers and 30 services. Handles property m
 | `agenda.py` | `/api/agenda` | Calendar/scheduling |
 | `documentos.py` | `/api/documentos` | Document management |
 
+### Integrations & Automation
+
+| Router | Prefix | Purpose |
+|--------|--------|---------|
+| `storage.py` | `/api/storage` | File upload/delete via Supabase Storage (dry-run when unconfigured) |
+| `pdf.py` | `/api/pdf` | PDF generation for contracts, proposals, financial reports, DIMOB |
+| `jobs.py` | `/api/jobs` | Background job submission and status tracking |
+| `recorrencia.py` | `/api/recorrencia` | Recurring transaction automation (rent generation, overdue detection) |
+| `notificacoes.py` | `/api/notificacoes` | Notification system with channel preferences |
+| `whatsapp_webhook.py` | `/api/whatsapp` | WAHA webhook receiver + session management |
+| `meta_api.py` | `/api/meta` | Facebook/Instagram Lead Ads + campaign sync |
+
 ### Logging
 
 | Router | Prefix | Purpose |
@@ -95,7 +107,7 @@ Full real estate CRM backend with 39 routers and 30 services. Handles property m
 
 ---
 
-## Services (31)
+## Services (37)
 
 ### AI & Matching
 
@@ -134,8 +146,20 @@ Full real estate CRM backend with 39 routers and 30 services. Handles property m
 | `relatorios_service.py` | Report generation |
 | `seguros_service.py` | Insurance management |
 | `vistorias_service.py` | Inspection logic |
-| `whatsapp_service.py` | WhatsApp messaging via WAHA |
+| `whatsapp_service.py` | WhatsApp messaging via Meta Business API or WAHA |
 | `xml_feeds.py` | XML feed generation for portals |
+
+### Integrations & Automation
+
+| Service | Purpose |
+|---------|---------|
+| `storage_service.py` | Supabase Storage: upload, delete, signed URLs (6 bucket categories, MIME validation, dry-run mode) |
+| `pdf_service.py` | PDF generation via reportlab (contracts, proposals, financial reports, DIMOB) |
+| `job_service.py` | In-memory async background jobs with named handlers and auto-cleanup |
+| `signature_provider.py` | Digital signature dispatch: ClickSign, DocuSign, D4Sign, or internal mock |
+| `recorrencia_service.py` | Recurring transactions: rent generation, lancamentos, overdue detection (idempotent) |
+| `notificacao_service.py` | Multi-channel notification delivery (app, email, WhatsApp) |
+| `meta_api_service.py` | Meta Graph API: Lead Ads sync, campaign metrics import |
 
 ---
 
@@ -160,14 +184,21 @@ SSO flow: Core platform issues SSO token → ERP validates via `/api/sso/validat
 ```
 tests/
 ├── conftest.py                    # MockSupabaseClient, AuthClient fixtures
-├── routers/                       # 40 router test files
+├── routers/                       # 47 router test files
 │   ├── test_ativos_router.py
 │   ├── test_clientes_router.py
 │   ├── test_matching_router.py
-│   ├── test_matching_service.py
-│   └── ... (40 files)
+│   ├── test_storage_router.py
+│   ├── test_pdf_router.py
+│   ├── test_jobs_router.py
+│   ├── test_recorrencia_router.py
+│   ├── test_bi_dashboard_router.py
+│   ├── test_notificacoes_router.py
+│   ├── test_meta_api_router.py
+│   └── ... (47 files)
 ├── services/                      # 11 service test files
 │   ├── test_embedding_service.py
+│   ├── test_email_service.py
 │   └── ... (11 files)
 └── integration/
     ├── conftest.py                # StatefulMockClient

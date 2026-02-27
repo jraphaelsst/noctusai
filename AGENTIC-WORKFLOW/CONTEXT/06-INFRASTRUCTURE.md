@@ -85,6 +85,15 @@ Configurable via `CORS_ORIGINS` env var (comma-separated).
 
 ---
 
+## Supabase Schema Configuration
+
+- **ERP backend** (`database.py`): `ClientOptions(schema="erp")` — all `.table()` and `.rpc()` calls target `erp` schema
+- **ERP frontend** (`client.ts`): `db: { schema: 'erp' }` — all direct `.from()` calls target `erp` schema
+- **Core backend**: defaults to `public` schema
+- **Supabase Dashboard**: `erp` must be in "Exposed schemas" (Project Settings → API) for PostgREST to accept the `Accept-Profile: erp` header
+
+---
+
 ## External Service Dependencies
 
 | Service | Used By | Purpose | Auth |
@@ -92,11 +101,18 @@ Configurable via `CORS_ORIGINS` env var (comma-separated).
 | Supabase | Both backends | Database, auth, storage | `SUPABASE_URL` + keys |
 | OpenAI | ERP backend | AI descriptions, embeddings, scoring | `OPENAI_API_KEY` |
 | Stripe | Core backend | Billing, subscriptions | `STRIPE_SECRET_KEY` |
-| WAHA | ERP backend | WhatsApp messaging | `WAHA_API_URL` + key |
+| WAHA | ERP backend | WhatsApp messaging (self-hosted) | `WAHA_API_URL` + key |
+| Meta Business API | ERP backend | WhatsApp Cloud API messaging | `WHATSAPP_API_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` |
+| Meta Graph API | ERP backend | Facebook Lead Ads + campaign sync | Stored in `erp.meta_config` per org |
+| Resend | Both backends | Email delivery | `RESEND_API_KEY` (org_settings → env fallback) |
+| ClickSign | ERP backend | Digital signatures | `CLICKSIGN_API_TOKEN` (org_settings → env) |
+| DocuSign | ERP backend | Digital signatures | `DOCUSIGN_INTEGRATION_KEY` + `DOCUSIGN_ACCOUNT_ID` |
+| D4Sign | ERP backend | Digital signatures | `D4SIGN_API_TOKEN` + `D4SIGN_CRYPT_KEY` |
 | n8n | External | Workflow orchestration | Webhook URLs |
-| Resend | Core backend | Email delivery | `RESEND_API_KEY` |
 | Sentry | Optional | Error tracking | `SENTRY_DSN` |
-| Redis | Optional | Caching | `REDIS_URL` |
+| Redis | Optional | Caching, job queue (production) | `REDIS_URL` |
+
+All external integrations follow a **dry-run pattern**: when credentials are not configured, services log actions and return mock responses. This allows development without real API keys.
 
 ---
 

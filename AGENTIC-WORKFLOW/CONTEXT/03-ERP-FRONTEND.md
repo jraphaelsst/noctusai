@@ -8,7 +8,7 @@
 
 ## Overview
 
-Full real estate CRM frontend with 45 lazy-loaded pages, 55 TanStack Query hooks, Zustand stores for UI state, and shadcn/ui components. All routes are protected behind auth.
+Full real estate CRM frontend with 48 lazy-loaded pages, 59 TanStack Query hooks, Zustand stores for UI state, and shadcn/ui components. All routes are protected behind auth. The Supabase client uses `db: { schema: 'erp' }` so all direct `.from()` calls target the ERP schema.
 
 ---
 
@@ -31,7 +31,7 @@ Full real estate CRM frontend with 45 lazy-loaded pages, 55 TanStack Query hooks
 
 ---
 
-## Pages (45)
+## Pages (48)
 
 ### Core Pages
 `Dashboard`, `Funil`, `Clientes`, `ClienteDetalhes`, `Metas`, `Usuarios`, `Admin`, `Index`, `NotFound`, `SSOCallback`
@@ -48,8 +48,8 @@ Full real estate CRM frontend with 45 lazy-loaded pages, 55 TanStack Query hooks
 ### Insurance & Documents
 `Seguros`, `Documentos`, `Chaves`
 
-### Marketing & Portals
-`Marketing`, `Portais`, `PortalExterno`, `PortalCliente`, `SiteImoveis`, `Emails`
+### Marketing & Communication
+`Marketing`, `Portais`, `PortalExterno`, `PortalCliente`, `SiteImoveis`, `Emails`, `WhatsAppInbox`, `Notificacoes`, `MetaAds`
 
 ### Compliance & Analytics
 `Dimob`, `AnaliseCredito`, `Filiais`, `Distribuicao`, `Relatorios`, `BI`, `Gamificacao`
@@ -59,7 +59,7 @@ Full real estate CRM frontend with 45 lazy-loaded pages, 55 TanStack Query hooks
 
 ---
 
-## Hooks (55)
+## Hooks (59)
 
 All follow TanStack Query patterns (`useQuery`, `useMutation`, `useQueryClient`).
 
@@ -84,6 +84,12 @@ All follow TanStack Query patterns (`useQuery`, `useMutation`, `useQueryClient`)
 ### Admin & Compliance
 `useAgenda`, `useAnaliseCredito`, `useBI`, `useCampo`, `useChaves`, `useDistribuicao`, `useDocumentos`, `useEmails`, `useFiliais`, `useGamificacao`, `useMarketing`, `usePortais`, `usePortalCliente`, `usePortalExterno`, `useRelatorios`, `useSiteImoveis`, `useVistorias`, `useWhatsApp`
 
+### Dashboard & Analytics
+`useDashboardResumo`, `useBIVendas`, `useBICaptacao`, `useBICorretores`, `useBIImoveis`, `useBIFinanceiro`
+
+### Integrations
+`useStorage` (`useUploadFile`, `useUploadMultipleFiles`, `useDeleteFile`), `useNotificacoes` (6 hooks: list, count, mark read, preferences), `useMetaApi` (config, leads, campaigns, sync)
+
 ### AI & Utilities
 `useAI`, `useAtividades`, `useActionLog`, `useProfiles`, `useDebounce`, `use-mobile`, `use-toast`, `useRecuperarSenha`, `useRequisitarSenha`
 
@@ -94,7 +100,18 @@ All follow TanStack Query patterns (`useQuery`, `useMutation`, `useQueryClient`)
 ### Layout
 - `layout/Layout.tsx` — Main app wrapper
 - `layout/Header.tsx` — Top bar
-- `layout/Sidebar.tsx` — Navigation sidebar (RLS-driven via `status_pagina` table)
+- `layout/Sidebar.tsx` — Navigation sidebar with **8 collapsible groups** (RLS-driven via `status_pagina` table):
+  1. **Principal** — Dashboard, Funil, Clientes, Metas
+  2. **Comercial** — Imóveis, Condomínios, Permutas, Negociações, Propostas, Contratos, Locações, Comissões
+  3. **Financeiro** — Financeiro, Impostos, Banco, Análise de Crédito
+  4. **Operacional** — Agenda, Vistorias, Manutenção, Chaves, Campo, Seguros
+  5. **Marketing & Comunicação** — Marketing, Emails, WhatsApp, Meta Ads, Notificações
+  6. **Documentos** — Documentos, Assinaturas, DIMOB, Relatórios
+  7. **Portais & Site** — Portal Cliente, Portal Externo, Site Imóveis
+  8. **Analytics & IA** — BI, Matching IA, Gamificação
+  - Plus standalone items: Distribuição, Filiais, Configurações
+  - Plus admin-only **Painel de Controle**: Usuários, Admin, Log de Ações
+- `NotificationBell.tsx` — Notification bell dropdown for the header
 
 ### Auth
 - `auth/AuthProvider.tsx` — Auth context provider
@@ -112,11 +129,18 @@ All follow TanStack Query patterns (`useQuery`, `useMutation`, `useQueryClient`)
 
 ---
 
+## Supabase Client (`integrations/supabase/client.ts`)
+
+- Configured with `db: { schema: 'erp' }` — all `.from()` calls target the `erp` schema
+- Only used directly for: auth (`supabase.auth.*`), `status_pagina` sidebar query, `user_roles` query, `user_actions_log` insert, `negociacoes` insert
+- All other data operations go through the API client below
+
 ## API Client (`lib/api-client.ts`)
 
 - Auto-includes Bearer token from Supabase session
 - Methods: `get()`, `post()`, `patch()`, `delete()`
 - Base URL: `VITE_BACKEND_API_URL` (default `http://localhost:8001`)
+- File uploads (`useStorage`) use raw `fetch()` with `BACKEND_URL` prefix (FormData requires omitting Content-Type header)
 
 ---
 

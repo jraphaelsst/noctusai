@@ -262,3 +262,17 @@ The `erp.ativos` table has an `embedding` column (vector, 1536 dimensions) popul
 | `products/erp-imobiliario/backend/migrations/002_ai_matching.sql` | pgvector embeddings + `match_ativos` function |
 | `products/erp-imobiliario/backend/migrations/003_schema_separation.sql` | Moves objects from `public` → `erp` (existing databases only) |
 | `products/erp-imobiliario/backend/migrations/004_mvp_expansion.sql` | 42 new tables for MVP expansion (existing databases) |
+| `products/erp-imobiliario/backend/migrations/005_fix_sidebar_pages.sql` | Fix `set_timestamps_sp()` trigger, seed all 42 sidebar routes, set admin role |
+
+### Trigger Function: `erp.set_timestamps_sp()`
+
+Shared trigger attached to most tables. Automatically sets `created_at` on INSERT and `updated_at` on INSERT/UPDATE. **Safely checks** `information_schema.columns` before touching `updated_at`, so tables without that column (e.g. `user_roles`, `password_request_codes`) don't crash.
+
+### Sidebar Visibility: `erp.status_pagina`
+
+Controls which pages appear in the sidebar. Each route must have a row in this table. RLS policies:
+- `tipo_pagina = 'geral'` + `status = 'producao'` → visible to all authenticated users
+- `tipo_pagina = 'administrativa'` → visible only to admins (`has_role(auth.uid(), 'admin')`)
+- `status = 'desenvolvimento'` → visible to admins and devs only
+
+The table is seeded with all 42 sidebar routes in migration 005 (and in 001 for fresh deploys).
