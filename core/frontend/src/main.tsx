@@ -18,10 +18,12 @@ import { AdminPlans } from './pages/admin/AdminPlans';
 import { AdminBilling } from './pages/admin/AdminBilling';
 import { AdminWebhooks } from './pages/admin/AdminWebhooks';
 import { AdminAnalytics } from './pages/admin/AdminAnalytics';
+import { AdminSettings } from './pages/admin/AdminSettings';
 import { Onboarding } from './pages/Onboarding';
 import { TeamManagement } from './pages/TeamManagement';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { AccountSettings } from './pages/AccountSettings';
+import { OrgSettings } from './pages/OrgSettings';
 import './index.css';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -50,6 +52,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/checkout/cancel" element={<ProtectedRoute><CheckoutCancel /></ProtectedRoute>} />
           <Route path="/team" element={<ProtectedRoute><TeamManagement /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><AccountSettings /></ProtectedRoute>} />
+          <Route path="/org-settings" element={<ProtectedRoute><OrgSettings /></ProtectedRoute>} />
           <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
 
           {/* Public route — accept invitation (no ProtectedRoute wrapper) */}
@@ -65,6 +68,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="billing" element={<AdminBilling />} />
             <Route path="webhooks" element={<AdminWebhooks />} />
             <Route path="analytics" element={<AdminAnalytics />} />
+            <Route path="settings" element={<AdminSettings />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

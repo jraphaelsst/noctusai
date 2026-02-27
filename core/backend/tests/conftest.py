@@ -334,6 +334,10 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
         # Billing router
         ("app.routers.billing.get_admin_client", mock_sb),
         ("app.routers.billing.get_current_user", mock_get_user),
+        # Settings router
+        ("app.routers.settings.get_admin_client", mock_sb),
+        ("app.routers.settings.get_current_user", mock_get_user),
+        ("app.routers.settings.get_current_admin", mock_get_admin),
         # Permissions service
         ("app.services.permissions.get_admin_client", mock_sb),
     ]

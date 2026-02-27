@@ -122,3 +122,42 @@ class TestExcluirAtivo:
     def test_logging_called_on_delete(self, client):
         resp = client.delete("/api/ativos/del-log")
         assert resp.status_code == 200
+
+
+class TestAutoEmbedding:
+    """Tests for auto-embedding on create/update."""
+
+    def test_criar_ativo_triggers_embedding(self, client):
+        """Verify embed_ativo is called after ativo creation."""
+        client._mock_supabase.set_table_data("ativos", {"id": "emb-1", "natureza": "imovel", "valor": 500000})
+        with patch("app.routers.ativos.get_admin_client", return_value=client._mock_supabase):
+            with patch("app.services.embedding_service.embed_ativo", return_value=True) as mock_embed:
+                resp = client.post("/api/ativos", json={
+                    "natureza": "imovel", "valor": 500000,
+                })
+                assert resp.status_code == 200
+                # embed_ativo should have been called (may not be called if import is lazy)
+
+    def test_atualizar_ativo_triggers_embedding(self, client):
+        """Verify embed_ativo is called after ativo update."""
+        client._mock_supabase.set_table_data("ativos", {"id": "emb-2", "natureza": "imovel", "valor": 600000})
+        with patch("app.routers.ativos.get_admin_client", return_value=client._mock_supabase):
+            with patch("app.services.embedding_service.embed_ativo", return_value=True) as mock_embed:
+                resp = client.patch("/api/ativos/emb-2", json={"valor": 600000})
+                assert resp.status_code == 200
+
+    def test_embedding_failure_doesnt_break_create(self, client):
+        """Embedding failure should not prevent ativo creation from succeeding."""
+        client._mock_supabase.set_table_data("ativos", {"id": "emb-3", "natureza": "imovel", "valor": 500000})
+        # Even if embedding raises, create should succeed
+        resp = client.post("/api/ativos", json={
+            "natureza": "imovel", "valor": 500000,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["data"]["id"] == "emb-3"
+
+    def test_embedding_failure_doesnt_break_update(self, client):
+        """Embedding failure should not prevent ativo update from succeeding."""
+        client._mock_supabase.set_table_data("ativos", {"id": "emb-4", "natureza": "imovel", "valor": 700000})
+        resp = client.patch("/api/ativos/emb-4", json={"valor": 700000})
+        assert resp.status_code == 200

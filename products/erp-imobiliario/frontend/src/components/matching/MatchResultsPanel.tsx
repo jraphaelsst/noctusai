@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MatchResult } from '@/types/imoveis';
+import { Match } from '@/hooks/useMatches';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,12 +14,12 @@ import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
 
 interface MatchResultsPanelProps {
-  matches: MatchResult[];
+  matches: Match[];
   onClose: () => void;
 }
 
 export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) {
-  const [selectedMatch, setSelectedMatch] = useState<MatchResult | null>(null);
+  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [observacoes, setObservacoes] = useState('');
   const [creating, setCreating] = useState(false);
   const { user } = useAuthStore();
@@ -45,14 +45,14 @@ export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) 
     try {
       const { error } = await supabase.from('negociacoes').insert({
         owner_id: user.id,
-        imovel_id: selectedMatch.imovel_id,
-        perfil_permuta_id: selectedMatch.perfil_permuta_id,
-        cliente_proprietario_id: selectedMatch.imovel?.owner_id || user.id,
-        cliente_ofertante_id: selectedMatch.perfil_permuta?.cliente_ofertante_id || user.id,
-        valor_imovel: selectedMatch.imovel?.preco_pedido || 0,
-        valor_permuta: selectedMatch.perfil_permuta?.valor_estimado || 0,
+        ativo_origem_id: selectedMatch.ativo_origem_id,
+        ativo_destino_id: selectedMatch.ativo_destino_id,
+        cliente_proprietario_id: selectedMatch.ativo_origem?.owner_id || user.id,
+        cliente_ofertante_id: selectedMatch.ativo_destino?.owner_id || user.id,
+        valor_imovel: selectedMatch.ativo_origem?.valor || 0,
+        valor_permuta: selectedMatch.ativo_destino?.valor || 0,
         valor_complemento: Math.max(
-          (selectedMatch.imovel?.preco_pedido || 0) - (selectedMatch.perfil_permuta?.valor_estimado || 0),
+          (selectedMatch.ativo_origem?.valor || 0) - (selectedMatch.ativo_destino?.valor || 0),
           0
         ),
         status_etapa: 'qualificacao',
@@ -98,18 +98,18 @@ export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) 
             </p>
           ) : (
             matches.map((match) => (
-              <Card key={`${match.imovel_id}-${match.perfil_permuta_id}`}>
+              <Card key={match.id || `${match.ativo_origem_id}-${match.ativo_destino_id}`}>
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
                         <HomeIcon className="h-4 w-4 text-primary" />
-                        <span className="font-medium">{match.imovel?.tipo}</span>
+                        <span className="font-medium">
+                          {match.ativo_origem?.tipo_imovel || match.ativo_origem?.natureza || 'Origem'}
+                        </span>
                         <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">
-                          {match.perfil_permuta?.categoria === 'imovel'
-                            ? match.perfil_permuta.tipo_imovel
-                            : match.perfil_permuta?.tipo_movel}
+                          {match.ativo_destino?.tipo_imovel || match.ativo_destino?.natureza || 'Destino'}
                         </span>
                       </div>
                       <p className="text-sm text-muted-foreground">{match.justificativa}</p>
@@ -123,6 +123,16 @@ export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) 
                   </div>
 
                   <div className="space-y-2 mb-4">
+                    {match.score_breakdown?.embedding_similarity != null && (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span>Similaridade IA</span>
+                          <span className="font-medium">{Math.round(match.score_breakdown.embedding_similarity)}%</span>
+                        </div>
+                        <Progress value={match.score_breakdown.embedding_similarity} className="h-2" />
+                      </>
+                    )}
+
                     <div className="flex justify-between text-sm">
                       <span>Região</span>
                       <span className="font-medium">{match.detalhes.compatibilidade_regiao}%</span>
@@ -150,8 +160,8 @@ export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) 
 
                   <div className="flex justify-between items-center pt-4 border-t">
                     <div className="text-sm">
-                      <div>Imóvel: {formatCurrency(match.imovel?.preco_pedido || 0)}</div>
-                      <div>Permuta: {formatCurrency(match.perfil_permuta?.valor_estimado || 0)}</div>
+                      <div>Origem: {formatCurrency(match.ativo_origem?.valor || 0)}</div>
+                      <div>Destino: {formatCurrency(match.ativo_destino?.valor || 0)}</div>
                       {match.detalhes.gap_valor > 0 && (
                         <div className="font-medium text-orange-600">
                           Gap: {formatCurrency(match.detalhes.gap_valor)}
@@ -182,8 +192,8 @@ export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) 
               <p className="text-sm font-medium mb-2">Match Selecionado:</p>
               <div className="text-sm space-y-1">
                 <div>Score: <span className="font-medium">{selectedMatch?.score}%</span></div>
-                <div>Imóvel: {formatCurrency(selectedMatch?.imovel?.preco_pedido || 0)}</div>
-                <div>Permuta: {formatCurrency(selectedMatch?.perfil_permuta?.valor_estimado || 0)}</div>
+                <div>Origem: {formatCurrency(selectedMatch?.ativo_origem?.valor || 0)}</div>
+                <div>Destino: {formatCurrency(selectedMatch?.ativo_destino?.valor || 0)}</div>
                 {selectedMatch && selectedMatch.detalhes.gap_valor > 0 && (
                   <div>Complemento: {formatCurrency(selectedMatch.detalhes.gap_valor)}</div>
                 )}

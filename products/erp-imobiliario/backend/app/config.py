@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # JWT / SSO (must match Core platform's jwt_secret)
     jwt_secret: str = "noctus-dev-secret-change-in-prod"
     jwt_algorithm: str = "HS256"
-    core_api_url: str = "http://localhost:8001"
+    core_api_url: str = "http://localhost:8000"
 
     # Observability (optional - graceful degradation if not set)
     sentry_dsn: Optional[str] = None

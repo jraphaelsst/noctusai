@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { to: '/admin/billing', label: 'Faturamento', icon: '💰', end: false },
   { to: '/admin/webhooks', label: 'Webhooks', icon: '🔗', end: false },
   { to: '/admin/analytics', label: 'Analytics', icon: '📈', end: false },
+  { to: '/admin/settings', label: 'Configurações', icon: '⚙️', end: false },
 ];
 
 export function AdminLayout() {

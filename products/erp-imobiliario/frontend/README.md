@@ -77,15 +77,14 @@ Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/c
 This project follows specific coding patterns to ensure consistency and best practices:
 
 ### Modal Implementation Pattern
-All modals in this project follow a standardized pattern for instant UI updates and better UX.
+All modals follow a standardized `formData` pattern for instant UI updates.
 
-**Quick Reference**: See [README_MODAL_PATTERNS.md](./README_MODAL_PATTERNS.md)  
-**Full Documentation**: See [MODAL_PATTERNS.md](./MODAL_PATTERNS.md)
+**Documentation**: See [AGENTIC-WORKFLOW/CONTEXT/03-ERP-FRONTEND.md](../../../AGENTIC-WORKFLOW/CONTEXT/03-ERP-FRONTEND.md) (Modal Patterns section)
 
 **Key Rules**:
-- ✅ Use `formData` state, not entity props, for display
-- ✅ Update UI instantly without closing modals
-- ✅ Keep consistent behavior across all modals
+- Use `formData` state, not entity props, for display
+- Update UI instantly without closing modals
+- Keep consistent behavior across all modals
 
 **Reference Implementations**:
 - `src/components/modals/MetaDetalhesModal.tsx`

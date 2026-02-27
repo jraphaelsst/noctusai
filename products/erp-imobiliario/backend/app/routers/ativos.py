@@ -233,6 +233,14 @@ async def criar_ativo(body: AtivoCreate, authorization: Optional[str] = Header(N
     log_action(user.id, "criar", "ativo", ativo["id"],
                f"Criou {body.natureza} {ativo['id']}")
 
+    # Auto-trigger embedding generation (non-blocking)
+    try:
+        from app.services.embedding_service import embed_ativo as do_embed
+        admin = get_admin_client()
+        await do_embed(ativo, admin)
+    except Exception as e:
+        logger.warning(f"Auto-embedding failed for {ativo['id']}: {e}")
+
     # Auto-trigger matching
     if body.natureza == "imovel" and body.aceita_permutas:
         try:
@@ -268,6 +276,15 @@ async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optio
         raise HTTPException(status_code=404, detail="Ativo não encontrado ou sem permissão")
 
     log_action(user.id, "editar", "ativo", ativo_id, f"Editou ativo {ativo_id}")
+
+    # Re-embed after update (non-blocking)
+    try:
+        from app.services.embedding_service import embed_ativo as do_embed
+        admin = get_admin_client()
+        await do_embed(result.data, admin)
+    except Exception as e:
+        logger.warning(f"Auto-embedding failed for {ativo_id}: {e}")
+
     return success_response(result.data)
 
 

@@ -3,11 +3,22 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/authStore';
 
+export interface ScoreBreakdown {
+  embedding_similarity: number;
+  compatibilidade_regiao: number;
+  compatibilidade_preco: number;
+  compatibilidade_specs: number;
+  qualidade_anuncio: number;
+  interesses: number;
+  gap_valor: number;
+}
+
 export interface Match {
   id: string;
   ativo_origem_id: string;
   ativo_destino_id: string;
   score: number;
+  score_breakdown: ScoreBreakdown | null;
   status: 'pendente' | 'aceito' | 'rejeitado' | 'expirado';
   justificativa: string | null;
   detalhes: {
@@ -77,6 +88,41 @@ export function useRecalcularMatches() {
     },
     onError: (error: Error) => {
       toast.error('Erro ao gerar matches', { description: error.message });
+    },
+  });
+}
+
+export function useEmbedAtivo() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (ativoId: string) => {
+      return api.post('/api/matching/embed', { ativo_id: ativoId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['matches'] });
+      toast.success('Embedding gerado com sucesso!');
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao gerar embedding', { description: error.message });
+    },
+  });
+}
+
+export function useEmbedBatch() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (ativoIds: string[]) => {
+      return api.post('/api/matching/embed-batch', { ativo_ids: ativoIds });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['matches'] });
+      const embedded = data?.embedded || 0;
+      toast.success(`${embedded} ativo(s) embedado(s) com sucesso!`);
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao gerar embeddings em lote', { description: error.message });
     },
   });
 }

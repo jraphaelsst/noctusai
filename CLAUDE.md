@@ -57,7 +57,7 @@ pip install -r requirements.txt
 source venv/bin/activate
 
 # Run server
-uvicorn app.main:app --reload --port 8000 --app-dir products/erp-imobiliario/backend
+uvicorn app.main:app --reload --port 8001 --app-dir products/erp-imobiliario/backend
 
 # Run all tests
 cd products/erp-imobiliario/backend
@@ -74,7 +74,7 @@ pytest tests/routers/test_matching_service.py::TestCompatibilidadeRegiao::test_e
 
 ```bash
 source venv/bin/activate
-uvicorn app.main:app --reload --port 8001 --app-dir core/backend
+uvicorn app.main:app --reload --port 8000 --app-dir core/backend
 ```
 
 ### ERP Frontend
@@ -141,8 +141,8 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 - **Validation**: Pydantic models use `Field()` constraints (ge, le, max_length). Use `Literal` types for enum-like fields.
 - **Error handling**: Raise `HTTPException` for simple cases. Use custom `AppException` subclasses for structured errors. All exceptions are caught by centralized handlers in `main.py`.
 - **Logging**: Structured JSON in production, human-readable in dev. Every request gets a correlation ID via middleware.
-- **Frontend modals**: Use `formData` state (not entity props) for display. Update UI instantly without closing modals. See `MODAL_PATTERNS.md`.
-- **Dates**: All date handling uses São Paulo timezone (America/Sao_Paulo). Server calculates dates via Supabase RPC `get_data_sp()`. See `DATE_TIMEZONE_GUIDE.md`.
+- **Frontend modals**: Use `formData` state (not entity props) for display. Update UI instantly without closing modals. See `AGENTIC-WORKFLOW/CONTEXT/03-ERP-FRONTEND.md` (Modal Patterns section).
+- **Dates**: All date handling uses São Paulo timezone (America/Sao_Paulo). Server calculates dates via Supabase RPC `get_data_sp()`. See `AGENTIC-WORKFLOW/CONTEXT/03-ERP-FRONTEND.md` (Date & Timezone Patterns section).
 
 ## Subscription & Admin System
 

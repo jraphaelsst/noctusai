@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: core/backend/Dockerfile
     ports:
-      - "8001:8001"
+      - "8000:8000"
     env_file:
       - .env
     restart: unless-stopped
@@ -16,7 +16,7 @@ services:
       context: .
       dockerfile: products/erp-imobiliario/backend/Dockerfile
     ports:
-      - "8000:8000"
+      - "8001:8001"
     env_file:
       - .env
     restart: unless-stopped

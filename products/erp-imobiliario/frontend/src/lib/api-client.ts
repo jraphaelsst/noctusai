@@ -5,7 +5,7 @@
  */
 import { supabase } from '@/integrations/supabase/client';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const { data: { session } } = await supabase.auth.getSession();

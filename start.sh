@@ -14,7 +14,7 @@ if [ ! -f "$ROOT_DIR/.env" ]; then
   exit 1
 fi
 
-PORTS=(8001 8000 5173 8080)
+PORTS=(8000 8001 5173 8080)
 PIDS=()
 
 # Kill a process and all its descendants
@@ -71,16 +71,16 @@ fi
 echo "[venv] Instalando dependencias..."
 "$VENV/bin/pip" install -q -r "$ROOT_DIR/requirements.txt"
 
-# --- Core Backend (porta 8001) ---
+# --- Core Backend (porta 8000) ---
 CORE_BACKEND="$ROOT_DIR/core/backend"
-echo "[Core Backend] Iniciando na porta 8001..."
-"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8001 --app-dir "$CORE_BACKEND" &
+echo "[Core Backend] Iniciando na porta 8000..."
+"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 --app-dir "$CORE_BACKEND" &
 PIDS+=($!)
 
-# --- ERP Backend (porta 8000) ---
+# --- ERP Backend (porta 8001) ---
 ERP_BACKEND="$ROOT_DIR/products/erp-imobiliario/backend"
-echo "[ERP Backend] Iniciando na porta 8000..."
-"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 --app-dir "$ERP_BACKEND" &
+echo "[ERP Backend] Iniciando na porta 8001..."
+"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8001 --app-dir "$ERP_BACKEND" &
 PIDS+=($!)
 
 # --- Core Frontend (porta 5173) ---
@@ -108,8 +108,8 @@ PIDS+=($!)
 echo ""
 echo "============================================"
 echo "  Servicos iniciados:"
-echo "  Core Backend  → http://localhost:8001"
-echo "  ERP Backend   → http://localhost:8000"
+echo "  Core Backend  → http://localhost:8000"
+echo "  ERP Backend   → http://localhost:8001"
 echo "  Core Frontend → http://localhost:5173"
 echo "  ERP Frontend  → http://localhost:8080"
 echo "============================================"

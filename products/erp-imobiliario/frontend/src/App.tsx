@@ -54,6 +54,8 @@ const Impostos = lazy(() => import("./pages/Impostos"));
 const Banco = lazy(() => import("./pages/Banco"));
 const Emails = lazy(() => import("./pages/Emails"));
 const BI = lazy(() => import("./pages/BI"));
+const Matching = lazy(() => import("./pages/Matching"));
+const Configuracoes = lazy(() => import("./pages/Configuracoes"));
 
 // QueryClient com configurações otimizadas
 const queryClient = new QueryClient({
@@ -124,6 +126,8 @@ function AuthenticatedRoutes() {
           <Route path="/banco" element={<Banco />} />
           <Route path="/emails" element={<Emails />} />
           <Route path="/bi" element={<BI />} />
+          <Route path="/matching" element={<Matching />} />
+          <Route path="/configuracoes" element={<Configuracoes />} />
           <Route path="/log-acoes" element={<LogAcoes />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

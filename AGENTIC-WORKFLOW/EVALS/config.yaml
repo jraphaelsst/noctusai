@@ -1,0 +1,42 @@
+# Eval Runner Configuration
+# Reference: INSTRUCTIONS/05-TESTING-EVALS.md and INSTRUCTIONS/07-TEMPLATES.md
+
+agent_under_test:
+  endpoint: "http://localhost:8001"
+  auth_token: "${TEST_AUTH_TOKEN}"
+
+runner:
+  timeout_per_case: 30          # seconds
+  max_retries: 1
+  parallel: false
+  report_dir: "AGENTIC-WORKFLOW/EVALS/reports"
+
+judge:
+  model: "gpt-4o-mini"
+  temperature: 0.0
+  max_tokens: 50000
+
+skills:
+  - name: property-description
+    cases_file: "cases/property-description.yaml"
+    baseline_score: 0.85
+  - name: lead-scoring
+    cases_file: "cases/lead-scoring.yaml"
+    baseline_score: 0.85
+  - name: price-suggestion
+    cases_file: "cases/price-suggestion.yaml"
+    baseline_score: 0.80
+  - name: ativo-matching
+    cases_file: "cases/ativo-matching.yaml"
+    baseline_score: 0.80
+  - name: ativo-embedding
+    cases_file: "cases/ativo-embedding.yaml"
+    baseline_score: 0.90
+  - name: whatsapp-messaging
+    cases_file: "cases/whatsapp-messaging.yaml"
+    baseline_score: 0.85
+
+regression:
+  enabled: true
+  fail_on_regression: true
+  tolerance: 0.05               # allow 5% score drop before flagging

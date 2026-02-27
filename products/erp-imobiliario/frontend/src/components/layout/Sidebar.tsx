@@ -1,4 +1,4 @@
-import { Home, Target, Users, Building2, Shield, ChevronDown, LayoutDashboard, UserCircle, Wrench, CheckCircle2, HomeIcon, ArrowLeftRight, FileText, FileSignature, UserCheck, HardHat, ShieldCheck, Receipt, Landmark, Mail, BarChart3 } from "lucide-react";
+import { Home, Target, Users, Building2, Shield, ChevronDown, LayoutDashboard, UserCircle, Wrench, CheckCircle2, HomeIcon, ArrowLeftRight, FileText, FileSignature, UserCheck, HardHat, ShieldCheck, Receipt, Landmark, Mail, BarChart3, Sparkles, Settings } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useUserRoles } from "@/hooks/useUserRoles";
@@ -46,6 +46,8 @@ export function Sidebar() {
     { name: "Banco", href: "/banco", icon: Landmark, route: "banco" },
     { name: "Emails", href: "/emails", icon: Mail, route: "emails" },
     { name: "BI", href: "/bi", icon: BarChart3, route: "bi" },
+    { name: "Matching", href: "/matching", icon: Sparkles, route: "matching" },
+    { name: "Configurações", href: "/configuracoes", icon: Settings, route: "configuracoes" },
   ];
 
   // Filtrar navegação baseado nas páginas retornadas pelas políticas RLS

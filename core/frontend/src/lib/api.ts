@@ -1,7 +1,7 @@
 /**
  * NoctusAI Core — API Client
  */
-const API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:8001';
+const API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:8000';
 
 function getToken(): string | null {
   return localStorage.getItem('noctus_token');
