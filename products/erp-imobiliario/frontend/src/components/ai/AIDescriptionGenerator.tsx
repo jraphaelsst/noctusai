@@ -4,7 +4,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { apiClient } from "@/lib/api-client";
+import { useGenerateDescription } from "@/hooks/useAI";
 
 interface PropertyData {
   tipo?: string;
@@ -36,16 +36,15 @@ export function AIDescriptionGenerator({
   currentDescription,
 }: AIDescriptionGeneratorProps) {
   const [description, setDescription] = useState(currentDescription || "");
-  const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const generateMutation = useGenerateDescription();
 
   async function handleGenerate() {
-    setLoading(true);
     try {
-      const res = await apiClient.post("/api/ai/generate-description", {
-        imovel: propertyData,
+      const result = await generateMutation.mutateAsync({
+        imovel_data: propertyData,
       });
-      const generated = res.data?.description || res.description || "";
+      const generated = result.descricao || "";
       setDescription(generated);
       onDescriptionGenerated?.(generated);
       toast({
@@ -58,8 +57,6 @@ export function AIDescriptionGenerator({
         description: err.message || "Não foi possível gerar a descrição. Verifique se a API de IA está configurada.",
         variant: "destructive",
       });
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -85,9 +82,9 @@ export function AIDescriptionGenerator({
             <Button
               size="sm"
               onClick={handleGenerate}
-              disabled={loading}
+              disabled={generateMutation.isPending}
             >
-              {loading ? "Gerando..." : "Gerar com IA"}
+              {generateMutation.isPending ? "Gerando..." : "Gerar com IA"}
             </Button>
           </div>
         </div>
