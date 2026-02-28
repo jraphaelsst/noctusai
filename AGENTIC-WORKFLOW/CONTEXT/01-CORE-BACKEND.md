@@ -10,7 +10,7 @@
 
 - FastAPI v1.0.0 with CORS middleware (configurable origins)
 - Rate limiting: 100/min default via slowapi (10/min for auth endpoints)
-- 5 exception handlers: `AppException`, `HTTPException`, `ValidationError`, generic, fallback
+- 5 exception handlers: `AppException`, `HTTPException`, `ValidationError`, `PostgRESTError` (PGRST116 → 404), generic fallback
 - Health endpoints: `GET /` (platform info), `GET /health`
 - 20 routers mounted under `/api/`
 

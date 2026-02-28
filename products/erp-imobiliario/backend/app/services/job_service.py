@@ -143,8 +143,8 @@ async def _job_enviar_campanha(job: Job):
     # Fetch target clients based on filters
     filtros = campanha.get("filtros") or {}
     query = db.table("clientes").select("id, nome, email, telefone")
-    if filtros.get("etapa_funil"):
-        query = query.eq("etapa_funil", filtros["etapa_funil"])
+    if filtros.get("etapa_atual"):
+        query = query.eq("etapa_atual", filtros["etapa_atual"])
     clients_result = query.execute()
     clientes = clients_result.data or []
 

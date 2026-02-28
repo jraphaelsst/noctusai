@@ -15,6 +15,7 @@ from app.exceptions import (
     app_exception_handler,
     http_exception_handler,
     validation_exception_handler,
+    postgrest_exception_handler,
     generic_exception_handler,
 )
 
@@ -52,6 +53,14 @@ app.add_middleware(
 app.add_exception_handler(AppException, app_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(ValidationError, validation_exception_handler)
+
+# Handle PostgREST errors (e.g. .single() with 0 rows → 404 instead of 500)
+try:
+    from postgrest.exceptions import APIError as PostgRESTError
+    app.add_exception_handler(PostgRESTError, postgrest_exception_handler)
+except ImportError:
+    pass
+
 app.add_exception_handler(Exception, generic_exception_handler)
 
 # Register routers

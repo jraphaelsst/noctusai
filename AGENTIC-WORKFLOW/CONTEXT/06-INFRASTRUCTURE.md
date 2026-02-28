@@ -114,6 +114,8 @@ Configurable via `CORS_ORIGINS` env var (comma-separated).
 
 All external integrations follow a **dry-run pattern**: when credentials are not configured, services log actions and return mock responses. This allows development without real API keys.
 
+**Credential resolution chain**: `org_settings` table → `platform_settings` table → environment variables. The settings router exposes `GET /api/settings/resolve/{key}` which follows this chain.
+
 ---
 
 ## Python Virtual Environment

@@ -116,22 +116,26 @@ n8n is the core orchestration engine for all agentic workflows.
 project-root/
 ├── core/                        # NoctusAI Platform (auth, orgs, billing, SSO)
 │   ├── backend/app/             # FastAPI :8000
-│   │   ├── routers/             # 20 routers (auth, orgs, billing, sso, etc.)
-│   │   ├── services/            # 8 services (billing, email, permissions, etc.)
+│   │   ├── routers/             # 20 routers (auth, orgs, billing, sso, notifications, webhooks, settings, etc.)
+│   │   ├── services/            # 8 services (audit, billing, email, entitlements, notifications, permissions, stripe, webhook_delivery)
 │   │   ├── dependencies.py      # Auth helpers (get_current_user, get_current_admin)
+│   │   ├── exceptions.py        # AppException hierarchy + postgrest_exception_handler
 │   │   ├── database.py          # Supabase client (admin + user)
 │   │   └── config.py            # Pydantic Settings from root .env
-│   ├── backend/tests/           # 23 test files
+│   ├── backend/migrations/      # 2 SQL migration files (15 tables total)
+│   ├── backend/tests/           # 23 test files (294 tests)
 │   └── frontend/src/            # React :5173 (admin panel, billing, team)
 │
 ├── products/
 │   └── erp-imobiliario/         # Real Estate CRM product
 │       ├── backend/app/         # FastAPI :8001
-│       │   ├── routers/         # 39 routers (ativos, clientes, matching, AI, etc.)
-│       │   ├── services/        # 30 services (matching, embedding, AI, etc.)
+│       │   ├── routers/         # 46 routers (ativos, clientes, matching, AI, etc.)
+│       │   ├── services/        # 37 services (matching, embedding, AI, etc.)
+│       │   ├── exceptions.py    # Same handler stack as Core (incl. postgrest_exception_handler)
 │       │   └── schemas/         # Pydantic request/response models
-│       ├── backend/tests/       # 56 test files
-│       └── frontend/src/        # React :8080 (45 pages, 55 hooks, shadcn/ui)
+│       ├── backend/migrations/  # 5 SQL migration files
+│       ├── backend/tests/       # 62 test files (986 tests)
+│       └── frontend/src/        # React :8080 (48 pages, 59 hooks, shadcn/ui)
 │
 ├── AGENTIC-WORKFLOW/            # CDD+TDD methodology & agentic artifacts
 │   ├── INSTRUCTIONS/            # Methodology documentation (00-07)
@@ -146,8 +150,8 @@ project-root/
 │   ├── CONTEXT/                 # System landscape docs for agent context loading
 │   │   ├── 00-LANDSCAPE.md      # Platform overview, products, architecture
 │   │   ├── 01-CORE-BACKEND.md   # Core backend: 20 routers, 8 services
-│   │   ├── 02-ERP-BACKEND.md    # ERP backend: 39 routers, 30 services
-│   │   ├── 03-ERP-FRONTEND.md   # ERP frontend: 45 pages, 55 hooks
+│   │   ├── 02-ERP-BACKEND.md    # ERP backend: 46 routers, 37 services
+│   │   ├── 03-ERP-FRONTEND.md   # ERP frontend: 48 pages, 59 hooks
 │   │   ├── 04-CORE-FRONTEND.md  # Core frontend: admin, billing, auth
 │   │   ├── 05-DATABASE.md       # Supabase tables, RLS, key relationships
 │   │   ├── 06-INFRASTRUCTURE.md # Ports, Docker, n8n, WAHA, deployment
@@ -191,7 +195,7 @@ JWT_SECRET=your-jwt-secret
 # App
 CORS_ORIGINS=http://localhost:5173,http://localhost:8080
 DEBUG=true
-CORE_API_URL=http://localhost:8001
+CORE_API_URL=http://localhost:8000
 
 # Billing (Stripe)
 STRIPE_SECRET_KEY=sk_test_...

@@ -78,32 +78,40 @@ def validate_dimob_data(data: dict) -> list[dict]:
 def _fetch_dimob_data(org_id: str, ano: int, supabase) -> dict:
     """Fetch all data needed for DIMOB from database."""
 
-    # Organization info
-    org_result = supabase.table("profiles").select(
-        "id, nome, email"
-    ).limit(1).execute()
-    org_data = org_result.data[0] if org_result.data else {}
+    # Organization info — use first profile as declarant fallback
+    org_data = {}
+    try:
+        org_result = supabase.table("profiles").select(
+            "id, nome, email"
+        ).limit(1).execute()
+        org_data = org_result.data[0] if org_result.data else {}
+    except Exception:
+        logger.debug("Could not fetch profile for DIMOB declarant")
 
-    # Sales (closed deals from funil with etapa 'venda_fechada' in the target year)
-    vendas_query = supabase.table("clientes").select(
-        "id, nome, cpf, email, valor_estimado, etapa_atual, updated_at"
-    ).eq("etapa_atual", "venda_fechada").gte(
-        "updated_at", f"{ano}-01-01T00:00:00"
-    ).lte(
-        "updated_at", f"{ano}-12-31T23:59:59"
-    )
-    vendas_result = vendas_query.execute()
-    vendas = vendas_result.data or []
+    # Sales (closed deals from funil with etapa 'fechado' in the target year)
+    vendas = []
+    try:
+        vendas_query = supabase.table("clientes").select(
+            "id, nome, email, valor_estimado, etapa_atual, updated_at"
+        ).eq("etapa_atual", "fechado").gte(
+            "updated_at", f"{ano}-01-01T00:00:00"
+        ).lte(
+            "updated_at", f"{ano}-12-31T23:59:59"
+        )
+        vendas_result = vendas_query.execute()
+        vendas = vendas_result.data or []
+    except Exception:
+        logger.debug("Could not fetch sales data for DIMOB")
 
-    # Rental operations (from locacoes table if exists)
+    # Rental operations (from contratos_locacao table)
     locacoes = []
     try:
-        loc_result = supabase.table("locacoes").select("*").gte(
+        loc_result = supabase.table("contratos_locacao").select("*").gte(
             "data_inicio", f"{ano}-01-01"
         ).lte("data_inicio", f"{ano}-12-31").execute()
         locacoes = loc_result.data or []
     except Exception:
-        logger.debug("locacoes table not found, skipping rental data")
+        logger.debug("contratos_locacao table not available, skipping rental data")
 
     return {
         "organizacao": org_data,
@@ -111,7 +119,7 @@ def _fetch_dimob_data(org_id: str, ano: int, supabase) -> dict:
             {
                 "id": v.get("id"),
                 "nome_comprador": v.get("nome", ""),
-                "cpf_comprador": v.get("cpf", ""),
+                "cpf_comprador": "",
                 "valor": v.get("valor_estimado", 0),
                 "data_operacao": v.get("updated_at", ""),
             }
@@ -120,9 +128,9 @@ def _fetch_dimob_data(org_id: str, ano: int, supabase) -> dict:
         "locacoes": [
             {
                 "id": loc.get("id"),
-                "cpf_locatario": loc.get("cpf_locatario", ""),
-                "nome_locatario": loc.get("nome_locatario", ""),
-                "valor_aluguel": loc.get("valor_mensal", 0),
+                "cpf_locatario": "",
+                "nome_locatario": "",
+                "valor_aluguel": loc.get("valor_aluguel", 0),
                 "data_inicio": loc.get("data_inicio", ""),
                 "data_fim": loc.get("data_fim", ""),
             }

@@ -226,21 +226,21 @@ async def resolver_setting(key: str, authorization: Optional[str] = Header(None)
             .select("value")
             .eq("org_id", org_id)
             .eq("key", key)
-            .single()
+            .limit(1)
             .execute()
         )
-        if org_result.data and org_result.data.get("value"):
-            return {"data": {"key": key, "value": org_result.data["value"], "source": "org"}}
+        if org_result.data and org_result.data[0].get("value"):
+            return {"data": {"key": key, "value": org_result.data[0]["value"], "source": "org"}}
 
     # Fall back to platform-level
     platform_result = (
         db.table("platform_settings")
         .select("value")
         .eq("key", key)
-        .single()
+        .limit(1)
         .execute()
     )
-    if platform_result.data and platform_result.data.get("value"):
-        return {"data": {"key": key, "value": platform_result.data["value"], "source": "platform"}}
+    if platform_result.data and platform_result.data[0].get("value"):
+        return {"data": {"key": key, "value": platform_result.data[0]["value"], "source": "platform"}}
 
     return {"data": None}

@@ -143,7 +143,7 @@ async def dashboard_resumo(
     db = get_user_client(token)
 
     # Fetch data in sequence (Supabase client is sync)
-    clientes_result = db.table("clientes").select("id, etapa_funil, created_at, valor_estimado").execute()
+    clientes_result = db.table("clientes").select("id, etapa_atual, created_at, valor_estimado").execute()
     clientes = clientes_result.data or []
 
     ativos_result = db.table("ativos").select("id, natureza, status, valor").execute()
@@ -161,7 +161,7 @@ async def dashboard_resumo(
     eventos_result = db.table("eventos").select("id, status, data_inicio").execute()
     eventos = eventos_result.data or []
 
-    negociacoes_result = db.table("negociacoes").select("id, status").execute()
+    negociacoes_result = db.table("negociacoes").select("id, status_etapa").execute()
     negociacoes = negociacoes_result.data or []
 
     # ── KPIs ──
@@ -181,7 +181,7 @@ async def dashboard_resumo(
     # ── Funil ──
     etapas_funil = {}
     for c in clientes:
-        etapa = c.get("etapa_funil") or "sem_etapa"
+        etapa = c.get("etapa_atual") or "sem_etapa"
         etapas_funil[etapa] = etapas_funil.get(etapa, 0) + 1
 
     # ── Financeiro ──
@@ -217,7 +217,7 @@ async def dashboard_resumo(
     )
 
     # ── Negociações ──
-    negociacoes_abertas = sum(1 for n in negociacoes if n.get("status") in ("aberta", "em_andamento"))
+    negociacoes_abertas = sum(1 for n in negociacoes if n.get("status_etapa") in ("qualificacao", "visitas", "proposta", "negociacao"))
 
     return success_response({
         "kpis": {

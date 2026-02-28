@@ -172,6 +172,21 @@ async def validation_exception_handler(request: Request, exc: ValidationError) -
     )
 
 
+async def postgrest_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle PostgREST APIError — convert PGRST116 (0 rows for .single()) to 404."""
+    if getattr(exc, "code", None) == "PGRST116":
+        return JSONResponse(
+            status_code=404,
+            content=format_error_response("NOT_FOUND", "Recurso não encontrado"),
+        )
+    # For any other PostgREST error, log and return 500
+    logger.exception(f"PostgREST error: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content=format_error_response("INTERNAL_ERROR", "Erro interno do servidor"),
+    )
+
+
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle unexpected exceptions."""
     logger.exception(f"Unhandled exception: {exc}")

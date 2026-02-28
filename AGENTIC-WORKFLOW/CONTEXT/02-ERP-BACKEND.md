@@ -2,17 +2,17 @@
 
 > Path: `products/erp-imobiliario/backend/app/`
 > Server: FastAPI on port **8001**
-> Tests: `products/erp-imobiliario/backend/tests/` (63 test files, 959 tests)
+> Tests: `products/erp-imobiliario/backend/tests/` (62 test files, 986 tests)
 
 ---
 
 ## Overview
 
-Full real estate CRM backend with 47 routers and 37 services. Handles property management, client CRM, sales funnel, AI-powered matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting.
+Full real estate CRM backend with 46 routers and 37 services. Handles property management, client CRM, sales funnel, AI-powered matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting.
 
 ---
 
-## Routers (47)
+## Routers (46)
 
 ### Core Domain
 
@@ -163,6 +163,12 @@ Full real estate CRM backend with 47 routers and 37 services. Handles property m
 
 ---
 
+## Exception Handling
+
+Same handler stack as Core: `AppException`, `HTTPException`, `ValidationError`, `PostgRESTError` (PGRST116 → 404), generic fallback. Additionally includes `CorrelationIdMiddleware` and `RequestLoggingMiddleware`.
+
+---
+
 ## Auth Pattern
 
 Same as core: `authorization: Optional[str] = Header(None)` → `get_current_user(authorization)` → `(user, token)`.
@@ -184,9 +190,11 @@ SSO flow: Core platform issues SSO token → ERP validates via `/api/sso/validat
 ```
 tests/
 ├── conftest.py                    # MockSupabaseClient, AuthClient fixtures
-├── routers/                       # 47 router test files
+├── test_postgrest_handler.py      # PostgREST PGRST116 → 404 regression test
+├── routers/                       # 49 router test files
 │   ├── test_ativos_router.py
 │   ├── test_clientes_router.py
+│   ├── test_dimob_router.py
 │   ├── test_matching_router.py
 │   ├── test_storage_router.py
 │   ├── test_pdf_router.py
@@ -195,11 +203,12 @@ tests/
 │   ├── test_bi_dashboard_router.py
 │   ├── test_notificacoes_router.py
 │   ├── test_meta_api_router.py
-│   └── ... (47 files)
-├── services/                      # 11 service test files
+│   └── ... (49 files)
+├── services/                      # 12 service test files
+│   ├── test_dimob_service.py
 │   ├── test_embedding_service.py
 │   ├── test_email_service.py
-│   └── ... (11 files)
+│   └── ... (12 files)
 └── integration/
     ├── conftest.py                # StatefulMockClient
     └── test_clientes_integration.py

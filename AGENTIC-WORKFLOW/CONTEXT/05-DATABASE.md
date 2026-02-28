@@ -21,27 +21,27 @@ The ERP backend's `database.py` uses `ClientOptions(schema="erp")` so all `.tabl
 
 ---
 
-## Core Platform Tables (`public` schema)
+## Core Platform Tables (`public` schema — 15 tables)
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
 | `noctus_users` | User profiles (extends Supabase auth.users) | `id`, `nome`, `email`, `role`, `org_id`, `org_role` |
-| `organizations` | Tenant definitions | `id`, `nome`, `slug`, `plano`, `category`, `is_active` |
-| `org_members` | User-to-org mapping | `user_id`, `org_id`, `role` |
-| `products` | Product catalog | `id`, `nome`, `slug`, `url_base`, `is_active` |
-| `licenses` | Org-to-product access grants | `id`, `org_id`, `product_id`, `status` |
+| `organizations` | Tenant definitions | `id`, `nome`, `slug`, `plano`, `category`, `onboarding_completed`, `onboarding_steps` |
+| `products` | Product catalog | `id`, `nome`, `slug`, `url_base`, `ativo` |
+| `licenses` | Org-to-product access grants | `id`, `org_id`, `product_id`, `status`, `inicio`, `fim` |
 | `plans` | Subscription tier definitions | `id`, `name`, `slug`, `price_monthly`, `price_yearly`, `max_users`, `max_products`, `features`, `stripe_price_id_*` |
-| `subscriptions` | Org subscriptions | `id`, `org_id`, `plan_id`, `status` (active/canceled/expired/trial), `current_period_end` |
-| `api_keys` | Hashed API keys (noctus_k_*) | `id`, `org_id`, `key_hash`, `key_prefix`, `scopes`, `expires_at` |
-| `roles` | System + custom org roles | `id`, `org_id` (NULL=system), `name`, `permissions[]` |
-| `platform_settings` | Global platform config | `key`, `value`, `description`, `is_secret` |
-| `org_settings` | Per-org configuration | `key`, `value`, `org_id`, `is_secret` |
-| `invitations` | Team invitations | `email`, `org_id`, `role`, `token`, `status`, `expires_at` |
-| `notifications` | In-app notifications | `id`, `user_id`, `type`, `title`, `message`, `is_read` |
-| `webhooks` | Webhook endpoint config | `id`, `org_id`, `url`, `events[]`, `secret`, `is_active` |
-| `webhook_deliveries` | Webhook delivery log | `webhook_id`, `event`, `status_code`, `response_body` |
-| `audit_logs` | Action audit trail | `user_id`, `org_id`, `action`, `resource_type`, `resource_id` |
-| `onboarding_status` | Org onboarding progress | `org_id`, step completions |
+| `subscriptions` | Org subscriptions | `id`, `org_id`, `plan_id`, `status` (active/canceled/expired/trial), `expires_at` |
+| `api_keys` | Hashed API keys (noctus_k_*) | `id`, `org_id`, `key_hash`, `key_prefix`, `scopes`, `expires_at`, `created_by` |
+| `roles` | System + custom org roles | `id`, `org_id` (NULL=system), `name`, `slug`, `permissions[]`, `is_system` |
+| `invitations` | Team invitations | `id`, `org_id`, `email`, `role`, `token`, `status`, `expires_at`, `invited_by` |
+| `notifications` | In-app notifications | `id`, `user_id`, `org_id`, `type` (team_invite/subscription_change/usage_alert/system), `title`, `message`, `read`, `metadata` |
+| `audit_logs` | Action audit trail | `id`, `user_id`, `org_id`, `action`, `resource_type`, `resource_id`, `details`, `ip_address`, `user_agent` |
+| `webhook_endpoints` | Webhook endpoint config | `id`, `org_id`, `url`, `secret`, `events[]`, `is_active` |
+| `webhook_deliveries` | Webhook delivery log | `id`, `endpoint_id`, `event_type`, `payload`, `response_status`, `response_body`, `attempts`, `status` |
+| `platform_settings` | Global platform config (service role only) | `key` (PK), `value`, `description`, `is_secret`, `updated_by` |
+| `org_settings` | Per-org configuration | `id`, `org_id`, `key`, `value`, `is_secret`, UNIQUE(`org_id`, `key`) |
+
+Note: Onboarding status is stored as fields on `organizations` (`onboarding_completed`, `onboarding_steps`), not a separate table.
 
 ---
 
@@ -256,13 +256,22 @@ The `erp.ativos` table has an `embedding` column (vector, 1536 dimensions) popul
 
 ## Migration Files
 
+### Core (`core/backend/migrations/`)
+
 | File | Purpose |
 |------|---------|
-| `products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql` | Full ERP schema (fresh deploys) — creates `erp` schema + all objects |
-| `products/erp-imobiliario/backend/migrations/002_ai_matching.sql` | pgvector embeddings + `match_ativos` function |
-| `products/erp-imobiliario/backend/migrations/003_schema_separation.sql` | Moves objects from `public` → `erp` (existing databases only) |
-| `products/erp-imobiliario/backend/migrations/004_mvp_expansion.sql` | 42 new tables for MVP expansion (existing databases) |
-| `products/erp-imobiliario/backend/migrations/005_fix_sidebar_pages.sql` | Fix `set_timestamps_sp()` trigger, seed all 42 sidebar routes, set admin role |
+| `001_noctusai_core.sql` | Full core schema — 15 tables, RLS policies, service role policies, seed data (fresh deploys) |
+| `002_missing_tables.sql` | Adds 6 tables (notifications, audit_logs, webhook_endpoints, webhook_deliveries, platform_settings, org_settings) to existing databases that only ran 001 |
+
+### ERP (`products/erp-imobiliario/backend/migrations/`)
+
+| File | Purpose |
+|------|---------|
+| `001_erp_imobiliario.sql` | Full ERP schema (fresh deploys) — creates `erp` schema + all objects |
+| `002_ai_matching.sql` | pgvector embeddings + `match_ativos` function |
+| `003_schema_separation.sql` | Moves objects from `public` → `erp` (existing databases only) |
+| `004_mvp_expansion.sql` | 42 new tables for MVP expansion (existing databases) |
+| `005_fix_sidebar_pages.sql` | Fix `set_timestamps_sp()` trigger, seed all 42 sidebar routes, set admin role |
 
 ### Trigger Function: `erp.set_timestamps_sp()`
 

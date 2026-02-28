@@ -193,7 +193,7 @@ async def importar_lead_como_cliente(
         "email": campo.get("email"),
         "telefone": campo.get("phone_number") or campo.get("telefone"),
         "origem": "facebook",
-        "etapa_funil": "lead",
+        "etapa_atual": "lead",
         "usuario_id": user.id,
     }
 
