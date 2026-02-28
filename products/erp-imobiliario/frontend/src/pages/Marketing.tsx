@@ -76,7 +76,7 @@ const TIPO_MAP: Record<string, { label: string; icon: typeof Mail }> = {
 
 export default function Marketing() {
   const [busca, setBusca] = useState('');
-  const [filtroStatus, setFiltroStatus] = useState<string>('');
+  const [filtroStatus, setFiltroStatus] = useState<string>('todos');
   const [dialogAberto, setDialogAberto] = useState(false);
   const [detalheCampanha, setDetalheCampanha] = useState<Campanha | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -90,7 +90,7 @@ export default function Marketing() {
   const [formFiltroEtapa, setFormFiltroEtapa] = useState('');
 
   const { data: campanhasData, isLoading } = useCampanhas({
-    status: filtroStatus || undefined,
+    status: filtroStatus === 'todos' ? undefined : filtroStatus,
   });
   const { data: alertas = [], isLoading: loadingAlertas } = useAlertasMarketing();
   const createMutation = useCreateCampanha();
@@ -175,7 +175,7 @@ export default function Marketing() {
                     <SelectValue placeholder="Todos os status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Todos</SelectItem>
+                    <SelectItem value="todos">Todos</SelectItem>
                     <SelectItem value="rascunho">Rascunho</SelectItem>
                     <SelectItem value="ativa">Ativa</SelectItem>
                     <SelectItem value="pausada">Pausada</SelectItem>

@@ -83,6 +83,15 @@ async def lead_score(body: LeadScoreRequest, authorization: Optional[str] = Head
     try:
         from app.services.ai_service import score_lead
         result = await score_lead(cliente_data)
+
+        # Persist score to the clientes table
+        if body.cliente_id:
+            db.table("clientes").update({
+                "lead_score": result["score"],
+                "lead_score_justificativa": result["justificativa"],
+                "lead_score_updated_at": "now()",
+            }).eq("id", body.cliente_id).execute()
+
         return success_response(result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

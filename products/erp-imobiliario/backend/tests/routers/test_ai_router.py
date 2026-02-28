@@ -3,7 +3,7 @@ Tests for the AI Features router.
 Covers property description generation, lead scoring, and price suggestion endpoints.
 """
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestGenerateDescription:
@@ -177,6 +177,63 @@ class TestLeadScore:
                 "cliente_data": {"nome": "Test"},
             })
             assert resp.status_code == 400
+
+
+    def test_score_persists_to_clientes_table(self, client):
+        """When cliente_id is provided, the score should be persisted to the clientes table."""
+        client._mock_supabase.set_table_data("clientes", {
+            "id": "c1",
+            "nome": "Joao Silva",
+            "email": "joao@test.com",
+            "etapa_atual": "visitas",
+            "probabilidade": 70,
+            "valor_estimado": 500000,
+        })
+        with patch(
+            "app.services.ai_service.score_lead",
+            new_callable=AsyncMock,
+            return_value={
+                "score": 85,
+                "justificativa": "Lead muito qualificado.",
+                "recomendacao": "Fechar negocio.",
+            },
+        ):
+            # Spy on the update method of the clientes table builder
+            clientes_builder = client._mock_supabase.table("clientes")
+            clientes_builder.update = MagicMock(return_value=clientes_builder)
+
+            resp = client.post("/api/ai/lead-score", json={
+                "cliente_id": "c1",
+            })
+            assert resp.status_code == 200
+
+            # Verify update was called with the score data
+            clientes_builder.update.assert_called_once()
+            update_data = clientes_builder.update.call_args[0][0]
+            assert update_data["lead_score"] == 85
+            assert update_data["lead_score_justificativa"] == "Lead muito qualificado."
+            assert "lead_score_updated_at" in update_data
+
+    def test_score_does_not_persist_without_cliente_id(self, client):
+        """When only cliente_data is provided (no ID), the score should NOT be persisted."""
+        with patch(
+            "app.services.ai_service.score_lead",
+            new_callable=AsyncMock,
+            return_value={
+                "score": 50,
+                "justificativa": "Dados parciais.",
+                "recomendacao": "Completar cadastro.",
+            },
+        ):
+            resp = client.post("/api/ai/lead-score", json={
+                "cliente_data": {
+                    "nome": "Maria",
+                    "email": "maria@test.com",
+                },
+            })
+            assert resp.status_code == 200
+            # No clientes table interaction expected (no update call)
+            assert "clientes" not in client._mock_supabase._tables
 
 
 class TestSuggestPrice:

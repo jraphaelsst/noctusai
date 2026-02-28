@@ -2,7 +2,7 @@ import { Cliente } from '@/types/clientes';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ExternalLink, MessageSquare, Archive } from 'lucide-react';
+import { ExternalLink, MessageSquare, Archive, Brain } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -75,6 +75,23 @@ export function ClienteCard({ cliente, onRegistrarAtividade, onArquivar, isDragg
             {cliente.origem && (
               <Badge variant="outline" className="text-xs">
                 {cliente.origem}
+              </Badge>
+            )}
+            {cliente.lead_score != null && (
+              <Badge
+                variant="outline"
+                className={`text-xs gap-0.5 ${
+                  cliente.lead_score >= 80
+                    ? 'bg-green-100 text-green-800'
+                    : cliente.lead_score >= 60
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : cliente.lead_score >= 40
+                        ? 'bg-orange-100 text-orange-800'
+                        : 'bg-red-100 text-red-800'
+                }`}
+              >
+                <Brain className="w-3 h-3" />
+                {cliente.lead_score}
               </Badge>
             )}
           </div>

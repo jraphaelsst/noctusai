@@ -16,6 +16,9 @@ export interface Cliente {
   valor_estimado: number;
   arquivado: boolean;
   kanban_pos: number;
+  lead_score?: number | null;
+  lead_score_justificativa?: string | null;
+  lead_score_updated_at?: string | null;
   created_at: string;
   updated_at: string;
   usuario?: {

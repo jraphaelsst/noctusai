@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useCliente, useUpdateCliente, useToggleArquivarCliente } from '@/hooks/useClientes';
 import { useAtividades, useCreateAtividade } from '@/hooks/useAtividades';
+import { LeadScoreBadge } from '@/components/clientes/LeadScoreBadge';
 import { ArrowLeft, Edit, Archive, MessageSquare } from 'lucide-react';
 import { ETAPAS_CONFIG, TIPOS_ATIVIDADE } from '@/lib/etapasConfig';
 import { formatDate } from '@/lib/utils';
@@ -108,6 +109,7 @@ export default function ClienteDetalhes() {
                 <h1 className="text-2xl sm:text-3xl font-bold truncate">{cliente.nome}</h1>
                 <Badge className={etapaConfig.bgColor}>{etapaConfig.label}</Badge>
                 {cliente.arquivado && <Badge variant="secondary">Arquivado</Badge>}
+                <LeadScoreBadge cliente={cliente} />
               </div>
               {cliente.usuario && (
                 <p className="text-sm text-muted-foreground">

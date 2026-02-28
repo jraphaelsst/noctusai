@@ -77,7 +77,7 @@ export default function Distribuicao() {
   const atribuirLead = useAtribuirLead();
 
   const [selectedLeadId, setSelectedLeadId] = useState('');
-  const [selectedCorretorId, setSelectedCorretorId] = useState('');
+  const [selectedCorretorId, setSelectedCorretorId] = useState('auto');
   const [buscaLead, setBuscaLead] = useState('');
 
   // Local state for agent checklist (optimistic)
@@ -102,12 +102,12 @@ export default function Distribuicao() {
     atribuirLead.mutate(
       {
         cliente_id: selectedLeadId,
-        corretor_id: selectedCorretorId || undefined,
+        corretor_id: selectedCorretorId === 'auto' ? undefined : selectedCorretorId,
       },
       {
         onSuccess: () => {
           setSelectedLeadId('');
-          setSelectedCorretorId('');
+          setSelectedCorretorId('auto');
         },
       },
     );
@@ -371,7 +371,7 @@ export default function Distribuicao() {
                       <SelectValue placeholder="Automatico (modo atual)" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Automatico (modo atual)</SelectItem>
+                      <SelectItem value="auto">Automatico (modo atual)</SelectItem>
                       {allProfiles
                         .filter((p: any) => corretoresAtivos.has(p.id))
                         .map((profile: any) => (

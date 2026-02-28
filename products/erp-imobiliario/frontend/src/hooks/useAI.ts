@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '@/lib/api-client';
 
@@ -42,10 +42,17 @@ export function useGenerateDescription() {
 }
 
 export function useLeadScore() {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: async (params: { cliente_id?: string; cliente_data?: Record<string, any> }) => {
       const result = await api.post('/api/ai/lead-score', params);
       return result.data as AILeadScoreResult;
+    },
+    onSuccess: (_data, variables) => {
+      if (variables.cliente_id) {
+        queryClient.invalidateQueries({ queryKey: ['cliente', variables.cliente_id] });
+      }
     },
     onError: (error: Error) => {
       toast.error('Erro ao pontuar lead', { description: error.message });

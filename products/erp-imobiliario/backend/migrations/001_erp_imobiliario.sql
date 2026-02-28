@@ -291,6 +291,9 @@ CREATE TABLE erp.clientes (
   valor_estimado NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (valor_estimado >= 0),
   arquivado BOOLEAN NOT NULL DEFAULT false,
   kanban_pos INTEGER NOT NULL DEFAULT 0,
+  lead_score INTEGER CHECK (lead_score >= 0 AND lead_score <= 100),
+  lead_score_justificativa TEXT,
+  lead_score_updated_at TIMESTAMPTZ,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
