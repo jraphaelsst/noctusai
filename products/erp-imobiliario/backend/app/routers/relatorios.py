@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/relatorios", tags=["Relatórios"])
 
 
+def _get_org_id(user) -> str:
+    """Extract org_id from user metadata."""
+    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
+    if not org_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Usuário sem organização associada")
+    return org_id
+
+
 @router.get("/ranking-corretores")
 async def get_ranking_corretores(
     periodo: int = Query(30, ge=1, le=365, description="Período em dias"),
@@ -33,9 +42,10 @@ async def get_ranking_corretores(
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+    org_id = _get_org_id(user)
 
     data = ranking_corretores(
-        org_id=user.id,
+        org_id=org_id,
         supabase=db,
         periodo_dias=periodo,
     )
@@ -51,9 +61,10 @@ async def get_conversao_funil(
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+    org_id = _get_org_id(user)
 
     data = conversao_funil(
-        org_id=user.id,
+        org_id=org_id,
         supabase=db,
     )
     return success_response(data)
@@ -69,9 +80,10 @@ async def get_atividade_mensal(
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+    org_id = _get_org_id(user)
 
     data = atividade_mensal(
-        org_id=user.id,
+        org_id=org_id,
         supabase=db,
         meses=meses,
     )
@@ -93,18 +105,19 @@ async def export_csv(
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+    org_id = _get_org_id(user)
 
     if tipo == "ranking-corretores":
-        data = ranking_corretores(org_id=user.id, supabase=db, periodo_dias=periodo)
+        data = ranking_corretores(org_id=org_id, supabase=db, periodo_dias=periodo)
         headers = ["nome", "email", "total_clientes", "clientes_fechados",
                     "valor_total_fechados", "total_atividades"]
         filename = "ranking_corretores.csv"
     elif tipo == "conversao-funil":
-        data = conversao_funil(org_id=user.id, supabase=db)
+        data = conversao_funil(org_id=org_id, supabase=db)
         headers = ["etapa", "label", "total", "taxa_conversao"]
         filename = "conversao_funil.csv"
     elif tipo == "atividade-mensal":
-        data = atividade_mensal(org_id=user.id, supabase=db, meses=meses)
+        data = atividade_mensal(org_id=org_id, supabase=db, meses=meses)
         headers = ["mes", "total_atividades", "novos_clientes", "fechados"]
         filename = "atividade_mensal.csv"
     else:

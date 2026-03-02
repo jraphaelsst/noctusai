@@ -173,17 +173,46 @@ async def validation_exception_handler(request: Request, exc: ValidationError) -
 
 
 async def postgrest_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle PostgREST APIError — convert PGRST116 (0 rows for .single()) to 404."""
-    if getattr(exc, "code", None) == "PGRST116":
+    """Handle PostgREST APIError with proper status codes for common PG errors."""
+    pg_code = getattr(exc, "code", None) or ""
+    message = getattr(exc, "message", str(exc))
+
+    # PGRST116: .single() returned 0 rows → 404
+    if pg_code == "PGRST116":
         return JSONResponse(
             status_code=404,
             content=format_error_response("NOT_FOUND", "Recurso não encontrado"),
         )
-    # For any other PostgREST error, log and return 500
-    logger.exception(f"PostgREST error: {exc}")
+
+    # 23505: unique constraint violation → 409
+    if pg_code == "23505":
+        logger.warning(f"PostgREST unique violation: {message}")
+        return JSONResponse(
+            status_code=409,
+            content=format_error_response("CONFLICT", "Registro duplicado — este recurso já existe"),
+        )
+
+    # 23503: foreign key violation → 400
+    if pg_code == "23503":
+        logger.warning(f"PostgREST FK violation: {message}")
+        return JSONResponse(
+            status_code=400,
+            content=format_error_response("BAD_REQUEST", "Referência inválida — recurso relacionado não encontrado"),
+        )
+
+    # 23502: not-null violation → 400
+    if pg_code == "23502":
+        logger.warning(f"PostgREST not-null violation: {message}")
+        return JSONResponse(
+            status_code=400,
+            content=format_error_response("BAD_REQUEST", "Campo obrigatório não preenchido"),
+        )
+
+    # All other PostgREST errors — log and surface the message
+    logger.exception(f"PostgREST error [{pg_code}]: {message}")
     return JSONResponse(
         status_code=500,
-        content=format_error_response("INTERNAL_ERROR", "Erro interno do servidor"),
+        content=format_error_response("INTERNAL_ERROR", message or "Erro interno do servidor"),
     )
 
 

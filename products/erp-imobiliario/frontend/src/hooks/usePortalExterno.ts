@@ -81,10 +81,16 @@ export function useRevogarToken() {
 const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';
 
 async function fetchPublic(path: string) {
-  const response = await fetch(`${BACKEND_URL}${path}`);
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND_URL}${path}`);
+  } catch {
+    throw new Error(`Servidor indisponível (${path}). Verifique se o backend está rodando.`);
+  }
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Erro na requisição' }));
-    throw new Error(error.detail || 'Erro na requisição');
+    const data = await response.json().catch(() => null);
+    const message = data?.error?.message || data?.detail || `Erro HTTP ${response.status}`;
+    throw new Error(`[${response.status}] ${message}`);
   }
   return response.json();
 }

@@ -58,7 +58,7 @@ async def salvar_config(
     """Save or update Meta API configuration."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id")
+    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
 
     data = {
         "org_id": org_id,
@@ -117,7 +117,7 @@ async def sincronizar_leads(
     """Sync leads from Facebook Lead Ads."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id")
+    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
 
     # Get config
     config_result = sb.table("meta_config").select("*").execute()
@@ -174,7 +174,7 @@ async def importar_lead_como_cliente(
     """Import a Meta lead as a CRM client."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id")
+    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
 
     # Get lead
     lead_result = (
@@ -202,9 +202,10 @@ async def importar_lead_como_cliente(
 
     # Mark lead as imported
     if cliente_id:
+        from datetime import datetime, timezone
         sb.table("meta_leads").update({
             "importado": True,
-            "importado_em": "now()",
+            "importado_em": datetime.now(timezone.utc).isoformat(),
             "cliente_id": cliente_id,
         }).eq("id", lead_id).execute()
 
@@ -250,7 +251,7 @@ async def sincronizar_campanhas(authorization: Optional[str] = Header(None)):
     """Sync campaign data from Facebook Ads Manager."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id")
+    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
 
     config_result = sb.table("meta_config").select("*").execute()
     if not config_result.data:
@@ -266,9 +267,11 @@ async def sincronizar_campanhas(authorization: Optional[str] = Header(None)):
     campaigns = await sync_campaigns(config)
     synced = 0
 
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
     for camp in campaigns:
         camp["org_id"] = org_id
-        camp["last_sync"] = "now()"
+        camp["last_sync"] = now_iso
         sb.table("meta_campanhas_sync").upsert(
             camp, on_conflict="org_id,campaign_id"
         ).execute()
@@ -333,13 +336,13 @@ async def meta_webhook_event(request: Request):
 
     org_id = config_result.data[0]["org_id"]
 
-    # Store the lead reference (full data fetched on sync)
-    admin.table("meta_leads").insert({
+    # Store the lead reference (full data fetched on sync); upsert to handle duplicate webhooks
+    admin.table("meta_leads").upsert({
         "org_id": org_id,
         "lead_id": lead_data["lead_id"],
         "form_id": lead_data.get("form_id"),
         "campo_data": {},
-    }).execute()
+    }, on_conflict="lead_id").execute()
 
     logger.info(f"Meta lead webhook stored: {lead_data['lead_id']} for org {org_id}")
     return {"status": "ok"}

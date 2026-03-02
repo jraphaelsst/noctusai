@@ -45,9 +45,12 @@ class TestCriarConfig:
         builder.execute = sequential_execute
 
     def test_create_success(self, client):
-        # First call (select for existing check) returns empty, second call (insert) returns data
+        # 1st call: existence check → empty (no config yet)
+        # 2nd call: slug uniqueness check (admin) → empty (slug available)
+        # 3rd call: insert result
         self._setup_sequential_responses(client, "site_config", [
-            MockSupabaseResponse(data=[]),  # existence check: no config yet
+            MockSupabaseResponse(data=[]),  # existence check
+            MockSupabaseResponse(data=[]),  # slug uniqueness check
             MockSupabaseResponse(data={
                 "id": "sc-new", "nome_site": "Nova Imobiliaria",
                 "slug": "nova-imob", "cor_primaria": "#6366f1",
@@ -61,8 +64,12 @@ class TestCriarConfig:
         assert resp.status_code == 200
 
     def test_create_with_all_fields(self, client):
+        # 1st call: existence check → empty
+        # 2nd call: slug uniqueness check → empty
+        # 3rd call: insert result
         self._setup_sequential_responses(client, "site_config", [
-            MockSupabaseResponse(data=[]),  # existence check: no config yet
+            MockSupabaseResponse(data=[]),  # existence check
+            MockSupabaseResponse(data=[]),  # slug uniqueness check
             MockSupabaseResponse(data={
                 "id": "sc-full", "nome_site": "Full Config",
                 "slug": "full-config", "cor_primaria": "#ff0000",

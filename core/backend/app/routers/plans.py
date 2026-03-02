@@ -100,6 +100,11 @@ async def criar_plan(body: PlanCreate, authorization: Optional[str] = Header(Non
     await get_current_admin(authorization)
     db = get_admin_client()
 
+    # Check for duplicate slug
+    existing = db.table("plans").select("id").eq("slug", body.slug).execute()
+    if existing.data:
+        raise HTTPException(status_code=409, detail="Já existe um plano com este slug")
+
     data = body.model_dump(exclude_none=True)
     data["is_active"] = True
 

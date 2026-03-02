@@ -2,7 +2,7 @@ import { useState, lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Layout } from "./components/layout/Layout";
 import { AuthProvider } from "./components/auth/AuthProvider";
@@ -10,6 +10,7 @@ import { LoginForm } from "./components/auth/LoginForm";
 import { useAuthStore } from "./store/authStore";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { toast } from "sonner";
 
 // Lazy load das páginas para melhor performance inicial
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -62,6 +63,11 @@ const NotificacoesPage = lazy(() => import("./pages/Notificacoes"));
 
 // QueryClient com configurações otimizadas
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error) => {
+      toast.error("Erro ao carregar dados", { description: error.message });
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5, // 5 minutos - dados considerados "fresh"

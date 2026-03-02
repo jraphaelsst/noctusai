@@ -88,13 +88,15 @@ async def marcar_como_lida(
         .update({"is_read": True})
         .eq("id", notificacao_id)
         .eq("user_id", user.id)
+        .select()
+        .single()
         .execute()
     )
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Notificação não encontrada")
 
-    return {"status": "success", "data": result.data[0]}
+    return {"status": "success", "data": result.data}
 
 
 @router.post("/ler-todas")
@@ -139,7 +141,7 @@ async def atualizar_preferencia(
     """Update a notification preference (upsert)."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id")
+    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
 
     data = {
         "org_id": org_id,

@@ -124,6 +124,12 @@ async def criar_config(body: SiteConfigCreate, authorization: Optional[str] = He
     if existing.data:
         raise HTTPException(status_code=409, detail="Configuração de site já existe. Use PATCH para atualizar.")
 
+    # Check slug uniqueness across all orgs
+    admin = get_admin_client()
+    slug_check = admin.table("site_config").select("id").eq("slug", body.slug).execute()
+    if slug_check.data:
+        raise HTTPException(status_code=409, detail="Este slug já está em uso por outra organização")
+
     data = body.model_dump(exclude_none=True)
     result = db.table("site_config").insert(data).select().single().execute()
     if not result.data:
@@ -206,7 +212,7 @@ async def site_publico(slug: str):
         "id, natureza, tipo_imovel, titulo_anuncio, descricao_seo, valor, cidade, bairro, "
         "logradouro, estado, quartos, suites, banheiros, vagas, area_privativa, area_total, "
         "fotos, tour_virtual_url, finalidade, latitude, longitude"
-    ).eq("pronto_para_portais", True).eq("status", "ativo").order(
+    ).eq("org_id", org_id).eq("pronto_para_portais", True).eq("status", "ativo").order(
         "valor", desc=True
     ).limit(200).execute()
 
@@ -231,10 +237,15 @@ async def site_imovel_detalhe(slug: str, imovel_id: str):
     if not config_result.data:
         raise HTTPException(status_code=404, detail="Site não encontrado")
 
-    # Fetch property
-    imovel_result = admin.table("ativos").select("*").eq(
-        "id", imovel_id
-    ).eq("pronto_para_portais", True).eq("status", "ativo").single().execute()
+    # Fetch property scoped to this org
+    org_id = config_result.data["org_id"]
+    imovel_result = admin.table("ativos").select(
+        "id, natureza, tipo_imovel, titulo_anuncio, descricao_seo, valor, cidade, bairro, "
+        "logradouro, estado, quartos, suites, banheiros, vagas, area_privativa, area_total, "
+        "fotos, tour_virtual_url, finalidade, latitude, longitude, descricao"
+    ).eq("id", imovel_id).eq("org_id", org_id).eq(
+        "pronto_para_portais", True
+    ).eq("status", "ativo").single().execute()
 
     if not imovel_result.data:
         raise HTTPException(status_code=404, detail="Imóvel não encontrado")

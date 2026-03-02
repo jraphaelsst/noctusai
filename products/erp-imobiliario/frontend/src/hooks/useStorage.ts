@@ -16,16 +16,24 @@ export function useUploadFile() {
       formData.append("file", file);
       formData.append("categoria", categoria);
       const token = await getToken();
-      const resp = await fetch(`${BACKEND_URL}/api/storage/upload`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      if (!resp.ok) throw new Error((await resp.json()).detail || "Falha no upload");
+      let resp: Response;
+      try {
+        resp = await fetch(`${BACKEND_URL}/api/storage/upload`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+      } catch {
+        throw new Error("Servidor indisponível. Verifique se o backend está rodando.");
+      }
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => null);
+        throw new Error(data?.error?.message || data?.detail || `Erro HTTP ${resp.status}`);
+      }
       return resp.json();
     },
     onSuccess: () => toast.success("Arquivo enviado com sucesso"),
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error("Erro no upload", { description: err.message }),
   });
 }
 
@@ -36,16 +44,24 @@ export function useUploadMultipleFiles() {
       files.forEach((f) => formData.append("files", f));
       formData.append("categoria", categoria);
       const token = await getToken();
-      const resp = await fetch(`${BACKEND_URL}/api/storage/upload-multiple`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      if (!resp.ok) throw new Error((await resp.json()).detail || "Falha no upload");
+      let resp: Response;
+      try {
+        resp = await fetch(`${BACKEND_URL}/api/storage/upload-multiple`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+      } catch {
+        throw new Error("Servidor indisponível. Verifique se o backend está rodando.");
+      }
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => null);
+        throw new Error(data?.error?.message || data?.detail || `Erro HTTP ${resp.status}`);
+      }
       return resp.json();
     },
     onSuccess: (data) => toast.success(`${data.total} arquivo(s) enviado(s)`),
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error("Erro no upload", { description: err.message }),
   });
 }
 
@@ -53,14 +69,22 @@ export function useDeleteFile() {
   return useMutation({
     mutationFn: async ({ path, categoria = "geral" }: { path: string; categoria?: string }) => {
       const token = await getToken();
-      const resp = await fetch(`${BACKEND_URL}/api/storage/delete?path=${encodeURIComponent(path)}&categoria=${categoria}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!resp.ok) throw new Error("Falha ao excluir");
+      let resp: Response;
+      try {
+        resp = await fetch(`${BACKEND_URL}/api/storage/delete?path=${encodeURIComponent(path)}&categoria=${categoria}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        throw new Error("Servidor indisponível. Verifique se o backend está rodando.");
+      }
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => null);
+        throw new Error(data?.error?.message || data?.detail || `Erro HTTP ${resp.status}`);
+      }
       return resp.json();
     },
     onSuccess: () => toast.success("Arquivo excluído"),
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error("Erro ao excluir arquivo", { description: err.message }),
   });
 }

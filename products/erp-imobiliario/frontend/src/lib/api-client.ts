@@ -18,14 +18,36 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   };
 }
 
+function extractErrorMessage(data: any, status: number): string {
+  // Backend returns { error: { code, message } }
+  if (data?.error?.message) return data.error.message;
+  // FastAPI default format
+  if (data?.detail) {
+    if (typeof data.detail === 'string') return data.detail;
+    // Pydantic validation errors: [{loc, msg, type}]
+    if (Array.isArray(data.detail)) {
+      return data.detail.map((e: any) => e.msg || e.message).join('; ');
+    }
+  }
+  if (data?.message) return data.message;
+  return `Erro HTTP ${status}`;
+}
+
 async function handleResponse(response: Response) {
   if (!response.ok) {
-    const error = await response.json().catch(() => ({
-      detail: `Request failed with status ${response.status}`,
-    }));
-    throw new Error(error.detail || error.error || 'Erro na requisição');
+    const data = await response.json().catch(() => null);
+    const message = data ? extractErrorMessage(data, response.status) : `Erro HTTP ${response.status}`;
+    throw new Error(`[${response.status}] ${message}`);
   }
   return response.json();
+}
+
+async function safeFetch(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${BACKEND_URL}${path}`, init);
+  } catch (err) {
+    throw new Error(`Servidor indisponível (${path}). Verifique se o backend está rodando.`);
+  }
 }
 
 export const api = {
@@ -39,13 +61,18 @@ export const api = {
         }
       });
     }
-    const response = await fetch(url.toString(), { headers });
-    return handleResponse(response);
+    try {
+      const response = await fetch(url.toString(), { headers });
+      return handleResponse(response);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('[')) throw err;
+      throw new Error(`Servidor indisponível (${path}). Verifique se o backend está rodando.`);
+    }
   },
 
   async post<T = any>(path: string, body?: any): Promise<T> {
     const headers = await getAuthHeaders();
-    const response = await fetch(`${BACKEND_URL}${path}`, {
+    const response = await safeFetch(path, {
       method: 'POST',
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -55,7 +82,7 @@ export const api = {
 
   async patch<T = any>(path: string, body?: any): Promise<T> {
     const headers = await getAuthHeaders();
-    const response = await fetch(`${BACKEND_URL}${path}`, {
+    const response = await safeFetch(path, {
       method: 'PATCH',
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -65,7 +92,7 @@ export const api = {
 
   async delete<T = any>(path: string): Promise<T> {
     const headers = await getAuthHeaders();
-    const response = await fetch(`${BACKEND_URL}${path}`, {
+    const response = await safeFetch(path, {
       method: 'DELETE',
       headers,
     });

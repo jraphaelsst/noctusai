@@ -242,10 +242,9 @@ async def remover_membro(
             detail="Não é possível remover o proprietário da organização",
         )
 
-    # Remove the member by clearing their org association
-    db.table("noctus_users").update(
-        {"org_id": None, "org_role": None}
-    ).eq("id", user_id).execute()
+    # Remove the member: delete their noctus_users profile.
+    # (org_id is NOT NULL, so we cannot just clear it.)
+    db.table("noctus_users").delete().eq("id", user_id).eq("org_id", org_id).execute()
 
     logger.info(f"Member {user_id} removed from org={org_id}")
     return {"message": "Membro removido com sucesso"}

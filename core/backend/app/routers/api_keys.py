@@ -130,11 +130,17 @@ async def atualizar_api_key(
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
+    # Scope to user's org
+    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    org_id = profile.data["org_id"]
+
     data = body.model_dump(exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("api_keys").update(data).eq("id", key_id).execute()
+    result = db.table("api_keys").update(data).eq("id", key_id).eq("org_id", org_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Chave API não encontrada")
 
@@ -148,9 +154,15 @@ async def revogar_api_key(key_id: str, authorization: Optional[str] = Header(Non
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
+    # Scope to user's org
+    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    org_id = profile.data["org_id"]
+
     result = db.table("api_keys").update(
         {"is_active": False}
-    ).eq("id", key_id).execute()
+    ).eq("id", key_id).eq("org_id", org_id).execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Chave API não encontrada")

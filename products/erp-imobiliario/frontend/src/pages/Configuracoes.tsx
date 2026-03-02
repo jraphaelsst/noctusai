@@ -13,15 +13,21 @@ async function coreApi(method: string, path: string, body?: any) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${CORE_API_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${CORE_API_URL}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error(`Servidor Core indisponível (${path}). Verifique se o backend está rodando.`);
+  }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: `Erro ${res.status}` }));
-    throw new Error(err.detail || 'Erro na requisição');
+    const data = await res.json().catch(() => null);
+    const message = data?.error?.message || data?.detail || `Erro HTTP ${res.status}`;
+    throw new Error(`[${res.status}] ${message}`);
   }
   return res.json();
 }

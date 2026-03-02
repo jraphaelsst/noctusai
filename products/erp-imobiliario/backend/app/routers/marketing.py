@@ -202,15 +202,19 @@ async def enviar_campanha(campanha_id: str, authorization: Optional[str] = Heade
     if not clientes_com_email:
         raise HTTPException(status_code=400, detail="Nenhum cliente com e-mail encontrado para os filtros")
 
-    # Create send records
+    # Filter out clients who already have a send record for this campaign
+    existing_envios = db.table("envios_email").select("cliente_id").eq("campanha_id", campanha_id).execute()
+    existing_ids = {e["cliente_id"] for e in (existing_envios.data or [])}
+
     envios = []
     for cliente in clientes_com_email:
-        envios.append({
-            "campanha_id": campanha_id,
-            "cliente_id": cliente["id"],
-            "email": cliente["email"],
-            "status": "pendente",
-        })
+        if cliente["id"] not in existing_ids:
+            envios.append({
+                "campanha_id": campanha_id,
+                "cliente_id": cliente["id"],
+                "email": cliente["email"],
+                "status": "pendente",
+            })
 
     if envios:
         db.table("envios_email").insert(envios).execute()

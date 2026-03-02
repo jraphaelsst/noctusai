@@ -42,6 +42,11 @@ async def criar_profile(body: ProfileCreate, authorization: Optional[str] = Head
     user, token = await get_current_user(authorization)
     admin = get_admin_client()
 
+    # Get caller's org_id to assign to new user
+    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Usuário sem organização associada")
+
     # Format name
     nome_formatado = " ".join(
         word.capitalize() for word in body.nome.strip().split()
@@ -56,6 +61,7 @@ async def criar_profile(body: ProfileCreate, authorization: Optional[str] = Head
             "user_metadata": {
                 "nome": nome_formatado,
                 "telefone": body.telefone or "",
+                "org_id": org_id,
             },
         })
     except Exception as e:
@@ -99,9 +105,21 @@ async def excluir_profile(profile_id: str, authorization: Optional[str] = Header
     user, token = await get_current_user(authorization)
     admin = get_admin_client()
 
-    # Get profile name before delete
-    profile = admin.table("profiles").select("nome").eq("id", profile_id).single().execute()
-    nome = profile.data.get("nome", "Unknown") if profile.data else "Unknown"
+    # Prevent self-deletion
+    if profile_id == user.id:
+        raise HTTPException(status_code=400, detail="Não é possível excluir a si mesmo")
+
+    # Verify target user belongs to same org
+    caller_org = user.user_metadata.get("org_id") if user.user_metadata else None
+    target_profile = admin.table("profiles").select("nome, org_id").eq("id", profile_id).single().execute()
+    if not target_profile.data:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+
+    target_org = target_profile.data.get("org_id")
+    if caller_org and target_org and caller_org != target_org:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+    nome = target_profile.data.get("nome", "Unknown")
 
     # Delete profile first (cascade deletes user_roles)
     admin.table("profiles").delete().eq("id", profile_id).execute()

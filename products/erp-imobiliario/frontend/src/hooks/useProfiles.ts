@@ -3,13 +3,8 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api-client';
 import { Profile } from '@/types';
 
-function sanitizeError(error: any): string {
-  const msg = error?.message?.toLowerCase() || '';
-  if (msg.includes('already') || msg.includes('duplicate') || msg.includes('cadastrado')) return 'Este email já está cadastrado';
-  if (msg.includes('invalid') || msg.includes('violates')) return 'Dados inválidos fornecidos';
-  if (msg.includes('permission') || msg.includes('policy')) return 'Sem permissão para esta ação';
-  if (msg.includes('network') || msg.includes('fetch')) return 'Erro de conexão';
-  return 'Ocorreu um erro. Tente novamente';
+function getErrorMessage(error: any): string {
+  return error?.message || 'Ocorreu um erro. Tente novamente';
 }
 
 export function useProfiles() {
@@ -37,7 +32,7 @@ export function useCreateProfile() {
       });
     },
     onError: (error: any) => {
-      toast.error('Erro ao cadastrar corretor', { description: sanitizeError(error) });
+      toast.error('Erro ao cadastrar corretor', { description: getErrorMessage(error) });
     },
   });
 }
@@ -55,7 +50,7 @@ export function useUpdateProfile() {
       toast.success('Perfil atualizado com sucesso!');
     },
     onError: (error: any) => {
-      toast.error('Erro ao atualizar perfil', { description: sanitizeError(error) });
+      toast.error('Erro ao atualizar perfil', { description: getErrorMessage(error) });
     },
   });
 }
@@ -73,7 +68,7 @@ export function useDeleteProfile() {
       toast.success('Usuário excluído com sucesso!');
     },
     onError: (error: any) => {
-      toast.error('Erro ao excluir usuário', { description: sanitizeError(error) });
+      toast.error('Erro ao excluir usuário', { description: getErrorMessage(error) });
     },
   });
 }

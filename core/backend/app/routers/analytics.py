@@ -8,7 +8,7 @@ GET /api/admin/analytics/tenants   — Tenant health (orgs with user count, subs
 All endpoints require platform admin role.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Header
 
@@ -51,7 +51,7 @@ async def get_overview(authorization: Optional[str] = Header(None)):
                 mrr += plan_prices.get(sub.get("plan_id", ""), 0)
 
     # Churn rate: canceled subs in last 30 days / total subs that were active 30 days ago
-    thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+    thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
     canceled_recent = db.table("subscriptions").select(
         "id", count="exact"
@@ -84,7 +84,7 @@ async def get_revenue(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     # Fetch all subscriptions with plan data from last 12 months
-    twelve_months_ago = (datetime.utcnow() - timedelta(days=365)).isoformat()
+    twelve_months_ago = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
 
     subs_result = db.table("subscriptions").select(
         "id, org_id, plan_id, status, started_at, canceled_at, created_at, plans(id, name, price_monthly)"
@@ -94,7 +94,7 @@ async def get_revenue(authorization: Optional[str] = Header(None)):
 
     # Build monthly revenue breakdown
     months: dict = {}
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for i in range(12):
         dt = now - timedelta(days=30 * i)
         key = dt.strftime("%Y-%m")

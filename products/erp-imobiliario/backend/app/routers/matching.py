@@ -48,7 +48,7 @@ class EmbedRequest(BaseModel):
 async def gerar_matches(body: GerarMatchesRequest, authorization: Optional[str] = Header(None)):
     """Generate matches. Tries embedding-based matching first, falls back to rule-based."""
     user, token = await get_current_user(authorization)
-    db = get_admin_client()
+    db = get_user_client(token)
 
     matches = []
 
@@ -195,8 +195,8 @@ async def atualizar_status_match(
     if body.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Status inválido. Use: {valid_statuses}")
 
-    result = db.table("matches").update({"status": body.status}).eq("id", match_id).execute()
+    result = db.table("matches").update({"status": body.status}).eq("id", match_id).select().single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Match não encontrado")
 
-    return {"data": result.data[0]}
+    return {"data": result.data}

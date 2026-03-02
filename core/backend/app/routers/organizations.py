@@ -48,6 +48,13 @@ async def get_organization(org_id: str, authorization: Optional[str] = Header(No
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
+    # Verify user belongs to this org or is platform admin
+    profile = db.table("noctus_users").select("org_id, role").eq("id", user.id).single().execute()
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    if profile.data["org_id"] != org_id and profile.data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
     result = db.table("organizations").select("*").eq("id", org_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Organização não encontrada")
@@ -58,6 +65,13 @@ async def get_organization(org_id: str, authorization: Optional[str] = Header(No
 async def atualizar_organization(org_id: str, body: OrgUpdate, authorization: Optional[str] = Header(None)):
     user, token = await get_current_user(authorization)
     db = get_admin_client()
+
+    # Verify user belongs to this org or is platform admin
+    profile = db.table("noctus_users").select("org_id, role").eq("id", user.id).single().execute()
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    if profile.data["org_id"] != org_id and profile.data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Acesso negado")
 
     data = body.model_dump(exclude_none=True)
     if not data:

@@ -7,6 +7,7 @@ GET   /api/auth/me       — Get current user profile + org
 POST  /api/auth/logout   — Invalidate session
 """
 import logging
+import uuid
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr
@@ -54,10 +55,16 @@ async def signup(request: Request, body: SignupRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Erro no cadastro: {str(e)}")
 
-    # 2. Create organization
+    # 2. Create organization (append suffix if slug already taken)
+    base_slug = body.empresa.strip().lower().replace(" ", "-")
+    slug = base_slug
+    existing_slug = db.table("organizations").select("id").eq("slug", slug).execute()
+    if existing_slug.data:
+        slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+
     org_data = {
         "nome": body.empresa.strip(),
-        "slug": body.empresa.strip().lower().replace(" ", "-"),
+        "slug": slug,
         "plano": "free",
         "owner_id": user.id,
         "category": "normal",
@@ -73,7 +80,8 @@ async def signup(request: Request, body: SignupRequest):
         "email": body.email,
         "nome": body.nome.strip().title(),
         "org_id": org["id"],
-        "role": "admin",  # First user is admin
+        "role": "user",
+        "org_role": "owner",  # Org creator is owner of their org
     }
     db.table("noctus_users").insert(profile_data).execute()
 
@@ -163,7 +171,7 @@ async def update_profile(
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    update_data = {k: v for k, v in body.dict().items() if v is not None}
+    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

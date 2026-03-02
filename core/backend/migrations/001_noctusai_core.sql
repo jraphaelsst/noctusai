@@ -72,13 +72,16 @@ CREATE TABLE IF NOT EXISTS licenses (
     status TEXT NOT NULL DEFAULT 'active',        -- active | expired | revoked
     inicio TIMESTAMPTZ DEFAULT now(),
     fim TIMESTAMPTZ,                              -- null = no expiry
-    created_at TIMESTAMPTZ DEFAULT now(),
-
-    UNIQUE(org_id, product_id)
+    created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_licenses_org ON licenses(org_id);
 CREATE INDEX IF NOT EXISTS idx_licenses_product ON licenses(product_id);
+
+-- Only one active license per org+product; historical revoked/expired records are unrestricted
+CREATE UNIQUE INDEX IF NOT EXISTS idx_licenses_one_active_per_org_product
+    ON licenses (org_id, product_id)
+    WHERE status = 'active';
 
 -------------------------------------------------
 -- 5. PLANS (subscription tiers)

@@ -56,8 +56,10 @@ class TestListLicenses:
 class TestGrantLicense:
     def test_grant_license_as_admin(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        mock_sb.set_table_data("licenses", [
-            {"id": "lic-new", "org_id": "org-1", "product_id": "prod-1", "status": "active"},
+        # First execute() → active check returns empty; second → insert returns new license
+        mock_sb.set_table_responses("licenses", [
+            [],
+            [{"id": "lic-new", "org_id": "org-1", "product_id": "prod-1", "status": "active"}],
         ])
 
         resp = admin_client.post("/api/licenses", json={
@@ -66,6 +68,38 @@ class TestGrantLicense:
         })
         assert resp.status_code == 200
         data = resp.json()["data"]
+        assert data["status"] == "active"
+
+    def test_grant_license_duplicate_active_returns_409(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        # Active check returns an existing active license → 409
+        mock_sb.set_table_data("licenses", [
+            {"id": "lic-1", "org_id": "org-1", "product_id": "prod-1", "status": "active"},
+        ])
+
+        resp = admin_client.post("/api/licenses", json={
+            "org_id": "org-1",
+            "product_id": "prod-1",
+        })
+        assert resp.status_code == 409
+
+    def test_grant_license_after_revoke_creates_new_record(self, admin_client):
+        """Re-granting after revocation creates a new license (not an update)."""
+        mock_sb = admin_client.mock_supabase
+        # Active check returns empty (revoked license is NOT active);
+        # insert returns the new license
+        mock_sb.set_table_responses("licenses", [
+            [],
+            [{"id": "lic-new", "org_id": "org-1", "product_id": "prod-1", "status": "active"}],
+        ])
+
+        resp = admin_client.post("/api/licenses", json={
+            "org_id": "org-1",
+            "product_id": "prod-1",
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["id"] == "lic-new"
         assert data["status"] == "active"
 
     def test_grant_license_forbidden_for_non_admin(self, client):
@@ -80,6 +114,37 @@ class TestGrantLicense:
             "org_id": "org-1",
         })
         assert resp.status_code == 422
+
+    def test_grant_license_with_expiry_date(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("licenses", [
+            [],
+            [{"id": "lic-new", "org_id": "org-1", "product_id": "prod-1", "status": "active", "fim": "2026-06-01T00:00:00"}],
+        ])
+
+        resp = admin_client.post("/api/licenses", json={
+            "org_id": "org-1",
+            "product_id": "prod-1",
+            "fim": "2026-06-01T00:00:00",
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["fim"] == "2026-06-01T00:00:00"
+
+    def test_grant_license_without_expiry_date(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("licenses", [
+            [],
+            [{"id": "lic-new", "org_id": "org-1", "product_id": "prod-1", "status": "active"}],
+        ])
+
+        resp = admin_client.post("/api/licenses", json={
+            "org_id": "org-1",
+            "product_id": "prod-1",
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert "fim" not in data or data.get("fim") is None
 
     def test_grant_license_unauthenticated(self, unauth_client):
         resp = unauth_client.post("/api/licenses", json={

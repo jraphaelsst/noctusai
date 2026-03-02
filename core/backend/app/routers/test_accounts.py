@@ -19,6 +19,7 @@ NOTE: The billing router (billing.py) should check organization.category == 'tes
 and block checkout/payment flows for test organizations. Test orgs bypass billing entirely.
 """
 import logging
+import uuid
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -58,10 +59,16 @@ async def criar_test_account(body: TestAccountCreate, authorization: Optional[st
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Erro no cadastro: {str(e)}")
 
-    # 2. Create test organization
+    # 2. Create test organization (append suffix if slug already taken)
+    base_slug = body.empresa.strip().lower().replace(" ", "-")
+    slug = base_slug
+    existing_slug = db.table("organizations").select("id").eq("slug", slug).execute()
+    if existing_slug.data:
+        slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+
     org_data = {
         "nome": body.empresa.strip(),
-        "slug": body.empresa.strip().lower().replace(" ", "-"),
+        "slug": slug,
         "plano": "free",
         "owner_id": user.id,
         "category": "test",
@@ -81,16 +88,20 @@ async def criar_test_account(body: TestAccountCreate, authorization: Optional[st
     }
     db.table("noctus_users").insert(profile_data).execute()
 
-    # 4. Auto-grant all active product licenses
+    # 4. Auto-grant all active product licenses (skip if already active)
     all_products = db.table("products").select("id").eq("ativo", True).execute()
     licenses_created = 0
     for product in (all_products.data or []):
-        license_data = {
+        existing = db.table("licenses").select("id").eq(
+            "org_id", org["id"]
+        ).eq("product_id", product["id"]).eq("status", "active").execute()
+        if existing.data:
+            continue
+        db.table("licenses").insert({
             "org_id": org["id"],
             "product_id": product["id"],
             "status": "active",
-        }
-        db.table("licenses").insert(license_data).execute()
+        }).execute()
         licenses_created += 1
 
     # 5. Create unlimited subscription (find or use the highest plan)

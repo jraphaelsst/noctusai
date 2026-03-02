@@ -164,7 +164,7 @@ export function Dashboard() {
         </section>
 
         <section className="products-grid">
-          {products.map(product => (
+          {[...products].sort((a, b) => Number(b.has_access) - Number(a.has_access)).map(product => (
             <div
               key={product.id}
               className={`product-card ${product.has_access ? 'unlocked' : 'locked'}`}

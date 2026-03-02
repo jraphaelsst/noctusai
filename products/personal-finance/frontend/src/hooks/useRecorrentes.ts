@@ -1,0 +1,93 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api-client";
+import { useAuthStore } from "@/store/authStore";
+import { toast } from "sonner";
+import type { Recorrente } from "@/types";
+
+export function useRecorrentes(ativo?: boolean) {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["recorrentes", ativo],
+    queryFn: async () => {
+      const params: Record<string, any> = {};
+      if (ativo !== undefined) params.ativo = ativo;
+      const result = await api.get("/api/recorrentes", params);
+      return (result.data || []) as Recorrente[];
+    },
+    enabled: !!user,
+    staleTime: 3 * 60 * 1000,
+  });
+}
+
+export function useProximasContas(dias?: number) {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["recorrentes", "proximas", dias],
+    queryFn: async () => {
+      const params: Record<string, any> = {};
+      if (dias !== undefined) params.dias = dias;
+      const result = await api.get("/api/recorrentes/proximas", params);
+      return (result.data || []) as Recorrente[];
+    },
+    enabled: !!user,
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+export function useCreateRecorrente() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: Partial<Recorrente>) => {
+      const result = await api.post("/api/recorrentes", data);
+      return result.data as Recorrente;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["recorrentes"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Conta recorrente criada com sucesso!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao criar conta recorrente", { description: error.message });
+    },
+  });
+}
+
+export function useUpdateRecorrente() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, ...data }: Partial<Recorrente> & { id: string }) => {
+      const result = await api.patch(`/api/recorrentes/${id}`, data);
+      return result.data as Recorrente;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["recorrentes"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Conta recorrente atualizada com sucesso!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar conta recorrente", { description: error.message });
+    },
+  });
+}
+
+export function useDeleteRecorrente() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/api/recorrentes/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["recorrentes"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Conta recorrente excluida com sucesso!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao excluir conta recorrente", { description: error.message });
+    },
+  });
+}

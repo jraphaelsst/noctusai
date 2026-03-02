@@ -73,14 +73,19 @@ class TestGetProduct:
 class TestCreateProduct:
     def test_create_product_as_admin(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        mock_sb.set_table_data("products", [
-            {
-                "id": "new-prod",
-                "nome": "New Product",
-                "slug": "new-prod",
-                "url_base": "http://localhost:3000",
-                "ativo": True,
-            }
+        # First execute: slug duplicate check → empty (no conflict)
+        # Second execute: insert result
+        mock_sb.set_table_responses("products", [
+            [],
+            [
+                {
+                    "id": "new-prod",
+                    "nome": "New Product",
+                    "slug": "new-prod",
+                    "url_base": "http://localhost:3000",
+                    "ativo": True,
+                }
+            ],
         ])
 
         resp = admin_client.post("/api/products", json={

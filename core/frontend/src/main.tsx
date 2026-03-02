@@ -15,6 +15,7 @@ import { AdminOrganizations } from './pages/admin/AdminOrganizations';
 import { AdminSubscriptions } from './pages/admin/AdminSubscriptions';
 import { AdminApiKeys } from './pages/admin/AdminApiKeys';
 import { AdminPlans } from './pages/admin/AdminPlans';
+import { AdminProducts } from './pages/admin/AdminProducts';
 import { AdminBilling } from './pages/admin/AdminBilling';
 import { AdminWebhooks } from './pages/admin/AdminWebhooks';
 import { AdminAnalytics } from './pages/admin/AdminAnalytics';
@@ -65,6 +66,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="subs" element={<AdminSubscriptions />} />
             <Route path="api-keys" element={<AdminApiKeys />} />
             <Route path="plans" element={<AdminPlans />} />
+            <Route path="products" element={<AdminProducts />} />
             <Route path="billing" element={<AdminBilling />} />
             <Route path="webhooks" element={<AdminWebhooks />} />
             <Route path="analytics" element={<AdminAnalytics />} />

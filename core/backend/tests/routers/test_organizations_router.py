@@ -64,6 +64,7 @@ class TestListOrganizations:
 class TestGetOrganization:
     def test_get_org_success(self, client):
         mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
         mock_sb.set_table_data("organizations", {
             "id": "org-1",
             "nome": "Test Corp",
@@ -94,6 +95,7 @@ class TestGetOrganization:
 class TestUpdateOrganization:
     def test_update_org_success(self, client):
         mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
         mock_sb.set_table_data("organizations", [
             {"id": "org-1", "nome": "Updated Corp", "plano": "pro"},
         ])
@@ -106,6 +108,9 @@ class TestUpdateOrganization:
         assert data["nome"] == "Updated Corp"
 
     def test_update_org_empty_body(self, client):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
+
         resp = client.patch("/api/organizations/org-1", json={})
         assert resp.status_code == 400
 
@@ -126,6 +131,7 @@ class TestUpdateOrganization:
 
     def test_update_org_valid_category(self, client):
         mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
         mock_sb.set_table_data("organizations", [
             {"id": "org-1", "nome": "Corp", "category": "test"},
         ])

@@ -21,6 +21,9 @@ python-dateutil==2.9.0
 python-multipart>=0.0.9
 reportlab>=4.0.0
 
+# Personal Finance-only
+yfinance>=0.2.36
+
 # Observability (optional)
 sentry-sdk[fastapi]==1.40.0
 

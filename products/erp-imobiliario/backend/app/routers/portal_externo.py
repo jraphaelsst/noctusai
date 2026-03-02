@@ -195,9 +195,9 @@ async def portal_financeiro(portal_token: str):
     admin = _get_admin()
 
     # Fetch financial records associated with the owner
-    result = admin.table("financeiro").select("*").eq(
-        "pessoa_id", token_data["pessoa_id"]
-    ).order("data_referencia", desc=True).limit(100).execute()
+    result = admin.table("lancamentos").select("*").eq(
+        "cliente_id", token_data["pessoa_id"]
+    ).order("data_vencimento", desc=True).limit(100).execute()
 
     return success_response(result.data or [])
 
@@ -209,7 +209,7 @@ async def portal_contratos(portal_token: str):
 
     admin = _get_admin()
     result = admin.table("contratos").select("*").eq(
-        "pessoa_id", token_data["pessoa_id"]
+        "cliente_id", token_data["pessoa_id"]
     ).order("created_at", desc=True).execute()
 
     return success_response(result.data or [])
@@ -222,7 +222,7 @@ async def portal_documentos(portal_token: str):
 
     admin = _get_admin()
     result = admin.table("documentos").select("*").eq(
-        "pessoa_id", token_data["pessoa_id"]
-    ).eq("compartilhado_portal", True).order("created_at", desc=True).execute()
+        "cliente_id", token_data["pessoa_id"]
+    ).order("created_at", desc=True).execute()
 
     return success_response(result.data or [])

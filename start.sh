@@ -1,5 +1,5 @@
 #!/bin/bash
-# NoctusAI Platform — Start all services (Core + ERP Imobiliario)
+# NoctusAI Platform — Start all services (Core + ERP Imobiliario + Personal Finance)
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -14,7 +14,7 @@ if [ ! -f "$ROOT_DIR/.env" ]; then
   exit 1
 fi
 
-PORTS=(8000 8001 5173 8080)
+PORTS=(8000 8001 8002 5173 8080 8090)
 PIDS=()
 
 # Kill a process and all its descendants
@@ -74,13 +74,13 @@ echo "[venv] Instalando dependencias..."
 # --- Core Backend (porta 8000) ---
 CORE_BACKEND="$ROOT_DIR/core/backend"
 echo "[Core Backend] Iniciando na porta 8000..."
-"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 --app-dir "$CORE_BACKEND" &
+"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir "$CORE_BACKEND" &
 PIDS+=($!)
 
 # --- ERP Backend (porta 8001) ---
 ERP_BACKEND="$ROOT_DIR/products/erp-imobiliario/backend"
 echo "[ERP Backend] Iniciando na porta 8001..."
-"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8001 --app-dir "$ERP_BACKEND" &
+"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8001 --reload --app-dir "$ERP_BACKEND" &
 PIDS+=($!)
 
 # --- Core Frontend (porta 5173) ---
@@ -105,13 +105,32 @@ echo "[ERP Frontend] Iniciando na porta 8080..."
 (cd "$ERP_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8080) &
 PIDS+=($!)
 
+# --- Personal Finance Backend (porta 8002) ---
+PF_BACKEND="$ROOT_DIR/products/personal-finance/backend"
+echo "[PF Backend] Iniciando na porta 8002..."
+"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8002 --reload --app-dir "$PF_BACKEND" &
+PIDS+=($!)
+
+# --- Personal Finance Frontend (porta 8090) ---
+PF_FRONTEND="$ROOT_DIR/products/personal-finance/frontend"
+if [ ! -d "$PF_FRONTEND/node_modules" ]; then
+  echo "[PF Frontend] Instalando dependencias..."
+  (cd "$PF_FRONTEND" && npm install)
+fi
+
+echo "[PF Frontend] Iniciando na porta 8090..."
+(cd "$PF_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8090) &
+PIDS+=($!)
+
 echo ""
 echo "============================================"
 echo "  Servicos iniciados:"
 echo "  Core Backend  → http://localhost:8000"
 echo "  ERP Backend   → http://localhost:8001"
+echo "  PF Backend    → http://localhost:8002"
 echo "  Core Frontend → http://localhost:5173"
 echo "  ERP Frontend  → http://localhost:8080"
+echo "  PF Frontend   → http://localhost:8090"
 echo "============================================"
 echo ""
 echo "Pressione Ctrl+C para parar todos os servicos."

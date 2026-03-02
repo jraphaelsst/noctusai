@@ -125,6 +125,7 @@ class TestCreateApiKey:
 class TestUpdateApiKey:
     def test_update_api_key_success(self, client):
         mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("api_keys", [
             {"id": "key-1", "name": "Updated Key", "scopes": ["read", "write"]},
         ])
@@ -137,6 +138,9 @@ class TestUpdateApiKey:
         assert data["name"] == "Updated Key"
 
     def test_update_api_key_empty_body(self, client):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
+
         resp = client.patch("/api/api-keys/key-1", json={})
         assert resp.status_code == 400
 
@@ -157,6 +161,7 @@ class TestUpdateApiKey:
 class TestRevokeApiKey:
     def test_revoke_api_key_success(self, client):
         mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("api_keys", [
             {"id": "key-1", "is_active": False},
         ])

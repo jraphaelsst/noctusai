@@ -86,10 +86,11 @@ async def lead_score(body: LeadScoreRequest, authorization: Optional[str] = Head
 
         # Persist score to the clientes table
         if body.cliente_id:
+            from datetime import datetime, timezone
             db.table("clientes").update({
                 "lead_score": result["score"],
                 "lead_score_justificativa": result["justificativa"],
-                "lead_score_updated_at": "now()",
+                "lead_score_updated_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", body.cliente_id).execute()
 
         return success_response(result)

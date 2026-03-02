@@ -122,14 +122,20 @@ async def oauth_callback(
     elif user_meta.get("name"):
         nome = user_meta["name"]
 
-    # Create organization
+    # Create organization (append suffix if slug already taken)
     org_name = f"Org de {nome}"
     org_slug = _slugify(nome)
+
+    existing_slug = db.table("organizations").select("id").eq("slug", org_slug).execute()
+    if existing_slug.data:
+        import uuid
+        org_slug = f"{org_slug}-{uuid.uuid4().hex[:6]}"
 
     org_result = db.table("organizations").insert({
         "nome": org_name,
         "slug": org_slug,
         "plano": "free",
+        "owner_id": user_id,
         "onboarding_completed": False,
         "onboarding_steps": {
             "company_details": False,

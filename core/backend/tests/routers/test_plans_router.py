@@ -75,14 +75,19 @@ class TestGetPlan:
 class TestCreatePlan:
     def test_create_plan_as_admin(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        mock_sb.set_table_data("plans", [
-            {
-                "id": "new-plan",
-                "name": "Enterprise",
-                "slug": "enterprise",
-                "price_monthly": 299,
-                "is_active": True,
-            }
+        # First execute: slug duplicate check → empty (no conflict)
+        # Second execute: insert result
+        mock_sb.set_table_responses("plans", [
+            [],
+            [
+                {
+                    "id": "new-plan",
+                    "name": "Enterprise",
+                    "slug": "enterprise",
+                    "price_monthly": 299,
+                    "is_active": True,
+                }
+            ],
         ])
 
         resp = admin_client.post("/api/plans", json={

@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: '/admin/subs', label: 'Assinaturas', icon: '💳', end: false },
   { to: '/admin/api-keys', label: 'Chaves API', icon: '🔑', end: false },
   { to: '/admin/plans', label: 'Planos', icon: '📋', end: false },
+  { to: '/admin/products', label: 'Produtos', icon: '📦', end: false },
   { to: '/admin/billing', label: 'Faturamento', icon: '💰', end: false },
   { to: '/admin/webhooks', label: 'Webhooks', icon: '🔗', end: false },
   { to: '/admin/analytics', label: 'Analytics', icon: '📈', end: false },
