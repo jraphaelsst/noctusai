@@ -28,7 +28,7 @@ from datetime import date
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.locacoes_service import calculate_reajuste
@@ -127,14 +127,15 @@ async def criar_contrato(body: ContratoCreate, authorization: Optional[str] = He
 
     data = body.model_dump(exclude_none=True)
 
-    result = db.table("contratos_locacao").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("contratos_locacao").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar contrato de locação")
 
-    log_action(user.id, "criar", "contrato_locacao", result.data["id"],
+    log_action(user.id, "criar", "contrato_locacao", row["id"],
                f"Criou contrato de locação para imóvel {body.imovel_id}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/{contrato_id}")
@@ -167,13 +168,14 @@ async def atualizar_contrato(
 
     result = db.table("contratos_locacao").update(data).eq(
         "id", contrato_id
-    ).select().single().execute()
-    if not result.data:
+    ).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
 
     log_action(user.id, "editar", "contrato_locacao", contrato_id,
                f"Atualizou contrato {contrato_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{contrato_id}")
@@ -291,15 +293,16 @@ async def renovar_contrato(
     # Remove None values
     new_data = {k: v for k, v in new_data.items() if v is not None}
 
-    novo_result = db.table("contratos_locacao").insert(new_data).select().single().execute()
-    if not novo_result.data:
+    novo_result = db.table("contratos_locacao").insert(new_data).execute()
+    novo_row = first_or_none(novo_result)
+    if not novo_row:
         raise HTTPException(status_code=500, detail="Erro ao criar contrato renovado")
 
     log_action(user.id, "renovar", "contrato_locacao", contrato_id,
-               f"Renovou contrato {contrato_id} → {novo_result.data['id']}",
-               {"contrato_anterior_id": contrato_id, "novo_contrato_id": novo_result.data["id"]})
+               f"Renovou contrato {contrato_id} → {novo_row['id']}",
+               {"contrato_anterior_id": contrato_id, "novo_contrato_id": novo_row["id"]})
 
     return success_response({
         "contrato_anterior": contrato,
-        "contrato_novo": novo_result.data,
+        "contrato_novo": novo_row,
     })

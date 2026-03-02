@@ -53,13 +53,8 @@ class TestListarEventos:
 class TestCriarEvento:
     @staticmethod
     def _setup_sequential(client, table, responses):
-        """Set up sequential execute() responses on the cached builder."""
-        builder = client._mock_supabase.table(table)
-        idx = [0]
-        def _execute():
-            i = idx[0]; idx[0] += 1
-            return responses[i] if i < len(responses) else MockSupabaseResponse(data=[])
-        builder.execute = _execute
+        """Set up sequential execute() responses via the response queue."""
+        client._mock_supabase.set_sequential_responses(table, responses)
 
     def test_create_success(self, client):
         self._setup_sequential(client, "eventos", [

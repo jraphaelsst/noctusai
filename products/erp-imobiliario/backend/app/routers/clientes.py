@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field, EmailStr
-from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 
@@ -130,13 +130,14 @@ async def criar_cliente(body: ClienteCreate, authorization: Optional[str] = Head
     data = body.model_dump(exclude_none=True)
     data["usuario_id"] = user.id
 
-    result = db.table("clientes").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("clientes").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar cliente")
 
-    log_action(user.id, "criar", "cliente", result.data["id"],
+    log_action(user.id, "criar", "cliente", row["id"],
                f"Criou cliente {body.nome}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/{cliente_id}")
@@ -148,12 +149,13 @@ async def atualizar_cliente(cliente_id: str, body: ClienteUpdate, authorization:
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("clientes").update(data).eq("id", cliente_id).select().single().execute()
-    if not result.data:
+    result = db.table("clientes").update(data).eq("id", cliente_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
     log_action(user.id, "editar", "cliente", cliente_id, f"Editou cliente {cliente_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{cliente_id}")
@@ -177,12 +179,13 @@ async def toggle_arquivar(cliente_id: str, authorization: Optional[str] = Header
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
     novo_estado = not current.data["arquivado"]
-    result = db.table("clientes").update({"arquivado": novo_estado}).eq("id", cliente_id).select().single().execute()
+    result = db.table("clientes").update({"arquivado": novo_estado}).eq("id", cliente_id).execute()
+    row = first_or_none(result)
 
     acao = "arquivar" if novo_estado else "desarquivar"
     log_action(user.id, acao, "cliente", cliente_id,
                f"{'Arquivou' if novo_estado else 'Desarquivou'} cliente {current.data['nome']}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.post("/{cliente_id}/mover-etapa")
@@ -198,11 +201,12 @@ async def mover_etapa(cliente_id: str, body: MoverEtapaRequest, authorization: O
     if body.novo_indice is not None:
         update_data["kanban_pos"] = body.novo_indice
 
-    result = db.table("clientes").update(update_data).eq("id", cliente_id).select().single().execute()
-    if not result.data:
+    result = db.table("clientes").update(update_data).eq("id", cliente_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
     log_action(user.id, "mover", "cliente", cliente_id,
                f"Moveu cliente para etapa {body.para_etapa}",
                {"para_etapa": body.para_etapa, "motivo": body.motivo})
-    return success_response(result.data)
+    return success_response(row)

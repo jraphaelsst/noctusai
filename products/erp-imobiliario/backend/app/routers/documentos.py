@@ -36,7 +36,7 @@ import logging
 from typing import Optional, Literal, Dict
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.document_service import DocumentService
 from app.config import settings
@@ -192,14 +192,15 @@ async def criar_documento(body: DocumentoCreate, authorization: Optional[str] = 
     if "metadata" not in data:
         data["metadata"] = {}
 
-    result = db.table("documentos").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("documentos").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar documento")
 
-    log_action(user.id, "criar", "documento", result.data["id"],
+    log_action(user.id, "criar", "documento", row["id"],
                f"Criou documento: {body.nome} ({body.tipo})")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.post("/templates")
@@ -215,14 +216,15 @@ async def criar_template(body: TemplateCreate, authorization: Optional[str] = He
         service = DocumentService(db, user.id)
         data["variaveis"] = service.extract_variables(body.conteudo)
 
-    result = db.table("document_templates").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("document_templates").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar template")
 
-    log_action(user.id, "criar", "template", result.data["id"],
+    log_action(user.id, "criar", "template", row["id"],
                f"Criou template: {body.nome}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.post("/generate")

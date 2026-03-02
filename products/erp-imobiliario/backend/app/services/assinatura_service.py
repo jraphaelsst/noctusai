@@ -9,6 +9,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from app.dependencies import first_or_none
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,8 +105,9 @@ class AssinaturaService:
             "data_envio": now,
         }
 
-        result = self.db.table("assinaturas").insert(data).select().single().execute()
-        return result.data
+        result = self.db.table("assinaturas").insert(data).execute()
+        row = first_or_none(result)
+        return row
 
     async def processar_webhook(
         self,
@@ -175,9 +178,10 @@ class AssinaturaService:
 
         updated = self.db.table("assinaturas").update(update_data).eq(
             "id", assinatura_id
-        ).select().single().execute()
+        ).execute()
+        row = first_or_none(updated)
 
-        return updated.data
+        return row
 
     def get_resumo(self, assinaturas: List[Dict]) -> Dict[str, Any]:
         """
@@ -269,6 +273,7 @@ class AssinaturaService:
 
         updated = self.db.table("assinaturas").update(update_data).eq(
             "id", assinatura_id
-        ).select().single().execute()
+        ).execute()
+        row = first_or_none(updated)
 
-        return updated.data
+        return row

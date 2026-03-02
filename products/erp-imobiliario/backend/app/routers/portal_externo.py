@@ -25,7 +25,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import success_response, paginated_response, ok_response, calculate_pagination
 from app.config import settings
 
@@ -98,15 +98,16 @@ async def gerar_link(body: GerarLinkBody, authorization: Optional[str] = Header(
         "is_active": True,
     }
 
-    result = db.table("portal_tokens").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("portal_tokens").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao gerar link de acesso")
 
-    log_action(user.id, "criar", "portal_token", result.data["id"],
+    log_action(user.id, "criar", "portal_token", row["id"],
                f"Gerou link de portal ({body.tipo}) para {body.nome}")
 
     return success_response({
-        **result.data,
+        **row,
         "link": f"/portal/{portal_token}",
     })
 
@@ -143,9 +144,10 @@ async def revogar_token(token_id: str, authorization: Optional[str] = Header(Non
 
     result = db.table("portal_tokens").update(
         {"is_active": False}
-    ).eq("id", token_id).select().single().execute()
+    ).eq("id", token_id).execute()
+    row = first_or_none(result)
 
-    if not result.data:
+    if not row:
         raise HTTPException(status_code=404, detail="Token não encontrado")
 
     log_action(user.id, "revogar", "portal_token", token_id, f"Revogou token de portal {token_id}")

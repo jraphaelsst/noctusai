@@ -30,7 +30,7 @@ import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.comissoes_service import ComissoesService
@@ -217,11 +217,12 @@ async def criar_comissao(body: ComissaoCreate, authorization: Optional[str] = He
     if body.observacoes:
         comissao_data["observacoes"] = body.observacoes
 
-    result = db.table("comissoes").insert(comissao_data).select().single().execute()
-    if not result.data:
+    result = db.table("comissoes").insert(comissao_data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar comissao")
 
-    comissao = result.data
+    comissao = row
 
     # Create splits
     if splits_validated:
@@ -263,9 +264,10 @@ async def atualizar_comissao(
 
     result = db.table("comissoes").update(update_data).eq(
         "id", comissao_id
-    ).select().single().execute()
+    ).execute()
+    row = first_or_none(result)
 
-    if not result.data:
+    if not row:
         raise HTTPException(status_code=404, detail="Comissao nao encontrada ou sem permissao")
 
     log_action(
@@ -273,7 +275,7 @@ async def atualizar_comissao(
         f"Atualizou status da comissao para {body.status}"
     )
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{comissao_id}")

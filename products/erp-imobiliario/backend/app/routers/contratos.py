@@ -39,7 +39,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.contratos_service import ContratosService
 from app.config import settings
@@ -199,14 +199,15 @@ async def criar_contrato(body: ContratoCreate, authorization: Optional[str] = He
 
     data = body.model_dump(exclude_none=True)
 
-    result = db.table("contratos").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("contratos").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar contrato")
 
-    log_action(user.id, "criar", "contrato", result.data["id"],
+    log_action(user.id, "criar", "contrato", row["id"],
                f"Criou contrato {body.tipo} para cliente {body.cliente_id}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/{contrato_id}")
@@ -223,14 +224,15 @@ async def atualizar_contrato(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("contratos").update(data).eq("id", contrato_id).select().single().execute()
-    if not result.data:
+    result = db.table("contratos").update(data).eq("id", contrato_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
 
     log_action(user.id, "editar", "contrato", contrato_id,
                f"Editou contrato {contrato_id}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{contrato_id}")
@@ -318,12 +320,13 @@ async def atualizar_parcela(
 
     result = db.table("parcelas_contrato").update(data).eq(
         "id", parcela_id
-    ).select().single().execute()
+    ).execute()
+    row = first_or_none(result)
 
-    if not result.data:
+    if not row:
         raise HTTPException(status_code=404, detail="Parcela não encontrada")
 
     log_action(user.id, "editar", "parcela", parcela_id,
                f"Editou parcela {parcela_id}")
 
-    return success_response(result.data)
+    return success_response(row)

@@ -10,7 +10,7 @@ from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client
+from app.dependencies import get_current_user, get_user_client, first_or_none
 from app.exceptions import AppException
 
 logger = logging.getLogger(__name__)
@@ -88,15 +88,14 @@ async def marcar_como_lida(
         .update({"is_read": True})
         .eq("id", notificacao_id)
         .eq("user_id", user.id)
-        .select()
-        .single()
         .execute()
     )
+    row = first_or_none(result)
 
-    if not result.data:
+    if not row:
         raise HTTPException(status_code=404, detail="Notificação não encontrada")
 
-    return {"status": "success", "data": result.data}
+    return {"status": "success", "data": row}
 
 
 @router.post("/ler-todas")

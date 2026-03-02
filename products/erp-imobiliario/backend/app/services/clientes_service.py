@@ -7,7 +7,7 @@ keeping the router focused on HTTP handling.
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.dependencies import log_action
+from app.dependencies import first_or_none, log_action
 
 logger = logging.getLogger(__name__)
 
@@ -79,18 +79,19 @@ class ClientesService:
             Created client data
         """
         data["usuario_id"] = self.user_id
-        result = self.db.table("clientes").insert(data).select().single().execute()
+        result = self.db.table("clientes").insert(data).execute()
+        row = first_or_none(result)
 
-        if result.data:
+        if row:
             log_action(
                 self.user_id,
                 "criar",
                 "cliente",
-                result.data["id"],
+                row["id"],
                 f"Criou cliente {data.get('nome', 'unknown')}"
             )
 
-        return result.data
+        return row
 
     async def update_cliente(self, cliente_id: str, data: Dict) -> Optional[Dict]:
         """
@@ -105,9 +106,10 @@ class ClientesService:
         """
         result = self.db.table("clientes").update(data).eq(
             "id", cliente_id
-        ).select().single().execute()
+        ).execute()
+        row = first_or_none(result)
 
-        if result.data:
+        if row:
             log_action(
                 self.user_id,
                 "editar",
@@ -116,7 +118,7 @@ class ClientesService:
                 f"Editou cliente {cliente_id}"
             )
 
-        return result.data
+        return row
 
     async def delete_cliente(self, cliente_id: str) -> bool:
         """
@@ -158,9 +160,10 @@ class ClientesService:
         novo_estado = not current.data["arquivado"]
         result = self.db.table("clientes").update(
             {"arquivado": novo_estado}
-        ).eq("id", cliente_id).select().single().execute()
+        ).eq("id", cliente_id).execute()
+        row = first_or_none(result)
 
-        if result.data:
+        if row:
             acao = "arquivar" if novo_estado else "desarquivar"
             log_action(
                 self.user_id,
@@ -170,7 +173,7 @@ class ClientesService:
                 f"{'Arquivou' if novo_estado else 'Desarquivou'} cliente {current.data['nome']}"
             )
 
-        return result.data, novo_estado
+        return row, novo_estado
 
     async def move_etapa(
         self,
@@ -197,9 +200,10 @@ class ClientesService:
 
         result = self.db.table("clientes").update(update_data).eq(
             "id", cliente_id
-        ).select().single().execute()
+        ).execute()
+        row = first_or_none(result)
 
-        if result.data:
+        if row:
             log_action(
                 self.user_id,
                 "mover",
@@ -209,4 +213,4 @@ class ClientesService:
                 {"para_etapa": para_etapa, "motivo": motivo}
             )
 
-        return result.data
+        return row

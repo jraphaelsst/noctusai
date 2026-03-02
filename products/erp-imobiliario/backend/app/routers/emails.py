@@ -33,7 +33,7 @@ import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.email_service import EmailService
 from app.config import settings
@@ -210,15 +210,16 @@ async def criar_template(body: TemplateCreate, authorization: Optional[str] = He
     db = get_user_client(token)
 
     data = body.model_dump()
-    result = db.table("email_templates").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("email_templates").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar template")
 
     log_action(
-        user.id, "criar", "email_template", result.data["id"],
+        user.id, "criar", "email_template", row["id"],
         f"Criou template de email '{body.nome}'",
     )
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/templates/{template_id}")
@@ -234,15 +235,16 @@ async def atualizar_template(
 
     result = db.table("email_templates").update(data).eq(
         "id", template_id
-    ).select().single().execute()
-    if not result.data:
+    ).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Template não encontrado")
 
     log_action(
         user.id, "editar", "email_template", template_id,
         f"Editou template de email {template_id}",
     )
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/templates/{template_id}")

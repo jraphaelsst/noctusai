@@ -24,7 +24,7 @@ from typing import Optional, Literal
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.agenda_service import check_conflict
@@ -158,11 +158,12 @@ async def criar_evento(body: EventoCreate, authorization: Optional[str] = Header
     payload = body.model_dump()
     payload["corretor_id"] = user.id
 
-    result = db.table("eventos").insert(payload).select().single().execute()
-    if not result.data:
+    result = db.table("eventos").insert(payload).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar evento")
 
-    evento = result.data
+    evento = row
     log_action(user.id, "criar", "evento", evento["id"], f"Criou evento '{body.titulo}'")
 
     response_data = evento
@@ -249,13 +250,14 @@ async def atualizar_evento(
                 existing.data["corretor_id"], di, df, db, exclude_id=evento_id
             )
 
-    result = db.table("eventos").update(data).eq("id", evento_id).select().single().execute()
-    if not result.data:
+    result = db.table("eventos").update(data).eq("id", evento_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Evento não encontrado")
 
     log_action(user.id, "editar", "evento", evento_id, f"Editou evento {evento_id}")
 
-    response_data = result.data
+    response_data = row
     if conflito:
         response_data["_conflito"] = {
             "evento_id": conflito["id"],

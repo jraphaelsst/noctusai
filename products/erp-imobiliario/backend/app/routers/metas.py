@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 
@@ -138,16 +138,15 @@ async def upsert_config(body: MetaConfigCreate, authorization: Optional[str] = H
     result = (
         db.table("metas_config")
         .upsert(payload)
-        .select()
-        .single()
         .execute()
     )
-    if not result.data:
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao salvar configuração de meta")
 
-    log_action(user.id, "editar", "config_meta", result.data.get("id", ""),
+    log_action(user.id, "editar", "config_meta", row.get("id", ""),
                f"Upsert config {body.categoria}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/config/{config_id}")
@@ -413,13 +412,14 @@ async def criar_meta(body: MetaCreate, authorization: Optional[str] = Header(Non
     if not data.get("usuario_id"):
         data["usuario_id"] = user.id
 
-    result = db.table("metas").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("metas").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar meta")
 
-    log_action(user.id, "criar", "meta", result.data["id"],
+    log_action(user.id, "criar", "meta", row["id"],
                f"Criou meta {body.categoria}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/{meta_id}")
@@ -428,12 +428,13 @@ async def atualizar_meta(meta_id: str, body: MetaUpdate, authorization: Optional
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
-    result = db.table("metas").update(data).eq("id", meta_id).select().single().execute()
-    if not result.data:
+    result = db.table("metas").update(data).eq("id", meta_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Meta não encontrada")
 
     log_action(user.id, "editar", "meta", meta_id, f"Atualizou meta {meta_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{meta_id}")

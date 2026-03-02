@@ -25,7 +25,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.propostas_service import PropostasService
 from app.config import settings
@@ -155,14 +155,15 @@ async def criar_proposta(body: PropostaCreate, authorization: Optional[str] = He
     )
     data["historico"] = [history_entry]
 
-    result = db.table("propostas").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("propostas").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar proposta")
 
-    log_action(user.id, "criar", "proposta", result.data["id"],
+    log_action(user.id, "criar", "proposta", row["id"],
                f"Criou proposta para imóvel {body.imovel_id}, valor {body.valor_proposta}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/{proposta_id}")
@@ -207,14 +208,15 @@ async def atualizar_proposta(
         history.append(entry)
         update_data["historico"] = history
 
-    result = db.table("propostas").update(update_data).eq("id", proposta_id).select().single().execute()
-    if not result.data:
+    result = db.table("propostas").update(update_data).eq("id", proposta_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao atualizar proposta")
 
     log_action(user.id, "editar", "proposta", proposta_id,
                f"Editou proposta {proposta_id}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.post("/{proposta_id}/contraproposta")
@@ -263,14 +265,15 @@ async def criar_contraproposta(
     if body.observacoes:
         update_data["observacoes"] = body.observacoes
 
-    result = db.table("propostas").update(update_data).eq("id", proposta_id).select().single().execute()
-    if not result.data:
+    result = db.table("propostas").update(update_data).eq("id", proposta_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao registrar contraproposta")
 
     log_action(user.id, "contraproposta", "proposta", proposta_id,
                f"Contraproposta de {body.valor_contraproposta} para proposta {proposta_id}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{proposta_id}")

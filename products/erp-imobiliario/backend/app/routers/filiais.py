@@ -25,7 +25,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 
@@ -103,13 +103,14 @@ async def criar_filial(body: FilialCreate, authorization: Optional[str] = Header
     data = body.model_dump(exclude_none=True)
     data["is_active"] = True
 
-    result = db.table("filiais").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("filiais").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar filial")
 
-    log_action(user.id, "criar", "filial", result.data["id"],
+    log_action(user.id, "criar", "filial", row["id"],
                f"Criou filial '{body.nome}' (código: {body.codigo})")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/consolidado")
@@ -192,12 +193,13 @@ async def atualizar_filial(filial_id: str, body: FilialUpdate, authorization: Op
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("filiais").update(data).eq("id", filial_id).select().single().execute()
-    if not result.data:
+    result = db.table("filiais").update(data).eq("id", filial_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Filial não encontrada")
 
     log_action(user.id, "editar", "filial", filial_id, f"Atualizou filial {filial_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{filial_id}")
@@ -208,9 +210,10 @@ async def desativar_filial(filial_id: str, authorization: Optional[str] = Header
 
     result = db.table("filiais").update(
         {"is_active": False}
-    ).eq("id", filial_id).select().single().execute()
+    ).eq("id", filial_id).execute()
+    row = first_or_none(result)
 
-    if not result.data:
+    if not row:
         raise HTTPException(status_code=404, detail="Filial não encontrada")
 
     log_action(user.id, "desativar", "filial", filial_id, f"Desativou filial {filial_id}")

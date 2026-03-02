@@ -7,7 +7,7 @@ including the unified ativos table handling imoveis and permutas.
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.dependencies import log_action, get_admin_client
+from app.dependencies import first_or_none, log_action, get_admin_client
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +76,13 @@ class AtivosService:
             Created asset data with optional _matches_count
         """
         data["owner_id"] = self.user_id
-        result = self.db.table("ativos").insert(data).select().single().execute()
+        result = self.db.table("ativos").insert(data).execute()
+        row = first_or_none(result)
 
-        if not result.data:
+        if not row:
             return None
 
-        ativo = result.data
+        ativo = row
         natureza = data.get("natureza")
 
         log_action(
@@ -145,9 +146,10 @@ class AtivosService:
         """
         result = self.db.table("ativos").update(data).eq(
             "id", ativo_id
-        ).select().single().execute()
+        ).execute()
+        row = first_or_none(result)
 
-        if result.data:
+        if row:
             log_action(
                 self.user_id,
                 "editar",
@@ -156,7 +158,7 @@ class AtivosService:
                 f"Editou ativo {ativo_id}"
             )
 
-        return result.data
+        return row
 
     async def delete_ativo(self, ativo_id: str) -> bool:
         """

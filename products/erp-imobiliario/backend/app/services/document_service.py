@@ -7,6 +7,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from app.dependencies import first_or_none
+
 logger = logging.getLogger(__name__)
 
 
@@ -129,8 +131,9 @@ class DocumentService:
             },
         }
 
-        doc_result = self.db.table("documentos").insert(doc_data).select().single().execute()
-        if doc_result.data:
-            doc_result.data["_generated_content"] = content
+        doc_result = self.db.table("documentos").insert(doc_data).execute()
+        row = first_or_none(doc_result)
+        if row:
+            row["_generated_content"] = content
 
-        return doc_result.data
+        return row

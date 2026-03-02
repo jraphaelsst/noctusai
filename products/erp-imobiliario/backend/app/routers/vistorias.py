@@ -25,7 +25,7 @@ from typing import Optional, Literal, List, Any
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.vistorias_service import (
@@ -136,13 +136,14 @@ async def criar_vistoria(body: VistoriaCreate, authorization: Optional[str] = He
     if "fotos" not in data:
         data["fotos"] = []
 
-    result = db.table("vistorias").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("vistorias").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar vistoria")
 
-    log_action(user.id, "criar", "vistoria", result.data["id"],
+    log_action(user.id, "criar", "vistoria", row["id"],
                f"Criou vistoria {body.tipo} para imóvel {body.imovel_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/template-checklist")
@@ -190,13 +191,14 @@ async def atualizar_vistoria(
 
     result = db.table("vistorias").update(data).eq(
         "id", vistoria_id
-    ).select().single().execute()
-    if not result.data:
+    ).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Vistoria não encontrada")
 
     log_action(user.id, "editar", "vistoria", vistoria_id,
                f"Atualizou vistoria {vistoria_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{vistoria_id}")
@@ -233,11 +235,12 @@ async def adicionar_fotos(
 
     result = db.table("vistorias").update({
         "fotos": updated_fotos,
-    }).eq("id", vistoria_id).select().single().execute()
+    }).eq("id", vistoria_id).execute()
+    row = first_or_none(result)
 
-    if not result.data:
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao adicionar fotos")
 
     log_action(user.id, "editar", "vistoria", vistoria_id,
                f"Adicionou {len(body.urls)} foto(s) à vistoria {vistoria_id}")
-    return success_response(result.data)
+    return success_response(row)

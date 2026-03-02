@@ -198,9 +198,11 @@ class TestLeadScore:
                 "recomendacao": "Fechar negocio.",
             },
         ):
-            # Spy on the update method of the clientes table builder
+            # Spy on the update method while preserving real return type
             clientes_builder = client._mock_supabase.table("clientes")
-            clientes_builder.update = MagicMock(return_value=clientes_builder)
+            original_update = clientes_builder.update
+            update_spy = MagicMock(side_effect=original_update)
+            clientes_builder.update = update_spy
 
             resp = client.post("/api/ai/lead-score", json={
                 "cliente_id": "c1",
@@ -208,8 +210,8 @@ class TestLeadScore:
             assert resp.status_code == 200
 
             # Verify update was called with the score data
-            clientes_builder.update.assert_called_once()
-            update_data = clientes_builder.update.call_args[0][0]
+            update_spy.assert_called_once()
+            update_data = update_spy.call_args[0][0]
             assert update_data["lead_score"] == 85
             assert update_data["lead_score_justificativa"] == "Lead muito qualificado."
             assert "lead_score_updated_at" in update_data

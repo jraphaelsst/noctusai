@@ -9,6 +9,8 @@ from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from typing import Any, Dict, List, Optional
 
+from app.dependencies import first_or_none
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,10 +78,11 @@ class ContratosService:
 
             result = self.db.table("parcelas_contrato").insert(
                 parcela_data
-            ).select().single().execute()
+            ).execute()
+            row = first_or_none(result)
 
-            if result.data:
-                parcelas_criadas.append(result.data)
+            if row:
+                parcelas_criadas.append(row)
 
         return parcelas_criadas
 

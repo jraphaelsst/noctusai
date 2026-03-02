@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 
@@ -225,11 +225,12 @@ async def criar_ativo(body: AtivoCreate, authorization: Optional[str] = Header(N
     data = body.model_dump(exclude_none=True)
     data["owner_id"] = user.id
 
-    result = db.table("ativos").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("ativos").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar ativo")
 
-    ativo = result.data
+    ativo = row
     log_action(user.id, "criar", "ativo", ativo["id"],
                f"Criou {body.natureza} {ativo['id']}")
 
@@ -271,8 +272,9 @@ async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optio
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("ativos").update(data).eq("id", ativo_id).select().single().execute()
-    if not result.data:
+    result = db.table("ativos").update(data).eq("id", ativo_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Ativo não encontrado ou sem permissão")
 
     log_action(user.id, "editar", "ativo", ativo_id, f"Editou ativo {ativo_id}")
@@ -281,11 +283,11 @@ async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optio
     try:
         from app.services.embedding_service import embed_ativo as do_embed
         admin = get_admin_client()
-        await do_embed(result.data, admin)
+        await do_embed(row, admin)
     except Exception as e:
         logger.warning(f"Auto-embedding failed for {ativo_id}: {e}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{ativo_id}")

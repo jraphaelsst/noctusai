@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
-from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/profiles", tags=["Profiles"])
@@ -88,12 +88,13 @@ async def atualizar_profile(profile_id: str, body: ProfileUpdate, authorization:
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("profiles").update(data).eq("id", profile_id).select().single().execute()
-    if not result.data:
+    result = db.table("profiles").update(data).eq("id", profile_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
     log_action(user.id, "editar", "usuario", profile_id, f"Editou perfil {profile_id}")
-    return {"data": result.data}
+    return {"data": row}
 
 
 @router.delete("/{profile_id}")

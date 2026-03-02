@@ -23,7 +23,7 @@ from typing import Optional, Literal
 from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
 from app.services.campo_service import CampoService
@@ -118,13 +118,14 @@ async def registrar_checkin(body: CheckinCreate, authorization: Optional[str] = 
     data = body.model_dump(exclude_none=True)
     data["corretor_id"] = user.id
 
-    result = db.table("checkins").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("checkins").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao registrar check-in")
 
-    log_action(user.id, "checkin", "campo", result.data["id"],
+    log_action(user.id, "checkin", "campo", row["id"],
                f"Check-in ({body.tipo}) em {body.latitude:.4f}, {body.longitude:.4f}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/checkins")
@@ -192,13 +193,14 @@ async def vistoria_rapida(body: VistoriaRapidaCreate, authorization: Optional[st
         "observacoes": body.observacoes,
         "fotos": body.fotos or [],
     }
-    checkin_result = db.table("checkins").insert(checkin_data).select().single().execute()
+    checkin_result = db.table("checkins").insert(checkin_data).execute()
+    checkin_row = first_or_none(checkin_result)
 
     # Store the inspection details in vistorias_rapidas table
     vistoria_data = {
         "corretor_id": user.id,
         "imovel_id": body.imovel_id,
-        "checkin_id": checkin_result.data["id"] if checkin_result.data else None,
+        "checkin_id": checkin_row["id"] if checkin_row else None,
         "estado_geral": body.estado_geral,
         "itens_checklist": body.itens_checklist or {},
         "observacoes": body.observacoes,
@@ -207,18 +209,19 @@ async def vistoria_rapida(body: VistoriaRapidaCreate, authorization: Optional[st
         "longitude": body.longitude,
     }
 
-    result = db.table("vistorias_rapidas").insert(vistoria_data).select().single().execute()
-    if not result.data:
+    result = db.table("vistorias_rapidas").insert(vistoria_data).execute()
+    row = first_or_none(result)
+    if not row:
         # If vistorias_rapidas table doesn't exist yet, return checkin data
         logger.warning("vistorias_rapidas table may not exist; returning checkin data")
-        return success_response(checkin_result.data)
+        return success_response(checkin_row)
 
-    log_action(user.id, "vistoria_rapida", "campo", result.data["id"],
+    log_action(user.id, "vistoria_rapida", "campo", row["id"],
                f"Vistoria rápida no imóvel {body.imovel_id} — estado: {body.estado_geral}")
 
     return success_response({
-        "vistoria": result.data,
-        "checkin": checkin_result.data,
+        "vistoria": row,
+        "checkin": checkin_row,
     })
 
 

@@ -9,7 +9,7 @@ from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import success_response
 from app.services.xml_feeds import generate_zap_xml, generate_olx_xml, generate_vivareal_xml
 
@@ -140,9 +140,10 @@ async def toggle_portal(
 
     result = db.table("ativos").update({
         "pronto_para_portais": body.pronto_para_portais,
-    }).eq("id", imovel_id).select().single().execute()
+    }).eq("id", imovel_id).execute()
+    row = first_or_none(result)
 
-    if not result.data:
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao atualizar status do portal")
 
     status_label = "ativado" if body.pronto_para_portais else "desativado"
@@ -151,7 +152,7 @@ async def toggle_portal(
         f"Portal {status_label} para imovel {imovel_id}"
     )
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/imoveis")

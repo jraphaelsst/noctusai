@@ -32,7 +32,7 @@ import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.manutencao_service import ManutencaoService
 from app.config import settings
@@ -182,14 +182,15 @@ async def criar_ordem(body: OrdemServicoCreate, authorization: Optional[str] = H
 
     data = body.model_dump(exclude_none=True)
 
-    result = db.table("ordens_servico").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("ordens_servico").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar ordem de servico")
 
-    log_action(user.id, "criar", "ordem_servico", result.data["id"],
+    log_action(user.id, "criar", "ordem_servico", row["id"],
                f"Criou ordem de servico: {body.titulo}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/{ordem_id}")
@@ -206,14 +207,15 @@ async def atualizar_ordem(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("ordens_servico").update(data).eq("id", ordem_id).select().single().execute()
-    if not result.data:
+    result = db.table("ordens_servico").update(data).eq("id", ordem_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Ordem de servico nao encontrada")
 
     log_action(user.id, "editar", "ordem_servico", ordem_id,
                f"Editou ordem de servico {ordem_id}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{ordem_id}")

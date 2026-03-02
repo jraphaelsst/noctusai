@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, Field, model_validator
 
-from app.dependencies import get_current_user, get_user_client, get_admin_client
+from app.dependencies import get_current_user, get_user_client, get_admin_client, first_or_none
 from app.services.matching import (
     gerar_matches_para_imovel,
     gerar_matches_para_permuta,
@@ -195,8 +195,9 @@ async def atualizar_status_match(
     if body.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Status inválido. Use: {valid_statuses}")
 
-    result = db.table("matches").update({"status": body.status}).eq("id", match_id).select().single().execute()
-    if not result.data:
+    result = db.table("matches").update({"status": body.status}).eq("id", match_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Match não encontrado")
 
-    return {"data": result.data}
+    return {"data": row}

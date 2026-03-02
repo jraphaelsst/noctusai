@@ -10,6 +10,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from app.dependencies import first_or_none
+
 logger = logging.getLogger(__name__)
 
 # Regex for {{variable}} placeholders
@@ -149,8 +151,9 @@ class EmailService:
         if external_id:
             email_data["external_id"] = external_id
 
-        result = self.db.table("emails").insert(email_data).select().single().execute()
-        return result.data
+        result = self.db.table("emails").insert(email_data).execute()
+        row = first_or_none(result)
+        return row
 
     def aplicar_template(
         self,

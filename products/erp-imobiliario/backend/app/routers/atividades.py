@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
 
@@ -65,11 +65,12 @@ async def criar_atividade(body: AtividadeCreate, authorization: Optional[str] = 
     data = body.model_dump(exclude_none=True)
     data["usuario_id"] = user.id
 
-    result = db.table("atividades").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("atividades").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar atividade")
 
-    log_action(user.id, "criar", "atividade", result.data["id"],
+    log_action(user.id, "criar", "atividade", row["id"],
                f"Registrou atividade {body.tipo}",
                {"tipo": body.tipo, "cliente_id": body.cliente_id})
-    return success_response(result.data)
+    return success_response(row)

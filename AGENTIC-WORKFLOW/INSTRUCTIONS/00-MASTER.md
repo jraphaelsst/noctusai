@@ -25,6 +25,7 @@ The methodology combines two complementary frameworks:
 4. **Integrate via protocol, not custom code.** Use MCP as the standardized integration layer. Every external capability should be an MCP Server that any agent can consume.
 5. **Orchestrate, don't hardcode.** Use agentic workflow patterns (reflection, tool use, planning, multi-agent) to create systems that adapt rather than follow rigid scripts.
 6. **Test at every layer.** Unit tests for logic, integration tests for APIs, evals for agent behavior, regression tracking for context drift.
+7. **Correct solutions only — no workarounds.** Always implement the proper solution using the real API, SDK, or framework behavior. Monkeypatches, shims, hacks, and "temporary" fixes are never acceptable. If the correct approach requires touching more files, adding abstractions, or refactoring existing code, that is the right path. Complexity in service of correctness and solidity is a worthwhile trade-off; fragile shortcuts are not. When a library or SDK doesn't support a pattern, adapt the application code to use the SDK's actual API rather than patching the SDK to match the desired pattern.
 
 ---
 

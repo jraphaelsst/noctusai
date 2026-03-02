@@ -7,6 +7,15 @@ from fastapi import Header, HTTPException
 from app.database import get_supabase_client
 
 
+def first_or_none(result) -> Optional[dict]:
+    """Extract first record from a Supabase list response, or None."""
+    if not result.data:
+        return None
+    if isinstance(result.data, dict):
+        return result.data
+    return result.data[0]
+
+
 async def get_current_user(authorization: Optional[str] = Header(None)):
     """
     Extract and validate the JWT from the Authorization header.

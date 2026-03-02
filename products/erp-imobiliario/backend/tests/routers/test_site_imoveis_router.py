@@ -33,16 +33,8 @@ class TestObterConfig:
 
 class TestCriarConfig:
     def _setup_sequential_responses(self, client, table, responses):
-        """Set up a mock builder that returns different data on each execute() call."""
-        builder = client._mock_supabase.table(table)
-        call_idx = [0]
-        def sequential_execute():
-            idx = call_idx[0]
-            call_idx[0] += 1
-            if idx < len(responses):
-                return responses[idx]
-            return MockSupabaseResponse(data=[])
-        builder.execute = sequential_execute
+        """Set up sequential execute() responses via the response queue."""
+        client._mock_supabase.set_sequential_responses(table, responses)
 
     def test_create_success(self, client):
         # 1st call: existence check → empty (no config yet)

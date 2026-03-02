@@ -28,7 +28,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.financeiro_service import FinanceiroService
 from app.config import settings
@@ -205,14 +205,15 @@ async def criar_lancamento(body: LancamentoCreate, authorization: Optional[str] 
 
     data = body.model_dump(exclude_none=True)
 
-    result = db.table("lancamentos").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("lancamentos").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar lançamento")
 
-    log_action(user.id, "criar", "lancamento", result.data["id"],
+    log_action(user.id, "criar", "lancamento", row["id"],
                f"Criou lançamento {body.tipo}: {body.descricao}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/{lancamento_id}")
@@ -229,14 +230,15 @@ async def atualizar_lancamento(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("lancamentos").update(data).eq("id", lancamento_id).select().single().execute()
-    if not result.data:
+    result = db.table("lancamentos").update(data).eq("id", lancamento_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
 
     log_action(user.id, "editar", "lancamento", lancamento_id,
                f"Editou lançamento {lancamento_id}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{lancamento_id}")

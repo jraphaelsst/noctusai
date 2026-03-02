@@ -27,7 +27,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field, field_validator
 
-from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import success_response
 
 
@@ -131,13 +131,14 @@ async def criar_config(body: SiteConfigCreate, authorization: Optional[str] = He
         raise HTTPException(status_code=409, detail="Este slug já está em uso por outra organização")
 
     data = body.model_dump(exclude_none=True)
-    result = db.table("site_config").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("site_config").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar configuração do site")
 
-    log_action(user.id, "criar", "site_config", result.data["id"],
+    log_action(user.id, "criar", "site_config", row["id"],
                f"Criou site '{body.nome_site}' com slug '{body.slug}'")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/config")
@@ -156,12 +157,13 @@ async def atualizar_config(body: SiteConfigUpdate, authorization: Optional[str] 
         raise HTTPException(status_code=404, detail="Configuração de site não encontrada. Crie primeiro via POST.")
 
     config_id = existing.data[0]["id"]
-    result = db.table("site_config").update(data).eq("id", config_id).select().single().execute()
-    if not result.data:
+    result = db.table("site_config").update(data).eq("id", config_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao atualizar configuração")
 
     log_action(user.id, "editar", "site_config", config_id, "Atualizou configuração do site")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/preview")

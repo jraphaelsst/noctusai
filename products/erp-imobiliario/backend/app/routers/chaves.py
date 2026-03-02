@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
 
@@ -120,13 +120,14 @@ async def criar_chave(body: ChaveCreate, authorization: Optional[str] = Header(N
     data = body.model_dump(exclude_none=True)
     data["status"] = "disponivel"
 
-    result = db.table("chaves").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("chaves").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao registrar chave")
 
-    log_action(user.id, "criar", "chave", result.data["id"],
+    log_action(user.id, "criar", "chave", row["id"],
                f"Registrou chave {body.codigo} para imóvel {body.imovel_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/{chave_id}")
@@ -159,12 +160,13 @@ async def atualizar_chave(chave_id: str, body: ChaveUpdate, authorization: Optio
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("chaves").update(data).eq("id", chave_id).select().single().execute()
-    if not result.data:
+    result = db.table("chaves").update(data).eq("id", chave_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Chave não encontrada")
 
     log_action(user.id, "editar", "chave", chave_id, f"Atualizou chave {chave_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.post("/{chave_id}/retirada")
@@ -191,7 +193,8 @@ async def retirar_chave(chave_id: str, body: RetiradaBody, authorization: Option
         "ultima_retirada_nome": body.corretor_nome,
         "ultima_retirada_em": now,
     }
-    result = db.table("chaves").update(update_data).eq("id", chave_id).select().single().execute()
+    result = db.table("chaves").update(update_data).eq("id", chave_id).execute()
+    row = first_or_none(result)
 
     # Record history
     db.table("chaves_historico").insert({
@@ -204,7 +207,7 @@ async def retirar_chave(chave_id: str, body: RetiradaBody, authorization: Option
 
     log_action(user.id, "retirada", "chave", chave_id,
                f"Retirou chave {chave_id} — {body.corretor_nome}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.post("/{chave_id}/devolucao")
@@ -227,7 +230,8 @@ async def devolver_chave(chave_id: str, body: DevolucaoBody, authorization: Opti
         "status": "disponivel",
         "ultima_devolucao_em": now,
     }
-    result = db.table("chaves").update(update_data).eq("id", chave_id).select().single().execute()
+    result = db.table("chaves").update(update_data).eq("id", chave_id).execute()
+    row = first_or_none(result)
 
     # Record history
     db.table("chaves_historico").insert({
@@ -240,7 +244,7 @@ async def devolver_chave(chave_id: str, body: DevolucaoBody, authorization: Opti
 
     log_action(user.id, "devolucao", "chave", chave_id,
                f"Devolveu chave {chave_id} — {body.corretor_nome}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/{chave_id}/historico")

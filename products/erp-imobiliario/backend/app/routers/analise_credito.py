@@ -26,7 +26,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field, field_validator
 
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
 
@@ -108,14 +108,15 @@ async def consultar_credito(body: ConsultaCreditoBody, authorization: Optional[s
         "validade": analise_resultado.get("validade"),
     }
 
-    result = db.table("analises_credito").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("analises_credito").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao registrar análise de crédito")
 
-    log_action(user.id, "consultar", "analise_credito", result.data["id"],
+    log_action(user.id, "consultar", "analise_credito", row["id"],
                f"Consultou crédito de {body.nome} (CPF: ***{body.cpf[-4:]}) via {body.fonte}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("/{analise_id}")
@@ -141,13 +142,14 @@ async def atualizar_analise(analise_id: str, body: AtualizarAnaliseBody, authori
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("analises_credito").update(data).eq("id", analise_id).select().single().execute()
-    if not result.data:
+    result = db.table("analises_credito").update(data).eq("id", analise_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Análise de crédito não encontrada")
 
     log_action(user.id, "editar", "analise_credito", analise_id,
                f"Atualizou análise de crédito {analise_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.get("")

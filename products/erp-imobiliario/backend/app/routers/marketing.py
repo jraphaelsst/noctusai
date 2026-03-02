@@ -30,7 +30,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.marketing_service import get_campaign_stats, process_alerts
@@ -109,13 +109,13 @@ async def criar_campanha(body: CampanhaCreate, authorization: Optional[str] = He
     db = get_user_client(token)
 
     payload = body.model_dump()
-    result = db.table("campanhas").insert(payload).select().single().execute()
-    if not result.data:
+    result = db.table("campanhas").insert(payload).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar campanha")
 
-    campanha = result.data
-    log_action(user.id, "criar", "campanha", campanha["id"], f"Criou campanha '{body.nome}'")
-    return success_response(campanha)
+    log_action(user.id, "criar", "campanha", row["id"], f"Criou campanha '{body.nome}'")
+    return success_response(row)
 
 
 @router.get("/campanhas/{campanha_id}")
@@ -145,12 +145,13 @@ async def atualizar_campanha(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("campanhas").update(data).eq("id", campanha_id).select().single().execute()
-    if not result.data:
+    result = db.table("campanhas").update(data).eq("id", campanha_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Campanha não encontrada")
 
     log_action(user.id, "editar", "campanha", campanha_id, f"Editou campanha {campanha_id}")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/campanhas/{campanha_id}")

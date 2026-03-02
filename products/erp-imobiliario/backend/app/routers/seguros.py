@@ -26,7 +26,7 @@ from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.seguros_service import SegurosService
 from app.config import settings
@@ -179,16 +179,17 @@ async def criar_seguro(body: SeguroCreate, authorization: Optional[str] = Header
     data = body.model_dump(exclude_none=True)
     data["status"] = "ativo"
 
-    result = db.table("seguros").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("seguros").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar seguro")
 
     log_action(
-        user.id, "criar", "seguro", result.data["id"],
+        user.id, "criar", "seguro", row["id"],
         f"Criou apólice de seguro {body.tipo_cobertura} para imóvel {body.imovel_id}"
     )
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/{seguro_id}")
@@ -207,8 +208,9 @@ async def atualizar_seguro(
 
     result = db.table("seguros").update(data).eq(
         "id", seguro_id
-    ).select().single().execute()
-    if not result.data:
+    ).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Seguro não encontrado")
 
     log_action(
@@ -216,7 +218,7 @@ async def atualizar_seguro(
         f"Atualizou seguro {seguro_id}"
     )
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{seguro_id}")

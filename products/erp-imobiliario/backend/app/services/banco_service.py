@@ -8,6 +8,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from app.dependencies import first_or_none
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,14 +69,13 @@ class BancoService:
         extrato_result = (
             self.db.table("extratos_bancarios")
             .insert(extrato_data)
-            .select()
-            .single()
             .execute()
         )
-        if not extrato_result.data:
+        extrato_row = first_or_none(extrato_result)
+        if not extrato_row:
             raise RuntimeError("Falha ao criar registro de extrato bancario")
 
-        extrato_id = extrato_result.data["id"]
+        extrato_id = extrato_row["id"]
 
         # Bulk insert movimentacoes
         movimentacoes_records = []
@@ -167,12 +168,10 @@ class BancoService:
                 "lancamento_id": lancamento_id,
             })
             .eq("id", movimentacao_id)
-            .select()
-            .single()
             .execute()
         )
 
-        return update_result.data
+        return first_or_none(update_result)
 
     def auto_conciliar(self, extrato_id: str) -> Dict[str, Any]:
         """
@@ -298,14 +297,13 @@ class BancoService:
         remessa_result = (
             self.db.table("remessas")
             .insert(remessa_data)
-            .select()
-            .single()
             .execute()
         )
-        if not remessa_result.data:
+        remessa_row = first_or_none(remessa_result)
+        if not remessa_row:
             raise RuntimeError("Falha ao criar registro de remessa")
 
-        remessa_id = remessa_result.data["id"]
+        remessa_id = remessa_row["id"]
 
         return {
             "remessa_id": remessa_id,

@@ -32,7 +32,7 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.portal_cliente_service import PortalClienteService
 from app.config import settings
@@ -91,15 +91,16 @@ async def gerar_acesso(body: GerarAcessoRequest, authorization: Optional[str] = 
     if body.data_expiracao:
         data["data_expiracao"] = body.data_expiracao
 
-    result = db.table("portal_acessos").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("portal_acessos").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao gerar acesso ao portal")
 
-    log_action(user.id, "criar", "portal_acesso", result.data["id"],
+    log_action(user.id, "criar", "portal_acesso", row["id"],
                f"Gerou acesso ao portal para cliente {body.cliente_id}")
 
     return success_response({
-        **result.data,
+        **row,
         "link": f"/portal-cliente/{portal_token}",
     })
 
@@ -148,9 +149,10 @@ async def revogar_acesso(acesso_id: str, authorization: Optional[str] = Header(N
 
     result = db.table("portal_acessos").update(
         {"ativo": False}
-    ).eq("id", acesso_id).select().single().execute()
+    ).eq("id", acesso_id).execute()
+    row = first_or_none(result)
 
-    if not result.data:
+    if not row:
         raise HTTPException(status_code=404, detail="Acesso não encontrado")
 
     log_action(user.id, "revogar", "portal_acesso", acesso_id,
@@ -214,14 +216,15 @@ async def atualizar_chamado(
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("chamados_portal").update(data).eq("id", chamado_id).select().single().execute()
-    if not result.data:
+    result = db.table("chamados_portal").update(data).eq("id", chamado_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Chamado não encontrado")
 
     log_action(user.id, "editar", "chamado_portal", chamado_id,
                f"Atualizou chamado {chamado_id}")
 
-    return success_response(result.data)
+    return success_response(row)
 
 
 # ---------------------------------------------------------------------------
@@ -285,8 +288,9 @@ async def portal_criar_chamado(token: str, body: ChamadoCreate):
         "status": "aberto",
     }
 
-    result = service.db.table("chamados_portal").insert(data).select().single().execute()
-    if not result.data:
+    result = service.db.table("chamados_portal").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar chamado")
 
-    return success_response(result.data)
+    return success_response(row)
