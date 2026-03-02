@@ -1,6 +1,7 @@
 """Categories service — hierarchy management."""
 import logging
 from typing import Dict, List, Optional
+from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +25,14 @@ class CategoriasService:
     async def criar(self, data: Dict) -> Dict:
         data["org_id"] = self.org_id
         data["is_sistema"] = False
-        result = self.db.table("categorias").insert(data).select().single().execute()
-        return result.data
+        result = self.db.table("categorias").insert(data).execute()
+        row = first_or_none(result)
+        return row
 
     async def atualizar(self, categoria_id: str, data: Dict) -> Optional[Dict]:
-        result = self.db.table("categorias").update(data).eq("id", categoria_id).select().single().execute()
-        return result.data
+        result = self.db.table("categorias").update(data).eq("id", categoria_id).execute()
+        row = first_or_none(result)
+        return row
 
     async def excluir(self, categoria_id: str) -> bool:
         self.db.table("categorias").delete().eq("id", categoria_id).execute()

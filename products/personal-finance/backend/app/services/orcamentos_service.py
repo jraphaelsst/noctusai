@@ -1,6 +1,7 @@
 """Budgets service — budget management with method support."""
 import logging
 from typing import Dict, List, Optional
+from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -20,18 +21,20 @@ class OrcamentosService:
 
     async def criar(self, data: Dict, itens: Optional[List[Dict]] = None) -> Dict:
         data["org_id"] = self.org_id
-        result = self.db.table("orcamentos").insert(data).select().single().execute()
+        result = self.db.table("orcamentos").insert(data).execute()
+        row = first_or_none(result)
 
-        if result.data and itens:
+        if row and itens:
             for item in itens:
-                item["orcamento_id"] = result.data["id"]
+                item["orcamento_id"] = row["id"]
             self.db.table("orcamento_itens").insert(itens).execute()
 
-        return result.data
+        return row
 
     async def atualizar(self, orcamento_id: str, data: Dict) -> Optional[Dict]:
-        result = self.db.table("orcamentos").update(data).eq("id", orcamento_id).eq("org_id", self.org_id).select().single().execute()
-        return result.data
+        result = self.db.table("orcamentos").update(data).eq("id", orcamento_id).eq("org_id", self.org_id).execute()
+        row = first_or_none(result)
+        return row
 
     async def excluir(self, orcamento_id: str) -> bool:
         self.db.table("orcamentos").delete().eq("id", orcamento_id).eq("org_id", self.org_id).execute()
@@ -63,12 +66,14 @@ class OrcamentosService:
         return result.data or []
 
     async def criar_item(self, data: Dict) -> Dict:
-        result = self.db.table("orcamento_itens").insert(data).select().single().execute()
-        return result.data
+        result = self.db.table("orcamento_itens").insert(data).execute()
+        row = first_or_none(result)
+        return row
 
     async def atualizar_item(self, item_id: str, data: Dict) -> Optional[Dict]:
-        result = self.db.table("orcamento_itens").update(data).eq("id", item_id).select().single().execute()
-        return result.data
+        result = self.db.table("orcamento_itens").update(data).eq("id", item_id).execute()
+        row = first_or_none(result)
+        return row
 
     async def excluir_item(self, item_id: str) -> bool:
         self.db.table("orcamento_itens").delete().eq("id", item_id).execute()

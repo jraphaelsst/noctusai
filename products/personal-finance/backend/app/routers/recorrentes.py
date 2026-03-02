@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
-from app.dependencies import get_current_user_org, get_user_client
+from app.dependencies import get_current_user_org, get_user_client, first_or_none
 from app.responses import success_response, ok_response
 from app.schemas.relatorios import RecorrenteCreate, RecorrenteUpdate
 
@@ -55,10 +55,11 @@ async def criar_recorrente(body: RecorrenteCreate, authorization: Optional[str] 
     db = get_user_client(token)
     data = body.model_dump(exclude_none=True)
     data["org_id"] = org_id
-    result = db.table("recorrentes").insert(data).select().single().execute()
-    if not result.data:
+    result = db.table("recorrentes").insert(data).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar recorrente")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.patch("/{recorrente_id}")
@@ -68,10 +69,11 @@ async def atualizar_recorrente(recorrente_id: str, body: RecorrenteUpdate, autho
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
-    result = db.table("recorrentes").update(updates).eq("id", recorrente_id).eq("org_id", org_id).select().single().execute()
-    if not result.data:
+    result = db.table("recorrentes").update(updates).eq("id", recorrente_id).eq("org_id", org_id).execute()
+    row = first_or_none(result)
+    if not row:
         raise HTTPException(status_code=404, detail="Recorrente nao encontrado")
-    return success_response(result.data)
+    return success_response(row)
 
 
 @router.delete("/{recorrente_id}")

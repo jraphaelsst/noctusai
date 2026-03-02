@@ -1,6 +1,7 @@
 """Portfolio service — portfolio management and summary."""
 import logging
 from typing import Dict, List, Optional
+from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,14 @@ class CarteiraService:
 
     async def criar(self, data: Dict) -> Dict:
         data["org_id"] = self.org_id
-        result = self.db.table("carteiras").insert(data).select().single().execute()
-        return result.data
+        result = self.db.table("carteiras").insert(data).execute()
+        row = first_or_none(result)
+        return row
 
     async def atualizar(self, carteira_id: str, data: Dict) -> Optional[Dict]:
-        result = self.db.table("carteiras").update(data).eq("id", carteira_id).eq("org_id", self.org_id).select().single().execute()
-        return result.data
+        result = self.db.table("carteiras").update(data).eq("id", carteira_id).eq("org_id", self.org_id).execute()
+        row = first_or_none(result)
+        return row
 
     async def excluir(self, carteira_id: str) -> bool:
         self.db.table("carteiras").delete().eq("id", carteira_id).eq("org_id", self.org_id).execute()

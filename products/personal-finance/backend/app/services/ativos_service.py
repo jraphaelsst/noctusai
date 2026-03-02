@@ -1,6 +1,7 @@
 """Holdings service — stock/asset management with average price calculation."""
 import logging
 from typing import Dict, List, Optional
+from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +24,14 @@ class AtivosService:
 
     async def criar(self, data: Dict) -> Dict:
         data["org_id"] = self.org_id
-        result = self.db.table("ativos").insert(data).select().single().execute()
-        return result.data
+        result = self.db.table("ativos").insert(data).execute()
+        row = first_or_none(result)
+        return row
 
     async def atualizar(self, ativo_id: str, data: Dict) -> Optional[Dict]:
-        result = self.db.table("ativos").update(data).eq("id", ativo_id).eq("org_id", self.org_id).select().single().execute()
-        return result.data
+        result = self.db.table("ativos").update(data).eq("id", ativo_id).eq("org_id", self.org_id).execute()
+        row = first_or_none(result)
+        return row
 
     async def excluir(self, ativo_id: str) -> bool:
         self.db.table("ativos").delete().eq("id", ativo_id).eq("org_id", self.org_id).execute()
@@ -36,18 +39,19 @@ class AtivosService:
 
     async def registrar_operacao(self, data: Dict) -> Dict:
         """Register buy/sell operation and recalculate holding."""
-        result = self.db.table("operacoes").insert(data).select().single().execute()
+        result = self.db.table("operacoes").insert(data).execute()
+        row = first_or_none(result)
 
-        if result.data and data.get("ativo_id"):
+        if row and data.get("ativo_id"):
             await self._recalcular_ativo(data["ativo_id"], data["tipo"], data)
-        elif result.data and not data.get("ativo_id"):
+        elif row and not data.get("ativo_id"):
             # Auto-create holding if needed
             ativo = await self._encontrar_ou_criar_ativo(data)
             if ativo:
-                self.db.table("operacoes").update({"ativo_id": ativo["id"]}).eq("id", result.data["id"]).execute()
+                self.db.table("operacoes").update({"ativo_id": ativo["id"]}).eq("id", row["id"]).execute()
                 await self._recalcular_ativo(ativo["id"], data["tipo"], data)
 
-        return result.data
+        return row
 
     async def _encontrar_ou_criar_ativo(self, operacao: Dict) -> Optional[Dict]:
         """Find existing holding by ticker or create new one."""
@@ -64,8 +68,8 @@ class AtivosService:
             "quantidade": 0,
             "preco_medio": 0,
         }
-        result = self.db.table("ativos").insert(novo).select().single().execute()
-        return result.data
+        result = self.db.table("ativos").insert(novo).execute()
+        return first_or_none(result)
 
     async def _recalcular_ativo_completo(self, ativo_id: str):
         """Recalculate holding from ALL operations using FIFO lot tracking."""

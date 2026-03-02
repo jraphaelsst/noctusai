@@ -1,6 +1,7 @@
 """Accounts service — CRUD and balance operations."""
 import logging
 from typing import Dict, List, Optional
+from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +24,14 @@ class ContasService:
 
     async def criar(self, data: Dict) -> Dict:
         data["org_id"] = self.org_id
-        result = self.db.table("contas").insert(data).select().single().execute()
-        return result.data
+        result = self.db.table("contas").insert(data).execute()
+        row = first_or_none(result)
+        return row
 
     async def atualizar(self, conta_id: str, data: Dict) -> Optional[Dict]:
-        result = self.db.table("contas").update(data).eq("id", conta_id).eq("org_id", self.org_id).select().single().execute()
-        return result.data
+        result = self.db.table("contas").update(data).eq("id", conta_id).eq("org_id", self.org_id).execute()
+        row = first_or_none(result)
+        return row
 
     async def excluir(self, conta_id: str) -> bool:
         self.db.table("contas").delete().eq("id", conta_id).eq("org_id", self.org_id).execute()

@@ -1,6 +1,7 @@
 """Transactions service — CRUD, filtering, categorization."""
 import logging
 from typing import Dict, List, Optional
+from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +69,16 @@ class TransacoesService:
         if data.get("tipo") == "transferencia" and not data.get("conta_destino_id"):
             raise ValueError("conta_destino_id obrigatorio para transferencias")
 
-        result = self.db.table("transacoes").insert(data).select().single().execute()
+        result = self.db.table("transacoes").insert(data).execute()
+        row = first_or_none(result)
 
         # Update account balance
-        if result.data:
+        if row:
             await self._atualizar_saldo_conta(data["conta_id"], float(data["valor"]), data["tipo"])
             if data.get("conta_destino_id") and data["tipo"] == "transferencia":
                 await self._atualizar_saldo_conta(data["conta_destino_id"], float(data["valor"]), "receita")
 
-        return result.data
+        return row
 
     async def atualizar(self, transacao_id: str, data: Dict) -> Optional[Dict]:
         # Fetch old transaction to reverse balance
@@ -84,12 +86,13 @@ class TransacoesService:
         if not old.data:
             return None
 
-        result = self.db.table("transacoes").update(data).eq("id", transacao_id).eq("org_id", self.org_id).select().single().execute()
-        if not result.data:
+        result = self.db.table("transacoes").update(data).eq("id", transacao_id).eq("org_id", self.org_id).execute()
+        row = first_or_none(result)
+        if not row:
             return None
 
         old_t = old.data
-        new_t = result.data
+        new_t = row
 
         # Reverse old balance effect
         reverse_tipo = "receita" if old_t["tipo"] == "despesa" else "despesa"
@@ -104,7 +107,7 @@ class TransacoesService:
         if new_t.get("conta_destino_id") and new_t["tipo"] == "transferencia":
             await self._atualizar_saldo_conta(new_t["conta_destino_id"], float(new_t["valor"]), "receita")
 
-        return result.data
+        return row
 
     async def excluir(self, transacao_id: str) -> bool:
         # Fetch transaction to reverse balance

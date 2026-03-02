@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from app.dependencies import get_current_user_org, get_user_client
+from app.dependencies import get_current_user_org, get_user_client, first_or_none
 from app.responses import success_response, ok_response
 from app.schemas.relatorios import WatchlistCreate, WatchlistItemCreate
 
@@ -37,8 +37,9 @@ async def criar_watchlist(body: WatchlistCreate, authorization: Optional[str] = 
     db = get_user_client(token)
     data = body.model_dump()
     data["org_id"] = org_id
-    result = db.table("watchlists").insert(data).select().single().execute()
-    return success_response(result.data)
+    result = db.table("watchlists").insert(data).execute()
+    row = first_or_none(result)
+    return success_response(row)
 
 
 @router.delete("/{watchlist_id}")
@@ -63,8 +64,9 @@ async def adicionar_item(watchlist_id: str, body: WatchlistItemCreate, authoriza
 
     data = body.model_dump(exclude_none=True)
     data["watchlist_id"] = watchlist_id
-    result = db.table("watchlist_itens").insert(data).select().single().execute()
-    return success_response(result.data)
+    result = db.table("watchlist_itens").insert(data).execute()
+    row = first_or_none(result)
+    return success_response(row)
 
 
 @router.delete("/itens/{item_id}")

@@ -51,3 +51,12 @@ def get_user_client(token: str):
 def get_admin_client():
     """Get a Supabase client with service role (bypasses RLS)."""
     return get_supabase_client()
+
+
+def first_or_none(result) -> Optional[dict]:
+    """Extract first record from a Supabase list response, or None."""
+    if not result.data:
+        return None
+    if isinstance(result.data, dict):
+        return result.data
+    return result.data[0]

@@ -2,6 +2,7 @@
 import logging
 from typing import Dict, List, Optional
 from datetime import date
+from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +75,11 @@ class PatrimonioService:
         # Check for existing snapshot on this date to avoid duplicates
         existing = self.db.table("patrimonio_snapshots").select("id").eq("org_id", self.org_id).eq("data", snapshot_date).execute()
         if existing.data:
-            result = self.db.table("patrimonio_snapshots").update(snapshot).eq("id", existing.data[0]["id"]).select().single().execute()
+            result = self.db.table("patrimonio_snapshots").update(snapshot).eq("id", existing.data[0]["id"]).execute()
         else:
-            result = self.db.table("patrimonio_snapshots").insert(snapshot).select().single().execute()
-        return result.data
+            result = self.db.table("patrimonio_snapshots").insert(snapshot).execute()
+        row = first_or_none(result)
+        return row
 
     async def historico(self, limite: int = 24) -> List[Dict]:
         """Get net worth history (most recent snapshots)."""

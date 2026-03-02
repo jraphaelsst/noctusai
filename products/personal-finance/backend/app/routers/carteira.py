@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from app.dependencies import get_current_user_org, get_user_client
+from app.dependencies import get_current_user_org, get_user_client, first_or_none
 from app.responses import success_response, ok_response
 from app.schemas.carteira import CarteiraCreate, CarteiraUpdate, AlocacaoAlvoCreate
 from app.services.carteira_service import CarteiraService
@@ -92,7 +92,8 @@ async def definir_alocacao_alvo(carteira_id: str, body: AlocacaoAlvoCreate, auth
     # Check for existing allocation for this asset class, update if exists
     existing = db.table("alocacao_alvo").select("id").eq("carteira_id", carteira_id).eq("classe_ativo", data.get("classe_ativo")).execute()
     if existing.data:
-        result = db.table("alocacao_alvo").update(data).eq("id", existing.data[0]["id"]).select().single().execute()
+        result = db.table("alocacao_alvo").update(data).eq("id", existing.data[0]["id"]).execute()
     else:
-        result = db.table("alocacao_alvo").insert(data).select().single().execute()
-    return success_response(result.data)
+        result = db.table("alocacao_alvo").insert(data).execute()
+    row = first_or_none(result)
+    return success_response(row)

@@ -2,6 +2,7 @@
 import logging
 from typing import Dict, List, Optional
 from datetime import date, datetime
+from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +33,14 @@ class MetasService:
 
     async def criar(self, data: Dict) -> Dict:
         data["org_id"] = self.org_id
-        result = self.db.table("metas").insert(data).select().single().execute()
-        return result.data
+        result = self.db.table("metas").insert(data).execute()
+        row = first_or_none(result)
+        return row
 
     async def atualizar(self, meta_id: str, data: Dict) -> Optional[Dict]:
-        result = self.db.table("metas").update(data).eq("id", meta_id).eq("org_id", self.org_id).select().single().execute()
-        return result.data
+        result = self.db.table("metas").update(data).eq("id", meta_id).eq("org_id", self.org_id).execute()
+        row = first_or_none(result)
+        return row
 
     async def excluir(self, meta_id: str) -> bool:
         self.db.table("metas").delete().eq("id", meta_id).eq("org_id", self.org_id).execute()
@@ -45,10 +48,11 @@ class MetasService:
 
     async def adicionar_contribuicao(self, meta_id: str, data: Dict) -> Dict:
         data["meta_id"] = meta_id
-        result = self.db.table("meta_contribuicoes").insert(data).select().single().execute()
+        result = self.db.table("meta_contribuicoes").insert(data).execute()
+        row = first_or_none(result)
 
         # Update meta valor_atual
-        if result.data:
+        if row:
             meta = await self.obter(meta_id)
             if meta:
                 novo_valor = float(meta.get("valor_atual", 0)) + float(data.get("valor", 0))
@@ -57,7 +61,7 @@ class MetasService:
                     update_data["status"] = "concluida"
                 self.db.table("metas").update(update_data).eq("id", meta_id).execute()
 
-        return result.data
+        return row
 
     async def obter_progresso(self, meta_id: str) -> Dict:
         meta = await self.obter(meta_id)
