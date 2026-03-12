@@ -1,6 +1,7 @@
 """Accounts service — CRUD and balance operations."""
 import logging
 from typing import Dict, List, Optional
+from fastapi import HTTPException
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ class ContasService:
         return row
 
     async def excluir(self, conta_id: str) -> bool:
+        check = self.db.table("contas").select("id").eq("id", conta_id).eq("org_id", self.org_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=404, detail="Conta não encontrada")
         self.db.table("contas").delete().eq("id", conta_id).eq("org_id", self.org_id).execute()
         return True
 

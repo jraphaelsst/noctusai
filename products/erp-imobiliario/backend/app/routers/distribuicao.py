@@ -19,7 +19,7 @@ from typing import Optional, Literal, List, Dict, Any
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
+from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
 from app.responses import success_response
 from app.services.distribuicao_service import auto_assign, get_queue_info
 
@@ -129,10 +129,10 @@ async def atribuir_lead(body: AtribuirRequest, authorization: Optional[str] = He
         })
 
     # Auto-assign
-    # We need the org_id — fetch from any scoped table
+    org_id = get_org_id(user)
     resultado = auto_assign(
         cliente_id=body.cliente_id,
-        org_id=user.id,  # RLS will scope to the correct org
+        org_id=org_id,
         supabase=db,
     )
 

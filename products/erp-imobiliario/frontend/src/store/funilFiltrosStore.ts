@@ -8,16 +8,16 @@ interface FunilFiltrosStore {
   origem: 'todas' | string;
   etapa: 'todas' | EtapaFunil;
   incluirArquivados: boolean;
-  dataInicio?: Date;
-  dataFim?: Date;
+  dataInicio?: string;
+  dataFim?: string;
   
   setBusca: (busca: string) => void;
   setResponsavelId: (id: 'todos' | string) => void;
   setOrigem: (origem: 'todas' | string) => void;
   setEtapa: (etapa: 'todas' | EtapaFunil) => void;
   setIncluirArquivados: (incluir: boolean) => void;
-  setDataInicio: (data?: Date) => void;
-  setDataFim: (data?: Date) => void;
+  setDataInicio: (data?: string) => void;
+  setDataFim: (data?: string) => void;
   limparFiltros: () => void;
 }
 

@@ -1,0 +1,4673 @@
+{
+    "nodes": [
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/receita-federal/pgfn",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.documento }}"
+                        },
+                        {
+                            "name": "birthdate",
+                            "value": "={{ $('Preparar Variáveis').item.json.dataNascimento }}"
+                        },
+                        {
+                            "name": "preferencia_emissao",
+                            "value": "2via"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 120000
+                }
+            },
+            "id": "261e7011-be6e-46bd-91a2-0307919506dd",
+            "name": "1. CND Federal (Receita)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7920,
+                4304
+            ]
+        },
+        {
+            "parameters": {},
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                8352,
+                6352
+            ],
+            "id": "2076086d-40eb-4b0a-9335-1b552bb26380",
+            "name": "No Operation, do nothing"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.data[0].site_receipt }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8352,
+                6160
+            ],
+            "id": "1da03d40-7be8-47f8-a691-d1ee8b52086f",
+            "name": "Baixa Certidão"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                8576,
+                6064
+            ],
+            "id": "324a7acc-4b19-4429-9930-1e75c88530b6",
+            "name": "Extrai Base64"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8800,
+                6064
+            ],
+            "id": "fecdd770-24ab-499b-8c1a-e34ed59161ce",
+            "name": "Upload Base64 API.PDF"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9024,
+                6064
+            ],
+            "id": "bc825099-8a6f-446b-ae3f-10a78d1b486c",
+            "name": "Converter PDF para PNG"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                9248,
+                6064
+            ],
+            "id": "9997960b-bfb0-4e1f-beec-3b4d9e1906b1",
+            "name": "Separa páginas do PDF"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI need you to tell me what's happening with the person's situation. The expected output is **ONLY** a reliable analysis of the person's situation. Don't tell me about the document itself, I just need to know about the person mentioned."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {
+                    "instructions": ""
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                9472,
+                6064
+            ],
+            "id": "35ad5bb0-6267-46cb-90ea-7f8d1fff200e",
+            "name": "Analisa a Certidão",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                10048,
+                6064
+            ],
+            "id": "f9a8f142-f8af-40f2-9660-1c736034fe4b",
+            "name": "Junta Resposta de Todas as Páginas"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                9824,
+                6064
+            ],
+            "id": "72eaaa9d-cc75-40a9-90ee-48681b803b36",
+            "name": "Salva Respostas da IA pra cada página"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10272,
+                6064
+            ],
+            "id": "f80cff30-d623-4517-96a4-748b3858eb6f",
+            "name": "Salva Uma Única Resposta"
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combineBy": "combineAll",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                10496,
+                6160
+            ],
+            "id": "ac75d029-7ada-4e38-b192-f4040f37e537",
+            "name": "Junta Análise da Certidão + Arquivo"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "9b1628dd-b285-44ab-8005-de330a444092",
+                            "name": "=data",
+                            "value": "=data",
+                            "type": "binary"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10272,
+                6256
+            ],
+            "id": "c28cb193-b371-4705-90cf-4448bebe6f0b",
+            "name": "Salva Arquivo PDF"
+        },
+        {
+            "parameters": {
+                "sendTo": "juridico@oneconsultoriaimobiliaria.com.br",
+                "subject": "=6. CND Trabalhistas (TST) - {{ $('Preparar Variáveis').item.json.nome }}",
+                "message": "={{ $json.document_text }}",
+                "options": {
+                    "attachmentsUi": {
+                        "attachmentsBinary": [
+                            {}
+                        ]
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.2,
+            "position": [
+                10720,
+                6160
+            ],
+            "id": "61ce3863-47a7-42a4-ac86-75836db6d3ab",
+            "name": "Envia Email Análise + PDF",
+            "webhookId": "cfb12d94-4044-4d83-8e2e-e81f210bb519",
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "IV0KKKw5d2auGbPY",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0d4661be-b994-4bbe-9fcb-36237f45991a",
+                            "leftValue": "={{ $json.code }}",
+                            "rightValue": 200,
+                            "operator": {
+                                "type": "number",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                8096,
+                4304
+            ],
+            "id": "6e2ea78e-97ef-446d-bf42-0acfa08e829e",
+            "name": "If1"
+        },
+        {
+            "parameters": {},
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                8320,
+                4400
+            ],
+            "id": "aec880e6-133d-4f9b-b803-b234f7e71596",
+            "name": "No Operation, do nothing1"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.data[0].site_receipt }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8320,
+                4208
+            ],
+            "id": "8622f553-59bd-42ee-ad35-3cbe9156ffe6",
+            "name": "Baixa Certidão1"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                8544,
+                4112
+            ],
+            "id": "808fcfb4-3a4c-414e-9009-365b58a7fc5d",
+            "name": "Extrai Base"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8768,
+                4112
+            ],
+            "id": "5e5fcab8-e7e0-42a5-9130-bc2ca1f69523",
+            "name": "Upload Base64 API.PDF1"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8992,
+                4112
+            ],
+            "id": "2391acbe-544f-49fa-b510-724642911a54",
+            "name": "Converter PDF para PNG1"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                9216,
+                4112
+            ],
+            "id": "d8acf40f-d99f-4673-bd43-7ac260a4bca1",
+            "name": "Separa páginas do PDF1"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI need you to tell me what's happening with the person's situation. The expected output is **ONLY** a reliable analysis of the person's situation. Don't tell me about the document itself, I just need to know about the person mentioned."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {
+                    "instructions": ""
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                9440,
+                4112
+            ],
+            "id": "988b1d11-bbd6-4ac8-82eb-de19611aed40",
+            "name": "Analisa a Certidão1",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                10016,
+                4112
+            ],
+            "id": "4f564c3c-7940-4c4b-8d1f-ae3ee5977346",
+            "name": "Junta Resposta de Todas as Páginas1"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                9792,
+                4112
+            ],
+            "id": "ba9b9f7d-c8e3-4dac-927b-f2d539247119",
+            "name": "Salva Respostas da IA pra cada página1"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10240,
+                4112
+            ],
+            "id": "ad21574c-9110-48ec-a2bc-124d681445ba",
+            "name": "Salva Uma Única Resposta1"
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combineBy": "combineAll",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                10464,
+                4208
+            ],
+            "id": "e3be2008-7d9e-4fbb-a6e6-23dd78d11b69",
+            "name": "Junta Análise da Certidão + Arquivo1"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "9b1628dd-b285-44ab-8005-de330a444092",
+                            "name": "=data",
+                            "value": "=data",
+                            "type": "binary"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10240,
+                4304
+            ],
+            "id": "f43f8d90-598d-4458-82b2-f4737a3c80e2",
+            "name": "Salva Arquivo PDF1"
+        },
+        {
+            "parameters": {
+                "sendTo": "juridico@oneconsultoriaimobiliaria.com.br",
+                "subject": "=1. CND Federal (Receita) - {{ $('Preparar Variáveis').item.json.nome }}",
+                "message": "={{ $json.document_text }}",
+                "options": {
+                    "attachmentsUi": {
+                        "attachmentsBinary": [
+                            {}
+                        ]
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.2,
+            "position": [
+                10688,
+                4208
+            ],
+            "id": "acee0909-f7e0-4743-87a6-081e59d4310e",
+            "name": "Envia Email Análise + PDF1",
+            "webhookId": "e505bdb4-fbd7-4649-a681-080d97a2f59f",
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "IV0KKKw5d2auGbPY",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {},
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                8336,
+                5328
+            ],
+            "id": "3298bee6-8f64-4704-a9e2-2629e65a5804",
+            "name": "No Operation, do nothing2"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                9072,
+                5040
+            ],
+            "id": "7ee6ef66-f841-44d1-9883-17fa4f5d6af5",
+            "name": "Extrai Base1"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9296,
+                5040
+            ],
+            "id": "4e98ed19-90ed-45d6-abee-0be909fd20a9",
+            "name": "Upload Base64 API.PDF2"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9520,
+                5040
+            ],
+            "id": "e8752a96-1407-4b89-85e7-fed55f2aedd5",
+            "name": "Converter PDF para PNG2"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                9744,
+                5040
+            ],
+            "id": "9ab8ada5-bf37-474e-bf91-4d1a32c48e18",
+            "name": "Separa páginas do PDF2"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI need you to tell me what's happening with the person's situation. The expected output is **ONLY** a reliable analysis of the person's situation. Don't tell me about the document itself, I just need to know about the person mentioned."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {
+                    "instructions": ""
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                9968,
+                5040
+            ],
+            "id": "f1a253ab-cd54-4dd9-a2be-4552b2df1c8a",
+            "name": "Analisa a Certidão2",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                10544,
+                5040
+            ],
+            "id": "47ba2d55-c153-487a-a982-f10e263efcdb",
+            "name": "Junta Resposta de Todas as Páginas2"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10320,
+                5040
+            ],
+            "id": "46c5a6d1-50a8-40ee-ab03-52ec9c93cd4d",
+            "name": "Salva Respostas da IA pra cada página2"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10768,
+                5040
+            ],
+            "id": "5a70b839-2e8b-4298-bb38-47c7b874ee6c",
+            "name": "Salva Uma Única Resposta2"
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combineBy": "combineAll",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                10992,
+                5136
+            ],
+            "id": "c20990f9-1c30-45e5-93ab-8bd3b46b2eba",
+            "name": "Junta Análise da Certidão + Arquivo2"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "9b1628dd-b285-44ab-8005-de330a444092",
+                            "name": "=data",
+                            "value": "=data",
+                            "type": "binary"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10768,
+                5232
+            ],
+            "id": "a165ae3b-bf2b-4e32-a5fd-a190c68cf235",
+            "name": "Salva Arquivo PDF2"
+        },
+        {
+            "parameters": {
+                "sendTo": "juridico@oneconsultoriaimobiliaria.com.br",
+                "subject": "=4. TRT2 (Trabalhista SP) Digital - {{ $('Preparar Variáveis').item.json.nome }}",
+                "message": "={{ $json.document_text }}",
+                "options": {
+                    "attachmentsUi": {
+                        "attachmentsBinary": [
+                            {}
+                        ]
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.2,
+            "position": [
+                11216,
+                5136
+            ],
+            "id": "5153939b-f6be-46b8-84d8-48ce82412957",
+            "name": "Envia Email Análise + PDF2",
+            "webhookId": "e3c309b6-338f-4ca7-b71c-d4e767119d28",
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "IV0KKKw5d2auGbPY",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/from/html",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"html\": {{ JSON.stringify($json.data) }},\n  \"name\": \"certidao.pdf\",\n  \"paperSize\": \"A4\",\n  \"orientation\": \"Portrait\",\n  \"printBackground\": true,\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8688,
+                5040
+            ],
+            "id": "17582c1d-470a-4ec0-8e59-6280a0e16486",
+            "name": "HTML para PDF"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.url }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8896,
+                5040
+            ],
+            "id": "7da07d02-ab59-4875-bd42-886bdfb96070",
+            "name": "Baixa Certidão3"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.data[0].site_receipt }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8320,
+                5136
+            ],
+            "id": "e727a328-e9fe-4a42-8acc-c6940d148972",
+            "name": "Baixa HTML"
+        },
+        {
+            "parameters": {
+                "sendTo": "juridico@oneconsultoriaimobiliaria.com.br",
+                "subject": "=5. TRT2 (Trabalhista SP) Físico - {{ $('Preparar Variáveis').item.json.nome }}",
+                "message": "={{ $json.document_text }}",
+                "options": {
+                    "attachmentsUi": {
+                        "attachmentsBinary": [
+                            {}
+                        ]
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.2,
+            "position": [
+                10688,
+                5616
+            ],
+            "id": "cbeaa610-6c43-44bb-a2b4-64e46e96baf7",
+            "name": "Envia Email Análise + PDF3",
+            "webhookId": "0f612b1d-9396-4527-a5f9-20dbe4261ad4",
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "IV0KKKw5d2auGbPY",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "text",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                8496,
+                5136
+            ],
+            "id": "d9f5b71b-f323-46e7-8bd6-11c20b0a0004",
+            "name": "Extrai HTML"
+        },
+        {
+            "parameters": {},
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                8352,
+                5808
+            ],
+            "id": "94ed4fac-1edc-477d-8fd0-0a5c6c661fee",
+            "name": "No Operation, do nothing3"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.data[0].site_receipt }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8352,
+                5616
+            ],
+            "id": "052ca430-8fa7-49ee-b48e-158966dbf6d1",
+            "name": "Baixa Certidão2"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                8576,
+                5520
+            ],
+            "id": "49189683-dc6b-4e4d-b466-f3a808461cb6",
+            "name": "Extrai Base2"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8800,
+                5520
+            ],
+            "id": "f87b9ce0-0a3b-4c1c-a416-be27714d5ad8",
+            "name": "Upload Base64 API.PDF3"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9024,
+                5520
+            ],
+            "id": "a24790a9-679d-4abf-a27d-6e4ff74bb358",
+            "name": "Converter PDF para PNG3"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                9248,
+                5520
+            ],
+            "id": "b21a7db3-b88f-42e5-8791-dc498f715287",
+            "name": "Separa páginas do PDF3"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI need you to tell me what's happening with the person's situation. The expected output is **ONLY** a reliable analysis of the person's situation. Don't tell me about the document itself, I just need to know about the person mentioned."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {
+                    "instructions": ""
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                9472,
+                5520
+            ],
+            "id": "495f357c-00ec-40d0-8e1e-f8edae4af03c",
+            "name": "Analisa a Certidão3",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                10048,
+                5520
+            ],
+            "id": "12bbfa43-4977-4361-b2fc-6f9b23338e06",
+            "name": "Junta Resposta de Todas as Páginas3"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                9824,
+                5520
+            ],
+            "id": "53042b66-c8a2-49ff-b0a5-af0f131794b5",
+            "name": "Salva Respostas da IA pra cada página3"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10272,
+                5520
+            ],
+            "id": "f6e8070a-37c5-428b-95df-195a4237944d",
+            "name": "Salva Uma Única Resposta3"
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combineBy": "combineAll",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                10496,
+                5616
+            ],
+            "id": "8052d9e2-f7fb-4d18-8b8b-13e16d253c23",
+            "name": "Junta Análise da Certidão + Arquivo3"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "9b1628dd-b285-44ab-8005-de330a444092",
+                            "name": "=data",
+                            "value": "=data",
+                            "type": "binary"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10272,
+                5712
+            ],
+            "id": "e8c36545-34b1-4aca-813c-87690f1f0878",
+            "name": "Salva Arquivo PDF3"
+        },
+        {
+            "parameters": {},
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                8368,
+                7408
+            ],
+            "id": "5edea5ac-9e49-46fd-a2ba-cc8fbe64962d",
+            "name": "No Operation, do nothing4"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                9104,
+                7120
+            ],
+            "id": "bccdaf10-f76d-488d-a090-7cd4cd81cba1",
+            "name": "Extrai Base3"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9328,
+                7120
+            ],
+            "id": "2fcc76dc-e53e-4afd-ad10-b694c0c9f8cc",
+            "name": "Upload Base64 API.PDF4"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9552,
+                7120
+            ],
+            "id": "6130f93e-affb-4ecb-93d2-ce9213b9cad5",
+            "name": "Converter PDF para PNG4"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                9776,
+                7120
+            ],
+            "id": "428263de-d1e4-4b49-90e7-bc46218f8d0d",
+            "name": "Separa páginas do PDF4"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI need you to tell me what's happening with the person's situation. The expected output is **ONLY** a reliable analysis of the person's situation. Don't tell me about the document itself, I just need to know about the person mentioned."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {
+                    "instructions": ""
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                10000,
+                7120
+            ],
+            "id": "a6cd9246-baef-4723-8fe1-8435dc412799",
+            "name": "Analisa a Certidão4",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                10576,
+                7120
+            ],
+            "id": "f0639ca7-3b51-4d1f-9c19-d0e15d8fdaa3",
+            "name": "Junta Resposta de Todas as Páginas4"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10352,
+                7120
+            ],
+            "id": "83614a28-e10b-4b00-8177-4edc43e653db",
+            "name": "Salva Respostas da IA pra cada página4"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10800,
+                7120
+            ],
+            "id": "e636744b-cd7a-4473-a0ec-ede167386894",
+            "name": "Salva Uma Única Resposta4"
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combineBy": "combineAll",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                11024,
+                7216
+            ],
+            "id": "b74880b6-b2a7-4118-a28b-8382bf51806f",
+            "name": "Junta Análise da Certidão + Arquivo4"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "9b1628dd-b285-44ab-8005-de330a444092",
+                            "name": "=data",
+                            "value": "=data",
+                            "type": "binary"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10800,
+                7312
+            ],
+            "id": "5b8963ca-c296-481c-9f4e-4d143d40ece1",
+            "name": "Salva Arquivo PDF4"
+        },
+        {
+            "parameters": {
+                "sendTo": "juridico@oneconsultoriaimobiliaria.com.br",
+                "subject": "=10. CENPROT - {{ $('Preparar Variáveis').item.json.nome }}",
+                "message": "={{ $json.document_text }}",
+                "options": {
+                    "attachmentsUi": {
+                        "attachmentsBinary": [
+                            {}
+                        ]
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.2,
+            "position": [
+                11248,
+                7216
+            ],
+            "id": "22d0e622-255f-4d6c-86c1-e4a2c9d9f9e4",
+            "name": "Envia Email Análise + PDF4",
+            "webhookId": "660b214a-a264-4b3e-8353-67d165e86f4c",
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "IV0KKKw5d2auGbPY",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/from/html",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"html\": {{ JSON.stringify($json.data) }},\n  \"name\": \"certidao.pdf\",\n  \"paperSize\": \"A4\",\n  \"orientation\": \"Portrait\",\n  \"printBackground\": true,\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8720,
+                7120
+            ],
+            "id": "ceca9db9-2cea-4892-978b-9627ab3316df",
+            "name": "HTML para PDF1"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.url }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8928,
+                7120
+            ],
+            "id": "4502644d-2592-4e98-87b5-29b15fb11c68",
+            "name": "Baixa Certidão4"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.site_receipts[0] }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8352,
+                7216
+            ],
+            "id": "74674c95-8cfd-41c1-9327-88668a21dabd",
+            "name": "Baixa HTML1"
+        },
+        {
+            "parameters": {
+                "operation": "text",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                8528,
+                7216
+            ],
+            "id": "81d8f22b-b519-495b-bd77-5d2ec20143da",
+            "name": "Extrai HTML1"
+        },
+        {
+            "parameters": {},
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                8320,
+                7904
+            ],
+            "id": "d9266b47-3fab-4b92-83cc-ec6a83827b53",
+            "name": "No Operation, do nothing5"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.data[0].site_receipt }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8320,
+                7712
+            ],
+            "id": "b4395208-7656-4de5-b3be-a1eaaecd26fe",
+            "name": "Baixa Certidão5"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                8544,
+                7616
+            ],
+            "id": "00b699a4-f4de-41e8-9208-75c8fc84413d",
+            "name": "Extrai Base65"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8768,
+                7616
+            ],
+            "id": "b7801c3e-26be-4316-8ba9-5dcf8ac8c4e8",
+            "name": "Upload Base64 API.PDF5"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8992,
+                7616
+            ],
+            "id": "d2d25174-9a67-4d9d-b4df-28042f0cc77d",
+            "name": "Converter PDF para PNG5"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                9216,
+                7616
+            ],
+            "id": "44b83f78-be10-436f-9370-0dbd7789f6a8",
+            "name": "Separa páginas do PDF5"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI need you to tell me what's happening with the person's situation. The expected output is **ONLY** a reliable analysis of the person's situation. Don't tell me about the document itself, I just need to know about the person mentioned."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {
+                    "instructions": ""
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                9440,
+                7616
+            ],
+            "id": "92e6a019-9659-4bfd-b4b7-0dc30fe3f43d",
+            "name": "Analisa a Certidão5",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                10016,
+                7616
+            ],
+            "id": "65d8f766-3e0b-4cec-99a4-9960bc744c7d",
+            "name": "Junta Resposta de Todas as Páginas5"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                9792,
+                7616
+            ],
+            "id": "96b945d0-0ad5-45b7-8e68-cfb9d335c580",
+            "name": "Salva Respostas da IA pra cada página5"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10240,
+                7616
+            ],
+            "id": "d2e5b1f9-1b7a-4c48-8d50-0c9e6d7614df",
+            "name": "Salva Uma Única Resposta5"
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combineBy": "combineAll",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                10464,
+                7712
+            ],
+            "id": "620b40ce-6923-4756-a50b-b1a989b1ac40",
+            "name": "Junta Análise da Certidão + Arquivo5"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "9b1628dd-b285-44ab-8005-de330a444092",
+                            "name": "=data",
+                            "value": "=data",
+                            "type": "binary"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10240,
+                7808
+            ],
+            "id": "5e61cf70-a359-47dd-ab94-97ceab73f51b",
+            "name": "Salva Arquivo PDF5"
+        },
+        {
+            "parameters": {
+                "sendTo": "juridico@oneconsultoriaimobiliaria.com.br",
+                "subject": "=11. CND Fazenda SP - {{ $('Preparar Variáveis').item.json.nome }}",
+                "message": "={{ $json.document_text }}",
+                "options": {
+                    "attachmentsUi": {
+                        "attachmentsBinary": [
+                            {}
+                        ]
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.2,
+            "position": [
+                10688,
+                7712
+            ],
+            "id": "b4031197-4d84-4002-b025-78ecda41390b",
+            "name": "Envia Email Análise + PDF5",
+            "webhookId": "e15c5dac-959d-4e9c-a4fa-22f3542e1d9e",
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "IV0KKKw5d2auGbPY",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "doc-tipo",
+                            "name": "tipoDocumento",
+                            "type": "string",
+                            "value": "={{ $json['Tipo de Documento'].includes('CPF') ? '1' : '2' }}"
+                        },
+                        {
+                            "id": "428571ac-674d-41e3-960b-30026d836567",
+                            "name": "documento",
+                            "value": "={{ $json['Número do Documento (CPF ou CNPJ)'] }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "6207076b-f5fb-420f-b769-3c2b1f5accb2",
+                            "name": "nome",
+                            "value": "={{ $json['Nome Completo / Razão Social'] }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "data-nasc",
+                            "name": "dataNascimento",
+                            "type": "string",
+                            "value": "={{ $json['Data de Nascimento (somente PF)'] ? $json['Data de Nascimento (somente PF)'].split('T')[0] : '' }}"
+                        },
+                        {
+                            "id": "genero",
+                            "name": "genero",
+                            "type": "string",
+                            "value": "={{ $json['Gênero (somente PF)'] === 'Masculino' ? 'M' : ($json['Gênero (somente PF)'] === 'Feminino' ? 'F' : '') }}"
+                        },
+                        {
+                            "id": "rg",
+                            "name": "rg",
+                            "type": "string",
+                            "value": "={{ $json['RG (somente PF)'] }}"
+                        },
+                        {
+                            "id": "timestamp",
+                            "name": "dataConsulta",
+                            "type": "string",
+                            "value": "={{ $now.format('yyyy-MM-dd_HH-mm') }}"
+                        },
+                        {
+                            "id": "tipo-trf3",
+                            "name": "tipoTRF3",
+                            "type": "string",
+                            "value": "=1"
+                        },
+                        {
+                            "id": "abrangencia-trf3",
+                            "name": "abrangenciaTRF3",
+                            "type": "string",
+                            "value": "=1"
+                        },
+                        {
+                            "id": "modelo-tjsp",
+                            "name": "modeloTJSP",
+                            "type": "string",
+                            "value": "=4"
+                        },
+                        {
+                            "id": "b04f1e8d-4c66-4096-b215-3640919411c8",
+                            "name": "email_envio",
+                            "value": "juridico@oneconsultoriaimobiliaria.com.br",
+                            "type": "string"
+                        },
+                        {
+                            "id": "1018c43d-39d5-432c-a12e-5f9c4947fd95",
+                            "name": "nome_mae",
+                            "value": "={{ $json['Nome da Mãe'] }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "dfd36f06-36d5-42a7-975b-df30889f318f",
+                            "name": "nome_pai",
+                            "value": "={{ $json['Nome do Pai'] }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "f10f190d-4457-4e0c-b86c-f6ac8e54f1c7",
+            "name": "Preparar Variáveis",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                7552,
+                6256
+            ]
+        },
+        {
+            "parameters": {
+                "formTitle": "Emissão de Certidões Negativas",
+                "formDescription": "Preencha os dados para emitir as certidões negativas automaticamente.<br><br><strong>Para Pessoa Física:</strong> Preencha todos os campos.<br><strong>Para Pessoa Jurídica:</strong> Preencha apenas Documento e Razão Social.<br><br><em>Campos marcados com (TJSP) são exclusivos para o TJSP. Campos marcados com (TRF3) são exclusivos para o TRF3.</em>",
+                "formFields": {
+                    "values": [
+                        {
+                            "fieldLabel": "Tipo de Documento",
+                            "fieldType": "dropdown",
+                            "fieldOptions": {
+                                "values": [
+                                    {
+                                        "option": "CPF - Pessoa Física"
+                                    },
+                                    {
+                                        "option": "CNPJ - Pessoa Jurídica"
+                                    }
+                                ]
+                            },
+                            "requiredField": true
+                        },
+                        {
+                            "fieldLabel": "Número do Documento (CPF ou CNPJ)",
+                            "placeholder": "Digite apenas números",
+                            "requiredField": true
+                        },
+                        {
+                            "fieldLabel": "RG (somente PF)",
+                            "placeholder": "Melhora resultados TJSP"
+                        },
+                        {
+                            "fieldLabel": "Nome Completo / Razão Social",
+                            "requiredField": true
+                        },
+                        {
+                            "fieldLabel": "Data de Nascimento (somente PF)",
+                            "fieldType": "date"
+                        },
+                        {
+                            "fieldLabel": "Gênero (somente PF)",
+                            "fieldType": "dropdown",
+                            "fieldOptions": {
+                                "values": [
+                                    {
+                                        "option": "Masculino"
+                                    },
+                                    {
+                                        "option": "Feminino"
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "fieldLabel": "Nome da Mãe"
+                        },
+                        {
+                            "fieldLabel": "Nome do Pai"
+                        }
+                    ]
+                },
+                "responseMode": "lastNode",
+                "options": {
+                    "respondWithOptions": {
+                        "values": {
+                            "formSubmittedText": "✅ Certidões processadas com sucesso! Os PDFs foram salvos no Google Drive e enviados para seu email."
+                        }
+                    }
+                }
+            },
+            "id": "9c8e3242-0ccc-46ea-902a-d4dd1e49339e",
+            "name": "Formulário de Consulta",
+            "type": "n8n-nodes-base.formTrigger",
+            "typeVersion": 2.2,
+            "position": [
+                7344,
+                6256
+            ],
+            "webhookId": "c1f54418-2a31-42f0-8787-72f2858978e2"
+        },
+        {
+            "parameters": {},
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                8352,
+                8448
+            ],
+            "id": "f423810e-70cb-46d3-8b0e-cb1ba2bd8ae9",
+            "name": "No Operation, do nothing6"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.data[0].site_receipt }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8352,
+                8256
+            ],
+            "id": "27cc53bd-95db-49dc-9ca4-3935499cf6d9",
+            "name": "Baixa Certidão6"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                8576,
+                8160
+            ],
+            "id": "00fda18b-f12c-48b0-a74e-76286a98d2a2",
+            "name": "Extrai Base66"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8800,
+                8160
+            ],
+            "id": "09f76719-5f36-4d64-8c18-bf9f0ded37e2",
+            "name": "Upload Base64 API.PDF6"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9024,
+                8160
+            ],
+            "id": "3f21e578-4c70-4259-9ba5-d4b881a00520",
+            "name": "Converter PDF para PNG6"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                9248,
+                8160
+            ],
+            "id": "4aba5156-63ef-43b3-9c54-fd5f7241b974",
+            "name": "Separa páginas do PDF6"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI need you to tell me what's happening with the person's situation. The expected output is **ONLY** a reliable analysis of the person's situation. Don't tell me about the document itself, I just need to know about the person mentioned."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {
+                    "instructions": ""
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                9472,
+                8160
+            ],
+            "id": "9d19c0ab-7f0a-4d3f-b416-6d3c059ea72d",
+            "name": "Analisa a Certidão6",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                10048,
+                8160
+            ],
+            "id": "11cc7906-80cf-4c34-9f6e-ea3f7757328b",
+            "name": "Junta Resposta de Todas as Páginas6"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                9824,
+                8160
+            ],
+            "id": "d6e48c52-54a5-48ee-8b6b-fea1121d1363",
+            "name": "Salva Respostas da IA pra cada página6"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10272,
+                8160
+            ],
+            "id": "c6bd5b22-575d-4106-bb75-cd1ca35627d5",
+            "name": "Salva Uma Única Resposta6"
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combineBy": "combineAll",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                10496,
+                8256
+            ],
+            "id": "124f6de3-a852-4c86-955d-b7b4daa351f4",
+            "name": "Junta Análise da Certidão + Arquivo6"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "9b1628dd-b285-44ab-8005-de330a444092",
+                            "name": "=data",
+                            "value": "=data",
+                            "type": "binary"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10272,
+                8352
+            ],
+            "id": "5aa44da5-305c-46d3-9dd0-eea40bf2aded",
+            "name": "Salva Arquivo PDF6"
+        },
+        {
+            "parameters": {
+                "sendTo": "juridico@oneconsultoriaimobiliaria.com.br",
+                "subject": "=12. Dívida Ativa - {{ $('Preparar Variáveis').item.json.nome }}",
+                "message": "={{ $json.document_text }}",
+                "options": {
+                    "attachmentsUi": {
+                        "attachmentsBinary": [
+                            {}
+                        ]
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.2,
+            "position": [
+                10720,
+                8256
+            ],
+            "id": "b9ded60e-76f9-47ca-bb2a-85c1f70c5d7e",
+            "name": "Envia Email Análise + PDF6",
+            "webhookId": "e15c5dac-959d-4e9c-a4fa-22f3542e1d9e",
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "IV0KKKw5d2auGbPY",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/tribunal/trf3/certidao-distr",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "=tipo",
+                            "value": "={{ $('Preparar Variáveis').item.json.tipoTRF3 }}"
+                        },
+                        {
+                            "name": "tipo_documento",
+                            "value": "={{ $json.tipoDocumento }}"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.documento }}"
+                        },
+                        {
+                            "name": "nome_social",
+                            "value": "={{ $('Preparar Variáveis').item.json.nome }}"
+                        },
+                        {
+                            "name": "abrangencia",
+                            "value": "={{ $('Preparar Variáveis').item.json.abrangenciaTRF3 }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 120000
+                }
+            },
+            "id": "ad5ce562-3fc0-4768-b6de-f4ff7a6ffd7f",
+            "name": "2 e 3. Certidão TRF3 (Regional)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7920,
+                4752
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/tribunal/trt2/ceat-digital",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj_raiz' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.documento }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 120000
+                }
+            },
+            "id": "b602a644-7bda-401a-b02d-88e1b8356bbd",
+            "name": "4. TRT2 (Trabalhista SP) Digital",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7920,
+                5232
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/tribunal/trt2/ceat",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.documento }}"
+                        },
+                        {
+                            "name": "nome",
+                            "value": "={{ $('Preparar Variáveis').item.json.nome }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 120000
+                }
+            },
+            "id": "9735902e-824e-4235-9fa2-d1364b657696",
+            "name": "5. TRT2 (Trabalhista SP) Físico",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7920,
+                5712
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0d4661be-b994-4bbe-9fcb-36237f45991a",
+                            "leftValue": "={{ $json.code }}",
+                            "rightValue": 200,
+                            "operator": {
+                                "type": "number",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                8128,
+                5232
+            ],
+            "id": "fe4b72cf-d167-4195-9234-72e10009cf33",
+            "name": "If2"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0d4661be-b994-4bbe-9fcb-36237f45991a",
+                            "leftValue": "={{ $json.code }}",
+                            "rightValue": 200,
+                            "operator": {
+                                "type": "number",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                8128,
+                5712
+            ],
+            "id": "cc6c2f04-49fb-4a0a-a0e7-2b6e4f805748",
+            "name": "If3"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0d4661be-b994-4bbe-9fcb-36237f45991a",
+                            "leftValue": "={{ $json.code }}",
+                            "rightValue": 200,
+                            "operator": {
+                                "type": "number",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                8128,
+                6256
+            ],
+            "id": "40f647c7-cda0-4a24-b336-f86b2e5c5cff",
+            "name": "If"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0d4661be-b994-4bbe-9fcb-36237f45991a",
+                            "leftValue": "={{ $json.code_message }}",
+                            "rightValue": "A consulta não retornou dados no site ou aplicativo de origem no qual a automação foi executada.",
+                            "operator": {
+                                "type": "string",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                8128,
+                7312
+            ],
+            "id": "d7b34022-3f66-4dc2-946f-acf48dce64af",
+            "name": "If4"
+        },
+        {
+            "parameters": {},
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                8336,
+                4848
+            ],
+            "id": "f0390965-d231-4d67-b469-01605d88d79c",
+            "name": "No Operation, do nothing8"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                9072,
+                4560
+            ],
+            "id": "190cd8b1-9b24-4be5-85f2-404771ff078c",
+            "name": "Extrai Base4"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9296,
+                4560
+            ],
+            "id": "db0b5c44-ffd8-4b19-ae87-f906ffcb1313",
+            "name": "Upload Base64 API.PDF7"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                9520,
+                4560
+            ],
+            "id": "bde0743a-4a29-4d31-be77-213e43610583",
+            "name": "Converter PDF para PNG7"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                9744,
+                4560
+            ],
+            "id": "4863b535-9f43-4041-a241-4cddac79c240",
+            "name": "Separa páginas do PDF7"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI need you to tell me what's happening with the person's situation. The expected output is **ONLY** a reliable analysis of the person's situation. Don't tell me about the document itself, I just need to know about the person mentioned."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {
+                    "instructions": ""
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                9968,
+                4560
+            ],
+            "id": "eac52bf5-d2e8-4f3b-8d6c-41d0ff0b53a8",
+            "name": "Analisa a Certidão7",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                10544,
+                4560
+            ],
+            "id": "55708879-655d-44dd-9737-ce21bdb8f6fb",
+            "name": "Junta Resposta de Todas as Páginas7"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10320,
+                4560
+            ],
+            "id": "5272bc3a-896e-4cff-890b-e3136c8aa6fa",
+            "name": "Salva Respostas da IA pra cada página7"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10768,
+                4560
+            ],
+            "id": "60de0718-2b48-4550-93de-cab0a8b4765d",
+            "name": "Salva Uma Única Resposta7"
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combineBy": "combineAll",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 3,
+            "position": [
+                10992,
+                4656
+            ],
+            "id": "f720c44c-1ea6-47dc-9557-a98e4f7d07b9",
+            "name": "Junta Análise da Certidão + Arquivo7"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "9b1628dd-b285-44ab-8005-de330a444092",
+                            "name": "=data",
+                            "value": "=data",
+                            "type": "binary"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                10768,
+                4752
+            ],
+            "id": "56c516ae-06b8-44fc-8d7c-8d3d377a7e4e",
+            "name": "Salva Arquivo PDF7"
+        },
+        {
+            "parameters": {
+                "sendTo": "juridico@oneconsultoriaimobiliaria.com.br",
+                "subject": "=2 e 3. Certidão TRF3 (Regional) - {{ $('Preparar Variáveis').item.json.nome }}",
+                "message": "={{ $json.document_text }}",
+                "options": {
+                    "attachmentsUi": {
+                        "attachmentsBinary": [
+                            {}
+                        ]
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.2,
+            "position": [
+                11216,
+                4656
+            ],
+            "id": "5e5b2d14-a9d0-4eab-8a90-1048af0c55d9",
+            "name": "Envia Email Análise + PDF7",
+            "webhookId": "e3c309b6-338f-4ca7-b71c-d4e767119d28",
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "IV0KKKw5d2auGbPY",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/from/html",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"html\": {{ JSON.stringify($json.data) }},\n  \"name\": \"certidao.pdf\",\n  \"paperSize\": \"A4\",\n  \"orientation\": \"Portrait\",\n  \"printBackground\": true,\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8688,
+                4560
+            ],
+            "id": "66dc264e-d38d-4337-ad7d-1ab2aa999abc",
+            "name": "HTML para PDF2"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.url }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8896,
+                4560
+            ],
+            "id": "cf5925fb-e3a6-41f3-8621-d07149eeff3b",
+            "name": "Baixa Certidão7"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.data[0].site_receipt }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                8320,
+                4656
+            ],
+            "id": "e6610a02-0724-4877-b292-e619795482c5",
+            "name": "Baixa HTML2"
+        },
+        {
+            "parameters": {
+                "operation": "text",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                8496,
+                4656
+            ],
+            "id": "221f0a4e-1ac8-462f-9d3f-7049423e4424",
+            "name": "Extrai HTML2"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0d4661be-b994-4bbe-9fcb-36237f45991a",
+                            "leftValue": "={{ $json.code }}",
+                            "rightValue": 200,
+                            "operator": {
+                                "type": "number",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                8128,
+                4752
+            ],
+            "id": "85a8d363-03c8-4e9c-ad78-5c4826c1f130",
+            "name": "If8"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0d4661be-b994-4bbe-9fcb-36237f45991a",
+                            "leftValue": "={{ $json.code }}",
+                            "rightValue": 200,
+                            "operator": {
+                                "type": "number",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                8128,
+                7808
+            ],
+            "id": "90f1784e-8fc3-44eb-884d-bcfb6488931a",
+            "name": "If5"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 3
+                    },
+                    "conditions": [
+                        {
+                            "id": "0d4661be-b994-4bbe-9fcb-36237f45991a",
+                            "leftValue": "={{ $json.code }}",
+                            "rightValue": 200,
+                            "operator": {
+                                "type": "number",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.3,
+            "position": [
+                8112,
+                8352
+            ],
+            "id": "42968a0a-ed34-4c4d-80ad-3c5df08635b1",
+            "name": "If6"
+        },
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/tribunal/tjsp/pedido-certidao",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
+                            "value": "={{ $json.documento }}"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'nome_completo' : 'razao_social' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.nome }}"
+                        },
+                        {
+                            "name": "birthdate",
+                            "value": "={{ $('Preparar Variáveis').item.json.dataNascimento }}"
+                        },
+                        {
+                            "name": "nome_mae",
+                            "value": "={{ $('Preparar Variáveis').item.json.nome_mae }}"
+                        },
+                        {
+                            "name": "nome_pai",
+                            "value": "={{ $('Preparar Variáveis').item.json.nome_pai }}"
+                        },
+                        {
+                            "name": "genero",
+                            "value": "={{ $('Preparar Variáveis').item.json.genero }}"
+                        },
+                        {
+                            "name": "modelo",
+                            "value": "={{ $('Preparar Variáveis').item.json.modeloTJSP }}"
+                        },
+                        {
+                            "name": "rg",
+                            "value": "={{ $('Preparar Variáveis').item.json.rg }}"
+                        },
+                        {
+                            "name": "email_envio",
+                            "value": "={{ $json.email_envio }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 120000
+                }
+            },
+            "id": "eebf95a4-33c3-4685-9c33-1d7914c87f19",
+            "name": "7. Certidão TJSP",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7952,
+                6816
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/cenprot-sp/protestos",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.documento }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 240000
+                }
+            },
+            "id": "508e6069-7873-4a2e-aabe-107444cb59bd",
+            "name": "10. CENPROT",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7920,
+                7312
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/sefaz/sp/certidao-debitos",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.documento }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 120000
+                }
+            },
+            "id": "86e3de07-c6a3-4354-9452-499525018a66",
+            "name": "11. CND Fazenda SP",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7920,
+                7808
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/pge/sp/cndt",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.documento }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 120000
+                }
+            },
+            "id": "c16ef353-4c32-4dbd-ac36-084c45e1ad3a",
+            "name": "12. Dívida Ativa",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7920,
+                8352
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://api.infosimples.com/api/v2/consultas/tst/cndt",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                        },
+                        {
+                            "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
+                            "value": "={{ $('Preparar Variáveis').item.json.documento }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 120000
+                }
+            },
+            "id": "18b7c15f-0c72-44f1-b5e7-81449eba909c",
+            "name": "6. CND Trabalhistas (TST)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                7920,
+                6256
+            ]
+        }
+    ],
+    "connections": {
+        "1. CND Federal (Receita)": {
+            "main": [
+                [
+                    {
+                        "node": "If1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa Certidão": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai Base64",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Salva Arquivo PDF",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai Base64": {
+            "main": [
+                [
+                    {
+                        "node": "Upload Base64 API.PDF",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload Base64 API.PDF": {
+            "main": [
+                [
+                    {
+                        "node": "Converter PDF para PNG",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Converter PDF para PNG": {
+            "main": [
+                [
+                    {
+                        "node": "Separa páginas do PDF",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Separa páginas do PDF": {
+            "main": [
+                [
+                    {
+                        "node": "Analisa a Certidão",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analisa a Certidão": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Respostas da IA pra cada página",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Resposta de Todas as Páginas": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Uma Única Resposta",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Respostas da IA pra cada página": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Resposta de Todas as Páginas",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Uma Única Resposta": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Análise da Certidão + Arquivo": {
+            "main": [
+                [
+                    {
+                        "node": "Envia Email Análise + PDF",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Arquivo PDF": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "If1": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa Certidão1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation, do nothing1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa Certidão1": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai Base",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Salva Arquivo PDF1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai Base": {
+            "main": [
+                [
+                    {
+                        "node": "Upload Base64 API.PDF1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload Base64 API.PDF1": {
+            "main": [
+                [
+                    {
+                        "node": "Converter PDF para PNG1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Converter PDF para PNG1": {
+            "main": [
+                [
+                    {
+                        "node": "Separa páginas do PDF1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Separa páginas do PDF1": {
+            "main": [
+                [
+                    {
+                        "node": "Analisa a Certidão1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analisa a Certidão1": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Respostas da IA pra cada página1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Resposta de Todas as Páginas1": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Uma Única Resposta1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Respostas da IA pra cada página1": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Resposta de Todas as Páginas1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Uma Única Resposta1": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Análise da Certidão + Arquivo1": {
+            "main": [
+                [
+                    {
+                        "node": "Envia Email Análise + PDF1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Arquivo PDF1": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo1",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "Extrai Base1": {
+            "main": [
+                [
+                    {
+                        "node": "Upload Base64 API.PDF2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload Base64 API.PDF2": {
+            "main": [
+                [
+                    {
+                        "node": "Converter PDF para PNG2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Converter PDF para PNG2": {
+            "main": [
+                [
+                    {
+                        "node": "Separa páginas do PDF2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Separa páginas do PDF2": {
+            "main": [
+                [
+                    {
+                        "node": "Analisa a Certidão2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analisa a Certidão2": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Respostas da IA pra cada página2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Resposta de Todas as Páginas2": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Uma Única Resposta2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Respostas da IA pra cada página2": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Resposta de Todas as Páginas2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Uma Única Resposta2": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Análise da Certidão + Arquivo2": {
+            "main": [
+                [
+                    {
+                        "node": "Envia Email Análise + PDF2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Arquivo PDF2": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo2",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "HTML para PDF": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa Certidão3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa Certidão3": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai Base1",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Salva Arquivo PDF2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa HTML": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai HTML",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai HTML": {
+            "main": [
+                [
+                    {
+                        "node": "HTML para PDF",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa Certidão2": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai Base2",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Salva Arquivo PDF3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai Base2": {
+            "main": [
+                [
+                    {
+                        "node": "Upload Base64 API.PDF3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload Base64 API.PDF3": {
+            "main": [
+                [
+                    {
+                        "node": "Converter PDF para PNG3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Converter PDF para PNG3": {
+            "main": [
+                [
+                    {
+                        "node": "Separa páginas do PDF3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Separa páginas do PDF3": {
+            "main": [
+                [
+                    {
+                        "node": "Analisa a Certidão3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analisa a Certidão3": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Respostas da IA pra cada página3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Resposta de Todas as Páginas3": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Uma Única Resposta3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Respostas da IA pra cada página3": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Resposta de Todas as Páginas3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Uma Única Resposta3": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Análise da Certidão + Arquivo3": {
+            "main": [
+                [
+                    {
+                        "node": "Envia Email Análise + PDF3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Arquivo PDF3": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo3",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "Extrai Base3": {
+            "main": [
+                [
+                    {
+                        "node": "Upload Base64 API.PDF4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload Base64 API.PDF4": {
+            "main": [
+                [
+                    {
+                        "node": "Converter PDF para PNG4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Converter PDF para PNG4": {
+            "main": [
+                [
+                    {
+                        "node": "Separa páginas do PDF4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Separa páginas do PDF4": {
+            "main": [
+                [
+                    {
+                        "node": "Analisa a Certidão4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analisa a Certidão4": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Respostas da IA pra cada página4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Resposta de Todas as Páginas4": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Uma Única Resposta4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Respostas da IA pra cada página4": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Resposta de Todas as Páginas4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Uma Única Resposta4": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Análise da Certidão + Arquivo4": {
+            "main": [
+                [
+                    {
+                        "node": "Envia Email Análise + PDF4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Arquivo PDF4": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo4",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "HTML para PDF1": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa Certidão4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa Certidão4": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai Base3",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Salva Arquivo PDF4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa HTML1": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai HTML1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai HTML1": {
+            "main": [
+                [
+                    {
+                        "node": "HTML para PDF1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa Certidão5": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai Base65",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Salva Arquivo PDF5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai Base65": {
+            "main": [
+                [
+                    {
+                        "node": "Upload Base64 API.PDF5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload Base64 API.PDF5": {
+            "main": [
+                [
+                    {
+                        "node": "Converter PDF para PNG5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Converter PDF para PNG5": {
+            "main": [
+                [
+                    {
+                        "node": "Separa páginas do PDF5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Separa páginas do PDF5": {
+            "main": [
+                [
+                    {
+                        "node": "Analisa a Certidão5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analisa a Certidão5": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Respostas da IA pra cada página5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Resposta de Todas as Páginas5": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Uma Única Resposta5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Respostas da IA pra cada página5": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Resposta de Todas as Páginas5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Uma Única Resposta5": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Análise da Certidão + Arquivo5": {
+            "main": [
+                [
+                    {
+                        "node": "Envia Email Análise + PDF5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Arquivo PDF5": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo5",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "Preparar Variáveis": {
+            "main": [
+                [
+                    {
+                        "node": "6. CND Trabalhistas (TST)",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "1. CND Federal (Receita)",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "2 e 3. Certidão TRF3 (Regional)",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "4. TRT2 (Trabalhista SP) Digital",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "5. TRT2 (Trabalhista SP) Físico",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "12. Dívida Ativa",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "11. CND Fazenda SP",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "10. CENPROT",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Formulário de Consulta": {
+            "main": [
+                [
+                    {
+                        "node": "Preparar Variáveis",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa Certidão6": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai Base66",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Salva Arquivo PDF6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai Base66": {
+            "main": [
+                [
+                    {
+                        "node": "Upload Base64 API.PDF6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload Base64 API.PDF6": {
+            "main": [
+                [
+                    {
+                        "node": "Converter PDF para PNG6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Converter PDF para PNG6": {
+            "main": [
+                [
+                    {
+                        "node": "Separa páginas do PDF6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Separa páginas do PDF6": {
+            "main": [
+                [
+                    {
+                        "node": "Analisa a Certidão6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analisa a Certidão6": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Respostas da IA pra cada página6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Resposta de Todas as Páginas6": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Uma Única Resposta6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Respostas da IA pra cada página6": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Resposta de Todas as Páginas6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Uma Única Resposta6": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Análise da Certidão + Arquivo6": {
+            "main": [
+                [
+                    {
+                        "node": "Envia Email Análise + PDF6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Arquivo PDF6": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo6",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "2 e 3. Certidão TRF3 (Regional)": {
+            "main": [
+                [
+                    {
+                        "node": "If8",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "4. TRT2 (Trabalhista SP) Digital": {
+            "main": [
+                [
+                    {
+                        "node": "If2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "5. TRT2 (Trabalhista SP) Físico": {
+            "main": [
+                [
+                    {
+                        "node": "If3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If2": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa HTML",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation, do nothing2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If3": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa Certidão2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation, do nothing3",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa Certidão",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation, do nothing",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If4": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa HTML1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation, do nothing4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai Base4": {
+            "main": [
+                [
+                    {
+                        "node": "Upload Base64 API.PDF7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload Base64 API.PDF7": {
+            "main": [
+                [
+                    {
+                        "node": "Converter PDF para PNG7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Converter PDF para PNG7": {
+            "main": [
+                [
+                    {
+                        "node": "Separa páginas do PDF7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Separa páginas do PDF7": {
+            "main": [
+                [
+                    {
+                        "node": "Analisa a Certidão7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Analisa a Certidão7": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Respostas da IA pra cada página7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Resposta de Todas as Páginas7": {
+            "main": [
+                [
+                    {
+                        "node": "Salva Uma Única Resposta7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Respostas da IA pra cada página7": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Resposta de Todas as Páginas7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Uma Única Resposta7": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Junta Análise da Certidão + Arquivo7": {
+            "main": [
+                [
+                    {
+                        "node": "Envia Email Análise + PDF7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salva Arquivo PDF7": {
+            "main": [
+                [
+                    {
+                        "node": "Junta Análise da Certidão + Arquivo7",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "HTML para PDF2": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa Certidão7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa Certidão7": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai Base4",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Salva Arquivo PDF7",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Baixa HTML2": {
+            "main": [
+                [
+                    {
+                        "node": "Extrai HTML2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrai HTML2": {
+            "main": [
+                [
+                    {
+                        "node": "HTML para PDF2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If8": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa HTML2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation, do nothing8",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If5": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa Certidão5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation, do nothing5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If6": {
+            "main": [
+                [
+                    {
+                        "node": "Baixa Certidão6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation, do nothing6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "7. Certidão TJSP": {
+            "main": [
+                []
+            ]
+        },
+        "10. CENPROT": {
+            "main": [
+                [
+                    {
+                        "node": "If4",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "11. CND Fazenda SP": {
+            "main": [
+                [
+                    {
+                        "node": "If5",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "12. Dívida Ativa": {
+            "main": [
+                [
+                    {
+                        "node": "If6",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "6. CND Trabalhistas (TST)": {
+            "main": [
+                [
+                    {
+                        "node": "If",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "pinData": {
+        "Formulário de Consulta": [
+            {
+                "Tipo de Documento": "CNPJ - Pessoa Jurídica",
+                "Número do Documento (CPF ou CNPJ)": "40479637000127",
+                "RG (somente PF)": "",
+                "Nome Completo / Razão Social": "One Consultoria Imobiliaria LTDA",
+                "Data de Nascimento (somente PF)": "",
+                "Gênero (somente PF)": "",
+                "Nome da Mãe": "",
+                "Nome do Pai": "",
+                "submittedAt": "2026-02-19T15:52:35.449-03:00",
+                "formMode": "test"
+            }
+        ]
+    },
+    "meta": {
+        "templateCredsSetupCompleted": true,
+        "instanceId": "d426a62e10d014b7a9cd9a8cb3fa05aeac045f6e6a99ab86c21ae6ff6d5b6276"
+    }
+}

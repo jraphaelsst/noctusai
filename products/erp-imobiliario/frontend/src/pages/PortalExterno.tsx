@@ -42,7 +42,8 @@ import {
   Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatDate } from '@/lib/utils';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
+import { formatDate, formatCurrency } from '@/lib/utils';
 import {
   usePortalTokens,
   useGerarLink,
@@ -133,7 +134,7 @@ function PortalPublicoView({ token }: { token: string }) {
           </CardHeader>
           <CardContent>
             {isLoadingImoveis ? (
-              <div className="py-8 text-center text-muted-foreground">Carregando imoveis...</div>
+              <TableSkeleton rows={3} />
             ) : imoveis && imoveis.length > 0 ? (
               <Table>
                 <TableHeader>
@@ -183,7 +184,7 @@ function PortalPublicoView({ token }: { token: string }) {
           </CardHeader>
           <CardContent>
             {isLoadingContratos ? (
-              <div className="py-8 text-center text-muted-foreground">Carregando contratos...</div>
+              <TableSkeleton rows={3} />
             ) : contratos && contratos.length > 0 ? (
               <Table>
                 <TableHeader>
@@ -205,7 +206,7 @@ function PortalPublicoView({ token }: { token: string }) {
                       <TableCell>{formatDate(contrato.data_fim)}</TableCell>
                       <TableCell>
                         {contrato.valor
-                          ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(contrato.valor)
+                          ? formatCurrency(contrato.valor)
                           : '-'}
                       </TableCell>
                       <TableCell>
@@ -235,7 +236,7 @@ function PortalPublicoView({ token }: { token: string }) {
           </CardHeader>
           <CardContent>
             {isLoadingFinanceiro ? (
-              <div className="py-8 text-center text-muted-foreground">Carregando pagamentos...</div>
+              <TableSkeleton rows={3} />
             ) : financeiro && financeiro.length > 0 ? (
               <Table>
                 <TableHeader>
@@ -253,7 +254,7 @@ function PortalPublicoView({ token }: { token: string }) {
                       <TableCell>{formatDate(item.data_vencimento)}</TableCell>
                       <TableCell>
                         {item.valor
-                          ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.valor)
+                          ? formatCurrency(item.valor)
                           : '-'}
                       </TableCell>
                       <TableCell>
@@ -412,7 +413,7 @@ function PortalGerenciamentoView() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="py-8 text-center text-muted-foreground">Carregando...</div>
+            <TableSkeleton rows={3} />
           ) : activeTokens.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               <Link2 className="h-12 w-12 mx-auto mb-4 opacity-50" />

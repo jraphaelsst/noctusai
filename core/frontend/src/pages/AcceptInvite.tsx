@@ -71,10 +71,13 @@ export function AcceptInvite() {
     setStatus('accepting');
 
     try {
-      // Sign up via the auth endpoint
-      const res = await api.post('/api/auth/signup', { nome, email, password });
-      if (res.token) {
-        setToken(res.token);
+      // Sign up via the auth endpoint (returns { data: { user_id, org_id } } — no token)
+      await api.post('/api/auth/signup', { nome, email, password, empresa: nome });
+
+      // Login to get the access token
+      const loginRes = await api.post('/api/auth/login', { email, password });
+      if (loginRes.access_token) {
+        setToken(loginRes.access_token);
       }
 
       // Now accept the invite
@@ -94,8 +97,8 @@ export function AcceptInvite() {
 
     try {
       const res = await api.post('/api/auth/login', { email, password });
-      if (res.token) {
-        setToken(res.token);
+      if (res.access_token) {
+        setToken(res.access_token);
       }
 
       // Now accept the invite

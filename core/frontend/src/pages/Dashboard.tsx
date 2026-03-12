@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
+import { NotificationBell } from '../components/NotificationBell';
 
 interface Product {
   id: string;
@@ -108,6 +109,7 @@ export function Dashboard() {
               Admin Panel
             </button>
           )}
+          <NotificationBell />
           <div className="user-info">
             <span className="user-name">{user?.nome}</span>
             <span className="org-name">

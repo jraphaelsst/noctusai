@@ -100,5 +100,11 @@ class TestAtualizarOrdem:
 
 class TestExcluirOrdem:
     def test_delete_success(self, client):
+        client._mock_supabase.set_table_data("ordens_servico", [{"id": "os1"}])
         resp = client.delete("/api/manutencao/os1")
         assert resp.status_code == 200
+
+    def test_delete_not_found(self, client):
+        client._mock_supabase.set_table_data("ordens_servico", [])
+        resp = client.delete("/api/manutencao/nonexistent")
+        assert resp.status_code == 404

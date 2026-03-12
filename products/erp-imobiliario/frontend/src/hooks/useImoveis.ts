@@ -64,6 +64,7 @@ export function useImoveis() {
       return (result.data || []) as Imovel[];
     },
     enabled: !!user,
+    staleTime: 3 * 60 * 1000,
   });
 }
 
@@ -113,9 +114,9 @@ export function useUpdateImovel() {
       const result = await api.patch(`/api/ativos/${id}`, data);
       return result.data as Imovel;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['imoveis'] });
-      queryClient.invalidateQueries({ queryKey: ['imovel'] });
+      queryClient.invalidateQueries({ queryKey: ['imovel', variables.id] });
       toast.success('Imóvel atualizado com sucesso!');
     },
     onError: (error: Error) => {

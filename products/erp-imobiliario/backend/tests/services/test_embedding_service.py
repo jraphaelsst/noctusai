@@ -135,9 +135,8 @@ class TestGenerateEmbedding:
             "data": [{"embedding": mock_embedding}]
         }
 
-        with patch("app.services.embedding_service.settings") as mock_settings, \
+        with patch("app.services.embedding_service.resolve_credential", return_value="test-key"), \
              patch("httpx.AsyncClient") as MockClient:
-            mock_settings.openai_api_key = "test-key"
 
             mock_client_instance = AsyncMock()
             mock_client_instance.post.return_value = mock_response
@@ -158,8 +157,7 @@ class TestGenerateEmbedding:
 
     @pytest.mark.asyncio
     async def test_generate_embedding_no_api_key(self):
-        with patch("app.services.embedding_service.settings") as mock_settings:
-            mock_settings.openai_api_key = None
+        with patch("app.services.embedding_service.resolve_credential", return_value=None):
             with pytest.raises(ValueError, match="Chave da API OpenAI"):
                 await generate_embedding("Test text")
 
@@ -169,9 +167,8 @@ class TestGenerateEmbedding:
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
 
-        with patch("app.services.embedding_service.settings") as mock_settings, \
+        with patch("app.services.embedding_service.resolve_credential", return_value="test-key"), \
              patch("httpx.AsyncClient") as MockClient:
-            mock_settings.openai_api_key = "test-key"
 
             mock_client_instance = AsyncMock()
             mock_client_instance.post.return_value = mock_response

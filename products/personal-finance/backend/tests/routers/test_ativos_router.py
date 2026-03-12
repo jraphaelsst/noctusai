@@ -186,11 +186,17 @@ class TestAtualizarAtivo:
 
 class TestExcluirAtivo:
     def test_deletes_holding(self, client):
+        client.mock_supabase.set_table_data("ativos", [{"id": "ativo-001", "org_id": "test-org-123"}])
         response = client.delete("/api/ativos/ativo-001")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
-        assert "excluido" in data["message"]
+        assert "excluído" in data["message"] or "excluido" in data["message"]
+
+    def test_deletes_not_found(self, client):
+        client.mock_supabase.set_table_data("ativos", [])
+        response = client.delete("/api/ativos/nonexistent")
+        assert response.status_code == 404
 
     def test_requires_auth(self, client):
         response = client._tc.delete("/api/ativos/ativo-001")

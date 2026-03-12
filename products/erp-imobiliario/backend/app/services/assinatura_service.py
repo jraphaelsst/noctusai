@@ -30,9 +30,10 @@ class AssinaturaService:
         "canceled": "cancelado",
     }
 
-    def __init__(self, db_client, user_id: str):
+    def __init__(self, db_client, user_id: str, org_id: Optional[str] = None):
         self.db = db_client
         self.user_id = user_id
+        self.org_id = org_id
 
     async def preparar_envio(
         self,
@@ -66,7 +67,7 @@ class AssinaturaService:
         now = datetime.now(timezone.utc).isoformat()
 
         # Send to external provider (or fall back to internal)
-        provider_config = SignatureProviderConfig(self.db)
+        provider_config = SignatureProviderConfig(org_id=self.org_id)
         provider_result = await enviar_para_assinatura(
             provedor, documento_nome, documento_url, signatarios, provider_config
         )

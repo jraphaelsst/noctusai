@@ -3,16 +3,16 @@ import { persist } from 'zustand/middleware';
 
 interface FiltrosState {
   periodo: string;
-  dataInicio: Date | undefined;
-  dataFim: Date | undefined;
+  dataInicio: string | undefined;
+  dataFim: string | undefined;
   filtroCorretor: string;
   filtroStatus: string;
   filtroTipo: string;
   filtroReferencia: string;
   filtroConclusaoPrazo: string;
   setPeriodo: (periodo: string) => void;
-  setDataInicio: (data: Date | undefined) => void;
-  setDataFim: (data: Date | undefined) => void;
+  setDataInicio: (data: string | undefined) => void;
+  setDataFim: (data: string | undefined) => void;
   setFiltroCorretor: (corretor: string) => void;
   setFiltroStatus: (status: string) => void;
   setFiltroTipo: (tipo: string) => void;

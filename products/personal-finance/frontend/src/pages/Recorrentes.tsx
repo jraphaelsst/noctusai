@@ -1,23 +1,15 @@
 import { useState } from "react";
-import { useRecorrentes, useCreateRecorrente, useUpdateRecorrente, useDeleteRecorrente } from "@/hooks/useRecorrentes";
+import { useRecorrentes, useCreateRecorrente, useUpdateRecorrente, useDeleteRecorrente, useExecutarPendentes, useExecutarUnico } from "@/hooks/useRecorrentes";
 import { useContas } from "@/hooks/useContas";
 import { useCategorias } from "@/hooks/useCategorias";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { FREQUENCIA_LABELS } from "@/lib/constants";
 import type { Recorrente } from "@/types";
 import Modal from "@/components/Modal";
-import { Plus, CalendarClock, AlertTriangle, Pencil, Trash2 } from "lucide-react";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { Plus, CalendarClock, AlertTriangle, Pencil, Trash2, Play, Zap } from "lucide-react";
 
 const inputClass = "w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary";
-
-const FREQUENCIA_LABELS: Record<string, string> = {
-  semanal: "Semanal",
-  quinzenal: "Quinzenal",
-  mensal: "Mensal",
-  bimestral: "Bimestral",
-  trimestral: "Trimestral",
-  semestral: "Semestral",
-  anual: "Anual",
-};
 
 function isProxima(dataStr?: string): boolean {
   if (!dataStr) return false;
@@ -28,7 +20,7 @@ function isProxima(dataStr?: string): boolean {
   return dias >= 0 && dias <= 7;
 }
 
-function RecorrenteRow({ item, onEdit, onDelete }: { item: Recorrente; onEdit: () => void; onDelete: () => void }) {
+function RecorrenteRow({ item, onEdit, onDelete, onExecute }: { item: Recorrente; onEdit: () => void; onDelete: () => void; onExecute: () => void }) {
   const isReceita = item.tipo === "receita";
   const proxima = isProxima(item.proxima_data);
 
@@ -76,6 +68,9 @@ function RecorrenteRow({ item, onEdit, onDelete }: { item: Recorrente; onEdit: (
           </p>
         </div>
         <div className="flex items-center gap-1">
+          <button onClick={onExecute} className="p-1.5 rounded-md hover:bg-emerald-500/10 transition" title="Executar agora">
+            <Play className="w-3.5 h-3.5 text-emerald-500" />
+          </button>
           <button onClick={onEdit} className="p-1.5 rounded-md hover:bg-accent transition" title="Editar">
             <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
           </button>
@@ -101,11 +96,14 @@ export default function Recorrentes() {
   const createMutation = useCreateRecorrente();
   const updateMutation = useUpdateRecorrente();
   const deleteMutation = useDeleteRecorrente();
+  const executarPendentesMutation = useExecutarPendentes();
+  const executarUnicoMutation = useExecutarUnico();
 
   const [modal, setModal] = useState<"create" | "edit" | null>(null);
   const [editingRecorrente, setEditingRecorrente] = useState<Recorrente | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [confirmExecOpen, setConfirmExecOpen] = useState(false);
 
   const openCreate = () => {
     setForm(EMPTY_FORM);
@@ -185,13 +183,23 @@ export default function Recorrentes() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Transacoes Recorrentes</h1>
-        <button
-          onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition"
-        >
-          <Plus className="w-4 h-4" />
-          Nova Recorrente
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setConfirmExecOpen(true)}
+            disabled={executarPendentesMutation.isPending}
+            className="flex items-center gap-2 px-4 py-2 rounded-md border bg-background text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+          >
+            <Zap className="w-4 h-4" />
+            {executarPendentesMutation.isPending ? "Executando..." : "Executar Pendentes"}
+          </button>
+          <button
+            onClick={openCreate}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition"
+          >
+            <Plus className="w-4 h-4" />
+            Nova Recorrente
+          </button>
+        </div>
       </div>
 
       {/* Summary */}
@@ -226,6 +234,7 @@ export default function Recorrentes() {
               item={item}
               onEdit={() => openEdit(item)}
               onDelete={() => setDeleteConfirmId(item.id)}
+              onExecute={() => executarUnicoMutation.mutate(item.id)}
             />
           ))}
         </div>
@@ -324,6 +333,19 @@ export default function Recorrentes() {
           </button>
         </div>
       </Modal>
+
+      {/* Executar Pendentes Confirmation */}
+      <ConfirmDialog
+        open={confirmExecOpen}
+        onClose={() => setConfirmExecOpen(false)}
+        onConfirm={() => {
+          executarPendentesMutation.mutate(undefined, { onSuccess: () => setConfirmExecOpen(false) });
+        }}
+        title="Executar Pendentes"
+        message="Isso vai criar transacoes para todas as recorrencias vencidas. Deseja continuar?"
+        confirmLabel="Executar"
+        loading={executarPendentesMutation.isPending}
+      />
     </div>
   );
 }

@@ -22,12 +22,13 @@ import secrets
 from typing import Optional, Literal
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import success_response, paginated_response, ok_response, calculate_pagination
 from app.config import settings
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portal", tags=["Portal Externo"])
@@ -159,7 +160,8 @@ async def revogar_token(token_id: str, authorization: Optional[str] = Header(Non
 # ---------------------------------------------------------------------------
 
 @router.get("/{portal_token}")
-async def validar_portal(portal_token: str):
+@limiter.limit("30/minute")
+async def validar_portal(request: Request, portal_token: str):
     """Valida um token de portal e retorna dados básicos."""
     token_data = _validate_token(portal_token)
     return success_response({
@@ -170,7 +172,8 @@ async def validar_portal(portal_token: str):
 
 
 @router.get("/{portal_token}/imoveis")
-async def portal_imoveis(portal_token: str):
+@limiter.limit("30/minute")
+async def portal_imoveis(request: Request, portal_token: str):
     """Retorna os imóveis do proprietário (via portal token)."""
     token_data = _validate_token(portal_token)
     if token_data["tipo"] != "proprietario":
@@ -180,7 +183,7 @@ async def portal_imoveis(portal_token: str):
     result = admin.table("ativos").select(
         "id, natureza, tipo_imovel, cidade, bairro, logradouro, numero, valor, status, "
         "quartos, area_privativa, fotos, created_at"
-    ).eq("proprietario_id", token_data["pessoa_id"]).order(
+    ).eq("org_id", token_data["org_id"]).eq("proprietario_id", token_data["pessoa_id"]).order(
         "created_at", desc=True
     ).execute()
 
@@ -188,7 +191,8 @@ async def portal_imoveis(portal_token: str):
 
 
 @router.get("/{portal_token}/financeiro")
-async def portal_financeiro(portal_token: str):
+@limiter.limit("30/minute")
+async def portal_financeiro(request: Request, portal_token: str):
     """Retorna o extrato financeiro do proprietário (aluguéis recebidos, taxas)."""
     token_data = _validate_token(portal_token)
     if token_data["tipo"] != "proprietario":
@@ -198,6 +202,8 @@ async def portal_financeiro(portal_token: str):
 
     # Fetch financial records associated with the owner
     result = admin.table("lancamentos").select("*").eq(
+        "org_id", token_data["org_id"]
+    ).eq(
         "cliente_id", token_data["pessoa_id"]
     ).order("data_vencimento", desc=True).limit(100).execute()
 
@@ -205,12 +211,15 @@ async def portal_financeiro(portal_token: str):
 
 
 @router.get("/{portal_token}/contratos")
-async def portal_contratos(portal_token: str):
+@limiter.limit("30/minute")
+async def portal_contratos(request: Request, portal_token: str):
     """Retorna os contratos do locatário (via portal token)."""
     token_data = _validate_token(portal_token)
 
     admin = _get_admin()
     result = admin.table("contratos").select("*").eq(
+        "org_id", token_data["org_id"]
+    ).eq(
         "cliente_id", token_data["pessoa_id"]
     ).order("created_at", desc=True).execute()
 
@@ -218,12 +227,15 @@ async def portal_contratos(portal_token: str):
 
 
 @router.get("/{portal_token}/documentos")
-async def portal_documentos(portal_token: str):
+@limiter.limit("30/minute")
+async def portal_documentos(request: Request, portal_token: str):
     """Retorna documentos compartilhados com o proprietário ou locatário."""
     token_data = _validate_token(portal_token)
 
     admin = _get_admin()
     result = admin.table("documentos").select("*").eq(
+        "org_id", token_data["org_id"]
+    ).eq(
         "cliente_id", token_data["pessoa_id"]
     ).order("created_at", desc=True).execute()
 

@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { loginSchema, signUpSchema } from '@/lib/validations';
 import { Eye, EyeOff } from 'lucide-react';
 import { useRecuperarSenha } from '@/hooks/useRecuperarSenha';
@@ -35,7 +35,6 @@ export function LoginForm({ onToggleMode, isSignUp }: LoginFormProps) {
   const [emailTouched, setEmailTouched] = useState(false);
   const [showRecuperarSenhaDialog, setShowRecuperarSenhaDialog] = useState(false);
   const [recuperarEmail, setRecuperarEmail] = useState('');
-  const { toast } = useToast();
   const recuperarSenhaMutation = useRecuperarSenha();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -76,10 +75,7 @@ export function LoginForm({ onToggleMode, isSignUp }: LoginFormProps) {
         
         if (error) throw error;
         
-        toast({
-          title: 'Cadastro realizado!',
-          description: 'Verifique seu email para confirmar a conta.',
-        });
+        toast.success('Cadastro realizado!', { description: 'Verifique seu email para confirmar a conta.' });
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email: email.trim(),
@@ -88,10 +84,7 @@ export function LoginForm({ onToggleMode, isSignUp }: LoginFormProps) {
         
         if (error) throw error;
         
-        toast({
-          title: 'Login realizado!',
-          description: 'Bem-vindo de volta!',
-        });
+        toast.success('Login realizado!', { description: 'Bem-vindo de volta!' });
       }
     } catch (error: any) {
       const errorMessage = error.message.includes('Invalid login credentials')
@@ -100,11 +93,7 @@ export function LoginForm({ onToggleMode, isSignUp }: LoginFormProps) {
         ? 'Este email já está cadastrado'
         : 'Erro ao processar sua solicitação. Tente novamente.';
       
-      toast({
-        title: 'Erro',
-        description: errorMessage,
-        variant: 'destructive',
-      });
+      toast.error('Erro', { description: errorMessage });
     } finally {
       setLoading(false);
     }
@@ -141,11 +130,7 @@ export function LoginForm({ onToggleMode, isSignUp }: LoginFormProps) {
     e.preventDefault();
     
     if (!recuperarEmail.trim()) {
-      toast({
-        title: 'Erro',
-        description: 'Por favor, informe seu email',
-        variant: 'destructive',
-      });
+      toast.error('Erro', { description: 'Por favor, informe seu email' });
       return;
     }
 

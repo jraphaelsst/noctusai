@@ -43,20 +43,20 @@ export function FiltrosDashboard() {
         setDataFim(undefined);
         break;
       case 'diario':
-        setDataInicio(startOfDay(hoje));
-        setDataFim(endOfDay(hoje));
+        setDataInicio(startOfDay(hoje).toISOString());
+        setDataFim(endOfDay(hoje).toISOString());
         break;
       case 'semanal':
-        setDataInicio(startOfWeek(hoje, { weekStartsOn: 0 }));
-        setDataFim(endOfWeek(hoje, { weekStartsOn: 0 }));
+        setDataInicio(startOfWeek(hoje, { weekStartsOn: 0 }).toISOString());
+        setDataFim(endOfWeek(hoje, { weekStartsOn: 0 }).toISOString());
         break;
       case 'mensal':
-        setDataInicio(startOfMonth(hoje));
-        setDataFim(endOfMonth(hoje));
+        setDataInicio(startOfMonth(hoje).toISOString());
+        setDataFim(endOfMonth(hoje).toISOString());
         break;
       case 'anual':
-        setDataInicio(startOfYear(hoje));
-        setDataFim(endOfYear(hoje));
+        setDataInicio(startOfYear(hoje).toISOString());
+        setDataFim(endOfYear(hoje).toISOString());
         break;
     }
   }, [periodo, setDataInicio, setDataFim]);
@@ -100,14 +100,14 @@ export function FiltrosDashboard() {
                 )}
               >
                 <CalendarIcon className="mr-2 h-4 w-4" />
-                {dataInicio ? format(dataInicio, "PPP", { locale: ptBR }) : <span>Selecione</span>}
+                {dataInicio ? format(new Date(dataInicio), "PPP", { locale: ptBR }) : <span>Selecione</span>}
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
               <Calendar
                 mode="single"
-                selected={dataInicio}
-                onSelect={setDataInicio}
+                selected={dataInicio ? new Date(dataInicio) : undefined}
+                onSelect={(date) => setDataInicio(date?.toISOString())}
                 initialFocus
                 className={cn("p-3 pointer-events-auto")}
               />
@@ -128,14 +128,14 @@ export function FiltrosDashboard() {
                 )}
               >
                 <CalendarIcon className="mr-2 h-4 w-4" />
-                {dataFim ? format(dataFim, "PPP", { locale: ptBR }) : <span>Selecione</span>}
+                {dataFim ? format(new Date(dataFim), "PPP", { locale: ptBR }) : <span>Selecione</span>}
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
               <Calendar
                 mode="single"
-                selected={dataFim}
-                onSelect={setDataFim}
+                selected={dataFim ? new Date(dataFim) : undefined}
+                onSelect={(date) => setDataFim(date?.toISOString())}
                 initialFocus
                 className={cn("p-3 pointer-events-auto")}
               />

@@ -67,13 +67,6 @@ class TestListAuditLogs:
         resp = client.get("/api/audit-logs?page=0")
         assert resp.status_code == 422
 
-    def test_list_audit_logs_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.get("/api/audit-logs")
-        assert resp.status_code == 404
-
     def test_list_audit_logs_unauthenticated(self, unauth_client):
         resp = unauth_client.get("/api/audit-logs")
         assert resp.status_code == 401

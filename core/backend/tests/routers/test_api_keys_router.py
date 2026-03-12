@@ -44,13 +44,6 @@ class TestListApiKeys:
         assert resp.status_code == 200
         assert resp.json()["data"] == []
 
-    def test_list_api_keys_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.get("/api/api-keys")
-        assert resp.status_code == 404
-
     def test_list_api_keys_unauthenticated(self, unauth_client):
         resp = unauth_client.get("/api/api-keys")
         assert resp.status_code == 401
@@ -110,12 +103,6 @@ class TestCreateApiKey:
         resp = client.post("/api/api-keys", json={})
         assert resp.status_code == 422
 
-    def test_create_api_key_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.post("/api/api-keys", json={"name": "Key"})
-        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

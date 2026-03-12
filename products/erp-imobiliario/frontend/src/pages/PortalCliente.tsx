@@ -48,6 +48,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import {
   usePortalAcessos,
   useGerarAcesso,
@@ -233,9 +234,7 @@ export default function PortalCliente() {
         <Card>
           <CardContent className="pt-6">
             {isLoadingAcessos ? (
-              <div className="py-8 text-center text-muted-foreground">
-                Carregando acessos...
-              </div>
+              <TableSkeleton rows={3} />
             ) : acessos.length === 0 ? (
               <div className="py-8 text-center text-muted-foreground">
                 Nenhum acesso encontrado
@@ -330,9 +329,7 @@ export default function PortalCliente() {
           <Card>
             <CardContent className="pt-6">
               {isLoadingChamados ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  Carregando chamados...
-                </div>
+                <TableSkeleton rows={3} />
               ) : chamados.length === 0 ? (
                 <div className="py-8 text-center text-muted-foreground">
                   Nenhum chamado encontrado

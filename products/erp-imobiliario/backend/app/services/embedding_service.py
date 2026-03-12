@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import httpx
 
-from app.config import settings
+from app.services.credential_resolver import resolve_credential
 
 logger = logging.getLogger(__name__)
 
@@ -18,44 +18,13 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 TIMEOUT = 30.0
 
 
-async def _resolve_api_key(auth_token: Optional[str] = None) -> str:
-    """Resolve OpenAI API key from core settings API with fallback to env.
-
-    When auth_token is provided, tries org-level then platform-level
-    via the core settings resolve endpoint. Falls back to the env variable.
-    """
-    if auth_token:
-        try:
-            core_url = settings.core_api_url
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(
-                    f"{core_url}/api/settings/resolve/openai_api_key",
-                    headers={"Authorization": f"Bearer {auth_token}"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json().get("data")
-                    if data and data.get("value"):
-                        return data["value"]
-        except Exception as e:
-            logger.debug(f"Core settings resolution failed, using env fallback: {e}")
-
-    # Fallback to env
-    key = settings.openai_api_key
+def _get_api_key(org_id: Optional[str] = None) -> str:
+    """Resolve OpenAI API key via org_settings → platform_settings → env."""
+    key = resolve_credential("openai_api_key", org_id)
     if not key:
         raise ValueError(
             "Chave da API OpenAI não configurada. "
-            "Defina OPENAI_API_KEY no arquivo .env ou configure nas configurações da organização."
-        )
-    return key
-
-
-def _get_api_key() -> str:
-    """Get OpenAI API key from env (sync, for backward compat)."""
-    key = settings.openai_api_key
-    if not key:
-        raise ValueError(
-            "Chave da API OpenAI não configurada. "
-            "Defina OPENAI_API_KEY no arquivo .env."
+            "Defina OPENAI_API_KEY no .env ou configure nas configurações da organização."
         )
     return key
 
@@ -157,14 +126,12 @@ def _build_location(ativo: dict) -> str:
     return ", ".join(location_parts)
 
 
-async def generate_embedding(text: str, auth_token: Optional[str] = None) -> list[float]:
+async def generate_embedding(text: str, org_id: Optional[str] = None) -> list[float]:
     """
     Call OpenAI text-embedding-3-small to generate a 1536-dim embedding.
     Raises ValueError if API key is not configured or API call fails.
-
-    If auth_token is provided, resolves the API key via core settings first.
     """
-    api_key = await _resolve_api_key(auth_token) if auth_token else _get_api_key()
+    api_key = _get_api_key(org_id)
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         response = await client.post(

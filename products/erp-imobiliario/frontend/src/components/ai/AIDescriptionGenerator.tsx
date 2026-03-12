@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { useGenerateDescription } from "@/hooks/useAI";
 
 interface PropertyData {
@@ -36,7 +36,6 @@ export function AIDescriptionGenerator({
   currentDescription,
 }: AIDescriptionGeneratorProps) {
   const [description, setDescription] = useState(currentDescription || "");
-  const { toast } = useToast();
   const generateMutation = useGenerateDescription();
 
   async function handleGenerate() {
@@ -47,22 +46,15 @@ export function AIDescriptionGenerator({
       const generated = result.descricao || "";
       setDescription(generated);
       onDescriptionGenerated?.(generated);
-      toast({
-        title: "Descrição gerada",
-        description: "A descrição foi gerada com sucesso pela IA.",
-      });
+      toast.success("Descrição gerada", { description: "A descrição foi gerada com sucesso pela IA." });
     } catch (err: any) {
-      toast({
-        title: "Erro ao gerar descrição",
-        description: err.message || "Não foi possível gerar a descrição. Verifique se a API de IA está configurada.",
-        variant: "destructive",
-      });
+      toast.error("Erro ao gerar descrição", { description: err.message || "Não foi possível gerar a descrição. Verifique se a API de IA está configurada." });
     }
   }
 
   function handleCopy() {
     navigator.clipboard.writeText(description);
-    toast({ title: "Copiado!", description: "Descrição copiada para a área de transferência." });
+    toast.success("Copiado!", { description: "Descrição copiada para a área de transferência." });
   }
 
   return (

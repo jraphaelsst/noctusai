@@ -71,6 +71,8 @@ async def listar_clientes(
         count_query = count_query.eq("origem", origem)
     if responsavel_id and responsavel_id != "todos":
         count_query = count_query.eq("usuario_id", responsavel_id)
+    if busca:
+        count_query = count_query.or_(f"nome.ilike.%{busca}%,email.ilike.%{busca}%,telefone.ilike.%{busca}%")
 
     # Build data query with pagination
     query = db.table("clientes").select(
@@ -85,6 +87,8 @@ async def listar_clientes(
         query = query.eq("origem", origem)
     if responsavel_id and responsavel_id != "todos":
         query = query.eq("usuario_id", responsavel_id)
+    if busca:
+        query = query.or_(f"nome.ilike.%{busca}%,email.ilike.%{busca}%,telefone.ilike.%{busca}%")
 
     # Apply pagination
     query = query.range(offset, offset + validated_page_size - 1)
@@ -95,16 +99,6 @@ async def listar_clientes(
     # Get total count
     count_result = count_query.execute()
     total = count_result.count if count_result.count is not None else len(data)
-
-    # Server-side search (applied after fetching - for full-text search consider DB-level)
-    if busca:
-        q = busca.lower()
-        data = [c for c in data if any(
-            q in str(c.get(f, "") or "").lower()
-            for f in ["nome", "email", "telefone", "interesse", "observacoes"]
-        )]
-        # When searching, we can't accurately paginate, return all matching from current page
-        total = len(data)
 
     return paginated_response(data, total, validated_page, validated_page_size)
 
@@ -162,6 +156,10 @@ async def atualizar_cliente(cliente_id: str, body: ClienteUpdate, authorization:
 async def excluir_cliente(cliente_id: str, authorization: Optional[str] = Header(None)):
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+
+    check = db.table("clientes").select("id").eq("id", cliente_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
     db.table("clientes").delete().eq("id", cliente_id).execute()
     log_action(user.id, "excluir", "cliente", cliente_id, f"Excluiu cliente {cliente_id}")

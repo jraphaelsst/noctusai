@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { Shield, UserCog, Plus, X } from 'lucide-react';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { AdicionarRoleModal } from '@/components/modals/AdicionarRoleModal';
 
 interface UserWithRoles {
@@ -150,9 +151,7 @@ export default function Admin() {
         </CardHeader>
         <CardContent>
           {isLoadingProfiles ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Carregando usuários...
-            </div>
+            <CardListSkeleton count={4} />
           ) : usersWithRoles.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               Nenhum usuário encontrado

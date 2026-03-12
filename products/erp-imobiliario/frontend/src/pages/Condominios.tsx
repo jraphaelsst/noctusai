@@ -14,6 +14,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 
 export default function Condominios() {
   const { data: condominios = [], isLoading } = useCondominios();
@@ -76,7 +77,7 @@ export default function Condominios() {
       </Card>
 
       {isLoading ? (
-        <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando...</CardContent></Card>
+        <CardGridSkeleton count={6} />
       ) : filtrados.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">

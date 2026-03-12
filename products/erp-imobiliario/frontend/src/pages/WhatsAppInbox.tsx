@@ -10,6 +10,7 @@ import {
   MessageSquare, Send, Search, Phone, User, Check, CheckCheck,
   AlertCircle, RefreshCw,
 } from "lucide-react";
+import { CardListSkeleton } from "@/components/ui/page-skeleton";
 
 interface Conversation {
   phone: string;
@@ -150,7 +151,7 @@ export default function WhatsAppInbox() {
           </div>
           <ScrollArea className="flex-1">
             {loadingConversations ? (
-              <div className="p-4 text-center text-sm text-muted-foreground">Carregando...</div>
+              <div className="p-4"><CardListSkeleton count={3} /></div>
             ) : filteredConversations.length === 0 ? (
               <div className="p-4 text-center text-sm text-muted-foreground">
                 Nenhuma conversa encontrada
@@ -223,7 +224,7 @@ export default function WhatsAppInbox() {
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-3 max-w-2xl mx-auto">
                   {loadingMessages ? (
-                    <p className="text-center text-sm text-muted-foreground">Carregando...</p>
+                    <CardListSkeleton count={3} />
                   ) : messages.length === 0 ? (
                     <p className="text-center text-sm text-muted-foreground">
                       Nenhuma mensagem ainda

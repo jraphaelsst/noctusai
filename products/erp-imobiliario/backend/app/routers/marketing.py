@@ -30,7 +30,7 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
+from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.marketing_service import get_campaign_stats, process_alerts
@@ -160,6 +160,10 @@ async def excluir_campanha(campanha_id: str, authorization: Optional[str] = Head
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("campanhas").select("id").eq("id", campanha_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Campanha não encontrada")
+
     # Delete sends first (foreign key)
     db.table("envios_email").delete().eq("campanha_id", campanha_id).execute()
     db.table("campanhas").delete().eq("id", campanha_id).execute()
@@ -247,7 +251,7 @@ async def processar_alertas(authorization: Optional[str] = Header(None)):
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    org_id = user.user_metadata.get("org_id", "") if user.user_metadata else ""
+    org_id = get_org_id(user)
     matches = process_alerts(org_id, db)
 
     return success_response(matches)

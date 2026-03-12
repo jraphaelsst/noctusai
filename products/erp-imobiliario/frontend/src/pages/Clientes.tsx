@@ -8,6 +8,8 @@ import { useClientes, useToggleArquivarCliente, useDeleteCliente } from '@/hooks
 import { useFunilFiltrosStore } from '@/store/funilFiltrosStore';
 import { NovoClienteDialog } from '@/components/clientes/NovoClienteDialog';
 import { ETAPAS_CONFIG } from '@/lib/etapasConfig';
+import { formatCurrency } from '@/lib/utils';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { FiltrosFunil } from '@/components/clientes/FiltrosFunil';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -56,7 +58,7 @@ export default function Clientes() {
 
       <div className="grid gap-4">
         {isLoading ? (
-          <div>Carregando...</div>
+          <CardListSkeleton count={4} />
         ) : clientes && clientes.length > 0 ? (
           clientes.map((cliente) => {
             const etapaConfig = ETAPAS_CONFIG[cliente.etapa_atual];
@@ -89,10 +91,7 @@ export default function Clientes() {
                     <div className="flex flex-wrap gap-2">
                       <Badge variant="secondary">{cliente.probabilidade}%</Badge>
                       <Badge variant="outline">
-                        {new Intl.NumberFormat('pt-BR', {
-                          style: 'currency',
-                          currency: 'BRL',
-                        }).format(Number(cliente.valor_estimado))}
+                        {formatCurrency(Number(cliente.valor_estimado))}
                       </Badge>
                       {cliente.origem && <Badge variant="outline">{cliente.origem}</Badge>}
                       {cliente.usuario && (

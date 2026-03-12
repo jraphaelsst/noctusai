@@ -58,14 +58,8 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-
-const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
-
-const formatDate = (d?: string | null) => {
-  if (!d) return '-';
-  return new Date(d).toLocaleDateString('pt-BR');
-};
+import { MetricsTableSkeleton } from '@/components/ui/page-skeleton';
+import { formatCurrency, formatDate } from '@/lib/utils';
 
 const statusConfig: Record<ComissaoStatus, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   pendente: { label: 'Pendente', variant: 'secondary' },
@@ -302,7 +296,7 @@ export default function Comissoes() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="py-8 text-center text-muted-foreground">Carregando...</div>
+            <MetricsTableSkeleton cards={0} />
           ) : comissoes.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               <DollarSign className="h-12 w-12 mx-auto mb-4 opacity-50" />

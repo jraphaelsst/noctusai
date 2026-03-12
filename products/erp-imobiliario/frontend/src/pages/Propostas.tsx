@@ -1,4 +1,8 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -40,7 +44,10 @@ import {
   Trash2,
   ArrowRightLeft,
   History,
+  FileText,
 } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import {
   usePropostas,
@@ -53,36 +60,54 @@ import {
 import {
   StatusProposta,
   Proposta,
-  PropostaCreateData,
   HistoricoProposta,
 } from '@/types/propostas';
 
 const STATUS_CONFIG: Record<StatusProposta, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: typeof Send }> = {
   enviada: { label: 'Enviada', variant: 'outline', icon: Send },
-  em_analise: { label: 'Em Analise', variant: 'secondary', icon: Search },
+  em_analise: { label: 'Em Análise', variant: 'secondary', icon: Search },
   contraproposta: { label: 'Contraproposta', variant: 'default', icon: ArrowRightLeft },
   aceita: { label: 'Aceita', variant: 'default', icon: CheckCircle2 },
   recusada: { label: 'Recusada', variant: 'destructive', icon: XCircle },
   expirada: { label: 'Expirada', variant: 'secondary', icon: Clock },
 };
 
-const emptyForm: PropostaCreateData = {
-  imovel_id: '',
-  cliente_id: '',
-  valor_proposta: 0,
-  condicoes_pagamento: undefined,
-  prazo_validade: undefined,
-  observacoes: undefined,
-};
+const propostaSchema = z.object({
+  imovel_id: z.string().min(1, 'ID do imóvel é obrigatório'),
+  cliente_id: z.string().min(1, 'ID do cliente é obrigatório'),
+  valor_proposta: z.coerce.number().positive('Valor deve ser maior que zero'),
+  prazo_validade: z.string().optional(),
+  condicoes_pagamento: z.string().optional(),
+  observacoes: z.string().optional(),
+});
+
+type PropostaFormData = z.infer<typeof propostaSchema>;
 
 export default function Propostas() {
+  const navigate = useNavigate();
   const [filtroStatus, setFiltroStatus] = useState<string>('todos');
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [contrapropostaModal, setContrapropostaModal] = useState<Proposta | null>(null);
   const [historyModal, setHistoryModal] = useState<Proposta | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<PropostaCreateData>(emptyForm);
   const [contraValor, setContraValor] = useState<number>(0);
+
+  const {
+    register: registerProposta,
+    handleSubmit: rhfHandleCreate,
+    formState: { errors: propostaErrors },
+    reset: resetProposta,
+  } = useForm<PropostaFormData>({
+    resolver: zodResolver(propostaSchema),
+    defaultValues: {
+      imovel_id: '',
+      cliente_id: '',
+      valor_proposta: 0,
+      prazo_validade: '',
+      condicoes_pagamento: '',
+      observacoes: '',
+    },
+  });
   const [contraCondicoes, setContraCondicoes] = useState<string>('');
   const [contraObs, setContraObs] = useState<string>('');
 
@@ -98,14 +123,21 @@ export default function Propostas() {
   const { mutate: sendContraproposta, isPending: isSendingContra } = useContraproposta();
   const { mutate: deleteProposta } = useDeleteProposta();
 
-  const handleCreate = () => {
-    if (!formData.imovel_id || !formData.cliente_id || !formData.valor_proposta) return;
-    createProposta(formData, {
-      onSuccess: () => {
-        setCreateModalOpen(false);
-        setFormData(emptyForm);
+  const handleCreate = (data: PropostaFormData) => {
+    createProposta(
+      {
+        ...data,
+        prazo_validade: data.prazo_validade || undefined,
+        condicoes_pagamento: data.condicoes_pagamento || undefined,
+        observacoes: data.observacoes || undefined,
       },
-    });
+      {
+        onSuccess: () => {
+          setCreateModalOpen(false);
+          resetProposta();
+        },
+      }
+    );
   };
 
   const handleStatusChange = (proposta: Proposta, newStatus: StatusProposta) => {
@@ -249,24 +281,21 @@ export default function Propostas() {
       {/* Proposals List */}
       <div className="space-y-4">
         {isLoading ? (
-          <Card>
-            <CardContent className="py-8 text-center text-muted-foreground">
-              Carregando propostas...
-            </CardContent>
-          </Card>
+          <CardListSkeleton count={3} />
         ) : propostas.length === 0 ? (
-          <Card>
-            <CardContent className="py-8 text-center text-muted-foreground">
-              Nenhuma proposta encontrada
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={FileText}
+            title="Nenhuma proposta encontrada"
+            description="Crie uma proposta para iniciar uma negociação"
+            action={{ label: 'Nova Proposta', onClick: () => setCreateModalOpen(true) }}
+          />
         ) : (
           propostas.map((proposta) => {
             const statusConfig = STATUS_CONFIG[proposta.status];
             const StatusIcon = statusConfig.icon;
 
             return (
-              <Card key={proposta.id}>
+              <Card key={proposta.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/propostas/${proposta.id}`)}>
                 <CardContent className="pt-6">
                   <div className="flex flex-col lg:flex-row items-start justify-between gap-4">
                     <div className="flex-1 min-w-0 space-y-3">
@@ -324,7 +353,7 @@ export default function Propostas() {
                       )}
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                       <Button
                         variant="outline"
                         size="sm"
@@ -394,78 +423,51 @@ export default function Propostas() {
             <DialogTitle>Nova Proposta</DialogTitle>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
-            <div className="space-y-2">
-              <Label>ID do Imovel</Label>
-              <Input
-                value={formData.imovel_id}
-                onChange={(e) => setFormData({ ...formData, imovel_id: e.target.value })}
-                placeholder="UUID do imovel"
-              />
+          <form onSubmit={rhfHandleCreate(handleCreate)}>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label>ID do Imóvel</Label>
+                <Input {...registerProposta('imovel_id')} placeholder="UUID do imóvel" />
+                {propostaErrors.imovel_id && <p className="text-sm text-destructive">{propostaErrors.imovel_id.message}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label>ID do Cliente</Label>
+                <Input {...registerProposta('cliente_id')} placeholder="UUID do cliente" />
+                {propostaErrors.cliente_id && <p className="text-sm text-destructive">{propostaErrors.cliente_id.message}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Valor da Proposta (R$)</Label>
+                <Input type="number" min="0" step="0.01" {...registerProposta('valor_proposta')} placeholder="0,00" />
+                {propostaErrors.valor_proposta && <p className="text-sm text-destructive">{propostaErrors.valor_proposta.message}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Prazo de Validade</Label>
+                <Input type="date" {...registerProposta('prazo_validade')} />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Condições de Pagamento</Label>
+                <Textarea {...registerProposta('condicoes_pagamento')} placeholder="Descreva as condições de pagamento..." rows={3} />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Observações</Label>
+                <Textarea {...registerProposta('observacoes')} placeholder="Observações adicionais..." rows={3} />
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>ID do Cliente</Label>
-              <Input
-                value={formData.cliente_id}
-                onChange={(e) => setFormData({ ...formData, cliente_id: e.target.value })}
-                placeholder="UUID do cliente"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Valor da Proposta (R$)</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={formData.valor_proposta || ''}
-                onChange={(e) => setFormData({ ...formData, valor_proposta: parseFloat(e.target.value) || 0 })}
-                placeholder="0,00"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Prazo de Validade</Label>
-              <Input
-                type="date"
-                value={formData.prazo_validade || ''}
-                onChange={(e) => setFormData({ ...formData, prazo_validade: e.target.value || undefined })}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Condicoes de Pagamento</Label>
-              <Textarea
-                value={formData.condicoes_pagamento || ''}
-                onChange={(e) => setFormData({ ...formData, condicoes_pagamento: e.target.value || undefined })}
-                placeholder="Descreva as condicoes de pagamento..."
-                rows={3}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Observacoes</Label>
-              <Textarea
-                value={formData.observacoes || ''}
-                onChange={(e) => setFormData({ ...formData, observacoes: e.target.value || undefined })}
-                placeholder="Observacoes adicionais..."
-                rows={3}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleCreate}
-              disabled={isCreating || !formData.imovel_id || !formData.cliente_id || !formData.valor_proposta}
-            >
-              Criar Proposta
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={isCreating}>
+                Criar Proposta
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

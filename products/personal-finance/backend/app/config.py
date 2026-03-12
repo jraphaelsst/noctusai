@@ -2,44 +2,33 @@
 Configuration settings loaded from environment variables.
 """
 from pathlib import Path
-from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from noctusai_shared.config import BaseAppSettings
 
 _ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
 
 
-class Settings(BaseSettings):
-    """Application settings from .env file."""
+class Settings(BaseAppSettings):
+    """Personal Finance specific application settings."""
 
-    # Supabase
-    supabase_url: str = ""
-    supabase_anon_key: str = ""
-    supabase_service_role_key: str = ""
-
-    # App
-    cors_origins: str = "http://localhost:8090,http://localhost:5173,http://localhost:3000"
-    debug: bool = True
-
-    # JWT / SSO (must match Core platform's jwt_secret)
+    # JWT / SSO
     jwt_secret: str = "noctus-dev-secret-change-in-prod"
-    jwt_algorithm: str = "HS256"
     core_api_url: str = "http://localhost:8000"
 
-    # Observability (optional)
-    sentry_dsn: Optional[str] = None
-    redis_url: Optional[str] = None
+    # CORS — PF frontend default port
+    cors_origins: str = "http://localhost:8090,http://localhost:5173,http://localhost:3000"
 
-    # Pagination defaults
-    default_page_size: int = 50
-    max_page_size: int = 200
-
-    @property
-    def cors_origins_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",")]
-
-    @property
-    def is_production(self) -> bool:
-        return not self.debug
+    @field_validator('jwt_secret')
+    @classmethod
+    def validate_jwt_secret(cls, v, info):
+        """Fail if using default JWT secret in production."""
+        debug = info.data.get('debug', True) if info.data else True
+        if v == "noctus-dev-secret-change-in-prod" and not debug:
+            raise ValueError(
+                "SECURITY ERROR: JWT_SECRET must be changed from default value in production. "
+                "Set JWT_SECRET environment variable to a secure random string."
+            )
+        return v
 
     class Config:
         env_file = str(_ROOT_ENV)

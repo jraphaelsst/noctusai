@@ -12,16 +12,14 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from supabase import create_client
 from app.config import settings
 from app.database import get_admin_client
 from app.dependencies import get_current_user
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 class SignupRequest(BaseModel):
@@ -85,7 +83,30 @@ async def signup(request: Request, body: SignupRequest):
     }
     db.table("noctus_users").insert(profile_data).execute()
 
+    # 4. Sync org_id to auth user_metadata so product backends can read it
+    try:
+        db.auth.admin.update_user_by_id(user.id, {"user_metadata": {"org_id": org["id"]}})
+    except Exception as e:
+        logger.warning(f"Failed to sync org_id to user_metadata: {e}")
+
     logger.info(f"New signup: {body.email} → org {org['nome']}")
+
+    # Audit log and welcome email (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=org["id"],
+            action="signup", resource_type="user", resource_id=user.id,
+            request=request,
+        )
+    except Exception:
+        pass
+    try:
+        from app.services.email_service import send_welcome_email
+        send_welcome_email(to=body.email, user_name=body.nome.strip().title(), org_name=org["nome"])
+    except Exception:
+        pass
+
     return {"data": {"user_id": user.id, "org_id": org["id"]}}
 
 
@@ -101,6 +122,17 @@ async def login(request: Request, body: LoginRequest):
         })
         if not response.session:
             raise HTTPException(status_code=401, detail="Credenciais inválidas")
+
+        # Audit log (best-effort)
+        try:
+            from app.services import audit_service
+            await audit_service.log(
+                user_id=str(response.user.id), org_id=None,
+                action="login", resource_type="user", resource_id=str(response.user.id),
+                request=request,
+            )
+        except Exception:
+            pass
 
         return {
             "access_token": response.session.access_token,

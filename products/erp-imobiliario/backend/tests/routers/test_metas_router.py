@@ -113,8 +113,14 @@ class TestAtualizarMeta:
 
 class TestExcluirMeta:
     def test_delete_meta(self, client):
+        client._mock_supabase.set_table_data("metas", [{"id": "m1"}])
         resp = client.delete("/api/metas/m1")
         assert resp.status_code == 200
+
+    def test_delete_meta_not_found(self, client):
+        client._mock_supabase.set_table_data("metas", [])
+        resp = client.delete("/api/metas/nonexistent")
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +231,17 @@ class TestUpsertConfig:
 
 class TestExcluirConfig:
     def test_delete_config(self, client):
+        client._mock_supabase.set_table_data("metas_config", {
+            "id": "cfg-123", "usuario_id": "user-1", "tipo": "mensal",
+            "categoria": "captacao", "meta_pretendida": 10, "ativo": True,
+        })
         resp = client.delete("/api/metas/config/cfg-123")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
+
+    def test_delete_config_not_found(self, client):
+        resp = client.delete("/api/metas/config/nonexistent")
+        assert resp.status_code == 404
 
     def test_delete_config_no_auth(self, client):
         resp = client._tc.delete("/api/metas/config/cfg-123")

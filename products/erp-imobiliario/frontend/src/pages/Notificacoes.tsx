@@ -18,6 +18,7 @@ import {
   Bell, BellRing, Check, CheckCheck, Settings, Mail, MessageSquare,
   Monitor, Clock,
 } from "lucide-react";
+import { CardListSkeleton } from "@/components/ui/page-skeleton";
 
 function timeAgo(dateStr: string) {
   if (!dateStr) return "";
@@ -198,13 +199,7 @@ function NotificacaoList({
   onMarcarLida: (id: string) => void;
 }) {
   if (isLoading) {
-    return (
-      <Card>
-        <CardContent className="py-8 text-center text-muted-foreground">
-          Carregando notificações...
-        </CardContent>
-      </Card>
-    );
+    return <CardListSkeleton count={4} />;
   }
 
   if (notificacoes.length === 0) {

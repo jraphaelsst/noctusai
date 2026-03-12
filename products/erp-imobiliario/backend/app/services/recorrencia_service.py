@@ -39,24 +39,38 @@ class RecorrenciaService:
         ).execute()
         contratos = result.data or []
 
-        gerados = 0
+        if not contratos:
+            return {
+                "referencia": referencia,
+                "gerados": 0,
+                "existentes": 0,
+                "erros": 0,
+                "total_contratos": 0,
+            }
+
+        # Batch-fetch all existing lancamentos for this reference month
+        existing_result = self.db.table("lancamentos").select(
+            "contrato_id"
+        ).eq("referencia", referencia).execute()
+        existing_contrato_ids = {
+            r["contrato_id"] for r in (existing_result.data or [])
+        }
+
+        # Build list of new lancamentos to insert
+        novos = []
         existentes = 0
         erros = 0
 
         for contrato in contratos:
             try:
                 contrato_id = contrato["id"]
-                valor_aluguel = float(contrato.get("valor_aluguel", 0))
-                dia_vencimento = int(contrato.get("dia_vencimento", 10))
 
-                # Check if already generated for this month
-                check = self.db.table("lancamentos").select("id").eq(
-                    "contrato_id", contrato_id
-                ).eq("referencia", referencia).execute()
-
-                if check.data:
+                if contrato_id in existing_contrato_ids:
                     existentes += 1
                     continue
+
+                valor_aluguel = float(contrato.get("valor_aluguel", 0))
+                dia_vencimento = int(contrato.get("dia_vencimento", 10))
 
                 # Calculate due date
                 try:
@@ -64,8 +78,7 @@ class RecorrenciaService:
                 except ValueError:
                     vencimento = datetime(int(ano), int(mes), 28)
 
-                # Create lancamento
-                self.db.table("lancamentos").insert({
+                novos.append({
                     "org_id": self.org_id,
                     "tipo": "receita",
                     "categoria": "aluguel",
@@ -78,12 +91,21 @@ class RecorrenciaService:
                     "imovel_id": contrato.get("imovel_id"),
                     "referencia": referencia,
                     "recorrente": True,
-                }).execute()
-                gerados += 1
+                })
 
             except Exception as e:
                 logger.error(f"[RECORRENCIA] Erro ao gerar aluguel: {e}")
                 erros += 1
+
+        # Batch-insert all new lancamentos in a single call
+        gerados = 0
+        if novos:
+            try:
+                self.db.table("lancamentos").insert(novos).execute()
+                gerados = len(novos)
+            except Exception as e:
+                logger.error(f"[RECORRENCIA] Erro ao inserir aluguéis em lote: {e}")
+                erros += len(novos)
 
         logger.info(
             f"[RECORRENCIA] Aluguéis {referencia}: {gerados} gerados, "
@@ -114,17 +136,24 @@ class RecorrenciaService:
         ).eq("status", "pago").execute()
         recorrentes = result.data or []
 
-        gerados = 0
+        if not recorrentes:
+            return {"gerados": 0, "referencia": referencia_atual}
+
+        # Batch-fetch existing lancamentos for current reference month
+        existing_result = self.db.table("lancamentos").select(
+            "categoria, descricao"
+        ).eq("referencia", referencia_atual).execute()
+        existing_keys = {
+            (r.get("categoria"), r.get("descricao"))
+            for r in (existing_result.data or [])
+        }
+
+        # Build list of new lancamentos to batch-insert
+        novos = []
         for lanc in recorrentes:
             try:
-                # Check if already generated
-                check = self.db.table("lancamentos").select("id").eq(
-                    "categoria", lanc.get("categoria")
-                ).eq("referencia", referencia_atual).eq(
-                    "descricao", lanc.get("descricao", "")
-                ).execute()
-
-                if check.data:
+                key = (lanc.get("categoria"), lanc.get("descricao", ""))
+                if key in existing_keys:
                     continue
 
                 # Calculate next due date (same day next month)
@@ -138,7 +167,7 @@ class RecorrenciaService:
                 else:
                     next_venc = hoje.replace(day=min(hoje.day, 28))
 
-                new_lanc = {
+                novos.append({
                     "org_id": self.org_id,
                     "tipo": lanc.get("tipo"),
                     "categoria": lanc.get("categoria"),
@@ -151,12 +180,19 @@ class RecorrenciaService:
                     "imovel_id": lanc.get("imovel_id"),
                     "referencia": referencia_atual,
                     "recorrente": True,
-                }
-                self.db.table("lancamentos").insert(new_lanc).execute()
-                gerados += 1
+                })
 
             except Exception as e:
                 logger.error(f"[RECORRENCIA] Erro: {e}")
+
+        # Single batch insert for all new lancamentos
+        gerados = 0
+        if novos:
+            try:
+                self.db.table("lancamentos").insert(novos).execute()
+                gerados = len(novos)
+            except Exception as e:
+                logger.error(f"[RECORRENCIA] Erro ao inserir recorrentes em lote: {e}")
 
         return {"gerados": gerados, "referencia": referencia_atual}
 
@@ -168,39 +204,20 @@ class RecorrenciaService:
         """
         hoje = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        # Find pending lancamentos past due date
-        result = self.db.table("lancamentos").select("id, data_vencimento").eq(
-            "status", "pendente"
-        ).lt("data_vencimento", hoje).execute()
-        atrasados = result.data or []
+        # Bulk update all pending lancamentos past due date
+        lanc_result = self.db.table("lancamentos").update(
+            {"status": "atrasado"}
+        ).eq("status", "pendente").lt("data_vencimento", hoje).execute()
+        lancamentos_atrasados = len(lanc_result.data) if lanc_result.data else 0
 
-        atualizados = 0
-        for lanc in atrasados:
-            try:
-                self.db.table("lancamentos").update({
-                    "status": "atrasado"
-                }).eq("id", lanc["id"]).execute()
-                atualizados += 1
-            except Exception as e:
-                logger.error(f"[RECORRENCIA] Erro ao marcar inadimplência: {e}")
-
-        # Also check parcelas
-        parcelas_result = self.db.table("parcelas_contrato").select("id").eq(
-            "status", "pendente"
-        ).lt("data_vencimento", hoje).execute()
-        parcelas_atrasadas = parcelas_result.data or []
-
-        for p in parcelas_atrasadas:
-            try:
-                self.db.table("parcelas_contrato").update({
-                    "status": "atrasada"
-                }).eq("id", p["id"]).execute()
-                atualizados += 1
-            except Exception:
-                pass
+        # Bulk update all pending parcelas past due date
+        parcelas_result = self.db.table("parcelas_contrato").update(
+            {"status": "atrasada"}
+        ).eq("status", "pendente").lt("data_vencimento", hoje).execute()
+        parcelas_atrasadas = len(parcelas_result.data) if parcelas_result.data else 0
 
         return {
-            "lancamentos_atrasados": len(atrasados),
-            "parcelas_atrasadas": len(parcelas_atrasadas),
-            "total_atualizados": atualizados,
+            "lancamentos_atrasados": lancamentos_atrasados,
+            "parcelas_atrasadas": parcelas_atrasadas,
+            "total_atualizados": lancamentos_atrasados + parcelas_atrasadas,
         }

@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { RefreshCw, Settings, Users, BarChart3, Download } from "lucide-react";
+import { TableSkeleton } from "@/components/ui/page-skeleton";
 import {
   useMetaConfig,
   useSalvarMetaConfig,
@@ -23,10 +24,7 @@ import {
   useMetaCampanhas,
   useSyncMetaCampanhas,
 } from "@/hooks/useMetaApi";
-
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
-}
+import { formatCurrency } from "@/lib/utils";
 
 export default function MetaAds() {
   const [tab, setTab] = useState("leads");
@@ -112,8 +110,8 @@ export default function MetaAds() {
                 <TableBody>
                   {leadsLoading ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8">
-                        Carregando...
+                      <TableCell colSpan={5} className="p-0">
+                        <TableSkeleton rows={3} />
                       </TableCell>
                     </TableRow>
                   ) : leads.length === 0 ? (
@@ -194,8 +192,8 @@ export default function MetaAds() {
                 <TableBody>
                   {campanhasLoading ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8">
-                        Carregando...
+                      <TableCell colSpan={7} className="p-0">
+                        <TableSkeleton rows={3} />
                       </TableCell>
                     </TableRow>
                   ) : campanhas.length === 0 ? (

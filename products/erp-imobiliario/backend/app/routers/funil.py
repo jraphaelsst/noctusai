@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Header, Query
 from app.dependencies import get_current_user, get_user_client
+from app.responses import success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funil", tags=["Funil"])
@@ -64,4 +65,4 @@ async def obter_funil(
             "cards": cards,
         })
 
-    return {"data": colunas}
+    return success_response(colunas)

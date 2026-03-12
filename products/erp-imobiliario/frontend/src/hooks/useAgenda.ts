@@ -88,7 +88,7 @@ export function useEventos(filtros?: FiltrosEvento) {
         page: filtros?.page || 1,
         page_size: filtros?.page_size || 100,
       });
-      return result as { data: Evento[]; pagination: any };
+      return result as { data: Evento[]; pagination: { page: number; page_size: number; total: number } | null };
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
@@ -199,7 +199,7 @@ export function useDeleteEvento() {
       queryClient.invalidateQueries({ queryKey: ['eventos'] });
       queryClient.invalidateQueries({ queryKey: ['eventos-hoje'] });
       queryClient.invalidateQueries({ queryKey: ['eventos-semana'] });
-      toast.success('Evento excluido!');
+      toast.success('Evento excluído!');
     },
     onError: (error: Error) => {
       toast.error('Erro ao excluir evento', { description: error.message });

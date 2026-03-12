@@ -15,6 +15,7 @@ import {
   Match,
 } from '@/hooks/useMatches';
 import { ArrowLeftRight, Sparkles, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 
 function Matching() {
   const [origemFilter, setOrigemFilter] = useState('');
@@ -141,7 +142,7 @@ function Matching() {
 
       {/* Results */}
       {isLoading ? (
-        <div className="text-center py-12 text-muted-foreground">Carregando matches...</div>
+        <CardListSkeleton count={4} />
       ) : filteredMatches.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">

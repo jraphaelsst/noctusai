@@ -100,17 +100,5 @@ async def excluir_operacao(operacao_id: str, authorization: Optional[str] = Head
     user, token, org_id = await get_current_user_org(authorization)
     db = get_user_client(token)
     service = AtivosService(db, org_id)
-
-    # Fetch operation before deleting to recalculate holding
-    op_result = db.table("operacoes").select("*").eq("id", operacao_id).eq("org_id", org_id).execute()
-    if not op_result.data:
-        raise HTTPException(status_code=404, detail="Operacao nao encontrada")
-    op = op_result.data[0]
-
-    db.table("operacoes").delete().eq("id", operacao_id).eq("org_id", org_id).execute()
-
-    # Recalculate holding from remaining operations if there's an ativo_id
-    if op.get("ativo_id"):
-        await service._recalcular_ativo_completo(op["ativo_id"])
-
+    await service.excluir_operacao(operacao_id)
     return ok_response("Operacao excluida com sucesso")

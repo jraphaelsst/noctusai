@@ -207,6 +207,10 @@ async def excluir_vistoria(vistoria_id: str, authorization: Optional[str] = Head
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("vistorias").select("id").eq("id", vistoria_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Vistoria não encontrada")
+
     db.table("vistorias").delete().eq("id", vistoria_id).execute()
     log_action(user.id, "excluir", "vistoria", vistoria_id,
                f"Excluiu vistoria {vistoria_id}")

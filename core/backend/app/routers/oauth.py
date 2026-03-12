@@ -157,6 +157,7 @@ async def oauth_callback(
         "nome": nome,
         "org_id": org["id"],
         "role": "user",
+        "org_role": "owner",  # Org creator is owner of their org
     }).execute()
 
     if not profile_result.data:
@@ -172,6 +173,12 @@ async def oauth_callback(
             "plan_id": free_plan.data[0]["id"],
             "status": "active",
         }).execute()
+
+    # Sync org_id to auth user_metadata so product backends can read it
+    try:
+        db.auth.admin.update_user_by_id(user_id, {"user_metadata": {"org_id": org["id"]}})
+    except Exception as e:
+        logger.warning(f"Failed to sync org_id to user_metadata: {e}")
 
     logger.info(f"OAuth signup: new user {email} via {body.provider}, org={org['id']}")
     return {

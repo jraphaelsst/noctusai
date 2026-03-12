@@ -35,6 +35,7 @@ export function useCondominios() {
       return (result.data || []) as Condominio[];
     },
     enabled: !!user,
+    staleTime: 10 * 60 * 1000,
   });
 }
 

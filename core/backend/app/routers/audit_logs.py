@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user, get_current_admin
+from app.dependencies import get_current_user, get_current_admin, get_org_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Audit Logs"])
@@ -27,14 +27,9 @@ async def listar_audit_logs(
 ):
     """List audit logs for the current user's organization (paginated)."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
-    # Get user's org_id
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Perfil ou organização não encontrada")
-
-    org_id = profile.data["org_id"]
     offset = (page - 1) * page_size
 
     # Build query with filters

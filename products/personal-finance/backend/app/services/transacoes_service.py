@@ -77,6 +77,8 @@ class TransacoesService:
             await self._atualizar_saldo_conta(data["conta_id"], float(data["valor"]), data["tipo"])
             if data.get("conta_destino_id") and data["tipo"] == "transferencia":
                 await self._atualizar_saldo_conta(data["conta_destino_id"], float(data["valor"]), "receita")
+            await self._sincronizar_orcamento(data.get("categoria_id"), data.get("data"))
+            await self._invalidar_cache_mensal(data.get("data"))
 
         return row
 
@@ -107,6 +109,12 @@ class TransacoesService:
         if new_t.get("conta_destino_id") and new_t["tipo"] == "transferencia":
             await self._atualizar_saldo_conta(new_t["conta_destino_id"], float(new_t["valor"]), "receita")
 
+        # Sync budget + cache for both old and new category/month
+        await self._sincronizar_orcamento(old_t.get("categoria_id"), old_t.get("data"))
+        await self._sincronizar_orcamento(new_t.get("categoria_id"), new_t.get("data"))
+        await self._invalidar_cache_mensal(old_t.get("data"))
+        await self._invalidar_cache_mensal(new_t.get("data"))
+
         return row
 
     async def excluir(self, transacao_id: str) -> bool:
@@ -122,6 +130,12 @@ class TransacoesService:
                 await self._atualizar_saldo_conta(t["conta_destino_id"], float(t["valor"]), "despesa")
 
         self.db.table("transacoes").delete().eq("id", transacao_id).eq("org_id", self.org_id).execute()
+
+        if transacao.data:
+            t = transacao.data
+            await self._sincronizar_orcamento(t.get("categoria_id"), t.get("data"))
+            await self._invalidar_cache_mensal(t.get("data"))
+
         return True
 
     async def por_categoria(self, data_inicio: str, data_fim: str) -> List[Dict]:
@@ -160,3 +174,27 @@ class TransacoesService:
                 self.db.table("contas").update({"saldo": novo_saldo}).eq("id", conta_id).execute()
         except Exception as e:
             logger.warning(f"Failed to update account balance: {e}")
+
+    async def _sincronizar_orcamento(self, categoria_id: Optional[str], data_transacao: Optional[str]):
+        """Sync budget items for the transaction's category+month."""
+        if not categoria_id or not data_transacao:
+            return
+        try:
+            periodo_mes = data_transacao[:7]  # YYYY-MM
+            from app.services.orcamentos_service import OrcamentosService
+            orc_service = OrcamentosService(self.db, self.org_id)
+            await orc_service.sincronizar_gastos(categoria_id, periodo_mes)
+        except Exception as e:
+            logger.warning(f"Budget sync failed: {e}")
+
+    async def _invalidar_cache_mensal(self, data_transacao: Optional[str]):
+        """Recompute and cache the monthly summary for the transaction's month."""
+        if not data_transacao:
+            return
+        try:
+            periodo_mes = data_transacao[:7]  # YYYY-MM
+            from app.services.relatorios_service import RelatoriosService
+            rel_service = RelatoriosService(self.db, self.org_id)
+            await rel_service.atualizar_resumo_mensal(periodo_mes)
+        except Exception as e:
+            logger.warning(f"Cache invalidation failed: {e}")

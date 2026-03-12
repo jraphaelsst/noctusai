@@ -53,6 +53,7 @@ export function AdminWebhooks() {
   const [viewDeliveriesId, setViewDeliveriesId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
   async function fetchEndpoints() {
     try {
@@ -150,6 +151,21 @@ export function AdminWebhooks() {
       console.error('Error:', err);
     } finally {
       setDeliveriesLoading(false);
+    }
+  }
+
+  async function handleRetryDelivery(delivery: WebhookDelivery) {
+    setRetryingId(delivery.id);
+    try {
+      await api.post(`/api/webhooks/deliveries/${delivery.id}/retry`);
+      // Refresh deliveries list
+      if (viewDeliveriesId) {
+        await fetchDeliveries(viewDeliveriesId);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Erro ao reenviar webhook');
+    } finally {
+      setRetryingId(null);
     }
   }
 
@@ -283,6 +299,7 @@ export function AdminWebhooks() {
                     <th>Tentativas</th>
                     <th>Data</th>
                     <th>Resposta</th>
+                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -299,6 +316,17 @@ export function AdminWebhooks() {
                       <td>{new Date(d.created_at).toLocaleString('pt-BR')}</td>
                       <td className="webhook-response-cell">
                         {d.response_body ? d.response_body.substring(0, 100) : '—'}
+                      </td>
+                      <td>
+                        {d.status !== 'success' && (
+                          <button
+                            className="btn-sm"
+                            onClick={() => handleRetryDelivery(d)}
+                            disabled={retryingId === d.id}
+                          >
+                            {retryingId === d.id ? 'Reenviando...' : 'Reenviar'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

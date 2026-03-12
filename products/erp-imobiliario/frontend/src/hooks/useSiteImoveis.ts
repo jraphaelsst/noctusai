@@ -34,6 +34,7 @@ export function useSiteConfig() {
       return result.data as SiteConfig | null;
     },
     enabled: !!user,
+    staleTime: 10 * 60 * 1000,
   });
 }
 

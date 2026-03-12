@@ -1,6 +1,7 @@
 """Categories service — hierarchy management."""
 import logging
 from typing import Dict, List, Optional
+from fastapi import HTTPException
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,9 @@ class CategoriasService:
         return row
 
     async def excluir(self, categoria_id: str) -> bool:
+        check = self.db.table("categorias").select("id").eq("id", categoria_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=404, detail="Categoria não encontrada")
         self.db.table("categorias").delete().eq("id", categoria_id).execute()
         return True
 

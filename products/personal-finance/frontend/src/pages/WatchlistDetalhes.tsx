@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useWatchlist, useDeleteWatchlist, useAddWatchlistItem, useRemoveWatchlistItem } from "@/hooks/useWatchlist";
 import type { WatchlistItem } from "@/types";
 import Modal from "@/components/Modal";
+import Breadcrumbs from "@/components/Breadcrumbs";
 import { ArrowLeft, Plus, Trash2, Eye, Tag, Bell, X } from "lucide-react";
 
 const inputClass = "w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary";
@@ -65,11 +66,11 @@ export default function WatchlistDetalhes() {
 
   return (
     <div className="space-y-6">
-      {/* Back Button */}
-      <button onClick={() => navigate("/watchlist")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition">
-        <ArrowLeft className="w-4 h-4" />
-        Voltar para Watchlists
-      </button>
+      <Breadcrumbs items={[
+        { label: "Dashboard", href: "/" },
+        { label: "Watchlist", href: "/watchlist" },
+        { label: watchlist.nome },
+      ]} />
 
       {/* Header */}
       <div className="flex items-start justify-between">

@@ -52,14 +52,6 @@ CREATE TYPE erp.etapa_funil AS ENUM ('qualificacao', 'visitas', 'proposta', 'neg
 
 CREATE TYPE erp.tipo_atividade AS ENUM ('ligacao', 'email', 'reuniao', 'whatsapp', 'visita', 'proposta', 'negociacao', 'outro');
 
-CREATE TYPE erp.finalidade_imovel AS ENUM ('venda', 'aluguel');
-
-CREATE TYPE erp.tipo_imovel AS ENUM ('casa', 'apartamento', 'terreno', 'comercial', 'rural', 'outro');
-
-CREATE TYPE erp.categoria_permuta AS ENUM ('imovel', 'movel');
-
-CREATE TYPE erp.tipo_movel AS ENUM ('carro', 'moto');
-
 CREATE TYPE erp.status_negociacao AS ENUM ('qualificacao', 'visitas', 'proposta', 'negociacao', 'fechado', 'cancelado');
 
 CREATE TYPE erp.tipo_acao AS ENUM (
@@ -69,7 +61,7 @@ CREATE TYPE erp.tipo_acao AS ENUM (
 
 CREATE TYPE erp.tipo_entidade AS ENUM (
   'meta', 'cliente', 'usuario', 'atividade', 'config_meta', 'auth',
-  'imovel', 'perfil_permuta', 'negociacao', 'match', 'condominio', 'ativo'
+  'negociacao', 'match', 'condominio', 'ativo'
 );
 
 CREATE TYPE erp.status_match AS ENUM ('pendente', 'aceito', 'rejeitado', 'expirado');
@@ -79,8 +71,6 @@ CREATE TYPE erp.status_match AS ENUM ('pendente', 'aceito', 'rejeitado', 'expira
 -- ─────────────────────────────────────────────────────────────────────
 
 CREATE SEQUENCE IF NOT EXISTS erp.metas_id_seq;
-CREATE SEQUENCE IF NOT EXISTS erp.imoveis_id_seq START WITH 1;
-CREATE SEQUENCE IF NOT EXISTS erp.perfis_permutas_id_seq START WITH 1;
 CREATE SEQUENCE IF NOT EXISTS erp.negociacoes_id_seq START WITH 1;
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -150,36 +140,6 @@ BEGIN
     next_id := 'MT' || LPAD(next_number::TEXT, 4, '0');
   ELSE
     next_id := 'MT' || next_number::TEXT;
-  END IF;
-  RETURN next_id;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION erp.generate_imovel_id()
-RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'erp', 'public'
-AS $$
-DECLARE next_number INTEGER; next_id TEXT;
-BEGIN
-  next_number := nextval('erp.imoveis_id_seq')::INTEGER;
-  IF next_number <= 9999 THEN
-    next_id := 'IM' || LPAD(next_number::TEXT, 4, '0');
-  ELSE
-    next_id := 'IM' || next_number::TEXT;
-  END IF;
-  RETURN next_id;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION erp.generate_perfil_permuta_id()
-RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'erp', 'public'
-AS $$
-DECLARE next_number INTEGER; next_id TEXT;
-BEGIN
-  next_number := nextval('erp.perfis_permutas_id_seq')::INTEGER;
-  IF next_number <= 9999 THEN
-    next_id := 'PP' || LPAD(next_number::TEXT, 4, '0');
-  ELSE
-    next_id := 'PP' || next_number::TEXT;
   END IF;
   RETURN next_id;
 END;
@@ -354,96 +314,14 @@ CREATE TABLE erp.user_actions_log (
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
--- 5k. Imóveis (properties)
-CREATE TABLE erp.imoveis (
-  id TEXT PRIMARY KEY DEFAULT generate_imovel_id(),
-  owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'ativo',
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  finalidade finalidade_imovel NOT NULL DEFAULT 'venda',
-  preco_pedido NUMERIC(12,2) NOT NULL,
-  aceita_permutas BOOLEAN NOT NULL DEFAULT false,
-  observacoes_negociacao TEXT,
-  cep TEXT NOT NULL,
-  logradouro TEXT,
-  numero TEXT,
-  complemento TEXT,
-  bairro TEXT,
-  cidade TEXT,
-  estado TEXT,
-  latitude NUMERIC(10,8),
-  longitude NUMERIC(11,8),
-  tipo tipo_imovel NOT NULL,
-  area_privativa NUMERIC(8,2),
-  area_total NUMERIC(8,2),
-  quartos INTEGER,
-  suites INTEGER,
-  banheiros INTEGER,
-  vagas INTEGER,
-  andar INTEGER,
-  condominio NUMERIC(10,2),
-  iptu NUMERIC(10,2),
-  condominio_nome TEXT,
-  ano_construcao INTEGER,
-  fotos TEXT[] DEFAULT ARRAY[]::TEXT[],
-  tour_virtual_url TEXT,
-  plantas TEXT[] DEFAULT ARRAY[]::TEXT[],
-  titulo_anuncio TEXT,
-  descricao_seo TEXT,
-  palavras_chave TEXT[] DEFAULT ARRAY[]::TEXT[],
-  pontos_de_interesse TEXT[] DEFAULT ARRAY[]::TEXT[],
-  pronto_para_portais BOOLEAN NOT NULL DEFAULT false,
-  lqs_score_hint TEXT,
-  condominio_id UUID, -- FK added after condominios table creation
-  CONSTRAINT check_palavras_chave_max CHECK (array_length(palavras_chave, 1) IS NULL OR array_length(palavras_chave, 1) <= 4)
-);
-
--- 5l. Perfis de permuta (exchange profiles)
-CREATE TABLE erp.perfis_permutas (
-  id TEXT PRIMARY KEY DEFAULT generate_perfil_permuta_id(),
-  cliente_ofertante_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'ativo',
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  categoria categoria_permuta NOT NULL,
-  tipo_imovel tipo_imovel,
-  faixa_preco_min NUMERIC(12,2),
-  faixa_preco_max NUMERIC(12,2),
-  regiao_preferida TEXT[] DEFAULT ARRAY[]::TEXT[],
-  metragem_min NUMERIC(8,2),
-  metragem_max NUMERIC(8,2),
-  quartos_min INTEGER,
-  vagas_min INTEGER,
-  tipo_movel tipo_movel,
-  marca TEXT,
-  modelo TEXT,
-  ano_min INTEGER,
-  ano_max INTEGER,
-  quilometragem_max INTEGER,
-  aceita_completar_diferenca BOOLEAN NOT NULL DEFAULT false,
-  limite_complemento NUMERIC(12,2),
-  observacoes TEXT,
-  valor_estimado NUMERIC(12,2)
-);
-
--- 5m. Imóveis ↔ Perfis permutas (N:N)
-CREATE TABLE erp.imoveis_perfis_permutas (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  imovel_id TEXT NOT NULL REFERENCES erp.imoveis(id) ON DELETE CASCADE,
-  perfil_permuta_id TEXT NOT NULL REFERENCES erp.perfis_permutas(id) ON DELETE CASCADE,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  UNIQUE(imovel_id, perfil_permuta_id)
-);
-
--- 5n. Negociações (negotiations)
+-- 5k. Negociações (negotiations) — FK to ativos added after ativos table creation
 CREATE TABLE erp.negociacoes (
   id TEXT PRIMARY KEY DEFAULT generate_negociacao_id(),
   owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  imovel_id TEXT NOT NULL REFERENCES erp.imoveis(id) ON DELETE CASCADE,
-  perfil_permuta_id TEXT NOT NULL REFERENCES erp.perfis_permutas(id) ON DELETE CASCADE,
+  ativo_origem_id UUID NOT NULL,
+  ativo_destino_id UUID NOT NULL,
   cliente_proprietario_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   cliente_ofertante_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   valor_imovel NUMERIC(12,2) NOT NULL,
@@ -454,7 +332,7 @@ CREATE TABLE erp.negociacoes (
   observacoes TEXT
 );
 
--- 5o. Condominios
+-- 5l. Condominios
 CREATE TABLE erp.condominios (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -482,12 +360,7 @@ CREATE TABLE erp.condominios (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
--- Add condominio FK to imoveis now that condominios table exists
-ALTER TABLE erp.imoveis
-  ADD CONSTRAINT imoveis_condominio_id_fkey
-  FOREIGN KEY (condominio_id) REFERENCES erp.condominios(id) ON DELETE SET NULL;
-
--- 5p. Matches (computed matches between ativos)
+-- 5l. Matches (computed matches between ativos)
 CREATE TABLE erp.matches (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   ativo_origem_id UUID NOT NULL,
@@ -579,6 +452,11 @@ ALTER TABLE erp.matches
   ADD CONSTRAINT matches_ativo_origem_id_fkey FOREIGN KEY (ativo_origem_id) REFERENCES erp.ativos(id) ON DELETE CASCADE,
   ADD CONSTRAINT matches_ativo_destino_id_fkey FOREIGN KEY (ativo_destino_id) REFERENCES erp.ativos(id) ON DELETE CASCADE;
 
+-- Add FK constraints from negociacoes to ativos
+ALTER TABLE erp.negociacoes
+  ADD CONSTRAINT negociacoes_ativo_origem_id_fkey FOREIGN KEY (ativo_origem_id) REFERENCES erp.ativos(id) ON DELETE CASCADE,
+  ADD CONSTRAINT negociacoes_ativo_destino_id_fkey FOREIGN KEY (ativo_destino_id) REFERENCES erp.ativos(id) ON DELETE CASCADE;
+
 -- ─────────────────────────────────────────────────────────────────────
 -- 6. INDEXES
 -- ─────────────────────────────────────────────────────────────────────
@@ -617,31 +495,9 @@ CREATE INDEX idx_user_actions_log_created_at ON erp.user_actions_log(created_at 
 CREATE INDEX idx_user_actions_log_tipo_acao ON erp.user_actions_log(tipo_acao);
 CREATE INDEX idx_user_actions_log_tipo_entidade ON erp.user_actions_log(tipo_entidade);
 
--- Imóveis
-CREATE INDEX idx_imoveis_owner ON erp.imoveis(owner_id);
-CREATE INDEX idx_imoveis_finalidade ON erp.imoveis(finalidade);
-CREATE INDEX idx_imoveis_tipo ON erp.imoveis(tipo);
-CREATE INDEX idx_imoveis_preco ON erp.imoveis(preco_pedido);
-CREATE INDEX idx_imoveis_aceita_permutas ON erp.imoveis(aceita_permutas);
-CREATE INDEX idx_imoveis_cep ON erp.imoveis(cep);
-CREATE INDEX idx_imoveis_cidade ON erp.imoveis(cidade);
-CREATE INDEX idx_imoveis_estado ON erp.imoveis(estado);
-CREATE INDEX idx_imoveis_status ON erp.imoveis(status);
-
--- Perfis de permuta
-CREATE INDEX idx_perfis_cliente ON erp.perfis_permutas(cliente_ofertante_id);
-CREATE INDEX idx_perfis_categoria ON erp.perfis_permutas(categoria);
-CREATE INDEX idx_perfis_tipo_imovel ON erp.perfis_permutas(tipo_imovel);
-CREATE INDEX idx_perfis_tipo_movel ON erp.perfis_permutas(tipo_movel);
-CREATE INDEX idx_perfis_status ON erp.perfis_permutas(status);
-
--- Imoveis ↔ Perfis
-CREATE INDEX idx_imoveis_perfis_imovel ON erp.imoveis_perfis_permutas(imovel_id);
-CREATE INDEX idx_imoveis_perfis_perfil ON erp.imoveis_perfis_permutas(perfil_permuta_id);
-
 -- Negociações
-CREATE INDEX idx_negociacoes_imovel ON erp.negociacoes(imovel_id);
-CREATE INDEX idx_negociacoes_perfil ON erp.negociacoes(perfil_permuta_id);
+CREATE INDEX idx_negociacoes_ativo_origem ON erp.negociacoes(ativo_origem_id);
+CREATE INDEX idx_negociacoes_ativo_destino ON erp.negociacoes(ativo_destino_id);
 CREATE INDEX idx_negociacoes_proprietario ON erp.negociacoes(cliente_proprietario_id);
 CREATE INDEX idx_negociacoes_ofertante ON erp.negociacoes(cliente_ofertante_id);
 CREATE INDEX idx_negociacoes_status ON erp.negociacoes(status_etapa);
@@ -681,9 +537,6 @@ ALTER TABLE erp.atividades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE erp.password_request_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE erp.status_pagina ENABLE ROW LEVEL SECURITY;
 ALTER TABLE erp.user_actions_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE erp.imoveis ENABLE ROW LEVEL SECURITY;
-ALTER TABLE erp.perfis_permutas ENABLE ROW LEVEL SECURITY;
-ALTER TABLE erp.imoveis_perfis_permutas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE erp.negociacoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE erp.condominios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE erp.matches ENABLE ROW LEVEL SECURITY;
@@ -758,31 +611,6 @@ CREATE POLICY "Apenas admins podem gerenciar páginas" ON erp.status_pagina FOR 
 CREATE POLICY "Admins podem ver todos os logs de ações" ON erp.user_actions_log FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
 CREATE POLICY "Usuários podem ver seus próprios logs" ON erp.user_actions_log FOR SELECT USING (auth.uid() = usuario_id);
 CREATE POLICY "Usuários podem inserir logs" ON erp.user_actions_log FOR INSERT WITH CHECK (auth.uid() = usuario_id);
-
--- ── Imóveis ──
-CREATE POLICY "Admins podem ver todos os imóveis" ON erp.imoveis FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem ver seus próprios imóveis" ON erp.imoveis FOR SELECT USING (auth.uid() = owner_id);
-CREATE POLICY "Usuários podem criar seus próprios imóveis" ON erp.imoveis FOR INSERT WITH CHECK (auth.uid() = owner_id);
-CREATE POLICY "Usuários podem atualizar seus próprios imóveis" ON erp.imoveis FOR UPDATE USING (auth.uid() = owner_id);
-CREATE POLICY "Admins podem atualizar todos os imóveis" ON erp.imoveis FOR UPDATE USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem deletar seus próprios imóveis" ON erp.imoveis FOR DELETE USING (auth.uid() = owner_id);
-CREATE POLICY "Admins podem deletar todos os imóveis" ON erp.imoveis FOR DELETE USING (public.has_role(auth.uid(), 'admin'));
-
--- ── Perfis de permuta ──
-CREATE POLICY "Admins podem ver todos os perfis de permuta" ON erp.perfis_permutas FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem ver seus próprios perfis" ON erp.perfis_permutas FOR SELECT USING (auth.uid() = cliente_ofertante_id);
-CREATE POLICY "Usuários podem criar seus próprios perfis" ON erp.perfis_permutas FOR INSERT WITH CHECK (auth.uid() = cliente_ofertante_id);
-CREATE POLICY "Usuários podem atualizar seus próprios perfis" ON erp.perfis_permutas FOR UPDATE USING (auth.uid() = cliente_ofertante_id);
-CREATE POLICY "Admins podem atualizar todos os perfis" ON erp.perfis_permutas FOR UPDATE USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem deletar seus próprios perfis" ON erp.perfis_permutas FOR DELETE USING (auth.uid() = cliente_ofertante_id);
-CREATE POLICY "Admins podem deletar todos os perfis" ON erp.perfis_permutas FOR DELETE USING (public.has_role(auth.uid(), 'admin'));
-
--- ── Imoveis ↔ Perfis permutas ──
-CREATE POLICY "Admins podem ver todos os relacionamentos" ON erp.imoveis_perfis_permutas FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem ver relacionamentos de seus imóveis" ON erp.imoveis_perfis_permutas FOR SELECT USING (EXISTS (SELECT 1 FROM erp.imoveis WHERE imoveis.id = imoveis_perfis_permutas.imovel_id AND imoveis.owner_id = auth.uid()));
-CREATE POLICY "Usuários podem criar relacionamentos de seus imóveis" ON erp.imoveis_perfis_permutas FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM erp.imoveis WHERE imoveis.id = imoveis_perfis_permutas.imovel_id AND imoveis.owner_id = auth.uid()));
-CREATE POLICY "Usuários podem deletar relacionamentos de seus imóveis" ON erp.imoveis_perfis_permutas FOR DELETE USING (EXISTS (SELECT 1 FROM erp.imoveis WHERE imoveis.id = imoveis_perfis_permutas.imovel_id AND imoveis.owner_id = auth.uid()));
-CREATE POLICY "Admins podem gerenciar todos os relacionamentos" ON erp.imoveis_perfis_permutas FOR ALL USING (public.has_role(auth.uid(), 'admin'));
 
 -- ── Negociações ──
 CREATE POLICY "Admins podem ver todas as negociações" ON erp.negociacoes FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
@@ -1400,20 +1228,16 @@ CREATE TRIGGER on_auth_user_created_assign_role AFTER INSERT ON auth.users FOR E
 -- Timestamp triggers (São Paulo)
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT OR UPDATE ON erp.metas FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT OR UPDATE ON erp.clientes FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
-CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT OR UPDATE ON erp.imoveis FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT OR UPDATE ON erp.profiles FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT OR UPDATE ON erp.negociacoes FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT OR UPDATE ON erp.metas_config FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT ON erp.atividades FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT ON erp.funil_movimentos FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT ON erp.user_actions_log FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
-CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT OR UPDATE ON erp.perfis_permutas FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
-CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT ON erp.imoveis_perfis_permutas FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT ON erp.user_roles FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 CREATE TRIGGER set_timestamps_sp_trigger BEFORE INSERT ON erp.password_request_codes FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
 
 -- Updated_at triggers (for tables not covered by set_timestamps_sp)
-CREATE TRIGGER update_perfis_permutas_updated_at BEFORE UPDATE ON erp.perfis_permutas FOR EACH ROW EXECUTE FUNCTION erp.update_updated_at_column();
 CREATE TRIGGER update_negociacoes_updated_at BEFORE UPDATE ON erp.negociacoes FOR EACH ROW EXECUTE FUNCTION erp.update_updated_at_column();
 CREATE TRIGGER update_metas_config_updated_at BEFORE UPDATE ON erp.metas_config FOR EACH ROW EXECUTE FUNCTION erp.update_updated_at_column();
 
@@ -2351,7 +2175,94 @@ BEGIN
 END $$;
 
 -- ─────────────────────────────────────────────────────────────────────
--- 12. FINAL GRANTS (ensure all objects have correct permissions)
+-- 12B. CERTIDÕES NEGATIVAS TABLES (inline from 007_certidoes_negativas.sql)
+-- ─────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.certidao_consultas (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id uuid,
+    created_by uuid NOT NULL,
+    tipo_documento text NOT NULL CHECK (tipo_documento IN ('cpf', 'cnpj')),
+    documento text NOT NULL,
+    nome text NOT NULL,
+    data_nascimento text,
+    genero text CHECK (genero IS NULL OR genero IN ('M', 'F')),
+    rg text,
+    nome_mae text,
+    nome_pai text,
+    status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'processando', 'concluida', 'erro')),
+    total_certidoes int NOT NULL DEFAULT 0,
+    concluidas int NOT NULL DEFAULT 0,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS erp.certidao_resultados (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    consulta_id uuid NOT NULL REFERENCES erp.certidao_consultas(id) ON DELETE CASCADE,
+    org_id uuid,
+    tipo text NOT NULL,
+    nome_display text NOT NULL,
+    ordem int NOT NULL DEFAULT 0,
+    status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'processando', 'sucesso', 'erro')),
+    analise_ia text,
+    arquivo_url text,
+    arquivo_nome text,
+    api_response jsonb,
+    erro_mensagem text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_certidao_consultas_org ON erp.certidao_consultas(org_id);
+CREATE INDEX IF NOT EXISTS idx_certidao_consultas_status ON erp.certidao_consultas(status);
+CREATE INDEX IF NOT EXISTS idx_certidao_consultas_documento ON erp.certidao_consultas(documento);
+CREATE INDEX IF NOT EXISTS idx_certidao_resultados_consulta ON erp.certidao_resultados(consulta_id);
+CREATE INDEX IF NOT EXISTS idx_certidao_resultados_org ON erp.certidao_resultados(org_id);
+
+ALTER TABLE erp.certidao_consultas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE erp.certidao_resultados ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY certidao_consultas_select ON erp.certidao_consultas
+    FOR SELECT TO authenticated USING (created_by = auth.uid());
+CREATE POLICY certidao_consultas_insert ON erp.certidao_consultas
+    FOR INSERT TO authenticated WITH CHECK (created_by = auth.uid());
+CREATE POLICY certidao_consultas_update ON erp.certidao_consultas
+    FOR UPDATE TO authenticated USING (created_by = auth.uid());
+CREATE POLICY certidao_consultas_delete ON erp.certidao_consultas
+    FOR DELETE TO authenticated USING (created_by = auth.uid());
+CREATE POLICY certidao_consultas_service ON erp.certidao_consultas
+    FOR ALL USING (auth.role() = 'service_role');
+
+CREATE POLICY certidao_resultados_select ON erp.certidao_resultados
+    FOR SELECT TO authenticated USING (
+        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = auth.uid())
+    );
+CREATE POLICY certidao_resultados_insert ON erp.certidao_resultados
+    FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY certidao_resultados_update ON erp.certidao_resultados
+    FOR UPDATE TO authenticated USING (
+        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = auth.uid())
+    );
+CREATE POLICY certidao_resultados_delete ON erp.certidao_resultados
+    FOR DELETE TO authenticated USING (
+        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = auth.uid())
+    );
+CREATE POLICY certidao_resultados_service ON erp.certidao_resultados
+    FOR ALL USING (auth.role() = 'service_role');
+
+CREATE TRIGGER set_certidao_consultas_updated
+    BEFORE UPDATE ON erp.certidao_consultas FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
+CREATE TRIGGER set_certidao_resultados_updated
+    BEFORE UPDATE ON erp.certidao_resultados FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
+
+-- Seed sidebar entry
+INSERT INTO erp.status_pagina (nome_pagina, status)
+VALUES ('certidoes', 'producao')
+ON CONFLICT (nome_pagina) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 13. FINAL GRANTS (ensure all objects have correct permissions)
 -- ─────────────────────────────────────────────────────────────────────
 
 GRANT ALL ON ALL TABLES IN SCHEMA erp TO postgres, service_role;

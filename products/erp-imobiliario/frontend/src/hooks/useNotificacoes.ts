@@ -22,6 +22,7 @@ export function useNotificacoes(page = 1, pageSize = 20, apenasNaoLidas = false)
       };
     },
     enabled: !!user,
+    staleTime: 30 * 1000,
   });
 }
 
@@ -36,6 +37,7 @@ export function useContagemNaoLidas() {
     },
     enabled: !!user,
     refetchInterval: 30000, // Poll every 30s
+    staleTime: 30 * 1000,
   });
 }
 

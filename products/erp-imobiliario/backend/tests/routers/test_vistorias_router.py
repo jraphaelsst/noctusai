@@ -209,8 +209,14 @@ class TestAtualizarVistoria:
 
 class TestExcluirVistoria:
     def test_delete(self, client):
+        client._mock_supabase.set_table_data("vistorias", [{"id": "v1"}])
         resp = client.delete("/api/vistorias/v1")
         assert resp.status_code == 200
+
+    def test_delete_not_found(self, client):
+        client._mock_supabase.set_table_data("vistorias", [])
+        resp = client.delete("/api/vistorias/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestAdicionarFotos:

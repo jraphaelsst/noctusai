@@ -1,12 +1,3 @@
-import { create } from "zustand";
-import type { User } from "@supabase/supabase-js";
+import { createAuthStore } from '@noctusai/shared/stores';
 
-interface AuthState {
-  user: User | null;
-  setUser: (user: User | null) => void;
-}
-
-export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
-  setUser: (user) => set({ user }),
-}));
+export const useAuthStore = createAuthStore();

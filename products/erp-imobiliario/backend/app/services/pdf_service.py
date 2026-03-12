@@ -64,6 +64,59 @@ class PDFService:
             return self._gerar_financeiro_reportlab(dados)
         return self._gerar_financeiro_texto(dados)
 
+    def montar_dados_dimob(
+        self, ano: int, contratos_locacao: List[Dict], contratos_venda: List[Dict]
+    ) -> Dict[str, Any]:
+        """
+        Assemble DIMOB section data from raw contract records.
+
+        Args:
+            ano: Calendar year for the declaration.
+            contratos_locacao: All lease contracts.
+            contratos_venda: All sale contracts with tipo='venda'.
+
+        Returns:
+            Dict with 'ano' and 'secoes' ready for gerar_dimob().
+        """
+        secoes: List[Dict[str, Any]] = []
+
+        # Section: Locações
+        locacoes_ano = [
+            c for c in contratos_locacao
+            if str(c.get("data_inicio", ""))[:4] <= str(ano)
+            and (not c.get("data_fim") or str(c.get("data_fim", ""))[:4] >= str(ano))
+        ]
+        if locacoes_ano:
+            secoes.append({
+                "titulo": f"Locações ativas em {ano}",
+                "itens": [
+                    f"Contrato {c.get('id', '')[:8]} - Valor: R$ {c.get('valor_aluguel', 0)}"
+                    for c in locacoes_ano
+                ],
+            })
+
+        # Section: Vendas
+        vendas_ano = [
+            v for v in contratos_venda
+            if str(v.get("data_inicio", ""))[:4] == str(ano)
+        ]
+        if vendas_ano:
+            secoes.append({
+                "titulo": f"Vendas em {ano}",
+                "itens": [
+                    f"Contrato {v.get('id', '')[:8]} - Valor: R$ {v.get('valor_total', 0)}"
+                    for v in vendas_ano
+                ],
+            })
+
+        if not secoes:
+            secoes.append({
+                "titulo": "Sem movimentações",
+                "itens": [f"Nenhuma operação registrada em {ano}"],
+            })
+
+        return {"ano": ano, "secoes": secoes}
+
     def gerar_dimob(self, dados: Dict[str, Any]) -> bytes:
         """Generate a DIMOB declaration report."""
         if self._has_reportlab:

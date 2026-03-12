@@ -147,9 +147,18 @@ class TestAtualizarLancamento:
 
 class TestExcluirLancamento:
     def test_delete_success(self, client):
+        client._mock_supabase.set_table_data("lancamentos", {
+            "id": "l1", "tipo": "receita", "categoria": "Comissao",
+            "descricao": "Venda apt 101", "valor": 15000,
+            "data_vencimento": "2026-03-01", "status": "pago",
+        })
         resp = client.delete("/api/financeiro/l1")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
+
+    def test_delete_not_found(self, client):
+        resp = client.delete("/api/financeiro/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestNoAuth:

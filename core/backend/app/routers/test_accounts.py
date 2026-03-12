@@ -85,6 +85,7 @@ async def criar_test_account(body: TestAccountCreate, authorization: Optional[st
         "nome": body.nome.strip().title(),
         "org_id": org["id"],
         "role": "admin",  # Test account user is admin of their org
+        "org_role": "owner",  # Org creator is owner of their org
     }
     db.table("noctus_users").insert(profile_data).execute()
 

@@ -241,6 +241,10 @@ async def excluir_contrato(contrato_id: str, authorization: Optional[str] = Head
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("contratos").select("id").eq("id", contrato_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Contrato não encontrado")
+
     db.table("contratos").delete().eq("id", contrato_id).execute()
 
     log_action(user.id, "excluir", "contrato", contrato_id,

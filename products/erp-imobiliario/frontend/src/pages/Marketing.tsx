@@ -60,18 +60,14 @@ import {
   BarChart3,
   Megaphone,
 } from 'lucide-react';
+import { CardGridSkeleton } from '@/components/ui/page-skeleton';
+import { MARKETING_STATUS_CONFIG, MARKETING_TIPO_CONFIG } from '@/lib/constants';
+import { formatDate } from '@/lib/utils';
 
-const STATUS_MAP: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
-  rascunho: { label: 'Rascunho', variant: 'secondary' },
-  ativa: { label: 'Ativa', variant: 'default' },
-  pausada: { label: 'Pausada', variant: 'outline' },
-  concluida: { label: 'Concluida', variant: 'secondary' },
-};
-
-const TIPO_MAP: Record<string, { label: string; icon: typeof Mail }> = {
-  email: { label: 'E-mail', icon: Mail },
-  whatsapp: { label: 'WhatsApp', icon: MessageCircle },
-  alerta_imovel: { label: 'Alerta de Imovel', icon: Bell },
+const TIPO_ICON: Record<string, typeof Mail> = {
+  email: Mail,
+  whatsapp: MessageCircle,
+  alerta_imovel: Bell,
 };
 
 export default function Marketing() {
@@ -187,7 +183,7 @@ export default function Marketing() {
           </Card>
 
           {isLoading ? (
-            <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando...</CardContent></Card>
+            <CardGridSkeleton count={6} />
           ) : filtradas.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center text-muted-foreground">
@@ -199,9 +195,9 @@ export default function Marketing() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filtradas.map((campanha) => {
-                const tipoInfo = TIPO_MAP[campanha.tipo] || TIPO_MAP.email;
-                const statusInfo = STATUS_MAP[campanha.status] || STATUS_MAP.rascunho;
-                const TipoIcon = tipoInfo.icon;
+                const tipoInfo = MARKETING_TIPO_CONFIG[campanha.tipo] || MARKETING_TIPO_CONFIG.email;
+                const statusInfo = MARKETING_STATUS_CONFIG[campanha.status] || MARKETING_STATUS_CONFIG.rascunho;
+                const TipoIcon = TIPO_ICON[campanha.tipo] || Mail;
 
                 return (
                   <Card key={campanha.id} className="hover:shadow-md transition-shadow">
@@ -217,7 +213,7 @@ export default function Marketing() {
                       <div className="flex items-center gap-1 text-sm text-muted-foreground">
                         <span>{tipoInfo.label}</span>
                         <span className="mx-1">-</span>
-                        <span>{new Date(campanha.created_at).toLocaleDateString('pt-BR')}</span>
+                        <span>{formatDate(campanha.created_at)}</span>
                       </div>
 
                       <div className="grid grid-cols-3 gap-2 text-center">
@@ -402,11 +398,11 @@ export default function Marketing() {
           {detalheCampanha && (
             <div className="space-y-4 py-4">
               <div className="flex items-center gap-2">
-                <Badge variant={STATUS_MAP[detalheCampanha.status]?.variant || 'secondary'}>
-                  {STATUS_MAP[detalheCampanha.status]?.label || detalheCampanha.status}
+                <Badge variant={MARKETING_STATUS_CONFIG[detalheCampanha.status]?.variant || 'secondary'}>
+                  {MARKETING_STATUS_CONFIG[detalheCampanha.status]?.label || detalheCampanha.status}
                 </Badge>
                 <Badge variant="outline">
-                  {TIPO_MAP[detalheCampanha.tipo]?.label || detalheCampanha.tipo}
+                  {MARKETING_TIPO_CONFIG[detalheCampanha.tipo]?.label || detalheCampanha.tipo}
                 </Badge>
               </div>
 
@@ -439,7 +435,7 @@ export default function Marketing() {
               </div>
 
               <div className="text-xs text-muted-foreground">
-                Criada em {new Date(detalheCampanha.created_at).toLocaleString('pt-BR')}
+                Criada em {formatDate(detalheCampanha.created_at, true)}
               </div>
             </div>
           )}

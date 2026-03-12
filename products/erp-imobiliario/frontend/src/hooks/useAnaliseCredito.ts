@@ -33,6 +33,7 @@ export function useAnalisesCredito(filters?: {
       return (result.data || []) as AnaliseCredito[];
     },
     enabled: !!user,
+    staleTime: 3 * 60 * 1000,
   });
 }
 

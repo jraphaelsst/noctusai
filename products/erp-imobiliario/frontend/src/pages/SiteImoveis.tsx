@@ -20,6 +20,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatCurrency } from '@/lib/utils';
 import {
   useSiteConfig,
   useCreateSiteConfig,
@@ -473,7 +474,7 @@ export default function SiteImoveis() {
                                 className="text-sm font-bold mt-1"
                                 style={{ color: formData.cor_primaria }}
                               >
-                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(imovel.valor)}
+                                {formatCurrency(imovel.valor)}
                               </p>
                             )}
                           </div>

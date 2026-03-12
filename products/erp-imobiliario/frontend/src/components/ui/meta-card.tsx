@@ -380,7 +380,6 @@ export const MetaCard = memo(function MetaCard({ meta, onEdit, onDelete, isSelec
                   <Button 
                     onClick={(e) => {
                       e.stopPropagation();
-                      console.log("MetaCard: Clique em excluir para meta:", meta.id);
                       onDelete(meta.id);
                     }}
                     variant="destructive"
@@ -521,7 +520,6 @@ export const MetaCard = memo(function MetaCard({ meta, onEdit, onDelete, isSelec
                   <Button 
                     onClick={(e) => {
                       e.stopPropagation();
-                      console.log("MetaCard: Clique em excluir para meta:", meta.id);
                       onDelete(meta.id);
                     }}
                     variant="destructive"

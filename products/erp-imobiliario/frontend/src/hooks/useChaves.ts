@@ -39,6 +39,7 @@ export function useChaves(filters?: { status?: string; imovel_id?: string }) {
       return (result.data || []) as Chave[];
     },
     enabled: !!user,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { usePerfilsPermuta, PerfilPermuta } from '@/hooks/usePermutas';
 import { useMatches, useMatchCounts, useRecalcularMatches, useAtualizarStatusMatch, Match } from '@/hooks/useMatches';
 import { NovoPerfilPermutaDialog } from '@/components/permutas/NovoPerfilPermutaDialog';
@@ -14,10 +15,8 @@ import {
   FileText, Car, Home as HomeIcon
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-
-// Helpers
-const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
+import { formatCurrency } from '@/lib/utils';
 
 export default function Permutas() {
   const [dialogAberto, setDialogAberto] = useState(false);
@@ -60,6 +59,7 @@ export default function Permutas() {
 
 // ==================== PERFIS TAB ====================
 function PerfisTab() {
+  const navigate = useNavigate();
   const { data: perfis = [], isLoading } = usePerfilsPermuta();
   const { data: matchCounts = {} } = useMatchCounts();
   const recalcularMutation = useRecalcularMatches();
@@ -91,7 +91,7 @@ function PerfisTab() {
         </CardContent>
       </Card>
 
-      {isLoading && <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando...</CardContent></Card>}
+      {isLoading && <CardListSkeleton count={3} />}
 
       {!isLoading && filtrados.length === 0 && (
         <Card>
@@ -109,7 +109,7 @@ function PerfisTab() {
         const isImovel = perfil.natureza === 'permuta_imovel';
 
         return (
-          <Card key={perfil.id} className="overflow-hidden">
+          <Card key={perfil.id} className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/permutas/${perfil.id}`)}>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
@@ -151,7 +151,7 @@ function PerfisTab() {
                 {perfil.aceita_completar_diferenca && <Badge variant="secondary">Aceita Complemento</Badge>}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                 <Button variant="outline" size="sm" onClick={() => setPerfilExpandido(isExpanded ? null : perfil.id)}>
                   {isExpanded ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
                   {isExpanded ? 'Ocultar' : 'Matches'}{matchCount > 0 ? ` (${matchCount})` : ''}
@@ -220,7 +220,7 @@ function MatchesTab() {
       </Card>
 
       {isLoading ? (
-        <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando matches...</CardContent></Card>
+        <CardListSkeleton count={3} />
       ) : filtrados.length === 0 ? (
         <Card><CardContent className="py-8 text-center text-muted-foreground">Nenhum match encontrado</CardContent></Card>
       ) : (
@@ -241,7 +241,7 @@ function PerfilMatchesSection({ perfilId }: { perfilId: string }) {
   const { data: matches = [], isLoading } = useMatches({ ativo_destino_id: perfilId });
   const atualizarMutation = useAtualizarStatusMatch();
 
-  if (isLoading) return <div className="mt-4 p-4 text-center text-muted-foreground">Carregando...</div>;
+  if (isLoading) return <CardListSkeleton count={3} />;
   if (matches.length === 0) return <div className="mt-4 p-4 text-center text-muted-foreground bg-muted/50 rounded-lg">Nenhum match. Tente recalcular.</div>;
 
   return (

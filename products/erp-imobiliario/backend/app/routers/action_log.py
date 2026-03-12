@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Header, Query
 from app.dependencies import get_current_user, get_user_client, get_admin_client
+from app.responses import success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/logs", tags=["ActionLog"])
@@ -40,4 +41,4 @@ async def listar_logs(
         for log in logs:
             log["usuario"] = users_map.get(log["usuario_id"])
 
-    return {"data": logs, "total": len(logs)}
+    return success_response(logs, total=len(logs))

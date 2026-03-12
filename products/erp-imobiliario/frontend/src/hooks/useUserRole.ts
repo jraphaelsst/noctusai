@@ -1,33 +1,18 @@
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuthStore } from '@/store/authStore';
+import { useUserRoles } from './useUserRoles';
 
 export function useUserRole() {
-  const { user } = useAuthStore();
+  const { data: roles, ...rest } = useUserRoles();
 
-  return useQuery({
-    queryKey: ['user-role', user?.id],
-    queryFn: async () => {
-      if (!user) return null;
+  // Se o usuário tem múltiplas roles, prioriza admin
+  let role: string | null = null;
+  if (roles && roles.length > 0) {
+    if (roles.includes('admin')) role = 'admin';
+    else if (roles.includes('coordenador')) role = 'coordenador';
+    else if (roles.includes('dev')) role = 'dev';
+    else role = roles[0];
+  }
 
-      const { data, error } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', user.id);
-
-      if (error) throw error;
-      
-      // Se o usuário tem múltiplas roles, prioriza admin
-      if (!data || data.length === 0) return null;
-      
-      const roles = data.map(r => r.role);
-      if (roles.includes('admin')) return 'admin';
-      if (roles.includes('coordenador')) return 'coordenador';
-      if (roles.includes('dev')) return 'dev';
-      return roles[0];
-    },
-    enabled: !!user,
-  });
+  return { data: role, ...rest };
 }
 
 export function useIsAdmin() {

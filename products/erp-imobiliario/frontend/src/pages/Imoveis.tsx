@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useImoveis, Imovel } from '@/hooks/useImoveis';
 import { useRecalcularMatches } from '@/hooks/useMatches';
 import { useCondominios } from '@/hooks/useCondominios';
@@ -9,11 +10,11 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Search, Plus, HomeIcon, Sparkles, Building2, MapPin, BedDouble, Car } from 'lucide-react';
-
-const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+import { CardGridSkeleton } from '@/components/ui/page-skeleton';
+import { formatCurrency } from '@/lib/utils';
 
 export default function Imoveis() {
+  const navigate = useNavigate();
   const { data: imoveis = [], isLoading } = useImoveis();
   const { data: condominios = [] } = useCondominios();
   const recalcularMutation = useRecalcularMatches();
@@ -80,7 +81,7 @@ export default function Imoveis() {
       </Card>
 
       {isLoading ? (
-        <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando...</CardContent></Card>
+        <CardGridSkeleton count={6} />
       ) : imoveisFiltrados.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
@@ -93,7 +94,7 @@ export default function Imoveis() {
           {imoveisFiltrados.map((imovel) => {
             const condNome = getCondominioNome(imovel);
             return (
-              <Card key={imovel.id} className="hover:shadow-md transition-shadow">
+              <Card key={imovel.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/imoveis/${imovel.id}`)}>
                 <CardContent className="pt-6 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -136,7 +137,7 @@ export default function Imoveis() {
                   )}
 
                   {imovel.aceita_permutas && (
-                    <Button className="w-full" variant="outline" onClick={() => handleGerarMatch(imovel.id)} disabled={recalcularMutation.isPending}>
+                    <Button className="w-full" variant="outline" onClick={(e) => { e.stopPropagation(); handleGerarMatch(imovel.id); }} disabled={recalcularMutation.isPending}>
                       <Sparkles className="h-4 w-4 mr-2" />Gerar Matches
                     </Button>
                   )}

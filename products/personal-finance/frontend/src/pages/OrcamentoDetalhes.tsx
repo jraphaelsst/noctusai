@@ -1,22 +1,32 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useOrcamento, useOrcamentoProgresso, useUpdateOrcamento, useDeleteOrcamento } from "@/hooks/useOrcamentos";
+import {
+  useOrcamento, useOrcamentoProgresso, useUpdateOrcamento, useDeleteOrcamento,
+  useCreateOrcamentoItem, useUpdateOrcamentoItem, useDeleteOrcamentoItem,
+} from "@/hooks/useOrcamentos";
+import { useCategorias } from "@/hooks/useCategorias";
 import { formatCurrency, getCurrentMonth, getMonthLabel } from "@/lib/utils";
 import { METODO_ORCAMENTO_LABELS } from "@/lib/constants";
 import type { OrcamentoItem } from "@/types";
 import Modal from "@/components/Modal";
-import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import Breadcrumbs from "@/components/Breadcrumbs";
+import { ArrowLeft, Pencil, Trash2, Plus } from "lucide-react";
 
 const inputClass = "w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary";
 
 const EMPTY_FORM = { nome: "", metodo: "zero_based", periodo: "mensal", ativo: true };
+const EMPTY_ITEM_FORM = { categoria_id: "", valor_planejado: 0 };
 
 export default function OrcamentoDetalhes() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: orcamento, isLoading } = useOrcamento(id);
+  const { data: categorias } = useCategorias();
   const updateMutation = useUpdateOrcamento();
   const deleteMutation = useDeleteOrcamento();
+  const createItemMutation = useCreateOrcamentoItem();
+  const updateItemMutation = useUpdateOrcamentoItem();
+  const deleteItemMutation = useDeleteOrcamentoItem();
 
   const [periodoMes, setPeriodoMes] = useState(getCurrentMonth());
   const { data: progresso } = useOrcamentoProgresso(id, periodoMes);
@@ -24,6 +34,13 @@ export default function OrcamentoDetalhes() {
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [deleteOpen, setDeleteOpen] = useState(false);
+
+  // Item CRUD state
+  const [addItemOpen, setAddItemOpen] = useState(false);
+  const [itemForm, setItemForm] = useState(EMPTY_ITEM_FORM);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editItemValue, setEditItemValue] = useState(0);
+  const [deleteItemId, setDeleteItemId] = useState<string | null>(null);
 
   const openEdit = () => {
     if (!orcamento) return;
@@ -40,6 +57,27 @@ export default function OrcamentoDetalhes() {
   const handleDelete = () => {
     if (!orcamento) return;
     deleteMutation.mutate(orcamento.id, { onSuccess: () => navigate("/orcamentos") });
+  };
+
+  const handleAddItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id) return;
+    createItemMutation.mutate(
+      { orcamentoId: id, categoria_id: itemForm.categoria_id, valor_planejado: Number(itemForm.valor_planejado), periodo_mes: periodoMes },
+      { onSuccess: () => { setAddItemOpen(false); setItemForm(EMPTY_ITEM_FORM); } },
+    );
+  };
+
+  const handleUpdateItem = (itemId: string) => {
+    updateItemMutation.mutate(
+      { itemId, valor_planejado: editItemValue },
+      { onSuccess: () => setEditingItemId(null) },
+    );
+  };
+
+  const handleDeleteItem = () => {
+    if (!deleteItemId) return;
+    deleteItemMutation.mutate(deleteItemId, { onSuccess: () => setDeleteItemId(null) });
   };
 
   if (isLoading) {
@@ -75,6 +113,10 @@ export default function OrcamentoDetalhes() {
     return "bg-emerald-500";
   };
 
+  // Categories not yet in this budget for this period
+  const usedCategoryIds = new Set(itens.map((i) => i.categoria_id));
+  const availableCategories = (categorias || []).filter((c) => !usedCategoryIds.has(c.id));
+
   // Build month selector options
   const meses: string[] = [];
   const now = new Date();
@@ -85,11 +127,11 @@ export default function OrcamentoDetalhes() {
 
   return (
     <div className="space-y-6">
-      {/* Back Button */}
-      <button onClick={() => navigate("/orcamentos")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition">
-        <ArrowLeft className="w-4 h-4" />
-        Voltar para Orcamentos
-      </button>
+      <Breadcrumbs items={[
+        { label: "Dashboard", href: "/" },
+        { label: "Orcamentos", href: "/orcamentos" },
+        { label: orcamento.nome },
+      ]} />
 
       {/* Header */}
       <div className="flex items-start justify-between">
@@ -168,11 +210,21 @@ export default function OrcamentoDetalhes() {
 
       {/* Category Breakdown */}
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold">Categorias</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Categorias</h2>
+          <button
+            onClick={() => { setItemForm(EMPTY_ITEM_FORM); setAddItemOpen(true); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Adicionar Categoria
+          </button>
+        </div>
         {itens.length > 0 ? (
           <div className="space-y-3">
             {itens.map((item: OrcamentoItem) => {
               const pct = item.valor_planejado > 0 ? (item.valor_gasto / item.valor_planejado) * 100 : 0;
+              const isEditing = editingItemId === item.id;
               return (
                 <div key={item.id} className="rounded-lg border bg-card p-4 space-y-2">
                   <div className="flex items-center justify-between">
@@ -180,9 +232,50 @@ export default function OrcamentoDetalhes() {
                       {item.categoria?.icone && <span className="text-sm">{item.categoria.icone}</span>}
                       <span className="font-medium">{item.categoria?.nome || "Categoria"}</span>
                     </div>
-                    <div className="text-right">
-                      <span className="text-sm font-medium">{formatCurrency(item.valor_gasto)}</span>
-                      <span className="text-sm text-muted-foreground"> / {formatCurrency(item.valor_planejado)}</span>
+                    <div className="flex items-center gap-2">
+                      {isEditing ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={editItemValue}
+                            onChange={(e) => setEditItemValue(Number(e.target.value))}
+                            className="w-28 px-2 py-1 rounded border bg-background text-sm"
+                          />
+                          <button
+                            onClick={() => handleUpdateItem(item.id)}
+                            disabled={updateItemMutation.isPending}
+                            className="text-xs px-2 py-1 rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                          >
+                            Salvar
+                          </button>
+                          <button onClick={() => setEditingItemId(null)} className="text-xs px-2 py-1 rounded border hover:bg-accent">
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="text-right">
+                            <span className="text-sm font-medium">{formatCurrency(item.valor_gasto)}</span>
+                            <span className="text-sm text-muted-foreground"> / {formatCurrency(item.valor_planejado)}</span>
+                          </div>
+                          <button
+                            onClick={() => { setEditingItemId(item.id); setEditItemValue(item.valor_planejado); }}
+                            className="p-1 rounded hover:bg-accent transition"
+                            title="Editar valor"
+                          >
+                            <Pencil className="w-3 h-3 text-muted-foreground" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteItemId(item.id)}
+                            className="p-1 rounded hover:bg-red-500/10 transition"
+                            title="Remover"
+                          >
+                            <Trash2 className="w-3 h-3 text-red-500" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -209,9 +302,38 @@ export default function OrcamentoDetalhes() {
         ) : (
           <div className="rounded-lg border bg-card text-center py-12 text-muted-foreground">
             <p className="text-sm">Nenhuma categoria configurada para este periodo</p>
+            <p className="text-xs mt-1">Clique em "Adicionar Categoria" para definir limites de gastos.</p>
           </div>
         )}
       </div>
+
+      {/* Add Item Modal */}
+      <Modal open={addItemOpen} onClose={() => setAddItemOpen(false)} title="Adicionar Categoria ao Orcamento">
+        <form onSubmit={handleAddItem} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Categoria *</label>
+            <select value={itemForm.categoria_id} onChange={(e) => setItemForm({ ...itemForm, categoria_id: e.target.value })} className={inputClass} required>
+              <option value="">Selecionar</option>
+              {availableCategories.map((c) => (
+                <option key={c.id} value={c.id}>{c.icone ? `${c.icone} ` : ""}{c.nome}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Valor Planejado *</label>
+            <input type="number" required step="0.01" min="0.01" value={itemForm.valor_planejado || ""} onChange={(e) => setItemForm({ ...itemForm, valor_planejado: Number(e.target.value) })} className={inputClass} />
+          </div>
+          <p className="text-xs text-muted-foreground">Periodo: {getMonthLabel(periodoMes)}</p>
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={() => setAddItemOpen(false)} className="px-4 py-2 rounded-md border bg-background text-sm hover:bg-accent transition">
+              Cancelar
+            </button>
+            <button type="submit" disabled={createItemMutation.isPending} className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50">
+              {createItemMutation.isPending ? "Adicionando..." : "Adicionar"}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Edit Modal */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Editar Orcamento">
@@ -251,7 +373,7 @@ export default function OrcamentoDetalhes() {
         </form>
       </Modal>
 
-      {/* Delete Confirmation */}
+      {/* Delete Orcamento Confirmation */}
       <Modal open={deleteOpen} onClose={() => setDeleteOpen(false)} title="Excluir Orcamento">
         <p className="text-sm text-muted-foreground mb-4">
           Tem certeza que deseja excluir este orcamento?
@@ -262,6 +384,21 @@ export default function OrcamentoDetalhes() {
           </button>
           <button onClick={handleDelete} disabled={deleteMutation.isPending} className="px-4 py-2 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition disabled:opacity-50">
             {deleteMutation.isPending ? "Excluindo..." : "Excluir"}
+          </button>
+        </div>
+      </Modal>
+
+      {/* Delete Item Confirmation */}
+      <Modal open={deleteItemId !== null} onClose={() => setDeleteItemId(null)} title="Remover Categoria">
+        <p className="text-sm text-muted-foreground mb-4">
+          Tem certeza que deseja remover esta categoria do orcamento?
+        </p>
+        <div className="flex justify-end gap-3">
+          <button onClick={() => setDeleteItemId(null)} className="px-4 py-2 rounded-md border bg-background text-sm hover:bg-accent transition">
+            Cancelar
+          </button>
+          <button onClick={handleDeleteItem} disabled={deleteItemMutation.isPending} className="px-4 py-2 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition disabled:opacity-50">
+            {deleteItemMutation.isPending ? "Removendo..." : "Remover"}
           </button>
         </div>
       </Modal>

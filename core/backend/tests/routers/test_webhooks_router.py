@@ -42,13 +42,6 @@ class TestListWebhooks:
         assert resp.status_code == 200
         assert resp.json()["data"] == []
 
-    def test_list_webhooks_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.get("/api/webhooks")
-        assert resp.status_code == 404
-
     def test_list_webhooks_unauthenticated(self, unauth_client):
         resp = unauth_client.get("/api/webhooks")
         assert resp.status_code == 401
@@ -87,14 +80,6 @@ class TestCreateWebhook:
         })
         assert resp.status_code == 422
 
-    def test_create_webhook_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.post("/api/webhooks", json={
-            "url": "https://example.com/hook",
-        })
-        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

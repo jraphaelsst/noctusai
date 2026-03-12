@@ -32,6 +32,50 @@ jobs:
         working-directory: products/erp-imobiliario/backend
         run: pytest --tb=short -q
 
+  core-backend-tests:
+    name: Core Backend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run tests
+        working-directory: core/backend
+        run: pytest --tb=short -q
+
+  pf-backend-tests:
+    name: PF Backend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run tests
+        working-directory: products/personal-finance/backend
+        run: pytest --tb=short -q
+
   erp-frontend-build:
     name: ERP Frontend Build
     runs-on: ubuntu-latest
@@ -78,6 +122,28 @@ jobs:
 
       - name: Build
         working-directory: core/frontend
+        run: npm run build
+
+  pf-frontend-build:
+    name: PF Frontend Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: products/personal-finance/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: products/personal-finance/frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: products/personal-finance/frontend
         run: npm run build
 
   core-e2e-tests:

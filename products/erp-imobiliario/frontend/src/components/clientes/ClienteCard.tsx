@@ -8,6 +8,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { formatCurrency } from '@/lib/utils';
 
 interface ClienteCardProps {
   cliente: Cliente;
@@ -67,10 +68,7 @@ export function ClienteCard({ cliente, onRegistrarAtividade, onArquivar, isDragg
               {cliente.probabilidade}%
             </Badge>
             <Badge variant="outline" className="text-xs">
-              {new Intl.NumberFormat('pt-BR', {
-                style: 'currency',
-                currency: 'BRL',
-              }).format(Number(cliente.valor_estimado))}
+              {formatCurrency(Number(cliente.valor_estimado))}
             </Badge>
             {cliente.origem && (
               <Badge variant="outline" className="text-xs">

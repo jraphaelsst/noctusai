@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, Query
 from fastapi.responses import StreamingResponse
 
-from app.dependencies import get_current_user, get_user_client
+from app.dependencies import get_current_user, get_user_client, get_org_id
 from app.responses import success_response
 from app.services.relatorios_service import (
     ranking_corretores,
@@ -23,14 +23,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/relatorios", tags=["Relatórios"])
 
 
-def _get_org_id(user) -> str:
-    """Extract org_id from user metadata."""
-    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
-    if not org_id:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="Usuário sem organização associada")
-    return org_id
-
 
 @router.get("/ranking-corretores")
 async def get_ranking_corretores(
@@ -42,7 +34,7 @@ async def get_ranking_corretores(
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
-    org_id = _get_org_id(user)
+    org_id = get_org_id(user)
 
     data = ranking_corretores(
         org_id=org_id,
@@ -61,7 +53,7 @@ async def get_conversao_funil(
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
-    org_id = _get_org_id(user)
+    org_id = get_org_id(user)
 
     data = conversao_funil(
         org_id=org_id,
@@ -80,7 +72,7 @@ async def get_atividade_mensal(
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
-    org_id = _get_org_id(user)
+    org_id = get_org_id(user)
 
     data = atividade_mensal(
         org_id=org_id,
@@ -105,7 +97,7 @@ async def export_csv(
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
-    org_id = _get_org_id(user)
+    org_id = get_org_id(user)
 
     if tipo == "ranking-corretores":
         data = ranking_corretores(org_id=org_id, supabase=db, periodo_dias=periodo)

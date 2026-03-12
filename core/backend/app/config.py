@@ -3,21 +3,17 @@ NoctusAI Core — Configuration settings.
 """
 from pathlib import Path
 from typing import Optional
-from pydantic_settings import BaseSettings
 from pydantic import field_validator
+from noctusai_shared.config import BaseAppSettings
 
 _ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 
 
-class Settings(BaseSettings):
-    # Supabase
-    supabase_url: str = ""
-    supabase_anon_key: str = ""
-    supabase_service_role_key: str = ""
+class Settings(BaseAppSettings):
+    """Core platform specific settings."""
 
     # JWT
     jwt_secret: str = "noctus-dev-secret-change-in-prod"
-    jwt_algorithm: str = "HS256"
     jwt_expiration_minutes: int = 60 * 24  # 24h
 
     # SSO
@@ -25,7 +21,6 @@ class Settings(BaseSettings):
 
     # App
     cors_origins: str = "*"
-    debug: bool = True
 
     # Stripe
     stripe_secret_key: str = ""
@@ -36,15 +31,10 @@ class Settings(BaseSettings):
     # Email (optional — Resend)
     resend_api_key: Optional[str] = None
 
-    # Observability (optional)
-    sentry_dsn: Optional[str] = None
-    redis_url: Optional[str] = None
-
     @field_validator('jwt_secret')
     @classmethod
     def validate_jwt_secret(cls, v, info):
         """Fail if using default JWT secret in production."""
-        # Access debug from info.data if available
         debug = info.data.get('debug', True) if info.data else True
         if v == "noctus-dev-secret-change-in-prod" and not debug:
             raise ValueError(
@@ -52,16 +42,6 @@ class Settings(BaseSettings):
                 "Set JWT_SECRET environment variable to a secure random string."
             )
         return v
-
-    @property
-    def cors_origins_list(self) -> list:
-        if self.cors_origins == "*":
-            return ["*"]
-        return [o.strip() for o in self.cors_origins.split(",")]
-
-    @property
-    def is_production(self) -> bool:
-        return not self.debug
 
     class Config:
         env_file = str(_ROOT_ENV)

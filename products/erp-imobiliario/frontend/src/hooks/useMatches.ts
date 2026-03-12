@@ -30,8 +30,8 @@ export interface Match {
   };
   created_at: string;
   updated_at: string;
-  ativo_origem?: any;
-  ativo_destino?: any;
+  ativo_origem?: Record<string, unknown>;
+  ativo_destino?: Record<string, unknown>;
 }
 
 export function useMatches(options?: {
@@ -70,6 +70,7 @@ export function useMatchCounts() {
       return counts;
     },
     enabled: !!user,
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -116,9 +117,9 @@ export function useEmbedBatch() {
     mutationFn: async (ativoIds: string[]) => {
       return api.post('/api/matching/embed-batch', { ativo_ids: ativoIds });
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: Record<string, unknown>) => {
       queryClient.invalidateQueries({ queryKey: ['matches'] });
-      const embedded = data?.embedded || 0;
+      const embedded = (data?.embedded as number) || 0;
       toast.success(`${embedded} ativo(s) embedado(s) com sucesso!`);
     },
     onError: (error: Error) => {

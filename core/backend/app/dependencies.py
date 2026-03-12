@@ -9,19 +9,19 @@ from app.config import settings
 from app.database import get_supabase_client, get_admin_client
 
 
-async def get_current_user(authorization: Optional[str] = Header(None)) -> Tuple:
-    """Extract and validate user from Supabase auth token."""
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    """Extract and validate JWT from Authorization header. Returns (user, token)."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token ausente")
-
     token = authorization.replace("Bearer ", "")
-    client = get_supabase_client()
-
     try:
-        user_response = client.auth.get_user(token)
+        admin = get_supabase_client()
+        user_response = admin.auth.get_user(token)
         if not user_response or not user_response.user:
             raise HTTPException(status_code=401, detail="Token inválido")
         return user_response.user, token
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
@@ -87,6 +87,18 @@ async def get_current_user_with_permissions(
         permissions = role_record.data[0].get("permissions", [])
 
     return user, token, permissions
+
+
+async def get_org_id(user) -> str:
+    """Extract org_id from noctus_users table for the given user.
+
+    Raises HTTPException(404) if profile or org_id not found.
+    """
+    db = get_admin_client()
+    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
+    if not profile.data or not profile.data.get("org_id"):
+        raise HTTPException(status_code=404, detail="Perfil ou organização não encontrada")
+    return profile.data["org_id"]
 
 
 def create_sso_token(user_id: str, org_id: str, product_slug: str,

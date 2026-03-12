@@ -102,3 +102,8 @@ class TestExcluirSeguro:
         client._mock_supabase.set_table_data("seguros", {"id": "seg1"})
         resp = client.delete("/api/seguros/seg1")
         assert resp.status_code == 200
+
+    def test_delete_not_found(self, client):
+        client._mock_supabase.set_table_data("seguros", None)
+        resp = client.delete("/api/seguros/nonexistent")
+        assert resp.status_code == 404

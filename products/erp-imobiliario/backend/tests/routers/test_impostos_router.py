@@ -109,5 +109,11 @@ class TestAtualizarImposto:
 
 class TestExcluirImposto:
     def test_delete_success(self, client):
+        client._mock_supabase.set_table_data("impostos", [{"id": "imp1"}])
         resp = client.delete("/api/impostos/imp1")
         assert resp.status_code == 200
+
+    def test_delete_not_found(self, client):
+        client._mock_supabase.set_table_data("impostos", [])
+        resp = client.delete("/api/impostos/nonexistent")
+        assert resp.status_code == 404

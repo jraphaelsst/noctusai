@@ -217,6 +217,10 @@ async def excluir_imposto(imposto_id: str, authorization: Optional[str] = Header
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("impostos").select("id").eq("id", imposto_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Imposto não encontrado")
+
     db.table("impostos").delete().eq("id", imposto_id).execute()
 
     log_action(user.id, "excluir", "imposto", imposto_id,

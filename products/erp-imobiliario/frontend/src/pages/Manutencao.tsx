@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,6 +48,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { MANUTENCAO_STATUS_CONFIG, MANUTENCAO_PRIORIDADE_CONFIG, MANUTENCAO_TIPO_CONFIG } from '@/lib/constants';
 import {
   useManutencao,
   useResumoManutencao,
@@ -63,26 +65,12 @@ import {
   OrdemServico,
 } from '@/types/manutencao';
 
-const STATUS_CONFIG: Record<StatusOrdem, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-  aberto: { label: 'Aberto', variant: 'destructive' },
-  em_andamento: { label: 'Em Andamento', variant: 'outline' },
-  aguardando: { label: 'Aguardando', variant: 'secondary' },
-  concluido: { label: 'Concluido', variant: 'default' },
-  cancelado: { label: 'Cancelado', variant: 'secondary' },
-};
-
-const PRIORIDADE_CONFIG: Record<PrioridadeOrdem, { label: string; className: string }> = {
-  baixa: { label: 'Baixa', className: 'bg-blue-100 text-blue-800' },
-  media: { label: 'Media', className: 'bg-yellow-100 text-yellow-800' },
-  alta: { label: 'Alta', className: 'bg-orange-100 text-orange-800' },
-  urgente: { label: 'Urgente', className: 'bg-red-100 text-red-800' },
-};
-
-const TIPO_CONFIG: Record<TipoOrdem, string> = {
-  preventiva: 'Preventiva',
-  corretiva: 'Corretiva',
-  emergencial: 'Emergencial',
-  reforma: 'Reforma',
+const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  aberto: 'destructive',
+  em_andamento: 'outline',
+  aguardando: 'secondary',
+  concluido: 'default',
+  cancelado: 'secondary',
 };
 
 const emptyForm: OrdemServicoCreateData = {
@@ -292,9 +280,7 @@ export default function Manutencao() {
       <Card>
         <CardContent className="pt-6">
           {isLoading ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Carregando ordens de servico...
-            </div>
+            <TableSkeleton rows={4} />
           ) : ordens.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               Nenhuma ordem de servico encontrada
@@ -319,10 +305,10 @@ export default function Manutencao() {
                       <TableCell className="max-w-[200px] truncate font-medium">
                         {ordem.titulo}
                       </TableCell>
-                      <TableCell>{TIPO_CONFIG[ordem.tipo]}</TableCell>
+                      <TableCell>{MANUTENCAO_TIPO_CONFIG[ordem.tipo]}</TableCell>
                       <TableCell>
-                        <Badge className={PRIORIDADE_CONFIG[ordem.prioridade].className}>
-                          {PRIORIDADE_CONFIG[ordem.prioridade].label}
+                        <Badge className={MANUTENCAO_PRIORIDADE_CONFIG[ordem.prioridade].className}>
+                          {MANUTENCAO_PRIORIDADE_CONFIG[ordem.prioridade].label}
                         </Badge>
                       </TableCell>
                       <TableCell>{ordem.responsavel || '-'}</TableCell>
@@ -330,8 +316,8 @@ export default function Manutencao() {
                         {ordem.data_previsao ? formatDate(ordem.data_previsao) : '-'}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_CONFIG[ordem.status].variant}>
-                          {STATUS_CONFIG[ordem.status].label}
+                        <Badge variant={STATUS_VARIANT[ordem.status]}>
+                          {MANUTENCAO_STATUS_CONFIG[ordem.status]?.label || ordem.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">

@@ -316,6 +316,63 @@ def get_message_history(
     }
 
 
+async def send_via_waha(db, phone: str, message: str) -> dict:
+    """Send a message through the WAHA API."""
+    config_result = db.table("whatsapp_config").select("*").eq("provider", "waha").eq("is_active", True).execute()
+    if not config_result.data:
+        return {"message_id": None, "status": "failed", "phone": phone, "error": "WAHA not configured"}
+
+    cfg = config_result.data[0]
+    waha_url = cfg.get("waha_api_url")
+    waha_key = cfg.get("waha_api_key")
+    session = cfg.get("waha_session_name", "default")
+
+    if not waha_url:
+        return {"message_id": f"dry_run_{phone}", "status": "sent", "phone": phone, "dry_run": True}
+
+    try:
+        import httpx
+
+        headers = {"Content-Type": "application/json"}
+        if waha_key:
+            headers["Authorization"] = f"Bearer {waha_key}"
+
+        # Normalize phone for WAHA format
+        digits = "".join(c for c in phone if c.isdigit())
+        if len(digits) <= 11:
+            digits = "55" + digits
+        chat_id = f"{digits}@c.us"
+
+        payload = {"chatId": chat_id, "text": message, "session": session}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{waha_url.rstrip('/')}/api/sendText",
+                headers=headers,
+                json=payload,
+                timeout=30.0,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "message_id": data.get("id", ""),
+                    "status": "sent",
+                    "phone": digits,
+                }
+            else:
+                return {
+                    "message_id": None,
+                    "status": "failed",
+                    "phone": digits,
+                    "error": response.text,
+                }
+    except ImportError:
+        return {"message_id": f"no_httpx_{phone}", "status": "sent", "phone": phone, "dry_run": True}
+    except Exception as e:
+        logger.error(f"WAHA send error: {e}")
+        return {"message_id": None, "status": "failed", "phone": phone, "error": str(e)}
+
+
 def get_whatsapp_config_from_env() -> WhatsAppConfig:
     """
     Load WhatsApp configuration from environment variables.

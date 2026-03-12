@@ -28,6 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import {
   Building2,
   FileDown,
@@ -249,9 +250,7 @@ export default function Banco() {
           <Card>
             <CardContent className="pt-6">
               {isLoadingExtratos ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  Carregando extratos...
-                </div>
+                <TableSkeleton rows={4} />
               ) : extratos.length === 0 ? (
                 <div className="py-8 text-center text-muted-foreground">
                   Nenhum extrato importado
@@ -304,9 +303,7 @@ export default function Banco() {
           <Card>
             <CardContent className="pt-6">
               {isLoadingConciliacao ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  Carregando movimentacoes...
-                </div>
+                <TableSkeleton rows={4} />
               ) : conciliacaoItems.length === 0 ? (
                 <div className="py-8 text-center text-muted-foreground">
                   Nenhuma movimentacao encontrada

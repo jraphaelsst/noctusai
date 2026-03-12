@@ -33,7 +33,7 @@ import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
+from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.email_service import EmailService
 from app.config import settings
@@ -132,7 +132,7 @@ async def enviar_email(body: EnviarEmailRequest, authorization: Optional[str] = 
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    svc = EmailService(db, user.id)
+    svc = EmailService(db, user.id, org_id=get_org_id(user))
 
     # If a template was referenced, render it first
     corpo = body.corpo
@@ -251,6 +251,10 @@ async def atualizar_template(
 async def excluir_template(template_id: str, authorization: Optional[str] = Header(None)):
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+
+    check = db.table("email_templates").select("id").eq("id", template_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Template não encontrado")
 
     db.table("email_templates").delete().eq("id", template_id).execute()
 

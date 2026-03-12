@@ -73,10 +73,10 @@ export function useCreateComissao() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['comissoes'] });
       queryClient.invalidateQueries({ queryKey: ['comissoes-resumo'] });
-      toast.success('Comissao criada com sucesso!');
+      toast.success('Comissão criada com sucesso!');
     },
     onError: (error: Error) => {
-      toast.error('Erro ao criar comissao', { description: error.message });
+      toast.error('Erro ao criar comissão', { description: error.message });
     },
   });
 }
@@ -93,10 +93,10 @@ export function useUpdateComissao() {
       queryClient.invalidateQueries({ queryKey: ['comissoes'] });
       queryClient.invalidateQueries({ queryKey: ['comissao'] });
       queryClient.invalidateQueries({ queryKey: ['comissoes-resumo'] });
-      toast.success('Comissao atualizada com sucesso!');
+      toast.success('Comissão atualizada com sucesso!');
     },
     onError: (error: Error) => {
-      toast.error('Erro ao atualizar comissao', { description: error.message });
+      toast.error('Erro ao atualizar comissão', { description: error.message });
     },
   });
 }
@@ -111,10 +111,10 @@ export function useDeleteComissao() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['comissoes'] });
       queryClient.invalidateQueries({ queryKey: ['comissoes-resumo'] });
-      toast.success('Comissao excluida com sucesso!');
+      toast.success('Comissão excluída com sucesso!');
     },
     onError: (error: Error) => {
-      toast.error('Erro ao excluir comissao', { description: error.message });
+      toast.error('Erro ao excluir comissão', { description: error.message });
     },
   });
 }

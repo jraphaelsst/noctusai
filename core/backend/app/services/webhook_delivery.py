@@ -4,6 +4,7 @@ NoctusAI Core — Webhook Delivery Service.
 Dispatches webhook events to registered endpoints with HMAC-SHA256 signed payloads.
 Logs delivery attempts and results.
 """
+import asyncio
 import hmac
 import json
 import hashlib
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Timeout for webhook HTTP requests (seconds)
 WEBHOOK_TIMEOUT = 10.0
-MAX_RETRIES = 1
+MAX_RETRIES = 2
 
 
 async def dispatch(org_id: str, event_type: str, payload: dict) -> list[dict]:
@@ -130,6 +131,10 @@ async def _send_webhook(endpoint: dict, event_type: str, payload: dict) -> dict:
             response_body = str(exc)[:2000]
             logger.warning(f"Webhook request error: endpoint={endpoint_id} error={exc} attempt={attempt}")
 
+        # Exponential backoff before next retry (skip after last attempt)
+        if status != "success" and attempt < MAX_RETRIES + 1:
+            await asyncio.sleep(2 ** attempt)
+
     # Update delivery record with result
     update_data = {
         "response_status": response_status,
@@ -148,3 +153,37 @@ async def _send_webhook(endpoint: dict, event_type: str, payload: dict) -> dict:
         )
 
     return updated.data[0] if updated.data else delivery_data
+
+
+async def retry_delivery(delivery_id: str) -> dict:
+    """
+    Re-dispatch a failed webhook delivery.
+
+    Fetches the original delivery record, looks up the endpoint,
+    and re-sends the payload with the same event type.
+
+    Returns the updated delivery record.
+    """
+    db = get_admin_client()
+
+    delivery = db.table("webhook_deliveries").select("*").eq(
+        "id", delivery_id
+    ).single().execute()
+
+    if not delivery.data:
+        raise ValueError(f"Delivery not found: {delivery_id}")
+
+    record = delivery.data
+    if record.get("status") == "success":
+        raise ValueError(f"Delivery already succeeded: {delivery_id}")
+
+    endpoint = db.table("webhook_endpoints").select("*").eq(
+        "id", record["endpoint_id"]
+    ).single().execute()
+
+    if not endpoint.data:
+        raise ValueError(f"Endpoint not found for delivery: {delivery_id}")
+
+    # Re-dispatch using the original event type and payload
+    result = await _send_webhook(endpoint.data, record["event_type"], record["payload"])
+    return result

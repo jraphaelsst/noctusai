@@ -1,3 +1,4 @@
+-e shared/backend
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 supabase==2.9.1
@@ -7,6 +8,7 @@ python-dotenv==1.0.1
 httpx>=0.27.0
 PyJWT==2.9.0
 slowapi>=0.1.9
+APScheduler>=3.10.0
 yfinance>=0.2.36
 
 # Observability (optional)
@@ -14,3 +16,6 @@ sentry-sdk[fastapi]==1.40.0
 
 # Caching (optional)
 redis==5.0.1
+
+# Testing
+pytest-asyncio>=0.21.0

@@ -1,10 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { Meta, NovaMetaForm } from "@/types";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { getDisplayCategoria } from "@/lib/categorias";
+import { useAuthStore } from "@/store/authStore";
 
 export function useMetas(corretorId?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["metas", corretorId],
     queryFn: async () => {
@@ -13,6 +16,7 @@ export function useMetas(corretorId?: string) {
       });
       return (result.data || []) as Meta[];
     },
+    enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });
 }
@@ -27,10 +31,10 @@ export function useCreateMeta() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });
-      toast({ title: "Meta criada com sucesso!" });
+      toast.success("Meta criada com sucesso!");
     },
-    onError: (error: any) => {
-      toast({ title: "Erro ao criar meta", description: error.message, variant: "destructive" });
+    onError: (error: Error) => {
+      toast.error("Erro ao criar meta", { description: error.message });
     },
   });
 }
@@ -45,10 +49,10 @@ export function useUpdateMeta() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });
-      toast({ title: "Meta atualizada!" });
+      toast.success("Meta atualizada!");
     },
-    onError: (error: any) => {
-      toast({ title: "Erro ao atualizar meta", description: error.message, variant: "destructive" });
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar meta", { description: error.message });
     },
   });
 }
@@ -62,10 +66,10 @@ export function useDeleteMeta() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });
-      toast({ title: "Meta excluída!" });
+      toast.success("Meta excluída!");
     },
-    onError: (error: any) => {
-      toast({ title: "Erro ao excluir meta", description: error.message, variant: "destructive" });
+    onError: (error: Error) => {
+      toast.error("Erro ao excluir meta", { description: error.message });
     },
   });
 }

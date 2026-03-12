@@ -1,6 +1,7 @@
 """Portfolio service — portfolio management and summary."""
 import logging
 from typing import Dict, List, Optional
+from fastapi import HTTPException
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -15,10 +16,24 @@ class CarteiraService:
         result = self.db.table("carteiras").select("*").eq("org_id", self.org_id).order("created_at").execute()
         carteiras = result.data or []
 
-        # Enrich with summary for each portfolio
+        if not carteiras:
+            return carteiras
+
+        # Fetch ALL ativos for all carteiras in a single query (avoid N+1)
+        carteira_ids = [c["id"] for c in carteiras]
+        ativos_result = self.db.table("ativos").select("carteira_id,valor_atual,ganho_perda,tipo").in_("carteira_id", carteira_ids).execute()
+        all_ativos = ativos_result.data or []
+
+        # Group ativos by carteira_id
+        ativos_por_carteira: Dict[str, List[Dict]] = {}
+        for ativo in all_ativos:
+            cid = ativo.get("carteira_id")
+            if cid:
+                ativos_por_carteira.setdefault(cid, []).append(ativo)
+
+        # Enrich each carteira with summary from grouped data
         for carteira in carteiras:
-            ativos = self.db.table("ativos").select("valor_atual,ganho_perda,tipo").eq("carteira_id", carteira["id"]).execute()
-            holdings = ativos.data or []
+            holdings = ativos_por_carteira.get(carteira["id"], [])
             carteira["valor_total"] = sum(float(a.get("valor_atual", 0)) for a in holdings)
             carteira["ganho_perda_total"] = sum(float(a.get("ganho_perda", 0)) for a in holdings)
             carteira["total_ativos"] = len(holdings)
@@ -41,6 +56,9 @@ class CarteiraService:
         return row
 
     async def excluir(self, carteira_id: str) -> bool:
+        check = self.db.table("carteiras").select("id").eq("id", carteira_id).eq("org_id", self.org_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=404, detail="Carteira não encontrada")
         self.db.table("carteiras").delete().eq("id", carteira_id).eq("org_id", self.org_id).execute()
         return True
 

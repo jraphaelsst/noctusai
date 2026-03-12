@@ -36,7 +36,7 @@ class TestGerarMatches:
             assert resp.status_code == 200
             data = resp.json()
             assert data["total"] == 1
-            assert data["matches"][0]["score"] == 75.5
+            assert data["data"][0]["score"] == 75.5
 
     def test_gerar_matches_fallback_no_embedding(self, client):
         """Ativo has no embedding → falls back to rule-based matching."""
@@ -70,8 +70,8 @@ class TestEmbedAtivo:
                 resp = client.post("/api/matching/embed", json={"ativo_id": "ativo-1"})
                 assert resp.status_code == 200
                 data = resp.json()
-                assert data["success"] is True
-                assert data["ativo_id"] == "ativo-1"
+                assert data["data"]["success"] is True
+                assert data["data"]["ativo_id"] == "ativo-1"
 
     def test_embed_ativo_not_found(self, client):
         """404 when ativo doesn't exist."""
@@ -103,8 +103,8 @@ class TestEmbedBatch:
             resp = client.post("/api/matching/embed-batch")
             assert resp.status_code == 200
             data = resp.json()
-            assert data["total"] == 2
-            assert data["embedded"] == 2
+            assert data["data"]["total"] == 2
+            assert data["data"]["embedded"] == 2
 
     def test_embed_batch_no_ativos(self, client):
         """Returns zeros when no ativos need embedding."""
@@ -112,7 +112,7 @@ class TestEmbedBatch:
         resp = client.post("/api/matching/embed-batch")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] == 0
+        assert data["data"]["total"] == 0
 
 
 class TestListarMatches:

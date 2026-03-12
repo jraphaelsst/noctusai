@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { PageLoadingSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -90,13 +91,7 @@ function Configuracoes() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="container mx-auto p-6 text-center text-muted-foreground">
-        Carregando configurações...
-      </div>
-    );
-  }
+  if (loading) return <PageLoadingSkeleton />;
 
   return (
     <div className="container mx-auto p-6 space-y-6">

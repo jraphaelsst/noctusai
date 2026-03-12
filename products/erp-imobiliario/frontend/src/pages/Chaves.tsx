@@ -45,6 +45,7 @@ import {
   Filter,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
+import { MetricsTableSkeleton } from '@/components/ui/page-skeleton';
 
 const STATUS_CONFIG = {
   disponivel: { label: 'Disponível', variant: 'default' as const, className: 'bg-green-100 text-green-800 hover:bg-green-100' },
@@ -193,7 +194,7 @@ export default function Chaves() {
 
       {/* Key list */}
       {isLoading ? (
-        <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando...</CardContent></Card>
+        <MetricsTableSkeleton cards={0} />
       ) : filtradas.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">

@@ -52,6 +52,7 @@ export function useCheckins(filters?: {
       return (result.data || []) as Checkin[];
     },
     enabled: !!user,
+    staleTime: 2 * 60 * 1000,
   });
 }
 
@@ -98,6 +99,7 @@ export function useVistoriaRapida() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['checkins'] });
+      queryClient.invalidateQueries({ queryKey: ['vistorias'] });
       toast.success('Vistoria rápida registrada!');
     },
     onError: (error: Error) => {
@@ -133,7 +135,7 @@ export function useSyncCampo() {
       return result.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['campo'] });
+      queryClient.invalidateQueries({ queryKey: ['campo-offline-data'] });
       queryClient.invalidateQueries({ queryKey: ['checkins'] });
       toast.success(`Sincronizado: ${data?.checkins_criados || 0} checkins, ${data?.vistorias_criadas || 0} vistorias`);
     },

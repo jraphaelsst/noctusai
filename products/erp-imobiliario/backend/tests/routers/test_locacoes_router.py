@@ -165,8 +165,14 @@ class TestAtualizarContrato:
 
 class TestExcluirContrato:
     def test_delete(self, client):
+        client._mock_supabase.set_table_data("contratos_locacao", [{"id": "cl1"}])
         resp = client.delete("/api/locacoes/cl1")
         assert resp.status_code == 200
+
+    def test_delete_not_found(self, client):
+        client._mock_supabase.set_table_data("contratos_locacao", [])
+        resp = client.delete("/api/locacoes/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestReajuste:

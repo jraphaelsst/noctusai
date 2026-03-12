@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
+from app.services.metas_service import criar_metas_hoje
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -58,14 +59,6 @@ class MetaConfigCreate(BaseModel):
     categoria_custom: Optional[str] = None
     meta_pretendida: int = Field(..., ge=0)
     ativo: bool = True
-
-
-class ConcluirBody(BaseModel):
-    pass  # No body needed; meta_id comes from path
-
-
-class CriarHojeBody(BaseModel):
-    pass  # Uses authenticated user
 
 
 class ScaffoldBody(BaseModel):
@@ -155,6 +148,10 @@ async def excluir_config(config_id: str, authorization: Optional[str] = Header(N
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("metas_config").select("id").eq("id", config_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Configuração de meta não encontrada")
+
     db.table("metas_config").delete().eq("id", config_id).execute()
     log_action(user.id, "excluir", "config_meta", config_id, f"Excluiu config {config_id}")
     return ok_response("Configuração de meta excluída com sucesso")
@@ -237,54 +234,7 @@ async def criar_hoje(authorization: Optional[str] = Header(None)):
     if not data_hoje:
         raise HTTPException(status_code=500, detail="Erro ao obter data atual")
 
-    # Active configs
-    configs = (
-        db.table("metas_config")
-        .select("*")
-        .eq("usuario_id", user.id)
-        .eq("ativo", True)
-        .execute()
-    )
-
-    created = 0
-    for cfg in (configs.data or []):
-        for tipo in ["diaria", "semanal", "mensal", "anual"]:
-            # Check if meta already exists via scaffold RPC
-            existing = db.rpc("ensure_scaffold_meta", {
-                "p_usuario_id": user.id,
-                "p_tipo": tipo,
-                "p_categoria": cfg["categoria"],
-                "p_data_ref": data_hoje,
-            }).execute()
-
-            if not existing.data:
-                # Calculate proportional target
-                prop = admin.rpc("calcular_meta_proporcional", {
-                    "p_meta_mensal": cfg["meta_pretendida"],
-                    "p_tipo": tipo,
-                    "p_data_ref": data_hoje,
-                }).execute()
-                meta_pretendida = prop.data if prop.data else cfg["meta_pretendida"]
-
-                # Get period end date
-                prazo = admin.rpc("period_end_date", {
-                    "tipo_meta": tipo,
-                    "data_ref": data_hoje,
-                }).execute()
-                data_prazo_val = prazo.data if prazo.data else data_hoje
-
-                db.table("metas").insert({
-                    "usuario_id": user.id,
-                    "tipo": tipo,
-                    "categoria": cfg["categoria"],
-                    "categoria_custom": cfg.get("categoria_custom"),
-                    "meta_pretendida": meta_pretendida,
-                    "meta_realizada": 0,
-                    "data_prazo": data_prazo_val,
-                    "status": "no_prazo",
-                    "criada_manualmente": False,
-                }).execute()
-                created += 1
+    created = criar_metas_hoje(user.id, data_hoje, db, admin)
 
     log_action(user.id, "criar", "meta", "", f"Criou {created} metas a partir de configs")
     return success_response({"message": f"{created} metas criadas com sucesso.", "metas_criadas": created})
@@ -441,6 +391,10 @@ async def atualizar_meta(meta_id: str, body: MetaUpdate, authorization: Optional
 async def excluir_meta(meta_id: str, authorization: Optional[str] = Header(None)):
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+
+    check = db.table("metas").select("id").eq("id", meta_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Meta não encontrada")
 
     db.table("metas").delete().eq("id", meta_id).execute()
     log_action(user.id, "excluir", "meta", meta_id, f"Excluiu meta {meta_id}")

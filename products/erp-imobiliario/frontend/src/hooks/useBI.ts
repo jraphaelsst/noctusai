@@ -7,6 +7,20 @@ interface FiltrosPeriodo {
   periodo_fim?: string;
 }
 
+export function useDashboardResumo() {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ['bi-dashboard'],
+    queryFn: async () => {
+      const result = await api.get('/api/bi/dashboard');
+      return result.data;
+    },
+    enabled: !!user,
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
 export function useBIVendas(filtros?: FiltrosPeriodo) {
   const { user } = useAuthStore();
 

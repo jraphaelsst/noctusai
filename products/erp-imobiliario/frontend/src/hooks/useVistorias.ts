@@ -67,6 +67,7 @@ export function useCreateVistoria() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vistorias'] });
+      queryClient.invalidateQueries({ queryKey: ['locacoes'] });
       toast.success('Vistoria criada com sucesso!');
     },
     onError: (error: Error) => {

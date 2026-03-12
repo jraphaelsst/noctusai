@@ -15,7 +15,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user, get_current_admin
+from app.dependencies import get_current_user, get_current_admin, get_org_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/licenses", tags=["Licenses"])
@@ -31,13 +31,9 @@ class LicenseGrant(BaseModel):
 async def listar_licenses(authorization: Optional[str] = Header(None)):
     """List active licenses for the current user's organization."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data:
-        raise HTTPException(status_code=404, detail="Perfil não encontrado")
-
-    org_id = profile.data["org_id"]
     result = db.table("licenses").select("*, products(*)").eq("org_id", org_id).order("fim", nullsfirst=True).order("created_at", desc=True).execute()
     return {"data": result.data or []}
 
@@ -93,6 +89,37 @@ async def grant_license(body: LicenseGrant, authorization: Optional[str] = Heade
         raise HTTPException(status_code=500, detail="Erro ao criar licença")
 
     logger.info(f"License granted: org={body.org_id} product={body.product_id}")
+
+    # Audit log, notification, and webhook (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=body.org_id,
+            action="grant", resource_type="license",
+            resource_id=result.data[0]["id"],
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import notification_service
+        await notification_service.notify_team(
+            org_id=body.org_id,
+            type="system",
+            title="Licença concedida",
+            message=f"Uma nova licença de produto foi ativada para sua organização.",
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import webhook_delivery
+        await webhook_delivery.dispatch(
+            org_id=body.org_id,
+            event_type="license.granted",
+            payload={"license_id": result.data[0]["id"], "product_id": body.product_id},
+        )
+    except Exception:
+        pass
+
     return {"data": result.data[0]}
 
 
@@ -110,20 +137,38 @@ async def revoke_license(license_id: str, authorization: Optional[str] = Header(
         raise HTTPException(status_code=404, detail="Licença não encontrada")
 
     logger.info(f"License revoked: {license_id}")
-    return {"data": result.data[0]}
+
+    # Audit log and webhook (best-effort)
+    revoked_record = result.data[0]
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=revoked_record.get("org_id"),
+            action="revoke", resource_type="license", resource_id=license_id,
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import webhook_delivery
+        org_id_val = revoked_record.get("org_id")
+        if org_id_val:
+            await webhook_delivery.dispatch(
+                org_id=org_id_val,
+                event_type="license.revoked",
+                payload={"license_id": license_id},
+            )
+    except Exception:
+        pass
+
+    return {"data": revoked_record}
 
 
 @router.get("/check/{product_slug}")
 async def check_access(product_slug: str, authorization: Optional[str] = Header(None)):
     """Check if the current user's org has access to a product."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
-
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data:
-        raise HTTPException(status_code=404, detail="Perfil não encontrado")
-
-    org_id = profile.data["org_id"]
 
     # Find product by slug
     product = db.table("products").select("id").eq("slug", product_slug).single().execute()

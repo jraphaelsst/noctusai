@@ -8,17 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { NEGOCIACAO_STATUS_CONFIG } from '@/lib/constants';
 import { FileText, TrendingUp, Clock, CheckCircle2 } from 'lucide-react';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { Negociacao, StatusNegociacao } from '@/types/imoveis';
-
-const STATUS_CONFIG: Record<StatusNegociacao, { label: string; color: string }> = {
-  qualificacao: { label: 'Qualificação', color: 'bg-blue-500' },
-  visitas: { label: 'Visitas', color: 'bg-purple-500' },
-  proposta: { label: 'Proposta', color: 'bg-yellow-500' },
-  negociacao: { label: 'Negociação', color: 'bg-orange-500' },
-  fechado: { label: 'Fechado', color: 'bg-green-500' },
-  cancelado: { label: 'Cancelado', color: 'bg-red-500' },
-};
 
 export default function Negociacoes() {
   const { user } = useAuthStore();
@@ -141,11 +134,7 @@ export default function Negociacoes() {
       {/* Lista de Negociações */}
       <div className="space-y-4">
         {isLoading ? (
-          <Card>
-            <CardContent className="py-8 text-center text-muted-foreground">
-              Carregando negociações...
-            </CardContent>
-          </Card>
+          <CardListSkeleton count={3} />
         ) : negociacoes.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
@@ -162,23 +151,23 @@ export default function Negociacoes() {
                       <FileText className="h-5 w-5 text-primary" />
                       <span className="font-semibold">{negociacao.id}</span>
                       <Badge 
-                        className={STATUS_CONFIG[negociacao.status_etapa].color}
+                        className={NEGOCIACAO_STATUS_CONFIG[negociacao.status_etapa].color}
                       >
-                        {STATUS_CONFIG[negociacao.status_etapa].label}
+                        {NEGOCIACAO_STATUS_CONFIG[negociacao.status_etapa].label}
                       </Badge>
                     </div>
                     
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
                       <div>
-                        <p className="text-muted-foreground">Imóvel</p>
-                        <p className="font-medium">{negociacao.imovel_id}</p>
+                        <p className="text-muted-foreground">Ativo Origem</p>
+                        <p className="font-medium">{negociacao.ativo_origem_id}</p>
                         <p className="text-muted-foreground">
                           {formatCurrency(negociacao.valor_imovel)}
                         </p>
                       </div>
                       <div>
-                        <p className="text-muted-foreground">Permuta</p>
-                        <p className="font-medium">{negociacao.perfil_permuta_id}</p>
+                        <p className="text-muted-foreground">Ativo Destino</p>
+                        <p className="font-medium">{negociacao.ativo_destino_id}</p>
                         <p className="text-muted-foreground">
                           {formatCurrency(negociacao.valor_permuta)}
                         </p>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
+import { NotificationBell } from './NotificationBell';
 
 const NAV_ITEMS = [
   { to: '/admin', label: 'Dashboard', icon: '📊', end: true },
@@ -70,6 +71,7 @@ export function AdminLayout() {
             ☰
           </button>
           <div className="admin-header-right">
+            <NotificationBell />
             <span className="admin-user-name">{user?.nome}</span>
             <button className="btn-logout" onClick={handleLogout}>Sair</button>
           </div>

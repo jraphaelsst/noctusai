@@ -11,6 +11,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@noctusai/shared": path.resolve(__dirname, "../../../shared/frontend/src"),
     },
+    dedupe: ["react", "react-dom", "zustand", "@tanstack/react-query"],
   },
 });

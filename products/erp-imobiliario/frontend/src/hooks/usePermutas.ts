@@ -53,6 +53,7 @@ export function usePerfilsPermuta() {
       return (result.data || []) as PerfilPermuta[];
     },
     enabled: !!user,
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -97,8 +98,9 @@ export function useUpdatePerfilPermuta() {
       const result = await api.patch(`/api/ativos/${id}`, data);
       return result.data as PerfilPermuta;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['permutas'] });
+      queryClient.invalidateQueries({ queryKey: ['permuta', variables.id] });
       toast.success('Permuta atualizada com sucesso!');
     },
     onError: (error: Error) => {
@@ -116,6 +118,7 @@ export function useDeletePerfilPermuta() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['permutas'] });
+      queryClient.invalidateQueries({ queryKey: ['matches'] });
       toast.success('Permuta excluída com sucesso!');
     },
     onError: (error: Error) => {

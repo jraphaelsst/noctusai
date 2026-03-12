@@ -1,6 +1,10 @@
 from typing import Optional
 from pydantic import BaseModel, Field
 
+# Re-export moved schemas for backward compatibility
+from app.schemas.watchlist import WatchlistCreate, WatchlistItemCreate  # noqa: F401
+from app.schemas.recorrentes import RecorrenteCreate, RecorrenteUpdate  # noqa: F401
+
 
 class PatrimonioSnapshotCreate(BaseModel):
     data: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -8,44 +12,3 @@ class PatrimonioSnapshotCreate(BaseModel):
     total_passivos: Optional[float] = Field(default=0, ge=0)
     patrimonio_liquido: Optional[float] = None
     detalhamento: Optional[dict] = None
-
-
-class WatchlistCreate(BaseModel):
-    nome: str = Field(..., min_length=1, max_length=255)
-
-
-class WatchlistItemCreate(BaseModel):
-    ticker: str = Field(..., min_length=1, max_length=20)
-    nome: Optional[str] = Field(default=None, max_length=255)
-    alerta_preco_acima: Optional[float] = Field(default=None, gt=0)
-    alerta_preco_abaixo: Optional[float] = Field(default=None, gt=0)
-    notas: Optional[str] = Field(default=None, max_length=500)
-
-
-class RecorrenteCreate(BaseModel):
-    nome: str = Field(..., min_length=1, max_length=255)
-    valor: float = Field(..., gt=0)
-    conta_id: Optional[str] = None
-    categoria_id: Optional[str] = None
-    tipo: str = Field(..., pattern="^(receita|despesa)$")
-    frequencia: str = Field(..., pattern="^(semanal|quinzenal|mensal|bimestral|trimestral|semestral|anual)$")
-    dia_vencimento: Optional[int] = Field(default=None, ge=1, le=31)
-    proxima_data: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-    is_automatico: Optional[bool] = False
-    comerciante: Optional[str] = Field(default=None, max_length=255)
-    lembrete_dias: Optional[int] = Field(default=3, ge=0, le=30)
-
-
-class RecorrenteUpdate(BaseModel):
-    nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    valor: Optional[float] = Field(default=None, gt=0)
-    conta_id: Optional[str] = None
-    categoria_id: Optional[str] = None
-    tipo: Optional[str] = Field(default=None, pattern="^(receita|despesa)$")
-    frequencia: Optional[str] = Field(default=None, pattern="^(semanal|quinzenal|mensal|bimestral|trimestral|semestral|anual)$")
-    dia_vencimento: Optional[int] = Field(default=None, ge=1, le=31)
-    proxima_data: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-    is_automatico: Optional[bool] = None
-    comerciante: Optional[str] = Field(default=None, max_length=255)
-    lembrete_dias: Optional[int] = Field(default=None, ge=0, le=30)
-    ativo: Optional[bool] = None

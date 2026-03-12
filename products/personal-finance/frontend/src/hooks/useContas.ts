@@ -21,6 +21,8 @@ export function useContas(ativo?: boolean) {
 }
 
 export function useConta(id?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["conta", id],
     queryFn: async () => {
@@ -28,7 +30,7 @@ export function useConta(id?: string) {
       const result = await api.get(`/api/contas/${id}`);
       return result.data as Conta;
     },
-    enabled: !!id,
+    enabled: !!user && !!id,
     staleTime: 5 * 60 * 1000,
   });
 }

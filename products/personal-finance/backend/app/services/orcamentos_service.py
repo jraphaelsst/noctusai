@@ -1,6 +1,7 @@
 """Budgets service — budget management with method support."""
 import logging
 from typing import Dict, List, Optional
+from fastapi import HTTPException
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -37,11 +38,71 @@ class OrcamentosService:
         return row
 
     async def excluir(self, orcamento_id: str) -> bool:
+        check = self.db.table("orcamentos").select("id").eq("id", orcamento_id).eq("org_id", self.org_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=404, detail="Orçamento não encontrado")
         self.db.table("orcamentos").delete().eq("id", orcamento_id).eq("org_id", self.org_id).execute()
         return True
 
+    async def sincronizar_gastos(self, categoria_id: str, periodo_mes: str) -> int:
+        """Sync valor_gasto from actual transactions for a category+month pair.
+
+        Returns the number of budget items updated.
+        """
+        data_inicio = f"{periodo_mes}-01"
+        ano, m = periodo_mes.split("-")
+        m_int = int(m)
+        if m_int == 12:
+            data_fim = f"{int(ano)+1}-01-01"
+        else:
+            data_fim = f"{ano}-{m_int+1:02d}-01"
+
+        # Sum despesas for this category in this month
+        transacoes = self.db.table("transacoes").select("valor, tipo").eq(
+            "org_id", self.org_id
+        ).eq("categoria_id", categoria_id).eq("tipo", "despesa").gte(
+            "data", data_inicio
+        ).lt("data", data_fim).execute()
+
+        total_gasto = sum(float(t.get("valor", 0)) for t in (transacoes.data or []))
+
+        # Update matching budget items
+        itens = self.db.table("orcamento_itens").select("id, orcamento_id").eq(
+            "categoria_id", categoria_id
+        ).eq("periodo_mes", periodo_mes).execute()
+
+        updated = 0
+        for item in (itens.data or []):
+            # Verify the budget belongs to this org
+            orc = self.db.table("orcamentos").select("id").eq(
+                "id", item["orcamento_id"]
+            ).eq("org_id", self.org_id).execute()
+            if not (orc.data or []):
+                continue
+            self.db.table("orcamento_itens").update(
+                {"valor_gasto": round(total_gasto, 2)}
+            ).eq("id", item["id"]).execute()
+            updated += 1
+
+        return updated
+
     async def obter_progresso(self, orcamento_id: str, periodo_mes: str) -> Dict:
-        """Get budget progress for a given month."""
+        """Get budget progress for a given month (syncs from transactions first)."""
+        # Sync gastos for each category in this budget's items before returning
+        itens_pre = self.db.table("orcamento_itens").select("categoria_id").eq(
+            "orcamento_id", orcamento_id
+        ).eq("periodo_mes", periodo_mes).execute()
+        synced_cats = set()
+        for item in (itens_pre.data or []):
+            cat_id = item.get("categoria_id")
+            if cat_id and cat_id not in synced_cats:
+                try:
+                    await self.sincronizar_gastos(cat_id, periodo_mes)
+                except Exception as e:
+                    logger.warning(f"Budget sync failed for category {cat_id}: {e}")
+                synced_cats.add(cat_id)
+
+        # Re-fetch with updated values
         itens_result = self.db.table("orcamento_itens").select("*, categoria:categorias(id,nome,icone,cor)").eq("orcamento_id", orcamento_id).eq("periodo_mes", periodo_mes).execute()
         itens = itens_result.data or []
 

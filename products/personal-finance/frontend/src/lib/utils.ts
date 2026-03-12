@@ -1,25 +1,10 @@
-import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
+// Re-export shared utilities so existing `import { cn } from '@/lib/utils'` keeps working
+export { cn, formatCurrency, formatDate, getTodayAtMidnight, stripTime } from '@noctusai/shared/utils';
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
-export function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
-}
+// Product-specific utilities below
 
 export function formatPercent(value: number, decimals = 2): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(decimals)}%`;
-}
-
-export function formatDate(dateString: string): string {
-  if (!dateString) return "";
-  const parts = dateString.split("-");
-  if (parts.length === 3) {
-    return `${parts[2]}/${parts[1]}/${parts[0]}`;
-  }
-  return dateString;
 }
 
 export function formatNumber(value: number, decimals = 2): string {

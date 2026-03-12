@@ -28,7 +28,9 @@ import { OrgSettings } from './pages/OrgSettings';
 import './index.css';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { loading } = useAuth();
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
+  if (loading) return <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>;
   return <>{children}</>;
 }
 

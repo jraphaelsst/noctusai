@@ -97,9 +97,10 @@ export function useUpdateCliente() {
       const result = await api.patch(`/api/clientes/${id}`, data);
       return result.data as Cliente;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
       queryClient.invalidateQueries({ queryKey: ['funil'] });
+      queryClient.invalidateQueries({ queryKey: ['cliente', variables.id] });
       toast.success('Cliente atualizado com sucesso!');
     },
     onError: (error: Error) => {

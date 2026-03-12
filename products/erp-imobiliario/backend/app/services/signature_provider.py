@@ -4,12 +4,13 @@ Signature Provider — External digital signature API integrations.
 Supports ClickSign, DocuSign, and D4Sign. Falls back to internal
 (mock) signing when no provider credentials are configured.
 
-Credentials are resolved from: org_settings → env vars.
+Credentials resolved via the standard chain: org_settings → platform_settings → env.
 """
 import logging
-import os
 import uuid
 from typing import Any, Dict, List, Optional
+
+from app.services.credential_resolver import resolve_credential
 
 logger = logging.getLogger(__name__)
 
@@ -17,54 +18,32 @@ logger = logging.getLogger(__name__)
 class SignatureProviderConfig:
     """Resolve signature provider credentials."""
 
-    def __init__(self, db_client=None):
-        self.db = db_client
-        self._cache: Dict[str, str] = {}
-
-    def _get_setting(self, key: str) -> Optional[str]:
-        """Try org_settings first, then env."""
-        if key in self._cache:
-            return self._cache[key]
-
-        # Try DB settings
-        if self.db:
-            try:
-                result = self.db.table("org_settings").select("value").eq("key", key).single().execute()
-                if result.data and result.data.get("value"):
-                    self._cache[key] = result.data["value"]
-                    return self._cache[key]
-            except Exception:
-                pass
-
-        # Fallback to env
-        val = os.getenv(key.upper(), "")
-        if val:
-            self._cache[key] = val
-        return val or None
+    def __init__(self, org_id: Optional[str] = None):
+        self.org_id = org_id
 
     @property
     def clicksign_token(self) -> Optional[str]:
-        return self._get_setting("clicksign_api_token")
+        return resolve_credential("clicksign_api_token", self.org_id)
 
     @property
     def clicksign_env(self) -> str:
-        return self._get_setting("clicksign_environment") or "sandbox"
+        return resolve_credential("clicksign_environment", self.org_id) or "sandbox"
 
     @property
     def docusign_integration_key(self) -> Optional[str]:
-        return self._get_setting("docusign_integration_key")
+        return resolve_credential("docusign_integration_key", self.org_id)
 
     @property
     def docusign_account_id(self) -> Optional[str]:
-        return self._get_setting("docusign_account_id")
+        return resolve_credential("docusign_account_id", self.org_id)
 
     @property
     def d4sign_token(self) -> Optional[str]:
-        return self._get_setting("d4sign_api_token")
+        return resolve_credential("d4sign_api_token", self.org_id)
 
     @property
     def d4sign_crypt_key(self) -> Optional[str]:
-        return self._get_setting("d4sign_crypt_key")
+        return resolve_credential("d4sign_crypt_key", self.org_id)
 
 
 async def enviar_para_assinatura(

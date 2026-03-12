@@ -105,13 +105,6 @@ class TestOrgSettingsList:
         # Secret should be masked
         assert "sk-secret" not in data[0]["value"]
 
-    def test_list_org_settings_no_org(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {"org_id": None})
-
-        resp = client.get("/api/settings/org")
-        assert resp.status_code == 404
-
     def test_list_org_settings_unauthenticated(self, unauth_client):
         resp = unauth_client.get("/api/settings/org")
         assert resp.status_code == 401
@@ -134,12 +127,6 @@ class TestOrgSettingsUpsert:
         assert resp.status_code == 200
         assert "data" in resp.json()
 
-    def test_upsert_org_setting_no_org(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {"org_id": None})
-
-        resp = client.put("/api/settings/org/test", json={"value": "val"})
-        assert resp.status_code == 404
 
 
 class TestOrgSettingsDelete:

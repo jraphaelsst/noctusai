@@ -12,7 +12,7 @@ export interface Documento {
   cliente_id?: string;
   proposta_id?: string;
   template_id?: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   created_by: string;
   created_at: string;
 }

@@ -25,6 +25,8 @@ and cash flow analysis.
 -- );
 """
 import logging
+from datetime import datetime, timezone
+from dateutil.relativedelta import relativedelta
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -147,10 +149,13 @@ async def resumo_financeiro(
     except Exception as e:
         logger.warning(f"Failed to mark overdue: {e}")
 
-    # Fetch all lancamentos (for summary calculation)
+    # Default to current year start if no data_inicio provided
+    if not data_inicio:
+        data_inicio = datetime.now(timezone.utc).strftime("%Y-01-01")
+
+    # Fetch lancamentos (for summary calculation)
     query = db.table("lancamentos").select("*")
-    if data_inicio:
-        query = query.gte("data_vencimento", data_inicio)
+    query = query.gte("data_vencimento", data_inicio)
     if data_fim:
         query = query.lte("data_vencimento", data_fim)
 
@@ -172,8 +177,11 @@ async def fluxo_caixa(
 
     service = FinanceiroService(db, user.id)
 
-    # Fetch all lancamentos for cash flow
-    result = db.table("lancamentos").select("*").order("data_vencimento", desc=False).execute()
+    # Only fetch data from the relevant time window
+    cutoff = (datetime.now(timezone.utc) - relativedelta(months=meses)).strftime("%Y-%m-%d")
+
+    # Fetch lancamentos for cash flow within the time window
+    result = db.table("lancamentos").select("*").gte("data_vencimento", cutoff).order("data_vencimento", desc=False).execute()
     lancamentos = result.data or []
 
     fluxo = service.get_fluxo_caixa(lancamentos)
@@ -246,6 +254,10 @@ async def excluir_lancamento(lancamento_id: str, authorization: Optional[str] = 
     """Delete a financial transaction."""
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+
+    check = db.table("lancamentos").select("id").eq("id", lancamento_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
 
     db.table("lancamentos").delete().eq("id", lancamento_id).execute()
 

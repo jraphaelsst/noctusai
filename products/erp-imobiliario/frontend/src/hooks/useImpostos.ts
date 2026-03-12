@@ -121,7 +121,7 @@ export function useDeleteImposto() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['impostos'] });
       queryClient.invalidateQueries({ queryKey: ['impostos-resumo'] });
-      toast.success('Imposto excluido!');
+      toast.success('Imposto excluído!');
     },
     onError: (error: Error) => {
       toast.error('Erro ao excluir imposto', { description: error.message });

@@ -155,6 +155,7 @@ class TestAtualizarCarteira:
 
 class TestExcluirCarteira:
     def test_deletes_portfolio(self, client):
+        client._mock_supabase.set_table_data("carteiras", [{"id": "cart-001", "org_id": "test-org-123"}])
         response = client.delete("/api/carteiras/cart-001")
         assert response.status_code == 200
         data = response.json()

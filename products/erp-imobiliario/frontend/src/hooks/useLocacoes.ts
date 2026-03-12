@@ -49,6 +49,7 @@ export function useCreateLocacao() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['locacoes'] });
+      queryClient.invalidateQueries({ queryKey: ['imoveis'] });
       toast.success('Contrato de locação criado com sucesso!');
     },
     onError: (error: Error) => {
@@ -85,6 +86,7 @@ export function useDeleteLocacao() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['locacoes'] });
+      queryClient.invalidateQueries({ queryKey: ['imoveis'] });
       toast.success('Contrato excluído com sucesso!');
     },
     onError: (error: Error) => {

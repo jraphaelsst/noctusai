@@ -38,7 +38,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user, get_current_admin
+from app.dependencies import get_current_user, get_current_admin, get_org_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subscriptions", tags=["Subscriptions"])
@@ -78,13 +78,9 @@ async def listar_subscriptions(authorization: Optional[str] = Header(None)):
 async def get_my_subscription(authorization: Optional[str] = Header(None)):
     """Get the current user's organization subscription."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data:
-        raise HTTPException(status_code=404, detail="Perfil não encontrado")
-
-    org_id = profile.data["org_id"]
     result = db.table("subscriptions").select(
         "*, plans(*)"
     ).eq("org_id", org_id).eq("status", "active").execute()
@@ -108,7 +104,7 @@ async def get_org_subscription(org_id: str, authorization: Optional[str] = Heade
 @router.post("")
 async def criar_subscription(body: SubscriptionCreate, authorization: Optional[str] = Header(None)):
     """Create/assign a subscription to an org (admin only)."""
-    await get_current_admin(authorization)
+    user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
     # Verify org exists
@@ -127,6 +123,37 @@ async def criar_subscription(body: SubscriptionCreate, authorization: Optional[s
         raise HTTPException(status_code=500, detail="Erro ao criar assinatura")
 
     logger.info(f"Subscription created: org={body.org_id} plan={body.plan_id}")
+
+    # Audit log, notification, and webhook (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=body.org_id,
+            action="create", resource_type="subscription",
+            resource_id=result.data[0]["id"],
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import notification_service
+        await notification_service.notify_team(
+            org_id=body.org_id,
+            type="subscription_change",
+            title="Assinatura criada",
+            message="Uma nova assinatura foi ativada para sua organização.",
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import webhook_delivery
+        await webhook_delivery.dispatch(
+            org_id=body.org_id,
+            event_type="subscription.created",
+            payload={"subscription_id": result.data[0]["id"], "plan_id": body.plan_id, "status": body.status},
+        )
+    except Exception:
+        pass
+
     return {"data": result.data[0]}
 
 
@@ -148,7 +175,31 @@ async def atualizar_subscription(
         raise HTTPException(status_code=404, detail="Assinatura não encontrada")
 
     logger.info(f"Subscription updated: {subscription_id}")
-    return {"data": result.data[0]}
+
+    # Audit log and webhook (best-effort)
+    updated_record = result.data[0]
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=None, org_id=updated_record.get("org_id"),
+            action="update", resource_type="subscription",
+            resource_id=subscription_id,
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import webhook_delivery
+        org_id_val = updated_record.get("org_id")
+        if org_id_val:
+            await webhook_delivery.dispatch(
+                org_id=org_id_val,
+                event_type="subscription.updated",
+                payload={"subscription_id": subscription_id, "status": updated_record.get("status")},
+            )
+    except Exception:
+        pass
+
+    return {"data": updated_record}
 
 
 @router.delete("/{subscription_id}")

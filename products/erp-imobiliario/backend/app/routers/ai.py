@@ -3,10 +3,11 @@ AI Features Router — property description generation, lead scoring, and price 
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 from app.dependencies import get_current_user, get_user_client
 from app.responses import success_response
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
@@ -36,7 +37,8 @@ class SuggestPriceRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/generate-description")
-async def generate_description(body: GenerateDescriptionRequest, authorization: Optional[str] = Header(None)):
+@limiter.limit("30/minute")
+async def generate_description(request: Request, body: GenerateDescriptionRequest, authorization: Optional[str] = Header(None)):
     """Generate an AI-powered property description."""
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
@@ -64,7 +66,8 @@ async def generate_description(body: GenerateDescriptionRequest, authorization: 
 
 
 @router.post("/lead-score")
-async def lead_score(body: LeadScoreRequest, authorization: Optional[str] = Header(None)):
+@limiter.limit("30/minute")
+async def lead_score(request: Request, body: LeadScoreRequest, authorization: Optional[str] = Header(None)):
     """Score a lead using AI analysis."""
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
@@ -102,7 +105,8 @@ async def lead_score(body: LeadScoreRequest, authorization: Optional[str] = Head
 
 
 @router.post("/suggest-price")
-async def suggest_price(body: SuggestPriceRequest, authorization: Optional[str] = Header(None)):
+@limiter.limit("30/minute")
+async def suggest_price(request: Request, body: SuggestPriceRequest, authorization: Optional[str] = Header(None)):
     """Suggest a price for a property based on comparables."""
     user, token = await get_current_user(authorization)
     db = get_user_client(token)

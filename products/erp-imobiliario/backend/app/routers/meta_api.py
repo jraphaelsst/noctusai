@@ -11,7 +11,8 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, get_admin_client
+from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id
+from app.responses import success_response, paginated_response
 from app.services.meta_api_service import (
     MetaApiConfig,
     sync_leads,
@@ -47,7 +48,7 @@ async def obter_config(authorization: Optional[str] = Header(None)):
     if config and config.get("access_token"):
         config["access_token"] = config["access_token"][:10] + "..."
 
-    return {"status": "success", "data": config}
+    return success_response(config)
 
 
 @router.post("/config")
@@ -58,7 +59,7 @@ async def salvar_config(
     """Save or update Meta API configuration."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
+    org_id = get_org_id(user)
 
     data = {
         "org_id": org_id,
@@ -74,7 +75,7 @@ async def salvar_config(
         .execute()
     )
 
-    return {"status": "success", "data": result.data[0] if result.data else data}
+    return success_response(result.data[0] if result.data else data)
 
 
 # ── Leads Endpoints ──────────────────────────────────────────────────
@@ -98,15 +99,7 @@ async def listar_leads(
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
 
-    return {
-        "status": "success",
-        "data": result.data or [],
-        "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total": result.count or 0,
-        },
-    }
+    return paginated_response(result.data or [], result.count or 0, page, page_size)
 
 
 @router.post("/leads/sync")
@@ -117,7 +110,7 @@ async def sincronizar_leads(
     """Sync leads from Facebook Lead Ads."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
+    org_id = get_org_id(user)
 
     # Get config
     config_result = sb.table("meta_config").select("*").execute()
@@ -160,10 +153,7 @@ async def sincronizar_leads(
         }).execute()
         imported += 1
 
-    return {
-        "status": "success",
-        "data": {"total_fetched": len(leads), "imported": imported},
-    }
+    return success_response({"total_fetched": len(leads), "imported": imported})
 
 
 @router.post("/leads/{lead_id}/importar")
@@ -174,7 +164,7 @@ async def importar_lead_como_cliente(
     """Import a Meta lead as a CRM client."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
+    org_id = get_org_id(user)
 
     # Get lead
     lead_result = (
@@ -209,10 +199,7 @@ async def importar_lead_como_cliente(
             "cliente_id": cliente_id,
         }).eq("id", lead_id).execute()
 
-    return {
-        "status": "success",
-        "data": {"cliente_id": cliente_id, "lead_id": lead_id},
-    }
+    return success_response({"cliente_id": cliente_id, "lead_id": lead_id})
 
 
 # ── Campaigns Endpoints ──────────────────────────────────────────────
@@ -235,15 +222,7 @@ async def listar_campanhas(
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
 
-    return {
-        "status": "success",
-        "data": result.data or [],
-        "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total": result.count or 0,
-        },
-    }
+    return paginated_response(result.data or [], result.count or 0, page, page_size)
 
 
 @router.post("/campanhas/sync")
@@ -251,7 +230,7 @@ async def sincronizar_campanhas(authorization: Optional[str] = Header(None)):
     """Sync campaign data from Facebook Ads Manager."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
+    org_id = get_org_id(user)
 
     config_result = sb.table("meta_config").select("*").execute()
     if not config_result.data:
@@ -277,10 +256,7 @@ async def sincronizar_campanhas(authorization: Optional[str] = Header(None)):
         ).execute()
         synced += 1
 
-    return {
-        "status": "success",
-        "data": {"total_synced": synced},
-    }
+    return success_response({"total_synced": synced})
 
 
 # ── Webhook (unauthenticated — called by Meta) ──────────────────────
@@ -309,10 +285,16 @@ async def meta_webhook_verify(
 
 
 @router.post("/webhook")
-async def meta_webhook_event(request: Request):
+async def meta_webhook_event(
+    request: Request,
+    x_hub_signature_256: Optional[str] = Header(None),
+):
     """Receive Meta Lead Ads webhook events (POST)."""
+    body_bytes = await request.body()
+
     try:
-        payload = await request.json()
+        import json
+        payload = json.loads(body_bytes)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
@@ -327,14 +309,22 @@ async def meta_webhook_event(request: Request):
     page_id = lead_data.get("page_id")
     config_result = (
         admin.table("meta_config")
-        .select("org_id, access_token")
+        .select("org_id, access_token, webhook_verify_token")
         .eq("page_id", page_id)
         .execute()
     )
     if not config_result.data:
         return {"status": "ignored", "reason": "page_not_configured"}
 
-    org_id = config_result.data[0]["org_id"]
+    # Verify HMAC-SHA256 signature when a webhook secret is configured
+    config_row = config_result.data[0]
+    webhook_secret = config_row.get("webhook_verify_token")
+    if webhook_secret:
+        from app.webhook_utils import verify_hmac_sha256
+        if not x_hub_signature_256 or not verify_hmac_sha256(body_bytes, x_hub_signature_256, webhook_secret):
+            raise HTTPException(status_code=401, detail="Assinatura do webhook inválida")
+
+    org_id = config_row["org_id"]
 
     # Store the lead reference (full data fetched on sync); upsert to handle duplicate webhooks
     admin.table("meta_leads").upsert({

@@ -30,11 +30,12 @@ and client-facing endpoints (token-based, no Bearer auth) for client self-servic
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.portal_cliente_service import PortalClienteService
+from app.rate_limit import limiter
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,8 @@ async def atualizar_chamado(
 # ---------------------------------------------------------------------------
 
 @router.get("/{token}/dashboard")
-async def portal_dashboard(token: str):
+@limiter.limit("30/minute")
+async def portal_dashboard(request: Request, token: str):
     """Retorna o dashboard do cliente: contratos, pagamentos recentes e documentos."""
     service = PortalClienteService.__from_token__(token)
     acesso = service.validar_token(token)
@@ -244,7 +246,8 @@ async def portal_dashboard(token: str):
 
 
 @router.get("/{token}/financeiro")
-async def portal_financeiro(token: str):
+@limiter.limit("30/minute")
+async def portal_financeiro(request: Request, token: str):
     """Retorna a visão financeira do cliente (lançamentos vinculados)."""
     service = PortalClienteService.__from_token__(token)
     acesso = service.validar_token(token)
@@ -256,7 +259,8 @@ async def portal_financeiro(token: str):
 
 
 @router.get("/{token}/chamados")
-async def portal_listar_chamados(token: str):
+@limiter.limit("30/minute")
+async def portal_listar_chamados(request: Request, token: str):
     """Retorna os chamados de suporte do cliente."""
     service = PortalClienteService.__from_token__(token)
     acesso = service.validar_token(token)
@@ -269,7 +273,8 @@ async def portal_listar_chamados(token: str):
 
 
 @router.post("/{token}/chamados")
-async def portal_criar_chamado(token: str, body: ChamadoCreate):
+@limiter.limit("30/minute")
+async def portal_criar_chamado(request: Request, token: str, body: ChamadoCreate):
     """Abre um chamado de suporte pelo portal do cliente."""
     service = PortalClienteService.__from_token__(token)
     acesso = service.validar_token(token)

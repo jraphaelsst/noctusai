@@ -90,8 +90,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Ensure noctus_users profile exists via OAuth callback
     try {
-      // Determine provider from URL or default to 'google'
-      const provider = params.get('provider_token') ? 'google' : 'google';
+      // Determine provider from URL params or default to 'google'
+      const provider = params.get('provider') || 'google';
       await api.post('/api/auth/oauth/callback', { provider });
     } catch {
       // Profile creation failed, but token is set — fetchProfile will handle it

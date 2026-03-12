@@ -2,6 +2,7 @@
 import logging
 from typing import Dict, List, Optional
 from datetime import date, datetime
+from fastapi import HTTPException
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ class MetasService:
         return row
 
     async def excluir(self, meta_id: str) -> bool:
+        check = self.db.table("metas").select("id").eq("id", meta_id).eq("org_id", self.org_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=404, detail="Meta não encontrada")
         self.db.table("metas").delete().eq("id", meta_id).eq("org_id", self.org_id).execute()
         return True
 

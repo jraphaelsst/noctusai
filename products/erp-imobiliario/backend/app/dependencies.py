@@ -4,29 +4,17 @@ Handles JWT auth token extraction and Supabase client creation.
 """
 from typing import Optional
 from fastapi import Header, HTTPException
+from noctusai_shared.auth import first_or_none  # noqa: F401
 from app.database import get_supabase_client
 
 
-def first_or_none(result) -> Optional[dict]:
-    """Extract first record from a Supabase list response, or None."""
-    if not result.data:
-        return None
-    if isinstance(result.data, dict):
-        return result.data
-    return result.data[0]
-
-
 async def get_current_user(authorization: Optional[str] = Header(None)):
-    """
-    Extract and validate the JWT from the Authorization header.
-    Returns (user, token) tuple.
-    """
+    """Extract and validate JWT from Authorization header. Returns (user, token)."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token ausente")
-
     token = authorization.replace("Bearer ", "")
     try:
-        admin = get_supabase_client()  # service role to validate
+        admin = get_supabase_client()
         user_response = admin.auth.get_user(token)
         if not user_response or not user_response.user:
             raise HTTPException(status_code=401, detail="Token inválido")
@@ -35,6 +23,22 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
         raise
     except Exception:
         raise HTTPException(status_code=401, detail="Não autenticado")
+
+
+def get_org_id(user, *, required: bool = False) -> Optional[str]:
+    """Extract org_id from user metadata.
+
+    org_id is set in auth.users.raw_user_meta_data during signup (core)
+    and user creation (ERP profiles router). Available on every request
+    without extra DB queries.
+
+    By default returns None if missing (backwards-compatible).
+    Pass required=True in endpoints where org_id is strictly needed.
+    """
+    org_id = (user.user_metadata or {}).get("org_id")
+    if not org_id and required:
+        raise HTTPException(status_code=400, detail="Organização não encontrada no perfil do usuário")
+    return org_id or None
 
 
 def get_user_client(token: str):

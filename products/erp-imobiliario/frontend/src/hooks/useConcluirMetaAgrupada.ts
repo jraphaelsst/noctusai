@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 
 export function useConcluirMetaAgrupada() {
   const queryClient = useQueryClient();
@@ -12,17 +12,10 @@ export function useConcluirMetaAgrupada() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });
-      toast({
-        title: "Sucesso!",
-        description: data.message || "Meta concluída com sucesso.",
-      });
+      toast.success("Sucesso!", { description: data.message || "Meta concluída com sucesso." });
     },
     onError: (error: Error) => {
-      toast({
-        title: "Erro",
-        description: error.message || "Erro ao concluir meta.",
-        variant: "destructive",
-      });
+      toast.error("Erro", { description: error.message || "Erro ao concluir meta." });
     },
   });
 }

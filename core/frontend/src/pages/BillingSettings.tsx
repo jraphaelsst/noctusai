@@ -2,15 +2,48 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
+import { formatCurrency, formatDate } from '../lib/utils';
+
+interface BillingPlan {
+  id: string;
+  name: string;
+  slug: string;
+  price_monthly: number;
+  price_yearly: number;
+  is_active: boolean;
+}
+
+interface BillingSubscription {
+  id: string;
+  status: string;
+  started_at: string | null;
+  expires_at: string | null;
+  canceled_at: string | null;
+  stripe_subscription_id: string | null;
+  stripe_customer_id: string | null;
+  metadata: Record<string, unknown>;
+  plans?: BillingPlan;
+}
 
 interface BillingStatus {
-  plan_name: string;
-  plan_slug: string;
-  status: string;
-  billing_period: string;
-  current_period_end: string | null;
-  cancel_at_period_end: boolean;
-  price: number;
+  has_subscription: boolean;
+  subscription: BillingSubscription | null;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  plan: BillingPlan | null;
+  next_invoice: {
+    amount_due: number;
+    currency: string;
+    period_start: string | null;
+    period_end: string | null;
+    next_payment_attempt: string | null;
+  } | null;
+  payment_method: {
+    brand: string;
+    last4: string;
+    exp_month: number;
+    exp_year: number;
+  } | null;
 }
 
 interface Invoice {
@@ -55,29 +88,14 @@ export function BillingSettings() {
     setPortalLoading(true);
     try {
       const res = await api.post('/api/billing/portal');
-      if (res.portal_url) {
-        window.location.href = res.portal_url;
+      if (res.data?.portal_url) {
+        window.location.href = res.data.portal_url;
       }
     } catch (err: any) {
       alert(err.message || 'Erro ao abrir portal de pagamento');
     } finally {
       setPortalLoading(false);
     }
-  }
-
-  function formatDate(dateStr: string | null): string {
-    if (!dateStr) return '--';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-  }
-
-  function formatCurrency(value: number): string {
-    if (value === 0) return 'Grátis';
-    return `R$ ${value.toFixed(2).replace('.', ',')}`;
   }
 
   function getStatusBadgeClass(status: string): string {
@@ -171,10 +189,10 @@ export function BillingSettings() {
         <div className="billing-plan-card">
           <div className="billing-plan-info">
             <div className="billing-plan-top">
-              <h3>{billing?.plan_name || 'Sem plano'}</h3>
-              {billing && (
-                <span className={`badge ${getStatusBadgeClass(billing.status)}`}>
-                  {getStatusLabel(billing.status)}
+              <h3>{billing?.plan?.name || 'Sem plano'}</h3>
+              {billing?.subscription && (
+                <span className={`badge ${getStatusBadgeClass(billing.subscription.status)}`}>
+                  {getStatusLabel(billing.subscription.status)}
                 </span>
               )}
             </div>
@@ -183,34 +201,34 @@ export function BillingSettings() {
                 <div className="billing-detail">
                   <span className="billing-detail-label">Valor</span>
                   <span className="billing-detail-value">
-                    {formatCurrency(billing.price)}
-                    {billing.price > 0 && (
-                      <span className="billing-detail-period">
-                        /{billing.billing_period === 'monthly' ? 'mês' : 'ano'}
-                      </span>
+                    {formatCurrency(billing.plan?.price_monthly ?? 0)}
+                    {(billing.plan?.price_monthly ?? 0) > 0 && (
+                      <span className="billing-detail-period">/mes</span>
                     )}
                   </span>
                 </div>
                 <div className="billing-detail">
-                  <span className="billing-detail-label">Próxima cobrança</span>
+                  <span className="billing-detail-label">Proxima cobranca</span>
                   <span className="billing-detail-value">
-                    {billing.cancel_at_period_end
-                      ? 'Cancela em ' + formatDate(billing.current_period_end)
-                      : formatDate(billing.current_period_end)
+                    {billing.subscription?.metadata?.cancel_at_period_end
+                      ? 'Cancela em ' + formatDate(billing.next_invoice?.next_payment_attempt)
+                      : formatDate(billing.next_invoice?.next_payment_attempt)
                     }
                   </span>
                 </div>
-                <div className="billing-detail">
-                  <span className="billing-detail-label">Período</span>
-                  <span className="billing-detail-value">
-                    {billing.billing_period === 'monthly' ? 'Mensal' : 'Anual'}
-                  </span>
-                </div>
+                {billing.payment_method && (
+                  <div className="billing-detail">
+                    <span className="billing-detail-label">Pagamento</span>
+                    <span className="billing-detail-value">
+                      {billing.payment_method.brand} **** {billing.payment_method.last4}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
-            {billing?.cancel_at_period_end && (
+            {billing?.subscription?.metadata?.cancel_at_period_end && (
               <div className="billing-cancel-notice">
-                Seu plano será cancelado ao final do período atual.
+                Seu plano sera cancelado ao final do periodo atual.
               </div>
             )}
           </div>

@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import httpx
 
-from app.config import settings
+from app.services.credential_resolver import resolve_credential
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +18,13 @@ MODEL = "gpt-4o-mini"
 TIMEOUT = 30.0
 
 
-def _get_api_key() -> str:
-    """Get OpenAI API key or raise."""
-    key = settings.openai_api_key
+def _get_api_key(org_id: Optional[str] = None) -> str:
+    """Resolve OpenAI API key via org_settings → platform_settings → env."""
+    key = resolve_credential("openai_api_key", org_id)
     if not key:
         raise ValueError(
             "Chave da API OpenAI não configurada. "
-            "Defina OPENAI_API_KEY no arquivo .env."
+            "Defina OPENAI_API_KEY no .env ou configure nas configurações da organização."
         )
     return key
 

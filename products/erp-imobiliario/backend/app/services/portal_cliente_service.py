@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 class PortalClienteService:
     """Service for client portal business logic."""
 
-    def __init__(self, db_client, user_id: Optional[str] = None):
+    def __init__(self, db_client, user_id: Optional[str] = None, org_id: Optional[str] = None):
         self.db = db_client
         self.user_id = user_id
+        self.org_id = org_id
 
     @classmethod
     def __from_token__(cls, token: str) -> "PortalClienteService":
@@ -78,6 +79,9 @@ class PortalClienteService:
                     detail="Token de acesso expirado",
                 )
 
+        # Store org_id for scoping subsequent queries
+        self.org_id = acesso.get("org_id")
+
         # Update last access timestamp
         try:
             self.db.table("portal_acessos").update(
@@ -102,19 +106,28 @@ class PortalClienteService:
         - documentos: shared documents for this client
         """
         # Contracts
-        contratos_result = self.db.table("contratos").select("*").eq(
+        contratos_q = self.db.table("contratos").select("*").eq(
             "cliente_id", cliente_id
-        ).order("created_at", desc=True).limit(20).execute()
+        )
+        if self.org_id:
+            contratos_q = contratos_q.eq("org_id", self.org_id)
+        contratos_result = contratos_q.order("created_at", desc=True).limit(20).execute()
 
         # Recent financial entries
-        financeiro_result = self.db.table("lancamentos").select("*").eq(
+        financeiro_q = self.db.table("lancamentos").select("*").eq(
             "cliente_id", cliente_id
-        ).order("data_vencimento", desc=True).limit(10).execute()
+        )
+        if self.org_id:
+            financeiro_q = financeiro_q.eq("org_id", self.org_id)
+        financeiro_result = financeiro_q.order("data_vencimento", desc=True).limit(10).execute()
 
         # Shared documents
-        documentos_result = self.db.table("documentos").select("*").eq(
+        documentos_q = self.db.table("documentos").select("*").eq(
             "cliente_id", cliente_id
-        ).order("created_at", desc=True).limit(20).execute()
+        )
+        if self.org_id:
+            documentos_q = documentos_q.eq("org_id", self.org_id)
+        documentos_result = documentos_q.order("created_at", desc=True).limit(20).execute()
 
         return {
             "contratos": contratos_result.data or [],
@@ -128,9 +141,12 @@ class PortalClienteService:
 
         Returns list of lancamentos ordered by due date descending.
         """
-        result = self.db.table("lancamentos").select("*").eq(
+        query = self.db.table("lancamentos").select("*").eq(
             "cliente_id", cliente_id
-        ).order("data_vencimento", desc=True).execute()
+        )
+        if self.org_id:
+            query = query.eq("org_id", self.org_id)
+        result = query.order("data_vencimento", desc=True).execute()
 
         return result.data or []
 

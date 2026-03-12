@@ -55,13 +55,15 @@ import {
   TemplateCreateData,
   DocumentTemplate,
 } from '@/types/documentos';
+import { CardGridSkeleton } from '@/components/ui/page-skeleton';
+import { DOCUMENTO_TIPO_CONFIG } from '@/lib/constants';
 
-const TIPO_CONFIG: Record<TipoDocumento, { label: string; icon: typeof FileText; className: string }> = {
-  contrato: { label: 'Contrato', icon: FileText, className: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
-  procuracao: { label: 'Procuracao', icon: FileCode, className: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' },
-  laudo: { label: 'Laudo', icon: File, className: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' },
-  certidao: { label: 'Certidao', icon: FileText, className: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' },
-  outro: { label: 'Outro', icon: FolderOpen, className: 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200' },
+const TIPO_DISPLAY: Record<TipoDocumento, { icon: typeof FileText; className: string }> = {
+  contrato: { icon: FileText, className: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
+  procuracao: { icon: FileCode, className: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' },
+  laudo: { icon: File, className: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' },
+  certidao: { icon: FileText, className: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' },
+  outro: { icon: FolderOpen, className: 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200' },
 };
 
 const emptyDocForm: DocumentoCreateData = {
@@ -206,11 +208,7 @@ export default function Documentos() {
           </div>
 
           {isLoadingDocs ? (
-            <Card>
-              <CardContent className="py-8 text-center text-muted-foreground">
-                Carregando documentos...
-              </CardContent>
-            </Card>
+            <CardGridSkeleton count={6} />
           ) : documentos.length === 0 ? (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
@@ -220,8 +218,9 @@ export default function Documentos() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {documentos.map((doc) => {
-                const tipoConfig = TIPO_CONFIG[doc.tipo];
-                const TipoIcon = tipoConfig.icon;
+                const tipoDisplay = TIPO_DISPLAY[doc.tipo];
+                const tipoLabel = DOCUMENTO_TIPO_CONFIG[doc.tipo]?.label || doc.tipo;
+                const TipoIcon = tipoDisplay.icon;
 
                 return (
                   <Card key={doc.id} className="hover:shadow-md transition-shadow">
@@ -234,8 +233,8 @@ export default function Documentos() {
                           <div className="min-w-0 flex-1">
                             <h3 className="font-semibold truncate">{doc.nome}</h3>
                             <div className="flex flex-wrap gap-1 mt-1">
-                              <Badge className={tipoConfig.className}>
-                                {tipoConfig.label}
+                              <Badge className={tipoDisplay.className}>
+                                {tipoLabel}
                               </Badge>
                               {doc.template_id && (
                                 <Badge variant="outline">Gerado</Badge>
@@ -288,11 +287,7 @@ export default function Documentos() {
           </div>
 
           {isLoadingTemplates ? (
-            <Card>
-              <CardContent className="py-8 text-center text-muted-foreground">
-                Carregando templates...
-              </CardContent>
-            </Card>
+            <CardGridSkeleton count={4} />
           ) : templates.length === 0 ? (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
@@ -302,15 +297,16 @@ export default function Documentos() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {templates.map((template) => {
-                const tipoConfig = TIPO_CONFIG[template.tipo];
+                const tipoDisplay = TIPO_DISPLAY[template.tipo];
+                const tipoLabel = DOCUMENTO_TIPO_CONFIG[template.tipo]?.label || template.tipo;
 
                 return (
                   <Card key={template.id} className="hover:shadow-md transition-shadow">
                     <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-base">{template.nome}</CardTitle>
-                        <Badge className={tipoConfig.className}>
-                          {tipoConfig.label}
+                        <Badge className={tipoDisplay.className}>
+                          {tipoLabel}
                         </Badge>
                       </div>
                     </CardHeader>
@@ -544,8 +540,8 @@ export default function Documentos() {
             {selectedTemplate && (
               <div className="text-sm">
                 <p className="font-medium">Template: {selectedTemplate.nome}</p>
-                <Badge className={TIPO_CONFIG[selectedTemplate.tipo].className}>
-                  {TIPO_CONFIG[selectedTemplate.tipo].label}
+                <Badge className={TIPO_DISPLAY[selectedTemplate.tipo].className}>
+                  {DOCUMENTO_TIPO_CONFIG[selectedTemplate.tipo]?.label || selectedTemplate.tipo}
                 </Badge>
               </div>
             )}

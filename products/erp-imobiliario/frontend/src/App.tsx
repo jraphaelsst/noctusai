@@ -1,8 +1,7 @@
 import { useState, lazy, Suspense } from "react";
-import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Layout } from "./components/layout/Layout";
 import { AuthProvider } from "./components/auth/AuthProvider";
@@ -10,7 +9,7 @@ import { LoginForm } from "./components/auth/LoginForm";
 import { useAuthStore } from "./store/authStore";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { toast } from "sonner";
+import { createQueryClient } from "@noctusai/shared/query-client";
 
 // Lazy load das páginas para melhor performance inicial
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -24,6 +23,7 @@ const ClienteDetalhes = lazy(() => import("./pages/ClienteDetalhes"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const LogAcoes = lazy(() => import("./pages/LogAcoes"));
 const Imoveis = lazy(() => import("./pages/Imoveis"));
+const ImovelDetalhes = lazy(() => import("./pages/ImovelDetalhes"));
 const Permutas = lazy(() => import("./pages/Permutas"));
 const Negociacoes = lazy(() => import("./pages/Negociacoes"));
 const Condominios = lazy(() => import("./pages/Condominios"));
@@ -47,6 +47,11 @@ const Campo = lazy(() => import("./pages/Campo"));
 const AnaliseCredito = lazy(() => import("./pages/AnaliseCredito"));
 const Filiais = lazy(() => import("./pages/Filiais"));
 const Contratos = lazy(() => import("./pages/Contratos"));
+const ContratoDetalhes = lazy(() => import("./pages/ContratoDetalhes"));
+const PropostaDetalhes = lazy(() => import("./pages/PropostaDetalhes"));
+const LocacaoDetalhes = lazy(() => import("./pages/LocacaoDetalhes"));
+const VistoriaDetalhes = lazy(() => import("./pages/VistoriaDetalhes"));
+const PermutaDetalhes = lazy(() => import("./pages/PermutaDetalhes"));
 const Assinaturas = lazy(() => import("./pages/Assinaturas"));
 const PortalCliente = lazy(() => import("./pages/PortalCliente"));
 const Manutencao = lazy(() => import("./pages/Manutencao"));
@@ -60,23 +65,9 @@ const Configuracoes = lazy(() => import("./pages/Configuracoes"));
 const MetaAds = lazy(() => import("./pages/MetaAds"));
 const WhatsAppInbox = lazy(() => import("./pages/WhatsAppInbox"));
 const NotificacoesPage = lazy(() => import("./pages/Notificacoes"));
+const Certidoes = lazy(() => import("./pages/Certidoes"));
 
-// QueryClient com configurações otimizadas
-const queryClient = new QueryClient({
-  queryCache: new QueryCache({
-    onError: (error) => {
-      toast.error("Erro ao carregar dados", { description: error.message });
-    },
-  }),
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutos - dados considerados "fresh"
-      gcTime: 1000 * 60 * 10, // 10 minutos - tempo de cache
-      refetchOnWindowFocus: false, // Evita refetches desnecessários
-      retry: 1, // Reduz tentativas de retry
-    },
-  },
-});
+const queryClient = createQueryClient();
 
 const PageSkeleton = () => (
   <div className="container mx-auto p-6 space-y-4">
@@ -101,8 +92,10 @@ function AuthenticatedRoutes() {
           <Route path="/clientes" element={<Clientes />} />
           <Route path="/clientes/:id" element={<ClienteDetalhes />} />
           <Route path="/imoveis" element={<Imoveis />} />
+          <Route path="/imoveis/:id" element={<ImovelDetalhes />} />
           <Route path="/condominios" element={<Condominios />} />
           <Route path="/permutas" element={<Permutas />} />
+          <Route path="/permutas/:id" element={<PermutaDetalhes />} />
           <Route path="/negociacoes" element={<Negociacoes />} />
           <Route path="/metas" element={<Metas />} />
           <Route path="/usuarios" element={<Usuarios />} />
@@ -111,9 +104,12 @@ function AuthenticatedRoutes() {
           <Route path="/portais" element={<Portais />} />
           <Route path="/financeiro" element={<Financeiro />} />
           <Route path="/propostas" element={<Propostas />} />
+          <Route path="/propostas/:id" element={<PropostaDetalhes />} />
           <Route path="/documentos" element={<Documentos />} />
           <Route path="/locacoes" element={<Locacoes />} />
+          <Route path="/locacoes/:id" element={<LocacaoDetalhes />} />
           <Route path="/vistorias" element={<Vistorias />} />
+          <Route path="/vistorias/:id" element={<VistoriaDetalhes />} />
           <Route path="/relatorios" element={<Relatorios />} />
           <Route path="/distribuicao" element={<Distribuicao />} />
           <Route path="/marketing" element={<Marketing />} />
@@ -127,6 +123,7 @@ function AuthenticatedRoutes() {
           <Route path="/analise-credito" element={<AnaliseCredito />} />
           <Route path="/filiais" element={<Filiais />} />
           <Route path="/contratos" element={<Contratos />} />
+          <Route path="/contratos/:id" element={<ContratoDetalhes />} />
           <Route path="/assinaturas" element={<Assinaturas />} />
           <Route path="/portal-cliente" element={<PortalCliente />} />
           <Route path="/manutencao" element={<Manutencao />} />
@@ -140,6 +137,7 @@ function AuthenticatedRoutes() {
           <Route path="/meta-ads" element={<MetaAds />} />
           <Route path="/whatsapp" element={<WhatsAppInbox />} />
           <Route path="/notificacoes" element={<NotificacoesPage />} />
+          <Route path="/certidoes" element={<Certidoes />} />
           <Route path="/log-acoes" element={<LogAcoes />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -149,8 +147,12 @@ function AuthenticatedRoutes() {
 }
 
 function AppContent() {
-  const { user } = useAuthStore();
+  const { user, isInitialized } = useAuthStore();
   const [isSignUp, setIsSignUp] = useState(false);
+
+  if (!isInitialized) {
+    return <PageSkeleton />;
+  }
 
   if (!user) {
     return <LoginForm onToggleMode={() => setIsSignUp(!isSignUp)} isSignUp={isSignUp} />;
@@ -175,7 +177,6 @@ const App = () => (
                 </Routes>
               </Suspense>
             </ErrorBoundary>
-            <Toaster />
             <Sonner />
           </AuthProvider>
         </BrowserRouter>

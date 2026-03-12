@@ -325,6 +325,39 @@ def gerar_matches_para_permuta(permuta: dict, imoveis: list[dict], score_minimo:
     return matches
 
 
+def upsert_matches(matches: list[dict], db) -> None:
+    """
+    Persist matches to the database in a single bulk upsert.
+
+    Args:
+        matches: List of match dicts from gerar_matches_* functions.
+        db: Supabase client.
+    """
+    if not matches:
+        return
+
+    all_upsert_data = []
+    for match in matches:
+        upsert_data = {
+            "ativo_origem_id": match["ativo_origem_id"],
+            "ativo_destino_id": match["ativo_destino_id"],
+            "score": match["score"],
+            "justificativa": match["justificativa"],
+            "detalhes": match["detalhes"],
+            "status": "pendente",
+        }
+        if "score_breakdown" in match:
+            upsert_data["score_breakdown"] = match["score_breakdown"]
+        all_upsert_data.append(upsert_data)
+
+    db.table("matches").upsert(
+        all_upsert_data,
+        on_conflict="ativo_origem_id,ativo_destino_id",
+    ).execute()
+
+    logger.info(f"Bulk upserted {len(all_upsert_data)} matches")
+
+
 async def gerar_matches_com_embeddings(
     source_ativo: dict,
     db,

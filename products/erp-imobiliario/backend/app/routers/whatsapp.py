@@ -10,15 +10,17 @@ Supports two providers:
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import success_response, paginated_response, calculate_pagination
 from app.config import settings
+from app.rate_limit import limiter
 from app.services.whatsapp_service import (
     WhatsAppConfig,
     send_message,
     send_property_card,
+    send_via_waha,
     get_message_history,
     get_whatsapp_config_from_env,
 )
@@ -75,8 +77,8 @@ def _get_config_from_db(db) -> tuple:
                         phone_number_id=phone_id,
                         api_version=cfg.get("meta_api_version", "v18.0"),
                     ), "meta"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Erro ao carregar config WhatsApp do banco: {e}")
     # Fallback to env vars
     return get_whatsapp_config_from_env(), "meta"
 
@@ -108,7 +110,9 @@ async def whatsapp_config_status(
 
 
 @router.post("/send")
+@limiter.limit("30/minute")
 async def enviar_mensagem(
+    request: Request,
     body: SendMessageRequest,
     authorization: Optional[str] = Header(None),
 ):
@@ -124,7 +128,7 @@ async def enviar_mensagem(
 
     # Send the message (WAHA uses different send path)
     if provider == "waha":
-        result = await _send_via_waha(db, body.phone, body.message)
+        result = await send_via_waha(db, body.phone, body.message)
     else:
         result = await send_message(body.phone, body.message, config)
 
@@ -162,7 +166,9 @@ async def enviar_mensagem(
 
 
 @router.post("/send-property")
+@limiter.limit("30/minute")
 async def enviar_imovel(
+    request: Request,
     body: SendPropertyRequest,
     authorization: Optional[str] = Header(None),
 ):
@@ -228,16 +234,22 @@ async def enviar_imovel(
 
 @router.get("/conversations")
 async def listar_conversas(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
     authorization: Optional[str] = Header(None),
 ):
     """
     List all conversations grouped by phone number.
 
-    Returns a list of conversations with last message preview,
+    Returns a paginated list of conversations with last message preview,
     timestamp, and unread count.
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+
+    validated_page, validated_page_size, offset = calculate_pagination(
+        page, page_size, settings.max_page_size
+    )
 
     result = db.table("whatsapp_messages").select("*").order(
         "created_at", desc=True
@@ -266,25 +278,42 @@ async def listar_conversas(
         reverse=True,
     )
 
-    return success_response(conversations)
+    # Paginate the grouped conversations
+    total = len(conversations)
+    paginated = conversations[offset:offset + validated_page_size]
+
+    return paginated_response(paginated, total, validated_page, validated_page_size)
 
 
 @router.get("/messages")
 async def listar_mensagens(
     phone: str = Query(..., description="Phone number to fetch messages for"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
     authorization: Optional[str] = Header(None),
 ):
     """
-    Retrieve all messages for a specific phone number, ordered chronologically.
+    Retrieve messages for a specific phone number, ordered chronologically, with pagination.
     """
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    result = db.table("whatsapp_messages").select("*").eq(
-        "phone", phone
-    ).order("created_at", desc=False).execute()
+    validated_page, validated_page_size, offset = calculate_pagination(
+        page, page_size, settings.max_page_size
+    )
 
-    return success_response(result.data or [])
+    query = (
+        db.table("whatsapp_messages")
+        .select("*", count="exact")
+        .eq("phone", phone)
+        .order("created_at", desc=False)
+        .range(offset, offset + validated_page_size - 1)
+    )
+    result = query.execute()
+
+    total = result.count if result.count is not None else len(result.data or [])
+
+    return paginated_response(result.data or [], total, validated_page, validated_page_size)
 
 
 @router.get("/history/{phone}")
@@ -319,62 +348,3 @@ async def historico_mensagens(
         validated_page,
         validated_page_size,
     )
-
-
-# ---------- WAHA Provider Helpers ----------
-
-async def _send_via_waha(db, phone: str, message: str) -> dict:
-    """Send a message through the WAHA API."""
-    config_result = db.table("whatsapp_config").select("*").eq("provider", "waha").eq("is_active", True).execute()
-    if not config_result.data:
-        return {"message_id": None, "status": "failed", "phone": phone, "error": "WAHA not configured"}
-
-    cfg = config_result.data[0]
-    waha_url = cfg.get("waha_api_url")
-    waha_key = cfg.get("waha_api_key")
-    session = cfg.get("waha_session_name", "default")
-
-    if not waha_url:
-        return {"message_id": f"dry_run_{phone}", "status": "sent", "phone": phone, "dry_run": True}
-
-    try:
-        import httpx
-
-        headers = {"Content-Type": "application/json"}
-        if waha_key:
-            headers["Authorization"] = f"Bearer {waha_key}"
-
-        # Normalize phone for WAHA format
-        digits = "".join(c for c in phone if c.isdigit())
-        if len(digits) <= 11:
-            digits = "55" + digits
-        chat_id = f"{digits}@c.us"
-
-        payload = {"chatId": chat_id, "text": message, "session": session}
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{waha_url.rstrip('/')}/api/sendText",
-                headers=headers,
-                json=payload,
-                timeout=30.0,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    "message_id": data.get("id", ""),
-                    "status": "sent",
-                    "phone": digits,
-                }
-            else:
-                return {
-                    "message_id": None,
-                    "status": "failed",
-                    "phone": digits,
-                    "error": response.text,
-                }
-    except ImportError:
-        return {"message_id": f"no_httpx_{phone}", "status": "sent", "phone": phone, "dry_run": True}
-    except Exception as e:
-        logger.error(f"WAHA send error: {e}")
-        return {"message_id": None, "status": "failed", "phone": phone, "error": str(e)}

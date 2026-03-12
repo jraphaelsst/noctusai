@@ -6,6 +6,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { TIPO_CONTA_LABELS, TIPO_TRANSACAO_LABELS } from "@/lib/constants";
 import type { Conta } from "@/types";
 import Modal from "@/components/Modal";
+import Breadcrumbs from "@/components/Breadcrumbs";
 import {
   ArrowLeft, Pencil, Trash2,
   Wallet, Building2, CreditCard, PiggyBank, Landmark, BanknoteIcon,
@@ -93,11 +94,11 @@ export default function ContaDetalhes() {
 
   return (
     <div className="space-y-6">
-      {/* Back Button */}
-      <button onClick={() => navigate("/contas")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition">
-        <ArrowLeft className="w-4 h-4" />
-        Voltar para Contas
-      </button>
+      <Breadcrumbs items={[
+        { label: "Dashboard", href: "/" },
+        { label: "Contas", href: "/contas" },
+        { label: conta.nome },
+      ]} />
 
       {/* Header */}
       <div className="flex items-start justify-between">

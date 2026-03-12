@@ -13,6 +13,8 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client
+from app.responses import success_response
+from app.webhook_utils import verify_hmac_sha256
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp-webhook"])
@@ -33,7 +35,7 @@ class WAHASessionRequest(BaseModel):
 # ── Webhook Endpoint (unauthenticated — called by WAHA server) ──────
 
 @router.post("/webhook")
-async def waha_webhook(event: WAHAMessageEvent, request: Request):
+async def waha_webhook(event: WAHAMessageEvent, request: Request, x_hub_signature: Optional[str] = Header(None)):
     """
     Receive webhook events from WAHA.
 
@@ -51,7 +53,7 @@ async def waha_webhook(event: WAHAMessageEvent, request: Request):
     # Find org by WAHA session
     config_result = (
         admin.table("whatsapp_config")
-        .select("org_id")
+        .select("org_id, webhook_secret")
         .eq("waha_session_name", event.session)
         .eq("provider", "waha")
         .eq("is_active", True)
@@ -61,7 +63,15 @@ async def waha_webhook(event: WAHAMessageEvent, request: Request):
         logger.warning(f"No config found for WAHA session: {event.session}")
         return {"status": "ignored", "reason": "session_not_configured"}
 
-    org_id = config_result.data[0]["org_id"]
+    config_row = config_result.data[0]
+    org_id = config_row["org_id"]
+
+    # Verify HMAC signature when webhook_secret is configured
+    webhook_secret = config_row.get("webhook_secret")
+    if webhook_secret:
+        body_bytes = await request.body()
+        if not x_hub_signature or not verify_hmac_sha256(body_bytes, x_hub_signature, webhook_secret):
+            raise HTTPException(status_code=401, detail="Assinatura do webhook inválida")
 
     if event.event == "message":
         return await _handle_incoming_message(admin, org_id, event.payload)
@@ -147,7 +157,7 @@ async def listar_sessions(authorization: Optional[str] = Header(None)):
         .execute()
     )
 
-    return {"status": "success", "data": result.data or []}
+    return success_response(result.data or [])
 
 
 @router.post("/sessions/start")
@@ -196,17 +206,15 @@ async def iniciar_session(
                 headers=headers,
                 timeout=30.0,
             )
-            return {
-                "status": "success",
-                "data": response.json() if response.status_code == 200 else None,
+            return success_response({
+                "session": response.json() if response.status_code == 200 else None,
                 "waha_status": response.status_code,
-            }
+            })
     except ImportError:
-        return {
-            "status": "success",
-            "data": {"session": body.session_name, "status": "dry_run"},
-            "message": "httpx não instalado — modo simulação",
-        }
+        return success_response({
+            "session": {"session": body.session_name, "status": "dry_run"},
+            "waha_status": None,
+        })
     except Exception as e:
         logger.error(f"WAHA session start error: {e}")
         raise HTTPException(status_code=502, detail=f"Erro ao conectar WAHA: {str(e)}")

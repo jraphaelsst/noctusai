@@ -140,6 +140,7 @@ class TestAtualizarConta:
 
 class TestExcluirConta:
     def test_deletes_account(self, client):
+        client._mock_supabase.set_table_data("contas", [{"id": "conta-001", "org_id": "test-org-123"}])
         response = client.delete("/api/contas/conta-001")
         assert response.status_code == 200
         data = response.json()

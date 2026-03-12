@@ -72,6 +72,7 @@ export function useWhatsAppHistory(phone?: string) {
       };
     },
     enabled: !!user && !!phone,
+    staleTime: 30 * 1000,
   });
 }
 
@@ -108,13 +109,13 @@ export function useSendWhatsAppProperty() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['whatsapp-history'] });
       if (data.dry_run) {
-        toast.success('Imovel enviado em modo teste');
+        toast.success('Imóvel enviado em modo teste');
       } else {
-        toast.success('Imovel enviado via WhatsApp!');
+        toast.success('Imóvel enviado via WhatsApp!');
       }
     },
     onError: (error: Error) => {
-      toast.error('Erro ao enviar imovel', { description: error.message });
+      toast.error('Erro ao enviar imóvel', { description: error.message });
     },
   });
 }

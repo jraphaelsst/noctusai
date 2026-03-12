@@ -140,10 +140,10 @@ export function useConciliar() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['conciliacao'] });
-      toast.success('Conciliacao realizada!');
+      toast.success('Conciliação realizada!');
     },
     onError: (error: Error) => {
-      toast.error('Erro ao conciliar movimentacao', { description: error.message });
+      toast.error('Erro ao conciliar movimentação', { description: error.message });
     },
   });
 }

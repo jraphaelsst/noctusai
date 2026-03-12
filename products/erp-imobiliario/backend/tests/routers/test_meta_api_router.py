@@ -11,7 +11,7 @@ class TestMetaConfig:
         resp = client.get("/api/meta/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "success"
+        assert "data" in data
 
     def test_get_config_exists(self, client):
         client._mock_supabase.set_table_data("meta_config", [

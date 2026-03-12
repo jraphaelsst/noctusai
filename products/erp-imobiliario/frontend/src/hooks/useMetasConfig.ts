@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { TipoMeta, CategoriaMeta } from "@/types";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
+import { useAuthStore } from "@/store/authStore";
 
 export interface MetaConfig {
   id: string;
@@ -23,12 +24,16 @@ export interface MetaConfigForm {
 }
 
 export function useMetasConfig() {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["metas-config"],
     queryFn: async () => {
       const result = await api.get("/api/metas/config");
       return (result.data || []) as MetaConfig[];
     },
+    enabled: !!user,
+    staleTime: 10 * 60 * 1000,
   });
 }
 
@@ -55,17 +60,10 @@ export function useUpsertMetaConfig() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["metas-config"] });
       queryClient.invalidateQueries({ queryKey: ["metas"] });
-      toast({
-        title: "Sucesso!",
-        description: "Configurações salvas e metas criadas com sucesso.",
-      });
+      toast.success("Sucesso!", { description: "Configurações salvas e metas criadas com sucesso." });
     },
-    onError: (error: any) => {
-      toast({
-        title: "Erro",
-        description: error.message || "Erro ao salvar configuração.",
-        variant: "destructive",
-      });
+    onError: (error: Error) => {
+      toast.error("Erro", { description: error.message || "Erro ao salvar configuração." });
     },
   });
 }
@@ -79,17 +77,10 @@ export function useDeleteMetaConfig() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["metas-config"] });
-      toast({
-        title: "Sucesso!",
-        description: "Configuração removida com sucesso.",
-      });
+      toast.success("Sucesso!", { description: "Configuração removida com sucesso." });
     },
-    onError: (error: any) => {
-      toast({
-        title: "Erro",
-        description: error.message || "Erro ao remover configuração.",
-        variant: "destructive",
-      });
+    onError: (error: Error) => {
+      toast.error("Erro", { description: error.message || "Erro ao remover configuração." });
     },
   });
 }

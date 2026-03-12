@@ -48,16 +48,19 @@ def ranking_corretores(
     if not profiles:
         return []
 
-    # Fetch clients
+    # Date cutoff for the reporting period
+    cutoff = (date.today() - timedelta(days=periodo_dias)).isoformat()
+
+    # Fetch clients created within the period, selecting only needed columns
     clientes_res = supabase.table("clientes").select(
-        "id, usuario_id, etapa_atual, valor_estimado, created_at"
-    ).execute()
+        "usuario_id, etapa_atual, valor_estimado"
+    ).gte("created_at", cutoff).execute()
     clientes = clientes_res.data or []
 
-    # Fetch activities count per user
+    # Fetch activities within the period, selecting only needed columns
     atividades_res = supabase.table("atividades").select(
-        "id, usuario_id, created_at"
-    ).execute()
+        "usuario_id"
+    ).gte("created_at", cutoff).execute()
     atividades = atividades_res.data or []
 
     # Aggregate per agent
@@ -153,16 +156,19 @@ def atividade_mensal(
     """
     today = date.today()
 
-    # Fetch all atividades
+    # Date cutoff: go back enough days to cover the requested months
+    cutoff = (today - timedelta(days=meses * 31)).isoformat()
+
+    # Fetch atividades within the period, selecting only needed columns
     atividades_res = supabase.table("atividades").select(
-        "id, created_at"
-    ).execute()
+        "created_at"
+    ).gte("created_at", cutoff).execute()
     atividades = atividades_res.data or []
 
-    # Fetch clients
+    # Fetch clients within the period, selecting only needed columns
     clientes_res = supabase.table("clientes").select(
-        "id, etapa_atual, created_at"
-    ).execute()
+        "etapa_atual, created_at"
+    ).gte("created_at", cutoff).execute()
     clientes = clientes_res.data or []
 
     # Build month buckets

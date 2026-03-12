@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -246,9 +247,7 @@ export default function Assinaturas() {
       <Card>
         <CardContent className="pt-6">
           {isLoading ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Carregando assinaturas...
-            </div>
+            <TableSkeleton rows={4} />
           ) : assinaturas.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               Nenhuma assinatura encontrada

@@ -19,6 +19,8 @@ export function useOrcamentos() {
 }
 
 export function useOrcamento(id?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["orcamento", id],
     queryFn: async () => {
@@ -26,12 +28,14 @@ export function useOrcamento(id?: string) {
       const result = await api.get(`/api/orcamentos/${id}`);
       return result.data as Orcamento;
     },
-    enabled: !!id,
+    enabled: !!user && !!id,
     staleTime: 5 * 60 * 1000,
   });
 }
 
 export function useOrcamentoProgresso(id?: string, periodoMes?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["orcamento", id, "progresso", periodoMes],
     queryFn: async () => {
@@ -41,7 +45,7 @@ export function useOrcamentoProgresso(id?: string, periodoMes?: string) {
       const result = await api.get(`/api/orcamentos/${id}/progresso`, params);
       return result.data;
     },
-    enabled: !!id,
+    enabled: !!user && !!id,
     staleTime: 2 * 60 * 1000,
   });
 }
@@ -98,6 +102,65 @@ export function useDeleteOrcamento() {
     },
     onError: (error: Error) => {
       toast.error("Erro ao excluir orcamento", { description: error.message });
+    },
+  });
+}
+
+export function useCreateOrcamentoItem() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ orcamentoId, ...data }: { orcamentoId: string; categoria_id: string; valor_planejado: number; periodo_mes: string }) => {
+      const result = await api.post(`/api/orcamentos/${orcamentoId}/itens`, data);
+      return result.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["orcamento"] });
+      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Item adicionado com sucesso!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao adicionar item", { description: error.message });
+    },
+  });
+}
+
+export function useUpdateOrcamentoItem() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ itemId, ...data }: { itemId: string; valor_planejado?: number }) => {
+      const result = await api.patch(`/api/orcamentos/itens/${itemId}`, data);
+      return result.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["orcamento"] });
+      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Item atualizado com sucesso!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar item", { description: error.message });
+    },
+  });
+}
+
+export function useDeleteOrcamentoItem() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (itemId: string) => {
+      await api.delete(`/api/orcamentos/itens/${itemId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["orcamento"] });
+      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Item removido com sucesso!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao remover item", { description: error.message });
     },
   });
 }

@@ -28,13 +28,6 @@ class TestListLicenses:
         data = resp.json()["data"]
         assert isinstance(data, list)
 
-    def test_list_licenses_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.get("/api/licenses")
-        assert resp.status_code == 404
-
     def test_list_licenses_empty(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})

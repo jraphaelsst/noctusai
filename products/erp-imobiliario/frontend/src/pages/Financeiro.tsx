@@ -1,4 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -46,7 +49,10 @@ import {
   Pencil,
   Trash2,
   BarChart3,
+  Receipt,
 } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
+import { MetricsTableSkeleton } from '@/components/ui/page-skeleton';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import {
   useFinanceiro,
@@ -59,7 +65,6 @@ import {
 import {
   TipoLancamento,
   StatusLancamento,
-  LancamentoCreateData,
   LancamentoUpdateData,
   Lancamento,
 } from '@/types/financeiro';
@@ -97,18 +102,20 @@ const FORMAS_PAGAMENTO = [
   'Cheque',
 ];
 
-const emptyForm: LancamentoCreateData = {
-  tipo: 'receita',
-  categoria: '',
-  descricao: '',
-  valor: 0,
-  data_vencimento: '',
-  data_pagamento: undefined,
-  status: 'pendente',
-  forma_pagamento: undefined,
-  recorrente: false,
-  observacoes: undefined,
-};
+const lancamentoSchema = z.object({
+  tipo: z.enum(['receita', 'despesa']),
+  categoria: z.string().min(1, 'Selecione uma categoria'),
+  descricao: z.string().min(1, 'Descrição é obrigatória'),
+  valor: z.coerce.number().positive('Valor deve ser maior que zero'),
+  data_vencimento: z.string().min(1, 'Data de vencimento é obrigatória'),
+  data_pagamento: z.string().optional(),
+  status: z.enum(['pendente', 'pago', 'atrasado', 'cancelado']).default('pendente'),
+  forma_pagamento: z.string().optional(),
+  recorrente: z.boolean().default(false),
+  observacoes: z.string().optional(),
+});
+
+type LancamentoFormData = z.infer<typeof lancamentoSchema>;
 
 export default function Financeiro() {
   const [filtroTipo, setFiltroTipo] = useState<string>('todos');
@@ -116,8 +123,35 @@ export default function Financeiro() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingLancamento, setEditingLancamento] = useState<Lancamento | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<LancamentoCreateData>(emptyForm);
   const [showFluxo, setShowFluxo] = useState(false);
+
+  const {
+    register,
+    handleSubmit: rhfHandleSubmit,
+    formState: { errors },
+    reset,
+    setValue,
+    watch,
+  } = useForm<LancamentoFormData>({
+    resolver: zodResolver(lancamentoSchema),
+    defaultValues: {
+      tipo: 'receita',
+      categoria: '',
+      descricao: '',
+      valor: 0,
+      data_vencimento: '',
+      data_pagamento: '',
+      status: 'pendente',
+      forma_pagamento: '',
+      recorrente: false,
+      observacoes: '',
+    },
+  });
+
+  const tipoValue = watch('tipo');
+  const categoriaValue = watch('categoria');
+  const formaPagamentoValue = watch('forma_pagamento');
+  const statusValue = watch('status');
 
   const { data: financeiroData, isLoading } = useFinanceiro({
     tipo: filtroTipo !== 'todos' ? filtroTipo : undefined,
@@ -134,44 +168,53 @@ export default function Financeiro() {
 
   const handleOpenCreate = () => {
     setEditingLancamento(null);
-    setFormData(emptyForm);
+    reset({
+      tipo: 'receita',
+      categoria: '',
+      descricao: '',
+      valor: 0,
+      data_vencimento: '',
+      data_pagamento: '',
+      status: 'pendente',
+      forma_pagamento: '',
+      recorrente: false,
+      observacoes: '',
+    });
     setModalOpen(true);
   };
 
   const handleOpenEdit = (lancamento: Lancamento) => {
     setEditingLancamento(lancamento);
-    setFormData({
+    reset({
       tipo: lancamento.tipo,
       categoria: lancamento.categoria,
       descricao: lancamento.descricao,
       valor: lancamento.valor,
       data_vencimento: lancamento.data_vencimento,
-      data_pagamento: lancamento.data_pagamento || undefined,
+      data_pagamento: lancamento.data_pagamento || '',
       status: lancamento.status,
-      forma_pagamento: lancamento.forma_pagamento || undefined,
+      forma_pagamento: lancamento.forma_pagamento || '',
       recorrente: lancamento.recorrente,
-      observacoes: lancamento.observacoes || undefined,
+      observacoes: lancamento.observacoes || '',
     });
     setModalOpen(true);
   };
 
-  const handleSubmit = () => {
-    if (!formData.descricao || !formData.categoria || !formData.valor || !formData.data_vencimento) {
-      return;
-    }
+  const onSubmit = (data: LancamentoFormData) => {
+    const payload = {
+      ...data,
+      data_pagamento: data.data_pagamento || undefined,
+      forma_pagamento: data.forma_pagamento || undefined,
+      observacoes: data.observacoes || undefined,
+    };
 
     if (editingLancamento) {
-      const updateData: LancamentoUpdateData = {
-        id: editingLancamento.id,
-        ...formData,
-      };
-      updateLancamento(updateData, {
-        onSuccess: () => setModalOpen(false),
-      });
+      updateLancamento(
+        { id: editingLancamento.id, ...payload },
+        { onSuccess: () => setModalOpen(false) }
+      );
     } else {
-      createLancamento(formData, {
-        onSuccess: () => setModalOpen(false),
-      });
+      createLancamento(payload, { onSuccess: () => setModalOpen(false) });
     }
   };
 
@@ -333,13 +376,14 @@ export default function Financeiro() {
       <Card>
         <CardContent className="pt-6">
           {isLoading ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Carregando lancamentos...
-            </div>
+            <MetricsTableSkeleton cards={0} />
           ) : lancamentos.length === 0 ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Nenhum lancamento encontrado
-            </div>
+            <EmptyState
+              icon={Receipt}
+              title="Nenhum lançamento encontrado"
+              description="Crie um lançamento para começar a controlar suas finanças"
+              action={{ label: 'Novo Lançamento', onClick: handleOpenCreate }}
+            />
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -415,155 +459,116 @@ export default function Financeiro() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Tipo</Label>
-                <Select
-                  value={formData.tipo}
-                  onValueChange={(v) => setFormData({ ...formData, tipo: v as TipoLancamento })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="receita">Receita</SelectItem>
-                    <SelectItem value="despesa">Despesa</SelectItem>
-                  </SelectContent>
-                </Select>
+          <form onSubmit={rhfHandleSubmit(onSubmit)}>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Tipo</Label>
+                  <Select value={tipoValue} onValueChange={(v) => setValue('tipo', v as TipoLancamento)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="receita">Receita</SelectItem>
+                      <SelectItem value="despesa">Despesa</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Categoria</Label>
+                  <Select value={categoriaValue} onValueChange={(v) => setValue('categoria', v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIAS.map((cat) => (
+                        <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {errors.categoria && <p className="text-sm text-destructive">{errors.categoria.message}</p>}
+                </div>
               </div>
 
               <div className="space-y-2">
-                <Label>Categoria</Label>
-                <Select
-                  value={formData.categoria}
-                  onValueChange={(v) => setFormData({ ...formData, categoria: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIAS.map((cat) => (
-                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Descrição</Label>
+                <Input {...register('descricao')} placeholder="Descrição do lançamento" />
+                {errors.descricao && <p className="text-sm text-destructive">{errors.descricao.message}</p>}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Valor (R$)</Label>
+                  <Input type="number" min="0" step="0.01" {...register('valor')} placeholder="0,00" />
+                  {errors.valor && <p className="text-sm text-destructive">{errors.valor.message}</p>}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Forma de Pagamento</Label>
+                  <Select value={formaPagamentoValue || ''} onValueChange={(v) => setValue('forma_pagamento', v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {FORMAS_PAGAMENTO.map((fp) => (
+                        <SelectItem key={fp} value={fp}>{fp}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Data de Vencimento</Label>
+                  <Input type="date" {...register('data_vencimento')} />
+                  {errors.data_vencimento && <p className="text-sm text-destructive">{errors.data_vencimento.message}</p>}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Data de Pagamento</Label>
+                  <Input type="date" {...register('data_pagamento')} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select value={statusValue} onValueChange={(v) => setValue('status', v as StatusLancamento)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pendente">Pendente</SelectItem>
+                      <SelectItem value="pago">Pago</SelectItem>
+                      <SelectItem value="atrasado">Atrasado</SelectItem>
+                      <SelectItem value="cancelado">Cancelado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-end space-x-2 pb-1">
+                  <input type="checkbox" id="recorrente" {...register('recorrente')} className="h-4 w-4" />
+                  <Label htmlFor="recorrente">Recorrente</Label>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Observações</Label>
+                <Textarea {...register('observacoes')} placeholder="Observações adicionais..." rows={3} />
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>Descricao</Label>
-              <Input
-                value={formData.descricao}
-                onChange={(e) => setFormData({ ...formData, descricao: e.target.value })}
-                placeholder="Descricao do lancamento"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Valor (R$)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={formData.valor || ''}
-                  onChange={(e) => setFormData({ ...formData, valor: parseFloat(e.target.value) || 0 })}
-                  placeholder="0,00"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Forma de Pagamento</Label>
-                <Select
-                  value={formData.forma_pagamento || ''}
-                  onValueChange={(v) => setFormData({ ...formData, forma_pagamento: v || undefined })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {FORMAS_PAGAMENTO.map((fp) => (
-                      <SelectItem key={fp} value={fp}>{fp}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Data de Vencimento</Label>
-                <Input
-                  type="date"
-                  value={formData.data_vencimento}
-                  onChange={(e) => setFormData({ ...formData, data_vencimento: e.target.value })}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Data de Pagamento</Label>
-                <Input
-                  type="date"
-                  value={formData.data_pagamento || ''}
-                  onChange={(e) => setFormData({ ...formData, data_pagamento: e.target.value || undefined })}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Status</Label>
-                <Select
-                  value={formData.status || 'pendente'}
-                  onValueChange={(v) => setFormData({ ...formData, status: v as StatusLancamento })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pendente">Pendente</SelectItem>
-                    <SelectItem value="pago">Pago</SelectItem>
-                    <SelectItem value="atrasado">Atrasado</SelectItem>
-                    <SelectItem value="cancelado">Cancelado</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-end space-x-2 pb-1">
-                <input
-                  type="checkbox"
-                  id="recorrente"
-                  checked={formData.recorrente || false}
-                  onChange={(e) => setFormData({ ...formData, recorrente: e.target.checked })}
-                  className="h-4 w-4"
-                />
-                <Label htmlFor="recorrente">Recorrente</Label>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Observacoes</Label>
-              <Textarea
-                value={formData.observacoes || ''}
-                onChange={(e) => setFormData({ ...formData, observacoes: e.target.value || undefined })}
-                placeholder="Observacoes adicionais..."
-                rows={3}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={isCreating || isUpdating || !formData.descricao || !formData.categoria || !formData.valor || !formData.data_vencimento}
-            >
-              {editingLancamento ? 'Salvar' : 'Criar'}
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={isCreating || isUpdating}>
+                {editingLancamento ? 'Salvar' : 'Criar'}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

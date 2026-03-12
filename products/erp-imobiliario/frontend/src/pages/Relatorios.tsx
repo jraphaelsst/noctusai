@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import {
   Trophy,
   TrendingDown,
@@ -34,9 +35,7 @@ import {
   Users,
   Loader2,
 } from 'lucide-react';
-
-const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+import { formatCurrency } from '@/lib/utils';
 
 const formatPercent = (v: number | null) => {
   if (v === null || v === undefined) return '-';
@@ -175,10 +174,7 @@ export default function Relatorios() {
           <Card>
             <CardContent className="pt-6">
               {loadingRanking ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
-                  Carregando ranking...
-                </div>
+                <TableSkeleton rows={3} />
               ) : !ranking || ranking.length === 0 ? (
                 <div className="py-12 text-center text-muted-foreground">
                   <Trophy className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -246,10 +242,7 @@ export default function Relatorios() {
           <Card>
             <CardContent className="pt-6">
               {loadingConversao ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
-                  Carregando dados do funil...
-                </div>
+                <TableSkeleton rows={3} />
               ) : !conversao || conversao.length === 0 ? (
                 <div className="py-12 text-center text-muted-foreground">
                   <TrendingDown className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -404,10 +397,7 @@ export default function Relatorios() {
           <Card>
             <CardContent className="pt-6">
               {loadingAtividade ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
-                  Carregando atividades...
-                </div>
+                <TableSkeleton rows={3} />
               ) : !atividade || atividade.length === 0 ? (
                 <div className="py-12 text-center text-muted-foreground">
                   <CalendarDays className="h-12 w-12 mx-auto mb-4 opacity-50" />

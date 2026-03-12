@@ -36,6 +36,7 @@ export function usePortaisFeeds() {
       return (result.data || []) as PortalFeed[];
     },
     enabled: !!user,
+    staleTime: 30 * 60 * 1000,
   });
 }
 
@@ -53,6 +54,7 @@ export function useImoveisPortal(prontoParaPortais?: boolean) {
       return (result.data || []) as ImovelPortal[];
     },
     enabled: !!user,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

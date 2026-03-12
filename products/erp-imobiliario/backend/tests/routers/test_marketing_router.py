@@ -145,17 +145,27 @@ class TestAtualizarCampanha:
 
 class TestExcluirCampanha:
     def test_delete_success(self, client):
-        client._mock_supabase.set_table_data("campanhas", [])
+        client._mock_supabase.set_table_data("campanhas", {
+            "id": "c1", "nome": "Test", "tipo": "email",
+            "status": "rascunho", "template": "Ola",
+        })
         client._mock_supabase.set_table_data("envios_email", [])
         resp = client.delete("/api/marketing/campanhas/c1")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
     def test_delete_message(self, client):
-        client._mock_supabase.set_table_data("campanhas", [])
+        client._mock_supabase.set_table_data("campanhas", {
+            "id": "c1", "nome": "Test", "tipo": "email",
+            "status": "rascunho", "template": "Ola",
+        })
         client._mock_supabase.set_table_data("envios_email", [])
         resp = client.delete("/api/marketing/campanhas/c1")
         assert "sucesso" in resp.json()["message"].lower()
+
+    def test_delete_not_found(self, client):
+        resp = client.delete("/api/marketing/campanhas/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestEnviarCampanha:

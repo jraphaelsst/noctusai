@@ -4,7 +4,9 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@noctusai/shared/*": ["../../../shared/frontend/src/*"],
+      "@noctusai/shared": ["../../../shared/frontend/src/index.ts"]
     },
     "noImplicitAny": false,
     "noUnusedParameters": false,

@@ -38,6 +38,7 @@ export function useFiliais(filters?: { is_active?: boolean }) {
       return (result.data || []) as Filial[];
     },
     enabled: !!user,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

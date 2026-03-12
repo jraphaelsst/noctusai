@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import Response
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_org_id, log_action
 from app.responses import success_response
 from app.services.dimob_service import preview_dimob, generate_dimob_xml, validate_dimob_data
 
@@ -22,7 +22,7 @@ async def preview(
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    org_id = user.user_metadata.get("org_id", "") if user.user_metadata else ""
+    org_id = get_org_id(user)
     data = preview_dimob(org_id, ano, db)
 
     return success_response(data)
@@ -37,7 +37,7 @@ async def validate(
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    org_id = user.user_metadata.get("org_id", "") if user.user_metadata else ""
+    org_id = get_org_id(user)
     data = preview_dimob(org_id, ano, db)
     warnings = validate_dimob_data(data)
 
@@ -58,7 +58,7 @@ async def generate(
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    org_id = user.user_metadata.get("org_id", "") if user.user_metadata else ""
+    org_id = get_org_id(user)
 
     try:
         xml_content = generate_dimob_xml(org_id, ano, db)

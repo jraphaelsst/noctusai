@@ -41,33 +41,7 @@ export const signUpSchema = z.object({
   path: ['confirmPassword'],
 });
 
-export const corretorSchema = z.object({
-  nome: z
-    .string()
-    .trim()
-    .min(1, 'Nome é obrigatório')
-    .max(100, 'Nome muito longo')
-    .regex(/^[a-zA-ZÀ-ÿ\s]+$/, 'Nome deve conter apenas letras'),
-  email: z
-    .string()
-    .trim()
-    .min(1, 'Email é obrigatório')
-    .email('Email inválido')
-    .max(255, 'Email muito longo'),
-  telefone: z
-    .string()
-    .trim()
-    .min(1, 'Telefone é obrigatório')
-    .regex(/^\(\d{2}\) \d{5}-\d{4}$/, 'Telefone deve estar no formato (00) 00000-0000'),
-  password: z
-    .string()
-    .min(8, 'Senha deve ter no mínimo 8 caracteres')
-    .max(100, 'Senha muito longa'),
-  confirmPassword: z.string(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: 'As senhas não coincidem',
-  path: ['confirmPassword'],
-});
+export const corretorSchema = signUpSchema;
 
 export type LoginFormData = z.infer<typeof loginSchema>;
 export type SignUpFormData = z.infer<typeof signUpSchema>;

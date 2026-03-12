@@ -6,11 +6,11 @@ and aggregate statistics. Uses Resend API for actual delivery when configured,
 falls back to dry-run mode when API key is not set.
 """
 import logging
-import os
 import re
 from typing import Any, Dict, List, Optional
 
 from app.dependencies import first_or_none
+from app.services.credential_resolver import resolve_credential
 
 logger = logging.getLogger(__name__)
 
@@ -18,40 +18,17 @@ logger = logging.getLogger(__name__)
 VARIABLE_PATTERN = re.compile(r"\{\{(\w+)\}\}")
 
 
-def _get_resend_config(db_client) -> Optional[Dict[str, str]]:
+def _get_resend_config(org_id: Optional[str] = None) -> Optional[Dict[str, str]]:
     """
-    Resolve email provider config: org_settings → platform_settings → env.
+    Resolve email provider config via the standard credential chain.
     Returns dict with api_key, from_email, from_name or None if unconfigured.
     """
-    api_key = None
-    from_email = None
-    from_name = None
-
-    # Try org_settings first (via the erp schema — settings may be in public)
-    try:
-        for key in ("resend_api_key", "email_from", "email_from_name"):
-            result = db_client.table("org_settings").select("value").eq("key", key).single().execute()
-            if result.data:
-                val = result.data.get("value", "")
-                if key == "resend_api_key":
-                    api_key = val
-                elif key == "email_from":
-                    from_email = val
-                elif key == "email_from_name":
-                    from_name = val
-    except Exception:
-        pass
-
-    # Fallback to env vars
-    if not api_key:
-        api_key = os.getenv("RESEND_API_KEY", "")
-    if not from_email:
-        from_email = os.getenv("EMAIL_FROM", "noreply@noctus.app")
-    if not from_name:
-        from_name = os.getenv("EMAIL_FROM_NAME", "NoctusAI ERP")
-
+    api_key = resolve_credential("resend_api_key", org_id)
     if not api_key:
         return None
+
+    from_email = resolve_credential("email_from", org_id) or "noreply@noctus.app"
+    from_name = resolve_credential("email_from_name", org_id) or "NoctusAI ERP"
 
     return {"api_key": api_key, "from_email": from_email, "from_name": from_name}
 
@@ -92,9 +69,10 @@ async def _send_via_resend(
 class EmailService:
     """Service for CRM email operations."""
 
-    def __init__(self, db_client, user_id: str):
+    def __init__(self, db_client, user_id: str, org_id: Optional[str] = None):
         self.db = db_client
         self.user_id = user_id
+        self.org_id = org_id
 
     async def enviar(
         self,
@@ -114,7 +92,7 @@ class EmailService:
         Returns:
             Created email record dict, or None on failure.
         """
-        config = _get_resend_config(self.db)
+        config = _get_resend_config(self.org_id)
         dry_run = config is None
         status = "enviado"
         external_id = None

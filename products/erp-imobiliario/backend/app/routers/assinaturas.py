@@ -24,11 +24,12 @@ processing webhook callbacks from providers, and audit trails.
 """
 import logging
 from typing import Optional, Literal, List
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.assinatura_service import AssinaturaService
+from app.webhook_utils import verify_hmac_sha256
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ async def enviar_assinatura(body: EnviarAssinaturaRequest, authorization: Option
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    service = AssinaturaService(db, user.id)
+    service = AssinaturaService(db, user.id, org_id=get_org_id(user))
 
     signatarios_data = [s.model_dump() for s in body.signatarios]
 
@@ -163,14 +164,44 @@ async def obter_assinatura(assinatura_id: str, authorization: Optional[str] = He
 
 
 @router.post("/webhook")
-async def processar_webhook(body: WebhookPayload):
+async def processar_webhook(
+    request: Request,
+    body: WebhookPayload,
+    x_hub_signature_256: Optional[str] = Header(None),
+):
     """
     Callback endpoint for signing provider events.
 
     This endpoint does not require user authentication since it is called
     directly by the signing provider (ClickSign, DocuSign, D4Sign, etc.).
+    Verifies HMAC-SHA256 signature when a webhook secret is configured.
     """
     db = get_admin_client()
+
+    # Verify signature: look up the assinatura to find its provider, then
+    # check if the org has a webhook_secret configured for that provider.
+    assinatura_result = (
+        db.table("assinaturas")
+        .select("org_id, provedor")
+        .eq("id", body.assinatura_id)
+        .execute()
+    )
+    if assinatura_result.data:
+        org_id = assinatura_result.data[0].get("org_id")
+        if org_id:
+            secret_result = (
+                db.table("org_settings")
+                .select("value")
+                .eq("org_id", org_id)
+                .eq("key", "assinatura_webhook_secret")
+                .execute()
+            )
+            webhook_secret = secret_result.data[0]["value"] if secret_result.data else None
+            if webhook_secret:
+                body_bytes = await request.body()
+                if not x_hub_signature_256 or not verify_hmac_sha256(body_bytes, x_hub_signature_256, webhook_secret):
+                    raise HTTPException(status_code=401, detail="Assinatura do webhook inválida")
+
     service = AssinaturaService(db, user_id="webhook")
 
     updated = await service.processar_webhook(

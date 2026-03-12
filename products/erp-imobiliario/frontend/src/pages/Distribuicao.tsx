@@ -41,6 +41,7 @@ import {
   Hand,
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 
 const modoLabels: Record<ModoDistribuicao, { label: string; descricao: string }> = {
   manual: {
@@ -148,10 +149,7 @@ export default function Distribuicao() {
             </CardHeader>
             <CardContent className="space-y-4">
               {loadingConfig ? (
-                <div className="py-4 text-center text-muted-foreground">
-                  <Loader2 className="h-5 w-5 mx-auto mb-2 animate-spin" />
-                  Carregando configuracao...
-                </div>
+                <CardListSkeleton count={2} />
               ) : (
                 <>
                   <Select
@@ -258,10 +256,7 @@ export default function Distribuicao() {
             </CardHeader>
             <CardContent>
               {loadingFila ? (
-                <div className="py-6 text-center text-muted-foreground">
-                  <Loader2 className="h-5 w-5 mx-auto mb-2 animate-spin" />
-                  Carregando fila...
-                </div>
+                <CardListSkeleton count={3} />
               ) : !fila || fila.corretores_ativos.length === 0 ? (
                 <div className="py-8 text-center text-muted-foreground">
                   <Users className="h-10 w-10 mx-auto mb-3 opacity-50" />

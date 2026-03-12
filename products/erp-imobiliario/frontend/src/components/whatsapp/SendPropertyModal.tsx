@@ -32,9 +32,7 @@ import {
   Car,
   AlertTriangle,
 } from 'lucide-react';
-
-const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+import { formatCurrency } from '@/lib/utils';
 
 interface ImovelPreview {
   id: string;

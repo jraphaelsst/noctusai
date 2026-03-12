@@ -16,6 +16,10 @@ Builder hierarchy (postgrest 0.17.2):
     .upsert(...)     → MockQueryBuilder
 """
 import pytest
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
 from typing import Optional
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -86,6 +90,7 @@ class MockSelectBuilder(_MockExecuteMixin):
     def match(self, *a, **k): return self
     def fts(self, *a, **k): return self
     def text_search(self, *a, **k): return self
+    def or_(self, *a, **k): return self
 
     @property
     def not_(self): return self

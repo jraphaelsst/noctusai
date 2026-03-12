@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/authStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,6 +32,7 @@ import {
   Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatCurrency, formatDate } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,11 +95,6 @@ function useDimobPreview(ano: number, enabled: boolean) {
 
 const currentYear = new Date().getFullYear();
 const availableYears = Array.from({ length: 6 }, (_, i) => currentYear - i);
-
-const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
-
-const formatDate = (d: string) => new Date(d).toLocaleDateString('pt-BR');
 
 const formatCpfCnpj = (v: string) => {
   if (!v) return '-';
@@ -239,10 +236,7 @@ export default function Dimob() {
       {previewActive && (
         <>
           {isLoading ? (
-            <div className="py-12 text-center text-muted-foreground">
-              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin" />
-              <p>Carregando dados do ano {selectedYear}...</p>
-            </div>
+            <CardListSkeleton count={3} />
           ) : isError ? (
             <Card>
               <CardContent className="py-12 text-center text-muted-foreground">

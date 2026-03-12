@@ -358,6 +358,106 @@ class BIService:
             "receitas_por_mes": receitas_por_mes,
         }
 
+    def get_dashboard_resumo(
+        self,
+        clientes: List[Dict],
+        ativos: List[Dict],
+        propostas: List[Dict],
+        lancamentos: List[Dict],
+        contratos: List[Dict],
+        eventos: List[Dict],
+        negociacoes: List[Dict],
+    ) -> Dict[str, Any]:
+        """
+        Comprehensive dashboard summary — aggregates key metrics from all modules.
+
+        Returns a single payload with: sales KPIs, funnel stats, financial summary,
+        property portfolio counts, pending tasks, and recent activity.
+        """
+        from datetime import timezone
+
+        now = datetime.now(timezone.utc)
+        hoje = now.strftime("%Y-%m-%d")
+        mes_atual = now.strftime("%Y-%m")
+
+        # -- KPIs --
+        total_clientes = len(clientes)
+        clientes_novos_mes = sum(
+            1 for c in clientes
+            if (c.get("created_at") or "")[:7] == mes_atual
+        )
+
+        imoveis_ativos = sum(1 for a in ativos if a.get("natureza") == "imovel" and a.get("status") == "ativo")
+        total_imoveis = sum(1 for a in ativos if a.get("natureza") == "imovel")
+
+        propostas_abertas = sum(1 for p in propostas if p.get("status") in ("rascunho", "enviada"))
+        propostas_aceitas = sum(1 for p in propostas if p.get("status") == "aceita")
+        valor_vendas = sum(float(p.get("valor_proposta", 0)) for p in propostas if p.get("status") == "aceita")
+
+        # -- Funil --
+        etapas_funil: Dict[str, int] = {}
+        for c in clientes:
+            etapa = c.get("etapa_atual") or "sem_etapa"
+            etapas_funil[etapa] = etapas_funil.get(etapa, 0) + 1
+
+        # -- Financeiro --
+        receitas_mes = sum(
+            float(l.get("valor", 0)) for l in lancamentos
+            if l.get("tipo") == "receita" and l.get("status") == "pago"
+            and (l.get("data_vencimento") or "")[:7] == mes_atual
+        )
+        despesas_mes = sum(
+            float(l.get("valor", 0)) for l in lancamentos
+            if l.get("tipo") == "despesa" and l.get("status") == "pago"
+            and (l.get("data_vencimento") or "")[:7] == mes_atual
+        )
+        vencidos = sum(
+            1 for l in lancamentos
+            if l.get("status") == "pendente" and (l.get("data_vencimento") or "") < hoje
+        )
+        a_receber = sum(
+            float(l.get("valor", 0)) for l in lancamentos
+            if l.get("tipo") == "receita" and l.get("status") == "pendente"
+        )
+
+        # -- Contratos --
+        contratos_ativos = sum(1 for c in contratos if c.get("status") == "ativo")
+
+        # -- Agenda --
+        eventos_hoje = sum(
+            1 for e in eventos
+            if (e.get("data_inicio") or "")[:10] == hoje and e.get("status") == "agendado"
+        )
+
+        # -- Negociacoes --
+        negociacoes_abertas = sum(
+            1 for n in negociacoes
+            if n.get("status_etapa") in ("qualificacao", "visitas", "proposta", "negociacao")
+        )
+
+        return {
+            "kpis": {
+                "total_clientes": total_clientes,
+                "clientes_novos_mes": clientes_novos_mes,
+                "imoveis_ativos": imoveis_ativos,
+                "total_imoveis": total_imoveis,
+                "propostas_abertas": propostas_abertas,
+                "propostas_aceitas": propostas_aceitas,
+                "valor_vendas": round(valor_vendas, 2),
+                "contratos_ativos": contratos_ativos,
+                "negociacoes_abertas": negociacoes_abertas,
+                "eventos_hoje": eventos_hoje,
+            },
+            "funil": etapas_funil,
+            "financeiro": {
+                "receitas_mes": round(receitas_mes, 2),
+                "despesas_mes": round(despesas_mes, 2),
+                "saldo_mes": round(receitas_mes - despesas_mes, 2),
+                "a_receber": round(a_receber, 2),
+                "vencidos": vencidos,
+            },
+        }
+
     # --- Private helpers ---
 
     def _filter_by_periodo(

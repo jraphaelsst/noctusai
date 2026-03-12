@@ -7,8 +7,9 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_org_id
 from app.services.job_service import submit_job, get_job, list_jobs
+from app.responses import success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -26,15 +27,11 @@ async def submit_background_job(
 ):
     """Submit a new background job."""
     user, token = await get_current_user(authorization)
-    org_id = user.user_metadata.get("org_id", "")
+    org_id = get_org_id(user)
 
     job = submit_job(body.name, org_id, body.params)
 
-    return {
-        "status": "success",
-        "data": job.to_dict(),
-        "message": f"Job '{body.name}' submetido com sucesso",
-    }
+    return success_response(job.to_dict())
 
 
 @router.get("/{job_id}")
@@ -44,7 +41,7 @@ async def get_job_status(
 ):
     """Get the status of a background job."""
     user, token = await get_current_user(authorization)
-    org_id = user.user_metadata.get("org_id", "")
+    org_id = get_org_id(user)
 
     job = get_job(job_id)
     if not job:
@@ -52,7 +49,7 @@ async def get_job_status(
     if job.org_id != org_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
-    return {"status": "success", "data": job.to_dict()}
+    return success_response(job.to_dict())
 
 
 @router.get("")
@@ -61,8 +58,8 @@ async def listar_jobs(
 ):
     """List recent background jobs for the org."""
     user, token = await get_current_user(authorization)
-    org_id = user.user_metadata.get("org_id", "")
+    org_id = get_org_id(user)
 
     jobs = list_jobs(org_id)
 
-    return {"status": "success", "data": jobs, "total": len(jobs)}
+    return success_response(jobs, total=len(jobs))

@@ -166,6 +166,7 @@ class TestAtualizarCategoria:
 
 class TestExcluirCategoria:
     def test_deletes_category(self, client):
+        client._mock_supabase.set_table_data("categorias", [{"id": "cat-001"}])
         response = client.delete("/api/categorias/cat-001")
         assert response.status_code == 200
         data = response.json()

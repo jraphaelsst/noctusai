@@ -15,18 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
-
-const acaoLabels: Record<string, string> = {
-  criar: "Criou",
-  editar: "Editou",
-  excluir: "Excluiu",
-  concluir: "Concluiu",
-  arquivar: "Arquivou",
-  desarquivar: "Desarquivou",
-  mover: "Moveu",
-  login: "Fez login",
-  logout: "Fez logout",
-};
+import { ACAO_LABELS } from "@/lib/constants";
 
 const entidadeLabels: Record<string, string> = {
   meta: "Meta",
@@ -229,7 +218,7 @@ export default function LogAcoes() {
                   <div className="flex-1 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant="outline" className={acaoColors[log.tipo_acao] || ""}>
-                        {acaoLabels[log.tipo_acao] || log.tipo_acao}
+                        {ACAO_LABELS[log.tipo_acao] || log.tipo_acao}
                       </Badge>
                       <Badge variant="secondary">
                         {entidadeLabels[log.tipo_entidade] || log.tipo_entidade}

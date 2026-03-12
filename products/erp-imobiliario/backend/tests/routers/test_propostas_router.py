@@ -197,13 +197,27 @@ class TestContraproposta:
 
 class TestExcluirProposta:
     def test_delete_success(self, client):
+        client._mock_supabase.set_table_data("propostas", {
+            "id": "p1", "imovel_id": "i1", "cliente_id": "c1",
+            "corretor_id": "u1", "valor_proposta": 500000,
+            "status": "enviada",
+        })
         resp = client.delete("/api/propostas/p1")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
     def test_logging_called_on_delete(self, client):
+        client._mock_supabase.set_table_data("propostas", {
+            "id": "p-del", "imovel_id": "i1", "cliente_id": "c1",
+            "corretor_id": "u1", "valor_proposta": 500000,
+            "status": "enviada",
+        })
         resp = client.delete("/api/propostas/p-del")
         assert resp.status_code == 200
+
+    def test_delete_not_found(self, client):
+        resp = client.delete("/api/propostas/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestNoAuth:

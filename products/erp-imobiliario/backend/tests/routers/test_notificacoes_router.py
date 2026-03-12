@@ -16,7 +16,7 @@ class TestListarNotificacoes:
         resp = client.get("/api/notificacoes")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "success"
+        assert "data" in data
 
     def test_list_unread_only(self, client):
         client._mock_supabase.set_table_data("notificacoes", [

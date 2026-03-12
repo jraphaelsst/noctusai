@@ -16,8 +16,8 @@ import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMetasConfig, useUpsertMetaConfig, MetaConfigForm } from "@/hooks/useMetasConfig";
 import { TipoMeta, CategoriaMeta } from "@/types";
-import { categoriaLabels, categoriasConfig } from "@/lib/categorias";
-import { toast } from "@/hooks/use-toast";
+import { categoriaLabels, categoriasDisponiveis } from "@/lib/categorias";
+import { toast } from "sonner";
 
 const tipoLabels: Record<TipoMeta, string> = {
   diaria: "Diárias",
@@ -73,13 +73,9 @@ export function ConfiguracoesMetasModal() {
 
   const handleSaveAll = async () => {
     try {
-      console.log('[Modal] Iniciando handleSaveAll');
-      console.log('[Modal] formData:', formData);
-      console.log('[Modal] activeStates:', activeStates);
-      
       const configsToSave: MetaConfigForm[] = [];
 
-      categoriasConfig.forEach((categoria) => {
+      categoriasDisponiveis.forEach((categoria) => {
         const tipo = "mensal" as TipoMeta;
         const key = `${tipo}-${categoria}`;
         const rawValue = formData[key];
@@ -93,19 +89,11 @@ export function ConfiguracoesMetasModal() {
         });
       });
 
-      console.log('[Modal] Salvando configurações:', configsToSave);
-
       await Promise.all(configsToSave.map((config) => upsertConfig.mutateAsync(config)));
 
-      console.log('[Modal] Todas as configs salvas, fechando modal');
       setOpen(false);
     } catch (error) {
-      console.error("[Modal] Erro ao salvar configurações:", error);
-      toast({
-        title: "Erro",
-        description: "Erro ao salvar configurações. Verifique o console para mais detalhes.",
-        variant: "destructive",
-      });
+      toast.error("Erro", { description: "Erro ao salvar configurações." });
     }
   };
 
@@ -151,7 +139,7 @@ export function ConfiguracoesMetasModal() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <TooltipProvider>
-                    {categoriasConfig.map((categoria, index) => (
+                    {categoriasDisponiveis.map((categoria, index) => (
                       <div key={categoria}>
                         {index > 0 && <Separator className="my-4" />}
                         <div className="flex items-center justify-between gap-4">

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 
 export function useCriarMetaHoje() {
   const queryClient = useQueryClient();
@@ -12,17 +12,10 @@ export function useCriarMetaHoje() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });
-      toast({
-        title: "Sucesso!",
-        description: data.message || "Metas de hoje criadas com sucesso.",
-      });
+      toast.success("Sucesso!", { description: data.message || "Metas de hoje criadas com sucesso." });
     },
     onError: (error: Error) => {
-      toast({
-        title: "Erro",
-        description: error.message || "Erro ao criar metas de hoje.",
-        variant: "destructive",
-      });
+      toast.error("Erro", { description: error.message || "Erro ao criar metas de hoje." });
     },
   });
 }

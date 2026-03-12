@@ -1,10 +1,12 @@
 """Recurring transactions & bills router."""
 import logging
+from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from app.dependencies import get_current_user_org, get_user_client, first_or_none
 from app.responses import success_response, ok_response
-from app.schemas.relatorios import RecorrenteCreate, RecorrenteUpdate
+from app.schemas.recorrentes import RecorrenteCreate, RecorrenteUpdate
+from app.services.recorrentes_service import RecorrentesService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/recorrentes", tags=["Recorrentes"])
@@ -24,6 +26,16 @@ async def listar_recorrentes(
     return success_response(result.data or [], total=len(result.data or []))
 
 
+@router.post("/executar")
+async def executar_pendentes(authorization: Optional[str] = Header(None)):
+    """Execute all pending automatic recurring transactions."""
+    user, token, org_id = await get_current_user_org(authorization)
+    db = get_user_client(token)
+    service = RecorrentesService(db, org_id)
+    data = await service.executar_pendentes()
+    return success_response(data)
+
+
 @router.get("/proximas")
 async def proximas_contas(
     dias: int = Query(7, ge=1, le=90),
@@ -32,11 +44,22 @@ async def proximas_contas(
     """Get upcoming bills within the next N days."""
     user, token, org_id = await get_current_user_org(authorization)
     db = get_user_client(token)
-    from datetime import date, timedelta
     hoje = date.today().isoformat()
     limite = (date.today() + timedelta(days=dias)).isoformat()
     result = db.table("recorrentes").select("*, conta:contas(id,nome), categoria:categorias(id,nome,icone,cor)").eq("org_id", org_id).eq("ativo", True).gte("proxima_data", hoje).lte("proxima_data", limite).order("proxima_data").execute()
     return success_response(result.data or [])
+
+
+@router.post("/{recorrente_id}/executar")
+async def executar_unico(recorrente_id: str, authorization: Optional[str] = Header(None)):
+    """Manually execute a single recurring entry once."""
+    user, token, org_id = await get_current_user_org(authorization)
+    db = get_user_client(token)
+    service = RecorrentesService(db, org_id)
+    data = await service.executar_unico(recorrente_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Recorrente nao encontrado")
+    return success_response(data)
 
 
 @router.get("/{recorrente_id}")

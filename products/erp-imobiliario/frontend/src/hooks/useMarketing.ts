@@ -80,7 +80,7 @@ export function useCampanhas(filtros?: FiltrosCampanhas) {
         page: filtros?.page || 1,
         page_size: filtros?.page_size || 50,
       });
-      return result as { data: Campanha[]; pagination: any };
+      return result as { data: Campanha[]; pagination: { page: number; page_size: number; total: number } | null };
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
@@ -126,8 +126,9 @@ export function useUpdateCampanha() {
       const result = await api.patch(`/api/marketing/campanhas/${id}`, data);
       return result.data as Campanha;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['campanhas'] });
+      queryClient.invalidateQueries({ queryKey: ['campanha', variables.id] });
       toast.success('Campanha atualizada!');
     },
     onError: (error: Error) => {
@@ -163,6 +164,7 @@ export function useEnviarCampanha() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['campanhas'] });
+      queryClient.invalidateQueries({ queryKey: ['emails'] });
       toast.success(data.mensagem);
     },
     onError: (error: Error) => {

@@ -3,7 +3,7 @@ import { MetaCard } from "@/components/ui/meta-card";
 import { ChevronDown, Loader2, CheckSquare, Trash2 } from "lucide-react";
 import { MetaDetalhesModal } from "@/components/modals/MetaDetalhesModal";
 import { NovaMetaModal } from "@/components/modals/NovaMetaModal";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -195,23 +195,13 @@ export default function Metas() {
   const handleExcluirMeta = async () => {
     if (!metaParaExcluir) return;
     
-    console.log("Tentando excluir meta com ID:", metaParaExcluir);
     try {
       await deleteMeta.mutateAsync(metaParaExcluir);
-      console.log("Meta excluída com sucesso:", metaParaExcluir);
 
-      toast({
-        title: "Sucesso!",
-        description: "Meta excluída com sucesso.",
-      });
+      toast.success("Sucesso!", { description: "Meta excluída com sucesso." });
       setMetaParaExcluir(null);
     } catch (error: any) {
-      console.error("Erro ao excluir meta:", error);
-      toast({
-        title: "Erro",
-        description: error?.message || "Erro ao excluir meta.",
-        variant: "destructive",
-      });
+      toast.error("Erro", { description: error?.message || "Erro ao excluir meta." });
     }
   };
 
@@ -220,32 +210,19 @@ export default function Metas() {
 
     const quantidade = metasSelecionadas.size;
     const idsArray = Array.from(metasSelecionadas);
-    console.log("Tentando excluir metas selecionadas:", idsArray);
 
     try {
-      const promises = idsArray.map((id) => {
-        console.log("Excluindo meta ID:", id);
-        return deleteMeta.mutateAsync(id);
-      });
+      const promises = idsArray.map((id) => deleteMeta.mutateAsync(id));
 
       await Promise.all(promises);
 
-      console.log("Todas as metas foram excluídas com sucesso");
       setMetasSelecionadas(new Set());
       setModoSelecao(false);
       setConfirmarExclusaoMassa(false);
 
-      toast({
-        title: "Sucesso!",
-        description: `${quantidade} meta(s) excluída(s) com sucesso.`,
-      });
+      toast.success("Sucesso!", { description: `${quantidade} meta(s) excluída(s) com sucesso.` });
     } catch (error: any) {
-      console.error("Erro ao excluir metas:", error);
-      toast({
-        title: "Erro",
-        description: error?.message || "Erro ao excluir metas selecionadas.",
-        variant: "destructive",
-      });
+      toast.error("Erro", { description: error?.message || "Erro ao excluir metas selecionadas." });
     }
   };
 

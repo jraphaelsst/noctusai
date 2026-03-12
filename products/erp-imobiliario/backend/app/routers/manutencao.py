@@ -224,6 +224,10 @@ async def excluir_ordem(ordem_id: str, authorization: Optional[str] = Header(Non
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("ordens_servico").select("id").eq("id", ordem_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Ordem de servico não encontrada")
+
     db.table("ordens_servico").delete().eq("id", ordem_id).execute()
 
     log_action(user.id, "excluir", "ordem_servico", ordem_id,

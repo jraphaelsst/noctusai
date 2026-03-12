@@ -109,10 +109,16 @@ class TestCriarDocumento:
 
 class TestExcluirDocumento:
     def test_delete(self, client):
+        client._mock_supabase.set_table_data("documentos", [{"id": "d1"}])
         resp = client.delete("/api/documentos/d1")
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True
+
+    def test_delete_not_found(self, client):
+        client._mock_supabase.set_table_data("documentos", [])
+        resp = client.delete("/api/documentos/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestListarTemplates:

@@ -183,6 +183,36 @@ async def convidar_membro(
 
     logger.info(f"Invitation created for {body.email} to org={org_id}")
 
+    # Audit log, notification, and webhook dispatch (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=org_id,
+            action="invite", resource_type="invitation",
+            resource_id=result.data[0]["id"],
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import notification_service
+        await notification_service.create(
+            user_id=user.id, org_id=org_id,
+            type="team_invite",
+            title="Convite enviado",
+            message=f"Convite enviado para {body.email} com papel {body.role}",
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import webhook_delivery
+        await webhook_delivery.dispatch(
+            org_id=org_id,
+            event_type="team.invite_sent",
+            payload={"email": body.email, "role": body.role, "invitation_id": result.data[0]["id"]},
+        )
+    except Exception:
+        pass
+
     # Send invitation email (best-effort — won't fail the request)
     try:
         from app.services.email_service import send_invitation_email
@@ -247,6 +277,26 @@ async def remover_membro(
     db.table("noctus_users").delete().eq("id", user_id).eq("org_id", org_id).execute()
 
     logger.info(f"Member {user_id} removed from org={org_id}")
+
+    # Audit log and webhook dispatch (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=org_id,
+            action="remove", resource_type="team_member", resource_id=user_id,
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import webhook_delivery
+        await webhook_delivery.dispatch(
+            org_id=org_id,
+            event_type="team.member_removed",
+            payload={"removed_user_id": user_id},
+        )
+    except Exception:
+        pass
+
     return {"message": "Membro removido com sucesso"}
 
 

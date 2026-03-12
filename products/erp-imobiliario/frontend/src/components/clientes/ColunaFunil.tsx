@@ -2,6 +2,7 @@ import { ColunaFunil as ColunaFunilType } from '@/types/clientes';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { ETAPAS_CONFIG } from '@/lib/etapasConfig';
+import { formatCurrency } from '@/lib/utils';
 import { ClienteCard } from './ClienteCard';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -27,10 +28,7 @@ export function ColunaFunil({ coluna, onRegistrarAtividade, onArquivar }: Coluna
             <Badge variant="secondary">{coluna.total}</Badge>
           </div>
           <p className="text-sm font-medium">
-            {new Intl.NumberFormat('pt-BR', {
-              style: 'currency',
-              currency: 'BRL',
-            }).format(coluna.valorTotal)}
+            {formatCurrency(coluna.valorTotal)}
           </p>
         </div>
 

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -44,7 +45,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatCurrency } from '@/lib/utils';
 import {
   useCheckins,
   useCreateCheckin,
@@ -60,8 +61,8 @@ type TipoCheckin = 'visita' | 'vistoria' | 'captacao' | 'reuniao';
 const TIPO_CONFIG: Record<TipoCheckin, { label: string; className: string; icon: string }> = {
   visita: { label: 'Visita', className: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200', icon: 'eye' },
   vistoria: { label: 'Vistoria', className: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200', icon: 'clipboard' },
-  captacao: { label: 'Captacao', className: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200', icon: 'home' },
-  reuniao: { label: 'Reuniao', className: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200', icon: 'users' },
+  captacao: { label: 'Captação', className: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200', icon: 'home' },
+  reuniao: { label: 'Reunião', className: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200', icon: 'users' },
 };
 
 const CHECKLIST_ITEMS = [
@@ -464,7 +465,7 @@ export default function Campo() {
                     </div>
                     {imovel.valor && (
                       <p className="text-xs font-semibold text-primary mt-1">
-                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(imovel.valor)}
+                        {formatCurrency(imovel.valor)}
                       </p>
                     )}
                   </div>
@@ -489,7 +490,7 @@ export default function Campo() {
         </CardHeader>
         <CardContent>
           {isLoadingCheckins ? (
-            <div className="py-8 text-center text-muted-foreground">Carregando...</div>
+            <TableSkeleton rows={4} />
           ) : recentCheckins.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />

@@ -265,6 +265,10 @@ async def excluir_documento(documento_id: str, authorization: Optional[str] = He
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("documentos").select("id").eq("id", documento_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+
     db.table("documentos").delete().eq("id", documento_id).execute()
 
     log_action(user.id, "excluir", "documento", documento_id,

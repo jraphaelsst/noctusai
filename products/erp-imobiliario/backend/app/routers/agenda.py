@@ -274,6 +274,10 @@ async def excluir_evento(evento_id: str, authorization: Optional[str] = Header(N
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("eventos").select("id").eq("id", evento_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Evento não encontrado")
+
     db.table("eventos").delete().eq("id", evento_id).execute()
     log_action(user.id, "excluir", "evento", evento_id, f"Excluiu evento {evento_id}")
     return ok_response("Evento excluído com sucesso")

@@ -40,7 +40,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user, get_current_admin
+from app.dependencies import get_current_user, get_current_admin, get_org_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["API Keys"])
@@ -70,13 +70,9 @@ def _generate_api_key() -> tuple[str, str, str]:
 async def listar_api_keys(authorization: Optional[str] = Header(None)):
     """List API keys for the current user's organization (prefix only)."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data:
-        raise HTTPException(status_code=404, detail="Perfil não encontrado")
-
-    org_id = profile.data["org_id"]
     result = db.table("api_keys").select(
         "id, org_id, name, key_prefix, scopes, last_used_at, expires_at, is_active, created_by, created_at"
     ).eq("org_id", org_id).eq("is_active", True).order("created_at", desc=True).execute()
@@ -88,13 +84,9 @@ async def listar_api_keys(authorization: Optional[str] = Header(None)):
 async def criar_api_key(body: ApiKeyCreate, authorization: Optional[str] = Header(None)):
     """Create a new API key. Returns the full key ONCE — store it securely."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data:
-        raise HTTPException(status_code=404, detail="Perfil não encontrado")
-
-    org_id = profile.data["org_id"]
     raw_key, key_hash, key_prefix = _generate_api_key()
 
     data = {
@@ -115,6 +107,17 @@ async def criar_api_key(body: ApiKeyCreate, authorization: Optional[str] = Heade
 
     logger.info(f"API key created: {key_prefix}... for org={org_id}")
 
+    # Audit log (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=org_id,
+            action="create", resource_type="api_key",
+            resource_id=result.data[0]["id"],
+        )
+    except Exception:
+        pass
+
     # Return the full key once — it cannot be retrieved again
     response_data = result.data[0].copy()
     response_data["raw_key"] = raw_key
@@ -128,13 +131,8 @@ async def atualizar_api_key(
 ):
     """Update an API key's name, scopes, or expiry."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
-
-    # Scope to user's org
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data:
-        raise HTTPException(status_code=404, detail="Perfil não encontrado")
-    org_id = profile.data["org_id"]
 
     data = body.model_dump(exclude_none=True)
     if not data:
@@ -152,13 +150,8 @@ async def atualizar_api_key(
 async def revogar_api_key(key_id: str, authorization: Optional[str] = Header(None)):
     """Revoke an API key (set inactive)."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
-
-    # Scope to user's org
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data:
-        raise HTTPException(status_code=404, detail="Perfil não encontrado")
-    org_id = profile.data["org_id"]
 
     result = db.table("api_keys").update(
         {"is_active": False}
@@ -168,6 +161,17 @@ async def revogar_api_key(key_id: str, authorization: Optional[str] = Header(Non
         raise HTTPException(status_code=404, detail="Chave API não encontrada")
 
     logger.info(f"API key revoked: {key_id}")
+
+    # Audit log (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=org_id,
+            action="revoke", resource_type="api_key", resource_id=key_id,
+        )
+    except Exception:
+        pass
+
     return {"data": result.data[0]}
 
 

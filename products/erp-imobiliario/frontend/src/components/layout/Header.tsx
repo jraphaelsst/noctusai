@@ -1,4 +1,5 @@
-import { User, LogOut, Lock, Edit2, Moon, Sun } from "lucide-react";
+import { LogOut, Lock, Edit2, Moon, Sun } from "lucide-react";
+import { NotificationBell } from "@/components/NotificationBell";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
@@ -145,6 +146,7 @@ export function Header() {
       <div></div>
       
       <div className="flex items-center gap-2 sm:gap-4">
+        <NotificationBell />
         {isLoading ? (
           <div className="text-right">
             <p className="text-sm font-medium text-muted-foreground">Carregando...</p>

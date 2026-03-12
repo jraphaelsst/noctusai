@@ -21,6 +21,8 @@ export function useMetas(status?: string) {
 }
 
 export function useMeta(id?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["meta", id],
     queryFn: async () => {
@@ -28,12 +30,14 @@ export function useMeta(id?: string) {
       const result = await api.get(`/api/metas/${id}`);
       return result.data as Meta;
     },
-    enabled: !!id,
+    enabled: !!user && !!id,
     staleTime: 5 * 60 * 1000,
   });
 }
 
 export function useMetaProgresso(id?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["meta", id, "progresso"],
     queryFn: async () => {
@@ -41,7 +45,7 @@ export function useMetaProgresso(id?: string) {
       const result = await api.get(`/api/metas/${id}/progresso`);
       return result.data;
     },
-    enabled: !!id,
+    enabled: !!user && !!id,
     staleTime: 2 * 60 * 1000,
   });
 }

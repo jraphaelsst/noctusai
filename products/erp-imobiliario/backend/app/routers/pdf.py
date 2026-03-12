@@ -136,35 +136,8 @@ async def gerar_pdf_dimob(
     vendas_result = db.table("contratos").select("*").eq("tipo", "venda").execute()
     vendas = vendas_result.data or []
 
-    secoes = []
-
-    # Section: Locações
-    locacoes_ano = [c for c in contratos if str(c.get("data_inicio", ""))[:4] <= str(ano)
-                    and (not c.get("data_fim") or str(c.get("data_fim", ""))[:4] >= str(ano))]
-    if locacoes_ano:
-        secoes.append({
-            "titulo": f"Locações ativas em {ano}",
-            "itens": [
-                f"Contrato {c.get('id', '')[:8]} - Valor: R$ {c.get('valor_aluguel', 0)}"
-                for c in locacoes_ano
-            ],
-        })
-
-    # Section: Vendas
-    vendas_ano = [v for v in vendas if str(v.get("data_inicio", ""))[:4] == str(ano)]
-    if vendas_ano:
-        secoes.append({
-            "titulo": f"Vendas em {ano}",
-            "itens": [
-                f"Contrato {v.get('id', '')[:8]} - Valor: R$ {v.get('valor_total', 0)}"
-                for v in vendas_ano
-            ],
-        })
-
-    if not secoes:
-        secoes.append({"titulo": "Sem movimentações", "itens": [f"Nenhuma operação registrada em {ano}"]})
-
-    dados = {"ano": ano, "secoes": secoes}
+    # Assemble DIMOB sections in the service
+    dados = pdf_service.montar_dados_dimob(ano, contratos, vendas)
     pdf_bytes = pdf_service.gerar_dimob(dados)
 
     log_action(user.id, "pdf_gerado", "dimob", descricao=f"DIMOB {ano} gerado")

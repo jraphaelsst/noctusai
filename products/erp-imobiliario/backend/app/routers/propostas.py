@@ -282,6 +282,10 @@ async def excluir_proposta(proposta_id: str, authorization: Optional[str] = Head
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
+    check = db.table("propostas").select("id").eq("id", proposta_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Proposta não encontrada")
+
     db.table("propostas").delete().eq("id", proposta_id).execute()
 
     log_action(user.id, "excluir", "proposta", proposta_id,

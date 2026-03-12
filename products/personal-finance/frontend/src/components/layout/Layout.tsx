@@ -3,8 +3,8 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/store/authStore";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  LayoutDashboard, Wallet, ArrowLeftRight, PiggyBank, Target,
-  TrendingUp, Eye, CalendarClock, Landmark, FileBarChart,
+  LayoutDashboard, Wallet, ArrowLeftRight, Tags, PiggyBank, Target,
+  TrendingUp, Eye, CalendarClock, Landmark, FileBarChart, ArrowUpDown,
   LogOut, Menu, X, ChevronLeft,
 } from "lucide-react";
 
@@ -14,10 +14,12 @@ const NAV_ITEMS = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/contas", label: "Contas", icon: Wallet },
   { path: "/transacoes", label: "Transacoes", icon: ArrowLeftRight },
+  { path: "/categorias", label: "Categorias", icon: Tags },
   { path: "/orcamentos", label: "Orcamentos", icon: PiggyBank },
   { path: "/metas", label: "Metas", icon: Target },
   { path: "/carteira", label: "Investimentos", icon: TrendingUp },
   { path: "/watchlist", label: "Watchlist", icon: Eye },
+  { path: "/operacoes", label: "Operacoes", icon: ArrowUpDown },
   { path: "/recorrentes", label: "Recorrentes", icon: CalendarClock },
   { path: "/patrimonio", label: "Patrimonio", icon: Landmark },
   { path: "/relatorios", label: "Relatorios", icon: FileBarChart },

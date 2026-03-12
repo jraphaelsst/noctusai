@@ -1,5 +1,5 @@
 export type IndiceReajuste = 'IGPM' | 'IPCA' | 'INPC' | 'fixo';
-export type StatusContrato = 'ativo' | 'encerrado' | 'renovado' | 'inadimplente';
+export type StatusLocacao = 'ativo' | 'encerrado' | 'renovado' | 'inadimplente';
 
 export interface ContratoLocacao {
   id: string;
@@ -13,7 +13,7 @@ export interface ContratoLocacao {
   data_fim: string;
   indice_reajuste: IndiceReajuste;
   percentual_reajuste?: number | null;
-  status: StatusContrato;
+  status: StatusLocacao;
   taxa_administracao: number;
   valor_caucao?: number | null;
   observacoes?: string | null;
@@ -43,7 +43,7 @@ export interface ContratoUpdateData {
   data_fim?: string;
   indice_reajuste?: IndiceReajuste;
   percentual_reajuste?: number;
-  status?: StatusContrato;
+  status?: StatusLocacao;
   taxa_administracao?: number;
   valor_caucao?: number;
   observacoes?: string;
@@ -173,5 +173,5 @@ export interface AtribuicaoResult {
   corretor_id?: string;
   modo?: string;
   motivo?: string;
-  cliente?: any;
+  cliente?: { id: string; nome: string };
 }

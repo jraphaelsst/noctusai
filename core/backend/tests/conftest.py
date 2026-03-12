@@ -4,6 +4,10 @@ Uses mocking to avoid requiring a live Supabase instance.
 """
 import contextlib
 import pytest
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
 from typing import Optional
 from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi.testclient import TestClient
@@ -256,7 +260,7 @@ MOCK_ADMIN_USER = MockUser(id="admin-user-456", email="admin@example.com")
 # Patch target helpers
 # ---------------------------------------------------------------------------
 
-def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
+def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm, mock_get_org_id=None):
     """Build the list of (target, replacement) tuples for all patches."""
     return [
         # Database module
@@ -281,10 +285,12 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
         ("app.routers.licenses.get_admin_client", mock_sb),
         ("app.routers.licenses.get_current_user", mock_get_user),
         ("app.routers.licenses.get_current_admin", mock_get_admin),
+        ("app.routers.licenses.get_org_id", mock_get_org_id),
         # Subscriptions router
         ("app.routers.subscriptions.get_admin_client", mock_sb),
         ("app.routers.subscriptions.get_current_user", mock_get_user),
         ("app.routers.subscriptions.get_current_admin", mock_get_admin),
+        ("app.routers.subscriptions.get_org_id", mock_get_org_id),
         # Plans router
         ("app.routers.plans.get_admin_client", mock_sb),
         ("app.routers.plans.get_current_user", mock_get_user),
@@ -293,6 +299,7 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
         ("app.routers.api_keys.get_admin_client", mock_sb),
         ("app.routers.api_keys.get_current_user", mock_get_user),
         ("app.routers.api_keys.get_current_admin", mock_get_admin),
+        ("app.routers.api_keys.get_org_id", mock_get_org_id),
         # Roles router
         ("app.routers.roles.get_admin_client", mock_sb),
         ("app.routers.roles.get_current_user", mock_get_user),
@@ -308,6 +315,7 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
         # Onboarding router
         ("app.routers.onboarding.get_admin_client", mock_sb),
         ("app.routers.onboarding.get_current_user", mock_get_user),
+        ("app.routers.onboarding.get_org_id", mock_get_org_id),
         # Analytics router
         ("app.routers.analytics.get_admin_client", mock_sb),
         ("app.routers.analytics.get_current_admin", mock_get_admin),
@@ -316,28 +324,33 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm):
         ("app.routers.oauth.get_supabase_client", mock_sb),
         ("app.routers.oauth.get_current_user", mock_get_user),
         # Entitlements router
-        ("app.routers.entitlements.get_admin_client", mock_sb),
         ("app.routers.entitlements.get_current_user", mock_get_user),
+        ("app.routers.entitlements.get_org_id", mock_get_org_id),
         # Notifications router
         ("app.routers.notifications.get_admin_client", mock_sb),
         ("app.routers.notifications.get_current_user", mock_get_user),
         # Webhooks router
         ("app.routers.webhooks.get_admin_client", mock_sb),
         ("app.routers.webhooks.get_current_user", mock_get_user),
+        ("app.routers.webhooks.get_current_admin", mock_get_admin),
+        ("app.routers.webhooks.get_org_id", mock_get_org_id),
         # Audit logs router
         ("app.routers.audit_logs.get_admin_client", mock_sb),
         ("app.routers.audit_logs.get_current_user", mock_get_user),
         ("app.routers.audit_logs.get_current_admin", mock_get_admin),
+        ("app.routers.audit_logs.get_org_id", mock_get_org_id),
         # Test accounts router
         ("app.routers.test_accounts.get_admin_client", mock_sb),
         ("app.routers.test_accounts.get_current_admin", mock_get_admin),
         # Billing router
         ("app.routers.billing.get_admin_client", mock_sb),
         ("app.routers.billing.get_current_user", mock_get_user),
+        ("app.routers.billing.get_org_id", mock_get_org_id),
         # Settings router
         ("app.routers.settings.get_admin_client", mock_sb),
         ("app.routers.settings.get_current_user", mock_get_user),
         ("app.routers.settings.get_current_admin", mock_get_admin),
+        ("app.routers.settings.get_org_id", mock_get_org_id),
         # Permissions service
         ("app.services.permissions.get_admin_client", mock_sb),
     ]
@@ -352,6 +365,7 @@ def _is_direct_replacement(target_name, value):
     direct_targets = (
         "get_current_user",
         "get_current_admin",
+        "get_org_id",
         "check_permission",
         "supabase_admin",
     )
@@ -406,8 +420,12 @@ def client():
     async def _mock_check_permission(user_id, org_id, permission_slug):
         return False
 
+    async def _mock_get_org_id(user):
+        return "test-org-123"
+
     patches = _build_patches(
-        mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission
+        mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
+        mock_get_org_id=_mock_get_org_id,
     )
 
     with contextlib.ExitStack() as stack:
@@ -443,8 +461,12 @@ def admin_client():
     async def _mock_check_permission(user_id, org_id, permission_slug):
         return True
 
+    async def _mock_get_org_id(user):
+        return "test-org-123"
+
     patches = _build_patches(
-        mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission
+        mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
+        mock_get_org_id=_mock_get_org_id,
     )
 
     with contextlib.ExitStack() as stack:
@@ -473,8 +495,12 @@ def unauth_client():
     async def _mock_check_permission(user_id, org_id, permission_slug):
         return False
 
+    async def _mock_get_org_id(user):
+        return "test-org-123"
+
     patches = _build_patches(
-        mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission
+        mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
+        mock_get_org_id=_mock_get_org_id,
     )
 
     with contextlib.ExitStack() as stack:

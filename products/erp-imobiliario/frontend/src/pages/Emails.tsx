@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -308,9 +309,7 @@ export default function Emails() {
           </CardHeader>
           <CardContent>
             {isLoadingTemplates ? (
-              <div className="py-8 text-center text-muted-foreground">
-                Carregando templates...
-              </div>
+              <TableSkeleton rows={3} />
             ) : templates.length === 0 ? (
               <div className="py-8 text-center text-muted-foreground">
                 Nenhum template encontrado
@@ -402,9 +401,7 @@ export default function Emails() {
       <Card>
         <CardContent className="pt-6">
           {isLoading ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Carregando emails...
-            </div>
+            <TableSkeleton rows={4} />
           ) : emails.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               Nenhum email encontrado

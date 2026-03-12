@@ -23,8 +23,10 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@noctusai/shared/*": ["../../../shared/frontend/src/*"],
+      "@noctusai/shared": ["../../../shared/frontend/src/index.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "../../../shared/frontend/src"]
 }

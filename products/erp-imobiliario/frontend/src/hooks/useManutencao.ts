@@ -80,10 +80,10 @@ export function useCreateOrdemServico() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['manutencao'] });
       queryClient.invalidateQueries({ queryKey: ['manutencao-resumo'] });
-      toast.success('Ordem de servico criada!');
+      toast.success('Ordem de serviço criada!');
     },
     onError: (error: Error) => {
-      toast.error('Erro ao criar ordem de servico', { description: error.message });
+      toast.error('Erro ao criar ordem de serviço', { description: error.message });
     },
   });
 }
@@ -118,7 +118,7 @@ export function useDeleteOrdemServico() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['manutencao'] });
       queryClient.invalidateQueries({ queryKey: ['manutencao-resumo'] });
-      toast.success('Ordem excluida!');
+      toast.success('Ordem excluída!');
     },
     onError: (error: Error) => {
       toast.error('Erro ao excluir ordem', { description: error.message });

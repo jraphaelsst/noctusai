@@ -11,37 +11,19 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Header
-from pydantic import BaseModel, Field, model_validator
 
-from app.dependencies import get_current_user, get_user_client, get_admin_client, first_or_none
+from app.dependencies import get_current_user, get_user_client, first_or_none
+from app.responses import success_response
+from app.schemas.matching import MatchRequest as GerarMatchesRequest, MatchStatusUpdate as AtualizarStatusRequest, EmbedRequest
 from app.services.matching import (
     gerar_matches_para_imovel,
     gerar_matches_para_permuta,
     gerar_matches_com_embeddings,
+    upsert_matches,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/matching", tags=["Matching"])
-
-
-class GerarMatchesRequest(BaseModel):
-    ativo_origem_id: Optional[str] = None
-    ativo_destino_id: Optional[str] = None
-    score_minimo: float = 20.0
-
-    @model_validator(mode='after')
-    def at_least_one_id(self):
-        if not self.ativo_origem_id and not self.ativo_destino_id:
-            raise ValueError('Informe ativo_origem_id ou ativo_destino_id')
-        return self
-
-
-class AtualizarStatusRequest(BaseModel):
-    status: str
-
-
-class EmbedRequest(BaseModel):
-    ativo_id: str
 
 
 @router.post("/gerar")
@@ -84,33 +66,18 @@ async def gerar_matches(body: GerarMatchesRequest, authorization: Optional[str] 
             imoveis = imoveis_res.data or []
             matches = gerar_matches_para_permuta(permuta, imoveis, body.score_minimo)
 
-    # Upsert matches
-    for match in matches:
-        upsert_data = {
-            "ativo_origem_id": match["ativo_origem_id"],
-            "ativo_destino_id": match["ativo_destino_id"],
-            "score": match["score"],
-            "justificativa": match["justificativa"],
-            "detalhes": match["detalhes"],
-            "status": "pendente",
-        }
-        if "score_breakdown" in match:
-            upsert_data["score_breakdown"] = match["score_breakdown"]
-
-        db.table("matches").upsert(
-            upsert_data,
-            on_conflict="ativo_origem_id,ativo_destino_id",
-        ).execute()
+    # Bulk upsert matches via service
+    upsert_matches(matches, db)
 
     logger.info(f"Generated {len(matches)} matches")
-    return {"total": len(matches), "matches": matches}
+    return success_response(matches, total=len(matches))
 
 
 @router.post("/embed")
 async def embed_ativo(body: EmbedRequest, authorization: Optional[str] = Header(None)):
     """Generate embedding for a single ativo."""
     user, token = await get_current_user(authorization)
-    db = get_admin_client()
+    db = get_user_client(token)
 
     # Lazy import to avoid ImportError when OpenAI is not needed
     from app.services.embedding_service import embed_ativo as do_embed
@@ -124,18 +91,18 @@ async def embed_ativo(body: EmbedRequest, authorization: Optional[str] = Header(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return {
+    return success_response({
         "ativo_id": body.ativo_id,
         "success": success,
         "message": "Embedding gerado com sucesso" if success else "Ativo sem dados suficientes para gerar embedding",
-    }
+    })
 
 
 @router.post("/embed-batch")
 async def embed_batch(authorization: Optional[str] = Header(None)):
     """Batch embed all ativos without embeddings."""
     user, token = await get_current_user(authorization)
-    db = get_admin_client()
+    db = get_user_client(token)
 
     from app.services.embedding_service import embed_ativos_batch
 
@@ -144,14 +111,17 @@ async def embed_batch(authorization: Optional[str] = Header(None)):
     ativo_ids = [row["id"] for row in (res.data or [])]
 
     if not ativo_ids:
-        return {"total": 0, "embedded": 0, "errors": 0}
+        return success_response({"total": 0, "embedded": 0, "errors": 0})
 
     try:
         result = await embed_ativos_batch(ativo_ids, db)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return result
+    return success_response(result)
+
+
+_ATIVO_SUMMARY_FIELDS = "id,natureza,tipo_imovel,tipo_veiculo,marca,modelo,valor,titulo_anuncio,ref,cidade,bairro,estado,zona,condominio_nome,fotos"
 
 
 @router.get("")
@@ -162,7 +132,7 @@ async def listar_matches(
     status: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ):
-    """List persisted matches with optional filters."""
+    """List persisted matches with optional filters, enriched with ativo summaries."""
     _, token = await get_current_user(authorization)
     db = get_user_client(token)
 
@@ -178,7 +148,25 @@ async def listar_matches(
         query = query.eq("status", status)
 
     result = query.execute()
-    return {"data": result.data or [], "total": len(result.data or [])}
+    matches = result.data or []
+
+    if not matches:
+        return success_response([], total=0)
+
+    # Collect unique ativo IDs and batch-fetch summaries (avoids N+1)
+    ativo_ids = set()
+    for m in matches:
+        ativo_ids.add(m["ativo_origem_id"])
+        ativo_ids.add(m["ativo_destino_id"])
+
+    ativos_res = db.table("ativos").select(_ATIVO_SUMMARY_FIELDS).in_("id", list(ativo_ids)).execute()
+    ativos_map = {a["id"]: a for a in (ativos_res.data or [])}
+
+    for m in matches:
+        m["ativo_origem"] = ativos_map.get(m["ativo_origem_id"])
+        m["ativo_destino"] = ativos_map.get(m["ativo_destino_id"])
+
+    return success_response(matches, total=len(matches))
 
 
 @router.patch("/{match_id}")
@@ -200,4 +188,4 @@ async def atualizar_status_match(
     if not row:
         raise HTTPException(status_code=404, detail="Match não encontrado")
 
-    return {"data": row}
+    return success_response(row)

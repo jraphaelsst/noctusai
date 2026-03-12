@@ -2,7 +2,7 @@ export interface Notificacao {
   id: string;
   org_id: string;
   user_id: string;
-  tipo: string;
+  tipo: 'nova_proposta' | 'status_proposta' | 'novo_match' | 'vencimento' | 'mensagem' | 'sistema' | string;
   titulo: string;
   mensagem?: string | null;
   is_read: boolean;

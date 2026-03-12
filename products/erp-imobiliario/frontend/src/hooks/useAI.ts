@@ -36,7 +36,7 @@ export function useGenerateDescription() {
       return result.data as AIDescriptionResult;
     },
     onError: (error: Error) => {
-      toast.error('Erro ao gerar descricao', { description: error.message });
+      toast.error('Erro ao gerar descrição', { description: error.message });
     },
   });
 }
@@ -67,7 +67,7 @@ export function useSuggestPrice() {
       return result.data as AIPriceResult;
     },
     onError: (error: Error) => {
-      toast.error('Erro ao sugerir preco', { description: error.message });
+      toast.error('Erro ao sugerir preço', { description: error.message });
     },
   });
 }

@@ -47,3 +47,13 @@ export const METODO_ORCAMENTO_LABELS: Record<string, string> = {
   "50_30_20": "50/30/20",
   personalizado: "Personalizado",
 };
+
+export const FREQUENCIA_LABELS: Record<string, string> = {
+  semanal: "Semanal",
+  quinzenal: "Quinzenal",
+  mensal: "Mensal",
+  bimestral: "Bimestral",
+  trimestral: "Trimestral",
+  semestral: "Semestral",
+  anual: "Anual",
+};

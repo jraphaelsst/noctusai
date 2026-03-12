@@ -73,7 +73,7 @@ export function useMeusPontos(page: number = 1) {
       const result = await api.get('/api/gamificacao/pontos', { page, page_size: 50 });
       return result as {
         data: Pontuacao[];
-        pagination: any;
+        pagination: { page: number; page_size: number; total: number } | null;
         total_pontos?: number;
       };
     },

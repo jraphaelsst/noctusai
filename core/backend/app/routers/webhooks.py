@@ -38,7 +38,8 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_admin, get_org_id
+from app.services import webhook_delivery
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
@@ -61,20 +62,11 @@ def _generate_webhook_secret() -> str:
     return f"whsec_{secrets.token_urlsafe(32)}"
 
 
-async def _get_user_org_id(user) -> str:
-    """Helper: resolve user -> org_id via noctus_users profile."""
-    db = get_admin_client()
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Perfil ou organização não encontrada")
-    return profile.data["org_id"]
-
-
 @router.get("")
 async def listar_webhooks(authorization: Optional[str] = Header(None)):
     """List webhook endpoints for the current user's organization."""
     user, token = await get_current_user(authorization)
-    org_id = await _get_user_org_id(user)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
     result = db.table("webhook_endpoints").select("*").eq(
@@ -88,7 +80,7 @@ async def listar_webhooks(authorization: Optional[str] = Header(None)):
 async def criar_webhook(body: WebhookCreate, authorization: Optional[str] = Header(None)):
     """Create a new webhook endpoint. Returns the signing secret ONCE."""
     user, token = await get_current_user(authorization)
-    org_id = await _get_user_org_id(user)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
     webhook_secret = _generate_webhook_secret()
@@ -121,7 +113,7 @@ async def atualizar_webhook(
 ):
     """Update a webhook endpoint."""
     user, token = await get_current_user(authorization)
-    org_id = await _get_user_org_id(user)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
     update_data = body.model_dump(exclude_none=True)
@@ -144,7 +136,7 @@ async def atualizar_webhook(
 async def deletar_webhook(webhook_id: str, authorization: Optional[str] = Header(None)):
     """Delete a webhook endpoint."""
     user, token = await get_current_user(authorization)
-    org_id = await _get_user_org_id(user)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
     # Only delete webhooks belonging to the user's org
@@ -168,7 +160,7 @@ async def listar_deliveries(
 ):
     """List delivery log for a webhook endpoint."""
     user, token = await get_current_user(authorization)
-    org_id = await _get_user_org_id(user)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
     # Verify the endpoint belongs to the user's org
@@ -198,3 +190,20 @@ async def listar_deliveries(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.post("/deliveries/{delivery_id}/retry")
+async def retry_webhook_delivery(
+    delivery_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Retry a failed webhook delivery. Admin-only."""
+    await get_current_admin(authorization)
+
+    try:
+        result = await webhook_delivery.retry_delivery(delivery_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    logger.info(f"Webhook delivery retried: {delivery_id}")
+    return {"data": result}

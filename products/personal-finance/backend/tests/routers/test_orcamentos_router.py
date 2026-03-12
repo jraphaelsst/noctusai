@@ -160,6 +160,7 @@ class TestAtualizarOrcamento:
 
 class TestExcluirOrcamento:
     def test_deletes_budget(self, client):
+        client._mock_supabase.set_table_data("orcamentos", [{"id": "orc-001", "org_id": "test-org-123"}])
         response = client.delete("/api/orcamentos/orc-001")
         assert response.status_code == 200
         data = response.json()

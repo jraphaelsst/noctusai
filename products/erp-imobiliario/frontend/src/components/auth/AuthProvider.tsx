@@ -1,15 +1,19 @@
 import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthStore } from '@/store/authStore';
+import { useSupabaseAuthInit } from '@noctusai/shared/auth';
 
 interface AuthProviderProps {
   children: React.ReactNode;
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const { setUser } = useAuthStore();
+  const { setUser, setInitialized } = useAuthStore();
 
-  // Atualizar última atividade do usuário - o banco gerencia o timestamp automaticamente
+  // Core auth initialization (session + listener) via shared hook
+  useSupabaseAuthInit(supabase, setUser, setInitialized);
+
+  // ERP-specific: update last activity
   const updateLastActivity = async (userId: string) => {
     try {
       await supabase
@@ -17,11 +21,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
         .update({ last_activity_at: new Date().toISOString() })
         .eq('id', userId);
     } catch (error) {
-      console.error('Erro ao atualizar última atividade:', error);
+      console.error('Erro ao atualizar ultima atividade:', error);
     }
   };
 
-  // Registrar ação de login/logout
+  // ERP-specific: register login/logout action
   const registerAuthAction = async (userId: string, action: 'login' | 'logout') => {
     try {
       await supabase.from("user_actions_log").insert({
@@ -31,28 +35,26 @@ export function AuthProvider({ children }: AuthProviderProps) {
         descricao: action === 'login' ? 'Fez login na plataforma' : 'Fez logout da plataforma',
       });
     } catch (error) {
-      console.error('Erro ao registrar ação de auth:', error);
+      console.error('Erro ao registrar acao de auth:', error);
     }
   };
 
+  // ERP-specific: activity tracking + action logging on auth changes
   useEffect(() => {
-    // Get initial session
+    // Update activity on initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
       if (session?.user) {
         updateLastActivity(session.user.id);
       }
     });
 
-    // Listen for auth changes
+    // Listen for auth events to log actions + update activity
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      setUser(session?.user ?? null);
       if (session?.user) {
         updateLastActivity(session.user.id);
-        
-        // Registrar login/logout
+
         if (event === 'SIGNED_IN') {
           setTimeout(() => registerAuthAction(session.user.id, 'login'), 0);
         } else if (event === 'SIGNED_OUT') {
@@ -62,16 +64,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
     });
 
     return () => subscription.unsubscribe();
-  }, [setUser]);
+  }, []);
 
-  // Atualizar atividade periodicamente enquanto o usuário está ativo
+  // ERP-specific: periodic activity heartbeat
   useEffect(() => {
     const interval = setInterval(async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         updateLastActivity(session.user.id);
       }
-    }, 5 * 60 * 1000); // A cada 5 minutos
+    }, 5 * 60 * 1000);
 
     return () => clearInterval(interval);
   }, []);

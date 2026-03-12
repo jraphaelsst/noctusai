@@ -6,6 +6,7 @@ import {
   usePortalFeedUrl,
 } from '@/hooks/usePortais';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CardGridSkeleton, TableSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -35,9 +36,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { toast } from 'sonner';
-
-const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+import { formatCurrency } from '@/lib/utils';
 
 const portalColors: Record<string, string> = {
   zap: 'bg-purple-100 text-purple-800',
@@ -105,11 +104,7 @@ export default function Portais() {
       {/* Feed Cards */}
       <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
         {feedsLoading ? (
-          <>
-            <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando...</CardContent></Card>
-            <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando...</CardContent></Card>
-            <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando...</CardContent></Card>
-          </>
+          <CardGridSkeleton count={3} />
         ) : (
           feeds.map((feed) => (
             <Card key={feed.portal}>
@@ -197,7 +192,7 @@ export default function Portais() {
 
           {/* Table */}
           {imoveisLoading ? (
-            <div className="py-8 text-center text-muted-foreground">Carregando...</div>
+            <TableSkeleton rows={4} />
           ) : imoveisFiltrados.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               <HomeIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />

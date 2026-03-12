@@ -1,15 +1,17 @@
 import { useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useCarteira } from "@/hooks/useCarteira";
+import { useCarteira, useCarteiraResumo } from "@/hooks/useCarteira";
 import { useAtivos, useCreateAtivo, useUpdateAtivo, useDeleteAtivo } from "@/hooks/useAtivos";
+import { useAtualizarPrecos } from "@/hooks/useCotacoes";
 import { DonutChartCard } from "@/components/charts/DonutChartCard";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { TIPO_ATIVO_LABELS, CHART_COLORS } from "@/lib/constants";
 import type { Ativo } from "@/types";
 import Modal from "@/components/Modal";
+import Breadcrumbs from "@/components/Breadcrumbs";
 import {
   ArrowLeft, Plus, TrendingUp, TrendingDown,
-  ArrowUpDown, ArrowUp, ArrowDown, Pencil, Trash2,
+  ArrowUpDown, ArrowUp, ArrowDown, Pencil, Trash2, RefreshCw,
 } from "lucide-react";
 
 type SortKey = "ticker" | "nome" | "quantidade" | "preco_medio" | "preco_atual" | "ganho_perda_pct" | "valor_atual";
@@ -24,10 +26,12 @@ export default function CarteiraDetalhes() {
   const navigate = useNavigate();
   const { data: carteira, isLoading: carteiraLoading } = useCarteira(id);
   const { data: ativos, isLoading: ativosLoading } = useAtivos(id);
+  const { data: resumo } = useCarteiraResumo(id);
 
   const createMutation = useCreateAtivo();
   const updateMutation = useUpdateAtivo();
   const deleteMutation = useDeleteAtivo();
+  const atualizarPrecosMutation = useAtualizarPrecos();
 
   const [sortKey, setSortKey] = useState<SortKey>("valor_atual");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -156,14 +160,11 @@ export default function CarteiraDetalhes() {
 
   return (
     <div className="space-y-6">
-      {/* Back Button */}
-      <button
-        onClick={() => navigate("/carteira")}
-        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        Voltar para Carteiras
-      </button>
+      <Breadcrumbs items={[
+        { label: "Dashboard", href: "/" },
+        { label: "Investimentos", href: "/carteira" },
+        { label: carteira.nome },
+      ]} />
 
       {/* Header */}
       <div className="flex items-start justify-between">
@@ -174,20 +175,33 @@ export default function CarteiraDetalhes() {
             {carteira.corretora ? ` - ${carteira.corretora}` : ""}
           </p>
         </div>
-        <button
-          onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition"
-        >
-          <Plus className="w-4 h-4" />
-          Adicionar Ativo
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => atualizarPrecosMutation.mutate()}
+            disabled={atualizarPrecosMutation.isPending}
+            className="flex items-center gap-2 px-4 py-2 rounded-md border bg-background text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${atualizarPrecosMutation.isPending ? "animate-spin" : ""}`} />
+            {atualizarPrecosMutation.isPending ? "Atualizando..." : "Atualizar Precos"}
+          </button>
+          <button
+            onClick={openCreate}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition"
+          >
+            <Plus className="w-4 h-4" />
+            Adicionar Ativo
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Valor Total</p>
           <p className="text-2xl font-bold">{formatCurrency(valorTotal)}</p>
+          {resumo?.custo_total > 0 && (
+            <p className="text-xs text-muted-foreground">Custo: {formatCurrency(resumo.custo_total)}</p>
+          )}
         </div>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Ganho/Perda</p>
@@ -195,11 +209,35 @@ export default function CarteiraDetalhes() {
             {isPositive ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
             <p className="text-2xl font-bold">{formatCurrency(Math.abs(ganhoPerdaTotal))}</p>
           </div>
+          {resumo?.ganho_perda_pct !== undefined && (
+            <p className={`text-xs font-medium ${isPositive ? "text-emerald-500" : "text-red-500"}`}>
+              {resumo.ganho_perda_pct >= 0 ? "+" : ""}{resumo.ganho_perda_pct.toFixed(2)}%
+            </p>
+          )}
         </div>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Total Ativos</p>
           <p className="text-2xl font-bold">{lista.length}</p>
         </div>
+        {resumo?.alocacao_alvo && resumo.alocacao_alvo.length > 0 && (
+          <div className="rounded-lg border bg-card p-4">
+            <p className="text-sm text-muted-foreground">Metas de Alocacao</p>
+            <div className="mt-1 space-y-1">
+              {resumo.alocacao_alvo.map((alvo: any) => {
+                const atual = resumo.alocacao_atual?.find((a: any) => a.tipo === alvo.classe_ativo);
+                const pctAtual = atual?.percentual || 0;
+                return (
+                  <div key={alvo.classe_ativo} className="flex items-center justify-between text-xs">
+                    <span>{TIPO_ATIVO_LABELS[alvo.classe_ativo] || alvo.classe_ativo}</span>
+                    <span className={Math.abs(pctAtual - alvo.percentual) > 5 ? "text-amber-500" : "text-muted-foreground"}>
+                      {pctAtual.toFixed(0)}% / {alvo.percentual}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Content: Table + Chart */}

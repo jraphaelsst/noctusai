@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "noctusai-shared"
+version = "0.1.0"
+description = "Shared backend utilities for all NoctusAI backends"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.2",
+    "supabase>=2.9.1",
+    "PyJWT>=2.9.0",
+    "slowapi>=0.1.9",
+    "sentry-sdk>=1.40.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["noctusai_shared*"]

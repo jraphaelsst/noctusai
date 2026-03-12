@@ -1,6 +1,9 @@
 # Root requirements — unified superset for all backends
 # Per-backend requirements.txt files are kept for independent Docker deploys.
 
+# Shared package (editable install)
+-e shared/backend
+
 # Core dependencies (shared by all backends)
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
@@ -26,6 +29,9 @@ yfinance>=0.2.36
 
 # Observability (optional)
 sentry-sdk[fastapi]==1.40.0
+
+# Scheduling
+APScheduler>=3.10.0
 
 # Rate limiting
 slowapi>=0.1.9

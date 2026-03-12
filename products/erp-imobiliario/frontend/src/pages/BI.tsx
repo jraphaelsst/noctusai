@@ -34,6 +34,7 @@ import {
 } from 'recharts';
 import { TrendingUp, Users, Building2, DollarSign, Target } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import {
   useBIVendas,
   useBICaptacao,
@@ -54,9 +55,9 @@ const PERIODO_OPTIONS = [
 
 const TABS = [
   { key: 'vendas', label: 'Vendas', icon: TrendingUp },
-  { key: 'captacao', label: 'Captacao', icon: Target },
+  { key: 'captacao', label: 'Captação', icon: Target },
   { key: 'corretores', label: 'Corretores', icon: Users },
-  { key: 'imoveis', label: 'Imoveis', icon: Building2 },
+  { key: 'imoveis', label: 'Imóveis', icon: Building2 },
   { key: 'financeiro', label: 'Financeiro', icon: DollarSign },
 ];
 
@@ -184,9 +185,7 @@ export default function BI() {
             </CardHeader>
             <CardContent>
               {loadingVendas ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  Carregando dados...
-                </div>
+                <TableSkeleton rows={3} />
               ) : vendas?.vendas_por_mes?.length > 0 ? (
                 <ResponsiveContainer width="100%" height={350}>
                   <BarChart data={vendas.vendas_por_mes}>
@@ -243,9 +242,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 {loadingCaptacao ? (
-                  <div className="py-8 text-center text-muted-foreground">
-                    Carregando dados...
-                  </div>
+                  <TableSkeleton rows={3} />
                 ) : captacao?.leads_por_origem?.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <PieChart>
@@ -280,9 +277,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 {loadingCaptacao ? (
-                  <div className="py-8 text-center text-muted-foreground">
-                    Carregando dados...
-                  </div>
+                  <TableSkeleton rows={3} />
                 ) : captacao?.leads_por_mes?.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart data={captacao.leads_por_mes}>
@@ -333,9 +328,7 @@ export default function BI() {
             </CardHeader>
             <CardContent>
               {loadingCorretores ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  Carregando dados...
-                </div>
+                <TableSkeleton rows={3} />
               ) : corretores?.ranking?.length > 0 ? (
                 <div className="overflow-x-auto">
                   <Table>
@@ -429,9 +422,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 {loadingImoveis ? (
-                  <div className="py-8 text-center text-muted-foreground">
-                    Carregando dados...
-                  </div>
+                  <TableSkeleton rows={3} />
                 ) : imoveis?.distribuicao_tipo?.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <PieChart>
@@ -466,9 +457,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 {loadingImoveis ? (
-                  <div className="py-8 text-center text-muted-foreground">
-                    Carregando dados...
-                  </div>
+                  <TableSkeleton rows={3} />
                 ) : imoveis?.imoveis_por_bairro?.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart data={imoveis.imoveis_por_bairro.slice(0, 10)} layout="vertical">
@@ -550,9 +539,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 {loadingFinanceiro ? (
-                  <div className="py-8 text-center text-muted-foreground">
-                    Carregando dados...
-                  </div>
+                  <TableSkeleton rows={3} />
                 ) : financeiro?.receitas_por_mes?.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart data={financeiro.receitas_por_mes}>
@@ -577,9 +564,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 {loadingFinanceiro ? (
-                  <div className="py-8 text-center text-muted-foreground">
-                    Carregando dados...
-                  </div>
+                  <TableSkeleton rows={3} />
                 ) : financeiro?.despesas_por_categoria?.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <PieChart>

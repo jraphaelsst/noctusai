@@ -38,7 +38,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_org_id
 from app.services import billing_service, stripe_service
 
 logger = logging.getLogger(__name__)
@@ -84,14 +84,7 @@ async def create_checkout(body: CheckoutRequest, authorization: Optional[str] = 
     Returns a ``checkout_url`` that the frontend should redirect to.
     """
     user, token = await get_current_user(authorization)
-    db = get_admin_client()
-
-    # Resolve the user's organization
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Perfil ou organizacao nao encontrada")
-
-    org_id = profile.data["org_id"]
+    org_id = await get_org_id(user)
 
     checkout_url = billing_service.start_subscription(
         org_id=org_id,
@@ -155,8 +148,54 @@ async def stripe_webhook(request: Request):
     else:
         logger.debug("Unhandled webhook event type: %s", event_type)
 
+    # Fire webhook delivery to org endpoints (best-effort)
+    if event_type in _HANDLED_EVENTS:
+        _dispatch_webhook(event_type, event_data)
+
     # Always return 200 so Stripe does not retry handled events
     return {"received": True}
+
+
+def _dispatch_webhook(event_type: str, event_data: dict) -> None:
+    """Dispatch billing event to registered webhook endpoints (best-effort, fire-and-forget)."""
+    try:
+        import asyncio
+        from app.services import webhook_delivery
+
+        session_obj = event_data.get("object", {})
+        stripe_customer_id = session_obj.get("customer")
+
+        # Resolve org_id from metadata or subscription lookup
+        org_id = session_obj.get("metadata", {}).get("org_id")
+        if not org_id and stripe_customer_id:
+            db = get_admin_client()
+            sub = (
+                db.table("subscriptions")
+                .select("org_id")
+                .eq("stripe_customer_id", stripe_customer_id)
+                .limit(1)
+                .execute()
+            )
+            if sub.data:
+                org_id = sub.data[0]["org_id"]
+
+        if not org_id:
+            return
+
+        payload = {
+            "event": event_type,
+            "data": event_data,
+        }
+
+        # Schedule as fire-and-forget coroutine
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(webhook_delivery.dispatch(org_id, event_type, payload))
+        except RuntimeError:
+            # No running loop (shouldn't happen in FastAPI, but be safe)
+            pass
+    except Exception as exc:
+        logger.warning(f"Failed to dispatch billing webhook: {exc}")
 
 
 def _notify_billing_event(event_type: str, event_data: dict) -> None:
@@ -241,13 +280,7 @@ async def create_portal(body: PortalRequest, authorization: Optional[str] = Head
     Returns a ``portal_url`` that the frontend should redirect to.
     """
     user, token = await get_current_user(authorization)
-    db = get_admin_client()
-
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Perfil ou organizacao nao encontrada")
-
-    org_id = profile.data["org_id"]
+    org_id = await get_org_id(user)
 
     # Get the Stripe customer ID for this org
     customer_id = billing_service.ensure_customer(org_id)
@@ -264,6 +297,42 @@ async def create_portal(body: PortalRequest, authorization: Optional[str] = Head
 
 
 # ---------------------------------------------------------------------------
+# POST /api/billing/cancel
+# ---------------------------------------------------------------------------
+
+class CancelRequest(BaseModel):
+    at_period_end: bool = Field(
+        default=True,
+        description="Se True, cancela ao final do periodo atual. Se False, cancela imediatamente.",
+    )
+
+
+@router.post("/cancel")
+async def cancel_subscription(body: CancelRequest, authorization: Optional[str] = Header(None)):
+    """Cancel the active subscription for the current user's organization.
+
+    By default cancels at the end of the billing period (``at_period_end=True``).
+    """
+    user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
+
+    result = billing_service.cancel_subscription(org_id, at_period_end=body.at_period_end)
+
+    # Audit log (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=user.id, org_id=org_id,
+            action="cancel", resource_type="subscription",
+            resource_id=result.get("id"),
+        )
+    except Exception:
+        pass
+
+    return {"data": result}
+
+
+# ---------------------------------------------------------------------------
 # GET /api/billing/invoices
 # ---------------------------------------------------------------------------
 
@@ -274,13 +343,8 @@ async def list_invoices(
 ):
     """List recent invoices for the current user's organization."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
-
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Perfil ou organizacao nao encontrada")
-
-    org_id = profile.data["org_id"]
 
     # Get stripe customer id from subscription
     sub = (
@@ -330,12 +394,6 @@ async def get_billing_status(authorization: Optional[str] = Header(None)):
     Includes plan details, subscription state, next invoice, and payment method.
     """
     user, token = await get_current_user(authorization)
-    db = get_admin_client()
-
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Perfil ou organizacao nao encontrada")
-
-    org_id = profile.data["org_id"]
+    org_id = await get_org_id(user)
     status = billing_service.get_billing_status(org_id)
     return {"data": status}

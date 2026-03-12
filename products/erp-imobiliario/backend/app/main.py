@@ -2,17 +2,9 @@
 Corretor Goal Hub — FastAPI Backend
 
 Entry point for the API server.
-Run with: uvicorn app.main:app --reload --port 8000
+Run with: uvicorn app.main:app --reload --port 8001
 """
-import logging
-
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import ValidationError
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+from fastapi import FastAPI
 
 from app.config import settings
 from app.routers import (
@@ -27,91 +19,33 @@ from app.routers import (
     seguros, impostos, banco, emails,
     notificacoes, whatsapp_webhook, meta_api,
     storage, pdf, jobs, recorrencia,
+    certidoes,
 )
-from app.exceptions import (
-    AppException,
-    app_exception_handler,
-    http_exception_handler,
-    validation_exception_handler,
-    postgrest_exception_handler,
-    generic_exception_handler,
-)
-from app.middleware import CorrelationIdMiddleware, RequestLoggingMiddleware
+from app.rate_limit import limiter
 from app.logging_config import configure_logging
+from noctusai_shared.app_factory import configure_app
 
 # Configure structured logging
 configure_logging(debug=settings.debug, json_logs=not settings.debug)
 
-# Initialize Sentry for error tracking (optional - only if SENTRY_DSN is set)
-if settings.sentry_dsn:
-    try:
-        import sentry_sdk
-        from sentry_sdk.integrations.fastapi import FastApiIntegration
-        from sentry_sdk.integrations.starlette import StarletteIntegration
-
-        sentry_sdk.init(
-            dsn=settings.sentry_dsn,
-            integrations=[
-                StarletteIntegration(transaction_style="endpoint"),
-                FastApiIntegration(transaction_style="endpoint"),
-            ],
-            traces_sample_rate=0.1 if settings.is_production else 1.0,
-            profiles_sample_rate=0.1 if settings.is_production else 1.0,
-            environment="production" if settings.is_production else "development",
-            send_default_pii=False,
-        )
-        logging.info("Sentry SDK initialized successfully")
-    except ImportError:
-        logging.warning("Sentry SDK not installed. Error tracking disabled.")
+# Production safety checks
+if not settings.debug and not settings.jwt_secret:
+    raise RuntimeError(
+        "JWT_SECRET must be set in production. "
+        "Set DEBUG=true for development or provide a secure JWT_SECRET."
+    )
 
 # Create app
 app = FastAPI(
     title="Corretor Goal Hub API",
     description="Backend API for real estate CRM with matching system",
     version="0.2.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
 )
 
-# Rate limiting
-limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
-app.state.limiter = limiter
-
-
-@app.exception_handler(RateLimitExceeded)
-async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(
-        status_code=429,
-        content={"error": {"code": "RATE_LIMITED", "message": "Muitas requisições. Tente novamente em breve."}},
-    )
-
-# CORS — restricted methods and headers for security
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With", "X-Correlation-ID", "X-Request-ID"],
-    expose_headers=["X-Correlation-ID", "X-Response-Time-Ms"],
-)
-
-# Add request tracking and logging middleware
-app.add_middleware(RequestLoggingMiddleware)
-app.add_middleware(CorrelationIdMiddleware)
-
-# Register exception handlers for standardized error responses
-app.add_exception_handler(AppException, app_exception_handler)
-app.add_exception_handler(HTTPException, http_exception_handler)
-app.add_exception_handler(ValidationError, validation_exception_handler)
-
-# Handle PostgREST errors (e.g. .single() with 0 rows → 404 instead of 500)
-try:
-    from postgrest.exceptions import APIError as PostgRESTError
-    app.add_exception_handler(PostgRESTError, postgrest_exception_handler)
-except ImportError:
-    pass
-
-app.add_exception_handler(Exception, generic_exception_handler)
+# Apply shared configuration (Sentry, CORS, exception handlers, middleware, rate limiting)
+configure_app(app, settings, limiter=limiter)
 
 # Register routers
 app.include_router(ativos.router)
@@ -160,6 +94,7 @@ app.include_router(storage.router)
 app.include_router(pdf.router)
 app.include_router(jobs.router)
 app.include_router(recorrencia.router)
+app.include_router(certidoes.router)
 
 
 @app.get("/health")

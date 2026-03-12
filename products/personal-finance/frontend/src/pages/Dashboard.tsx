@@ -4,6 +4,7 @@ import { useTransacoesPorCategoria } from "@/hooks/useTransacoes";
 import { AreaChartCard } from "@/components/charts/AreaChartCard";
 import { DonutChartCard } from "@/components/charts/DonutChartCard";
 import { BarChartCard } from "@/components/charts/BarChartCard";
+import { KPICardSkeleton, ChartSkeleton, ListSkeleton } from "@/components/Skeleton";
 import { formatCurrency, formatPercent, formatDate, getCurrentMonth, getMonthLabel } from "@/lib/utils";
 import type { DashboardKPIs, Transacao, Recorrente, Meta } from "@/types";
 import {
@@ -119,8 +120,23 @@ export default function Dashboard() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <KPICardSkeleton />
+          <KPICardSkeleton />
+          <KPICardSkeleton />
+          <KPICardSkeleton />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2"><ChartSkeleton /></div>
+          <ChartSkeleton />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <ListSkeleton />
+          <ListSkeleton />
+          <ListSkeleton />
+        </div>
       </div>
     );
   }

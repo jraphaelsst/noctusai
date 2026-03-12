@@ -30,7 +30,7 @@ class TestGetOnboardingStatus:
         resp = client.get("/api/onboarding/status")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["org_id"] == "org-1"
+        assert data["org_id"] == "test-org-123"
         assert data["onboarding_completed"] is False
         assert data["progress"]["completed"] == 1
         assert data["progress"]["total"] == 4
@@ -56,13 +56,6 @@ class TestGetOnboardingStatus:
         data = resp.json()["data"]
         assert data["onboarding_completed"] is True
         assert data["progress"]["percentage"] == 100
-
-    def test_get_status_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.get("/api/onboarding/status")
-        assert resp.status_code == 404
 
     def test_get_status_org_not_found(self, client):
         mock_sb = client.mock_supabase

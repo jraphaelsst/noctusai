@@ -19,6 +19,8 @@ export function useCarteiras() {
 }
 
 export function useCarteira(id?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["carteira", id],
     queryFn: async () => {
@@ -26,12 +28,14 @@ export function useCarteira(id?: string) {
       const result = await api.get(`/api/carteiras/${id}`);
       return result.data as Carteira;
     },
-    enabled: !!id,
+    enabled: !!user && !!id,
     staleTime: 5 * 60 * 1000,
   });
 }
 
 export function useCarteiraResumo(id?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["carteira", id, "resumo"],
     queryFn: async () => {
@@ -39,7 +43,7 @@ export function useCarteiraResumo(id?: string) {
       const result = await api.get(`/api/carteiras/${id}/resumo`);
       return result.data;
     },
-    enabled: !!id,
+    enabled: !!user && !!id,
     staleTime: 2 * 60 * 1000,
   });
 }

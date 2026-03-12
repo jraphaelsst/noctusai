@@ -1,4 +1,8 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import {
   useVistorias,
   useCreateVistoria,
@@ -47,28 +51,29 @@ import {
   Clock,
   XCircle,
 } from 'lucide-react';
+import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 import { formatDate } from '@/lib/utils';
+import { VISTORIA_STATUS_CONFIG, VISTORIA_TIPO_CONFIG } from '@/lib/constants';
 import { useAuthStore } from '@/store/authStore';
 import type {
   Vistoria,
-  VistoriaCreateData,
   TipoVistoria,
   StatusVistoria,
   ChecklistItem,
   EstadoChecklist,
 } from '@/types/locacoes';
 
-const TIPO_CONFIG: Record<TipoVistoria, { label: string; variant: 'default' | 'secondary' | 'outline' }> = {
-  entrada: { label: 'Entrada', variant: 'default' },
-  saida: { label: 'Saida', variant: 'secondary' },
-  periodica: { label: 'Periodica', variant: 'outline' },
+const TIPO_VARIANT: Record<TipoVistoria, 'default' | 'secondary' | 'outline'> = {
+  entrada: 'default',
+  saida: 'secondary',
+  periodica: 'outline',
 };
 
-const STATUS_CONFIG: Record<StatusVistoria, { label: string; icon: typeof Clock; color: string }> = {
-  agendada: { label: 'Agendada', icon: Calendar, color: 'text-blue-500' },
-  em_andamento: { label: 'Em Andamento', icon: Clock, color: 'text-yellow-500' },
-  concluida: { label: 'Concluida', icon: CheckCircle, color: 'text-green-500' },
-  cancelada: { label: 'Cancelada', icon: XCircle, color: 'text-red-500' },
+const STATUS_ICON: Record<StatusVistoria, { icon: typeof Clock; color: string }> = {
+  agendada: { icon: Calendar, color: 'text-blue-500' },
+  em_andamento: { icon: Clock, color: 'text-yellow-500' },
+  concluida: { icon: CheckCircle, color: 'text-green-500' },
+  cancelada: { icon: XCircle, color: 'text-red-500' },
 };
 
 const ESTADO_OPTIONS: { value: EstadoChecklist; label: string; color: string }[] = [
@@ -93,10 +98,22 @@ const DEFAULT_CHECKLIST: ChecklistItem[] = [
   { item: 'Limpeza Geral', estado: 'bom', observacao: '' },
 ];
 
+const vistoriaSchema = z.object({
+  imovel_id: z.string().min(1, 'ID do imóvel é obrigatório'),
+  tipo: z.enum(['entrada', 'saida', 'periodica']),
+  data_vistoria: z.string().min(1, 'Data da vistoria é obrigatória'),
+  responsavel_id: z.string().optional(),
+  responsavel_nome: z.string().optional(),
+  observacoes_gerais: z.string().optional(),
+});
+
+type VistoriaFormData = z.infer<typeof vistoriaSchema>;
+
 export default function Vistorias() {
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [filtroStatus, setFiltroStatus] = useState('todos');
   const [busca, setBusca] = useState('');
+  const navigate = useNavigate();
   const { user } = useAuthStore();
 
   const { data: vistorias = [], isLoading } = useVistorias({
@@ -108,15 +125,28 @@ export default function Vistorias() {
   const deleteMutation = useDeleteVistoria();
 
   const [dialogAberto, setDialogAberto] = useState(false);
-  const [formData, setFormData] = useState<VistoriaCreateData>({
-    imovel_id: '',
-    tipo: 'entrada',
-    data_vistoria: '',
-    responsavel_id: '',
-    responsavel_nome: '',
-    observacoes_gerais: '',
-  });
   const [formChecklist, setFormChecklist] = useState<ChecklistItem[]>([...DEFAULT_CHECKLIST]);
+
+  const {
+    register: registerVistoria,
+    handleSubmit: rhfHandleCreate,
+    formState: { errors: vistoriaErrors },
+    reset: resetVistoria,
+    setValue: setVistoriaValue,
+    watch: watchVistoria,
+  } = useForm<VistoriaFormData>({
+    resolver: zodResolver(vistoriaSchema),
+    defaultValues: {
+      imovel_id: '',
+      tipo: 'entrada',
+      data_vistoria: '',
+      responsavel_id: '',
+      responsavel_nome: '',
+      observacoes_gerais: '',
+    },
+  });
+
+  const tipoVistoriaValue = watchVistoria('tipo');
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [detailVistoria, setDetailVistoria] = useState<Vistoria | null>(null);
 
@@ -138,20 +168,17 @@ export default function Vistorias() {
     return { agendadas, emAndamento, concluidas, total: vistorias.length };
   }, [vistorias]);
 
-  const handleCreate = () => {
+  const handleCreate = (data: VistoriaFormData) => {
     createMutation.mutate(
-      { ...formData, checklist: formChecklist },
+      {
+        ...data,
+        responsavel_id: data.responsavel_id || user?.id || '',
+        checklist: formChecklist,
+      },
       {
         onSuccess: () => {
           setDialogAberto(false);
-          setFormData({
-            imovel_id: '',
-            tipo: 'entrada',
-            data_vistoria: '',
-            responsavel_id: user?.id || '',
-            responsavel_nome: '',
-            observacoes_gerais: '',
-          });
+          resetVistoria();
           setFormChecklist([...DEFAULT_CHECKLIST]);
         },
       }
@@ -184,10 +211,8 @@ export default function Vistorias() {
           <p className="text-muted-foreground">Agende e gerencie vistorias de imoveis</p>
         </div>
         <Button onClick={() => {
-          setFormData({
-            ...formData,
-            responsavel_id: user?.id || '',
-          });
+          resetVistoria({ imovel_id: '', tipo: 'entrada', data_vistoria: '', responsavel_id: user?.id || '', responsavel_nome: '', observacoes_gerais: '' });
+          setFormChecklist([...DEFAULT_CHECKLIST]);
           setDialogAberto(true);
         }}>
           <Plus className="h-4 w-4 mr-2" />Nova Vistoria
@@ -276,11 +301,7 @@ export default function Vistorias() {
 
       {/* Vistorias List */}
       {isLoading ? (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground">
-            Carregando...
-          </CardContent>
-        </Card>
+        <CardGridSkeleton count={6} />
       ) : filtrados.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
@@ -292,17 +313,19 @@ export default function Vistorias() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtrados.map((vistoria) => {
-            const tipoCfg = TIPO_CONFIG[vistoria.tipo] || TIPO_CONFIG.entrada;
-            const statusCfg = STATUS_CONFIG[vistoria.status] || STATUS_CONFIG.agendada;
-            const StatusIcon = statusCfg.icon;
+            const tipoLabel = VISTORIA_TIPO_CONFIG[vistoria.tipo]?.label || vistoria.tipo;
+            const tipoVariant = TIPO_VARIANT[vistoria.tipo] || 'default';
+            const statusLabel = VISTORIA_STATUS_CONFIG[vistoria.status]?.label || vistoria.status;
+            const statusIcon = STATUS_ICON[vistoria.status] || STATUS_ICON.agendada;
+            const StatusIcon = statusIcon.icon;
             return (
               <Card key={vistoria.id} className="hover:shadow-md transition-shadow">
                 <CardContent className="pt-6 space-y-3">
                   <div className="flex items-center justify-between">
-                    <Badge variant={tipoCfg.variant}>{tipoCfg.label}</Badge>
-                    <div className={`flex items-center gap-1 text-sm ${statusCfg.color}`}>
+                    <Badge variant={tipoVariant}>{tipoLabel}</Badge>
+                    <div className={`flex items-center gap-1 text-sm ${statusIcon.color}`}>
                       <StatusIcon className="h-4 w-4" />
-                      {statusCfg.label}
+                      {statusLabel}
                     </div>
                   </div>
 
@@ -347,7 +370,7 @@ export default function Vistorias() {
                   )}
 
                   <div className="flex gap-2 pt-2">
-                    <Button size="sm" variant="outline" onClick={() => setDetailVistoria(vistoria)}>
+                    <Button size="sm" variant="outline" onClick={() => navigate(`/vistorias/${vistoria.id}`)}>
                       <Eye className="h-3 w-3 mr-1" />Detalhes
                     </Button>
                     {vistoria.status === 'agendada' && (
@@ -385,56 +408,39 @@ export default function Vistorias() {
           <DialogHeader>
             <DialogTitle>Nova Vistoria</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+          <form onSubmit={rhfHandleCreate(handleCreate)} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <Label>ID do Imovel</Label>
-                <Input
-                  value={formData.imovel_id}
-                  onChange={(e) => setFormData({ ...formData, imovel_id: e.target.value })}
-                  placeholder="UUID do imovel"
-                />
+                <Label>ID do Imóvel</Label>
+                <Input {...registerVistoria('imovel_id')} placeholder="UUID do imóvel" />
+                {vistoriaErrors.imovel_id && <p className="text-sm text-destructive">{vistoriaErrors.imovel_id.message}</p>}
               </div>
               <div>
                 <Label>Tipo</Label>
-                <Select
-                  value={formData.tipo}
-                  onValueChange={(v) => setFormData({ ...formData, tipo: v as TipoVistoria })}
-                >
+                <Select value={tipoVistoriaValue} onValueChange={(v) => setVistoriaValue('tipo', v as TipoVistoria)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="entrada">Entrada</SelectItem>
-                    <SelectItem value="saida">Saida</SelectItem>
-                    <SelectItem value="periodica">Periodica</SelectItem>
+                    <SelectItem value="saida">Saída</SelectItem>
+                    <SelectItem value="periodica">Periódica</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>Data da Vistoria</Label>
-                <Input
-                  type="date"
-                  value={formData.data_vistoria}
-                  onChange={(e) => setFormData({ ...formData, data_vistoria: e.target.value })}
-                />
+                <Input type="date" {...registerVistoria('data_vistoria')} />
+                {vistoriaErrors.data_vistoria && <p className="text-sm text-destructive">{vistoriaErrors.data_vistoria.message}</p>}
               </div>
               <div>
-                <Label>Nome do Responsavel</Label>
-                <Input
-                  value={formData.responsavel_nome || ''}
-                  onChange={(e) => setFormData({ ...formData, responsavel_nome: e.target.value })}
-                  placeholder="Nome do responsavel"
-                />
+                <Label>Nome do Responsável</Label>
+                <Input {...registerVistoria('responsavel_nome')} placeholder="Nome do responsável" />
               </div>
             </div>
             <div>
-              <Label>Observacoes Gerais</Label>
-              <Textarea
-                value={formData.observacoes_gerais || ''}
-                onChange={(e) => setFormData({ ...formData, observacoes_gerais: e.target.value })}
-                rows={2}
-              />
+              <Label>Observações Gerais</Label>
+              <Textarea {...registerVistoria('observacoes_gerais')} rows={2} />
             </div>
 
             {/* Checklist Editor */}
@@ -469,18 +475,16 @@ export default function Vistorias() {
                 ))}
               </div>
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogAberto(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleCreate}
-              disabled={createMutation.isPending || !formData.imovel_id || !formData.data_vistoria}
-            >
-              {createMutation.isPending ? 'Criando...' : 'Criar Vistoria'}
-            </Button>
-          </DialogFooter>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialogAberto(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? 'Criando...' : 'Criar Vistoria'}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -492,12 +496,12 @@ export default function Vistorias() {
           </DialogHeader>
           {detailVistoria && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                 <div>
-                  <strong>Tipo:</strong> {TIPO_CONFIG[detailVistoria.tipo]?.label || detailVistoria.tipo}
+                  <strong>Tipo:</strong> {VISTORIA_TIPO_CONFIG[detailVistoria.tipo]?.label || detailVistoria.tipo}
                 </div>
                 <div>
-                  <strong>Status:</strong> {STATUS_CONFIG[detailVistoria.status]?.label || detailVistoria.status}
+                  <strong>Status:</strong> {VISTORIA_STATUS_CONFIG[detailVistoria.status]?.label || detailVistoria.status}
                 </div>
                 <div>
                   <strong>Data:</strong> {formatDate(detailVistoria.data_vistoria)}

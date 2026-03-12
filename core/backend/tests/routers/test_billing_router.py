@@ -60,16 +60,6 @@ class TestCreateCheckout:
         })
         assert resp.status_code == 422
 
-    def test_checkout_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.post("/api/billing/checkout", json={
-            "plan_id": "plan-1",
-            "billing_cycle": "monthly",
-        })
-        assert resp.status_code == 404
-
     def test_checkout_unauthenticated(self, unauth_client):
         resp = unauth_client.post("/api/billing/checkout", json={
             "plan_id": "plan-1",
@@ -142,12 +132,6 @@ class TestCreatePortal:
             data = resp.json()["data"]
             assert "portal_url" in data
 
-    def test_portal_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.post("/api/billing/portal", json={})
-        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -226,13 +210,6 @@ class TestBillingStatus:
             data = resp.json()["data"]
             assert data["plan"] == "Pro"
             assert data["status"] == "active"
-
-    def test_billing_status_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.get("/api/billing/status")
-        assert resp.status_code == 404
 
     def test_billing_status_unauthenticated(self, unauth_client):
         resp = unauth_client.get("/api/billing/status")

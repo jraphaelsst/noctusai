@@ -2,18 +2,23 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '@/lib/api-client';
 import { Profile } from '@/types';
+import { useAuthStore } from '@/store/authStore';
 
-function getErrorMessage(error: any): string {
-  return error?.message || 'Ocorreu um erro. Tente novamente';
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return 'Ocorreu um erro. Tente novamente';
 }
 
 export function useProfiles() {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ['profiles'],
     queryFn: async () => {
       const result = await api.get('/api/profiles');
       return (result.data || []) as Profile[];
     },
+    enabled: !!user,
   });
 }
 
@@ -31,7 +36,7 @@ export function useCreateProfile() {
         description: 'Usuário criado no servidor.',
       });
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast.error('Erro ao cadastrar corretor', { description: getErrorMessage(error) });
     },
   });
@@ -49,7 +54,7 @@ export function useUpdateProfile() {
       queryClient.invalidateQueries({ queryKey: ['profiles'] });
       toast.success('Perfil atualizado com sucesso!');
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast.error('Erro ao atualizar perfil', { description: getErrorMessage(error) });
     },
   });
@@ -67,7 +72,7 @@ export function useDeleteProfile() {
       queryClient.invalidateQueries({ queryKey: ['profiles'] });
       toast.success('Usuário excluído com sucesso!');
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast.error('Erro ao excluir usuário', { description: getErrorMessage(error) });
     },
   });

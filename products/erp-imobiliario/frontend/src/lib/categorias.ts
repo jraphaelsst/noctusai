@@ -21,16 +21,6 @@ export const categoriasDisponiveis: CategoriaMeta[] = [
   'fechamento',
 ];
 
-// Categorias para configuração (excluindo "outro")
-export const categoriasConfig: CategoriaMeta[] = [
-  'captacao_imoveis',
-  'captacao_compradores',
-  'atualizacao_imoveis',
-  'visitas',
-  'propostas',
-  'fechamento',
-];
-
 export const categoriaLabels: Record<CategoriaMeta, string> = {
   captacao: "Captação",
   captacao_imoveis: "Captação de Imóveis",

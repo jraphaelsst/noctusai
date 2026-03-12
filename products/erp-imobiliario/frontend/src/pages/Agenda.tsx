@@ -8,6 +8,7 @@ import {
   type Evento,
 } from '@/hooks/useAgenda';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -38,19 +39,26 @@ import {
   ChevronRight,
   Trash2,
 } from 'lucide-react';
+import { formatDate } from '@/lib/utils';
+import { AGENDA_TIPO_CONFIG } from '@/lib/constants';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const tipoConfig: Record<TipoEvento, { label: string; color: string; bg: string }> = {
-  visita: { label: 'Visita', color: 'text-blue-700', bg: 'bg-blue-100 border-blue-300' },
-  reuniao: { label: 'Reuniao', color: 'text-purple-700', bg: 'bg-purple-100 border-purple-300' },
-  ligacao: { label: 'Ligacao', color: 'text-green-700', bg: 'bg-green-100 border-green-300' },
-  vistoria: { label: 'Vistoria', color: 'text-orange-700', bg: 'bg-orange-100 border-orange-300' },
-  assinatura: { label: 'Assinatura', color: 'text-red-700', bg: 'bg-red-100 border-red-300' },
-  outro: { label: 'Outro', color: 'text-gray-700', bg: 'bg-gray-100 border-gray-300' },
+const tipoStyle: Record<TipoEvento, { color: string; bg: string }> = {
+  visita: { color: 'text-blue-700', bg: 'bg-blue-100 border-blue-300' },
+  reuniao: { color: 'text-purple-700', bg: 'bg-purple-100 border-purple-300' },
+  ligacao: { color: 'text-green-700', bg: 'bg-green-100 border-green-300' },
+  vistoria: { color: 'text-orange-700', bg: 'bg-orange-100 border-orange-300' },
+  assinatura: { color: 'text-red-700', bg: 'bg-red-100 border-red-300' },
+  outro: { color: 'text-gray-700', bg: 'bg-gray-100 border-gray-300' },
 };
+
+const getTipoConfig = (tipo: TipoEvento) => ({
+  label: AGENDA_TIPO_CONFIG[tipo]?.label || tipo,
+  ...tipoStyle[tipo] || tipoStyle.outro,
+});
 
 const tipoBadgeVariant: Record<TipoEvento, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   visita: 'default',
@@ -64,10 +72,6 @@ const tipoBadgeVariant: Record<TipoEvento, 'default' | 'secondary' | 'destructiv
 const formatTime = (dateStr: string) => {
   const d = new Date(dateStr);
   return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-};
-
-const formatDate = (dateStr: string) => {
-  return new Date(dateStr).toLocaleDateString('pt-BR');
 };
 
 const formatDateFull = (dateStr: string) => {
@@ -319,14 +323,17 @@ export default function Agenda() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {(Object.keys(tipoConfig) as TipoEvento[]).map((tipo) => (
+                    {(Object.keys(tipoStyle) as TipoEvento[]).map((tipo) => {
+                      const cfg = getTipoConfig(tipo);
+                      return (
                       <SelectItem key={tipo} value={tipo}>
                         <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full ${tipoConfig[tipo].bg.split(' ')[0]}`} />
-                          {tipoConfig[tipo].label}
+                          <div className={`w-2 h-2 rounded-full ${cfg.bg.split(' ')[0]}`} />
+                          {cfg.label}
                         </div>
                       </SelectItem>
-                    ))}
+                    );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -450,12 +457,7 @@ export default function Agenda() {
             </Tabs>
           </div>
 
-          {isLoading && (
-            <div className="py-8 text-center text-muted-foreground">
-              <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
-              Carregando eventos...
-            </div>
-          )}
+          {isLoading && <CardListSkeleton count={3} />}
 
           {/* Week View */}
           {view === 'semana' && !isLoading && (
@@ -527,7 +529,7 @@ export default function Agenda() {
                             {/* Events overlay */}
                             {dayEvents.map((evento) => {
                               const style = getEventStyle(evento);
-                              const cfg = tipoConfig[evento.tipo] || tipoConfig.outro;
+                              const cfg = getTipoConfig(evento.tipo);
                               return (
                                 <div
                                   key={evento.id}
@@ -612,7 +614,7 @@ export default function Agenda() {
                             </div>
                             <div className="space-y-0.5">
                               {dayEvents.slice(0, 3).map((evento) => {
-                                const cfg = tipoConfig[evento.tipo] || tipoConfig.outro;
+                                const cfg = getTipoConfig(evento.tipo);
                                 return (
                                   <div
                                     key={evento.id}
@@ -661,7 +663,7 @@ export default function Agenda() {
               ) : (
                 <div className="space-y-3">
                   {todayEvents.map((evento) => {
-                    const cfg = tipoConfig[evento.tipo] || tipoConfig.outro;
+                    const cfg = getTipoConfig(evento.tipo);
                     return (
                       <div
                         key={evento.id}

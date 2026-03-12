@@ -44,7 +44,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user, get_current_admin
+from app.dependencies import get_current_user, get_current_admin, get_org_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
@@ -137,14 +137,9 @@ async def deletar_platform_setting(
 async def listar_org_settings(authorization: Optional[str] = Header(None)):
     """List settings for the current user's organization."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
-    # Resolve user's org_id
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Organização não encontrada")
-
-    org_id = profile.data["org_id"]
     result = db.table("org_settings").select("*").eq("org_id", org_id).order("key").execute()
     items = result.data or []
 
@@ -163,13 +158,9 @@ async def upsert_org_setting(
 ):
     """Create or update an org setting."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Organização não encontrada")
-
-    org_id = profile.data["org_id"]
     result = db.table("org_settings").upsert(
         {
             "org_id": org_id,
@@ -194,13 +185,9 @@ async def deletar_org_setting(
 ):
     """Delete an org setting."""
     user, token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
     db = get_admin_client()
 
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if not profile.data or not profile.data.get("org_id"):
-        raise HTTPException(status_code=404, detail="Organização não encontrada")
-
-    org_id = profile.data["org_id"]
     result = db.table("org_settings").delete().eq("org_id", org_id).eq("key", key).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Configuração não encontrada")
@@ -218,9 +205,12 @@ async def resolver_setting(key: str, authorization: Optional[str] = Header(None)
     db = get_admin_client()
 
     # Try org-level first
-    profile = db.table("noctus_users").select("org_id").eq("id", user.id).single().execute()
-    if profile.data and profile.data.get("org_id"):
-        org_id = profile.data["org_id"]
+    try:
+        org_id = await get_org_id(user)
+    except Exception:
+        org_id = None
+
+    if org_id:
         org_result = (
             db.table("org_settings")
             .select("value")

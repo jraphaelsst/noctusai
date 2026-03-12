@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,7 +49,7 @@ type FonteAnalise = 'serasa' | 'boa_vista' | 'manual';
 
 const STATUS_CONFIG: Record<StatusAnalise, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: typeof ShieldCheck }> = {
   pendente: { label: 'Pendente', variant: 'outline', icon: Clock },
-  em_analise: { label: 'Em Analise', variant: 'secondary', icon: Search },
+  em_analise: { label: 'Em Análise', variant: 'secondary', icon: Search },
   aprovado: { label: 'Aprovado', variant: 'default', icon: ShieldCheck },
   reprovado: { label: 'Reprovado', variant: 'destructive', icon: XCircle },
 };
@@ -393,7 +394,7 @@ export default function AnaliseCredito() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="py-8 text-center text-muted-foreground">Carregando...</div>
+            <TableSkeleton rows={4} />
           ) : !analises || analises.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               <FileSearch className="h-12 w-12 mx-auto mb-4 opacity-50" />

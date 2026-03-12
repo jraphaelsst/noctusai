@@ -102,18 +102,22 @@ async def notify_team(
         logger.info(f"No team members found for org={org_id}")
         return []
 
-    notifications = []
-    for member in members.data:
-        notification = await create(
-            user_id=member["id"],
-            org_id=org_id,
-            type=type,
-            title=title,
-            message=message,
-            metadata=metadata,
-        )
-        if notification:
-            notifications.append(notification)
+    # Bulk INSERT all notifications in a single query (avoids N+1)
+    rows = [
+        {
+            "user_id": member["id"],
+            "org_id": org_id,
+            "type": type,
+            "title": title,
+            "message": message,
+            "metadata": metadata or {},
+            "read": False,
+        }
+        for member in members.data
+    ]
+
+    result = db.table("notifications").insert(rows).execute()
+    notifications = result.data or []
 
     logger.info(f"Team notified: org={org_id} type={type} count={len(notifications)}")
     return notifications

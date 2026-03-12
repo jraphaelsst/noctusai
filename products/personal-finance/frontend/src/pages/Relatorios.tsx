@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useRelatorioMensal } from "@/hooks/useRelatorios";
+import { useRelatorioMensal, useRelatorioAnual, useFluxoCaixa } from "@/hooks/useRelatorios";
 import { BarChartCard } from "@/components/charts/BarChartCard";
 import { LineChartCard } from "@/components/charts/LineChartCard";
 import { DonutChartCard } from "@/components/charts/DonutChartCard";
@@ -7,11 +7,16 @@ import { formatCurrency, formatPercent, getCurrentMonth, getMonthLabel } from "@
 import { CHART_COLORS } from "@/lib/constants";
 import { FileBarChart, TrendingUp, TrendingDown } from "lucide-react";
 
-export default function Relatorios() {
-  const [mesSelecionado, setMesSelecionado] = useState(getCurrentMonth());
-  const { data: relatorio, isLoading } = useRelatorioMensal(mesSelecionado);
+type TabView = "mensal" | "anual" | "fluxo";
 
-  // Build month selector options (current + last 23 months)
+const tabClass = (active: boolean) =>
+  `px-4 py-2 text-sm font-medium rounded-md transition ${
+    active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-accent"
+  }`;
+
+function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string) => void }) {
+  const { data: relatorio, isLoading } = useRelatorioMensal(mes);
+
   const meses = useMemo(() => {
     const result: string[] = [];
     const now = new Date();
@@ -24,72 +29,33 @@ export default function Relatorios() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
       </div>
     );
   }
 
   const rel = relatorio || {} as any;
-  const receita = rel.receita_total || rel.receita || 0;
-  const despesa = rel.despesa_total || rel.despesa || 0;
+  const receita = rel.receita_total || 0;
+  const despesa = rel.despesa_total || 0;
   const fluxoCaixa = receita - despesa;
   const taxaPoupanca = receita > 0 ? ((receita - despesa) / receita) * 100 : 0;
-  const isPositiveFluxo = fluxoCaixa >= 0;
-
-  // Top categories
-  const topCategorias: { nome: string; total: number; cor?: string }[] = rel.top_categorias || rel.categorias || [];
+  const topCategorias: { nome: string; total: number; cor?: string }[] = rel.top_categorias || [];
   const categoriaChartData = topCategorias.map((c, idx) => ({
     nome: c.nome || "Outros",
     total: c.total || 0,
     cor: c.cor || CHART_COLORS[idx % CHART_COLORS.length],
   }));
 
-  // Cash flow chart (income vs expense for each month, using comparativo_mensal if available)
-  const comparativo: any[] = rel.comparativo_mensal || rel.comparativo || [];
-  const cashFlowData = comparativo.length > 0
-    ? comparativo.map((m: any) => ({
-        label: getMonthLabel(m.mes || m.periodo || ""),
-        receita: m.receita || m.receita_total || 0,
-        despesa: m.despesa || m.despesa_total || 0,
-      }))
-    : [
-        {
-          label: getMonthLabel(mesSelecionado),
-          receita,
-          despesa,
-        },
-      ];
-
-  // Monthly comparison line data
-  const lineData = comparativo.length > 0
-    ? comparativo.map((m: any) => ({
-        label: getMonthLabel(m.mes || m.periodo || ""),
-        fluxo: (m.receita || m.receita_total || 0) - (m.despesa || m.despesa_total || 0),
-      }))
-    : [];
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Relatorios</h1>
-      </div>
-
-      {/* Month selector */}
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium text-muted-foreground">Mes:</label>
-        <select
-          value={mesSelecionado}
-          onChange={(e) => setMesSelecionado(e.target.value)}
-          className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-        >
-          {meses.map((m) => (
-            <option key={m} value={m}>{getMonthLabel(m)}</option>
-          ))}
+        <select value={mes} onChange={(e) => onMesChange(e.target.value)} className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+          {meses.map((m) => (<option key={m} value={m}>{getMonthLabel(m)}</option>))}
         </select>
       </div>
 
-      {/* KPI Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Receita</p>
@@ -101,32 +67,26 @@ export default function Relatorios() {
         </div>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Fluxo de Caixa</p>
-          <div className={`flex items-center gap-2 ${isPositiveFluxo ? "text-emerald-500" : "text-red-500"}`}>
-            {isPositiveFluxo ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+          <div className={`flex items-center gap-2 ${fluxoCaixa >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+            {fluxoCaixa >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
             <p className="text-xl font-bold">{formatCurrency(fluxoCaixa)}</p>
           </div>
         </div>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Taxa de Poupanca</p>
-          <p className={`text-xl font-bold ${taxaPoupanca >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-            {formatPercent(taxaPoupanca)}
-          </p>
+          <p className={`text-xl font-bold ${taxaPoupanca >= 0 ? "text-emerald-500" : "text-red-500"}`}>{formatPercent(taxaPoupanca)}</p>
         </div>
       </div>
 
-      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Income vs Expense */}
         <BarChartCard
           title="Receita vs Despesa"
-          data={cashFlowData}
+          data={[{ label: getMonthLabel(mes), receita, despesa }]}
           bars={[
             { dataKey: "receita", color: "#10b981", name: "Receita" },
             { dataKey: "despesa", color: "#ef4444", name: "Despesa" },
           ]}
         />
-
-        {/* Top Categories */}
         {categoriaChartData.length > 0 ? (
           <DonutChartCard title="Top Categorias" data={categoriaChartData} />
         ) : (
@@ -136,18 +96,6 @@ export default function Relatorios() {
         )}
       </div>
 
-      {/* Monthly Comparison */}
-      {lineData.length > 1 && (
-        <LineChartCard
-          title="Comparacao Mensal - Fluxo de Caixa"
-          data={lineData}
-          lines={[
-            { dataKey: "fluxo", color: "#3b82f6", name: "Fluxo de Caixa" },
-          ]}
-        />
-      )}
-
-      {/* Top Categories Table */}
       {topCategorias.length > 0 && (
         <div className="rounded-lg border bg-card p-4">
           <h3 className="font-semibold mb-3">Top Categorias</h3>
@@ -162,13 +110,7 @@ export default function Relatorios() {
                     <span className="text-muted-foreground ml-2 shrink-0">{formatCurrency(cat.total)}</span>
                   </div>
                   <div className="w-full bg-muted rounded-full h-2">
-                    <div
-                      className="h-2 rounded-full transition-all"
-                      style={{
-                        width: `${pct}%`,
-                        backgroundColor: cat.cor || CHART_COLORS[idx % CHART_COLORS.length],
-                      }}
-                    />
+                    <div className="h-2 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: cat.cor || CHART_COLORS[idx % CHART_COLORS.length] }} />
                   </div>
                 </div>
               );
@@ -177,7 +119,6 @@ export default function Relatorios() {
         </div>
       )}
 
-      {/* Empty state */}
       {!relatorio && !isLoading && (
         <div className="text-center py-12 text-muted-foreground">
           <FileBarChart className="w-12 h-12 mx-auto mb-3 opacity-50" />
@@ -185,6 +126,231 @@ export default function Relatorios() {
           <p className="text-sm">Adicione transacoes para gerar relatorios.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+function AnualView({ ano, onAnoChange }: { ano: number; onAnoChange: (a: number) => void }) {
+  const { data: relatorio, isLoading } = useRelatorioAnual(ano);
+
+  const anos = useMemo(() => {
+    const now = new Date().getFullYear();
+    return Array.from({ length: 5 }, (_, i) => now - i);
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  const rel = relatorio || {} as any;
+  const receitaAnual = rel.receita_anual || 0;
+  const despesaAnual = rel.despesa_anual || 0;
+  const fluxoAnual = rel.fluxo_liquido_anual || 0;
+  const taxaPoupanca = rel.taxa_poupanca_anual || 0;
+  const mesesData: any[] = rel.meses || [];
+
+  const chartData = mesesData.map((m: any) => ({
+    label: getMonthLabel(m.mes),
+    receita: m.receita_total || 0,
+    despesa: m.despesa_total || 0,
+  }));
+
+  const fluxoData = mesesData.map((m: any) => ({
+    label: getMonthLabel(m.mes),
+    fluxo: m.fluxo_liquido || 0,
+  }));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium text-muted-foreground">Ano:</label>
+        <select value={ano} onChange={(e) => onAnoChange(Number(e.target.value))} className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+          {anos.map((a) => (<option key={a} value={a}>{a}</option>))}
+        </select>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="rounded-lg border bg-card p-4">
+          <p className="text-sm text-muted-foreground">Receita Anual</p>
+          <p className="text-xl font-bold text-emerald-500">{formatCurrency(receitaAnual)}</p>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <p className="text-sm text-muted-foreground">Despesa Anual</p>
+          <p className="text-xl font-bold text-red-500">{formatCurrency(despesaAnual)}</p>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <p className="text-sm text-muted-foreground">Fluxo Liquido</p>
+          <div className={`flex items-center gap-2 ${fluxoAnual >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+            {fluxoAnual >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+            <p className="text-xl font-bold">{formatCurrency(fluxoAnual)}</p>
+          </div>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <p className="text-sm text-muted-foreground">Taxa de Poupanca</p>
+          <p className={`text-xl font-bold ${taxaPoupanca >= 0 ? "text-emerald-500" : "text-red-500"}`}>{formatPercent(taxaPoupanca)}</p>
+        </div>
+      </div>
+
+      {chartData.length > 0 && (
+        <BarChartCard
+          title="Receita vs Despesa Mensal"
+          data={chartData}
+          bars={[
+            { dataKey: "receita", color: "#10b981", name: "Receita" },
+            { dataKey: "despesa", color: "#ef4444", name: "Despesa" },
+          ]}
+        />
+      )}
+
+      {fluxoData.length > 0 && (
+        <LineChartCard
+          title="Fluxo de Caixa Mensal"
+          data={fluxoData}
+          lines={[{ dataKey: "fluxo", color: "#3b82f6", name: "Fluxo Liquido" }]}
+        />
+      )}
+    </div>
+  );
+}
+
+function FluxoCaixaView() {
+  const now = new Date();
+  const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [dataInicio, setDataInicio] = useState(`${mesAtual}-01`);
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const [dataFim, setDataFim] = useState(`${mesAtual}-${String(lastDay).padStart(2, "0")}`);
+
+  const { data: fluxo, isLoading } = useFluxoCaixa(dataInicio, dataFim);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  const fluxoData: any[] = (fluxo as any)?.fluxo || [];
+
+  const totalReceitas = fluxoData.reduce((acc, d) => acc + (d.receitas || 0), 0);
+  const totalDespesas = fluxoData.reduce((acc, d) => acc + (d.despesas || 0), 0);
+  const totalLiquido = totalReceitas - totalDespesas;
+
+  const chartData = fluxoData.map((d: any) => ({
+    label: d.data?.slice(5) || "",
+    receitas: d.receitas || 0,
+    despesas: d.despesas || 0,
+    liquido: d.liquido || 0,
+  }));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-muted-foreground">De:</label>
+          <input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-muted-foreground">Ate:</label>
+          <input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="rounded-lg border bg-card p-4">
+          <p className="text-sm text-muted-foreground">Total Receitas</p>
+          <p className="text-xl font-bold text-emerald-500">{formatCurrency(totalReceitas)}</p>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <p className="text-sm text-muted-foreground">Total Despesas</p>
+          <p className="text-xl font-bold text-red-500">{formatCurrency(totalDespesas)}</p>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <p className="text-sm text-muted-foreground">Liquido</p>
+          <div className={`flex items-center gap-2 ${totalLiquido >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+            {totalLiquido >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+            <p className="text-xl font-bold">{formatCurrency(totalLiquido)}</p>
+          </div>
+        </div>
+      </div>
+
+      {chartData.length > 0 ? (
+        <>
+          <BarChartCard
+            title="Fluxo Diario"
+            data={chartData}
+            bars={[
+              { dataKey: "receitas", color: "#10b981", name: "Receitas" },
+              { dataKey: "despesas", color: "#ef4444", name: "Despesas" },
+            ]}
+          />
+          <LineChartCard
+            title="Fluxo Liquido Diario"
+            data={chartData}
+            lines={[{ dataKey: "liquido", color: "#3b82f6", name: "Liquido" }]}
+          />
+        </>
+      ) : (
+        <div className="text-center py-12 text-muted-foreground">
+          <FileBarChart className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p className="text-lg font-medium">Nenhum dado para o periodo selecionado</p>
+        </div>
+      )}
+
+      {fluxoData.length > 0 && (
+        <div className="rounded-lg border bg-card overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                <th className="text-left p-3 font-medium text-muted-foreground">Data</th>
+                <th className="text-right p-3 font-medium text-muted-foreground">Receitas</th>
+                <th className="text-right p-3 font-medium text-muted-foreground">Despesas</th>
+                <th className="text-right p-3 font-medium text-muted-foreground">Liquido</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {fluxoData.map((d: any, idx: number) => (
+                <tr key={idx} className="hover:bg-accent/50">
+                  <td className="p-3">{d.data}</td>
+                  <td className="p-3 text-right text-emerald-500">{formatCurrency(d.receitas || 0)}</td>
+                  <td className="p-3 text-right text-red-500">{formatCurrency(d.despesas || 0)}</td>
+                  <td className={`p-3 text-right font-medium ${(d.liquido || 0) >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                    {formatCurrency(d.liquido || 0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Relatorios() {
+  const [tab, setTab] = useState<TabView>("mensal");
+  const [mesSelecionado, setMesSelecionado] = useState(getCurrentMonth());
+  const [anoSelecionado, setAnoSelecionado] = useState(new Date().getFullYear());
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Relatorios</h1>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button onClick={() => setTab("mensal")} className={tabClass(tab === "mensal")}>Mensal</button>
+        <button onClick={() => setTab("anual")} className={tabClass(tab === "anual")}>Anual</button>
+        <button onClick={() => setTab("fluxo")} className={tabClass(tab === "fluxo")}>Fluxo de Caixa</button>
+      </div>
+
+      {tab === "mensal" && <MensalView mes={mesSelecionado} onMesChange={setMesSelecionado} />}
+      {tab === "anual" && <AnualView ano={anoSelecionado} onAnoChange={setAnoSelecionado} />}
+      {tab === "fluxo" && <FluxoCaixaView />}
     </div>
   );
 }

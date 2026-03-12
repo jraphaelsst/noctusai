@@ -15,6 +15,10 @@ Builder hierarchy (postgrest 0.17.2):
     .upsert(...)     → MockQueryBuilder
 """
 import pytest
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
 from typing import Optional
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -63,6 +67,7 @@ class MockSelectBuilder(_MockExecuteMixin):
     def ilike(self, *a, **k): return self
     def like(self, *a, **k): return self
     def is_(self, *a, **k): return self
+    def or_(self, *a, **k): return self
     def contains(self, *a, **k): return self
     def filter(self, *a, **k): return self
 
@@ -199,6 +204,10 @@ class AuthClient:
         self._tc = tc
         self._mock_supabase = mock_sb
         self._headers = {"Authorization": "Bearer test-token-valid"}
+
+    @property
+    def mock_supabase(self) -> MockSupabaseClient:
+        return self._mock_supabase
 
     def get(self, url, **kwargs):
         return self._tc.get(url, headers=self._headers, **kwargs)

@@ -91,3 +91,45 @@ export function useDeleteRecorrente() {
     },
   });
 }
+
+export function useExecutarPendentes() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const result = await api.post("/api/recorrentes/executar");
+      return result.data as { executadas: number; pendentes_processadas: number; erros: number };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["recorrentes"] });
+      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+      queryClient.invalidateQueries({ queryKey: ["contas"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success(`${data.executadas} transacao(oes) executada(s)`);
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao executar pendentes", { description: error.message });
+    },
+  });
+}
+
+export function useExecutarUnico() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const result = await api.post(`/api/recorrentes/${id}/executar`);
+      return result.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["recorrentes"] });
+      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+      queryClient.invalidateQueries({ queryKey: ["contas"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Transacao executada com sucesso!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao executar recorrente", { description: error.message });
+    },
+  });
+}

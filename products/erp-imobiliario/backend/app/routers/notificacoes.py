@@ -10,8 +10,9 @@ from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client, first_or_none
+from app.dependencies import get_current_user, get_user_client, get_org_id, first_or_none
 from app.exceptions import AppException
+from app.responses import success_response, paginated_response, ok_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notificacoes", tags=["notificacoes"])
@@ -46,15 +47,7 @@ async def listar_notificacoes(
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
 
-    return {
-        "status": "success",
-        "data": result.data or [],
-        "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total": result.count or 0,
-        },
-    }
+    return paginated_response(result.data or [], result.count or 0, page, page_size)
 
 
 @router.get("/contagem")
@@ -71,7 +64,7 @@ async def contagem_nao_lidas(authorization: Optional[str] = Header(None)):
         .execute()
     )
 
-    return {"status": "success", "data": {"nao_lidas": result.count or 0}}
+    return success_response({"nao_lidas": result.count or 0})
 
 
 @router.patch("/{notificacao_id}/ler")
@@ -95,7 +88,7 @@ async def marcar_como_lida(
     if not row:
         raise HTTPException(status_code=404, detail="Notificação não encontrada")
 
-    return {"status": "success", "data": row}
+    return success_response(row)
 
 
 @router.post("/ler-todas")
@@ -113,7 +106,7 @@ async def marcar_todas_como_lidas(authorization: Optional[str] = Header(None)):
     )
 
     count = len(result.data) if result.data else 0
-    return {"status": "success", "message": f"{count} notificações marcadas como lidas"}
+    return ok_response(f"{count} notificações marcadas como lidas")
 
 
 @router.get("/preferencias")
@@ -129,7 +122,7 @@ async def listar_preferencias(authorization: Optional[str] = Header(None)):
         .execute()
     )
 
-    return {"status": "success", "data": result.data or []}
+    return success_response(result.data or [])
 
 
 @router.patch("/preferencias")
@@ -140,7 +133,7 @@ async def atualizar_preferencia(
     """Update a notification preference (upsert)."""
     user, token = await get_current_user(authorization)
     sb = get_user_client(token)
-    org_id = user.user_metadata.get("org_id") if user.user_metadata else None
+    org_id = get_org_id(user)
 
     data = {
         "org_id": org_id,
@@ -156,4 +149,4 @@ async def atualizar_preferencia(
         .execute()
     )
 
-    return {"status": "success", "data": result.data[0] if result.data else data}
+    return success_response(result.data[0] if result.data else data)

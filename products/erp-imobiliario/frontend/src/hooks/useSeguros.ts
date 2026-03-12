@@ -116,7 +116,7 @@ export function useDeleteSeguro() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['seguros'] });
       queryClient.invalidateQueries({ queryKey: ['seguros-vencimentos'] });
-      toast.success('Seguro excluido!');
+      toast.success('Seguro excluído!');
     },
     onError: (error: Error) => {
       toast.error('Erro ao excluir seguro', { description: error.message });

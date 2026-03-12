@@ -105,24 +105,13 @@ class FinanceiroService:
         """
         today = date.today().isoformat()
 
-        # Fetch pending transactions with past due dates
-        result = self.db.table("lancamentos").select("id").eq(
-            "status", "pendente"
-        ).lt("data_vencimento", today).execute()
+        # Bulk update all pending transactions past due date in a single query
+        result = self.db.table("lancamentos").update(
+            {"status": "atrasado"}
+        ).eq("status", "pendente").lt("data_vencimento", today).execute()
 
-        overdue_ids = [r["id"] for r in (result.data or [])]
-        if not overdue_ids:
-            return 0
-
-        # Update each to 'atrasado'
-        count = 0
-        for lid in overdue_ids:
-            try:
-                self.db.table("lancamentos").update(
-                    {"status": "atrasado"}
-                ).eq("id", lid).execute()
-                count += 1
-            except Exception as e:
-                logger.warning(f"Failed to mark lancamento {lid} as overdue: {e}")
+        count = len(result.data) if result.data else 0
+        if count:
+            logger.info(f"Marked {count} lancamentos as overdue")
 
         return count

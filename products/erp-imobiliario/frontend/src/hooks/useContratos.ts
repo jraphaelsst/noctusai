@@ -155,6 +155,8 @@ export function useGerarParcelas() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['parcelas'] });
       queryClient.invalidateQueries({ queryKey: ['contratos'] });
+      queryClient.invalidateQueries({ queryKey: ['financeiro'] });
+      queryClient.invalidateQueries({ queryKey: ['financeiro-resumo'] });
       toast.success('Parcelas geradas com sucesso!');
     },
     onError: (error: Error) => {

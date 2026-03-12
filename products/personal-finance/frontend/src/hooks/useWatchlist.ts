@@ -19,6 +19,8 @@ export function useWatchlists() {
 }
 
 export function useWatchlist(id?: string) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["watchlist", id],
     queryFn: async () => {
@@ -26,7 +28,7 @@ export function useWatchlist(id?: string) {
       const result = await api.get(`/api/watchlists/${id}`);
       return result.data as Watchlist;
     },
-    enabled: !!id,
+    enabled: !!user && !!id,
     staleTime: 3 * 60 * 1000,
   });
 }

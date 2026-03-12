@@ -33,13 +33,15 @@ import {
   Lock,
   Unlock,
   Zap,
-  Loader2,
   User,
   Crown,
   TrendingUp,
   Award,
   CalendarDays,
 } from 'lucide-react';
+import { TableSkeleton } from '@/components/ui/page-skeleton';
+import { formatDate } from '@/lib/utils';
+import { ACAO_LABELS } from '@/lib/constants';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,27 +51,11 @@ type Periodo = 'semana' | 'mes' | 'geral';
 
 const periodoLabels: Record<Periodo, string> = {
   semana: 'Semana',
-  mes: 'Mes',
+  mes: 'Mês',
   geral: 'Geral',
 };
 
-const formatDate = (d: string) => {
-  return new Date(d).toLocaleDateString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
-};
-
-const formatDateTime = (d: string) => {
-  return new Date(d).toLocaleDateString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
+const formatDateTime = (d: string) => formatDate(d, true);
 
 const rankStyles: Record<number, { bg: string; text: string; icon: React.ReactNode }> = {
   1: {
@@ -89,16 +75,6 @@ const rankStyles: Record<number, { bg: string; text: string; icon: React.ReactNo
   },
 };
 
-const acaoLabels: Record<string, string> = {
-  cliente_cadastrado: 'Novo cliente cadastrado',
-  visita_realizada: 'Visita realizada',
-  proposta_enviada: 'Proposta enviada',
-  negocio_fechado: 'Negocio fechado',
-  meta_concluida: 'Meta concluida',
-  avaliacao_imovel: 'Avaliacao de imovel',
-  captacao_imovel: 'Captacao de imovel',
-  indicacao_cliente: 'Indicacao de cliente',
-};
 
 // ---------------------------------------------------------------------------
 // Component
@@ -201,10 +177,7 @@ export default function Gamificacao() {
             </CardHeader>
             <CardContent>
               {loadingLeaderboard ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
-                  Carregando ranking...
-                </div>
+                <TableSkeleton rows={3} />
               ) : ranking.length === 0 ? (
                 <div className="py-12 text-center text-muted-foreground">
                   <Trophy className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -293,10 +266,7 @@ export default function Gamificacao() {
             </CardHeader>
             <CardContent>
               {loadingPontos ? (
-                <div className="py-6 text-center text-muted-foreground">
-                  <Loader2 className="h-5 w-5 mx-auto mb-2 animate-spin" />
-                  Carregando pontos...
-                </div>
+                <TableSkeleton rows={3} />
               ) : pontuacoes.length === 0 ? (
                 <div className="py-6 text-center text-muted-foreground">
                   <Zap className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -317,7 +287,7 @@ export default function Gamificacao() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">
-                          {acaoLabels[p.acao] || p.acao}
+                          {ACAO_LABELS[p.acao] || p.acao}
                         </p>
                         <div className="flex items-center gap-2 mt-0.5">
                           <Badge variant="outline" className="text-[10px] text-green-600 border-green-300">
@@ -358,10 +328,7 @@ export default function Gamificacao() {
         </CardHeader>
         <CardContent>
           {loadingConquistas ? (
-            <div className="py-8 text-center text-muted-foreground">
-              <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
-              Carregando conquistas...
-            </div>
+            <TableSkeleton rows={3} />
           ) : allConquistas.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               <Award className="h-12 w-12 mx-auto mb-4 opacity-50" />

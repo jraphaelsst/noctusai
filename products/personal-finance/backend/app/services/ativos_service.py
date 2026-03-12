@@ -1,6 +1,7 @@
 """Holdings service — stock/asset management with average price calculation."""
 import logging
 from typing import Dict, List, Optional
+from fastapi import HTTPException
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,25 @@ class AtivosService:
         return row
 
     async def excluir(self, ativo_id: str) -> bool:
+        check = self.db.table("ativos").select("id").eq("id", ativo_id).eq("org_id", self.org_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=404, detail="Ativo não encontrado")
         self.db.table("ativos").delete().eq("id", ativo_id).eq("org_id", self.org_id).execute()
+        return True
+
+    async def excluir_operacao(self, operacao_id: str) -> bool:
+        """Delete an operation and recalculate the associated holding."""
+        op_result = self.db.table("operacoes").select("*").eq("id", operacao_id).eq("org_id", self.org_id).execute()
+        if not op_result.data:
+            raise HTTPException(status_code=404, detail="Operação não encontrada")
+        op = op_result.data[0]
+
+        self.db.table("operacoes").delete().eq("id", operacao_id).eq("org_id", self.org_id).execute()
+
+        # Recalculate holding from remaining operations
+        if op.get("ativo_id"):
+            await self._recalcular_ativo_completo(op["ativo_id"])
+
         return True
 
     async def registrar_operacao(self, data: Dict) -> Dict:

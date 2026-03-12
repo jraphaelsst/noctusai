@@ -111,6 +111,11 @@ class TestTemplates:
         assert resp.status_code == 200
 
     def test_excluir_template(self, client):
-        client._mock_supabase.set_table_data("email_templates", [])
+        client._mock_supabase.set_table_data("email_templates", [{"id": "tpl1"}])
         resp = client.delete("/api/emails/templates/tpl1")
         assert resp.status_code == 200
+
+    def test_excluir_template_not_found(self, client):
+        client._mock_supabase.set_table_data("email_templates", [])
+        resp = client.delete("/api/emails/templates/nonexistent")
+        assert resp.status_code == 404

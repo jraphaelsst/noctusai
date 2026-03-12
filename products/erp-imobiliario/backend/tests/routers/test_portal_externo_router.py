@@ -173,6 +173,7 @@ class TestPortalImoveis:
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt1",
+            "org_id": "org-1",
             "tipo": "proprietario",
             "pessoa_id": "p1",
             "nome": "Carlos",
@@ -191,6 +192,7 @@ class TestPortalImoveis:
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt2",
+            "org_id": "org-1",
             "tipo": "locatario",
             "pessoa_id": "p2",
             "nome": "Ana",
@@ -207,6 +209,7 @@ class TestPortalFinanceiro:
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt1",
+            "org_id": "org-1",
             "tipo": "proprietario",
             "pessoa_id": "p1",
             "nome": "Carlos",
@@ -224,6 +227,7 @@ class TestPortalFinanceiro:
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt2",
+            "org_id": "org-1",
             "tipo": "locatario",
             "pessoa_id": "p2",
             "nome": "Ana",
@@ -240,6 +244,7 @@ class TestPortalContratos:
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt1",
+            "org_id": "org-1",
             "tipo": "locatario",
             "pessoa_id": "p1",
             "nome": "Ana",
@@ -259,6 +264,7 @@ class TestPortalDocumentos:
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt1",
+            "org_id": "org-1",
             "tipo": "proprietario",
             "pessoa_id": "p1",
             "nome": "Carlos",
@@ -276,6 +282,7 @@ class TestPortalDocumentos:
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt1",
+            "org_id": "org-1",
             "tipo": "locatario",
             "pessoa_id": "p2",
             "nome": "Ana",

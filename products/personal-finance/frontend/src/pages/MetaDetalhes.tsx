@@ -5,7 +5,8 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { PRIORIDADE_LABELS } from "@/lib/constants";
 import type { Meta } from "@/types";
 import Modal from "@/components/Modal";
-import { ArrowLeft, Pencil, Trash2, DollarSign, Target } from "lucide-react";
+import Breadcrumbs from "@/components/Breadcrumbs";
+import { ArrowLeft, Pencil, Trash2, DollarSign, Target, CalendarCheck, History } from "lucide-react";
 
 const inputClass = "w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary";
 
@@ -31,7 +32,7 @@ export default function MetaDetalhes() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: meta, isLoading } = useMeta(id);
-  const { data: _progresso } = useMetaProgresso(id);
+  const { data: progresso } = useMetaProgresso(id);
   const updateMutation = useUpdateMeta();
   const deleteMutation = useDeleteMeta();
   const contribuicaoMutation = useAddContribuicao();
@@ -122,11 +123,11 @@ export default function MetaDetalhes() {
 
   return (
     <div className="space-y-6">
-      {/* Back Button */}
-      <button onClick={() => navigate("/metas")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition">
-        <ArrowLeft className="w-4 h-4" />
-        Voltar para Metas
-      </button>
+      <Breadcrumbs items={[
+        { label: "Dashboard", href: "/" },
+        { label: "Metas", href: "/metas" },
+        { label: meta.nome },
+      ]} />
 
       {/* Header */}
       <div className="flex items-start justify-between">
@@ -206,6 +207,50 @@ export default function MetaDetalhes() {
             <p className="text-sm text-muted-foreground">
               Data alvo: <span className="font-medium text-foreground">{formatDate(meta.data_alvo)}</span>
             </p>
+          </div>
+        )}
+      </div>
+
+      {/* Estimated Completion */}
+      {progresso?.data_previsao && meta.status === "ativa" && (
+        <div className="rounded-lg border bg-card p-4 flex items-center gap-3">
+          <CalendarCheck className="w-5 h-5 text-primary shrink-0" />
+          <div>
+            <p className="text-sm font-medium">Previsao de conclusao</p>
+            <p className="text-sm text-muted-foreground">
+              Com base nas suas contribuicoes, a meta deve ser atingida em{" "}
+              <span className="font-medium text-foreground">{formatDate(progresso.data_previsao)}</span>
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Contribution History */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <History className="w-5 h-5 text-muted-foreground" />
+          <h2 className="text-lg font-semibold">Historico de Contribuicoes</h2>
+        </div>
+        {progresso?.contribuicoes && progresso.contribuicoes.length > 0 ? (
+          <div className="rounded-lg border bg-card divide-y">
+            {progresso.contribuicoes.map((contrib: any) => (
+              <div key={contrib.id} className="flex items-center justify-between p-4 hover:bg-accent/50 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 bg-emerald-500/10">
+                    <DollarSign className="w-4 h-4 text-emerald-500" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{contrib.descricao || "Contribuicao"}</p>
+                    <p className="text-xs text-muted-foreground">{formatDate(contrib.data || contrib.created_at)}</p>
+                  </div>
+                </div>
+                <span className="text-sm font-semibold text-emerald-500">+{formatCurrency(contrib.valor)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border bg-card text-center py-8 text-muted-foreground">
+            <p className="text-sm">Nenhuma contribuicao registrada ainda</p>
           </div>
         )}
       </div>

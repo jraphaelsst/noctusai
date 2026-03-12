@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   useLocacoes,
   useCreateLocacao,
@@ -49,16 +50,18 @@ import {
   Calendar,
   Home,
 } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
+import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type {
   ContratoLocacao,
   ContratoCreateData,
-  StatusContrato,
+  StatusLocacao,
   IndiceReajuste,
   ReajusteResult,
 } from '@/types/locacoes';
 
-const STATUS_CONFIG: Record<StatusContrato, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+const STATUS_CONFIG: Record<StatusLocacao, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   ativo: { label: 'Ativo', variant: 'default' },
   encerrado: { label: 'Encerrado', variant: 'secondary' },
   renovado: { label: 'Renovado', variant: 'outline' },
@@ -80,6 +83,7 @@ const EMPTY_FORM: ContratoCreateData = {
 };
 
 export default function Locacoes() {
+  const navigate = useNavigate();
   const [filtroStatus, setFiltroStatus] = useState('todos');
   const [busca, setBusca] = useState('');
   const { data: contratos = [], isLoading } = useLocacoes(filtroStatus !== 'todos' ? filtroStatus : undefined);
@@ -275,25 +279,19 @@ export default function Locacoes() {
 
       {/* Contracts List */}
       {isLoading ? (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground">
-            Carregando...
-          </CardContent>
-        </Card>
+        <CardGridSkeleton count={4} />
       ) : filtrados.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center text-muted-foreground">
-            <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-lg">Nenhum contrato encontrado</p>
-            <p className="text-sm mt-1">Crie um contrato de locacao para comecar</p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={FileText}
+          title="Nenhum contrato encontrado"
+          description="Crie um contrato de locação para começar"
+        />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filtrados.map((contrato) => {
             const cfg = STATUS_CONFIG[contrato.status] || STATUS_CONFIG.ativo;
             return (
-              <Card key={contrato.id} className="hover:shadow-md transition-shadow">
+              <Card key={contrato.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/locacoes/${contrato.id}`)}>
                 <CardContent className="pt-6 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -329,7 +327,7 @@ export default function Locacoes() {
                     <p className="text-sm text-muted-foreground truncate">{contrato.observacoes}</p>
                   )}
 
-                  <div className="flex gap-2 pt-2">
+                  <div className="flex gap-2 pt-2" onClick={(e) => e.stopPropagation()}>
                     {contrato.status === 'ativo' && (
                       <>
                         <Button
@@ -378,7 +376,7 @@ export default function Locacoes() {
             <DialogTitle>Novo Contrato de Locacao</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>ID do Imovel</Label>
                 <Input
@@ -404,7 +402,7 @@ export default function Locacoes() {
                 placeholder="UUID do proprietario"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>Valor do Aluguel (R$)</Label>
                 <Input
@@ -426,7 +424,7 @@ export default function Locacoes() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>Data de Inicio</Label>
                 <Input
@@ -444,7 +442,7 @@ export default function Locacoes() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>Indice de Reajuste</Label>
                 <Select

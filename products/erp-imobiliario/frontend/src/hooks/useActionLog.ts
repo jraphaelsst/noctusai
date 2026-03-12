@@ -1,5 +1,6 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
+import { useAuthStore } from "@/store/authStore";
 
 export type TipoAcao = 'criar' | 'editar' | 'excluir' | 'concluir' | 'arquivar' | 'desarquivar' | 'mover' | 'login' | 'logout';
 export type TipoEntidade = 'meta' | 'cliente' | 'usuario' | 'atividade' | 'config_meta' | 'auth' | 'ativo';
@@ -17,6 +18,8 @@ export interface ActionLog {
 }
 
 export function useActionLogs(usuarioId?: string, dataInicio?: Date, dataFim?: Date) {
+  const { user } = useAuthStore();
+
   return useQuery({
     queryKey: ["action-logs", usuarioId, dataInicio, dataFim],
     queryFn: async () => {
@@ -27,16 +30,7 @@ export function useActionLogs(usuarioId?: string, dataInicio?: Date, dataFim?: D
       });
       return (result.data || []) as ActionLog[];
     },
+    enabled: !!user,
   });
 }
 
-// Action logging is now done server-side.
-// This hook is kept as a no-op for backward compatibility.
-export function useRegisterAction() {
-  return useMutation({
-    mutationFn: async (_params: any) => {
-      // No-op: all action logging is handled server-side in the backend routers.
-      // This hook is kept for API compatibility.
-    },
-  });
-}

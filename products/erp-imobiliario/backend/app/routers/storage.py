@@ -7,8 +7,9 @@ inspection images, and other file types.
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, get_org_id, log_action
 from app.services.storage_service import StorageService
+from app.responses import success_response, ok_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/storage", tags=["storage"])
@@ -23,7 +24,7 @@ async def upload_file(
     """Upload a single file to Supabase Storage."""
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
-    org_id = user.user_metadata.get("org_id", "")
+    org_id = get_org_id(user)
 
     storage = StorageService(db, org_id)
 
@@ -38,7 +39,7 @@ async def upload_file(
 
     log_action(user.id, "upload", "arquivo", descricao=f"Upload: {file.filename} ({categoria})")
 
-    return {"status": "success", "data": result}
+    return success_response(result)
 
 
 @router.post("/upload-multiple")
@@ -50,7 +51,7 @@ async def upload_multiple_files(
     """Upload multiple files at once."""
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
-    org_id = user.user_metadata.get("org_id", "")
+    org_id = get_org_id(user)
 
     storage = StorageService(db, org_id)
 
@@ -70,7 +71,7 @@ async def upload_multiple_files(
     log_action(user.id, "upload_multiplo", "arquivo",
                descricao=f"Upload de {len(results)} arquivos ({categoria})")
 
-    return {"status": "success", "data": results, "total": len(results)}
+    return success_response(results, total=len(results))
 
 
 @router.delete("/delete")
@@ -82,7 +83,7 @@ async def delete_file(
     """Delete a file from storage."""
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
-    org_id = user.user_metadata.get("org_id", "")
+    org_id = get_org_id(user)
 
     storage = StorageService(db, org_id)
     success = await storage.delete(path, categoria)
@@ -92,4 +93,4 @@ async def delete_file(
 
     log_action(user.id, "delete", "arquivo", descricao=f"Delete: {path}")
 
-    return {"status": "success", "message": "Arquivo excluído"}
+    return ok_response("Arquivo excluído")

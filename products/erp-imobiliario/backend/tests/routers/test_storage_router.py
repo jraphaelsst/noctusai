@@ -16,7 +16,7 @@ class TestUploadFile:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "success"
+        assert "data" in data
         assert "url" in data["data"]
 
     def test_upload_invalid_type(self, client):

@@ -13,7 +13,7 @@ class TestSubmitJob:
         })
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "success"
+        assert "data" in data
         assert "id" in data["data"]
 
     def test_submit_empty_name(self, client):
@@ -35,4 +35,4 @@ class TestListJobs:
         resp = client.get("/api/jobs")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "success"
+        assert "data" in data

@@ -71,13 +71,6 @@ class TestGetMySubscription:
         assert resp.status_code == 200
         assert resp.json()["data"] is None
 
-    def test_get_my_subscription_profile_not_found(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", None)
-
-        resp = client.get("/api/subscriptions/me")
-        assert resp.status_code == 404
-
     def test_get_my_subscription_unauthenticated(self, unauth_client):
         resp = unauth_client.get("/api/subscriptions/me")
         assert resp.status_code == 401

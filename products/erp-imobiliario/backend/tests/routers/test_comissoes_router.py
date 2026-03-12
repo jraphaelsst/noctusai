@@ -185,7 +185,7 @@ class TestExcluirComissao:
     def test_delete_not_found(self, client):
         client._mock_supabase.set_table_data("comissoes", None)
         resp = client.delete("/api/comissoes/nonexistent")
-        assert resp.status_code in [200, 404]
+        assert resp.status_code == 404
 
 
 class TestNoAuth:

@@ -166,6 +166,8 @@ async def listar_ativos(
         count_query = count_query.eq("tipo_imovel", tipo_imovel)
     if cidade:
         count_query = count_query.ilike("cidade", f"%{cidade}%")
+    if busca:
+        count_query = count_query.or_(f"titulo_anuncio.ilike.%{busca}%,logradouro.ilike.%{busca}%,bairro.ilike.%{busca}%,cidade.ilike.%{busca}%")
 
     # Build data query with pagination
     query = db.table("ativos").select("*").order("created_at", desc=True)
@@ -181,6 +183,8 @@ async def listar_ativos(
         query = query.eq("tipo_imovel", tipo_imovel)
     if cidade:
         query = query.ilike("cidade", f"%{cidade}%")
+    if busca:
+        query = query.or_(f"titulo_anuncio.ilike.%{busca}%,logradouro.ilike.%{busca}%,bairro.ilike.%{busca}%,cidade.ilike.%{busca}%")
 
     # Apply pagination
     query = query.range(offset, offset + validated_page_size - 1)
@@ -191,16 +195,6 @@ async def listar_ativos(
     # Get total count
     count_result = count_query.execute()
     total = count_result.count if count_result.count is not None else len(data)
-
-    # Server-side text search
-    if busca:
-        q = busca.lower()
-        data = [d for d in data if any(
-            q in str(d.get(f, "") or "").lower()
-            for f in ["id", "cidade", "bairro", "titulo_anuncio", "condominio_nome",
-                       "marca", "modelo", "tipo_imovel", "tipo_veiculo", "ref"]
-        )]
-        total = len(data)
 
     return paginated_response(data, total, validated_page, validated_page_size)
 
@@ -245,17 +239,13 @@ async def criar_ativo(body: AtivoCreate, authorization: Optional[str] = Header(N
     # Auto-trigger matching
     if body.natureza == "imovel" and body.aceita_permutas:
         try:
-            from app.services.matching import gerar_matches_para_imovel
+            from app.services.matching import gerar_matches_para_imovel, upsert_matches
             admin = get_admin_client()
             permutas = admin.table("ativos").select("*").in_(
                 "natureza", ["permuta_imovel", "permuta_automovel"]
             ).eq("status", "ativo").execute()
             matches = gerar_matches_para_imovel(ativo, permutas.data or [])
-            for m in matches:
-                admin.table("matches").upsert(
-                    {**m, "status": "pendente"},
-                    on_conflict="ativo_origem_id,ativo_destino_id",
-                ).execute()
+            upsert_matches(matches, admin)
             ativo["_matches_count"] = len(matches)
         except Exception as e:
             logger.warning(f"Auto-matching failed: {e}")
@@ -294,6 +284,10 @@ async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optio
 async def excluir_ativo(ativo_id: str, authorization: Optional[str] = Header(None)):
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
+
+    check = db.table("ativos").select("id").eq("id", ativo_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Ativo não encontrado")
 
     db.table("ativos").delete().eq("id", ativo_id).execute()
     log_action(user.id, "excluir", "ativo", ativo_id, f"Excluiu ativo {ativo_id}")

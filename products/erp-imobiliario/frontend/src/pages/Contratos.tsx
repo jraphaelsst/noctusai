@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,6 +49,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { CONTRATO_STATUS_CONFIG, CONTRATO_TIPO_CONFIG } from '@/lib/constants';
 import {
   useContratos,
   useResumoContratos,
@@ -62,18 +64,19 @@ import {
   ContratoUpdateData,
   Contrato,
 } from '@/types/contratos';
+import { MetricsTableSkeleton } from '@/components/ui/page-skeleton';
 
-const STATUS_CONFIG: Record<StatusContrato, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-  rascunho: { label: 'Rascunho', variant: 'outline' },
-  ativo: { label: 'Ativo', variant: 'default' },
-  concluido: { label: 'Concluido', variant: 'secondary' },
-  cancelado: { label: 'Cancelado', variant: 'destructive' },
-  distratado: { label: 'Distratado', variant: 'destructive' },
+const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  rascunho: 'outline',
+  ativo: 'default',
+  concluido: 'secondary',
+  cancelado: 'destructive',
+  distratado: 'destructive',
 };
 
-const TIPO_CONFIG: Record<TipoContrato, { label: string; className: string }> = {
-  venda: { label: 'Venda', className: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
-  locacao: { label: 'Locacao', className: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' },
+const TIPO_CLASS: Record<string, string> = {
+  venda: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+  locacao: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
 };
 
 const emptyForm: ContratoCreateData = {
@@ -91,6 +94,7 @@ const emptyForm: ContratoCreateData = {
 };
 
 export default function Contratos() {
+  const navigate = useNavigate();
   const [filtroStatus, setFiltroStatus] = useState<string>('todos');
   const [filtroTipo, setFiltroTipo] = useState<string>('todos');
   const [modalOpen, setModalOpen] = useState(false);
@@ -267,9 +271,7 @@ export default function Contratos() {
       <Card>
         <CardContent className="pt-6">
           {isLoading ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Carregando contratos...
-            </div>
+            <MetricsTableSkeleton cards={0} />
           ) : contratos.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               Nenhum contrato encontrado
@@ -290,10 +292,10 @@ export default function Contratos() {
                 </TableHeader>
                 <TableBody>
                   {contratos.map((contrato) => (
-                    <TableRow key={contrato.id}>
+                    <TableRow key={contrato.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/contratos/${contrato.id}`)}>
                       <TableCell>
-                        <Badge className={TIPO_CONFIG[contrato.tipo].className}>
-                          {TIPO_CONFIG[contrato.tipo].label}
+                        <Badge className={TIPO_CLASS[contrato.tipo]}>
+                          {CONTRATO_TIPO_CONFIG[contrato.tipo]?.label || contrato.tipo}
                         </Badge>
                       </TableCell>
                       <TableCell className="max-w-[150px] truncate">
@@ -307,12 +309,12 @@ export default function Contratos() {
                       </TableCell>
                       <TableCell>{formatDate(contrato.data_inicio)}</TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_CONFIG[contrato.status].variant}>
-                          {STATUS_CONFIG[contrato.status].label}
+                        <Badge variant={STATUS_VARIANT[contrato.status]}>
+                          {CONTRATO_STATUS_CONFIG[contrato.status]?.label || contrato.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                           <Button
                             variant="ghost"
                             size="sm"

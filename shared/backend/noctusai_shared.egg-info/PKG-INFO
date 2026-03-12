@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: noctusai-shared
+Version: 0.1.0
+Summary: Shared backend utilities for all NoctusAI backends
+Requires-Python: >=3.9
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: pydantic>=2.9.0
+Requires-Dist: pydantic-settings>=2.5.2
+Requires-Dist: supabase>=2.9.1
+Requires-Dist: PyJWT>=2.9.0
+Requires-Dist: slowapi>=0.1.9
+Requires-Dist: sentry-sdk>=1.40.0
