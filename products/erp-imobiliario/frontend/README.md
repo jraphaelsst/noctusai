@@ -79,7 +79,7 @@ This project follows specific coding patterns to ensure consistency and best pra
 ### Modal Implementation Pattern
 All modals follow a standardized `formData` pattern for instant UI updates.
 
-**Documentation**: See [AGENTIC-WORKFLOW/CONTEXT/03-ERP-FRONTEND.md](../../../AGENTIC-WORKFLOW/CONTEXT/03-ERP-FRONTEND.md) (Modal Patterns section)
+**Documentation**: See [AGENTIC-WORKFLOW/CONTEXT/frontend/02-ERP.md](../../../AGENTIC-WORKFLOW/CONTEXT/frontend/02-ERP.md) (Modal Patterns section)
 
 **Key Rules**:
 - Use `formData` state, not entity props, for display

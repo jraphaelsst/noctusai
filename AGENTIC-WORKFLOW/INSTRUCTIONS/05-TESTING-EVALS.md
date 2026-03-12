@@ -35,10 +35,59 @@ The challenge isn't that agents can't be tested — it's that you need **differe
      /                  \  Integration Tests
     /                    \ API endpoints, MCP tools, database queries
    /                      \Tools: pytest + httpx, MCP test client
-  /------------------------\
- /                          \ Unit Tests
-/                            \Business logic, validators, formatters
-                              Tools: pytest, vitest
+  /  - - - - - - - - - - - \
+ / Real-DB Integration Tests \ SQL filtering, FK/CHECK constraints, RLS
+/  - - - - - - - - - - - - - -\Tools: pytest + real Supabase SDK
+ /                              \ Unit Tests (mock-based)
+/                                \Business logic, validators, formatters
+                                  Tools: pytest, vitest
+```
+
+### Layer 0: Real-DB Integration Tests (Confidence Foundation)
+
+A small suite (~25 tests) that hits a **real Supabase instance** to verify what mocks cannot: actual SQL filtering (`ilike`, `.range()`), FK/CHECK constraints, cascade deletes, unique constraint violations, PostgREST errors (PGRST116), and RLS org isolation.
+
+**Location**: `tests/realdb/` in each backend (core, ERP, PF).
+
+**Pattern**:
+```python
+import pytest
+from postgrest.exceptions import APIError
+
+pytestmark = pytest.mark.realdb
+
+class TestContaCRUD:
+    def test_conta_crud(self, pf_db, test_org, cleanup):
+        conta = pf_db.table("contas").insert({
+            "org_id": test_org["id"],
+            "nome": "Conta Corrente",
+            "tipo": "corrente",
+        }).execute().data[0]
+        cleanup.append(("contas", conta["id"]))
+        assert conta["tipo"] == "corrente"
+
+class TestFKViolation:
+    def test_fk_violation(self, pf_db, test_org):
+        with pytest.raises(APIError):
+            pf_db.table("transacoes").insert({
+                "org_id": test_org["id"],
+                "conta_id": "00000000-0000-0000-0000-000000000000",
+                "data": "2026-01-01", "valor": 50, "tipo": "despesa",
+            }).execute()
+```
+
+**Key conventions**:
+- Tests auto-skip when `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` are not set
+- `cleanup` fixture collects `(table, id)` tuples and deletes in reverse order
+- Test orgs use `category: "test"` for easy identification
+- Service-role key bypasses RLS for speed; dedicated RLS tests create real auth users
+
+**Running**:
+```bash
+pytest tests/realdb/ -v                  # Single backend
+pytest core/backend/tests/realdb/ \
+       products/erp-imobiliario/backend/tests/realdb/ \
+       products/personal-finance/backend/tests/realdb/ -v  # All
 ```
 
 ### Layer 1: Unit Tests (Foundation)
@@ -419,10 +468,16 @@ For each agent workflow before deployment:
 # .github/workflows/test.yaml (or equivalent CI config)
 
 stages:
-  - name: Unit Tests
+  - name: Unit Tests (mock-based)
     run: |
-      pytest tests/services/ tests/models/ -v
+      pytest tests/services/ tests/models/ tests/routers/ -v
       cd client && npx vitest run
+
+  - name: Real-DB Integration Tests
+    run: pytest tests/realdb/ -v
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
   - name: Integration Tests
     run: pytest tests/api/ tests/mcp/ -v
@@ -441,4 +496,5 @@ A change is only complete when:
 1. All existing tests still pass
 2. New tests are written for new behavior
 3. Evals show no regression (or regression is intentional and documented)
-4. Code reviewed and approved
+4. Documentation updated (`CLAUDE.md` + `AGENTIC-WORKFLOW/` files reflect the changes)
+5. Code reviewed and approved

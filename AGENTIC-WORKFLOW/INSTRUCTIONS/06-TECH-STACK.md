@@ -14,7 +14,7 @@
 | **Styling** | Tailwind CSS + shadcn/ui | Utility-first styling, component library |
 | **Routing** | React Router v6 | Client-side routing |
 | **Server State** | TanStack Query (React Query) | Data fetching, caching, sync (ERP) |
-| **Client State** | Zustand | Global UI state (ERP); React Context (Core) |
+| **Client State** | Zustand | Global UI state (ERP, PF); React Context (Core) |
 | **Backend** | Python 3.11+ / FastAPI | REST API, async-first |
 | **Database** | Supabase (PostgreSQL + RLS) | Primary datastore, auth, storage, client SDK |
 | **Migrations** | Raw SQL files | Database schema versioning via `migrations/` |
@@ -122,20 +122,31 @@ project-root/
 │   │   ├── exceptions.py        # AppException hierarchy + postgrest_exception_handler
 │   │   ├── database.py          # Supabase client (admin + user)
 │   │   └── config.py            # Pydantic Settings from root .env
-│   ├── backend/migrations/      # 2 SQL migration files (15 tables total)
-│   ├── backend/tests/           # 23 test files (294 tests)
+│   ├── backend/migrations/      # 3 SQL migration files (15 tables total)
+│   ├── backend/tests/           # 23 test files (299 tests)
 │   └── frontend/src/            # React :5173 (admin panel, billing, team)
 │
 ├── products/
-│   └── erp-imobiliario/         # Real Estate CRM product
-│       ├── backend/app/         # FastAPI :8001
-│       │   ├── routers/         # 46 routers (ativos, clientes, matching, AI, etc.)
-│       │   ├── services/        # 37 services (matching, embedding, AI, etc.)
-│       │   ├── exceptions.py    # Same handler stack as Core (incl. postgrest_exception_handler)
-│       │   └── schemas/         # Pydantic request/response models
-│       ├── backend/migrations/  # 5 SQL migration files
-│       ├── backend/tests/       # 62 test files (986 tests)
-│       └── frontend/src/        # React :8080 (48 pages, 59 hooks, shadcn/ui)
+│   ├── erp-imobiliario/         # Real Estate CRM product
+│   │   ├── backend/app/         # FastAPI :8001
+│   │   │   ├── routers/         # 48 routers (ativos, clientes, matching, AI, certidoes, etc.)
+│   │   │   ├── services/        # 40 services (matching, embedding, AI, certidoes, etc.)
+│   │   │   ├── rate_limit.py    # Shared slowapi Limiter instance
+│   │   │   └── schemas/         # Pydantic request/response models
+│   │   ├── backend/migrations/  # 8 SQL migration files
+│   │   ├── backend/tests/       # 87 test files (1432 tests)
+│   │   └── frontend/src/        # React :8080 (54 pages, 56 hooks, shadcn/ui, lib/constants.ts)
+│   │
+│   └── personal-finance/        # Personal Finance product
+│       ├── backend/app/         # FastAPI :8002
+│       │   ├── routers/         # 15 routers (contas, transacoes, orcamentos, carteira, etc.)
+│       │   ├── services/        # 13 services (dashboard, recorrentes, watchlist, etc.)
+│       │   ├── schemas/         # Pydantic request/response models
+│       │   ├── rate_limit.py    # Shared slowapi Limiter instance
+│       │   └── scheduler.py     # APScheduler for recurring transactions
+│       ├── backend/migrations/  # 3 SQL migration files
+│       ├── backend/tests/       # 27 test files (465 tests)
+│       └── frontend/src/        # React :8090 (18 pages, 14 hooks, lib/constants.ts)
 │
 ├── AGENTIC-WORKFLOW/            # CDD+TDD methodology & agentic artifacts
 │   ├── INSTRUCTIONS/            # Methodology documentation (00-07)
@@ -149,13 +160,17 @@ project-root/
 │   │   └── 07-TEMPLATES.md      # Reusable starting point templates
 │   ├── CONTEXT/                 # System landscape docs for agent context loading
 │   │   ├── 00-LANDSCAPE.md      # Platform overview, products, architecture
-│   │   ├── 01-CORE-BACKEND.md   # Core backend: 20 routers, 8 services
-│   │   ├── 02-ERP-BACKEND.md    # ERP backend: 46 routers, 37 services
-│   │   ├── 03-ERP-FRONTEND.md   # ERP frontend: 48 pages, 59 hooks
-│   │   ├── 04-CORE-FRONTEND.md  # Core frontend: admin, billing, auth
-│   │   ├── 05-DATABASE.md       # Supabase tables, RLS, key relationships
 │   │   ├── 06-INFRASTRUCTURE.md # Ports, Docker, n8n, WAHA, deployment
-│   │   └── 07-AI-FEATURES.md    # AI service, embeddings, matching algorithm
+│   │   ├── backend/             # Backend context docs
+│   │   │   ├── 01-CORE.md       # Core backend: 20 routers, 8 services
+│   │   │   ├── 02-ERP.md        # ERP backend: 48 routers, 40 services
+│   │   │   ├── 03-PF.md         # PF backend: 15 routers, 13 services
+│   │   │   ├── 04-DATABASE.md   # Supabase tables (public, erp, personal-finance), RLS
+│   │   │   └── 05-AI-FEATURES.md # AI service, embeddings, matching algorithm
+│   │   └── frontend/            # Frontend context docs
+│   │       ├── 01-CORE.md       # Core frontend: admin, billing, auth
+│   │       ├── 02-ERP.md        # ERP frontend: 54 pages, 56 hooks
+│   │       └── 03-PF.md         # PF frontend: 18 pages, 14 hooks
 │   ├── SKILLS/                  # Agent skill definitions (reference 01-SKILLS.md)
 │   │   ├── property-description/SKILL.md
 │   │   ├── lead-scoring/SKILL.md
@@ -171,7 +186,11 @@ project-root/
 │   ├── MCP-SERVERS/             # MCP Server definitions (reference 02-MCP.md)
 │   └── WORKFLOWS/               # n8n workflow exports (reference 03-AGENTIC-WORKFLOWS.md)
 │
-├── docker-compose.yml           # Local dev: 4 services
+├── shared/                      # Cross-cutting shared code
+│   ├── backend/noctusai_shared/ # Python: exceptions, responses, middleware, logging, config, database, app_factory
+│   └── frontend/src/            # TypeScript: api, utils, auth, stores, hooks, components (via @shared/* alias)
+│
+├── docker-compose.yml           # Local dev: 6 services
 ├── start.sh                     # Local dev startup script
 ├── requirements.txt             # Root Python deps (merged superset)
 ├── venv/                        # Shared Python virtual environment
@@ -216,6 +235,7 @@ REDIS_URL=...
 Frontend uses `VITE_`-prefixed vars in per-frontend `.env` files (security boundary — these end up in browser bundles):
 - Core: `VITE_CORE_API_URL=http://localhost:8000`
 - ERP: `VITE_BACKEND_API_URL=http://localhost:8001`
+- PF: `VITE_BACKEND_API_URL=http://localhost:8002`
 
 ---
 
@@ -226,6 +246,7 @@ Frontend uses `VITE_`-prefixed vars in per-frontend `.env` files (security bound
 - `docker-compose up` — Containerized local dev (4 services)
 - Core Backend: `uvicorn app.main:app --reload --port 8000 --app-dir core/backend`
 - ERP Backend: `uvicorn app.main:app --reload --port 8001 --app-dir products/erp-imobiliario/backend`
+- PF Backend: `uvicorn app.main:app --reload --port 8002 --app-dir products/personal-finance/backend`
 
 ### VPS — Hostinger (n8n + WAHA)
 - Server: `72.61.28.36`

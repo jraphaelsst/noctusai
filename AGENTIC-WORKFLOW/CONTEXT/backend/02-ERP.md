@@ -2,17 +2,17 @@
 
 > Path: `products/erp-imobiliario/backend/app/`
 > Server: FastAPI on port **8001**
-> Tests: `products/erp-imobiliario/backend/tests/` (62 test files, 986 tests)
+> Tests: `products/erp-imobiliario/backend/tests/` (87 test files, 1432 tests)
 
 ---
 
 ## Overview
 
-Full real estate CRM backend with 46 routers and 37 services. Handles property management, client CRM, sales funnel, AI-powered matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting.
+Full real estate CRM backend with 48 routers and 40 services. Handles property management, client CRM, sales funnel, AI-powered matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting.
 
 ---
 
-## Routers (46)
+## Routers (48)
 
 ### Core Domain
 
@@ -75,6 +75,7 @@ Full real estate CRM backend with 46 routers and 37 services. Handles property m
 | `dimob.py` | `/api/dimob` | DIMOB tax compliance |
 | `analise_credito.py` | `/api/analise-credito` | Credit analysis |
 | `gamificacao.py` | `/api/gamificacao` | Gamification / performance scoring |
+| `certidoes.py` | `/api/certidoes` | Certidões negativas (negative certificates) management |
 
 ### Organization
 
@@ -105,9 +106,15 @@ Full real estate CRM backend with 46 routers and 37 services. Handles property m
 | `action_log.py` | `/api/action-log` | Action audit log |
 | `atividades.py` | `/api/atividades` | User activities |
 
+### Utilities
+
+| Router | Prefix | Purpose |
+|--------|--------|---------|
+| `webhook_utils.py` | N/A | Webhook utility helpers (not a router, but routing-adjacent) |
+
 ---
 
-## Services (37)
+## Services (40)
 
 ### AI & Matching
 
@@ -160,6 +167,21 @@ Full real estate CRM backend with 46 routers and 37 services. Handles property m
 | `recorrencia_service.py` | Recurring transactions: rent generation, lancamentos, overdue detection (idempotent) |
 | `notificacao_service.py` | Multi-channel notification delivery (app, email, WhatsApp) |
 | `meta_api_service.py` | Meta Graph API: Lead Ads sync, campaign metrics import |
+| `certidoes_service.py` | Certidões negativas: issuance, renewal, status tracking |
+| `credential_resolver.py` | Credential resolution chain: org_settings → platform_settings → env vars |
+| `metas_service.py` | Goals/targets business logic and aggregation |
+
+---
+
+## Legacy Data Migration
+
+The ERP database contains migrated records from an old Django permutas system. Migration scripts live in `migratingDB/` (see `../00-LANDSCAPE.md`). Key facts for development:
+
+- **264 imóveis** and **13 permutas** were migrated into `erp.ativos`, along with ~214 placeholder `erp.clientes` and ~147 placeholder `erp.condominios`
+- Migrated imóveis have `titulo_anuncio LIKE '[MOCK]%'` — these need real titles, fotos, and descriptions
+- Migrated clientes/condominios originally had placeholder names (`Proprietário #N`, `Condomínio #N`), enriched in Phase 2 with real names/contacts (marked `[MIGRADO-ENRIQUECIDO]`)
+- `erp.ativos.interesses` is a JSONB array storing exchange preferences (tipo_imovel, zona, valor range) — used by the matching algorithm
+- `erp.matches` table is NOT populated by migration — it's filled by the `/api/matching/gerar` endpoint
 
 ---
 
@@ -175,6 +197,8 @@ Same as core: `authorization: Optional[str] = Header(None)` → `get_current_use
 
 SSO flow: Core platform issues SSO token → ERP validates via `/api/sso/validate` → creates local session.
 
+**Org ID extraction**: Use `get_org_id(user)` from `dependencies.py` — never inline `user.user_metadata.get("org_id")`. Raises 400 if missing.
+
 ---
 
 ## Response Patterns
@@ -182,6 +206,64 @@ SSO flow: Core platform issues SSO token → ERP validates via `/api/sso/validat
 - `paginated_response(data, total, page, page_size)` — List endpoints
 - `success_response(data)` — Single items
 - `ok_response(message)` — Deletes and actions
+
+---
+
+## Security Patterns
+
+### Rate Limiting
+Public and AI endpoints use `@limiter.limit("30/minute")` from `app.rate_limit`. The shared `limiter` instance lives in `rate_limit.py` to avoid circular imports. Applied to: `ai.py` (3 endpoints), `whatsapp.py` `/send`, `portal_externo.py` (5 public endpoints).
+
+### Webhook HMAC Verification
+`whatsapp_webhook.py` verifies HMAC-SHA256 signatures via `x-hub-signature` header when the org's `webhook_secret` is configured. Unverified requests are rejected with 403.
+
+### Production Safety
+- `jwt_secret` defaults to empty string — server raises `RuntimeError` at startup if empty in production (`not debug`)
+- `debug` defaults to `False` — docs/redoc endpoints are only exposed when `debug=True`
+- Portal endpoints (`portal_externo.py`) scope all queries by `org_id` from the JWT token
+
+---
+
+## Router Patterns
+
+### DELETE Pre-checks
+All DELETE endpoints verify the record exists before attempting deletion:
+```python
+check = db.table("x").select("id").eq("id", entity_id).execute()
+if not check.data:
+    raise HTTPException(status_code=404, detail="Entidade não encontrada")
+db.table("x").delete().eq("id", entity_id).execute()
+```
+
+### Server-side Search
+List endpoints with a `busca` query param apply `.or_()` with `ilike` for server-side filtering BEFORE pagination:
+```python
+if busca:
+    query = query.or_(f"nome.ilike.%{busca}%,email.ilike.%{busca}%,telefone.ilike.%{busca}%")
+    count_query = count_query.or_(...)
+```
+
+### Router → Service Delegation
+Business logic belongs in services, not routers. Routers are thin: auth + validation + delegation.
+- `bi.py` → `BIService.get_dashboard_resumo()` for dashboard aggregation
+- `whatsapp.py` → `whatsapp_service.send_via_waha()` for message sending
+- Financial batch operations → `financeiro_service`, `recorrencia_service`
+
+---
+
+## Performance Patterns
+
+### N+1 Prevention
+Batch operations use single bulk queries instead of loops:
+- `financeiro_service.mark_overdue()` — Single bulk UPDATE for all overdue lancamentos
+- `recorrencia_service.gerar_alugueis_mes()` — Batch fetch existing, build set, batch insert
+- `recorrencia_service.verificar_inadimplencia()` — Two bulk UPDATEs instead of loops
+- `relatorios_service.ranking_corretores()` — `.gte("created_at", cutoff)` with column selection
+
+### Query Scoping
+- `bi.py` dashboard queries include `year_start` filter on all table queries
+- `financeiro.py` `/resumo` defaults to current year start if no date provided
+- `financeiro.py` `/fluxo-caixa` uses month-based cutoff
 
 ---
 
@@ -204,12 +286,20 @@ tests/
 │   ├── test_notificacoes_router.py
 │   ├── test_meta_api_router.py
 │   └── ... (49 files)
-├── services/                      # 12 service test files
+├── services/                      # 25 service test files
 │   ├── test_dimob_service.py
 │   ├── test_embedding_service.py
 │   ├── test_email_service.py
-│   └── ... (12 files)
+│   ├── test_matching_service.py
+│   ├── test_financeiro_service.py
+│   └── ... (25 files)
 └── integration/
     ├── conftest.py                # StatefulMockClient
     └── test_clientes_integration.py
 ```
+
+### Test Patterns
+
+- **DELETE tests**: Must provide mock data with matching ID so the pre-check passes. Add a separate `test_delete_not_found` that sets empty data and expects 404.
+- **Search tests**: Mock `.or_()` doesn't filter — tests verify the endpoint accepts `busca` param and returns 200, not the filtered count.
+- **Mock builder**: `MockSelectBuilder` supports `.or_()`, `.gte()`, `.lte()`, `.ilike()` etc. as no-op chainable methods (return self without filtering).

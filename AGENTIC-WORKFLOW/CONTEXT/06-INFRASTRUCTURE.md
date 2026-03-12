@@ -11,8 +11,10 @@
 |---------|------|-----|
 | Core Backend | 8000 | `http://localhost:8000` |
 | ERP Backend | 8001 | `http://localhost:8001` |
+| PF Backend | 8002 | `http://localhost:8002` |
 | Core Frontend | 5173 | `http://localhost:5173` |
 | ERP Frontend | 8080 | `http://localhost:8080` |
+| PF Frontend | 8090 | `http://localhost:8090` |
 
 ---
 
@@ -25,16 +27,20 @@ Startup script that:
 2. Installs Python dependencies from root `requirements.txt`
 3. Starts Core Backend (uvicorn :8000)
 4. Starts ERP Backend (uvicorn :8001)
-5. Starts Core Frontend (vite :5173)
-6. Starts ERP Frontend (vite :8080)
+5. Starts PF Backend (uvicorn :8002)
+6. Starts Core Frontend (vite :5173)
+7. Starts ERP Frontend (vite :8080)
+8. Starts PF Frontend (vite :8090)
 
 ### Docker Compose (`docker-compose.yml`)
 
-4 services for local containerized development:
+6 services for local containerized development:
 - `core-backend` — FastAPI on :8000
 - `erp-backend` — FastAPI on :8001
+- `pf-backend` — FastAPI on :8002
 - `core-frontend` — Vite on :5173
 - `erp-frontend` — Vite on :8080
+- `pf-frontend` — Vite on :8090
 
 All services share the root `.env` file.
 
@@ -71,6 +77,7 @@ Each frontend has its own `.env` with `VITE_`-prefixed vars (Vite convention —
 
 - Core: `VITE_CORE_API_URL=http://localhost:8000`
 - ERP: `VITE_BACKEND_API_URL=http://localhost:8001`
+- PF: `VITE_BACKEND_API_URL=http://localhost:8002`
 
 ---
 
@@ -89,8 +96,10 @@ Configurable via `CORS_ORIGINS` env var (comma-separated).
 
 - **ERP backend** (`database.py`): `ClientOptions(schema="erp")` — all `.table()` and `.rpc()` calls target `erp` schema
 - **ERP frontend** (`client.ts`): `db: { schema: 'erp' }` — all direct `.from()` calls target `erp` schema
+- **PF backend** (`database.py`): `ClientOptions(schema="personal-finance")` — all calls target `personal-finance` schema
+- **PF frontend** (`client.ts`): `db: { schema: 'personal-finance' }` — all calls target `personal-finance` schema
 - **Core backend**: defaults to `public` schema
-- **Supabase Dashboard**: `erp` must be in "Exposed schemas" (Project Settings → API) for PostgREST to accept the `Accept-Profile: erp` header
+- **Supabase Dashboard**: `erp` and `personal-finance` must be in "Exposed schemas" (Project Settings → API) for PostgREST to accept the schema headers
 
 ---
 
@@ -98,7 +107,7 @@ Configurable via `CORS_ORIGINS` env var (comma-separated).
 
 | Service | Used By | Purpose | Auth |
 |---------|---------|---------|------|
-| Supabase | Both backends | Database, auth, storage | `SUPABASE_URL` + keys |
+| Supabase | All backends | Database, auth, storage | `SUPABASE_URL` + keys |
 | OpenAI | ERP backend | AI descriptions, embeddings, scoring | `OPENAI_API_KEY` |
 | Stripe | Core backend | Billing, subscriptions | `STRIPE_SECRET_KEY` |
 | WAHA | ERP backend | WhatsApp messaging (self-hosted) | `WAHA_API_URL` + key |

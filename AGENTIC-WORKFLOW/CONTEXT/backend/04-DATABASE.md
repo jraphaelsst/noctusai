@@ -14,6 +14,7 @@ Tables are separated into **product-scoped PostgreSQL schemas**:
 |--------|---------|---------|
 | `public` | Core platform tables + auth hook functions | `core/backend` (default) |
 | `erp` | ERP product tables + business logic functions | `products/erp-imobiliario/backend` (`ClientOptions(schema="erp")`) |
+| `personal-finance` | Personal finance tables | `products/personal-finance/backend` (`ClientOptions(schema="personal-finance")`) |
 
 The ERP backend's `database.py` uses `ClientOptions(schema="erp")` so all `.table()` and `.rpc()` calls target the `erp` schema via PostgREST's `Accept-Profile` / `Content-Profile` headers.
 
@@ -218,6 +219,23 @@ Note: Onboarding status is stored as fields on `organizations` (`onboarding_comp
 
 ---
 
+## Personal Finance Tables (`personal-finance` schema)
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `contas` | Bank accounts (corrente, poupança, investimento, carteira) | `id`, `org_id`, `nome`, `tipo`, `saldo`, `instituicao`, `cor` |
+| `categorias` | Transaction categories (custom per org) | `id`, `org_id`, `nome`, `tipo` (receita/despesa), `cor`, `icone` |
+| `transacoes` | Financial transactions | `id`, `org_id`, `conta_id`, `categoria_id`, `valor`, `tipo` (receita/despesa/transferencia), `data`, `descricao` |
+| `orcamentos` | Monthly budgets with category limits | `id`, `org_id`, `nome`, `mes`, `ano`, `valor_total` |
+| `orcamento_categorias` | Budget category breakdown | `id`, `orcamento_id`, `categoria_id`, `valor_limite` |
+| `metas` | Savings goals and debt payoff targets | `id`, `org_id`, `nome`, `valor_alvo`, `valor_atual`, `prazo`, `tipo` |
+| `recorrentes` | Recurring transactions (salary, rent, subscriptions) | `id`, `org_id`, `conta_id`, `categoria_id`, `valor`, `frequencia`, `proximo_vencimento` |
+| `carteiras` | Investment portfolios | `id`, `org_id`, `nome`, `descricao` |
+| `ativos` | Individual asset positions | `id`, `org_id`, `carteira_id`, `ticker`, `quantidade`, `preco_medio`, `tipo` |
+| `watchlist` | Stock watchlist items | `id`, `org_id`, `ticker`, `nome`, `preco_alerta` |
+
+---
+
 ## RLS Pattern
 
 All ERP tables enforce tenant isolation:
@@ -272,6 +290,17 @@ The `erp.ativos` table has an `embedding` column (vector, 1536 dimensions) popul
 | `003_schema_separation.sql` | Moves objects from `public` → `erp` (existing databases only) |
 | `004_mvp_expansion.sql` | 42 new tables for MVP expansion (existing databases) |
 | `005_fix_sidebar_pages.sql` | Fix `set_timestamps_sp()` trigger, seed all 42 sidebar routes, set admin role |
+| `006_lead_scoring.sql` | Adds lead_score columns to erp.clientes |
+| `007_certidoes_negativas.sql` | Certidões negativas table and indexes |
+| `007_drop_legacy_tables.sql` | Drops legacy tables no longer in use |
+
+### Personal Finance (`products/personal-finance/backend/migrations/`)
+
+| File | Purpose |
+|------|---------|
+| `001_personal_finance.sql` | Full PF schema — accounts, transactions, categories, budgets, goals, portfolios, assets, watchlists, recurring transactions |
+| `002_seed_product.sql` | Seeds the personal-finance product record in the core `products` table |
+| `003_fix_schema_permissions.sql` | Fixes schema permissions for PostgREST access |
 
 ### Trigger Function: `erp.set_timestamps_sp()`
 

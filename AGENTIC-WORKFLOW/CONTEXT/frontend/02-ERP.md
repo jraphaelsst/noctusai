@@ -8,7 +8,7 @@
 
 ## Overview
 
-Full real estate CRM frontend with 48 lazy-loaded pages, 59 TanStack Query hooks, Zustand stores for UI state, and shadcn/ui components. All routes are protected behind auth. The Supabase client uses `db: { schema: 'erp' }` so all direct `.from()` calls target the ERP schema.
+Full real estate CRM frontend with 54 lazy-loaded pages, 56 TanStack Query hooks, Zustand stores for UI state, and shadcn/ui components. All routes are protected behind auth. The Supabase client uses `db: { schema: 'erp' }` so all direct `.from()` calls target the ERP schema.
 
 ---
 
@@ -25,28 +25,33 @@ Full real estate CRM frontend with 48 lazy-loaded pages, 59 TanStack Query hooks
 
 | Store | Persistence | Key State |
 |-------|-------------|-----------|
-| `authStore.ts` | None (managed by AuthProvider) | `user`, `setUser()` |
-| `filtrosStore.ts` | localStorage (`filtros-storage`) | `periodo`, `dataInicio`, `dataFim`, corretor/status/tipo filters |
+| `authStore.ts` | None (managed by AuthProvider) | `user`, `isInitialized`, `setUser()`, `setInitialized()` |
+| `filtrosStore.ts` | localStorage (`filtros-storage`) | `periodo`, `dataInicio` (string), `dataFim` (string), corretor/status/tipo filters |
 | `funilFiltrosStore.ts` | localStorage (`funil-filtros-storage`) | `busca`, `responsavelId`, `origem`, `etapa`, `incluirArquivados` |
+
+**Date fields in stores use `string | undefined` (ISO strings), not `Date` objects.** Convert at component boundaries:
+- Calendar `selected`: `selected={dataInicio ? new Date(dataInicio) : undefined}`
+- Calendar `onSelect`: `onSelect={(date) => setDataInicio(date?.toISOString())}`
+- date-fns functions: `setDataInicio(startOfDay(hoje).toISOString())`
 
 ---
 
-## Pages (48)
+## Pages (54)
 
 ### Core Pages
-`Dashboard`, `Funil`, `Clientes`, `ClienteDetalhes`, `Metas`, `Usuarios`, `Admin`, `Index`, `NotFound`, `SSOCallback`
+`Dashboard`, `Funil`, `Clientes`, `ClienteDetalhes`, `Metas`, `Usuarios`, `Admin`, `NotFound`, `SSOCallback`
 
 ### Property Management
-`Imoveis`, `Condominios`, `Permutas`, `Negociacoes`
+`Imoveis`, `ImovelDetalhes`, `Condominios`, `Permutas`, `PermutaDetalhes`, `Negociacoes`
 
 ### Real Estate Operations
-`Locacoes`, `Vistorias`, `Contratos`, `Propostas`
+`Locacoes`, `LocacaoDetalhes`, `Vistorias`, `VistoriaDetalhes`, `Contratos`, `ContratoDetalhes`, `Propostas`, `PropostaDetalhes`
 
 ### Financial
 `Financeiro`, `Comissoes`, `Banco`, `Assinaturas`, `Impostos`, `Manutencao`
 
 ### Insurance & Documents
-`Seguros`, `Documentos`, `Chaves`
+`Seguros`, `Documentos`, `Chaves`, `Certidoes`
 
 ### Marketing & Communication
 `Marketing`, `Portais`, `PortalExterno`, `PortalCliente`, `SiteImoveis`, `Emails`, `WhatsAppInbox`, `Notificacoes`, `MetaAds`
@@ -59,18 +64,18 @@ Full real estate CRM frontend with 48 lazy-loaded pages, 59 TanStack Query hooks
 
 ---
 
-## Hooks (59)
+## Hooks (56)
 
 All follow TanStack Query patterns (`useQuery`, `useMutation`, `useQueryClient`).
 
 ### Core
-`useAuth`, `useUserProfile`, `useUserRole`, `useUserRoles`, `useIsAdminOrCoordenador`, `useIsDev`
+`useUserProfile`, `useUserRole`, `useUserRoles`, `useIsAdminOrCoordenador`
 
 ### Goals
 `useMetas`, `useMetasConfig`, `useMetasOrdem`, `useAtualizarStatusMetas`, `useConcluirMetaAgrupada`, `useCriarMetaHoje`
 
 ### Clients & Sales
-`useClientes`, `useFunil`, `usePermutas`, `useMatches`, `useMatching`
+`useClientes`, `useFunil`, `usePermutas`, `useMatches`
 
 ### Properties
 `useImoveis`, `useCondominios`, `useCepSearch`
@@ -82,16 +87,16 @@ All follow TanStack Query patterns (`useQuery`, `useMutation`, `useQueryClient`)
 `useContratos`, `useLocacoes`, `usePropostas`
 
 ### Admin & Compliance
-`useAgenda`, `useAnaliseCredito`, `useBI`, `useCampo`, `useChaves`, `useDistribuicao`, `useDocumentos`, `useEmails`, `useFiliais`, `useGamificacao`, `useMarketing`, `usePortais`, `usePortalCliente`, `usePortalExterno`, `useRelatorios`, `useSiteImoveis`, `useVistorias`, `useWhatsApp`
+`useAgenda`, `useAnaliseCredito`, `useBI`, `useCampo`, `useChaves`, `useCertidoes`, `useDistribuicao`, `useDocumentos`, `useEmails`, `useFiliais`, `useGamificacao`, `useMarketing`, `usePortais`, `usePortalCliente`, `usePortalExterno`, `useRelatorios`, `useSiteImoveis`, `useVistorias`, `useWhatsApp`
 
 ### Dashboard & Analytics
-`useDashboardResumo`, `useBIVendas`, `useBICaptacao`, `useBICorretores`, `useBIImoveis`, `useBIFinanceiro`
+`useDashboardResumo` (in useBI.ts), `useBIVendas`, `useBICaptacao`, `useBICorretores`, `useBIImoveis`, `useBIFinanceiro`
 
 ### Integrations
-`useStorage` (`useUploadFile`, `useUploadMultipleFiles`, `useDeleteFile`), `useNotificacoes` (6 hooks: list, count, mark read, preferences), `useMetaApi` (config, leads, campaigns, sync)
+`useNotificacoes` (6 hooks: list, count, mark read, preferences), `useMetaApi` (config, leads, campaigns, sync)
 
 ### AI & Utilities
-`useAI`, `useAtividades`, `useActionLog`, `useProfiles`, `useDebounce`, `use-mobile`, `use-toast`, `useRecuperarSenha`, `useRequisitarSenha`
+`useAI`, `useAtividades`, `useActionLog`, `useProfiles`, `useDebounce`, `use-mobile`, `useRecuperarSenha`, `useRequisitarSenha`
 
 ---
 
@@ -114,18 +119,119 @@ All follow TanStack Query patterns (`useQuery`, `useMutation`, `useQueryClient`)
 - `NotificationBell.tsx` — Notification bell dropdown for the header
 
 ### Auth
-- `auth/AuthProvider.tsx` — Auth context provider
+- `auth/AuthProvider.tsx` — Auth context provider (manages `isInitialized` flag + periodic activity tracking)
 - `auth/LoginForm.tsx` — Login/signup form
 
+### Shared Components
+- `shared/DocumentosTab.tsx` — Reusable document tab accepting `{ entityType, entityId }`, used by ClienteDocumentos, ImovelDocumentos, etc.
+
 ### Domain Components
-- `clientes/` — ClienteCard, ColunaFunil, FiltrosFunil, NovoClienteDialog
+- `clientes/` — ClienteCard, ColunaFunil, FiltrosFunil, NovoClienteDialog, ClienteResumo, ClienteDocumentos, ClienteHistorico, ClienteAtividades, ClientePropostas
+- `imoveis/` — ImovelResumo, ImovelFotos, ImovelDocumentos, ImovelMatches, ImovelPropostas, ImovelVistorias
+- `contratos/` — ContratoResumo, ContratoParcelas, ContratoDocumentos
+- `locacoes/` — LocacaoResumo, LocacaoDocumentos, LocacaoVistorias
+- `permutas/` — PermutaResumo, PermutaMatches, PermutaCriterios
+- `propostas/` — PropostaResumo, PropostaDocumentos, PropostaHistorico
+- `vistorias/` — VistoriaResumo, VistoriaFotos, VistoriaChecklist
 - `matching/MatchResultsPanel.tsx` — AI matching results display
 - `metas/MetasDraggableSection.tsx` — Draggable goals UI
 - `ai/AIDescriptionGenerator.tsx` — AI description generation
 - `whatsapp/SendPropertyModal.tsx` — WhatsApp property sharing
 
+### Shared UI Components
+- `ui/empty-state.tsx` — Empty state placeholder for empty lists
+- `ui/entity-link.tsx` — Cross-entity navigation links
+- `ui/page-breadcrumb.tsx` — Breadcrumb navigation for detail pages
+- `ui/page-skeleton.tsx` — Full-page loading skeleton
+
 ### UI Library
-60+ shadcn/ui components (accordion, alert, badge, button, calendar, card, chart, dialog, dropdown-menu, form, input, pagination, select, table, tabs, toast, etc.)
+60+ shadcn/ui components (accordion, alert, badge, button, calendar, card, chart, dialog, dropdown-menu, form, input, pagination, select, table, tabs, etc.)
+
+### Key Library Files
+
+| File | Purpose |
+|------|---------|
+| `lib/api-client.ts` | Centralized API client (get/post/patch/delete with auth, 204 handling, `unknown` body types) |
+| `lib/utils.ts` | `formatCurrency()`, `formatDate()`, `getTodayAtMidnight()`, `cn()` |
+| `lib/constants.ts` | Centralized status/type config maps with proper Portuguese accents |
+| `lib/validations.ts` | Zod schemas (loginSchema, signUpSchema, corretorSchema, clienteSchema, etc.) |
+| `lib/categorias.ts` | Meta category ordering and labels |
+
+---
+
+## Toast Pattern (Mandatory)
+
+Use **sonner** for all toasts. The old `useToast` hook and shadcn toast components have been deleted.
+
+```typescript
+import { toast } from 'sonner';
+
+// Success
+toast.success("Operação realizada com sucesso");
+
+// Error with description
+toast.error("Erro ao salvar", { description: "Verifique os campos do formulário" });
+
+// Never use:
+// - import { useToast } from '@/hooks/use-toast'  (DELETED)
+// - toast({ title: "...", variant: "destructive" })  (OLD PATTERN)
+```
+
+---
+
+## Hook Quality Patterns (Mandatory)
+
+### Auth Guards
+Every query hook that fetches user-scoped data must include `enabled: !!user`:
+```typescript
+const { data } = useQuery({
+  queryKey: ["metas", user?.id],
+  queryFn: () => api.get("/api/metas"),
+  enabled: !!user,  // Prevents unauthenticated requests
+});
+```
+
+### staleTime Guidelines
+| Data Type | staleTime | Examples |
+|-----------|-----------|---------|
+| Reference data (rarely changes) | 10-30 min | condominios, portaisFeeds, siteConfig, metasConfig |
+| Active working data | 3-5 min | imoveis, imoveisPortal, perfilsPermuta, filiais, chaves, analisesCredito |
+| Real-time-ish data | 30s-2 min | contagemNaoLidas, checkins |
+| AI/expensive operations | 5 min | matchCounts |
+
+### Mutation Invalidations
+Every mutation must invalidate all affected query keys. Cross-entity invalidations are critical:
+```typescript
+onSuccess: () => {
+  queryClient.invalidateQueries({ queryKey: ["locacoes"] });
+  queryClient.invalidateQueries({ queryKey: ["imoveis"] });  // Creating a locação affects imóvel status
+}
+```
+
+### Constants Centralization
+Status/type config maps (label + color) live in `lib/constants.ts`:
+```typescript
+import { PROPOSTA_STATUS_CONFIG, CONTRATO_STATUS_CONFIG } from '@/lib/constants';
+
+const config = PROPOSTA_STATUS_CONFIG[status];
+// { label: "Aceita", color: "bg-green-100 text-green-800" }
+```
+
+Available maps: `PROPOSTA_STATUS_CONFIG`, `CONTRATO_STATUS_CONFIG`, `CONTRATO_TIPO_CONFIG`, `VISTORIA_STATUS_CONFIG`, `VISTORIA_TIPO_CONFIG`, `MANUTENCAO_STATUS_CONFIG`, `AGENDA_TIPO_CONFIG`, `GAMIFICACAO_PERIODO_CONFIG`, `DOCUMENTO_TIPO_CONFIG`. Plus `formatFileSize()`.
+
+---
+
+## Auth Initialization Pattern
+
+`AuthProvider` calls `setInitialized()` on `authStore` after `getSession()` resolves. `AppContent` in `App.tsx` shows `<PageSkeleton />` while `!isInitialized`, preventing the login form from flashing briefly before the session loads.
+
+```typescript
+// AppContent
+const { user, isInitialized } = useAuthStore();
+if (!isInitialized) return <PageSkeleton />;
+if (!user) return <LoginForm />;
+return <AuthenticatedRoutes />;
+```
 
 ---
 
@@ -140,6 +246,10 @@ All follow TanStack Query patterns (`useQuery`, `useMutation`, `useQueryClient`)
 - Auto-includes Bearer token from Supabase session
 - Methods: `get()`, `post()`, `patch()`, `delete()`
 - Base URL: `VITE_BACKEND_API_URL` (default `http://localhost:8001`)
+- All methods use `safeFetch()` wrapper (catches network errors with user-friendly Portuguese message)
+- Handles HTTP 204 No Content (returns `null`, no `.json()` call)
+- Body params typed as `unknown` (not `any`) for type safety
+- `get()` supports `params` object for query string construction (skips undefined/null/empty values)
 - File uploads (`useStorage`) use raw `fetch()` with `BACKEND_URL` prefix (FormData requires omitting Content-Type header)
 
 ---
