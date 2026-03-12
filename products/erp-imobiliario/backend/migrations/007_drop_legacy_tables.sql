@@ -95,7 +95,7 @@ DROP TYPE IF EXISTS erp.tipo_imovel;
 -- ============================================================================
 
 -- Update any rows using old values first
-UPDATE erp.action_log SET tipo_entidade = 'ativo' WHERE tipo_entidade IN ('imovel', 'perfil_permuta');
+UPDATE erp.user_actions_log SET tipo_entidade = 'ativo' WHERE tipo_entidade IN ('imovel', 'perfil_permuta');
 
 -- Recreate enum without legacy values (PostgreSQL doesn't support removing enum values)
 ALTER TYPE erp.tipo_entidade RENAME TO tipo_entidade_old;
@@ -103,7 +103,7 @@ CREATE TYPE erp.tipo_entidade AS ENUM (
   'meta', 'cliente', 'usuario', 'atividade', 'config_meta', 'auth',
   'negociacao', 'match', 'condominio', 'ativo'
 );
-ALTER TABLE erp.action_log ALTER COLUMN tipo_entidade TYPE erp.tipo_entidade USING tipo_entidade::TEXT::erp.tipo_entidade;
+ALTER TABLE erp.user_actions_log ALTER COLUMN tipo_entidade TYPE erp.tipo_entidade USING tipo_entidade::TEXT::erp.tipo_entidade;
 DROP TYPE erp.tipo_entidade_old;
 
 COMMIT;
