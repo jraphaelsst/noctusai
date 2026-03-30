@@ -10,7 +10,6 @@ export interface ScoreBreakdown {
   compatibilidade_specs: number;
   qualidade_anuncio: number;
   interesses: number;
-  gap_valor: number;
 }
 
 export interface Match {
@@ -37,17 +36,17 @@ export interface Match {
 export function useMatches(options?: {
   ativo_origem_id?: string;
   ativo_destino_id?: string;
-  min_score?: number;
+  status?: string;
 }) {
   const { user } = useAuthStore();
 
   return useQuery({
-    queryKey: ['matches', options?.ativo_origem_id, options?.ativo_destino_id, options?.min_score],
+    queryKey: ['matches', options?.ativo_origem_id, options?.ativo_destino_id, options?.status],
     queryFn: async () => {
       const result = await api.get('/api/matching', {
         ativo_origem_id: options?.ativo_origem_id,
         ativo_destino_id: options?.ativo_destino_id,
-        min_score: options?.min_score,
+        status: options?.status,
       });
       return (result.data || []) as Match[];
     },
@@ -61,13 +60,8 @@ export function useMatchCounts() {
   return useQuery({
     queryKey: ['match-counts'],
     queryFn: async () => {
-      const result = await api.get('/api/matching');
-      const matches = result.data || [];
-      const counts: Record<string, number> = {};
-      matches.forEach((m: Match) => {
-        counts[m.ativo_destino_id] = (counts[m.ativo_destino_id] || 0) + 1;
-      });
-      return counts;
+      const result = await api.get('/api/matching/counts');
+      return (result.data || {}) as Record<string, number>;
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
@@ -78,8 +72,8 @@ export function useRecalcularMatches() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (params: { ativo_origem_id?: string; ativo_destino_id?: string }) => {
-      return api.post('/api/matching/gerar', params);
+    mutationFn: async (params?: { ativo_origem_id?: string; ativo_destino_id?: string }) => {
+      return api.post('/api/matching/gerar', params || {});
     },
     onSuccess: (_data) => {
       queryClient.invalidateQueries({ queryKey: ['matches'] });
@@ -114,8 +108,8 @@ export function useEmbedBatch() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (ativoIds: string[]) => {
-      return api.post('/api/matching/embed-batch', { ativo_ids: ativoIds });
+    mutationFn: async () => {
+      return api.post('/api/matching/embed-batch', {});
     },
     onSuccess: (data: Record<string, unknown>) => {
       queryClient.invalidateQueries({ queryKey: ['matches'] });

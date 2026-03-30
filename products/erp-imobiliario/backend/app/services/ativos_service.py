@@ -93,40 +93,43 @@ class AtivosService:
             f"Criou {natureza} {ativo['id']}"
         )
 
-        # Auto-trigger matching for properties that accept trades
-        if natureza == "imovel" and data.get("aceita_permutas"):
-            matches_count = await self._auto_match(ativo)
-            if matches_count > 0:
-                ativo["_matches_count"] = matches_count
+        # Auto-trigger matching for any natureza
+        matches_count = await self._auto_match(ativo, natureza)
+        if matches_count > 0:
+            ativo["_matches_count"] = matches_count
 
         return ativo
 
-    async def _auto_match(self, ativo: Dict) -> int:
+    async def _auto_match(self, ativo: Dict, natureza: str) -> int:
         """
-        Automatically generate matches for a new property.
+        Automatically generate matches for a new asset (imovel or permuta).
 
         Args:
             ativo: The newly created asset
+            natureza: Asset type
 
         Returns:
             Number of matches generated
         """
         try:
-            from app.services.matching import gerar_matches_para_imovel
+            from app.services.matching import gerar_matches_para_imovel, gerar_matches_para_permuta, upsert_matches
 
             admin = get_admin_client()
-            permutas = admin.table("ativos").select("*").in_(
-                "natureza", ["permuta_imovel", "permuta_automovel"]
-            ).eq("status", "ativo").execute()
 
-            matches = gerar_matches_para_imovel(ativo, permutas.data or [])
+            if natureza == "imovel" and ativo.get("aceita_permutas"):
+                permutas = admin.table("ativos").select("*").in_(
+                    "natureza", ["permuta_imovel", "permuta_automovel"]
+                ).eq("status", "ativo").execute()
+                matches = gerar_matches_para_imovel(ativo, permutas.data or [])
+            elif natureza in ("permuta_imovel", "permuta_automovel"):
+                imoveis = admin.table("ativos").select("*").eq(
+                    "natureza", "imovel"
+                ).eq("aceita_permutas", True).eq("status", "ativo").execute()
+                matches = gerar_matches_para_permuta(ativo, imoveis.data or [])
+            else:
+                return 0
 
-            for m in matches:
-                admin.table("matches").upsert(
-                    {**m, "status": "pendente"},
-                    on_conflict="ativo_origem_id,ativo_destino_id",
-                ).execute()
-
+            upsert_matches(matches, admin)
             return len(matches)
 
         except Exception as e:

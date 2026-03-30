@@ -12,4 +12,8 @@ export const api = createApiClient({
     const { data } = await supabase.auth.getSession();
     return data?.session?.access_token ?? null;
   },
+  onTokenExpired: async () => {
+    const { data: { session } } = await supabase.auth.refreshSession();
+    return session?.access_token ?? null;
+  },
 });

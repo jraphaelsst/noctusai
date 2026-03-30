@@ -6,6 +6,13 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 
 
+@pytest.fixture(autouse=True)
+def _bypass_openai_check():
+    """Bypass upfront OpenAI credential check for all AI router tests."""
+    with patch("app.routers.ai.check_openai_configured", return_value=True):
+        yield
+
+
 class TestGenerateDescription:
     def test_generate_with_imovel_id(self, client):
         client._mock_supabase.set_table_data("ativos", {

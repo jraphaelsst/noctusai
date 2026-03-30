@@ -5,6 +5,7 @@ Handles property photos, documents, inspection images, and other file uploads.
 Falls back to mock/dry-run mode when Supabase Storage is not configured.
 """
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,23 +14,13 @@ logger = logging.getLogger(__name__)
 
 # Supabase Storage buckets
 BUCKETS = {
-    "imoveis": "erp-imoveis",
-    "documentos": "erp-documentos",
-    "vistorias": "erp-vistorias",
-    "perfil": "erp-perfil",
-    "contratos": "erp-contratos",
+    "certidoes": "erp-certidoes",
     "geral": "erp-geral",
 }
 
 # Allowed MIME types per bucket
 ALLOWED_TYPES = {
-    "imoveis": ["image/jpeg", "image/png", "image/webp", "image/heic"],
-    "documentos": ["application/pdf", "image/jpeg", "image/png", "application/msword",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
-    "vistorias": ["image/jpeg", "image/png", "image/webp", "video/mp4"],
-    "perfil": ["image/jpeg", "image/png", "image/webp"],
-    "contratos": ["application/pdf"],
+    "certidoes": ["application/pdf"],
     "geral": ["image/jpeg", "image/png", "image/webp", "application/pdf"],
 }
 
@@ -59,11 +50,31 @@ class StorageService:
     def _get_bucket(self, categoria: str) -> str:
         return BUCKETS.get(categoria, BUCKETS["geral"])
 
-    def _generate_path(self, categoria: str, filename: str) -> str:
-        """Generate a unique storage path: org_id/categoria/uuid_filename."""
+    @staticmethod
+    def _sanitize_folder_name(name: str) -> str:
+        """Sanitize a string for use as a folder name in storage paths."""
+        # Normalize whitespace and strip
+        name = name.strip()
+        # Replace slashes and backslashes with hyphens
+        name = name.replace("/", "-").replace("\\", "-")
+        # Collapse multiple spaces/hyphens into single hyphen
+        name = re.sub(r"[\s_]+", "-", name)
+        # Remove characters that are problematic in paths
+        name = re.sub(r"[^\w\-.]", "", name)
+        # Collapse multiple hyphens
+        name = re.sub(r"-{2,}", "-", name)
+        # Trim to reasonable length
+        return name[:100] or "sem-nome"
+
+    def _generate_path(self, categoria: str, filename: str,
+                       subfolder: Optional[str] = None) -> str:
+        """Generate a unique storage path: org_id/[subfolder/]uuid_filename."""
         ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
         unique_name = f"{uuid.uuid4().hex[:12]}.{ext}"
-        return f"{self.org_id}/{categoria}/{unique_name}"
+        if subfolder:
+            safe_folder = self._sanitize_folder_name(subfolder)
+            return f"{self.org_id}/{safe_folder}/{unique_name}"
+        return f"{self.org_id}/{unique_name}"
 
     def validate_file(self, filename: str, content_type: str, size: int,
                       categoria: str = "geral") -> Optional[str]:
@@ -84,6 +95,7 @@ class StorageService:
         filename: str,
         content_type: str,
         categoria: str = "geral",
+        subfolder: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload a file to Supabase Storage.
@@ -92,7 +104,7 @@ class StorageService:
         In dry-run mode, returns a mock URL.
         """
         bucket = self._get_bucket(categoria)
-        path = self._generate_path(categoria, filename)
+        path = self._generate_path(categoria, filename, subfolder=subfolder)
 
         if not self._check_storage():
             mock_url = f"https://storage.mock.noctus.app/{bucket}/{path}"

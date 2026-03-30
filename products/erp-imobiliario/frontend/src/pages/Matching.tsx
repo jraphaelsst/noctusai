@@ -1,11 +1,9 @@
 import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Slider } from '@/components/ui/slider';
 import { formatCurrency } from '@/lib/utils';
 import {
   useMatches,
@@ -18,25 +16,15 @@ import { ArrowLeftRight, Sparkles, RefreshCw, CheckCircle, XCircle } from 'lucid
 import { CardListSkeleton } from '@/components/ui/page-skeleton';
 
 function Matching() {
-  const [origemFilter, setOrigemFilter] = useState('');
-  const [destinoFilter, setDestinoFilter] = useState('');
-  const [minScore, setMinScore] = useState([0]);
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [gerarAtivoId, setGerarAtivoId] = useState('');
 
   const { data: matches = [], isLoading } = useMatches({
-    ativo_origem_id: origemFilter || undefined,
-    ativo_destino_id: destinoFilter || undefined,
-    min_score: minScore[0] > 0 ? minScore[0] : undefined,
+    status: statusFilter !== 'all' ? statusFilter : undefined,
   });
 
   const recalcularMutation = useRecalcularMatches();
   const statusMutation = useAtualizarStatusMatch();
   const embedBatchMutation = useEmbedBatch();
-
-  const filteredMatches = statusFilter === 'all'
-    ? matches
-    : matches.filter(m => m.status === statusFilter);
 
   const getScoreColor = (score: number) => {
     if (score >= 80) return 'text-green-600';
@@ -54,104 +42,62 @@ function Matching() {
     }
   };
 
-  const handleGerar = () => {
-    recalcularMutation.mutate({
-      ativo_origem_id: gerarAtivoId || undefined,
-    });
-  };
-
-  const handleEmbedBatch = () => {
-    embedBatchMutation.mutate([]);
-  };
-
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Matching de Ativos</h1>
           <p className="text-muted-foreground">
-            {filteredMatches.length} match{filteredMatches.length !== 1 ? 'es' : ''} encontrado{filteredMatches.length !== 1 ? 's' : ''}
+            {matches.length} match{matches.length !== 1 ? 'es' : ''} encontrado{matches.length !== 1 ? 's' : ''}
           </p>
         </div>
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={handleEmbedBatch}
+            onClick={() => embedBatchMutation.mutate()}
             disabled={embedBatchMutation.isPending}
           >
             <Sparkles className="h-4 w-4 mr-2" />
             {embedBatchMutation.isPending ? 'Embedando...' : 'Embed Batch'}
           </Button>
-          <Button onClick={handleGerar} disabled={recalcularMutation.isPending}>
+          <Button
+            onClick={() => recalcularMutation.mutate()}
+            disabled={recalcularMutation.isPending}
+          >
             <RefreshCw className={`h-4 w-4 mr-2 ${recalcularMutation.isPending ? 'animate-spin' : ''}`} />
-            {recalcularMutation.isPending ? 'Gerando...' : 'Gerar Matches'}
+            {recalcularMutation.isPending ? 'Recalculando...' : 'Recalcular Tudo'}
           </Button>
         </div>
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
-              <label className="text-sm font-medium mb-1 block">Ativo Origem ID</label>
-              <Input
-                placeholder="Filtrar por origem..."
-                value={origemFilter}
-                onChange={e => setOrigemFilter(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Gerar para Ativo ID</label>
-              <Input
-                placeholder="ID do ativo para gerar matches..."
-                value={gerarAtivoId}
-                onChange={e => setGerarAtivoId(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Status</label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  <SelectItem value="pendente">Pendente</SelectItem>
-                  <SelectItem value="aceito">Aceito</SelectItem>
-                  <SelectItem value="rejeitado">Rejeitado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                Score mínimo: {minScore[0]}%
-              </label>
-              <Slider
-                value={minScore}
-                onValueChange={setMinScore}
-                min={0}
-                max={100}
-                step={5}
-                className="mt-3"
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Status filter */}
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium">Status:</label>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="pendente">Pendente</SelectItem>
+            <SelectItem value="aceito">Aceito</SelectItem>
+            <SelectItem value="rejeitado">Rejeitado</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       {/* Results */}
       {isLoading ? (
         <CardListSkeleton count={4} />
-      ) : filteredMatches.length === 0 ? (
+      ) : matches.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            Nenhum match encontrado. Use "Gerar Matches" para iniciar.
+            Nenhum match encontrado. Os matches são gerados automaticamente ao criar ou atualizar ativos.
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
-          {filteredMatches.map((match: Match) => (
+          {matches.map((match: Match) => (
             <Card key={match.id}>
               <CardContent className="pt-6">
                 <div className="flex items-start justify-between mb-4">
@@ -178,8 +124,9 @@ function Matching() {
                 </div>
 
                 {/* Score breakdown bars */}
+                {match.score_breakdown && (
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                  {match.score_breakdown?.embedding_similarity != null && (
+                  {match.score_breakdown.embedding_similarity > 0 && (
                     <div>
                       <div className="flex justify-between text-xs mb-1">
                         <span>Similaridade IA</span>
@@ -190,26 +137,27 @@ function Matching() {
                   )}
                   <div>
                     <div className="flex justify-between text-xs mb-1">
-                      <span>Preço</span>
-                      <span>{Math.round(match.detalhes.compatibilidade_preco)}%</span>
+                      <span>Região</span>
+                      <span>{Math.round(match.score_breakdown.compatibilidade_regiao)}%</span>
                     </div>
-                    <Progress value={match.detalhes.compatibilidade_preco} className="h-1.5" />
+                    <Progress value={match.score_breakdown.compatibilidade_regiao} className="h-1.5" />
                   </div>
                   <div>
                     <div className="flex justify-between text-xs mb-1">
-                      <span>Região</span>
-                      <span>{Math.round(match.detalhes.compatibilidade_regiao)}%</span>
+                      <span>Preço</span>
+                      <span>{Math.round(match.score_breakdown.compatibilidade_preco)}%</span>
                     </div>
-                    <Progress value={match.detalhes.compatibilidade_regiao} className="h-1.5" />
+                    <Progress value={match.score_breakdown.compatibilidade_preco} className="h-1.5" />
                   </div>
                   <div>
                     <div className="flex justify-between text-xs mb-1">
                       <span>Specs</span>
-                      <span>{Math.round(match.detalhes.compatibilidade_specs)}%</span>
+                      <span>{Math.round(match.score_breakdown.compatibilidade_specs)}%</span>
                     </div>
-                    <Progress value={match.detalhes.compatibilidade_specs} className="h-1.5" />
+                    <Progress value={match.score_breakdown.compatibilidade_specs} className="h-1.5" />
                   </div>
                 </div>
+                )}
 
                 {/* Actions */}
                 <div className="flex justify-between items-center pt-3 border-t">

@@ -62,29 +62,21 @@ class ContratosService:
         # Parse data_inicio to generate monthly due dates
         inicio = datetime.strptime(data_inicio, "%Y-%m-%d").date()
 
-        parcelas_criadas = []
+        rows = []
         for i in range(num_parcelas):
             numero = i + 1
             data_vencimento = inicio + relativedelta(months=i)
             valor = valor_ultima if numero == num_parcelas else valor_parcela
-
-            parcela_data = {
+            rows.append({
                 "contrato_id": contrato_id,
                 "numero": numero,
                 "valor": valor,
                 "data_vencimento": data_vencimento.isoformat(),
                 "status": "pendente",
-            }
+            })
 
-            result = self.db.table("parcelas_contrato").insert(
-                parcela_data
-            ).execute()
-            row = first_or_none(result)
-
-            if row:
-                parcelas_criadas.append(row)
-
-        return parcelas_criadas
+        result = self.db.table("parcelas_contrato").insert(rows).execute()
+        return result.data or []
 
     def get_resumo(self, contratos: List[Dict]) -> Dict[str, Any]:
         """
@@ -171,15 +163,9 @@ class ContratosService:
         if not overdue_ids:
             return 0
 
-        # Update each to 'atrasado'
-        count = 0
-        for pid in overdue_ids:
-            try:
-                self.db.table("parcelas_contrato").update(
-                    {"status": "atrasado"}
-                ).eq("id", pid).execute()
-                count += 1
-            except Exception as e:
-                logger.warning(f"Failed to mark parcela {pid} as overdue: {e}")
+        # Batch update all overdue parcelas
+        self.db.table("parcelas_contrato").update(
+            {"status": "atrasado"}
+        ).in_("id", overdue_ids).execute()
 
-        return count
+        return len(overdue_ids)

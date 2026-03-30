@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/store/authStore";
 import { supabase } from "@/integrations/supabase/client";
+import { NotificationBell } from "@/components/NotificationBell";
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, Tags, PiggyBank, Target,
   TrendingUp, Eye, CalendarClock, Landmark, FileBarChart, ArrowUpDown,
@@ -45,14 +46,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span className="text-xl">💰</span>
             <h1 className="font-bold text-lg">Financas</h1>
           </div>
-          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2">
-            {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2">
+              {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
 
         {/* Sidebar */}
         <aside className={`${sidebarOpen ? "block" : "hidden"} md:block w-full md:w-64 border-r bg-card min-h-screen`}>
-          <div className="p-4 border-b hidden md:block">
+          <div className="p-4 border-b hidden md:flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-2xl">💰</span>
               <div>
@@ -60,6 +64,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <p className="text-xs text-muted-foreground">NoctusAI</p>
               </div>
             </div>
+            <NotificationBell />
           </div>
 
           <nav className="p-2 space-y-1">

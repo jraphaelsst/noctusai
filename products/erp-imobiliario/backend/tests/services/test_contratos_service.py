@@ -26,9 +26,8 @@ def _make_mock_db(insert_returns=None, select_data=None):
         builder.lt = MagicMock(return_value=builder)
         builder.single = MagicMock(return_value=builder)
 
-        # Prepend a dummy response for the DELETE.execute() call that
-        # gerar_parcelas performs before inserting new installments.
-        all_returns = [None] + insert_returns
+        # gerar_parcelas calls: 1) DELETE.execute() → None, 2) batch INSERT.execute() → all records
+        all_returns = [None, insert_returns]
         call_count = {"n": 0}
         def _execute():
             idx = call_count["n"]

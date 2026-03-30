@@ -2,7 +2,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { useMatches, useRecalcularMatches, useAtualizarStatusMatch, Match } from '@/hooks/useMatches';
+import { useMatches, useAtualizarStatusMatch, Match } from '@/hooks/useMatches';
 import { formatCurrency } from '@/lib/utils';
 import { Sparkles, HomeIcon, ArrowLeftRight, Check, X } from 'lucide-react';
 
@@ -22,12 +22,10 @@ function getScoreLabel(score: number) {
 
 interface ImovelMatchesProps {
   imovelId: string;
-  aceitaPermutas: boolean;
 }
 
-export function ImovelMatches({ imovelId, aceitaPermutas }: ImovelMatchesProps) {
+export function ImovelMatches({ imovelId }: ImovelMatchesProps) {
   const { data: matches = [], isLoading } = useMatches({ ativo_origem_id: imovelId });
-  const recalcular = useRecalcularMatches();
   const atualizarStatus = useAtualizarStatusMatch();
 
   if (isLoading) {
@@ -40,27 +38,13 @@ export function ImovelMatches({ imovelId, aceitaPermutas }: ImovelMatchesProps) 
 
   return (
     <div className="space-y-4">
-      {aceitaPermutas && (
-        <div className="flex justify-end">
-          <Button
-            onClick={() => recalcular.mutate({ ativo_origem_id: imovelId })}
-            disabled={recalcular.isPending}
-          >
-            <Sparkles className="w-4 h-4 mr-2" />
-            {recalcular.isPending ? 'Gerando...' : 'Gerar Matches'}
-          </Button>
-        </div>
-      )}
-
       {matches.length === 0 ? (
         <Card className="p-8 text-center">
           <Sparkles className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
           <p className="text-muted-foreground">Nenhum match encontrado</p>
-          {aceitaPermutas && (
-            <p className="text-sm text-muted-foreground mt-1">
-              Clique em "Gerar Matches" para buscar imóveis compatíveis
-            </p>
-          )}
+          <p className="text-sm text-muted-foreground mt-1">
+            Matches são gerados automaticamente ao criar ou atualizar ativos
+          </p>
         </Card>
       ) : (
         matches.map((match) => (
@@ -127,8 +111,9 @@ function MatchCard({
       </div>
 
       {/* Score breakdown */}
+      {match.score_breakdown && (
       <div className="space-y-2 mb-4">
-        {match.score_breakdown?.embedding_similarity != null && (
+        {match.score_breakdown.embedding_similarity > 0 && (
           <>
             <div className="flex justify-between text-sm">
               <span>Similaridade IA</span>
@@ -139,28 +124,29 @@ function MatchCard({
         )}
         <div className="flex justify-between text-sm">
           <span>Região</span>
-          <span className="font-medium">{match.detalhes.compatibilidade_regiao}%</span>
+          <span className="font-medium">{Math.round(match.score_breakdown.compatibilidade_regiao)}%</span>
         </div>
-        <Progress value={match.detalhes.compatibilidade_regiao} className="h-2" />
+        <Progress value={match.score_breakdown.compatibilidade_regiao} className="h-2" />
 
         <div className="flex justify-between text-sm">
           <span>Preço</span>
-          <span className="font-medium">{match.detalhes.compatibilidade_preco}%</span>
+          <span className="font-medium">{Math.round(match.score_breakdown.compatibilidade_preco)}%</span>
         </div>
-        <Progress value={match.detalhes.compatibilidade_preco} className="h-2" />
+        <Progress value={match.score_breakdown.compatibilidade_preco} className="h-2" />
 
         <div className="flex justify-between text-sm">
           <span>Especificações</span>
-          <span className="font-medium">{match.detalhes.compatibilidade_specs}%</span>
+          <span className="font-medium">{Math.round(match.score_breakdown.compatibilidade_specs)}%</span>
         </div>
-        <Progress value={match.detalhes.compatibilidade_specs} className="h-2" />
+        <Progress value={match.score_breakdown.compatibilidade_specs} className="h-2" />
 
         <div className="flex justify-between text-sm">
           <span>Qualidade</span>
-          <span className="font-medium">{match.detalhes.qualidade_anuncio}%</span>
+          <span className="font-medium">{Math.round(match.score_breakdown.qualidade_anuncio)}%</span>
         </div>
-        <Progress value={match.detalhes.qualidade_anuncio} className="h-2" />
+        <Progress value={match.score_breakdown.qualidade_anuncio} className="h-2" />
       </div>
+      )}
 
       {/* Values + actions */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-4 border-t">

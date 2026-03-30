@@ -114,15 +114,9 @@ class ImpostosService:
         if not overdue_ids:
             return 0
 
-        # Update each to 'atrasado'
-        count = 0
-        for imposto_id in overdue_ids:
-            try:
-                self.db.table("impostos").update(
-                    {"status": "atrasado"}
-                ).eq("id", imposto_id).execute()
-                count += 1
-            except Exception as e:
-                logger.warning(f"Failed to mark imposto {imposto_id} as overdue: {e}")
+        # Batch update all overdue impostos
+        self.db.table("impostos").update(
+            {"status": "atrasado"}
+        ).in_("id", overdue_ids).execute()
 
-        return count
+        return len(overdue_ids)

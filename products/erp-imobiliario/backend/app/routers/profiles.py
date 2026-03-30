@@ -4,7 +4,7 @@ Admin operations (delete user) use the service role key on the backend,
 never exposed to the client.
 """
 import logging
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action, first_or_none
@@ -26,6 +26,7 @@ class ProfileUpdate(BaseModel):
     telefone: Optional[str] = None
     cargo: Optional[str] = None
     avatar_url: Optional[str] = None
+    tema: Optional[Literal["light", "dark"]] = None
 
 
 @router.get("")

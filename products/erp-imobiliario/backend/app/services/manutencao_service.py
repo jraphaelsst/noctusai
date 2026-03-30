@@ -123,14 +123,9 @@ class ManutencaoService:
         if not overdue_ids:
             return 0
 
-        count = 0
-        for oid in overdue_ids:
-            try:
-                self.db.table("ordens_servico").update(
-                    {"prioridade": "urgente"}
-                ).eq("id", oid).execute()
-                count += 1
-            except Exception as e:
-                logger.warning(f"Failed to escalate ordem {oid} priority: {e}")
+        # Batch update all overdue ordens
+        self.db.table("ordens_servico").update(
+            {"prioridade": "urgente"}
+        ).in_("id", overdue_ids).execute()
 
-        return count
+        return len(overdue_ids)

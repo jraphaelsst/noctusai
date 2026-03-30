@@ -15,6 +15,7 @@ from app.routers import (
     contas, transacoes, categorias, orcamentos, metas,
     carteira, ativos, operacoes, watchlist, recorrentes,
     patrimonio, relatorios, cotacoes, dashboard,
+    notificacoes,
 )
 from app.rate_limit import limiter
 from app.logging_config import configure_logging
@@ -57,6 +58,7 @@ app.include_router(patrimonio.router)
 app.include_router(relatorios.router)
 app.include_router(cotacoes.router)
 app.include_router(dashboard.router)
+app.include_router(notificacoes.router)
 
 
 @app.get("/health")

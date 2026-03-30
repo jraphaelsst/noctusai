@@ -4,6 +4,7 @@ export interface Profile {
   email: string;
   telefone: string;
   avatar?: string;
+  tema?: 'light' | 'dark';
   created_at: string;
   updated_at: string;
 }

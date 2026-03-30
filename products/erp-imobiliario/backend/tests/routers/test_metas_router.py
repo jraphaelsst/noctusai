@@ -315,15 +315,13 @@ class TestCriarHoje:
             {"id": "cfg1", "usuario_id": "test-user-123", "tipo": "mensal",
              "categoria": "captacao", "meta_pretendida": 10, "ativo": True},
         ])
-        # ensure_scaffold_meta returns None (no existing meta) so new ones are created
-        client._mock_supabase.set_rpc_data("ensure_scaffold_meta", None)
-        client._mock_supabase.set_rpc_data("calcular_meta_proporcional", 8)
-        client._mock_supabase.set_rpc_data("period_end_date", "2026-02-28")
-        client._mock_supabase.set_table_data("metas", {"id": "m-new"})
+        # No existing metas — all should be created
+        client._mock_supabase.set_table_data("metas", [])
 
         resp = client.post("/api/metas/criar-hoje")
         assert resp.status_code == 200
-        assert resp.json()["data"]["metas_criadas"] >= 0
+        # 1 config × 4 tipos = 4 metas created
+        assert resp.json()["data"]["metas_criadas"] == 4
 
     def test_criar_hoje_no_auth(self, client):
         resp = client._tc.post("/api/metas/criar-hoje")

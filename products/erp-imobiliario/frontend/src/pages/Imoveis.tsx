@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useImoveis, Imovel } from '@/hooks/useImoveis';
-import { useRecalcularMatches } from '@/hooks/useMatches';
 import { useCondominios } from '@/hooks/useCondominios';
 import { NovoImovelDialog } from '@/components/imoveis/NovoImovelDialog';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Search, Plus, HomeIcon, Sparkles, Building2, MapPin, BedDouble, Car } from 'lucide-react';
+import { Search, Plus, HomeIcon, Building2, MapPin, BedDouble, Car } from 'lucide-react';
 import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 import { formatCurrency } from '@/lib/utils';
 
@@ -17,7 +16,6 @@ export default function Imoveis() {
   const navigate = useNavigate();
   const { data: imoveis = [], isLoading } = useImoveis();
   const { data: condominios = [] } = useCondominios();
-  const recalcularMutation = useRecalcularMatches();
   const [busca, setBusca] = useState('');
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [dialogAberto, setDialogAberto] = useState(false);
@@ -32,10 +30,6 @@ export default function Imoveis() {
     const matchTipo = filtroTipo === 'todos' || imovel.tipo_imovel === filtroTipo;
     return matchBusca && matchTipo;
   });
-
-  const handleGerarMatch = async (imovelId: string) => {
-    await recalcularMutation.mutateAsync({ ativo_origem_id: imovelId });
-  };
 
   const getCondominioNome = (imovel: Imovel) => {
     if (imovel.condominio_nome) return imovel.condominio_nome;
@@ -136,11 +130,6 @@ export default function Imoveis() {
                     </div>
                   )}
 
-                  {imovel.aceita_permutas && (
-                    <Button className="w-full" variant="outline" onClick={(e) => { e.stopPropagation(); handleGerarMatch(imovel.id); }} disabled={recalcularMutation.isPending}>
-                      <Sparkles className="h-4 w-4 mr-2" />Gerar Matches
-                    </Button>
-                  )}
                 </CardContent>
               </Card>
             );

@@ -47,6 +47,13 @@ export interface CreateApiClientOptions {
    * callback should throw instead.
    */
   getAuthToken: () => Promise<string | null>;
+  /**
+   * Called when a request receives a 401 response. Should force a session
+   * refresh and return a fresh token, or `null` if refresh failed.
+   * When provided, the client automatically retries the failed request once
+   * with the new token before propagating the error.
+   */
+  onTokenExpired?: () => Promise<string | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,13 +61,13 @@ export interface CreateApiClientOptions {
 // ---------------------------------------------------------------------------
 
 export function createApiClient(options: CreateApiClientOptions): ApiClient {
-  const { getBaseUrl, getAuthToken } = options;
+  const { getBaseUrl, getAuthToken, onTokenExpired } = options;
 
-  async function getHeaders(): Promise<Record<string, string>> {
+  async function buildHeaders(token?: string | null): Promise<Record<string, string>> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = await getAuthToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    const t = token ?? await getAuthToken();
+    if (t) {
+      headers['Authorization'] = `Bearer ${t}`;
     }
     return headers;
   }
@@ -86,9 +93,28 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     }
   }
 
+  /**
+   * Execute a fetch request. If the response is 401 and `onTokenExpired` is
+   * configured, force a token refresh and retry the request exactly once.
+   */
+  async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+    const response = await safeFetch(url, init);
+
+    if (response.status === 401 && onTokenExpired) {
+      const freshToken = await onTokenExpired();
+      if (freshToken) {
+        const retryHeaders = { ...init.headers as Record<string, string> };
+        retryHeaders['Authorization'] = `Bearer ${freshToken}`;
+        return safeFetch(url, { ...init, headers: retryHeaders });
+      }
+    }
+
+    return response;
+  }
+
   return {
     async get<T = any>(path: string, params?: Record<string, any>): Promise<T> {
-      const headers = await getHeaders();
+      const headers = await buildHeaders();
       const base = getBaseUrl();
       const url = new URL(`${base}${path}`);
       if (params) {
@@ -98,14 +124,14 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
           }
         });
       }
-      const response = await safeFetch(url.toString(), { headers });
+      const response = await fetchWithRetry(url.toString(), { headers });
       return handleResponse<T>(response);
     },
 
     async post<T = any>(path: string, body?: unknown): Promise<T> {
-      const headers = await getHeaders();
+      const headers = await buildHeaders();
       const base = getBaseUrl();
-      const response = await safeFetch(`${base}${path}`, {
+      const response = await fetchWithRetry(`${base}${path}`, {
         method: 'POST',
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -114,9 +140,9 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     },
 
     async patch<T = any>(path: string, body?: unknown): Promise<T> {
-      const headers = await getHeaders();
+      const headers = await buildHeaders();
       const base = getBaseUrl();
-      const response = await safeFetch(`${base}${path}`, {
+      const response = await fetchWithRetry(`${base}${path}`, {
         method: 'PATCH',
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -125,9 +151,9 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     },
 
     async put<T = any>(path: string, body?: unknown): Promise<T> {
-      const headers = await getHeaders();
+      const headers = await buildHeaders();
       const base = getBaseUrl();
-      const response = await safeFetch(`${base}${path}`, {
+      const response = await fetchWithRetry(`${base}${path}`, {
         method: 'PUT',
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -136,9 +162,9 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     },
 
     async delete<T = any>(path: string): Promise<T> {
-      const headers = await getHeaders();
+      const headers = await buildHeaders();
       const base = getBaseUrl();
-      const response = await safeFetch(`${base}${path}`, {
+      const response = await fetchWithRetry(`${base}${path}`, {
         method: 'DELETE',
         headers,
       });

@@ -36,17 +36,31 @@ export function Header() {
     newPassword: "",
     confirmPassword: "",
   });
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    return (saved === 'dark' || saved === 'light') ? saved : 'light';
+  });
 
+  // Sync localStorage → DOM class
   useEffect(() => {
-    const isDark = document.documentElement.classList.contains('dark');
-    setTheme(isDark ? 'dark' : 'light');
-  }, []);
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  // Sync profile (DB) → localStorage on load
+  useEffect(() => {
+    if (profile?.tema && profile.tema !== theme) {
+      setTheme(profile.tema);
+    }
+  }, [profile?.tema]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleTheme = () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
     setTheme(newTheme);
-    document.documentElement.classList.toggle('dark');
+    // Persist to DB
+    if (profile?.id) {
+      updateProfile.mutate({ id: profile.id, tema: newTheme });
+    }
   };
 
   const handleLogout = async () => {

@@ -23,10 +23,15 @@ def _get_api_key(org_id: Optional[str] = None) -> str:
     key = resolve_credential("openai_api_key", org_id)
     if not key:
         raise ValueError(
-            "Chave da API OpenAI não configurada. "
-            "Defina OPENAI_API_KEY no .env ou configure nas configurações da organização."
+            "OpenAI API Key não configurada. "
+            "Acesse Configurações > Chaves de API para configurar."
         )
     return key
+
+
+def check_openai_configured(org_id: Optional[str] = None) -> bool:
+    """Check if OpenAI API key is available without raising."""
+    return bool(resolve_credential("openai_api_key", org_id))
 
 
 async def _chat_completion(messages: list[dict], temperature: float = 0.7) -> str:

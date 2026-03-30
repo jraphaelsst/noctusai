@@ -136,6 +136,7 @@ export function Sidebar() {
       items: [
         { name: "Documentos", href: "/documentos", icon: FileBox, route: "documentos" },
         { name: "Certidões", href: "/certidoes", icon: ShieldCheck, route: "certidoes" },
+        { name: "Matrículas", href: "/matriculas", icon: FileText, route: "matriculas" },
         { name: "Assinaturas", href: "/assinaturas", icon: FileSignature, route: "assinaturas" },
         { name: "DIMOB", href: "/dimob", icon: FileText, route: "dimob" },
         { name: "Relatórios", href: "/relatorios", icon: ClipboardList, route: "relatorios" },

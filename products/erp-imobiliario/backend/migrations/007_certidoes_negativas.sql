@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS erp.certidao_resultados (
     tipo text NOT NULL,
     nome_display text NOT NULL,
     ordem int NOT NULL DEFAULT 0,
-    status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'processando', 'sucesso', 'erro')),
+    status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'processando', 'na_fila', 'sucesso', 'erro')),
     analise_ia text,
     arquivo_url text,
     arquivo_nome text,

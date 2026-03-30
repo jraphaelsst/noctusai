@@ -236,19 +236,27 @@ async def criar_ativo(body: AtivoCreate, authorization: Optional[str] = Header(N
     except Exception as e:
         logger.warning(f"Auto-embedding failed for {ativo['id']}: {e}")
 
-    # Auto-trigger matching
-    if body.natureza == "imovel" and body.aceita_permutas:
-        try:
-            from app.services.matching import gerar_matches_para_imovel, upsert_matches
-            admin = get_admin_client()
+    # Auto-trigger matching for any natureza
+    try:
+        from app.services.matching import gerar_matches_para_imovel, gerar_matches_para_permuta, upsert_matches
+        admin = get_admin_client()
+        if body.natureza == "imovel" and body.aceita_permutas:
             permutas = admin.table("ativos").select("*").in_(
                 "natureza", ["permuta_imovel", "permuta_automovel"]
             ).eq("status", "ativo").execute()
             matches = gerar_matches_para_imovel(ativo, permutas.data or [])
-            upsert_matches(matches, admin)
+        elif body.natureza in ("permuta_imovel", "permuta_automovel"):
+            imoveis = admin.table("ativos").select("*").eq(
+                "natureza", "imovel"
+            ).eq("aceita_permutas", True).eq("status", "ativo").execute()
+            matches = gerar_matches_para_permuta(ativo, imoveis.data or [])
+        else:
+            matches = []
+        upsert_matches(matches, admin)
+        if matches:
             ativo["_matches_count"] = len(matches)
-        except Exception as e:
-            logger.warning(f"Auto-matching failed: {e}")
+    except Exception as e:
+        logger.warning(f"Auto-matching failed: {e}")
 
     return success_response(ativo)
 
@@ -277,6 +285,26 @@ async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optio
     except Exception as e:
         logger.warning(f"Auto-embedding failed for {ativo_id}: {e}")
 
+    # Re-run matching after update
+    try:
+        from app.services.matching import gerar_matches_para_imovel, gerar_matches_para_permuta, upsert_matches
+        admin = get_admin_client()
+        natureza = row.get("natureza")
+        if natureza == "imovel" and row.get("aceita_permutas"):
+            permutas = admin.table("ativos").select("*").in_(
+                "natureza", ["permuta_imovel", "permuta_automovel"]
+            ).eq("status", "ativo").execute()
+            matches = gerar_matches_para_imovel(row, permutas.data or [])
+            upsert_matches(matches, admin)
+        elif natureza in ("permuta_imovel", "permuta_automovel"):
+            imoveis = admin.table("ativos").select("*").eq(
+                "natureza", "imovel"
+            ).eq("aceita_permutas", True).eq("status", "ativo").execute()
+            matches = gerar_matches_para_permuta(row, imoveis.data or [])
+            upsert_matches(matches, admin)
+    except Exception as e:
+        logger.warning(f"Auto-matching after update failed for {ativo_id}: {e}")
+
     return success_response(row)
 
 
@@ -290,5 +318,15 @@ async def excluir_ativo(ativo_id: str, authorization: Optional[str] = Header(Non
         raise HTTPException(status_code=404, detail="Ativo não encontrado")
 
     db.table("ativos").delete().eq("id", ativo_id).execute()
+
+    # Clean up orphaned matches
+    try:
+        admin = get_admin_client()
+        admin.table("matches").delete().or_(
+            f"ativo_origem_id.eq.{ativo_id},ativo_destino_id.eq.{ativo_id}"
+        ).execute()
+    except Exception as e:
+        logger.warning(f"Match cleanup failed for {ativo_id}: {e}")
+
     log_action(user.id, "excluir", "ativo", ativo_id, f"Excluiu ativo {ativo_id}")
     return ok_response("Ativo excluído com sucesso")

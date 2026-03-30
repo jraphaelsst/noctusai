@@ -106,7 +106,7 @@ export default function ImovelDetalhes() {
         </TabsContent>
 
         <TabsContent value="matches" className="mt-6">
-          <ImovelMatches imovelId={imovel.id} aceitaPermutas={!!imovel.aceita_permutas} />
+          <ImovelMatches imovelId={imovel.id} />
         </TabsContent>
 
         <TabsContent value="documentos" className="mt-6">

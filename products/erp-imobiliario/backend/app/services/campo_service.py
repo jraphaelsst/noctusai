@@ -52,38 +52,37 @@ class CampoService:
         vistorias_criadas = 0
         erros: List[Dict[str, str]] = []
 
-        # --- Sync checkins ---
-        for checkin in checkins:
-            try:
+        # --- Sync checkins (batch insert) ---
+        if checkins:
+            checkin_rows = []
+            for checkin in checkins:
                 data = checkin.model_dump(exclude_none=True)
-                # Remove PWA-only fields that don't map to DB columns
-                offline_id = data.pop("offline_id", None)
+                data.pop("offline_id", None)
                 data.pop("created_at_local", None)
-
                 data["corretor_id"] = self.user_id
-
-                self.db.table("checkins").insert(data).execute()
-                checkins_criados += 1
-            except Exception as exc:
-                identifier = offline_id or f"checkin-{checkins.index(checkin)}"
-                logger.warning("Erro ao sincronizar checkin %s: %s", identifier, exc)
-                erros.append({"item": identifier, "tipo": "checkin", "erro": str(exc)})
-
-        # --- Sync vistorias ---
-        for vistoria in vistorias:
+                checkin_rows.append(data)
             try:
-                data = vistoria.model_dump(exclude_none=True)
-                offline_id = data.pop("offline_id", None)
-                data.pop("created_at_local", None)
-
-                data["corretor_id"] = self.user_id
-
-                self.db.table("vistorias_rapidas").insert(data).execute()
-                vistorias_criadas += 1
+                self.db.table("checkins").insert(checkin_rows).execute()
+                checkins_criados = len(checkin_rows)
             except Exception as exc:
-                identifier = offline_id or f"vistoria-{vistorias.index(vistoria)}"
-                logger.warning("Erro ao sincronizar vistoria %s: %s", identifier, exc)
-                erros.append({"item": identifier, "tipo": "vistoria", "erro": str(exc)})
+                logger.warning("Erro ao sincronizar checkins em batch: %s", exc)
+                erros.append({"item": "checkins-batch", "tipo": "checkin", "erro": str(exc)})
+
+        # --- Sync vistorias (batch insert) ---
+        if vistorias:
+            vistoria_rows = []
+            for vistoria in vistorias:
+                data = vistoria.model_dump(exclude_none=True)
+                data.pop("offline_id", None)
+                data.pop("created_at_local", None)
+                data["corretor_id"] = self.user_id
+                vistoria_rows.append(data)
+            try:
+                self.db.table("vistorias_rapidas").insert(vistoria_rows).execute()
+                vistorias_criadas = len(vistoria_rows)
+            except Exception as exc:
+                logger.warning("Erro ao sincronizar vistorias em batch: %s", exc)
+                erros.append({"item": "vistorias-batch", "tipo": "vistoria", "erro": str(exc)})
 
         return {
             "checkins_criados": checkins_criados,

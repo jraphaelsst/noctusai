@@ -28,6 +28,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA erp GRANT EXECUTE ON FUNCTIONS TO anon, authe
 
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
 
 -- ─────────────────────────────────────────────────────────────────────
 -- 2. ENUMS
@@ -171,6 +172,7 @@ CREATE TABLE erp.profiles (
   email TEXT NOT NULL,
   telefone TEXT NOT NULL,
   avatar TEXT,
+  tema TEXT NOT NULL DEFAULT 'light' CHECK (tema IN ('light', 'dark')),
   last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
@@ -365,10 +367,11 @@ CREATE TABLE erp.matches (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   ativo_origem_id UUID NOT NULL,
   ativo_destino_id UUID NOT NULL,
-  score INTEGER NOT NULL DEFAULT 0 CHECK (score >= 0 AND score <= 100),
+  score NUMERIC(5,1) NOT NULL DEFAULT 0 CHECK (score >= 0 AND score <= 100),
   status status_match NOT NULL DEFAULT 'pendente',
   justificativa TEXT,
   detalhes JSONB DEFAULT '{}'::JSONB,
+  score_breakdown JSONB DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
   UNIQUE(ativo_origem_id, ativo_destino_id)
@@ -444,7 +447,10 @@ CREATE TABLE erp.ativos (
   vagas_min INTEGER,
   ano_min INTEGER,
   ano_max INTEGER,
-  quilometragem_max INTEGER
+  quilometragem_max INTEGER,
+  -- AI matching fields (pgvector)
+  embedding extensions.vector(1536),
+  interesses_descricao TEXT
 );
 
 -- Add FK constraints from matches to ativos
@@ -521,6 +527,9 @@ CREATE INDEX idx_ativos_estado ON erp.ativos(estado);
 CREATE INDEX idx_ativos_valor ON erp.ativos(valor);
 CREATE INDEX idx_ativos_status ON erp.ativos(status);
 CREATE INDEX idx_ativos_proprietario ON erp.ativos(proprietario_id);
+CREATE INDEX idx_ativos_embedding ON erp.ativos
+  USING ivfflat (embedding extensions.vector_cosine_ops)
+  WITH (lists = 100);
 
 -- ─────────────────────────────────────────────────────────────────────
 -- 7. ROW LEVEL SECURITY
@@ -645,6 +654,32 @@ CREATE POLICY "Users can delete their own ativos" ON erp.ativos FOR DELETE TO au
 -- ─────────────────────────────────────────────────────────────────────
 
 -- NOTE: has_role() is defined in section 5b (right after user_roles table)
+
+-- AI matching: similarity search via pgvector
+CREATE OR REPLACE FUNCTION erp.match_ativos(
+  query_embedding extensions.vector(1536),
+  match_count INT DEFAULT 50,
+  similarity_threshold FLOAT DEFAULT 0.3,
+  exclude_id UUID DEFAULT NULL
+)
+RETURNS TABLE (
+  id UUID,
+  similarity FLOAT
+)
+LANGUAGE sql STABLE
+SET search_path = erp, public, extensions
+AS $$
+  SELECT
+    a.id,
+    1 - (a.embedding OPERATOR(extensions.<=>) query_embedding) AS similarity
+  FROM erp.ativos a
+  WHERE a.embedding IS NOT NULL
+    AND (exclude_id IS NULL OR a.id != exclude_id)
+    AND a.status = 'ativo'
+    AND 1 - (a.embedding OPERATOR(extensions.<=>) query_embedding) > similarity_threshold
+  ORDER BY a.embedding OPERATOR(extensions.<=>) query_embedding
+  LIMIT match_count;
+$$;
 
 -- Auth: Create profile on signup (stays in public — triggered by auth.users)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -1304,6 +1339,8 @@ INSERT INTO erp.status_pagina (nome_pagina, status, tipo_pagina) VALUES
   ('notificacoes', 'producao', 'geral'),
   -- Documentos
   ('documentos', 'producao', 'geral'),
+  ('certidoes', 'producao', 'geral'),
+  ('matriculas', 'producao', 'geral'),
   ('assinaturas', 'producao', 'geral'),
   ('dimob', 'producao', 'geral'),
   ('relatorios', 'producao', 'geral'),
@@ -1958,6 +1995,14 @@ CREATE TABLE IF NOT EXISTS erp.notificacao_preferencias (
   UNIQUE(user_id, canal, tipo_evento)
 );
 
+ALTER TABLE erp.notificacoes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "org_isolation" ON erp.notificacoes
+    USING (org_id = ((current_setting('request.jwt.claims', true)::json->>'user_metadata')::json->>'org_id')::uuid);
+
+ALTER TABLE erp.notificacao_preferencias ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "org_isolation" ON erp.notificacao_preferencias
+    USING (org_id = ((current_setting('request.jwt.claims', true)::json->>'user_metadata')::json->>'org_id')::uuid);
+
 -- ── WAHA WhatsApp Config ────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS erp.whatsapp_config (
@@ -2204,12 +2249,13 @@ CREATE TABLE IF NOT EXISTS erp.certidao_resultados (
     tipo text NOT NULL,
     nome_display text NOT NULL,
     ordem int NOT NULL DEFAULT 0,
-    status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'processando', 'sucesso', 'erro')),
+    status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'processando', 'na_fila', 'sucesso', 'erro')),
     analise_ia text,
     arquivo_url text,
     arquivo_nome text,
     api_response jsonb,
     erro_mensagem text,
+    api_requested_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2260,6 +2306,84 @@ CREATE TRIGGER set_certidao_resultados_updated
 INSERT INTO erp.status_pagina (nome_pagina, status)
 VALUES ('certidoes', 'producao')
 ON CONFLICT (nome_pagina) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 12b. MATRÍCULA TEXT EXTRACTION (inline from 008_matricula_extracoes.sql)
+-- ─────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS erp.matricula_extracoes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    nome_arquivo TEXT NOT NULL,
+    tamanho_bytes INTEGER,
+    num_paginas INTEGER,
+    texto_extraido TEXT,
+    status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'processando', 'concluida', 'erro')),
+    erro_mensagem TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE erp.matricula_extracoes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "org_isolation" ON erp.matricula_extracoes
+    USING (org_id = ((current_setting('request.jwt.claims', true)::json->>'user_metadata')::json->>'org_id')::uuid);
+
+CREATE INDEX idx_matricula_extracoes_org_id ON erp.matricula_extracoes(org_id);
+CREATE INDEX idx_matricula_extracoes_user_id ON erp.matricula_extracoes(user_id);
+CREATE INDEX idx_matricula_extracoes_created_at ON erp.matricula_extracoes(created_at DESC);
+
+CREATE TRIGGER set_updated_at_matricula_extracoes
+    BEFORE UPDATE ON erp.matricula_extracoes
+    FOR EACH ROW EXECUTE FUNCTION erp.set_timestamps_sp();
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 12c. SUPABASE STORAGE BUCKETS
+-- ─────────────────────────────────────────────────────────────────────
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES
+    ('erp-certidoes', 'erp-certidoes', true),
+    ('erp-geral',     'erp-geral',     true)
+ON CONFLICT (id) DO NOTHING;
+
+-- RLS policies for storage.objects — scoped by org_id in the file path
+
+CREATE POLICY erp_storage_select ON storage.objects
+    FOR SELECT TO authenticated
+    USING (
+        bucket_id LIKE 'erp-%'
+        AND (storage.foldername(name))[1] = (auth.jwt() -> 'user_metadata' ->> 'org_id')
+    );
+
+CREATE POLICY erp_storage_insert ON storage.objects
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        bucket_id LIKE 'erp-%'
+        AND (storage.foldername(name))[1] = (auth.jwt() -> 'user_metadata' ->> 'org_id')
+    );
+
+CREATE POLICY erp_storage_update ON storage.objects
+    FOR UPDATE TO authenticated
+    USING (
+        bucket_id LIKE 'erp-%'
+        AND (storage.foldername(name))[1] = (auth.jwt() -> 'user_metadata' ->> 'org_id')
+    );
+
+CREATE POLICY erp_storage_delete ON storage.objects
+    FOR DELETE TO authenticated
+    USING (
+        bucket_id LIKE 'erp-%'
+        AND (storage.foldername(name))[1] = (auth.jwt() -> 'user_metadata' ->> 'org_id')
+    );
+
+CREATE POLICY erp_storage_service ON storage.objects
+    FOR ALL
+    USING (
+        bucket_id LIKE 'erp-%'
+        AND auth.role() = 'service_role'
+    );
 
 -- ─────────────────────────────────────────────────────────────────────
 -- 13. FINAL GRANTS (ensure all objects have correct permissions)

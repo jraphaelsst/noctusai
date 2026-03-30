@@ -3,6 +3,7 @@ Tests for the matching scoring algorithm.
 Covers region, price, specs, interests, quality, and edge cases.
 """
 import pytest
+from unittest.mock import MagicMock
 from app.services.matching import (
     calcular_compatibilidade_regiao,
     calcular_compatibilidade_preco,
@@ -10,9 +11,9 @@ from app.services.matching import (
     calcular_alinhamento_interesses,
     calcular_qualidade_anuncio,
     calcular_score_total,
-    calcular_score_composto,
     gerar_matches_para_imovel,
     gerar_matches_para_permuta,
+    upsert_matches,
 )
 
 
@@ -244,55 +245,6 @@ class TestQualidadeAnuncio:
         assert score == 3
 
 
-# ========== COMPOSITE SCORE ==========
-class TestScoreComposto:
-    def test_perfect_composite_score(self):
-        """All components maxed: similarity=1.0, preco=25, specs=20, interesses=15."""
-        score = calcular_score_composto(1.0, 25, 20, 15)
-        assert score == 100.0
-
-    def test_zero_embedding_partial_structured(self):
-        """No embedding similarity, but some structured scores."""
-        score = calcular_score_composto(0.0, 20, 15, 10)
-        assert score > 0
-        assert score < 100
-
-    def test_score_capped_at_100(self):
-        """Even with impossibly high inputs, score should not exceed 100."""
-        score = calcular_score_composto(1.0, 25, 20, 15)
-        assert score <= 100.0
-
-    def test_score_is_float(self):
-        """Composite score should be a float with decimal precision."""
-        score = calcular_score_composto(0.75, 18, 12, 8)
-        assert isinstance(score, float)
-
-    def test_all_zeros(self):
-        """All zeros should yield 0."""
-        score = calcular_score_composto(0.0, 0, 0, 0)
-        assert score == 0.0
-
-    def test_only_embedding(self):
-        """100% embedding, 0 structured → 40% of max."""
-        score = calcular_score_composto(1.0, 0, 0, 0)
-        assert score == 40.0
-
-    def test_only_preco(self):
-        """0 embedding, max price → 25% of max."""
-        score = calcular_score_composto(0.0, 25, 0, 0)
-        assert score == 25.0
-
-    def test_only_specs(self):
-        """0 embedding, max specs → 20% of max."""
-        score = calcular_score_composto(0.0, 0, 20, 0)
-        assert score == 20.0
-
-    def test_only_interesses(self):
-        """0 embedding, max interests → 15% of max."""
-        score = calcular_score_composto(0.0, 0, 0, 15)
-        assert score == 15.0
-
-
 # ========== TOTAL SCORE ==========
 class TestScoreTotal:
     def test_perfect_match(self):
@@ -318,11 +270,20 @@ class TestScoreTotal:
         assert "justificativa" in result
 
     def test_no_match_at_all(self):
+        """Pairs that fail hard filters return None."""
         result = calcular_score_total({}, {"natureza": "permuta_imovel"})
-        assert result["score"] < 20
+        assert result is None
 
     def test_detalhes_structure(self):
-        result = calcular_score_total({"valor": 100000}, {"natureza": "permuta_imovel", "valor": 100000})
+        """Pairs that pass hard filters include detalhes dict."""
+        imovel = {"valor": 500000, "cidade": "São Paulo", "estado": "SP",
+                  "tipo_imovel": "apartamento", "quartos": 2, "vagas": 1}
+        permuta = {"natureza": "permuta_imovel", "valor": 500000,
+                   "faixa_preco_min": 400000, "faixa_preco_max": 600000,
+                   "cidade": "São Paulo", "estado": "SP",
+                   "tipo_imovel": "apartamento", "quartos_min": 2}
+        result = calcular_score_total(imovel, permuta)
+        assert result is not None
         assert "compatibilidade_regiao" in result["detalhes"]
         assert "compatibilidade_preco" in result["detalhes"]
         assert "compatibilidade_specs" in result["detalhes"]
@@ -330,7 +291,14 @@ class TestScoreTotal:
         assert "gap_valor" in result["detalhes"]
 
     def test_score_is_float(self):
-        result = calcular_score_total({"valor": 100000}, {"natureza": "permuta_imovel", "valor": 100000})
+        imovel = {"valor": 500000, "cidade": "São Paulo", "estado": "SP",
+                  "tipo_imovel": "apartamento", "quartos": 2}
+        permuta = {"natureza": "permuta_imovel", "valor": 500000,
+                   "faixa_preco_min": 400000, "faixa_preco_max": 600000,
+                   "cidade": "São Paulo", "estado": "SP",
+                   "tipo_imovel": "apartamento", "quartos_min": 2}
+        result = calcular_score_total(imovel, permuta)
+        assert result is not None
         assert isinstance(result["score"], float)
 
 
@@ -423,3 +391,113 @@ class TestGerarMatches:
     def test_empty_imoveis_list(self):
         permuta = {"id": "perm-1", "owner_id": "user-b", "natureza": "permuta_imovel", "valor": 500000}
         assert gerar_matches_para_permuta(permuta, [], score_minimo=0) == []
+
+
+# ========== SCORE BREAKDOWN FIELDS ==========
+class TestScoreBreakdown:
+    def test_rule_based_has_score_breakdown(self):
+        """calcular_score_total returns score_breakdown with unified keys."""
+        result = calcular_score_total(
+            {"valor": 500000, "cidade": "São Paulo", "estado": "SP"},
+            {"natureza": "permuta_imovel", "valor": 500000, "cidade": "São Paulo", "estado": "SP"},
+        )
+        assert "score_breakdown" in result
+        sb = result["score_breakdown"]
+        assert "embedding_similarity" in sb
+        assert "compatibilidade_regiao" in sb
+        assert "compatibilidade_preco" in sb
+        assert "compatibilidade_specs" in sb
+        assert "qualidade_anuncio" in sb
+        assert "interesses" in sb
+
+    def test_rule_based_embedding_similarity_is_zero(self):
+        """Rule-based matches have embedding_similarity = 0."""
+        imovel = {"valor": 500000, "cidade": "São Paulo", "estado": "SP",
+                  "tipo_imovel": "apartamento", "quartos": 2}
+        permuta = {"natureza": "permuta_imovel", "valor": 500000,
+                   "faixa_preco_min": 400000, "faixa_preco_max": 600000,
+                   "cidade": "São Paulo", "estado": "SP",
+                   "tipo_imovel": "apartamento", "quartos_min": 2}
+        result = calcular_score_total(imovel, permuta)
+        assert result is not None
+        assert result["score_breakdown"]["embedding_similarity"] == 0
+
+    def test_score_breakdown_values_are_percentages(self):
+        """Score breakdown values are percentages (0-100)."""
+        imovel = {"valor": 500000, "cidade": "São Paulo", "estado": "SP",
+                  "titulo_anuncio": "Test", "descricao_seo": "Desc", "fotos": ["a", "b", "c"]}
+        permuta = {"natureza": "permuta_imovel", "valor": 500000,
+                   "faixa_preco_min": 400000, "faixa_preco_max": 600000,
+                   "cidade": "São Paulo", "estado": "SP"}
+        result = calcular_score_total(imovel, permuta)
+        sb = result["score_breakdown"]
+        for key, val in sb.items():
+            assert 0 <= val <= 100, f"{key} = {val} out of 0-100 range"
+
+    def test_generated_matches_include_score_breakdown(self):
+        """gerar_matches_para_imovel includes score_breakdown in each match."""
+        imovel = {"id": "i1", "owner_id": "a", "valor": 500000, "cidade": "SP", "estado": "SP"}
+        permutas = [{"id": "p1", "owner_id": "b", "natureza": "permuta_imovel",
+                     "valor": 500000, "cidade": "SP", "estado": "SP", "status": "ativo"}]
+        matches = gerar_matches_para_imovel(imovel, permutas, score_minimo=0)
+        assert len(matches) >= 1
+        assert "score_breakdown" in matches[0]
+
+
+# ========== UPSERT PROTECTION ==========
+class TestUpsertProtection:
+    def _make_mock_db(self, existing_matches=None):
+        """Create a mock DB that returns existing matches for protection check."""
+        db = MagicMock()
+        existing_response = MagicMock()
+        existing_response.data = existing_matches or []
+        # Chain: db.table("matches").select(...).in_(...).neq(...).execute()
+        db.table.return_value.select.return_value.in_.return_value.neq.return_value.execute.return_value = existing_response
+        # Chain: db.table("matches").upsert(...).execute()
+        db.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+        return db
+
+    def test_upsert_preserves_rejected(self):
+        """Rejected matches should not be overwritten by new upsert."""
+        db = self._make_mock_db([
+            {"ativo_origem_id": "i1", "ativo_destino_id": "p1", "status": "rejeitado"},
+        ])
+        matches = [
+            {"ativo_origem_id": "i1", "ativo_destino_id": "p1", "score": 80.0,
+             "justificativa": "test", "detalhes": {}, "score_breakdown": {}},
+            {"ativo_origem_id": "i1", "ativo_destino_id": "p2", "score": 70.0,
+             "justificativa": "test", "detalhes": {}, "score_breakdown": {}},
+        ]
+        upsert_matches(matches, db)
+        # Should only upsert the non-protected match (i1, p2)
+        upsert_call = db.table.return_value.upsert
+        assert upsert_call.called
+        upserted_data = upsert_call.call_args[0][0]
+        assert len(upserted_data) == 1
+        assert upserted_data[0]["ativo_destino_id"] == "p2"
+
+    def test_upsert_preserves_accepted(self):
+        """Accepted matches should not be overwritten by new upsert."""
+        db = self._make_mock_db([
+            {"ativo_origem_id": "i1", "ativo_destino_id": "p1", "status": "aceito"},
+        ])
+        matches = [
+            {"ativo_origem_id": "i1", "ativo_destino_id": "p1", "score": 90.0,
+             "justificativa": "test", "detalhes": {}, "score_breakdown": {}},
+        ]
+        upsert_matches(matches, db)
+        # All matches are protected, so upsert should NOT be called
+        upsert_call = db.table.return_value.upsert
+        assert not upsert_call.called
+
+    def test_upsert_allows_pendente(self):
+        """Pendente matches can be overwritten."""
+        db = self._make_mock_db([])  # no protected matches
+        matches = [
+            {"ativo_origem_id": "i1", "ativo_destino_id": "p1", "score": 80.0,
+             "justificativa": "test", "detalhes": {}, "score_breakdown": {}},
+        ]
+        upsert_matches(matches, db)
+        upsert_call = db.table.return_value.upsert
+        assert upsert_call.called
+        assert len(upsert_call.call_args[0][0]) == 1

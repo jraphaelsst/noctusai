@@ -9,12 +9,32 @@ export interface CertidaoResultado {
   tipo: string;
   nome_display: string;
   ordem: number;
-  status: 'pendente' | 'processando' | 'sucesso' | 'erro';
+  status: 'pendente' | 'processando' | 'na_fila' | 'sucesso' | 'erro';
   analise_ia?: string;
   arquivo_url?: string;
   arquivo_nome?: string;
   erro_mensagem?: string;
   created_at: string;
+}
+
+export interface TjspFilaItem {
+  id: string;
+  consulta_id: string;
+  posicao: number;
+  nome: string;
+  documento: string;
+  tipo_documento: string;
+  created_at: string;
+}
+
+export interface TjspFilaStatus {
+  items: TjspFilaItem[];
+  total_na_fila: number;
+  cooldown: {
+    ativo: boolean;
+    ultimo_request_at?: string;
+    segundos_restantes?: number;
+  };
 }
 
 export interface CertidaoConsulta {
@@ -30,6 +50,7 @@ export interface CertidaoConsulta {
   status: 'pendente' | 'processando' | 'concluida' | 'erro';
   total_certidoes: number;
   concluidas: number;
+  erros: number;
   created_at: string;
   resultados?: CertidaoResultado[];
 }
@@ -64,6 +85,13 @@ export function useCertidaoConsultas(filtros?: FiltrosConsultas) {
     },
     enabled: !!user,
     staleTime: 30 * 1000, // 30s — data changes during processing
+    refetchInterval: (query) => {
+      const data = query.state.data as CertidaoConsulta[] | undefined;
+      if (data?.some((c) => c.status === 'pendente' || c.status === 'processando')) {
+        return 3000; // Poll every 3s for real-time progress updates
+      }
+      return false;
+    },
   });
 }
 
@@ -78,11 +106,11 @@ export function useCertidaoConsulta(id?: string) {
       return result.data as CertidaoConsulta;
     },
     enabled: !!user && !!id,
-    staleTime: 10 * 1000, // 10s — poll frequently during processing
+    staleTime: 5 * 1000, // 5s — poll frequently during processing
     refetchInterval: (query) => {
       const data = query.state.data as CertidaoConsulta | null | undefined;
       if (data && (data.status === 'pendente' || data.status === 'processando')) {
-        return 5000; // Poll every 5s while processing
+        return 3000; // Poll every 3s for real-time progress updates
       }
       return false;
     },
@@ -138,6 +166,47 @@ export function useDeleteConsulta() {
     },
     onError: (error: Error) => {
       toast.error('Erro ao excluir consulta', { description: error.message });
+    },
+  });
+}
+
+export function useCancelarProcessamento() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (consultaId: string) => {
+      const result = await api.post(`/api/certidoes/consultas/${consultaId}/cancelar`);
+      return result.data as { cancelados: number };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['certidao-consultas'] });
+      queryClient.invalidateQueries({ queryKey: ['certidao-consulta'] });
+      queryClient.invalidateQueries({ queryKey: ['tjsp-fila'] });
+      toast.success(`${data.cancelados} certidão(ões) cancelada(s)`);
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao cancelar processamento', { description: error.message });
+    },
+  });
+}
+
+export function useTjspFila() {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ['tjsp-fila'],
+    queryFn: async () => {
+      const result = await api.get('/api/certidoes/fila-tjsp');
+      return result.data as TjspFilaStatus;
+    },
+    enabled: !!user,
+    staleTime: 10 * 1000,
+    refetchInterval: (query) => {
+      const data = query.state.data as TjspFilaStatus | undefined;
+      if (data && (data.total_na_fila > 0 || data.cooldown.ativo)) {
+        return 15000; // Poll every 15s while queue is active
+      }
+      return false;
     },
   });
 }

@@ -145,7 +145,7 @@ class TestProcessarSync:
 
         assert result["checkins_criados"] == 0
         assert len(result["erros"]) == 1
-        assert result["erros"][0]["item"] == "c-err"
+        assert result["erros"][0]["item"] == "checkins-batch"
         assert result["erros"][0]["tipo"] == "checkin"
 
     @pytest.mark.asyncio
@@ -163,7 +163,7 @@ class TestProcessarSync:
 
         assert result["vistorias_criadas"] == 0
         assert len(result["erros"]) == 1
-        assert result["erros"][0]["item"] == "v-err"
+        assert result["erros"][0]["item"] == "vistorias-batch"
         assert result["erros"][0]["tipo"] == "vistoria"
 
     @pytest.mark.asyncio
@@ -187,7 +187,7 @@ class TestProcessarSync:
     @pytest.mark.asyncio
     async def test_corretor_id_is_set(self):
         """The service should inject user_id as corretor_id."""
-        inserted_data = {}
+        inserted_rows = []
 
         class CapturingDB:
             def __init__(self):
@@ -196,7 +196,10 @@ class TestProcessarSync:
             def table(self, name):
                 builder = MagicMock()
                 def _insert(data):
-                    inserted_data.update(data)
+                    if isinstance(data, list):
+                        inserted_rows.extend(data)
+                    else:
+                        inserted_rows.append(data)
                     return builder
                 builder.insert = _insert
                 builder.execute = MagicMock(return_value=MockSupabaseResponse(data=[]))
@@ -211,7 +214,8 @@ class TestProcessarSync:
 
         await svc.processar_sync(checkins=[checkin], vistorias=[])
 
-        assert inserted_data.get("corretor_id") == "user-42"
+        assert len(inserted_rows) == 1
+        assert inserted_rows[0].get("corretor_id") == "user-42"
 
 
 # ---------------------------------------------------------------------------

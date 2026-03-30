@@ -65,12 +65,13 @@ Cross-cutting code lives in `shared/` to avoid duplication across products:
 **Important**: `get_current_user` is NOT shared — it lives in each product's `dependencies.py` and calls `get_supabase_client` at runtime. This is required for test mocks to work (`unittest.mock.patch` patches module attributes, but closures capture references at import time).
 
 **Frontend** (`shared/frontend/src/`) — TypeScript source consumed via Vite path aliases (`@shared/*`), no build step:
-- `api.ts` — `createApiClient` factory with `safeFetch`, `extractErrorMessage`
+- `api.ts` — `createApiClient` factory with `safeFetch`, `extractErrorMessage`, `onTokenExpired` 401-retry
 - `utils.ts` — `cn`, `formatCurrency`, `formatDate`, `getTodayAtMidnight`, `stripTime`
 - `auth.ts` — `useSupabaseAuthInit` hook
 - `stores.ts` — `createAuthStore`, `createFiltrosStore` factories
 - `hooks.ts` — `createCrudHooks` factory for TanStack Query CRUD patterns
 - `query-client.ts` — `createQueryClient` with shared defaults
+- `notifications.ts` — `createNotificationHooks` factory + `Notificacao`, `ContagemNaoLidas` types
 - `components/ErrorBoundary.tsx`, `components/SSOCallback.tsx`
 
 All shared backend modules use `from __future__ import annotations` for Python 3.9 compatibility.
@@ -139,7 +140,7 @@ bash start.sh    # Creates root venv, installs deps, starts all backends + front
 
 ## Testing
 
-Tests use **pytest** with a fully mocked Supabase layer (299 core tests, 1432 ERP tests, 465 PF tests). Key fixtures are in `tests/conftest.py`:
+Tests use **pytest** with a fully mocked Supabase layer (299 core tests, 1498 ERP tests, 465 PF tests). Key fixtures are in `tests/conftest.py`:
 
 - `MockSupabaseClient` / `MockQueryBuilder` — Chainable query builder that simulates Supabase PostgREST
 - `AuthClient` — Wraps FastAPI `TestClient` with automatic `Authorization: Bearer` headers
@@ -205,7 +206,13 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 - **Server-side search**: List endpoints with `busca` param use Supabase `.or_()` with `ilike` for server-side filtering BEFORE pagination. Never filter in Python after fetching all records.
 - **Rate limiting**: Public and AI endpoints use `@limiter.limit("30/minute")` from `app.rate_limit`. Import the shared `limiter` instance, add `request: Request` parameter. Applied to: AI endpoints, WhatsApp `/send`, portal externo public endpoints.
 - **Webhook security**: WhatsApp webhook verifies HMAC-SHA256 signatures via `x-hub-signature` header when `webhook_secret` is configured.
-- **N+1 prevention**: Batch operations (mark overdue, generate rent, detect delinquency) use single bulk UPDATEs or batch INSERTs. Never loop individual queries.
+- **N+1 prevention (zero tolerance)**: Every DB operation that touches multiple rows MUST be batched. No workarounds, no exceptions. Specifically:
+  - **Reads**: Use `.in_("id", ids)` to fetch multiple records in one query. Never loop `.eq("id", id).single()` per item.
+  - **Writes (INSERT)**: Build a list of dicts and call `.insert(rows)` once. Never loop `.insert(single_row)` per item.
+  - **Writes (UPDATE)**: Use `.update(data).in_("id", ids)` for same-value updates. For different-value updates, group by value and batch each group.
+  - **Writes (UPSERT)**: Pass the full list to `.upsert(rows, on_conflict=...)` in one call.
+  - **Enrichment**: When enriching a list with related data (e.g., adding consulta info to resultados), fetch all related records with `.in_()` and build a lookup dict — never query per item in a loop.
+  - If a loop contains `db.table(...)`, it's almost certainly an N+1 bug. The only exception is when each iteration requires genuinely unique logic (e.g., different RPC calls with unique parameters).
 - **Router → Service delegation**: Business logic and aggregation belong in services, not routers. Routers are thin (auth + validation + delegation). Examples: `BIService.get_dashboard_resumo()`, `whatsapp_service.send_via_waha()`.
 - **Validation**: Pydantic models use `Field()` constraints (ge, le, max_length). Use `Literal` types for enum-like fields.
 - **Error handling**: Raise `HTTPException` for simple cases. Use custom `AppException` subclasses for structured errors. All exceptions are caught by centralized handlers in `main.py`. Both backends register a `postgrest_exception_handler` that catches Supabase PostgREST `APIError` with code `PGRST116` (`.single()` returning 0 rows) and converts it to a 404 response.
@@ -225,6 +232,80 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 - **Validation schemas**: Deduplicate identical schemas (e.g., `corretorSchema = signUpSchema`). Schemas live in `lib/validations.ts`.
 - **Modals**: Use `formData` state (not entity props) for display. Update UI instantly without closing modals. See `AGENTIC-WORKFLOW/CONTEXT/frontend/02-ERP.md` (Modal Patterns section).
 - **Dates**: All date handling uses São Paulo timezone (America/Sao_Paulo). Server calculates dates via Supabase RPC `get_data_sp()`. See `AGENTIC-WORKFLOW/CONTEXT/frontend/02-ERP.md` (Date & Timezone Patterns section).
+
+### Token Refresh & 401 Retry (All Products)
+
+Supabase JWTs expire after ~1 hour. `supabase.auth.getSession()` returns a **cached** token that may already be expired — it does NOT auto-refresh. The auto-refresh (`onAuthStateChange`) happens asynchronously and there is a gap between expiry and refresh. During this gap, API calls fail with 401.
+
+**Solution — automatic retry on 401 at the shared API client level:**
+
+1. **Shared `createApiClient`** (`shared/frontend/src/api.ts`) accepts an `onTokenExpired` callback. When any request returns 401, the client calls `onTokenExpired()` to force a session refresh, then retries the request exactly once with the new token.
+
+2. **Every product api-client** (`lib/api-client.ts`) MUST provide `onTokenExpired`:
+   ```ts
+   export const api = createApiClient({
+     getBaseUrl: () => BACKEND_URL,
+     getAuthToken: async () => {
+       const { data: { session } } = await supabase.auth.getSession();
+       if (!session?.access_token) throw new Error('Nao autenticado');
+       return session.access_token;
+     },
+     onTokenExpired: async () => {
+       const { data: { session } } = await supabase.auth.refreshSession();
+       return session?.access_token ?? null;
+     },
+   });
+   ```
+
+3. **Raw `fetch` calls** (file uploads via FormData, binary downloads) cannot use the JSON api client. These MUST implement the same 401-retry pattern manually:
+   ```ts
+   let resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+   if (resp.status === 401) {
+     const { data: { session } } = await supabase.auth.refreshSession();
+     if (session) {
+       resp = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` } });
+     }
+   }
+   ```
+
+4. **Never skip this pattern.** Every authenticated HTTP call — whether through the shared api client or raw fetch — must handle token expiry. Failing to do so causes cascading 401 errors on pages with polling (`refetchInterval`), where a single expired token triggers repeated failures every few seconds.
+
+## Notifications (Platform-Level)
+
+Notifications are a **platform concern**, not a product concern. All products share a single `public.notifications` table managed by the core platform.
+
+### Architecture
+- **Table**: `public.notifications` — defined in `core/backend/migrations/001_noctusai_core.sql`, has RLS scoped to `user_id = auth.uid()`
+- **Core router**: `core/backend/app/routers/notifications.py` — English API (`/api/notifications`) for the core platform frontend
+- **Product routers**: Each product has its own `/api/notificacoes` router that proxies to `public.notifications` with Portuguese field mapping
+
+### How to add notifications to a new product
+
+**Backend:**
+1. Add `get_core_client()` to the product's `database.py` — creates a Supabase client targeting `schema="public"` (not the product schema)
+2. Create `routers/notificacoes.py` — use `get_core_client().table("notifications")` for all CRUD. Map fields: `type→tipo`, `title→titulo`, `message→mensagem`, `read→is_read`
+3. Register the router in `main.py`
+
+**Frontend:**
+1. Create `hooks/useNotificacoes.ts` — use `createNotificationHooks()` factory from `@noctusai/shared/notifications`
+2. Create or copy `components/NotificationBell.tsx`
+3. Add `<NotificationBell />` to the layout header
+
+**Shared code:**
+- `shared/frontend/src/notifications.ts` — `createNotificationHooks()` factory, `Notificacao` and `ContagemNaoLidas` types
+- `shared/backend/` — no shared notification code needed; each product's router is thin enough (~100 lines)
+
+### Field Mapping (core → product API)
+| Core (English) | Product API (Portuguese) |
+|---|---|
+| `type` | `tipo` |
+| `title` | `titulo` |
+| `message` | `mensagem` |
+| `read` | `is_read` |
+| `metadata.link` | `link` |
+
+### Migration
+Run `core/backend/migrations/004_ensure_notifications.sql` on any database that doesn't have the `notifications` table yet. Safe to run multiple times (uses `IF NOT EXISTS`).
 
 ## Subscription & Admin System
 
@@ -321,8 +402,30 @@ Migration scripts for importing data from the legacy Django permutas system into
 - `002_seed_product.sql` — Seeds the personal-finance product record in the core products table
 - `003_fix_schema_permissions.sql` — Fixes schema permissions for PostgREST access
 
-## External Integrations (Dry-Run Pattern)
+## External Integrations & Credential Enforcement
 
-All external integrations follow a **dry-run pattern**: when API keys/credentials are not configured, services log actions and return mock responses. This allows development and testing without real API keys. Credential resolution chain: `org_settings` table → `platform_settings` table → environment variables.
+Credential resolution chain: `org_settings` table → `platform_settings` table → environment variables. All credentials are managed via the Configurações page (`Configurações > Chaves de API`) and stored in `org_settings` with `is_secret: true`.
 
-Integrations: Resend (email), ClickSign/DocuSign/D4Sign (digital signatures), Meta Graph API (Lead Ads, campaign sync), WAHA/Meta Business API (WhatsApp), Supabase Storage (file uploads), reportlab (PDF generation).
+### Required vs Optional Credentials
+
+External integrations follow one of two patterns depending on whether a credential is **required** or **optional** for a given feature:
+
+**Required credentials** — Router validates upfront via `check_*_configured()` before any work. Returns HTTP 422 with a clear message pointing to `Configurações > Chaves de API`. No data is created, no background tasks are started.
+
+| Credential | Feature | Router check |
+|---|---|---|
+| `infosimples_token` | Certidões negativas (all 9 certificate types) | `check_required_credentials()` in `certidoes.py` |
+| `openai_api_key` | AI description, lead scoring, price suggestion | `check_openai_configured()` in `ai.py` |
+| `openai_api_key` | Embedding generation (embed, embed-batch) | `check_openai_configured()` in `matching.py` |
+
+**Optional credentials** — Feature works without the credential but shows a clear placeholder where results would appear. No fake success status.
+
+| Credential | Feature | Behavior when missing |
+|---|---|---|
+| `openai_api_key` | Certidões AI analysis (`analise_ia` field) | Placeholder: `"[Análise IA não disponível — OpenAI API Key não configurada...]"` |
+| `resend_api_key` | Email delivery | Dry-run: email record created but not dispatched via Resend |
+| `clicksign_api_token` / `docusign_*` / `d4sign_*` | Digital signatures | Fallback: internal mock signing with `dry_run: true` |
+
+**Pattern for new integrations**: If a credential is the core requirement for a feature (the feature cannot produce real results without it), validate upfront in the router and block with 422. If a credential enhances results but the feature works without it, return a clear placeholder string in the relevant field so the UI can display it.
+
+Integrations: InfoSimples (certidões), OpenAI (AI features, embeddings, certidão analysis), Resend (email), ClickSign/DocuSign/D4Sign (digital signatures), Meta Graph API (Lead Ads, campaign sync), WAHA/Meta Business API (WhatsApp), Supabase Storage (file uploads), reportlab (PDF generation).

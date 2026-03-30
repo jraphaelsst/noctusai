@@ -5,12 +5,23 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
-from app.dependencies import get_current_user, get_user_client
+from app.dependencies import get_current_user, get_user_client, get_org_id
 from app.responses import success_response
 from app.rate_limit import limiter
+from app.services.ai_service import check_openai_configured
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
+
+
+def _require_openai(org_id):
+    """Raise 422 if OpenAI key is not configured."""
+    if not check_openai_configured(org_id):
+        raise HTTPException(
+            status_code=422,
+            detail="OpenAI API Key não configurada. "
+            "Acesse Configurações > Chaves de API para configurar.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +52,7 @@ class SuggestPriceRequest(BaseModel):
 async def generate_description(request: Request, body: GenerateDescriptionRequest, authorization: Optional[str] = Header(None)):
     """Generate an AI-powered property description."""
     user, token = await get_current_user(authorization)
+    _require_openai(get_org_id(user))
     db = get_user_client(token)
 
     # Get property data — either from ID or from request body
@@ -70,6 +82,7 @@ async def generate_description(request: Request, body: GenerateDescriptionReques
 async def lead_score(request: Request, body: LeadScoreRequest, authorization: Optional[str] = Header(None)):
     """Score a lead using AI analysis."""
     user, token = await get_current_user(authorization)
+    _require_openai(get_org_id(user))
     db = get_user_client(token)
 
     # Get client data — either from ID or from request body
@@ -109,6 +122,7 @@ async def lead_score(request: Request, body: LeadScoreRequest, authorization: Op
 async def suggest_price(request: Request, body: SuggestPriceRequest, authorization: Optional[str] = Header(None)):
     """Suggest a price for a property based on comparables."""
     user, token = await get_current_user(authorization)
+    _require_openai(get_org_id(user))
     db = get_user_client(token)
 
     # Get property data

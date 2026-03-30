@@ -23,6 +23,8 @@ resend>=2.0.0
 python-dateutil==2.9.0
 python-multipart>=0.0.9
 reportlab>=4.0.0
+xhtml2pdf>=0.2.0
+PyMuPDF>=1.24.0
 
 # Personal Finance-only
 yfinance>=0.2.36

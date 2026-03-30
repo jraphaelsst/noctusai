@@ -23,8 +23,8 @@ def _get_api_key(org_id: Optional[str] = None) -> str:
     key = resolve_credential("openai_api_key", org_id)
     if not key:
         raise ValueError(
-            "Chave da API OpenAI não configurada. "
-            "Defina OPENAI_API_KEY no .env ou configure nas configurações da organização."
+            "OpenAI API Key não configurada. "
+            "Acesse Configurações > Chaves de API para configurar."
         )
     return key
 
@@ -115,6 +115,63 @@ def build_ativo_text(ativo: dict) -> str:
     return ". ".join(parts) if parts else ""
 
 
+def build_interesses_text(ativo: dict) -> str:
+    """
+    Build a text representation of what an ativo WANTS in exchange.
+
+    For imóveis: uses the `interesses` JSONB array (e.g., wants apartamento in SP, R$300-600k).
+    For permutas: uses the `interesses` JSONB array (e.g., wants casa in Campinas, R$500-900k).
+
+    This is the counterpart to build_ativo_text() which describes what an ativo IS.
+    Matching compares profile↔interest embeddings, not profile↔profile.
+    """
+    interesses = ativo.get("interesses") or []
+    if not interesses:
+        # Fallback: use interesses_descricao free-text if available
+        desc = ativo.get("interesses_descricao") or ""
+        return desc.strip()
+
+    parts: list[str] = []
+    for interesse in interesses:
+        sub: list[str] = []
+        tipo = interesse.get("tipo", "")
+
+        if tipo == "imovel":
+            sub.append("Busca imóvel")
+            if interesse.get("tipo_imovel"):
+                sub.append(f"tipo: {interesse['tipo_imovel']}")
+            if interesse.get("cidade"):
+                sub.append(f"cidade: {interesse['cidade']}")
+            if interesse.get("estado"):
+                sub.append(f"estado: {interesse['estado']}")
+            if interesse.get("bairro"):
+                sub.append(f"bairro: {interesse['bairro']}")
+            valor_min = interesse.get("valor_min")
+            valor_max = interesse.get("valor_max")
+            if valor_min or valor_max:
+                sub.append(f"faixa: R$ {valor_min or '?'} - R$ {valor_max or '?'}")
+            if interesse.get("quartos_min"):
+                sub.append(f"quartos mínimos: {interesse['quartos_min']}")
+            if interesse.get("area_min"):
+                sub.append(f"área mínima: {interesse['area_min']}m²")
+
+        elif tipo == "automovel":
+            sub.append("Busca automóvel")
+            if interesse.get("marca"):
+                sub.append(f"marca: {interesse['marca']}")
+            if interesse.get("modelo"):
+                sub.append(f"modelo: {interesse['modelo']}")
+            valor_min = interesse.get("valor_min")
+            valor_max = interesse.get("valor_max")
+            if valor_min or valor_max:
+                sub.append(f"faixa: R$ {valor_min or '?'} - R$ {valor_max or '?'}")
+
+        if sub:
+            parts.append(", ".join(sub))
+
+    return ". ".join(parts) if parts else ""
+
+
 def _build_location(ativo: dict) -> str:
     """Build location string from bairro, cidade, estado, zona."""
     location_parts = filter(None, [
@@ -156,21 +213,36 @@ async def generate_embedding(text: str, org_id: Optional[str] = None) -> list[fl
 
 async def embed_ativo(ativo: dict, db) -> bool:
     """
-    Generate embedding for an ativo and store it in the database.
-    Returns True if embedding was generated and stored successfully.
+    Generate embeddings for an ativo and store them in the database.
+
+    Generates two embeddings:
+      - `embedding`: the ativo's PROFILE (what it IS)
+      - `embedding_interesses`: what the ativo WANTS in exchange
+
+    Matching compares profile↔interest across pairs (not profile↔profile).
+    Returns True if at least the profile embedding was generated.
     """
     text = build_ativo_text(ativo)
     if not text:
         logger.warning(f"Ativo {ativo.get('id')} has no text to embed")
         return False
 
+    update_data = {}
+
+    # Profile embedding (what the ativo IS)
     embedding = await generate_embedding(text)
+    update_data["embedding"] = embedding
 
-    db.table("ativos").update(
-        {"embedding": embedding}
-    ).eq("id", ativo["id"]).execute()
+    # Interest embedding (what the ativo WANTS)
+    interesses_text = build_interesses_text(ativo)
+    if interesses_text:
+        embedding_interesses = await generate_embedding(interesses_text)
+        update_data["embedding_interesses"] = embedding_interesses
+        logger.info(f"Embedded ativo {ativo['id']} profile + interesses ({len(embedding)} dims)")
+    else:
+        logger.info(f"Embedded ativo {ativo['id']} profile only ({len(embedding)} dims, no interesses)")
 
-    logger.info(f"Embedded ativo {ativo['id']} ({len(embedding)} dims)")
+    db.table("ativos").update(update_data).eq("id", ativo["id"]).execute()
     return True
 
 
@@ -182,14 +254,17 @@ async def embed_ativos_batch(ativo_ids: list[str], db) -> dict:
     embedded = 0
     errors = 0
 
-    for ativo_id in ativo_ids:
-        try:
-            res = db.table("ativos").select("*").eq("id", ativo_id).single().execute()
-            if not res.data:
-                errors += 1
-                continue
+    # Batch fetch all ativos in one query
+    res = db.table("ativos").select("*").in_("id", ativo_ids).execute()
+    ativos_by_id = {a["id"]: a for a in (res.data or [])}
 
-            success = await embed_ativo(res.data, db)
+    for ativo_id in ativo_ids:
+        ativo = ativos_by_id.get(ativo_id)
+        if not ativo:
+            errors += 1
+            continue
+        try:
+            success = await embed_ativo(ativo, db)
             if success:
                 embedded += 1
             else:

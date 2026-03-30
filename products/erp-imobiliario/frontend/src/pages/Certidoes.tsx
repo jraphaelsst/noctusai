@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -8,8 +9,10 @@ import {
   useCreateConsulta,
   useReprocessarConsulta,
   useDeleteConsulta,
+  useCancelarProcessamento,
+  useTjspFila,
 } from '@/hooks/useCertidoes';
-import type { CertidaoConsulta, CertidaoResultado } from '@/hooks/useCertidoes';
+import type { CertidaoConsulta, CertidaoResultado, TjspFilaStatus } from '@/hooks/useCertidoes';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,15 +66,22 @@ import {
   Loader2,
   FileText,
   Download,
+  ExternalLink,
   ChevronDown,
-  ChevronUp,
   ShieldCheck,
+  Upload,
   User,
   Building2,
+  Timer,
 } from 'lucide-react';
 import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 import { formatDate } from '@/lib/utils';
+import { downloadFile, authenticatedFetch, triggerBlobDownload } from '@/lib/file-download';
+import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
+import { supabase } from '@/integrations/supabase/client';
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';
 
 // --------------- Constants ---------------
 
@@ -82,9 +92,10 @@ const CONSULTA_STATUS_CONFIG: Record<string, { label: string; variant: 'default'
   erro: { label: 'Erro', variant: 'destructive' },
 };
 
-const RESULTADO_STATUS_ICON: Record<string, { icon: typeof Clock; color: string }> = {
+const RESULTADO_STATUS_ICON: Record<string, { icon: typeof Clock; color: string; label?: string }> = {
   pendente: { icon: Clock, color: 'text-muted-foreground' },
   processando: { icon: Loader2, color: 'text-blue-500' },
+  na_fila: { icon: Clock, color: 'text-muted-foreground', label: 'Pendente (TJSP)' },
   sucesso: { icon: CheckCircle, color: 'text-green-500' },
   erro: { icon: XCircle, color: 'text-red-500' },
 };
@@ -120,9 +131,25 @@ export default function Certidoes() {
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
   });
   const { data: detalhe } = useCertidaoConsulta(detalheId || undefined);
+  const { data: tjspFila } = useTjspFila();
   const createMutation = useCreateConsulta();
   const reprocessarMutation = useReprocessarConsulta();
   const deleteMutation = useDeleteConsulta();
+  const cancelarMutation = useCancelarProcessamento();
+
+  // Live countdown for TJSP cooldown
+  const [cooldownSegs, setCooldownSegs] = useState(0);
+  useEffect(() => {
+    if (!tjspFila?.cooldown?.ativo || !tjspFila.cooldown.segundos_restantes) {
+      setCooldownSegs(0);
+      return;
+    }
+    setCooldownSegs(tjspFila.cooldown.segundos_restantes);
+    const interval = setInterval(() => {
+      setCooldownSegs((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [tjspFila?.cooldown?.ativo, tjspFila?.cooldown?.segundos_restantes]);
 
   const {
     register,
@@ -182,8 +209,83 @@ export default function Certidoes() {
     reprocessarMutation.mutate(id);
   };
 
+  const [downloadingZip, setDownloadingZip] = useState<string | null>(null);
+
+  const handleDownloadAll = async (consulta: CertidaoConsulta) => {
+    setDownloadingZip(consulta.id);
+    try {
+      const url = `${BACKEND_URL}/api/certidoes/consultas/${consulta.id}/download-zip`;
+      const resp = await authenticatedFetch(url);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        throw new Error(err?.detail || 'Erro ao baixar certidões');
+      }
+      const blob = await resp.blob();
+      const zipName = `certidoes_${consulta.nome.replace(/\s+/g, '_').slice(0, 50)}_${consulta.documento}.zip`;
+      triggerBlobDownload(blob, zipName);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Erro ao baixar certidões';
+      toast.error(msg);
+    } finally {
+      setDownloadingZip(null);
+    }
+  };
+
+  const handleDownload = (url: string, filename: string) => downloadFile(url, filename);
+
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const handleUploadClick = (resultadoId: string) => {
+    setUploadingId(resultadoId);
+    uploadInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !uploadingId) return;
+
+    if (file.type !== 'application/pdf') {
+      toast.error('Apenas arquivos PDF são aceitos.');
+      setUploadingId(null);
+      return;
+    }
+
+    try {
+      const url = `${BACKEND_URL}/api/certidoes/resultados/${uploadingId}/upload`;
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const resp = await authenticatedFetch(url, { method: 'POST', body: formData });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        throw new Error(err?.detail || 'Erro ao enviar certidão');
+      }
+
+      toast.success('Certidão enviada com sucesso!');
+      queryClient.invalidateQueries({ queryKey: ['certidao-consulta'] });
+      queryClient.invalidateQueries({ queryKey: ['certidao-consultas'] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao enviar certidão';
+      toast.error(msg);
+    } finally {
+      setUploadingId(null);
+    }
+  };
+
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* Hidden file input for manual certificate upload */}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={handleFileSelected}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -237,6 +339,66 @@ export default function Certidoes() {
         </Card>
       </div>
 
+      {/* TJSP Queue Status */}
+      {tjspFila && (tjspFila.total_na_fila > 0 || tjspFila.cooldown.ativo) && (
+        <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Timer className="h-4 w-4 text-amber-500" />
+              Fila TJSP
+              <Badge variant="outline" className="ml-auto text-amber-600 border-amber-300">
+                {tjspFila.total_na_fila} na fila
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {/* Cooldown bar */}
+            {tjspFila.cooldown.ativo && cooldownSegs > 0 && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Cooldown TJSP (limite: 1 request / 30 min)</span>
+                  <span className="font-mono font-medium text-amber-600">
+                    {Math.floor(cooldownSegs / 60)}:{String(cooldownSegs % 60).padStart(2, '0')}
+                  </span>
+                </div>
+                <Progress
+                  value={((tjspFila.cooldown.segundos_restantes! - cooldownSegs) / tjspFila.cooldown.segundos_restantes!) * 100}
+                  className="h-1.5"
+                />
+              </div>
+            )}
+
+            {/* Queue items */}
+            {tjspFila.items.length > 0 && (
+              <div className="space-y-1.5">
+                {tjspFila.items.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-3 text-sm rounded-md bg-white dark:bg-background px-3 py-2 border"
+                  >
+                    <span className="font-mono text-xs text-muted-foreground w-5 text-center">
+                      #{item.posicao}
+                    </span>
+                    <span className="font-medium truncate flex-1">{item.nome}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {item.tipo_documento.toUpperCase()}: {item.documento}
+                    </span>
+                    <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!tjspFila.cooldown.ativo && tjspFila.total_na_fila > 0 && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Processando proximo item da fila...
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
@@ -281,9 +443,9 @@ export default function Certidoes() {
         <div className="space-y-3">
           {consultas.map((consulta) => {
             const statusConfig = CONSULTA_STATUS_CONFIG[consulta.status] || CONSULTA_STATUS_CONFIG.pendente;
-            const progress = consulta.total_certidoes > 0
-              ? (consulta.concluidas / consulta.total_certidoes) * 100
-              : 0;
+            const total = consulta.total_certidoes || 1;
+            const successPct = (consulta.concluidas / total) * 100;
+            const errorPct = ((consulta.erros || 0) / total) * 100;
             const isProcessing = consulta.status === 'pendente' || consulta.status === 'processando';
 
             return (
@@ -307,7 +469,16 @@ export default function Certidoes() {
                       </div>
 
                       <div className="flex items-center gap-3">
-                        <Progress value={progress} className="flex-1 h-2" />
+                        <div className="relative flex-1 h-2 overflow-hidden rounded-full bg-secondary/20">
+                          <div
+                            className="absolute inset-y-0 left-0 bg-primary transition-all duration-500"
+                            style={{ width: `${successPct}%` }}
+                          />
+                          <div
+                            className="absolute inset-y-0 bg-destructive transition-all duration-500"
+                            style={{ left: `${successPct}%`, width: `${errorPct}%` }}
+                          />
+                        </div>
                         <span className="text-sm text-muted-foreground whitespace-nowrap">
                           {consulta.concluidas}/{consulta.total_certidoes}
                         </span>
@@ -321,6 +492,36 @@ export default function Certidoes() {
                       <Button size="sm" variant="outline" onClick={() => setDetalheId(consulta.id)}>
                         <Eye className="h-3 w-3 mr-1" />Detalhes
                       </Button>
+                      {consulta.concluidas > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleDownloadAll(consulta)}
+                          disabled={downloadingZip === consulta.id}
+                        >
+                          {downloadingZip === consulta.id ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <Download className="h-3 w-3 mr-1" />
+                          )}
+                          Baixar Tudo
+                        </Button>
+                      )}
+                      {isProcessing && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => cancelarMutation.mutate(consulta.id)}
+                          disabled={cancelarMutation.isPending}
+                        >
+                          {cancelarMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <XCircle className="h-3 w-3 mr-1" />
+                          )}
+                          Cancelar
+                        </Button>
+                      )}
                       {consulta.status === 'erro' && (
                         <Button
                           size="sm"
@@ -453,18 +654,28 @@ export default function Certidoes() {
           {detalhe && (
             <div className="space-y-4">
               {/* Progress */}
-              <div className="flex items-center gap-3">
-                <Progress
-                  value={detalhe.total_certidoes > 0
-                    ? (detalhe.concluidas / detalhe.total_certidoes) * 100
-                    : 0
-                  }
-                  className="flex-1 h-3"
-                />
-                <Badge variant={CONSULTA_STATUS_CONFIG[detalhe.status]?.variant || 'outline'}>
-                  {CONSULTA_STATUS_CONFIG[detalhe.status]?.label || detalhe.status}
-                </Badge>
-              </div>
+              {(() => {
+                const total = detalhe.total_certidoes || 1;
+                const sPct = (detalhe.concluidas / total) * 100;
+                const ePct = ((detalhe.erros || 0) / total) * 100;
+                return (
+                  <div className="flex items-center gap-3">
+                    <div className="relative flex-1 h-3 overflow-hidden rounded-full bg-secondary/20">
+                      <div
+                        className="absolute inset-y-0 left-0 bg-primary transition-all duration-500"
+                        style={{ width: `${sPct}%` }}
+                      />
+                      <div
+                        className="absolute inset-y-0 bg-destructive transition-all duration-500"
+                        style={{ left: `${sPct}%`, width: `${ePct}%` }}
+                      />
+                    </div>
+                    <Badge variant={CONSULTA_STATUS_CONFIG[detalhe.status]?.variant || 'outline'}>
+                      {CONSULTA_STATUS_CONFIG[detalhe.status]?.label || detalhe.status}
+                    </Badge>
+                  </div>
+                );
+              })()}
 
               {/* Results Table */}
               <Table>
@@ -483,8 +694,8 @@ export default function Certidoes() {
                     const isExpanded = expandedAnalise === resultado.id;
 
                     return (
-                      <>
-                        <TableRow key={resultado.id}>
+                      <Fragment key={resultado.id}>
+                        <TableRow>
                           <TableCell className="font-mono text-sm">{resultado.ordem}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
@@ -498,7 +709,7 @@ export default function Certidoes() {
                           <TableCell>
                             <div className={`flex items-center gap-1.5 ${statusIcon.color}`}>
                               <StatusIcon className={`h-4 w-4 ${resultado.status === 'processando' ? 'animate-spin' : ''}`} />
-                              <span className="text-sm capitalize">{resultado.status}</span>
+                              <span className="text-sm capitalize">{statusIcon.label || resultado.status}</span>
                             </div>
                           </TableCell>
                           <TableCell>
@@ -509,49 +720,109 @@ export default function Certidoes() {
                                   variant="ghost"
                                   onClick={() => setExpandedAnalise(isExpanded ? null : resultado.id)}
                                 >
-                                  {isExpanded ? (
-                                    <ChevronUp className="h-3 w-3" />
-                                  ) : (
-                                    <ChevronDown className="h-3 w-3" />
-                                  )}
+                                  <ChevronDown className={`h-3 w-3 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
                                 </Button>
                               )}
                               {resultado.arquivo_url && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    asChild
+                                    title="Abrir em nova guia"
+                                  >
+                                    <a href={resultado.arquivo_url} target="_blank" rel="noopener noreferrer">
+                                      <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    title="Download"
+                                    onClick={() => handleDownload(
+                                      resultado.arquivo_url!,
+                                      resultado.arquivo_nome || 'certidao.pdf',
+                                    )}
+                                  >
+                                    <Download className="h-3 w-3" />
+                                  </Button>
+                                </>
+                              )}
+                              {resultado.status !== 'sucesso' && resultado.status !== 'processando' && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  asChild
+                                  title="Upload manual"
+                                  onClick={() => handleUploadClick(resultado.id)}
+                                  disabled={uploadingId === resultado.id}
                                 >
-                                  <a href={resultado.arquivo_url} target="_blank" rel="noopener noreferrer">
-                                    <Download className="h-3 w-3" />
-                                  </a>
+                                  {uploadingId === resultado.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Upload className="h-3 w-3" />
+                                  )}
                                 </Button>
                               )}
                             </div>
                           </TableCell>
                         </TableRow>
-                        {isExpanded && resultado.analise_ia && (
-                          <TableRow key={`${resultado.id}-analise`}>
-                            <TableCell colSpan={4}>
-                              <div className="bg-muted/50 rounded-lg p-4 text-sm whitespace-pre-wrap">
-                                <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-muted-foreground uppercase">
-                                  <ShieldCheck className="h-3 w-3" />
-                                  Analise IA
+                        {resultado.analise_ia && (
+                          <TableRow>
+                            <TableCell colSpan={4} className="p-0">
+                              <div
+                                className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+                                style={{ gridTemplateRows: isExpanded ? '1fr' : '0fr' }}
+                              >
+                                <div className="overflow-hidden">
+                                  <div className="bg-muted/50 rounded-lg p-4 m-2 text-sm whitespace-pre-wrap">
+                                    <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-muted-foreground uppercase">
+                                      <ShieldCheck className="h-3 w-3" />
+                                      Analise IA
+                                    </div>
+                                    {resultado.analise_ia}
+                                  </div>
                                 </div>
-                                {resultado.analise_ia}
                               </div>
                             </TableCell>
                           </TableRow>
                         )}
-                      </>
+                      </Fragment>
                     );
                   })}
                 </TableBody>
               </Table>
 
-              {/* Reprocess button if there are errors */}
-              {detalhe.resultados?.some((r) => r.status === 'erro') && (
-                <div className="flex justify-end">
+              {/* Action buttons */}
+              <div className="flex justify-end gap-2">
+                {detalhe.concluidas > 0 && (
+                  <Button
+                    variant="outline"
+                    onClick={() => handleDownloadAll(detalhe)}
+                    disabled={downloadingZip === detalhe.id}
+                  >
+                    {downloadingZip === detalhe.id ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4 mr-2" />
+                    )}
+                    Baixar Tudo (.zip)
+                  </Button>
+                )}
+                {(detalhe.status === 'pendente' || detalhe.status === 'processando') && (
+                  <Button
+                    variant="outline"
+                    onClick={() => cancelarMutation.mutate(detalhe.id)}
+                    disabled={cancelarMutation.isPending}
+                  >
+                    {cancelarMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <XCircle className="h-4 w-4 mr-2" />
+                    )}
+                    Cancelar Processamento
+                  </Button>
+                )}
+                {detalhe.resultados?.some((r) => r.status === 'erro') && (
                   <Button
                     variant="outline"
                     onClick={() => handleReprocessar(detalhe.id)}
@@ -559,8 +830,8 @@ export default function Certidoes() {
                   >
                     <RefreshCw className="h-4 w-4 mr-2" />Reprocessar Certidoes com Erro
                   </Button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
 

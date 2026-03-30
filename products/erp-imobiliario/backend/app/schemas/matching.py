@@ -1,21 +1,14 @@
 """
 Pydantic schemas for matching requests and responses.
 """
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
 class MatchRequest(BaseModel):
-    """Request to generate matches."""
+    """Request to generate matches. Both IDs empty = full platform scan."""
     ativo_origem_id: Optional[str] = None
     ativo_destino_id: Optional[str] = None
-    score_minimo: float = Field(default=20.0, ge=0, le=100)
-
-    @model_validator(mode="after")
-    def validate_at_least_one(self):
-        if not self.ativo_origem_id and not self.ativo_destino_id:
-            raise ValueError("Informe ativo_origem_id ou ativo_destino_id")
-        return self
 
 
 class MatchDetails(BaseModel):
@@ -30,12 +23,13 @@ class MatchDetails(BaseModel):
 
 
 class ScoreBreakdown(BaseModel):
-    """Weighted score breakdown for composite scoring."""
-    embedding: float = 0
-    preco: float = 0
-    specs: float = 0
+    """Weighted score breakdown — unified for both AI and rule-based matches."""
+    embedding_similarity: float = 0
+    compatibilidade_regiao: float = 0
+    compatibilidade_preco: float = 0
+    compatibilidade_specs: float = 0
+    qualidade_anuncio: float = 0
     interesses: float = 0
-    weights: Optional[dict] = None
 
 
 class MatchResult(BaseModel):

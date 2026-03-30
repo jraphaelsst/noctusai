@@ -129,11 +129,10 @@ class SegurosService:
 
             expired_ids = [s["id"] for s in expired]
 
-            # Update in batch
-            for seguro_id in expired_ids:
-                self.db.table("seguros").update(
-                    {"status": "vencido"}
-                ).eq("id", seguro_id).execute()
+            # Batch update all expired seguros
+            self.db.table("seguros").update(
+                {"status": "vencido"}
+            ).in_("id", expired_ids).execute()
 
             logger.info(
                 f"Marcou {len(expired_ids)} apólice(s) como vencida(s)",

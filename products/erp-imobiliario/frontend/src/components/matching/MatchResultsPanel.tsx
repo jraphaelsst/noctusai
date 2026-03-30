@@ -94,7 +94,7 @@ export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) 
         <CardContent className="space-y-4">
           {matches.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
-              Nenhum match encontrado. Tente ajustar os critérios.
+              Nenhum match encontrado.
             </p>
           ) : (
             matches.map((match) => (
@@ -122,8 +122,9 @@ export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) 
                     </div>
                   </div>
 
+                  {match.score_breakdown && (
                   <div className="space-y-2 mb-4">
-                    {match.score_breakdown?.embedding_similarity != null && (
+                    {match.score_breakdown.embedding_similarity > 0 && (
                       <>
                         <div className="flex justify-between text-sm">
                           <span>Similaridade IA</span>
@@ -135,28 +136,29 @@ export function MatchResultsPanel({ matches, onClose }: MatchResultsPanelProps) 
 
                     <div className="flex justify-between text-sm">
                       <span>Região</span>
-                      <span className="font-medium">{match.detalhes.compatibilidade_regiao}%</span>
+                      <span className="font-medium">{Math.round(match.score_breakdown.compatibilidade_regiao)}%</span>
                     </div>
-                    <Progress value={match.detalhes.compatibilidade_regiao} className="h-2" />
+                    <Progress value={match.score_breakdown.compatibilidade_regiao} className="h-2" />
 
                     <div className="flex justify-between text-sm">
                       <span>Preço</span>
-                      <span className="font-medium">{match.detalhes.compatibilidade_preco}%</span>
+                      <span className="font-medium">{Math.round(match.score_breakdown.compatibilidade_preco)}%</span>
                     </div>
-                    <Progress value={match.detalhes.compatibilidade_preco} className="h-2" />
+                    <Progress value={match.score_breakdown.compatibilidade_preco} className="h-2" />
 
                     <div className="flex justify-between text-sm">
                       <span>Especificações</span>
-                      <span className="font-medium">{match.detalhes.compatibilidade_specs}%</span>
+                      <span className="font-medium">{Math.round(match.score_breakdown.compatibilidade_specs)}%</span>
                     </div>
-                    <Progress value={match.detalhes.compatibilidade_specs} className="h-2" />
+                    <Progress value={match.score_breakdown.compatibilidade_specs} className="h-2" />
 
                     <div className="flex justify-between text-sm">
                       <span>Qualidade</span>
-                      <span className="font-medium">{match.detalhes.qualidade_anuncio}%</span>
+                      <span className="font-medium">{Math.round(match.score_breakdown.qualidade_anuncio)}%</span>
                     </div>
-                    <Progress value={match.detalhes.qualidade_anuncio} className="h-2" />
+                    <Progress value={match.score_breakdown.qualidade_anuncio} className="h-2" />
                   </div>
+                  )}
 
                   <div className="flex justify-between items-center pt-4 border-t">
                     <div className="text-sm">

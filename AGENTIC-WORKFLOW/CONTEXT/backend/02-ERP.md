@@ -253,12 +253,25 @@ Business logic belongs in services, not routers. Routers are thin: auth + valida
 
 ## Performance Patterns
 
-### N+1 Prevention
-Batch operations use single bulk queries instead of loops:
+### N+1 Prevention (Zero Tolerance)
+**Every DB operation touching multiple rows MUST be batched. No workarounds, no exceptions.** If a loop contains `db.table(...)`, it's almost certainly an N+1 bug.
+
+**Patterns:**
+- **Batch SELECT**: `.in_("id", ids)` + build lookup dict — never `.eq("id", id).single()` in a loop
+- **Batch INSERT**: `.insert([row1, row2, ...])` — never `.insert(single_row)` in a loop
+- **Batch UPDATE**: `.update(data).in_("id", ids)` — never `.update(data).eq("id", id)` in a loop
+- **Batch UPSERT**: `.upsert(rows, on_conflict=...)` — never `.upsert(single_row)` in a loop
+- **Enrichment**: Fetch related records with `.in_()`, build `{id: record}` dict, iterate in Python
+
+**Examples in codebase:**
 - `financeiro_service.mark_overdue()` — Single bulk UPDATE for all overdue lancamentos
 - `recorrencia_service.gerar_alugueis_mes()` — Batch fetch existing, build set, batch insert
-- `recorrencia_service.verificar_inadimplencia()` — Two bulk UPDATEs instead of loops
-- `relatorios_service.ranking_corretores()` — `.gte("created_at", cutoff)` with column selection
+- `contratos_service.gerar_parcelas()` — Batch INSERT for all installments
+- `contratos_service.mark_overdue()` — `.update().in_("id", overdue_ids)` instead of loop
+- `certidoes router /fila-tjsp` — `.in_("id", consulta_ids)` to enrich queue items
+- `filiais router /consolidado` — `.in_("filial_id", ids)` to count per-branch
+- `meta_api router /sync-leads` — `.in_("lead_id", ids)` to check existing, then batch insert new
+- `embedding_service.embed_ativos_batch()` — `.in_("id", ativo_ids)` to fetch all ativos at once
 
 ### Query Scoping
 - `bi.py` dashboard queries include `year_start` filter on all table queries

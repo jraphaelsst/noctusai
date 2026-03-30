@@ -1,9 +1,14 @@
 """
-Notification endpoints — manages user notifications and preferences.
+Notification endpoints — proxies to the core platform's public.notifications table.
 
-Tables:
-  erp.notificacoes — per-user notification records
-  erp.notificacao_preferencias — notification channel preferences
+Notifications are a platform-level feature shared across all NoctusAI products.
+The actual data lives in `public.notifications` (core schema), not in `erp`.
+This router provides a Portuguese-language API that maps to the core table columns.
+
+Preferences remain product-specific in `erp.notificacao_preferencias`.
+
+Core table columns: id, user_id, org_id, type, title, message, metadata, read, created_at
+ERP API fields:     id, user_id, org_id, tipo, titulo, mensagem, metadata, is_read, created_at
 """
 import logging
 from typing import Optional, Literal
@@ -11,11 +16,29 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, get_org_id, first_or_none
-from app.exceptions import AppException
+from app.database import get_core_client
 from app.responses import success_response, paginated_response, ok_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notificacoes", tags=["notificacoes"])
+
+
+# ── Field Mapping (core English → ERP Portuguese) ────────────────────
+
+def _map_to_pt(row: dict) -> dict:
+    """Map core notification fields to Portuguese for the frontend."""
+    return {
+        "id": row.get("id"),
+        "user_id": row.get("user_id"),
+        "org_id": row.get("org_id"),
+        "tipo": row.get("type"),
+        "titulo": row.get("title"),
+        "mensagem": row.get("message"),
+        "metadata": row.get("metadata"),
+        "is_read": row.get("read", False),
+        "link": (row.get("metadata") or {}).get("link"),
+        "created_at": row.get("created_at"),
+    }
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -36,31 +59,32 @@ async def listar_notificacoes(
     apenas_nao_lidas: bool = Query(False),
 ):
     """List user notifications (unread first)."""
-    user, token = await get_current_user(authorization)
-    sb = get_user_client(token)
+    user, _ = await get_current_user(authorization)
+    db = get_core_client()
 
-    query = sb.table("notificacoes").select("*", count="exact").eq("user_id", user.id)
+    query = db.table("notifications").select("*", count="exact").eq("user_id", user.id)
     if apenas_nao_lidas:
-        query = query.eq("is_read", False)
+        query = query.eq("read", False)
     query = query.order("created_at", desc=True)
 
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
 
-    return paginated_response(result.data or [], result.count or 0, page, page_size)
+    mapped = [_map_to_pt(r) for r in (result.data or [])]
+    return paginated_response(mapped, result.count or 0, page, page_size)
 
 
 @router.get("/contagem")
 async def contagem_nao_lidas(authorization: Optional[str] = Header(None)):
     """Get count of unread notifications."""
-    user, token = await get_current_user(authorization)
-    sb = get_user_client(token)
+    user, _ = await get_current_user(authorization)
+    db = get_core_client()
 
     result = (
-        sb.table("notificacoes")
+        db.table("notifications")
         .select("id", count="exact")
         .eq("user_id", user.id)
-        .eq("is_read", False)
+        .eq("read", False)
         .execute()
     )
 
@@ -73,12 +97,12 @@ async def marcar_como_lida(
     authorization: Optional[str] = Header(None),
 ):
     """Mark a single notification as read."""
-    user, token = await get_current_user(authorization)
-    sb = get_user_client(token)
+    user, _ = await get_current_user(authorization)
+    db = get_core_client()
 
     result = (
-        sb.table("notificacoes")
-        .update({"is_read": True})
+        db.table("notifications")
+        .update({"read": True})
         .eq("id", notificacao_id)
         .eq("user_id", user.id)
         .execute()
@@ -88,20 +112,20 @@ async def marcar_como_lida(
     if not row:
         raise HTTPException(status_code=404, detail="Notificação não encontrada")
 
-    return success_response(row)
+    return success_response(_map_to_pt(row))
 
 
 @router.post("/ler-todas")
 async def marcar_todas_como_lidas(authorization: Optional[str] = Header(None)):
     """Mark all notifications as read."""
-    user, token = await get_current_user(authorization)
-    sb = get_user_client(token)
+    user, _ = await get_current_user(authorization)
+    db = get_core_client()
 
     result = (
-        sb.table("notificacoes")
-        .update({"is_read": True})
+        db.table("notifications")
+        .update({"read": True})
         .eq("user_id", user.id)
-        .eq("is_read", False)
+        .eq("read", False)
         .execute()
     )
 

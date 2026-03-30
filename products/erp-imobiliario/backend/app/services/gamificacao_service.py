@@ -128,16 +128,16 @@ def check_and_award_badges(user_id: str, supabase) -> list[dict]:
         if badge["tipo"] in existing_tipos:
             continue
         if badge["condicao"](stats):
-            # Award the badge
-            conquista = {
+            novas.append({
                 "user_id": user_id,
                 "tipo": badge["tipo"],
                 "nome": badge["nome"],
                 "descricao": badge["descricao"],
                 "icone": badge["icone"],
-            }
-            supabase.table("conquistas").insert(conquista).execute()
-            novas.append(conquista)
+            })
+
+    if novas:
+        supabase.table("conquistas").insert(novas).execute()
 
     return novas
 

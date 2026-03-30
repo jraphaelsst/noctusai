@@ -29,4 +29,18 @@ def get_supabase_client(access_token: Optional[str] = None) -> Client:
     )
 
 
+def get_core_client() -> Client:
+    """Create a Supabase client targeting the `public` schema.
+
+    Used for platform-level tables (notifications, etc.) that live in the
+    core schema, not in the product-specific schema.
+    """
+    return make_supabase_client(
+        url=settings.supabase_url,
+        anon_key=settings.supabase_anon_key,
+        service_role_key=settings.supabase_service_role_key,
+        schema="public",
+    )
+
+
 supabase_admin: Client = get_supabase_client() if settings.supabase_service_role_key else None

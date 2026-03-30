@@ -125,35 +125,35 @@ async def sincronizar_leads(
     )
 
     leads = await sync_leads(config, form_id)
-    imported = 0
 
+    # Batch check which leads already exist (1 query instead of N)
+    lead_ids = [lead.get("id", "") for lead in leads]
+    existing_result = sb.table("meta_leads").select("lead_id").in_(
+        "lead_id", lead_ids
+    ).execute() if lead_ids else type("R", (), {"data": []})()
+    existing_ids = {r["lead_id"] for r in (existing_result.data or [])}
+
+    # Batch insert new leads
+    new_rows = []
     for lead in leads:
         lead_id = lead.get("id", "")
-        # Check if already exists
-        existing = (
-            sb.table("meta_leads")
-            .select("id")
-            .eq("lead_id", lead_id)
-            .execute()
-        )
-        if existing.data:
+        if lead_id in existing_ids:
             continue
-
-        # Extract field data
         field_data = {}
         for fd in lead.get("field_data", []):
             field_data[fd.get("name", "")] = fd.get("values", [""])[0]
-
-        sb.table("meta_leads").insert({
+        new_rows.append({
             "org_id": org_id,
             "lead_id": lead_id,
             "form_id": lead.get("form_id") or form_id,
             "form_name": lead.get("form_name"),
             "campo_data": field_data,
-        }).execute()
-        imported += 1
+        })
 
-    return success_response({"total_fetched": len(leads), "imported": imported})
+    if new_rows:
+        sb.table("meta_leads").insert(new_rows).execute()
+
+    return success_response({"total_fetched": len(leads), "imported": len(new_rows)})
 
 
 @router.post("/leads/{lead_id}/importar")
@@ -251,12 +251,13 @@ async def sincronizar_campanhas(authorization: Optional[str] = Header(None)):
     for camp in campaigns:
         camp["org_id"] = org_id
         camp["last_sync"] = now_iso
-        sb.table("meta_campanhas_sync").upsert(
-            camp, on_conflict="org_id,campaign_id"
-        ).execute()
-        synced += 1
 
-    return success_response({"total_synced": synced})
+    if campaigns:
+        sb.table("meta_campanhas_sync").upsert(
+            campaigns, on_conflict="org_id,campaign_id"
+        ).execute()
+
+    return success_response({"total_synced": len(campaigns)})
 
 
 # ── Webhook (unauthenticated — called by Meta) ──────────────────────

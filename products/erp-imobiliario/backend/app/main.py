@@ -4,6 +4,9 @@ Corretor Goal Hub — FastAPI Backend
 Entry point for the API server.
 Run with: uvicorn app.main:app --reload --port 8001
 """
+import logging
+
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import settings
@@ -20,10 +23,16 @@ from app.routers import (
     notificacoes, whatsapp_webhook, meta_api,
     storage, pdf, jobs, recorrencia,
     certidoes,
+    matriculas,
+    configuracoes,
 )
 from app.rate_limit import limiter
 from app.logging_config import configure_logging
+from app.services.certidoes_service import recover_stuck_processando, schedule_all_pending_tjsp
+from app.dependencies import get_admin_client
 from noctusai_shared.app_factory import configure_app
+
+logger = logging.getLogger(__name__)
 
 # Configure structured logging
 configure_logging(debug=settings.debug, json_logs=not settings.debug)
@@ -35,6 +44,16 @@ if not settings.debug and not settings.jwt_secret:
         "Set DEBUG=true for development or provide a secure JWT_SECRET."
     )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Recover stuck items and schedule pending TJSP on startup."""
+    admin_db = get_admin_client()
+    recover_stuck_processando(admin_db)
+    schedule_all_pending_tjsp(admin_db)
+    yield
+
+
 # Create app
 app = FastAPI(
     title="Corretor Goal Hub API",
@@ -42,10 +61,16 @@ app = FastAPI(
     version="0.2.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
+    lifespan=lifespan,
 )
 
 # Apply shared configuration (Sentry, CORS, exception handlers, middleware, rate limiting)
-configure_app(app, settings, limiter=limiter)
+configure_app(
+    app, settings, limiter=limiter,
+    cors_expose_headers=[
+        "X-Correlation-ID", "X-Response-Time-Ms", "Content-Disposition",
+    ],
+)
 
 # Register routers
 app.include_router(ativos.router)
@@ -95,6 +120,8 @@ app.include_router(pdf.router)
 app.include_router(jobs.router)
 app.include_router(recorrencia.router)
 app.include_router(certidoes.router)
+app.include_router(matriculas.router)
+app.include_router(configuracoes.router)
 
 
 @app.get("/health")

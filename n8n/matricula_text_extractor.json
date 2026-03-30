@@ -1,0 +1,717 @@
+{
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "matricula-extractor",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2.1,
+            "position": [
+                -128,
+                0
+            ],
+            "id": "75594558-fe60-47f1-9c1d-34b2fd3ce4a6",
+            "name": "Webhook",
+            "webhookId": "b85c1c89-1830-47b6-8779-f1cd8571aef6"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "c2314507-167e-4be3-a838-2ac9e740284d",
+                            "name": "data.chat.id",
+                            "value": "={{ $json.body.payload._data.Info.Chat }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "4194ef71-6062-418e-8d3c-88a6629624f6",
+                            "name": "data.client.id",
+                            "value": "={{ $json.body.payload._data.Info.Sender }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "1835dd5b-dd03-4cb5-99e9-9e7db544e7db",
+                            "name": "data.eventMsg.id",
+                            "value": "={{ $json.body.id }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "d9d112ed-4a61-4e30-b812-69d2c6d97b76",
+                            "name": "data.client.phone",
+                            "value": "={{ $json.body.payload._data.Info.SenderAlt.split(\"@\", \"1\")[0] || $json.body.payload._data.Info.SenderAlt.split(\":\", \"1\")[0] }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "59234528-3aa7-4a6d-b40d-87fef1d4e3a6",
+                            "name": "data.client.email",
+                            "value": "email@gmail.com",
+                            "type": "string"
+                        },
+                        {
+                            "id": "cd059ecc-a048-4988-80af-3169ab986a64",
+                            "name": "data.client.message",
+                            "value": "={{ $json.body.payload._data.Message.conversation || 'No message' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "581ac831-1c37-4dda-a8d1-5fe8d7379e88",
+                            "name": "data.eventMsg.type",
+                            "value": "={{ $json.body.payload._data.Info.Type }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "6b2c3ecb-3cd6-45cc-92ff-c3c4fcd8d1b0",
+                            "name": "data.eventMsg.fromMe",
+                            "value": "={{ $json.body.payload._data.Info.IsFromMe }}",
+                            "type": "boolean"
+                        },
+                        {
+                            "id": "9e1b1869-fd1f-4198-806f-870f21b422a6",
+                            "name": "data.eventMsg.isGroup",
+                            "value": "={{ $json.body.payload._data.Info.IsGroup }}",
+                            "type": "boolean"
+                        },
+                        {
+                            "id": "82431300-dc2e-4cba-82af-bbd12a45f12c",
+                            "name": "data.eventMsg.media.config.urlServer",
+                            "value": "={{ $json.body.payload.media.url || 'No media' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "4120d7c9-5b90-4b3d-a910-67e177cb6ef8",
+                            "name": "data.eventMsg.media.mediaType",
+                            "value": "={{ $json.body.payload._data.Info.MediaType || 'No media' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "f92f9972-dbbe-4db0-b1f3-02e046831e5c",
+                            "name": "data.eventMsg.media.mimeType",
+                            "value": "={{ $json.body.payload.media.mimetype || 'No media' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "b6496b51-385c-41d5-a8c1-fd3df1501d3f",
+                            "name": "data.eventMsg.media.config.mediaKey",
+                            "value": "={{ $json.body.payload._data.RawMessage.audioMessage.mediaKey || 'No media' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "0a8ac275-43f0-4b42-8cb6-ccdd04482a6e",
+                            "name": "data.eventMsg.media.config.fileEncSha256",
+                            "value": "={{ $json.body.payload._data.RawMessage.audioMessage.fileEncSHA256 || 'No media' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "38aa0df5-dfa3-49c7-9a4e-352fe7fbb4e5",
+                            "name": "data.eventMsg.media.config.fileSha256",
+                            "value": "={{ $json.body.payload._data.RawMessage.audioMessage.fileSHA256 || 'No media' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "d5fad765-72e7-4f77-8fbc-2fdd997ccab8",
+                            "name": "data.eventMsg.media.config.urlEnc",
+                            "value": "={{ $json.body.payload._data.Message.audioMessage.URL || 'No media' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "e7b19f97-c37c-4119-b303-885d6ce1d166",
+                            "name": "data.eventMsg.media.config.length",
+                            "value": "={{ $json.body.payload._data.RawMessage.audioMessage.seconds || 'No media' }}",
+                            "type": "number"
+                        },
+                        {
+                            "id": "401b95b9-2584-49ae-ac21-2f882e3092f4",
+                            "name": "data.eventMsg.date",
+                            "value": "={{ $json.body.payload._data.Info.Timestamp.toDateTime().format('dd/MM/yyyy') }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "11e593b1-757c-438e-8e63-34e0cb594aa3",
+                            "name": "data.eventMsg.time",
+                            "value": "={{ $json.body.payload._data.Info.Timestamp.toDateTime().format('HH:mm:ss') }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "0d2bcdb4-756a-4be0-98be-c565a7de9d57",
+                            "name": "data.eventMsg.media.imageMessage",
+                            "value": "={{ $json.body.payload._data.Message.imageMessage }}",
+                            "type": "object"
+                        },
+                        {
+                            "id": "39d53ad5-93bd-4d82-84ae-29a3a494d659",
+                            "name": "data.eventMsg.media.docMessage",
+                            "value": "={{ $json.body.payload._data.Message.documentMessage }}",
+                            "type": "object"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                96,
+                0
+            ],
+            "id": "0fcc35bd-3456-434d-86f5-aa83d280b02b",
+            "name": "Define Dados"
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.data.eventMsg.media.docMessage.URL }}",
+                "sendHeaders": true,
+                "specifyHeaders": "json",
+                "jsonHeaders": "{\n  \"User-Agent\": \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\",\n  \"Accept\": \"application/octet-stream\",\n  \"Accept-Encoding\": \"identity\",\n  \"Referer\": \"https://web.whatsapp.com/\",\n  \"Connection\": \"keep-alive\"\n}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "fullResponse": true,
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                336,
+                0
+            ],
+            "id": "b76dc614-2a35-4f2a-9cf8-bf06f21f86b0",
+            "name": "HTTP Request"
+        },
+        {
+            "parameters": {
+                "rules": {
+                    "values": [
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict",
+                                    "version": 2
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $('Define Dados').item.json.data.eventMsg.media.mediaType }}",
+                                        "rightValue": "document",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        },
+                                        "id": "ae9995cb-5ec8-400c-94b3-917b5bca74f9"
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "Doc"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 3.3,
+            "position": [
+                544,
+                0
+            ],
+            "id": "6a8d644f-572c-49e9-903b-64358c25a081",
+            "name": "VerificaTipoMsg"
+        },
+        {
+            "parameters": {
+                "rules": {
+                    "values": [
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict",
+                                    "version": 2
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $('Define Dados').item.json.data.eventMsg.media.docMessage.mimetype }}",
+                                        "rightValue": "application/pdf",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        },
+                                        "id": "ae9995cb-5ec8-400c-94b3-917b5bca74f9"
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "PDF"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 3.3,
+            "position": [
+                768,
+                0
+            ],
+            "id": "8128f3b3-29b2-4907-96ae-b51dc5b3cff7",
+            "name": "VerificaTipoDoc"
+        },
+        {
+            "parameters": {
+                "link": "={{ $('Define Dados').item.json.data.eventMsg.media.docMessage.URL }}",
+                "mediaKey": "={{ $('Define Dados').item.json.data.eventMsg.media.docMessage.mediaKey }}",
+                "tipo": "pdf"
+            },
+            "type": "n8n-nodes-whatsapp-decrypt.whatsAppMediaDecrypt",
+            "typeVersion": 1,
+            "position": [
+                992,
+                0
+            ],
+            "id": "6a76d8a4-1671-484a-b7c4-385e44803025",
+            "name": "WhatsApp Decrypt"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.pdf.co/v1/pdf/convert/to/png",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"url\": \"{{ $json.url }}\",\n  \"async\": false\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                1664,
+                0
+            ],
+            "id": "e43c3aba-f5fd-46f2-ada8-c52957675d8c",
+            "name": "HTTP Request2"
+        },
+        {
+            "parameters": {
+                "operation": "binaryToPropery",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1.1,
+            "position": [
+                1216,
+                0
+            ],
+            "id": "b799bb41-82ba-4ea3-bac7-bb7c64e265d5",
+            "name": "Extract from File1"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://api.pdf.co/v1/file/upload/base64",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"name\": \"document.pdf\",\n  \"file\": \"{{ $json.data }}\"\n}",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                1440,
+                0
+            ],
+            "id": "ccadbf14-1782-4533-95c3-d56be5d42349",
+            "name": "Upload File"
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "urls",
+                "options": {}
+            },
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1,
+            "position": [
+                -48,
+                288
+            ],
+            "id": "d3bf42d0-8fc2-4112-835b-6090294df61f",
+            "name": "Split Out"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4.1-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4.1-MINI"
+                },
+                "responses": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "=You are a document analyser. Your task is to iterate over the object items and analyse the image, one by one, and give me a reliable copy of the pages content.\n\nI don't want you to fix grammatical errors. You must give me the exact text you read from the document.\n\nI don't want you to tell me what's happening. The expected output is **ONLY** the reliable text extracted from the documents."
+                        },
+                        {
+                            "type": "image",
+                            "imageUrl": "={{ $json.urls }}"
+                        }
+                    ]
+                },
+                "builtInTools": {},
+                "options": {}
+            },
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 2.1,
+            "position": [
+                192,
+                288
+            ],
+            "id": "db4cac84-8ba3-4315-8f07-fb2af6fbc98e",
+            "name": "Message a model",
+            "credentials": {
+                "openAiApi": {
+                    "id": "rwTr7CFWwHlmPMDf",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "fieldsToAggregate": {
+                    "fieldToAggregate": [
+                        {
+                            "fieldToAggregate": "=page_text",
+                            "renameField": true,
+                            "outputFieldName": "full_document_text"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.aggregate",
+            "typeVersion": 1,
+            "position": [
+                768,
+                288
+            ],
+            "id": "de912814-df33-4213-b070-0b800af96450",
+            "name": "Aggregate"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "67b492bf-788b-443f-ab3b-5dde9c994353",
+                            "name": "page_text",
+                            "value": "={{ $json.output[0].content[0].text }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                544,
+                288
+            ],
+            "id": "f5dbf13b-21f1-46eb-b9f6-98694fd13edf",
+            "name": "Edit Fields"
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "={{ $json.document_text }}",
+                "options": {
+                    "systemMessage": "I want you to give me the full document. Don't talk anything, just give me the document text as a whole, on the exact same words. Please don't make any changes, don't correct grammar errors, punctuation nor anything else."
+                }
+            },
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 3,
+            "position": [
+                1216,
+                288
+            ],
+            "id": "3de604de-c2eb-48d7-89ad-d32e0c6b8114",
+            "name": "AI Agent"
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "b8f70a97-cb85-4e32-8dfe-7999fefdcef5",
+                            "name": "document_text",
+                            "value": "={{ $json.full_document_text.join('\\n\\n') }}",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                992,
+                288
+            ],
+            "id": "ab4b6179-641c-4d08-a38c-de75a13c855d",
+            "name": "Edit Fields1"
+        },
+        {
+            "parameters": {
+                "model": "openai/gpt-oss-safeguard-20b",
+                "options": {}
+            },
+            "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+            "typeVersion": 1,
+            "position": [
+                1136,
+                464
+            ],
+            "id": "5a2772af-d28f-49e8-8fbc-965f60e33ab0",
+            "name": "Groq Chat Model",
+            "credentials": {
+                "groqApi": {
+                    "id": "ARMuWgBoWED9KpU5",
+                    "name": "Groq account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "resource": "Chatting",
+                "operation": "Send Text",
+                "session": "=default",
+                "chatId": "={{ $('Define Dados').item.json.data.chat.id }}",
+                "reply_to": "={{ $('Define Dados').item.json.data.client.phone }}",
+                "text": "={{ $json.output }}",
+                "requestOptions": {}
+            },
+            "type": "n8n-nodes-waha.WAHA",
+            "typeVersion": 202411,
+            "position": [
+                1568,
+                288
+            ],
+            "id": "f9f4bd8e-5a07-4c67-904a-51f6955cdb7e",
+            "name": "EnviaMsg",
+            "credentials": {
+                "wahaApi": {
+                    "id": "55X1m6M4D2yehbWf",
+                    "name": "WAHA account"
+                }
+            }
+        }
+    ],
+    "connections": {
+        "Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Define Dados",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Define Dados": {
+            "main": [
+                [
+                    {
+                        "node": "HTTP Request",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "HTTP Request": {
+            "main": [
+                [
+                    {
+                        "node": "VerificaTipoMsg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "VerificaTipoMsg": {
+            "main": [
+                [
+                    {
+                        "node": "VerificaTipoDoc",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "VerificaTipoDoc": {
+            "main": [
+                [
+                    {
+                        "node": "WhatsApp Decrypt",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "WhatsApp Decrypt": {
+            "main": [
+                [
+                    {
+                        "node": "Extract from File1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "HTTP Request2": {
+            "main": [
+                [
+                    {
+                        "node": "Split Out",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extract from File1": {
+            "main": [
+                [
+                    {
+                        "node": "Upload File",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upload File": {
+            "main": [
+                [
+                    {
+                        "node": "HTTP Request2",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Split Out": {
+            "main": [
+                [
+                    {
+                        "node": "Message a model",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Message a model": {
+            "main": [
+                [
+                    {
+                        "node": "Edit Fields",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Aggregate": {
+            "main": [
+                [
+                    {
+                        "node": "Edit Fields1",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Edit Fields": {
+            "main": [
+                [
+                    {
+                        "node": "Aggregate",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI Agent": {
+            "main": [
+                [
+                    {
+                        "node": "EnviaMsg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Edit Fields1": {
+            "main": [
+                [
+                    {
+                        "node": "AI Agent",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Groq Chat Model": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "AI Agent",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "pinData": {},
+    "meta": {
+        "templateCredsSetupCompleted": true,
+        "instanceId": "d426a62e10d014b7a9cd9a8cb3fa05aeac045f6e6a99ab86c21ae6ff6d5b6276"
+    }
+}

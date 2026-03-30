@@ -123,27 +123,34 @@ async def consolidado_filiais(authorization: Optional[str] = Header(None)):
     filiais_result = db.table("filiais").select("*").eq("is_active", True).order("nome").execute()
     filiais = filiais_result.data or []
 
+    filial_ids = [f["id"] for f in filiais]
+
+    # Batch count: fetch filial_id for all ativos/clientes in 2 queries total
+    imoveis_counts: dict[str, int] = {}
+    clientes_counts: dict[str, int] = {}
+    if filial_ids:
+        imoveis_result = db.table("ativos").select(
+            "filial_id"
+        ).in_("filial_id", filial_ids).execute()
+        for row in (imoveis_result.data or []):
+            fid = row["filial_id"]
+            imoveis_counts[fid] = imoveis_counts.get(fid, 0) + 1
+
+        clientes_result = db.table("clientes").select(
+            "filial_id"
+        ).in_("filial_id", filial_ids).execute()
+        for row in (clientes_result.data or []):
+            fid = row["filial_id"]
+            clientes_counts[fid] = clientes_counts.get(fid, 0) + 1
+
     consolidado = []
     totais = {"imoveis": 0, "clientes": 0, "filiais": len(filiais)}
 
     for filial in filiais:
-        filial_id = filial["id"]
-
-        # Count properties for this branch
-        imoveis_count = db.table("ativos").select("id", count="exact").eq(
-            "filial_id", filial_id
-        ).execute()
-        n_imoveis = imoveis_count.count if imoveis_count.count is not None else 0
-
-        # Count clients for this branch
-        clientes_count = db.table("clientes").select("id", count="exact").eq(
-            "filial_id", filial_id
-        ).execute()
-        n_clientes = clientes_count.count if clientes_count.count is not None else 0
-
+        n_imoveis = imoveis_counts.get(filial["id"], 0)
+        n_clientes = clientes_counts.get(filial["id"], 0)
         totais["imoveis"] += n_imoveis
         totais["clientes"] += n_clientes
-
         consolidado.append({
             **filial,
             "total_imoveis": n_imoveis,

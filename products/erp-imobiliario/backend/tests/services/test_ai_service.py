@@ -56,14 +56,14 @@ class TestGetApiKey:
         from app.services.ai_service import _get_api_key
 
         with patch("app.services.ai_service.resolve_credential", return_value=None):
-            with pytest.raises(ValueError, match="Chave da API OpenAI"):
+            with pytest.raises(ValueError, match="OpenAI API Key"):
                 _get_api_key()
 
     def test_raises_when_empty_key(self):
         from app.services.ai_service import _get_api_key
 
         with patch("app.services.ai_service.resolve_credential", return_value=None):
-            with pytest.raises(ValueError, match="Chave da API OpenAI"):
+            with pytest.raises(ValueError, match="OpenAI API Key"):
                 _get_api_key()
 
     def test_returns_key_when_set(self):

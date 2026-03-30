@@ -160,3 +160,57 @@ class TestAutoEmbedding:
         client._mock_supabase.set_table_data("ativos", {"id": "emb-4", "natureza": "imovel", "valor": 700000})
         resp = client.patch("/api/ativos/emb-4", json={"valor": 700000})
         assert resp.status_code == 200
+
+
+class TestAutoMatching:
+    """Tests for auto-matching on CRUD operations."""
+
+    def test_create_permuta_auto_matches(self, client):
+        """Creating a permuta should trigger matching against active imoveis."""
+        client._mock_supabase.set_table_data("ativos", {"id": "perm-new", "natureza": "permuta_imovel", "valor": 300000})
+        client._mock_supabase.set_table_data("matches", [])
+        with patch("app.routers.ativos.get_admin_client", return_value=client._mock_supabase):
+            resp = client.post("/api/ativos", json={
+                "natureza": "permuta_imovel", "valor": 300000,
+            })
+            assert resp.status_code == 200
+
+    def test_create_imovel_aceita_permutas_auto_matches(self, client):
+        """Creating an imovel with aceita_permutas triggers matching."""
+        client._mock_supabase.set_table_data("ativos", {"id": "im-new", "natureza": "imovel", "valor": 500000, "aceita_permutas": True})
+        client._mock_supabase.set_table_data("matches", [])
+        with patch("app.routers.ativos.get_admin_client", return_value=client._mock_supabase):
+            resp = client.post("/api/ativos", json={
+                "natureza": "imovel", "valor": 500000, "aceita_permutas": True,
+            })
+            assert resp.status_code == 200
+
+    def test_update_ativo_re_matches(self, client):
+        """Updating an ativo should re-run matching."""
+        client._mock_supabase.set_table_data("ativos", {
+            "id": "upd-match", "natureza": "permuta_imovel", "valor": 400000,
+        })
+        client._mock_supabase.set_table_data("matches", [])
+        with patch("app.routers.ativos.get_admin_client", return_value=client._mock_supabase):
+            resp = client.patch("/api/ativos/upd-match", json={"valor": 450000})
+            assert resp.status_code == 200
+
+    def test_delete_ativo_cleans_matches(self, client):
+        """Deleting an ativo should clean up its matches."""
+        client._mock_supabase.set_table_data("ativos", [{"id": "del-match"}])
+        client._mock_supabase.set_table_data("matches", [
+            {"id": "m1", "ativo_origem_id": "del-match", "ativo_destino_id": "other"},
+        ])
+        with patch("app.routers.ativos.get_admin_client", return_value=client._mock_supabase):
+            resp = client.delete("/api/ativos/del-match")
+            assert resp.status_code == 200
+
+    def test_matching_failure_doesnt_break_create(self, client):
+        """Matching failure should not prevent ativo creation."""
+        client._mock_supabase.set_table_data("ativos", {"id": "fail-match", "natureza": "permuta_imovel", "valor": 300000})
+        # Even with matching failure, create should succeed
+        resp = client.post("/api/ativos", json={
+            "natureza": "permuta_imovel", "valor": 300000,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["data"]["id"] == "fail-match"

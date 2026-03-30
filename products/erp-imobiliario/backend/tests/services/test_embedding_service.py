@@ -158,7 +158,7 @@ class TestGenerateEmbedding:
     @pytest.mark.asyncio
     async def test_generate_embedding_no_api_key(self):
         with patch("app.services.embedding_service.resolve_credential", return_value=None):
-            with pytest.raises(ValueError, match="Chave da API OpenAI"):
+            with pytest.raises(ValueError, match="OpenAI API Key"):
                 await generate_embedding("Test text")
 
     @pytest.mark.asyncio
@@ -221,7 +221,6 @@ class TestEmbedAtivo:
     async def test_embed_ativos_batch_success(self):
         mock_db = MagicMock()
 
-        # Mock fetching ativo data
         ativo_data = {
             "id": "ativo-1",
             "natureza": "imovel",
@@ -230,10 +229,18 @@ class TestEmbedAtivo:
         }
         mock_query = MagicMock()
         mock_query.select.return_value = mock_query
+        mock_query.in_.return_value = mock_query
         mock_query.eq.return_value = mock_query
-        mock_query.single.return_value = mock_query
-        mock_query.execute.return_value = MagicMock(data=ativo_data)
         mock_query.update.return_value = mock_query
+
+        # First execute = batch fetch (returns list), subsequent = embed updates
+        call_count = {"n": 0}
+        def _execute():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return MagicMock(data=[ativo_data])
+            return MagicMock(data=[ativo_data])
+        mock_query.execute.side_effect = _execute
         mock_db.table.return_value = mock_query
 
         with patch("app.services.embedding_service.generate_embedding", new_callable=AsyncMock) as mock_gen:
@@ -248,22 +255,20 @@ class TestEmbedAtivo:
     async def test_embed_ativos_batch_with_errors(self):
         mock_db = MagicMock()
 
-        # Mock: first ativo found, second not found
         mock_query = MagicMock()
         mock_query.select.return_value = mock_query
+        mock_query.in_.return_value = mock_query
         mock_query.eq.return_value = mock_query
-        mock_query.single.return_value = mock_query
         mock_query.update.return_value = mock_query
 
-        call_count = 0
-        def side_effect():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return MagicMock(data={"id": "a1", "natureza": "imovel", "tipo_imovel": "casa", "cidade": "SP"})
-            return MagicMock(data=None)
-
-        mock_query.execute.side_effect = side_effect
+        # Batch fetch returns only a1, so a2 is "not found"
+        call_count = {"n": 0}
+        def _execute():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return MagicMock(data=[{"id": "a1", "natureza": "imovel", "tipo_imovel": "casa", "cidade": "SP"}])
+            return MagicMock(data=[{"id": "a1"}])
+        mock_query.execute.side_effect = _execute
         mock_db.table.return_value = mock_query
 
         with patch("app.services.embedding_service.generate_embedding", new_callable=AsyncMock) as mock_gen:

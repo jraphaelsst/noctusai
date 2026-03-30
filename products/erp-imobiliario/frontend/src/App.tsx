@@ -66,6 +66,7 @@ const MetaAds = lazy(() => import("./pages/MetaAds"));
 const WhatsAppInbox = lazy(() => import("./pages/WhatsAppInbox"));
 const NotificacoesPage = lazy(() => import("./pages/Notificacoes"));
 const Certidoes = lazy(() => import("./pages/Certidoes"));
+const Matriculas = lazy(() => import("./pages/Matriculas"));
 
 const queryClient = createQueryClient();
 
@@ -138,6 +139,7 @@ function AuthenticatedRoutes() {
           <Route path="/whatsapp" element={<WhatsAppInbox />} />
           <Route path="/notificacoes" element={<NotificacoesPage />} />
           <Route path="/certidoes" element={<Certidoes />} />
+          <Route path="/matriculas" element={<Matriculas />} />
           <Route path="/log-acoes" element={<LogAcoes />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

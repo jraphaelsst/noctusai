@@ -1,18 +1,18 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePerfilsPermuta, PerfilPermuta } from '@/hooks/usePermutas';
-import { useMatches, useMatchCounts, useRecalcularMatches, useAtualizarStatusMatch, Match } from '@/hooks/useMatches';
+import { useMatches, useMatchCounts, useRecalcularMatches, useAtualizarStatusMatch } from '@/hooks/useMatches';
 import { NovoPerfilPermutaDialog } from '@/components/permutas/NovoPerfilPermutaDialog';
+import { MatchCard } from '@/components/shared/MatchCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Progress } from '@/components/ui/progress';
 import {
-  Search, Plus, ArrowLeftRight, Sparkles, RefreshCcw,
-  ChevronDown, ChevronUp, CheckCircle, XCircle,
-  FileText, Car, Home as HomeIcon
+  Search, Plus, ArrowLeftRight, Sparkles,
+  ChevronDown, ChevronUp,
+  Car, Home as HomeIcon, RefreshCw,
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CardListSkeleton } from '@/components/ui/page-skeleton';
@@ -62,7 +62,6 @@ function PerfisTab() {
   const navigate = useNavigate();
   const { data: perfis = [], isLoading } = usePerfilsPermuta();
   const { data: matchCounts = {} } = useMatchCounts();
-  const recalcularMutation = useRecalcularMatches();
   const [busca, setBusca] = useState('');
   const [perfilExpandido, setPerfilExpandido] = useState<string | null>(null);
 
@@ -156,9 +155,6 @@ function PerfisTab() {
                   {isExpanded ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
                   {isExpanded ? 'Ocultar' : 'Matches'}{matchCount > 0 ? ` (${matchCount})` : ''}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => recalcularMutation.mutateAsync({ ativo_destino_id: perfil.id })} disabled={recalcularMutation.isPending}>
-                  <RefreshCcw className={`h-4 w-4 mr-1 ${recalcularMutation.isPending ? 'animate-spin' : ''}`} />Recalcular
-                </Button>
               </div>
 
               {isExpanded && <PerfilMatchesSection perfilId={perfil.id} />}
@@ -174,6 +170,7 @@ function PerfisTab() {
 function MatchesTab() {
   const { data: allMatches = [], isLoading } = useMatches();
   const atualizarMutation = useAtualizarStatusMatch();
+  const recalcularMutation = useRecalcularMatches();
   const [filtroScore, setFiltroScore] = useState('todos');
 
   const filtrados = allMatches.filter((m) => {
@@ -222,7 +219,23 @@ function MatchesTab() {
       {isLoading ? (
         <CardListSkeleton count={3} />
       ) : filtrados.length === 0 ? (
-        <Card><CardContent className="py-8 text-center text-muted-foreground">Nenhum match encontrado</CardContent></Card>
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            <Sparkles className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-lg font-semibold">Nenhum match encontrado</p>
+            <p className="text-sm mt-2">
+              Matches são gerados automaticamente ou podem ser recalculados manualmente.
+            </p>
+            <Button
+              onClick={() => recalcularMutation.mutate()}
+              disabled={recalcularMutation.isPending}
+              className="mt-4"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${recalcularMutation.isPending ? 'animate-spin' : ''}`} />
+              Recalcular Matches
+            </Button>
+          </CardContent>
+        </Card>
       ) : (
         <div className="space-y-3">
           {filtrados.map((match) => (
@@ -253,74 +266,5 @@ function PerfilMatchesSection({ perfilId }: { perfilId: string }) {
           isUpdating={atualizarMutation.isPending} />
       ))}
     </div>
-  );
-}
-
-function MatchCard({ match, onAtualizarStatus, isUpdating }: {
-  match: Match;
-  onAtualizarStatus: (id: string, status: 'aceito' | 'rejeitado') => Promise<any>;
-  isUpdating: boolean;
-}) {
-  const scoreColor = match.score >= 80 ? 'text-green-600' : match.score >= 60 ? 'text-yellow-600' : match.score >= 40 ? 'text-orange-600' : 'text-red-600';
-  const borderColor = match.score >= 60 ? '#22c55e' : match.score >= 40 ? '#f59e0b' : '#ef4444';
-
-  const origem = match.ativo_origem;
-  const destino = match.ativo_destino;
-
-  const statusBadge = match.status === 'aceito' ? <Badge className="bg-green-100 text-green-800">Aceito</Badge>
-    : match.status === 'rejeitado' ? <Badge className="bg-red-100 text-red-800">Rejeitado</Badge>
-    : <Badge variant="outline">Pendente</Badge>;
-
-  return (
-    <Card className="border-l-4" style={{ borderLeftColor: borderColor }}>
-      <CardContent className="pt-4 pb-4">
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-medium capitalize">{origem?.tipo_imovel || origem?.tipo_veiculo || 'Ativo'}</span>
-              {origem?.cidade && <span className="text-sm text-muted-foreground">— {origem.cidade}{origem.estado ? `, ${origem.estado}` : ''}</span>}
-              {statusBadge}
-            </div>
-            {match.justificativa && <p className="text-sm text-muted-foreground">{match.justificativa}</p>}
-          </div>
-          <div className="text-right ml-4">
-            <div className={`text-2xl font-bold ${scoreColor}`}>{match.score}%</div>
-          </div>
-        </div>
-
-        {match.detalhes && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            {[
-              { label: 'Região', val: match.detalhes.compatibilidade_regiao || 0, max: 30 },
-              { label: 'Preço', val: match.detalhes.compatibilidade_preco || 0, max: 25 },
-              { label: 'Specs', val: match.detalhes.compatibilidade_specs || 0, max: 20 },
-              { label: 'Qualidade', val: match.detalhes.qualidade_anuncio || 0, max: 10 },
-            ].map(({ label, val, max }) => (
-              <div key={label}>
-                <div className="flex justify-between text-xs"><span>{label}</span><span>{val}/{max}</span></div>
-                <Progress value={val / max * 100} className="h-1.5" />
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="flex items-center justify-between pt-3 border-t">
-          <div className="text-sm space-x-4">
-            {origem && <span>Origem: <strong>{formatCurrency(origem.valor || 0)}</strong></span>}
-            {destino && <span>Destino: <strong>{formatCurrency(destino.valor || 0)}</strong></span>}
-          </div>
-          {match.status === 'pendente' && (
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="text-red-600" disabled={isUpdating} onClick={() => onAtualizarStatus(match.id, 'rejeitado')}>
-                <XCircle className="h-4 w-4 mr-1" />Rejeitar
-              </Button>
-              <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={isUpdating} onClick={() => onAtualizarStatus(match.id, 'aceito')}>
-                <CheckCircle className="h-4 w-4 mr-1" />Aceitar
-              </Button>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
