@@ -14,7 +14,7 @@ if [ ! -f "$ROOT_DIR/.env" ]; then
   exit 1
 fi
 
-PORTS=(8000 8001 8002 5173 8080 8090)
+PORTS=(8000 8001 8002 8003 5173 8080 8090 8095)
 PIDS=()
 
 # Kill a process and all its descendants
@@ -122,15 +122,34 @@ echo "[PF Frontend] Iniciando na porta 8090..."
 (cd "$PF_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8090) &
 PIDS+=($!)
 
+# --- Therapy Backend (porta 8003) ---
+THERAPY_BACKEND="$ROOT_DIR/products/therapy-platform/backend"
+echo "[Therapy Backend] Iniciando na porta 8003..."
+"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8003 --reload --app-dir "$THERAPY_BACKEND" &
+PIDS+=($!)
+
+# --- Therapy Frontend (porta 8095) ---
+THERAPY_FRONTEND="$ROOT_DIR/products/therapy-platform/frontend"
+if [ ! -d "$THERAPY_FRONTEND/node_modules" ]; then
+  echo "[Therapy Frontend] Instalando dependencias..."
+  (cd "$THERAPY_FRONTEND" && npm install)
+fi
+
+echo "[Therapy Frontend] Iniciando na porta 8095..."
+(cd "$THERAPY_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8095) &
+PIDS+=($!)
+
 echo ""
 echo "============================================"
 echo "  Servicos iniciados:"
-echo "  Core Backend  → http://localhost:8000"
-echo "  ERP Backend   → http://localhost:8001"
-echo "  PF Backend    → http://localhost:8002"
-echo "  Core Frontend → http://localhost:5173"
-echo "  ERP Frontend  → http://localhost:8080"
-echo "  PF Frontend   → http://localhost:8090"
+echo "  Core Backend     → http://localhost:8000"
+echo "  ERP Backend      → http://localhost:8001"
+echo "  PF Backend       → http://localhost:8002"
+echo "  Therapy Backend  → http://localhost:8003"
+echo "  Core Frontend    → http://localhost:5173"
+echo "  ERP Frontend     → http://localhost:8080"
+echo "  PF Frontend      → http://localhost:8090"
+echo "  Therapy Frontend → http://localhost:8095"
 echo "============================================"
 echo ""
 echo "Pressione Ctrl+C para parar todos os servicos."

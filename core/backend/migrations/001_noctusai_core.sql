@@ -274,6 +274,14 @@ CREATE TABLE IF NOT EXISTS org_settings (
 
 CREATE INDEX IF NOT EXISTS idx_org_settings_org ON org_settings(org_id);
 
+-- FK indexes
+CREATE INDEX IF NOT EXISTS idx_api_keys_created_by ON public.api_keys(created_by);
+CREATE INDEX IF NOT EXISTS idx_invitations_invited_by ON public.invitations(invited_by);
+CREATE INDEX IF NOT EXISTS idx_notifications_org_id ON public.notifications(org_id);
+CREATE INDEX IF NOT EXISTS idx_platform_settings_updated_by ON public.platform_settings(updated_by);
+CREATE INDEX IF NOT EXISTS idx_roles_org_id ON public.roles(org_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_plan_id ON public.subscriptions(plan_id);
+
 -------------------------------------------------
 -- 16. RLS Policies
 -------------------------------------------------
@@ -302,48 +310,48 @@ CREATE POLICY "plans_read_all" ON plans
     FOR SELECT TO authenticated USING (true);
 
 CREATE POLICY "plans_admin_write" ON plans
-    FOR ALL USING (auth.uid() IN (SELECT id FROM noctus_users WHERE role = 'admin'));
+    FOR ALL USING ((SELECT auth.uid()) IN (SELECT id FROM noctus_users WHERE role = 'admin'));
 
 -- Users can read their own org
 CREATE POLICY "org_read_own" ON organizations
     FOR SELECT TO authenticated
-    USING (id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid()));
+    USING (id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid())));
 
 -- Users can read profiles in their org
 CREATE POLICY "users_read_own" ON noctus_users
     FOR SELECT TO authenticated
-    USING (id = auth.uid() OR org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid()));
+    USING (id = (SELECT auth.uid()) OR org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid())));
 
 -- Licenses: read own org
 CREATE POLICY "licenses_read_own_org" ON licenses
     FOR SELECT TO authenticated
-    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid()));
+    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid())));
 
 -- Subscriptions: read own org, admin write
 CREATE POLICY "subscriptions_read_own" ON subscriptions
     FOR SELECT TO authenticated
-    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid()));
+    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid())));
 
 CREATE POLICY "subscriptions_admin_all" ON subscriptions
-    FOR ALL USING (auth.uid() IN (SELECT id FROM noctus_users WHERE role = 'admin'));
+    FOR ALL USING ((SELECT auth.uid()) IN (SELECT id FROM noctus_users WHERE role = 'admin'));
 
 -- API keys: own org
 CREATE POLICY "api_keys_read_own" ON api_keys
     FOR SELECT TO authenticated
-    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid()));
+    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid())));
 
 CREATE POLICY "api_keys_write_own" ON api_keys
     FOR ALL TO authenticated
-    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid()));
+    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid())));
 
 -- Invitations: own org
 CREATE POLICY "invitations_read_own" ON invitations
     FOR SELECT TO authenticated
-    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid()));
+    USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid())));
 
 -- Notifications: own records
 CREATE POLICY "notifications_own" ON notifications
-    FOR ALL USING (user_id = auth.uid());
+    FOR ALL USING (user_id = (SELECT auth.uid()));
 
 CREATE POLICY "notifications_service" ON notifications
     FOR ALL TO service_role
@@ -353,7 +361,7 @@ CREATE POLICY "notifications_service" ON notifications
 -- Audit logs: read own org
 CREATE POLICY "audit_logs_org_read" ON audit_logs
     FOR SELECT USING (
-        org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid())
+        org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid()))
     );
 
 CREATE POLICY "audit_logs_service" ON audit_logs
@@ -364,7 +372,7 @@ CREATE POLICY "audit_logs_service" ON audit_logs
 -- Webhook endpoints: own org
 CREATE POLICY "webhook_endpoints_org" ON webhook_endpoints
     FOR ALL USING (
-        org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid())
+        org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid()))
     );
 
 CREATE POLICY "webhook_endpoints_service" ON webhook_endpoints
@@ -377,7 +385,7 @@ CREATE POLICY "webhook_deliveries_via_endpoint" ON webhook_deliveries
     FOR SELECT USING (
         endpoint_id IN (
             SELECT id FROM webhook_endpoints
-            WHERE org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid())
+            WHERE org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid()))
         )
     );
 
@@ -395,7 +403,7 @@ CREATE POLICY "platform_settings_service" ON platform_settings
 -- Org settings: org members
 CREATE POLICY "org_settings_org_members" ON org_settings
     FOR ALL USING (
-        org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid())
+        org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid()))
     );
 
 CREATE POLICY "org_settings_service" ON org_settings
@@ -435,6 +443,13 @@ CREATE POLICY "api_keys_service" ON api_keys
 CREATE POLICY "roles_service" ON roles
     FOR ALL TO service_role
     USING (true) WITH CHECK (true);
+
+CREATE POLICY "roles_read_own_org" ON public.roles
+  FOR SELECT TO authenticated
+  USING (org_id IN (
+    SELECT noctus_users.org_id FROM noctus_users
+    WHERE noctus_users.id = (SELECT auth.uid())
+  ));
 
 CREATE POLICY "invitations_service" ON invitations
     FOR ALL TO service_role

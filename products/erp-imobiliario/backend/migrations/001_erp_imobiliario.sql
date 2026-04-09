@@ -82,16 +82,19 @@ CREATE SEQUENCE IF NOT EXISTS erp.negociacoes_id_seq START WITH 1;
 CREATE OR REPLACE FUNCTION erp.current_date_sao_paulo()
 RETURNS DATE
 LANGUAGE SQL STABLE
+SET search_path = erp, public
 AS $$ SELECT (NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE; $$;
 
 CREATE OR REPLACE FUNCTION erp.now_sao_paulo()
 RETURNS TIMESTAMP WITH TIME ZONE
 LANGUAGE SQL STABLE
+SET search_path = erp, public
 AS $$ SELECT NOW() AT TIME ZONE 'America/Sao_Paulo'; $$;
 
 CREATE OR REPLACE FUNCTION erp.normalize_timestamp_sp(ts TIMESTAMP WITH TIME ZONE)
 RETURNS TIMESTAMP WITH TIME ZONE
 LANGUAGE SQL IMMUTABLE
+SET search_path = erp, public
 AS $$ SELECT ts AT TIME ZONE 'America/Sao_Paulo'; $$;
 
 -- Generic updated_at trigger
@@ -531,6 +534,14 @@ CREATE INDEX idx_ativos_embedding ON erp.ativos
   USING ivfflat (embedding extensions.vector_cosine_ops)
   WITH (lists = 100);
 
+-- FK indexes (missing foreign key indexes for query performance)
+CREATE INDEX IF NOT EXISTS idx_atividades_usuario_id ON erp.atividades(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_ativos_condominio_id ON erp.ativos(condominio_id);
+CREATE INDEX IF NOT EXISTS idx_chamados_portal_portal_acesso_id ON erp.chamados_portal(portal_acesso_id);
+CREATE INDEX IF NOT EXISTS idx_funil_movimentos_responsavel_id ON erp.funil_movimentos(responsavel_id);
+CREATE INDEX IF NOT EXISTS idx_negociacoes_owner_id ON erp.negociacoes(owner_id);
+CREATE INDEX IF NOT EXISTS idx_vistorias_rapidas_checkin_id ON erp.vistorias_rapidas(checkin_id);
+
 -- ─────────────────────────────────────────────────────────────────────
 -- 7. ROW LEVEL SECURITY
 -- ─────────────────────────────────────────────────────────────────────
@@ -552,102 +563,169 @@ ALTER TABLE erp.matches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE erp.ativos ENABLE ROW LEVEL SECURITY;
 
 -- ── Profiles ──
-CREATE POLICY "Users can view their own profile" ON erp.profiles FOR SELECT USING (auth.uid() = id);
-CREATE POLICY "Admins can view all profiles" ON erp.profiles FOR SELECT USING (public.has_role(auth.uid(), 'admin'::app_role));
-CREATE POLICY "Users can update their own profile" ON erp.profiles FOR UPDATE TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
-CREATE POLICY "Users can insert their own profile" ON erp.profiles FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
-CREATE POLICY "Admins can update all profiles" ON erp.profiles FOR UPDATE TO authenticated USING (public.has_role(auth.uid(), 'admin'::app_role));
+CREATE POLICY "profiles_select_own" ON erp.profiles FOR SELECT
+  USING ((SELECT auth.uid()) = id OR public.has_role((SELECT auth.uid()), 'admin'::app_role));
+CREATE POLICY "profiles_insert" ON erp.profiles FOR INSERT TO authenticated
+  WITH CHECK ((SELECT auth.uid()) = id);
+CREATE POLICY "profiles_update" ON erp.profiles FOR UPDATE TO authenticated
+  USING ((SELECT auth.uid()) = id OR public.has_role((SELECT auth.uid()), 'admin'::app_role))
+  WITH CHECK ((SELECT auth.uid()) = id OR public.has_role((SELECT auth.uid()), 'admin'::app_role));
 
 -- ── User roles ──
-CREATE POLICY "Admins can view all roles" ON erp.user_roles FOR SELECT TO authenticated USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Users can view their own roles" ON erp.user_roles FOR SELECT TO authenticated USING (auth.uid() = user_id);
-CREATE POLICY "Admins can insert roles" ON erp.user_roles FOR INSERT TO authenticated WITH CHECK (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Admins can update roles" ON erp.user_roles FOR UPDATE TO authenticated USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Admins can delete roles" ON erp.user_roles FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'admin'));
+CREATE POLICY "user_roles_select" ON erp.user_roles FOR SELECT TO authenticated
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (SELECT auth.uid()) = user_id);
+CREATE POLICY "user_roles_insert" ON erp.user_roles FOR INSERT TO authenticated
+  WITH CHECK (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role));
+CREATE POLICY "user_roles_update" ON erp.user_roles FOR UPDATE TO authenticated
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role));
+CREATE POLICY "user_roles_delete" ON erp.user_roles FOR DELETE TO authenticated
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role));
 CREATE POLICY "Deny unauthenticated access to user_roles" ON erp.user_roles FOR ALL TO anon USING (false);
 
 -- ── Metas ──
-CREATE POLICY "Users can view their own metas" ON erp.metas FOR SELECT TO authenticated USING (auth.uid() = usuario_id);
-CREATE POLICY "Admins can view all metas" ON erp.metas FOR SELECT TO authenticated USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Users can insert their own metas" ON erp.metas FOR INSERT TO authenticated WITH CHECK (usuario_id = auth.uid() AND usuario_id IS NOT NULL);
-CREATE POLICY "Admins can insert metas for any user" ON erp.metas FOR INSERT TO authenticated WITH CHECK (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Users can update own daily incomplete metas" ON erp.metas FOR UPDATE TO authenticated USING (auth.uid() = usuario_id AND tipo = 'diaria' AND status != 'concluida') WITH CHECK (auth.uid() = usuario_id AND tipo = 'diaria' AND status != 'concluida');
-CREATE POLICY "Admins can update monthly metas" ON erp.metas FOR UPDATE TO authenticated USING (public.has_role(auth.uid(), 'admin') AND tipo = 'mensal') WITH CHECK (public.has_role(auth.uid(), 'admin') AND tipo = 'mensal');
-CREATE POLICY "Admins can update daily metas" ON erp.metas FOR UPDATE TO authenticated USING (public.has_role(auth.uid(), 'admin') AND tipo = 'diaria') WITH CHECK (public.has_role(auth.uid(), 'admin') AND tipo = 'diaria');
-CREATE POLICY "Users can delete own daily incomplete metas" ON erp.metas FOR DELETE USING (auth.uid() = usuario_id AND tipo = 'diaria' AND status != 'concluida');
-CREATE POLICY "Users can delete own aggregated metas" ON erp.metas FOR DELETE USING ((auth.uid() = usuario_id) AND (tipo IN ('semanal', 'mensal', 'anual')));
-CREATE POLICY "Admins can delete completed metas" ON erp.metas FOR DELETE USING (public.has_role(auth.uid(), 'admin') AND status = 'concluida');
-CREATE POLICY "Admins can delete aggregated metas" ON erp.metas FOR DELETE USING (public.has_role(auth.uid(), 'admin') AND tipo IN ('semanal', 'mensal', 'anual'));
-CREATE POLICY "Admins can delete any daily incomplete meta" ON erp.metas FOR DELETE USING (public.has_role(auth.uid(), 'admin') AND tipo = 'diaria' AND status != 'concluida');
+CREATE POLICY "metas_select" ON erp.metas FOR SELECT TO authenticated
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (SELECT auth.uid()) = usuario_id);
+CREATE POLICY "metas_insert" ON erp.metas FOR INSERT TO authenticated
+  WITH CHECK (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (usuario_id = (SELECT auth.uid()) AND usuario_id IS NOT NULL));
+CREATE POLICY "metas_update" ON erp.metas FOR UPDATE TO authenticated
+  USING (
+    public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+    OR ((SELECT auth.uid()) = usuario_id AND tipo = 'diaria'::erp.tipo_meta AND status != 'concluida'::erp.status_meta)
+  )
+  WITH CHECK (
+    public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+    OR ((SELECT auth.uid()) = usuario_id AND tipo = 'diaria'::erp.tipo_meta AND status != 'concluida'::erp.status_meta)
+  );
+CREATE POLICY "metas_delete" ON erp.metas FOR DELETE TO public
+  USING (has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR ((SELECT auth.uid()) = usuario_id AND (tipo IN ('semanal'::erp.tipo_meta, 'mensal'::erp.tipo_meta, 'anual'::erp.tipo_meta) OR (tipo = 'diaria'::erp.tipo_meta AND status <> 'concluida'::erp.status_meta))));
 
 -- ── Metas config ──
-CREATE POLICY "Usuários podem ver suas próprias configs" ON erp.metas_config FOR SELECT USING (auth.uid() = usuario_id);
-CREATE POLICY "Usuários podem inserir suas próprias configs" ON erp.metas_config FOR INSERT WITH CHECK (auth.uid() = usuario_id);
-CREATE POLICY "Usuários podem atualizar suas próprias configs" ON erp.metas_config FOR UPDATE USING (auth.uid() = usuario_id);
-CREATE POLICY "Usuários podem deletar suas próprias configs" ON erp.metas_config FOR DELETE USING (auth.uid() = usuario_id);
-CREATE POLICY "Admins podem ver todas as configs" ON erp.metas_config FOR SELECT USING (public.has_role(auth.uid(), 'admin'::app_role));
+CREATE POLICY "metas_config_select" ON erp.metas_config FOR SELECT
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (SELECT auth.uid()) = usuario_id);
+CREATE POLICY "metas_config_insert" ON erp.metas_config FOR INSERT
+  WITH CHECK ((SELECT auth.uid()) = usuario_id);
+CREATE POLICY "metas_config_update" ON erp.metas_config FOR UPDATE
+  USING ((SELECT auth.uid()) = usuario_id);
+CREATE POLICY "metas_config_delete" ON erp.metas_config FOR DELETE
+  USING ((SELECT auth.uid()) = usuario_id);
 
 -- ── Clientes ──
-CREATE POLICY "Usuários podem ver seus próprios clientes" ON erp.clientes FOR SELECT TO authenticated USING (auth.uid() = usuario_id);
-CREATE POLICY "Admins podem ver todos os clientes" ON erp.clientes FOR SELECT TO authenticated USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem criar seus próprios clientes" ON erp.clientes FOR INSERT TO authenticated WITH CHECK (auth.uid() = usuario_id);
-CREATE POLICY "Usuários podem atualizar seus próprios clientes" ON erp.clientes FOR UPDATE TO authenticated USING (auth.uid() = usuario_id);
-CREATE POLICY "Admins podem atualizar todos os clientes" ON erp.clientes FOR UPDATE TO authenticated USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem deletar seus próprios clientes" ON erp.clientes FOR DELETE TO authenticated USING (auth.uid() = usuario_id);
-CREATE POLICY "Admins podem deletar todos os clientes" ON erp.clientes FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'admin'));
+CREATE POLICY "clientes_select" ON erp.clientes FOR SELECT TO authenticated
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (SELECT auth.uid()) = usuario_id);
+CREATE POLICY "clientes_insert" ON erp.clientes FOR INSERT TO authenticated
+  WITH CHECK ((SELECT auth.uid()) = usuario_id);
+CREATE POLICY "clientes_update" ON erp.clientes FOR UPDATE TO authenticated
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (SELECT auth.uid()) = usuario_id);
+CREATE POLICY "clientes_delete" ON erp.clientes FOR DELETE TO authenticated
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (SELECT auth.uid()) = usuario_id);
 
 -- ── Funil movimentos ──
-CREATE POLICY "Usuários podem ver movimentos de seus clientes" ON erp.funil_movimentos FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM erp.clientes WHERE clientes.id = funil_movimentos.cliente_id AND clientes.usuario_id = auth.uid()));
-CREATE POLICY "Admins podem ver todos os movimentos" ON erp.funil_movimentos FOR SELECT TO authenticated USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem criar movimentos para seus clientes" ON erp.funil_movimentos FOR INSERT TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM erp.clientes WHERE clientes.id = funil_movimentos.cliente_id AND clientes.usuario_id = auth.uid()) AND responsavel_id = auth.uid());
+CREATE POLICY "funil_movimentos_select" ON erp.funil_movimentos FOR SELECT TO authenticated
+  USING (
+    public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+    OR EXISTS (SELECT 1 FROM erp.clientes WHERE clientes.id = funil_movimentos.cliente_id AND clientes.usuario_id = (SELECT auth.uid()))
+  );
+CREATE POLICY "funil_movimentos_insert" ON erp.funil_movimentos FOR INSERT TO authenticated
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM erp.clientes WHERE clientes.id = funil_movimentos.cliente_id AND clientes.usuario_id = (SELECT auth.uid()))
+    AND responsavel_id = (SELECT auth.uid())
+  );
 
 -- ── Atividades ──
-CREATE POLICY "Usuários podem ver atividades de seus clientes" ON erp.atividades FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM erp.clientes WHERE clientes.id = atividades.cliente_id AND clientes.usuario_id = auth.uid()));
-CREATE POLICY "Admins podem ver todas as atividades" ON erp.atividades FOR SELECT TO authenticated USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem criar atividades para seus clientes" ON erp.atividades FOR INSERT TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM erp.clientes WHERE clientes.id = atividades.cliente_id AND clientes.usuario_id = auth.uid()) AND usuario_id = auth.uid());
+CREATE POLICY "atividades_select" ON erp.atividades FOR SELECT TO authenticated
+  USING (
+    public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+    OR EXISTS (SELECT 1 FROM erp.clientes WHERE clientes.id = atividades.cliente_id AND clientes.usuario_id = (SELECT auth.uid()))
+  );
+CREATE POLICY "atividades_insert" ON erp.atividades FOR INSERT TO authenticated
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM erp.clientes WHERE clientes.id = atividades.cliente_id AND clientes.usuario_id = (SELECT auth.uid()))
+    AND usuario_id = (SELECT auth.uid())
+  );
 
 -- ── Password request codes ──
-CREATE POLICY "Admins can manage their own password request codes" ON erp.password_request_codes FOR ALL USING (auth.uid() = admin_user_id);
-CREATE POLICY "Only admins can view password codes" ON erp.password_request_codes FOR SELECT TO authenticated USING (public.has_role(auth.uid(), 'admin'));
+CREATE POLICY "Admins can manage their own password request codes" ON erp.password_request_codes FOR ALL
+  USING ((SELECT auth.uid()) = admin_user_id);
+CREATE POLICY "Only admins can view password codes" ON erp.password_request_codes FOR SELECT TO authenticated
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role));
 
 -- ── Status pagina ──
-CREATE POLICY "Todos podem ver páginas gerais em produção" ON erp.status_pagina FOR SELECT USING (status = 'producao' AND tipo_pagina = 'geral');
-CREATE POLICY "Admins podem ver todas as páginas" ON erp.status_pagina FOR SELECT USING (public.has_role(auth.uid(), 'admin'::app_role));
-CREATE POLICY "Devs podem ver páginas gerais em desenvolvimento" ON erp.status_pagina FOR SELECT USING (public.has_role(auth.uid(), 'dev'::app_role) AND tipo_pagina = 'geral');
-CREATE POLICY "Apenas admins podem gerenciar páginas" ON erp.status_pagina FOR ALL USING (public.has_role(auth.uid(), 'admin'::app_role)) WITH CHECK (public.has_role(auth.uid(), 'admin'::app_role));
+CREATE POLICY "Todos podem ver páginas gerais em produção" ON erp.status_pagina FOR SELECT
+  USING (status = 'producao' AND tipo_pagina = 'geral');
+CREATE POLICY "Admins podem ver todas as páginas" ON erp.status_pagina FOR SELECT
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role));
+CREATE POLICY "Devs podem ver páginas gerais em desenvolvimento" ON erp.status_pagina FOR SELECT
+  USING (public.has_role((SELECT auth.uid()), 'dev'::erp.app_role) AND tipo_pagina = 'geral');
+CREATE POLICY "Apenas admins podem gerenciar páginas" ON erp.status_pagina FOR ALL
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role))
+  WITH CHECK (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role));
 
 -- ── User actions log ──
-CREATE POLICY "Admins podem ver todos os logs de ações" ON erp.user_actions_log FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem ver seus próprios logs" ON erp.user_actions_log FOR SELECT USING (auth.uid() = usuario_id);
-CREATE POLICY "Usuários podem inserir logs" ON erp.user_actions_log FOR INSERT WITH CHECK (auth.uid() = usuario_id);
+CREATE POLICY "user_actions_log_select" ON erp.user_actions_log FOR SELECT
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (SELECT auth.uid()) = usuario_id);
+CREATE POLICY "user_actions_log_insert" ON erp.user_actions_log FOR INSERT
+  WITH CHECK ((SELECT auth.uid()) = usuario_id);
 
 -- ── Negociações ──
-CREATE POLICY "Admins podem ver todas as negociações" ON erp.negociacoes FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Proprietários podem ver suas negociações" ON erp.negociacoes FOR SELECT USING (auth.uid() = cliente_proprietario_id);
-CREATE POLICY "Ofertantes podem ver suas negociações" ON erp.negociacoes FOR SELECT USING (auth.uid() = cliente_ofertante_id);
-CREATE POLICY "Usuários podem criar negociações" ON erp.negociacoes FOR INSERT WITH CHECK (auth.uid() = owner_id);
-CREATE POLICY "Proprietários podem atualizar suas negociações" ON erp.negociacoes FOR UPDATE USING (auth.uid() = cliente_proprietario_id OR auth.uid() = cliente_ofertante_id);
-CREATE POLICY "Admins podem atualizar todas as negociações" ON erp.negociacoes FOR UPDATE USING (public.has_role(auth.uid(), 'admin'));
-CREATE POLICY "Usuários podem deletar negociações que criaram" ON erp.negociacoes FOR DELETE USING (auth.uid() = owner_id);
-CREATE POLICY "Admins podem deletar todas as negociações" ON erp.negociacoes FOR DELETE USING (public.has_role(auth.uid(), 'admin'));
+CREATE POLICY "negociacoes_select" ON erp.negociacoes FOR SELECT
+  USING (
+    public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+    OR (SELECT auth.uid()) = owner_id
+    OR (SELECT auth.uid()) = cliente_proprietario_id
+    OR (SELECT auth.uid()) = cliente_ofertante_id
+  );
+CREATE POLICY "negociacoes_insert" ON erp.negociacoes FOR INSERT
+  WITH CHECK ((SELECT auth.uid()) = owner_id);
+CREATE POLICY "negociacoes_update" ON erp.negociacoes FOR UPDATE
+  USING (
+    public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+    OR (SELECT auth.uid()) = cliente_proprietario_id
+    OR (SELECT auth.uid()) = cliente_ofertante_id
+  );
+CREATE POLICY "negociacoes_delete" ON erp.negociacoes FOR DELETE
+  USING (public.has_role((SELECT auth.uid()), 'admin'::erp.app_role) OR (SELECT auth.uid()) = owner_id);
 
 -- ── Condominios ──
 CREATE POLICY "Users can view all condominios" ON erp.condominios FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Users can insert their own condominios" ON erp.condominios FOR INSERT TO authenticated WITH CHECK (auth.uid() = owner_id);
-CREATE POLICY "Users can update their own condominios" ON erp.condominios FOR UPDATE TO authenticated USING (auth.uid() = owner_id);
-CREATE POLICY "Users can delete their own condominios" ON erp.condominios FOR DELETE TO authenticated USING (auth.uid() = owner_id);
+CREATE POLICY "Users can insert their own condominios" ON erp.condominios FOR INSERT TO authenticated
+  WITH CHECK ((SELECT auth.uid()) = owner_id);
+CREATE POLICY "Users can update their own condominios" ON erp.condominios FOR UPDATE TO authenticated
+  USING ((SELECT auth.uid()) = owner_id);
+CREATE POLICY "Users can delete their own condominios" ON erp.condominios FOR DELETE TO authenticated
+  USING ((SELECT auth.uid()) = owner_id);
 
 -- ── Matches ──
-CREATE POLICY "Authenticated users can view matches" ON erp.matches FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Authenticated users can update match status" ON erp.matches FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated users can insert matches" ON erp.matches FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "Authenticated users can delete matches" ON erp.matches FOR DELETE TO authenticated USING (true);
+CREATE POLICY "matches_select" ON erp.matches FOR SELECT TO authenticated
+  USING (
+    EXISTS (SELECT 1 FROM erp.ativos WHERE ativos.id = matches.ativo_origem_id AND ativos.owner_id = (SELECT auth.uid()))
+    OR EXISTS (SELECT 1 FROM erp.ativos WHERE ativos.id = matches.ativo_destino_id AND ativos.owner_id = (SELECT auth.uid()))
+    OR public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+  );
+CREATE POLICY "matches_insert" ON erp.matches FOR INSERT TO authenticated
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM erp.ativos WHERE ativos.id = matches.ativo_origem_id AND ativos.owner_id = (SELECT auth.uid()))
+    OR public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+  );
+CREATE POLICY "matches_update" ON erp.matches FOR UPDATE TO authenticated
+  USING (
+    EXISTS (SELECT 1 FROM erp.ativos WHERE ativos.id = matches.ativo_origem_id AND ativos.owner_id = (SELECT auth.uid()))
+    OR EXISTS (SELECT 1 FROM erp.ativos WHERE ativos.id = matches.ativo_destino_id AND ativos.owner_id = (SELECT auth.uid()))
+    OR public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+  );
+CREATE POLICY "matches_delete" ON erp.matches FOR DELETE TO authenticated
+  USING (
+    EXISTS (SELECT 1 FROM erp.ativos WHERE ativos.id = matches.ativo_origem_id AND ativos.owner_id = (SELECT auth.uid()))
+    OR public.has_role((SELECT auth.uid()), 'admin'::erp.app_role)
+  );
 
 -- ── Ativos ──
 CREATE POLICY "Users can view all active ativos" ON erp.ativos FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Users can insert their own ativos" ON erp.ativos FOR INSERT TO authenticated WITH CHECK (auth.uid() = owner_id);
-CREATE POLICY "Users can update their own ativos" ON erp.ativos FOR UPDATE TO authenticated USING (auth.uid() = owner_id);
-CREATE POLICY "Users can delete their own ativos" ON erp.ativos FOR DELETE TO authenticated USING (auth.uid() = owner_id);
+CREATE POLICY "Users can insert their own ativos" ON erp.ativos FOR INSERT TO authenticated
+  WITH CHECK ((SELECT auth.uid()) = owner_id);
+CREATE POLICY "Users can update their own ativos" ON erp.ativos FOR UPDATE TO authenticated
+  USING ((SELECT auth.uid()) = owner_id);
+CREATE POLICY "Users can delete their own ativos" ON erp.ativos FOR DELETE TO authenticated
+  USING ((SELECT auth.uid()) = owner_id);
 
 -- ─────────────────────────────────────────────────────────────────────
 -- 8. BUSINESS LOGIC FUNCTIONS
@@ -1030,6 +1108,7 @@ $$;
 -- Performance level calculation
 CREATE OR REPLACE FUNCTION erp.calcular_nivel_performance(p_realizada INTEGER, p_pretendida INTEGER)
 RETURNS nivel_performance_meta LANGUAGE plpgsql IMMUTABLE
+SET search_path = erp, public
 AS $$
 DECLARE v_prog NUMERIC;
 BEGIN
@@ -1150,6 +1229,7 @@ $$;
 -- Expired password codes cleanup
 CREATE OR REPLACE FUNCTION erp.delete_expired_password_codes()
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = erp, public
 AS $$ BEGIN DELETE FROM erp.password_request_codes WHERE expires_at < now(); END; $$;
 
 -- Distribuir meta descendente (downward distribution from manual metas)
@@ -1250,7 +1330,7 @@ BEGIN
   END CASE;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = erp, public;
 
 -- ─────────────────────────────────────────────────────────────────────
 -- 9. TRIGGERS
@@ -1298,6 +1378,7 @@ CREATE TRIGGER normalize_password_codes_expires_trigger BEFORE INSERT ON erp.pas
 CREATE OR REPLACE FUNCTION erp.get_data_sp()
 RETURNS DATE
 LANGUAGE SQL STABLE
+SET search_path = erp, public
 AS $$ SELECT (NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE; $$;
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -1997,11 +2078,11 @@ CREATE TABLE IF NOT EXISTS erp.notificacao_preferencias (
 
 ALTER TABLE erp.notificacoes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "org_isolation" ON erp.notificacoes
-    USING (org_id = ((current_setting('request.jwt.claims', true)::json->>'user_metadata')::json->>'org_id')::uuid);
+    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
 
 ALTER TABLE erp.notificacao_preferencias ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "org_isolation" ON erp.notificacao_preferencias
-    USING (org_id = ((current_setting('request.jwt.claims', true)::json->>'user_metadata')::json->>'org_id')::uuid);
+    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
 
 -- ── WAHA WhatsApp Config ────────────────────────────────────────────
 
@@ -2160,22 +2241,22 @@ BEGIN
     EXECUTE format('ALTER TABLE erp.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_select_policy', tbl);
     EXECUTE format(
-      'CREATE POLICY %I ON erp.%I FOR SELECT TO authenticated USING (org_id = (auth.jwt() ->> ''org_id'')::uuid)',
+      'CREATE POLICY %I ON erp.%I FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> ''org_id'')::uuid)',
       tbl || '_select_policy', tbl
     );
     EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_insert_policy', tbl);
     EXECUTE format(
-      'CREATE POLICY %I ON erp.%I FOR INSERT TO authenticated WITH CHECK (org_id = (auth.jwt() ->> ''org_id'')::uuid)',
+      'CREATE POLICY %I ON erp.%I FOR INSERT TO authenticated WITH CHECK (org_id = ((SELECT auth.jwt()) ->> ''org_id'')::uuid)',
       tbl || '_insert_policy', tbl
     );
     EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_update_policy', tbl);
     EXECUTE format(
-      'CREATE POLICY %I ON erp.%I FOR UPDATE TO authenticated USING (org_id = (auth.jwt() ->> ''org_id'')::uuid)',
+      'CREATE POLICY %I ON erp.%I FOR UPDATE TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> ''org_id'')::uuid)',
       tbl || '_update_policy', tbl
     );
     EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_delete_policy', tbl);
     EXECUTE format(
-      'CREATE POLICY %I ON erp.%I FOR DELETE TO authenticated USING (org_id = (auth.jwt() ->> ''org_id'')::uuid)',
+      'CREATE POLICY %I ON erp.%I FOR DELETE TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> ''org_id'')::uuid)',
       tbl || '_delete_policy', tbl
     );
     EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_service_role_policy', tbl);
@@ -2270,29 +2351,31 @@ ALTER TABLE erp.certidao_consultas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE erp.certidao_resultados ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY certidao_consultas_select ON erp.certidao_consultas
-    FOR SELECT TO authenticated USING (created_by = auth.uid());
+    FOR SELECT TO authenticated USING (created_by = (SELECT auth.uid()));
 CREATE POLICY certidao_consultas_insert ON erp.certidao_consultas
-    FOR INSERT TO authenticated WITH CHECK (created_by = auth.uid());
+    FOR INSERT TO authenticated WITH CHECK (created_by = (SELECT auth.uid()));
 CREATE POLICY certidao_consultas_update ON erp.certidao_consultas
-    FOR UPDATE TO authenticated USING (created_by = auth.uid());
+    FOR UPDATE TO authenticated USING (created_by = (SELECT auth.uid()));
 CREATE POLICY certidao_consultas_delete ON erp.certidao_consultas
-    FOR DELETE TO authenticated USING (created_by = auth.uid());
+    FOR DELETE TO authenticated USING (created_by = (SELECT auth.uid()));
 CREATE POLICY certidao_consultas_service ON erp.certidao_consultas
     FOR ALL USING (auth.role() = 'service_role');
 
 CREATE POLICY certidao_resultados_select ON erp.certidao_resultados
     FOR SELECT TO authenticated USING (
-        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = auth.uid())
+        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = (SELECT auth.uid()))
     );
 CREATE POLICY certidao_resultados_insert ON erp.certidao_resultados
-    FOR INSERT TO authenticated WITH CHECK (true);
+    FOR INSERT TO authenticated WITH CHECK (
+        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = (SELECT auth.uid()))
+    );
 CREATE POLICY certidao_resultados_update ON erp.certidao_resultados
     FOR UPDATE TO authenticated USING (
-        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = auth.uid())
+        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = (SELECT auth.uid()))
     );
 CREATE POLICY certidao_resultados_delete ON erp.certidao_resultados
     FOR DELETE TO authenticated USING (
-        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = auth.uid())
+        EXISTS (SELECT 1 FROM erp.certidao_consultas WHERE id = consulta_id AND created_by = (SELECT auth.uid()))
     );
 CREATE POLICY certidao_resultados_service ON erp.certidao_resultados
     FOR ALL USING (auth.role() = 'service_role');
@@ -2328,7 +2411,7 @@ CREATE TABLE IF NOT EXISTS erp.matricula_extracoes (
 ALTER TABLE erp.matricula_extracoes ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "org_isolation" ON erp.matricula_extracoes
-    USING (org_id = ((current_setting('request.jwt.claims', true)::json->>'user_metadata')::json->>'org_id')::uuid);
+    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
 
 CREATE INDEX idx_matricula_extracoes_org_id ON erp.matricula_extracoes(org_id);
 CREATE INDEX idx_matricula_extracoes_user_id ON erp.matricula_extracoes(user_id);
@@ -2354,28 +2437,28 @@ CREATE POLICY erp_storage_select ON storage.objects
     FOR SELECT TO authenticated
     USING (
         bucket_id LIKE 'erp-%'
-        AND (storage.foldername(name))[1] = (auth.jwt() -> 'user_metadata' ->> 'org_id')
+        AND (storage.foldername(name))[1] = ((SELECT auth.jwt()) ->> 'org_id')
     );
 
 CREATE POLICY erp_storage_insert ON storage.objects
     FOR INSERT TO authenticated
     WITH CHECK (
         bucket_id LIKE 'erp-%'
-        AND (storage.foldername(name))[1] = (auth.jwt() -> 'user_metadata' ->> 'org_id')
+        AND (storage.foldername(name))[1] = ((SELECT auth.jwt()) ->> 'org_id')
     );
 
 CREATE POLICY erp_storage_update ON storage.objects
     FOR UPDATE TO authenticated
     USING (
         bucket_id LIKE 'erp-%'
-        AND (storage.foldername(name))[1] = (auth.jwt() -> 'user_metadata' ->> 'org_id')
+        AND (storage.foldername(name))[1] = ((SELECT auth.jwt()) ->> 'org_id')
     );
 
 CREATE POLICY erp_storage_delete ON storage.objects
     FOR DELETE TO authenticated
     USING (
         bucket_id LIKE 'erp-%'
-        AND (storage.foldername(name))[1] = (auth.jwt() -> 'user_metadata' ->> 'org_id')
+        AND (storage.foldername(name))[1] = ((SELECT auth.jwt()) ->> 'org_id')
     );
 
 CREATE POLICY erp_storage_service ON storage.objects

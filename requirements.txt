@@ -29,6 +29,12 @@ PyMuPDF>=1.24.0
 # Personal Finance-only
 yfinance>=0.2.36
 
+# Therapy-only
+livekit-api>=0.6.0
+google-api-python-client>=2.0.0
+google-auth-oauthlib>=1.0.0
+openai>=1.0.0
+
 # Observability (optional)
 sentry-sdk[fastapi]==1.40.0
 

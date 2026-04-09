@@ -357,6 +357,32 @@ CREATE INDEX IF NOT EXISTS idx_operacoes_carteira ON "personal-finance".operacoe
 CREATE INDEX IF NOT EXISTS idx_operacoes_ticker ON "personal-finance".operacoes(ticker);
 CREATE INDEX IF NOT EXISTS idx_patrimonio_org_data ON "personal-finance".patrimonio_snapshots(org_id, data DESC);
 
+-- FK indexes
+CREATE INDEX IF NOT EXISTS idx_alocacao_alvo_carteira_id ON "personal-finance".alocacao_alvo(carteira_id);
+CREATE INDEX IF NOT EXISTS idx_ativos_user_id ON "personal-finance".ativos(user_id);
+CREATE INDEX IF NOT EXISTS idx_carteiras_user_id ON "personal-finance".carteiras(user_id);
+CREATE INDEX IF NOT EXISTS idx_categorias_categoria_pai_id ON "personal-finance".categorias(categoria_pai_id);
+CREATE INDEX IF NOT EXISTS idx_categorias_user_id ON "personal-finance".categorias(user_id);
+CREATE INDEX IF NOT EXISTS idx_contas_user_id ON "personal-finance".contas(user_id);
+CREATE INDEX IF NOT EXISTS idx_meta_contribuicoes_meta_id ON "personal-finance".meta_contribuicoes(meta_id);
+CREATE INDEX IF NOT EXISTS idx_meta_contribuicoes_transacao_id ON "personal-finance".meta_contribuicoes(transacao_id);
+CREATE INDEX IF NOT EXISTS idx_metas_conta_vinculada_id ON "personal-finance".metas(conta_vinculada_id);
+CREATE INDEX IF NOT EXISTS idx_metas_user_id ON "personal-finance".metas(user_id);
+CREATE INDEX IF NOT EXISTS idx_operacoes_ativo_id ON "personal-finance".operacoes(ativo_id);
+CREATE INDEX IF NOT EXISTS idx_operacoes_user_id ON "personal-finance".operacoes(user_id);
+CREATE INDEX IF NOT EXISTS idx_orcamento_itens_categoria_id ON "personal-finance".orcamento_itens(categoria_id);
+CREATE INDEX IF NOT EXISTS idx_orcamento_itens_orcamento_id ON "personal-finance".orcamento_itens(orcamento_id);
+CREATE INDEX IF NOT EXISTS idx_orcamentos_user_id ON "personal-finance".orcamentos(user_id);
+CREATE INDEX IF NOT EXISTS idx_patrimonio_snapshots_user_id ON "personal-finance".patrimonio_snapshots(user_id);
+CREATE INDEX IF NOT EXISTS idx_recorrentes_categoria_id ON "personal-finance".recorrentes(categoria_id);
+CREATE INDEX IF NOT EXISTS idx_recorrentes_conta_id ON "personal-finance".recorrentes(conta_id);
+CREATE INDEX IF NOT EXISTS idx_recorrentes_user_id ON "personal-finance".recorrentes(user_id);
+CREATE INDEX IF NOT EXISTS idx_resumos_mensais_user_id ON "personal-finance".resumos_mensais(user_id);
+CREATE INDEX IF NOT EXISTS idx_transacoes_conta_destino_id ON "personal-finance".transacoes(conta_destino_id);
+CREATE INDEX IF NOT EXISTS idx_transacoes_user_id ON "personal-finance".transacoes(user_id);
+CREATE INDEX IF NOT EXISTS idx_watchlist_itens_watchlist_id ON "personal-finance".watchlist_itens(watchlist_id);
+CREATE INDEX IF NOT EXISTS idx_watchlists_user_id ON "personal-finance".watchlists(user_id);
+
 -- ===================== TIMESTAMPS TRIGGER =====================
 CREATE OR REPLACE FUNCTION "personal-finance".set_updated_at()
 RETURNS TRIGGER AS $$
@@ -364,7 +390,7 @@ BEGIN
     NEW.updated_at = now();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = "personal-finance", public;
 
 CREATE TRIGGER set_contas_updated_at BEFORE UPDATE ON "personal-finance".contas
     FOR EACH ROW EXECUTE FUNCTION "personal-finance".set_updated_at();

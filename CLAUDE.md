@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **DRY — Don't Repeat Yourself.** Every piece of knowledge, logic, or configuration must have a single authoritative source. Never duplicate code, constants, utilities, validation rules, or business logic across files. Extract shared helpers, reuse existing services, import from centralized modules. If two files need the same function, it belongs in a shared module. If three routers do the same org_id lookup, it belongs in `dependencies.py`. Three similar lines are acceptable; three similar blocks are not — extract and reuse. This applies to backend (services, helpers, schemas) and frontend (hooks, utils, constants, shared components) equally.
 
-**Docs stay in sync with code.** Every commit must include documentation updates. When committing changes, update `CLAUDE.md` and `AGENTIC-WORKFLOW/` files to reflect what changed: router/service/page/hook counts, new modules, deleted modules, new patterns, test counts, migration files, infrastructure changes. Documentation is part of the changeset, not a separate task. The user should never have to ask "are the docs up to date?" — they always are.
+**Docs stay in sync with code.** Every commit must include documentation updates. When committing changes, update `CLAUDE.md` to reflect what changed: router/service/page/hook counts, new modules, deleted modules, new patterns, test counts, migration files, infrastructure changes. Documentation is part of the changeset, not a separate task. The user should never have to ask "are the docs up to date?" — they always are.
 
 ## Architecture
 
@@ -17,6 +17,7 @@ This is a **multi-tenant, multi-product SaaS monorepo**. Each organization (tena
 - **`core/`** — NoctusAI Platform foundation (20 routers, 8 services): authentication, organizations, products, licenses, SSO, notifications, webhooks, audit logs, settings. Manages tenants, user-to-org mapping, and cross-product access. Every user belongs to an organization; every product access requires an active license for that org.
 - **`products/erp-imobiliario/`** — Real estate CRM product with 48 routers and 40 services: client management, property listings (ativos), sales funnel, AI matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting. All data is scoped to the user's organization.
 - **`products/personal-finance/`** — Personal finance tracker product: multi-account transaction management, budgets (orcamentos), recurring transactions, investment portfolio tracking (carteiras), stock watchlists with real-time quotes (yfinance), reports, and dashboard analytics. Uses the same FastAPI + Supabase backend / React + TypeScript frontend stack.
+- **`products/therapy-platform/`** — Online therapy platform with 7 routers and 6 services: therapist/patient/clinic profiles, directory discovery, reviews, admin approval, and notifications. 4 user roles (platform_admin, clinic_admin, therapist, patient) with role-based layouts. Auth is direct Supabase Auth (NOT NoctusAI SSO). Multi-tenant via `clinic_id` (not `org_id`). Schema: `therapy`. Backend port 8003, frontend port 8095. 39 database tables covering identity, scheduling, video sessions, clinical AI, financials, messaging, and reviews.
 
 All layers follow the same stack: **FastAPI + Supabase** backend, **React + TypeScript + Vite** frontend. Each has independent backend and frontend directories.
 
@@ -132,7 +133,24 @@ cd core/frontend
 npm run dev      # Vite dev server on port 5173
 ```
 
-### Full Stack (Replit)
+### Therapy Backend
+
+```bash
+source venv/bin/activate
+uvicorn app.main:app --reload --port 8003 --app-dir products/therapy-platform/backend
+```
+
+### Therapy Frontend
+
+```bash
+cd products/therapy-platform/frontend
+
+npm run dev      # Vite dev server on port 8095
+npm run build    # Production build
+npm run lint     # ESLint
+```
+
+### Full Stack
 
 ```bash
 bash start.sh    # Creates root venv, installs deps, starts all backends + frontends
@@ -140,7 +158,7 @@ bash start.sh    # Creates root venv, installs deps, starts all backends + front
 
 ## Testing
 
-Tests use **pytest** with a fully mocked Supabase layer (299 core tests, 1498 ERP tests, 465 PF tests). Key fixtures are in `tests/conftest.py`:
+Tests use **pytest** with a fully mocked Supabase layer (299 core tests, 1549 ERP tests, 465 PF tests). Key fixtures are in `tests/conftest.py`:
 
 - `MockSupabaseClient` / `MockQueryBuilder` — Chainable query builder that simulates Supabase PostgREST
 - `AuthClient` — Wraps FastAPI `TestClient` with automatic `Authorization: Bearer` headers
@@ -169,7 +187,7 @@ pytest core/backend/tests/realdb/ \
 - **Auto-skip**: Tests skip when `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` are not set, so normal `pytest` runs are unaffected.
 - **Cleanup**: Every test cleans up its data via `cleanup` fixture (collects `(table, id)` tuples, deletes in reverse order).
 - **Convention**: Test orgs use `category: "test"` for easy identification.
-- **Schema targeting**: Core tests use `public`, ERP uses `ClientOptions(schema="erp")`, PF uses `ClientOptions(schema="personal-finance")`.
+- **Schema targeting**: Core tests use `public`, ERP uses `ClientOptions(schema="erp")`, PF uses `ClientOptions(schema="personal-finance")`, Therapy uses `ClientOptions(schema="therapy")`.
 
 ## Environment Variables
 
@@ -187,9 +205,15 @@ DEBUG=true
 CORE_API_URL=http://localhost:8000
 SENTRY_DSN=          # Optional
 REDIS_URL=           # Optional
-OPENAI_API_KEY=      # Optional (ERP product)
+OPENAI_API_KEY=      # Optional (ERP + Therapy products)
 RESEND_API_KEY=      # Optional (email delivery)
 CLICKSIGN_API_TOKEN= # Optional (digital signatures)
+THERAPY_LIVEKIT_URL=           # Therapy product only
+THERAPY_LIVEKIT_API_KEY=       # Therapy product only
+THERAPY_LIVEKIT_API_SECRET=    # Therapy product only
+THERAPY_GOOGLE_CLIENT_ID=      # Therapy product only (Google OAuth + Calendar)
+THERAPY_GOOGLE_CLIENT_SECRET=  # Therapy product only
+THERAPY_STRIPE_CONNECT_CLIENT_ID= # Therapy product only (Stripe Connect marketplace)
 ```
 
 Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary — frontend vars end up in browser bundles).
@@ -217,7 +241,9 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 - **Validation**: Pydantic models use `Field()` constraints (ge, le, max_length). Use `Literal` types for enum-like fields.
 - **Error handling**: Raise `HTTPException` for simple cases. Use custom `AppException` subclasses for structured errors. All exceptions are caught by centralized handlers in `main.py`. Both backends register a `postgrest_exception_handler` that catches Supabase PostgREST `APIError` with code `PGRST116` (`.single()` returning 0 rows) and converts it to a 404 response.
 - **Logging**: Structured JSON in production, human-readable in dev. Every request gets a correlation ID via middleware.
-- **Security defaults**: `debug` defaults to `False` across all backends (core, ERP, personal-finance). `jwt_secret` defaults to a dev-only placeholder that triggers a validation error in production. Docs endpoints are disabled when `not debug`.
+- **Security defaults**: `debug` defaults to `False` across all backends (core, ERP, personal-finance, therapy). `jwt_secret` defaults to a dev-only placeholder that triggers a validation error in production. Docs endpoints are disabled when `not debug`. Leaked password protection is enabled in Supabase Auth (checks passwords against HaveIBeenPwned.org).
+- **RLS InitPlan optimization**: All RLS policies wrap `auth.uid()`, `auth.jwt()`, and `current_setting()` calls in subselects — `(SELECT auth.uid())` instead of `auth.uid()` — to prevent per-row re-evaluation. The therapy schema uses helper functions `therapy.current_user_role()` and `therapy.current_clinic_id()` for the same purpose. Never write a new RLS policy with a bare `auth.uid()` or `auth.jwt()` call.
+- **Function search_path**: All PostgreSQL functions must include `SET search_path = <schema>, public` to prevent search path injection. This applies to both `erp` and `personal-finance` schema functions.
 
 ### Frontend Patterns
 
@@ -230,8 +256,8 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 - **Auth initialization**: `authStore` has `isInitialized` flag. `AuthProvider` calls `setInitialized()` after `getSession()`. `AppContent` shows `<PageSkeleton />` while `!isInitialized` to prevent login form flash.
 - **API client** (`lib/api-client.ts`): Handles 204 No Content, uses `safeFetch()` for all methods (not raw `fetch`). Body params typed as `unknown` (not `any`).
 - **Validation schemas**: Deduplicate identical schemas (e.g., `corretorSchema = signUpSchema`). Schemas live in `lib/validations.ts`.
-- **Modals**: Use `formData` state (not entity props) for display. Update UI instantly without closing modals. See `AGENTIC-WORKFLOW/CONTEXT/frontend/02-ERP.md` (Modal Patterns section).
-- **Dates**: All date handling uses São Paulo timezone (America/Sao_Paulo). Server calculates dates via Supabase RPC `get_data_sp()`. See `AGENTIC-WORKFLOW/CONTEXT/frontend/02-ERP.md` (Date & Timezone Patterns section).
+- **Modals**: Use `formData` state (not entity props) for display. Update UI instantly without closing modals.
+- **Dates**: All date handling uses São Paulo timezone (America/Sao_Paulo). Server calculates dates via Supabase RPC `get_data_sp()`.
 
 ### Token Refresh & 401 Retry (All Products)
 
@@ -342,24 +368,50 @@ All tables are defined in `core/backend/migrations/001_noctusai_core.sql` (15 ta
 
 The codebase uses **Portuguese (Brazilian)** for business domain terminology (clientes, metas, ativos, funil, etc.) and English for technical/framework concepts. Error messages returned to users are in Portuguese.
 
+## Database Security & RLS Architecture
+
+All 129 tables across all 4 schemas have RLS enabled. Security was comprehensively audited and hardened on 2026-04-09.
+
+### RLS Patterns by Schema
+
+- **`public`** (15 tables) — Org-scoped via `noctus_users.org_id` subquery: `USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = (SELECT auth.uid())))`. Admin endpoints use `noctus_users.role = 'admin'` check.
+- **`erp`** (59 tables) — Two patterns: (1) org-scoped via `org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid` for ~48 tables, (2) role+owner-scoped via `has_role((SELECT auth.uid()), 'admin')` + `(SELECT auth.uid()) = usuario_id` for user-facing tables (clientes, metas, profiles, etc.). Matches scoped via ativos.owner_id FK chain.
+- **`personal-finance`** (16 tables) — User-scoped via `user_org_id()` SECURITY DEFINER helper function. Child tables (alocacao_alvo, watchlist_itens, etc.) use parent-table subqueries.
+- **`therapy`** (39 tables) — 4-role system (platform_admin, clinic_admin, therapist, patient). Uses `therapy.current_user_role()` and `therapy.current_clinic_id()` SECURITY DEFINER helper functions. Policies are role-aware: platform_admin sees all, clinic_admin sees own clinic, therapist/patient see own data. Clinical session tables chain through appointment joins.
+
+### RLS Rules (Mandatory)
+
+1. **Always use `(SELECT auth.uid())` / `(SELECT auth.jwt())`** — never bare `auth.uid()`. The subselect prevents per-row re-evaluation (InitPlan optimization).
+2. **All PostgreSQL functions must include `SET search_path`** — prevents search path injection. Example: `SET search_path = erp, public`.
+3. **Therapy uses helper functions** — `therapy.current_user_role()` and `therapy.current_clinic_id()` for efficient role/clinic extraction from JWT.
+4. **Leaked password protection is enabled** in Supabase Auth (HaveIBeenPwned check on password changes).
+5. **Service role bypasses RLS** — backend operations that need cross-tenant access use `get_admin_client()`.
+
+### Known Gaps (Future Work)
+
+- **Provisioning lifecycle**: When a license is created in `public.licenses`, no mechanism bootstraps per-org data in the target product schema. The `license.granted` webhook fires to external URLs only, not to product backends.
+- **Usage reporting**: Products don't report metrics back to core for billing/admin dashboards.
+- **ERP `ativos` SELECT policy is `USING(true)`**: All authenticated users can read all ativos (cross-org). This is by current design (org filtering happens at the application layer) but is a candidate for tightening.
+
 ## Database Schema Separation
 
 Tables are separated into **product-scoped PostgreSQL schemas**:
 
 - **`public`** — Core platform tables (15 total: `noctus_users`, `organizations`, `products`, `licenses`, `plans`, `subscriptions`, `api_keys`, `roles`, `invitations`, `notifications`, `audit_logs`, `webhook_endpoints`, `webhook_deliveries`, `platform_settings`, `org_settings`) + auth hook functions (`handle_new_user`, `assign_default_corretor_role`, `has_role`)
 - **`erp`** — ERP product tables (`metas`, `clientes`, `ativos`, `profiles`, `user_roles`, `condominios`, etc.) + all ERP business logic functions
+- **`therapy`** — Therapy platform tables (39 total: `clinics`, `therapist_profiles`, `patient_profiles`, `appointments`, `video_rooms`, `session_records`, `session_summary_versions`, `wallets`, `transactions`, `conversations`, `messages`, `reviews`, `platform_settings`, etc.). Auth is direct Supabase Auth — users reference `auth.users(id)` directly. Multi-tenant via `clinic_id` (not `org_id`). 4-role RLS: platform_admin (full access), clinic_admin (own clinic), therapist (own data + patients), patient (own data). Helper functions `therapy.current_user_role()` and `therapy.current_clinic_id()` extract role/clinic from JWT metadata.
 
-The ERP backend's `database.py` uses `ClientOptions(schema="erp")` so all `.table()` and `.rpc()` calls target the `erp` schema automatically. The ERP frontend's Supabase client uses `db: { schema: 'erp' }` so all direct `.from()` calls also target the `erp` schema. The Core backend defaults to `public`.
+Each product backend's `database.py` uses `ClientOptions(schema="<schema>")` so all `.table()` and `.rpc()` calls target the correct schema automatically. Each product frontend's Supabase client uses `db: { schema: '<schema>' }` for data queries. The Core backend defaults to `public`.
 
-**Supabase Dashboard** must have `erp` in the "Exposed schemas" list (Project Settings → API) for PostgREST to accept the `Accept-Profile: erp` header.
+**Supabase Dashboard** must have all product schemas (`erp`, `personal-finance`, `therapy`) in the "Exposed schemas" list (Project Settings → API) for PostgREST to accept the `Accept-Profile` header.
 
 ### Core migration files (`core/backend/migrations/`):
-- `001_noctusai_core.sql` — Full core schema (15 tables, RLS policies, seed data) for fresh deploys
+- `001_noctusai_core.sql` — Full core schema (15 tables, RLS policies with InitPlan optimization, FK indexes, seed data) for fresh deploys. All RLS policies use `(SELECT auth.uid())` subselect pattern. Includes `roles_read_own_org` SELECT policy.
 - `002_missing_tables.sql` — Adds 6 tables (notifications, audit_logs, webhooks, settings) to existing databases
 - `003_license_history.sql` — Modifies licenses table for multiple records per org+product
 
 ### ERP migration files (`products/erp-imobiliario/backend/migrations/`):
-- `001_erp_imobiliario.sql` — Creates `erp` schema + all ERP objects (fresh deploys)
+- `001_erp_imobiliario.sql` — Creates `erp` schema + all ERP objects (fresh deploys). All RLS policies use `(SELECT auth.uid())` / `(SELECT auth.jwt())` subselect pattern. All functions include `SET search_path`. Consolidated admin+user policies (metas, negociacoes, clientes, profiles). Matches scoped via ativos.owner_id FK chain. FK indexes on atividades, ativos, chamados_portal, funil_movimentos, negociacoes, vistorias_rapidas.
 - `002_ai_matching.sql` — pgvector embeddings in `erp` schema
 - `003_schema_separation.sql` — Moves existing objects from `public` → `erp` (existing databases only)
 - `004_mvp_expansion.sql` — 42 new tables for MVP expansion (existing databases)
@@ -398,9 +450,12 @@ Migration scripts for importing data from the legacy Django permutas system into
 - Phase 2 uses ref-based JOINs (not UUID) since Phase 1 TEMP tables are gone; placeholder name parsing (`'Proprietário #' || old_id`) for reverse mapping
 
 ### Personal Finance migration files (`products/personal-finance/backend/migrations/`):
-- `001_personal_finance.sql` — Full PF schema (accounts, transactions, budgets, portfolios, watchlists)
+- `001_personal_finance.sql` — Full PF schema (accounts, transactions, budgets, portfolios, watchlists). All RLS policies use `(SELECT auth.uid())` subselect pattern. `set_updated_at()` function includes `SET search_path`. 24 FK indexes on all foreign key columns.
 - `002_seed_product.sql` — Seeds the personal-finance product record in the core products table
 - `003_fix_schema_permissions.sql` — Fixes schema permissions for PostgREST access
+
+### Therapy Platform migration files (`products/therapy-platform/backend/migrations/`):
+- `001_therapy_platform.sql` — Full therapy schema (39 tables, role-based RLS policies, indexes, seed data, product seed) for fresh deploys. Includes `therapy.current_user_role()` and `therapy.current_clinic_id()` helper functions for RLS. All 39 tables have proper 4-role RLS (platform_admin, clinic_admin, therapist, patient) — no blanket `USING(true)` policies. `therapy.platform_settings` with default AI prompts, commission rates, session timing config. Product-specific env vars use `THERAPY_` prefix.
 
 ## External Integrations & Credential Enforcement
 
