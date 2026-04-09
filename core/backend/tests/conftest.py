@@ -353,6 +353,11 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm, mock
         ("app.routers.settings.get_org_id", mock_get_org_id),
         # Permissions service
         ("app.services.permissions.get_admin_client", mock_sb),
+        # Usage router
+        ("app.routers.usage.get_admin_client", mock_sb),
+        ("app.routers.usage.get_current_user", mock_get_user),
+        ("app.routers.usage.get_current_admin", mock_get_admin),
+        ("app.routers.usage.get_org_id", mock_get_org_id),
     ]
 
 

@@ -14,18 +14,13 @@ class TestConstants:
 
     def test_buckets_defined(self):
         from app.services.storage_service import BUCKETS
-        assert "imoveis" in BUCKETS
-        assert "documentos" in BUCKETS
-        assert "vistorias" in BUCKETS
-        assert "perfil" in BUCKETS
-        assert "contratos" in BUCKETS
+        assert "certidoes" in BUCKETS
         assert "geral" in BUCKETS
 
     def test_allowed_types_defined(self):
         from app.services.storage_service import ALLOWED_TYPES
-        assert "image/jpeg" in ALLOWED_TYPES["imoveis"]
-        assert "application/pdf" in ALLOWED_TYPES["documentos"]
-        assert "video/mp4" in ALLOWED_TYPES["vistorias"]
+        assert "application/pdf" in ALLOWED_TYPES["certidoes"]
+        assert "image/jpeg" in ALLOWED_TYPES["geral"]
 
     def test_max_file_size(self):
         from app.services.storage_service import MAX_FILE_SIZE
@@ -46,29 +41,29 @@ class TestValidateFile:
 
     def test_valid_image(self):
         svc = self._make_svc()
-        err = svc.validate_file("foto.jpg", "image/jpeg", 1024, "imoveis")
+        err = svc.validate_file("foto.jpg", "image/jpeg", 1024, "geral")
         assert err is None
 
     def test_invalid_content_type(self):
         svc = self._make_svc()
-        err = svc.validate_file("script.sh", "application/x-sh", 100, "imoveis")
+        err = svc.validate_file("script.sh", "application/x-sh", 100, "geral")
         assert err is not None
         assert "não permitido" in err
 
     def test_file_too_large(self):
         svc = self._make_svc()
-        err = svc.validate_file("big.jpg", "image/jpeg", 20 * 1024 * 1024, "imoveis")
+        err = svc.validate_file("big.jpg", "image/jpeg", 20 * 1024 * 1024, "geral")
         assert err is not None
         assert "muito grande" in err
 
-    def test_valid_pdf_for_documentos(self):
+    def test_valid_pdf_for_certidoes(self):
         svc = self._make_svc()
-        err = svc.validate_file("doc.pdf", "application/pdf", 5000, "documentos")
+        err = svc.validate_file("doc.pdf", "application/pdf", 5000, "certidoes")
         assert err is None
 
-    def test_invalid_pdf_for_perfil(self):
+    def test_invalid_exe_for_certidoes(self):
         svc = self._make_svc()
-        err = svc.validate_file("doc.pdf", "application/pdf", 5000, "perfil")
+        err = svc.validate_file("malware.exe", "application/x-msdownload", 5000, "certidoes")
         assert err is not None
 
     def test_unknown_categoria_uses_geral(self):
@@ -92,8 +87,8 @@ class TestBucketAndPath:
 
     def test_known_bucket(self):
         svc = self._make_svc()
-        assert svc._get_bucket("imoveis") == "erp-imoveis"
-        assert svc._get_bucket("contratos") == "erp-contratos"
+        assert svc._get_bucket("certidoes") == "erp-certidoes"
+        assert svc._get_bucket("geral") == "erp-geral"
 
     def test_unknown_bucket_fallback(self):
         svc = self._make_svc()
@@ -101,9 +96,9 @@ class TestBucketAndPath:
 
     def test_generate_path_format(self):
         svc = self._make_svc()
-        path = svc._generate_path("imoveis", "photo.jpg")
-        # Should be org_id/categoria/uuid.ext
-        assert path.startswith("org-test/imoveis/")
+        path = svc._generate_path("geral", "photo.jpg")
+        # Should be org_id/uuid.ext
+        assert path.startswith("org-test/")
         assert path.endswith(".jpg")
 
     def test_generate_path_no_extension(self):
@@ -126,11 +121,11 @@ class TestUploadDryRun:
         from app.services.storage_service import StorageService
         svc = StorageService(mock_client, "org-1")
 
-        result = await svc.upload(b"fake-content", "photo.jpg", "image/jpeg", "imoveis")
+        result = await svc.upload(b"fake-content", "photo.jpg", "image/jpeg", "geral")
 
         assert result["dry_run"] is True
         assert "mock.noctus.app" in result["url"]
-        assert result["bucket"] == "erp-imoveis"
+        assert result["bucket"] == "erp-geral"
         assert result["size"] == len(b"fake-content")
         assert result["content_type"] == "image/jpeg"
 
@@ -146,7 +141,7 @@ class TestUploadDryRun:
             (b"img1", "a.jpg", "image/jpeg"),
             (b"img2", "b.png", "image/png"),
         ]
-        results = await svc.upload_multiple(files, "imoveis")
+        results = await svc.upload_multiple(files, "geral")
 
         assert len(results) == 2
         assert all(r["dry_run"] for r in results)
@@ -170,7 +165,7 @@ class TestUploadReal:
         from app.services.storage_service import StorageService
         svc = StorageService(mock_client, "org-1")
 
-        result = await svc.upload(b"data", "photo.jpg", "image/jpeg", "imoveis")
+        result = await svc.upload(b"data", "photo.jpg", "image/jpeg", "geral")
 
         assert result["dry_run"] is False
         assert result["url"] == "https://storage.real/org-1/photo.jpg"
@@ -188,7 +183,7 @@ class TestUploadReal:
         svc = StorageService(mock_client, "org-1")
 
         with pytest.raises(RuntimeError, match="upload failed"):
-            await svc.upload(b"data", "photo.jpg", "image/jpeg", "imoveis")
+            await svc.upload(b"data", "photo.jpg", "image/jpeg", "geral")
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +200,7 @@ class TestDelete:
         from app.services.storage_service import StorageService
         svc = StorageService(mock_client, "org-1")
 
-        result = await svc.delete("org-1/imoveis/abc.jpg", "imoveis")
+        result = await svc.delete("org-1/imoveis/abc.jpg", "geral")
         assert result is True
 
     @pytest.mark.asyncio
@@ -219,7 +214,7 @@ class TestDelete:
         from app.services.storage_service import StorageService
         svc = StorageService(mock_client, "org-1")
 
-        result = await svc.delete("org-1/imoveis/abc.jpg", "imoveis")
+        result = await svc.delete("org-1/imoveis/abc.jpg", "geral")
         assert result is True
         mock_bucket.remove.assert_called_once_with(["org-1/imoveis/abc.jpg"])
 
@@ -234,7 +229,7 @@ class TestDelete:
         from app.services.storage_service import StorageService
         svc = StorageService(mock_client, "org-1")
 
-        result = await svc.delete("org-1/imoveis/abc.jpg", "imoveis")
+        result = await svc.delete("org-1/imoveis/abc.jpg", "geral")
         assert result is False
 
 
@@ -251,7 +246,7 @@ class TestGetSignedUrl:
         from app.services.storage_service import StorageService
         svc = StorageService(mock_client, "org-1")
 
-        url = svc.get_signed_url("org-1/docs/file.pdf", "documentos")
+        url = svc.get_signed_url("org-1/docs/file.pdf", "certidoes")
         assert url is not None
         assert "mock.noctus.app" in url
         assert "mock-signed" in url
@@ -268,7 +263,7 @@ class TestGetSignedUrl:
         from app.services.storage_service import StorageService
         svc = StorageService(mock_client, "org-1")
 
-        url = svc.get_signed_url("org-1/docs/file.pdf", "documentos", expires_in=7200)
+        url = svc.get_signed_url("org-1/docs/file.pdf", "certidoes", expires_in=7200)
         assert url == "https://storage.real/signed/abc?token=xyz"
         mock_bucket.create_signed_url.assert_called_once_with("org-1/docs/file.pdf", 7200)
 
@@ -282,5 +277,5 @@ class TestGetSignedUrl:
         from app.services.storage_service import StorageService
         svc = StorageService(mock_client, "org-1")
 
-        url = svc.get_signed_url("org-1/docs/file.pdf", "documentos")
+        url = svc.get_signed_url("org-1/docs/file.pdf", "certidoes")
         assert url is None
