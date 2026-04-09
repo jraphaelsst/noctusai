@@ -226,7 +226,7 @@ export function BillingSettings() {
                 )}
               </div>
             )}
-            {billing?.subscription?.metadata?.cancel_at_period_end && (
+            {Boolean(billing?.subscription?.metadata?.cancel_at_period_end) && (
               <div className="billing-cancel-notice">
                 Seu plano sera cancelado ao final do periodo atual.
               </div>

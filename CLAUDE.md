@@ -8,16 +8,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **DRY — Don't Repeat Yourself.** Every piece of knowledge, logic, or configuration must have a single authoritative source. Never duplicate code, constants, utilities, validation rules, or business logic across files. Extract shared helpers, reuse existing services, import from centralized modules. If two files need the same function, it belongs in a shared module. If three routers do the same org_id lookup, it belongs in `dependencies.py`. Three similar lines are acceptable; three similar blocks are not — extract and reuse. This applies to backend (services, helpers, schemas) and frontend (hooks, utils, constants, shared components) equally.
 
-**Docs stay in sync with code.** Every commit must include documentation updates. When committing changes, update `CLAUDE.md` to reflect what changed: router/service/page/hook counts, new modules, deleted modules, new patterns, test counts, migration files, infrastructure changes. Documentation is part of the changeset, not a separate task. The user should never have to ask "are the docs up to date?" — they always are.
+**Docs stay in sync with code.** Every commit must include documentation updates. When committing changes, update `CLAUDE.md` and `KNOWLEDGE-BASE/` files to reflect what changed: router/service/page/hook counts, new modules, deleted modules, new patterns, test counts, migration files, infrastructure changes. Documentation is part of the changeset, not a separate task. The user should never have to ask "are the docs up to date?" — they always are.
+
+**Knowledge Base (`KNOWLEDGE-BASE/`)** is the platform's persistent context — architecture docs, domain knowledge, and design rationale that survives across conversations and context window limits. `CLAUDE.md` defines *how to behave* (rules, patterns); `KNOWLEDGE-BASE/` defines *what this platform is* (architecture, inventories, domain knowledge). When adding new platform knowledge (product docs, database changes, integration details), create or update files in `KNOWLEDGE-BASE/CONTEXT/`. See `KNOWLEDGE-BASE/CONTEXT/00-LANDSCAPE.md` for the full platform overview.
 
 ## Architecture
 
 This is a **multi-tenant, multi-product SaaS monorepo**. Each organization (tenant) signs up once on the core platform and gets access to licensed products. Tenant isolation is enforced at the database level via Supabase RLS policies scoped to `org_id`, so data from one organization is never visible to another. Products are independently deployable but share authentication and tenant context through SSO.
 
-- **`core/`** — NoctusAI Platform foundation (21 routers, 8 services): authentication, organizations, products, licenses, SSO, notifications, webhooks, audit logs, settings, usage reporting. Manages tenants, user-to-org mapping, and cross-product access. Every user belongs to an organization; every product access requires an active license for that org. License grants trigger automatic provisioning via database trigger.
-- **`products/erp-imobiliario/`** — Real estate CRM product with 48 routers and 40 services: client management, property listings (ativos), sales funnel, AI matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting. All data is scoped to the user's organization.
-- **`products/personal-finance/`** — Personal finance tracker product: multi-account transaction management, budgets (orcamentos), recurring transactions, investment portfolio tracking (carteiras), stock watchlists with real-time quotes (yfinance), reports, and dashboard analytics. Uses the same FastAPI + Supabase backend / React + TypeScript frontend stack.
-- **`products/therapy-platform/`** — Online therapy platform with 7 routers and 6 services: therapist/patient/clinic profiles, directory discovery, reviews, admin approval, and notifications. 4 user roles (platform_admin, clinic_admin, therapist, patient) with role-based layouts. Auth is direct Supabase Auth (NOT NoctusAI SSO). Multi-tenant via `clinic_id` (not `org_id`). Schema: `therapy`. Backend port 8003, frontend port 8095. 39 database tables covering identity, scheduling, video sessions, clinical AI, financials, messaging, and reviews.
+- **`core/`** — NoctusAI Platform foundation (21 routers, 9 services): authentication, organizations, products, licenses, SSO, notifications, webhooks, audit logs, settings, usage reporting. Manages tenants, user-to-org mapping, and cross-product access. Every user belongs to an organization; every product access requires an active license for that org. License grants trigger automatic provisioning via database trigger. See `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`.
+- **`products/erp-imobiliario/`** — Real estate CRM product with 50 routers and 42 services: client management, property listings (ativos), sales funnel, AI matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting. All data is scoped to the user's organization. See `KNOWLEDGE-BASE/CONTEXT/backend/02-ERP.md`.
+- **`products/personal-finance/`** — Personal finance tracker product with 16 routers and 14 services: multi-account transaction management, budgets (orcamentos), recurring transactions, investment portfolio tracking (carteiras), stock watchlists with real-time quotes (yfinance), reports, and dashboard analytics. See `KNOWLEDGE-BASE/CONTEXT/backend/03-PF.md`.
+- **`products/therapy-platform/`** — Online therapy platform with 39 routers and 38 services: therapist/patient/clinic profiles, scheduling, video sessions (LiveKit), clinical AI (transcription, summaries, longitudinal analysis, crisis detection), wallets, payments (Stripe Connect), messaging, reviews. 4 user roles (platform_admin, clinic_admin, therapist, patient) with role-based layouts. Auth is direct Supabase Auth (NOT NoctusAI SSO). Multi-tenant via `clinic_id` (not `org_id`). Schema: `therapy`. Backend port 8003, frontend port 8095. See `KNOWLEDGE-BASE/CONTEXT/backend/06-THERAPY.md`.
 
 All layers follow the same stack: **FastAPI + Supabase** backend, **React + TypeScript + Vite** frontend. Each has independent backend and frontend directories.
 
@@ -166,7 +168,7 @@ bash start.sh    # Creates root venv, installs deps, starts all backends + front
 
 ## Testing
 
-Tests use **pytest** with a fully mocked Supabase layer (299 core tests, 1549 ERP tests, 465 PF tests). Key fixtures are in `tests/conftest.py`:
+Tests use **pytest** with a fully mocked Supabase layer (351 core tests, 1,634 ERP tests, 473 PF tests, 1,021 therapy tests — 3,479 total). Key fixtures are in `tests/conftest.py`:
 
 - `MockSupabaseClient` / `MockQueryBuilder` — Chainable query builder that simulates Supabase PostgREST
 - `AuthClient` — Wraps FastAPI `TestClient` with automatic `Authorization: Bearer` headers
@@ -271,8 +273,8 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 - **Auth initialization**: `authStore` has `isInitialized` flag. `AuthProvider` calls `setInitialized()` after `getSession()`. `AppContent` shows `<PageSkeleton />` while `!isInitialized` to prevent login form flash.
 - **API client** (`lib/api-client.ts`): Handles 204 No Content, uses `safeFetch()` for all methods (not raw `fetch`). Body params typed as `unknown` (not `any`).
 - **Validation schemas**: Deduplicate identical schemas (e.g., `corretorSchema = signUpSchema`). Schemas live in `lib/validations.ts`.
-- **Modals**: Use `formData` state (not entity props) for display. Update UI instantly without closing modals.
-- **Dates**: All date handling uses São Paulo timezone (America/Sao_Paulo). Server calculates dates via Supabase RPC `get_data_sp()`.
+- **Modals**: Use `formData` state (not entity props) for display. Update UI instantly without closing modals. See `KNOWLEDGE-BASE/CONTEXT/frontend/02-ERP.md` (Modal Patterns section).
+- **Dates**: All date handling uses São Paulo timezone (America/Sao_Paulo). Server calculates dates via Supabase RPC `get_data_sp()`. See `KNOWLEDGE-BASE/CONTEXT/frontend/02-ERP.md` (Date & Timezone Patterns section).
 
 ### Token Refresh & 401 Retry (All Products)
 

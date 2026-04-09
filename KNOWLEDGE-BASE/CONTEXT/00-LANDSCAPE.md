@@ -21,6 +21,18 @@ A **multi-tenant, multi-product SaaS platform**. Organizations sign up once on t
 
 ---
 
+## Inventory
+
+| Product | Routers | Services | Tests | Test Files |
+|---------|---------|----------|-------|------------|
+| Core | 21 | 9 | 351 | 26 |
+| ERP | 50 | 42 | 1,634 | 98 |
+| PF | 16 | 14 | 473 | 37 |
+| Therapy | 39 | 38 | 1,021 | 62 |
+| **Total** | **126** | **103** | **3,479** | **223** |
+
+---
+
 ## Architecture
 
 ```
@@ -30,25 +42,27 @@ A **multi-tenant, multi-product SaaS platform**. Organizations sign up once on t
 │  FastAPI :8000          React :5173                      │
 └──────────┬──────────────────────────┬───────────────────┘
            │ SSO Token                │ SSO Token
-┌──────────▼──────────┐   ┌──────────▼──────────┐
-│  ERP Imobiliario     │   │  Personal Finance    │
-│  Clients · Properties│   │  Accounts · Budgets  │
-│  Matching · AI       │   │  Portfolios · Reports│
-│  FastAPI :8001       │   │  FastAPI :8002        │
-│  React :8080         │   │  React :8090          │
-└──────────┬───────────┘   └──────────┬───────────┘
-           │                          │
-    ┌──────▼──────────────────────────▼──────┐
-    │              Supabase                   │
-    │  PostgreSQL · RLS per org · Storage     │
-    │  Schemas: public | erp | personal-finance│
-    └──────────┬─────────────────────────────┘
+┌──────────▼──────────┐   ┌──────────▼──────────┐   ┌──────────────────────┐
+│  ERP Imobiliario     │   │  Personal Finance    │   │  Therapy Platform    │
+│  Clients · Properties│   │  Accounts · Budgets  │   │  Sessions · Clinical │
+│  Matching · AI       │   │  Portfolios · Reports│   │  Wallets · Messaging │
+│  FastAPI :8001       │   │  FastAPI :8002        │   │  FastAPI :8003       │
+│  React :8080         │   │  React :8090          │   │  React :8095         │
+└──────────┬───────────┘   └──────────┬───────────┘   └──────────┬───────────┘
+           │                          │                          │
+    ┌──────▼──────────────────────────▼──────────────────────────▼──────┐
+    │                          Supabase                                  │
+    │  PostgreSQL · RLS per org/role · Storage                          │
+    │  Schemas: public | erp | personal-finance | therapy               │
+    └──────────┬────────────────────────────────────────────────────────┘
                │
-    ┌──────────▼──────────────────────────────┐
-    │           External Services              │
-    │  OpenAI · WAHA · n8n · Stripe · yfinance│
-    └─────────────────────────────────────────┘
+    ┌──────────▼──────────────────────────────────────────────────────┐
+    │                      External Services                          │
+    │  OpenAI · WAHA · n8n · Stripe · yfinance · LiveKit · Resend    │
+    └─────────────────────────────────────────────────────────────────┘
 ```
+
+Note: Therapy Platform uses **direct Supabase Auth** (not SSO through Core). Multi-tenant via `clinic_id` (not `org_id`).
 
 ---
 
@@ -60,13 +74,14 @@ A **multi-tenant, multi-product SaaS platform**. Organizations sign up once on t
 | Frontend | React 18 + TypeScript + Vite |
 | Database | Supabase (PostgreSQL + RLS) |
 | Styling | Tailwind CSS + shadcn/ui |
-| Server State | TanStack Query (ERP, PF), React Context (Core) |
-| Client State | Zustand (ERP, PF), React Context (Core) |
+| Server State | TanStack Query (ERP, PF, Therapy), React Context (Core) |
+| Client State | Zustand (ERP, PF, Therapy), React Context (Core) |
 | Auth | Supabase Auth + JWT + SSO tokens |
 | AI | OpenAI GPT-4o-mini + text-embedding-3-small |
 | Messaging | WAHA (WhatsApp HTTP API) |
+| Video Sessions | LiveKit (Therapy product) |
 | Orchestration | n8n (self-hosted) |
-| Billing | Stripe |
+| Billing | Stripe / Stripe Connect (Therapy marketplace) |
 
 ---
 
@@ -104,7 +119,7 @@ A **multi-tenant, multi-product SaaS platform**. Organizations sign up once on t
 
 ## Testing Strategy
 
-**Dual-layer testing**: Mock-based unit tests for speed (2,196 tests: Core 299, ERP 1,432, PF 465) + real-DB integration tests (~25 tests per backend) for confidence. Mock tests use `MockSupabaseClient` and run without credentials. Real-DB tests in `tests/realdb/` hit a live Supabase instance to verify SQL filtering, FK/CHECK constraints, cascade deletes, PostgREST errors, and RLS org isolation — auto-skip without credentials.
+**Dual-layer testing**: Mock-based unit tests for speed (3,479 tests: Core 351, ERP 1,634, PF 473, Therapy 1,021) + real-DB integration tests (~25 tests per backend) for confidence. Mock tests use `MockSupabaseClient` and run without credentials. Real-DB tests in `tests/realdb/` hit a live Supabase instance to verify SQL filtering, FK/CHECK constraints, cascade deletes, PostgREST errors, and RLS org isolation — auto-skip without credentials.
 
 ## Legacy Data Migration (`migratingDB/`)
 

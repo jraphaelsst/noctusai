@@ -496,5 +496,5 @@ A change is only complete when:
 1. All existing tests still pass
 2. New tests are written for new behavior
 3. Evals show no regression (or regression is intentional and documented)
-4. Documentation updated (`CLAUDE.md` + `AGENTIC-WORKFLOW/` files reflect the changes)
+4. Documentation updated (`CLAUDE.md` + `KNOWLEDGE-BASE/` files reflect the changes)
 5. Code reviewed and approved

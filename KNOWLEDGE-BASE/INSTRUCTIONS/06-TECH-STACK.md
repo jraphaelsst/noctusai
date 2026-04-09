@@ -148,7 +148,7 @@ project-root/
 │       ├── backend/tests/       # 27 test files (465 tests)
 │       └── frontend/src/        # React :8090 (18 pages, 14 hooks, lib/constants.ts)
 │
-├── AGENTIC-WORKFLOW/            # CDD+TDD methodology & agentic artifacts
+├── KNOWLEDGE-BASE/            # CDD+TDD methodology & agentic artifacts
 │   ├── INSTRUCTIONS/            # Methodology documentation (00-07)
 │   │   ├── 00-MASTER.md         # Core principles and architecture
 │   │   ├── 01-SKILLS.md         # Composable units of agent expertise

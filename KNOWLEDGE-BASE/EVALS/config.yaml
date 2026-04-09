@@ -9,7 +9,7 @@ runner:
   timeout_per_case: 30          # seconds
   max_retries: 1
   parallel: false
-  report_dir: "AGENTIC-WORKFLOW/EVALS/reports"
+  report_dir: "KNOWLEDGE-BASE/EVALS/reports"
 
 judge:
   model: "gpt-4o-mini"

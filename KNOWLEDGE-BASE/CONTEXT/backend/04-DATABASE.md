@@ -15,8 +15,9 @@ Tables are separated into **product-scoped PostgreSQL schemas**:
 | `public` | Core platform tables + auth hook functions | `core/backend` (default) |
 | `erp` | ERP product tables + business logic functions | `products/erp-imobiliario/backend` (`ClientOptions(schema="erp")`) |
 | `personal-finance` | Personal finance tables | `products/personal-finance/backend` (`ClientOptions(schema="personal-finance")`) |
+| `therapy` | Therapy platform tables (39 tables) + 4-role RLS | `products/therapy-platform/backend` (`ClientOptions(schema="therapy")`) |
 
-The ERP backend's `database.py` uses `ClientOptions(schema="erp")` so all `.table()` and `.rpc()` calls target the `erp` schema via PostgREST's `Accept-Profile` / `Content-Profile` headers.
+Each backend's `database.py` uses `ClientOptions(schema="<schema>")` so all `.table()` and `.rpc()` calls target the correct schema via PostgREST's `Accept-Profile` / `Content-Profile` headers.
 
 **Auth hook functions** (`handle_new_user`, `assign_default_corretor_role`, `has_role`) stay in `public` because they are triggered by `auth.users` (a platform-level table). Their bodies reference `erp.*` tables with schema-qualified names.
 
@@ -233,6 +234,90 @@ Note: Onboarding status is stored as fields on `organizations` (`onboarding_comp
 | `carteiras` | Investment portfolios | `id`, `org_id`, `nome`, `descricao` |
 | `ativos` | Individual asset positions | `id`, `org_id`, `carteira_id`, `ticker`, `quantidade`, `preco_medio`, `tipo` |
 | `watchlist` | Stock watchlist items | `id`, `org_id`, `ticker`, `nome`, `preco_alerta` |
+
+---
+
+## Therapy Platform Tables (`therapy` schema — 39+ tables)
+
+### Identity & Profiles
+
+| Table | Purpose |
+|-------|---------|
+| `therapy.clinics` | Clinic profiles (CNPJ, approval status, logo, specialties) |
+| `therapy.therapist_profiles` | Therapist credentials (CRP), specialties, session pricing, approval status |
+| `therapy.patient_profiles` | Patient profiles with current therapist link, origin, clinic assignment |
+
+### Clinic Configuration
+
+| Table | Purpose |
+|-------|---------|
+| `therapy.clinic_settings` | Bank details, notification email, default commission percentages |
+| `therapy.clinic_branding` | Custom logo, colors, domain routing |
+| `therapy.clinic_rules` | Clinic-level policies (session duration, deposit requirement, etc.) |
+
+### Wallets & Finance
+
+| Table | Purpose |
+|-------|---------|
+| `therapy.patient_wallets` | Patient balance, freeze status |
+| `therapy.therapist_wallets` | Therapist balance, freeze status |
+| `therapy.wallet_movements` | Debit/credit history |
+| `therapy.transactions` | All financial movements (deposits, withdrawals, commissions, refunds) |
+| `therapy.invoices` | Invoice records with status and payment terms |
+| `therapy.refund_requests` | Refund request workflow (pending, approved, rejected, processed) |
+| `therapy.stripe_subscriptions` | Stripe subscription tracking |
+| `therapy.payout_requests` | Therapist withdrawal requests |
+| `therapy.payout_batches` | Grouped payouts with status |
+| `therapy.no_show_charges` | Automatic charge records for no-shows |
+
+### Scheduling & Sessions
+
+| Table | Purpose |
+|-------|---------|
+| `therapy.appointment_slots` | Available appointment times |
+| `therapy.appointments` | Scheduled sessions with status, price, no-show tracking |
+| `therapy.appointment_cancellations` | Cancellation history with reason and fee |
+| `therapy.sessions` | Active/completed video sessions with LiveKit metadata |
+| `therapy.recurring_schedules` | Recurring appointment patterns |
+| `therapy.recurring_skips` | Exceptions/skipped dates for recurring schedules |
+
+### Clinical Features (migration 002)
+
+| Table | Purpose |
+|-------|---------|
+| `therapy.anamnese` | Patient intake forms (queixa_principal, historia_pregressa, medicacoes) |
+| `therapy.treatment_plans` | Treatment plans with description, status, dates |
+| `therapy.treatment_plan_goals` | Individual goals within plans with status tracking |
+| `therapy.evolution_notes` | Clinical notes (SOAP format or free-form) |
+| `therapy.rooms` | Physical rooms with capacity, active status |
+| `therapy.room_bookings` | Room reservations linked to appointments |
+
+### Communication
+
+| Table | Purpose |
+|-------|---------|
+| `therapy.notifications` | User notifications with delivery status |
+| `therapy.notification_preferences` | User opt-in/opt-out settings |
+| `therapy.email_logs` | Sent email history |
+
+### Additional
+
+Reviews, messaging (conversations + messages), attachments, patient notes, platform approvals, matching data, journaling tables.
+
+### RLS Model
+
+4-role system using `therapy.current_user_role()` and `therapy.current_clinic_id()` SECURITY DEFINER helper functions:
+- **platform_admin**: Full access to all tables
+- **clinic_admin**: Scoped to own `clinic_id`
+- **therapist**: Own data + assigned patients
+- **patient**: Own data only
+
+### Migration Files
+
+| File | Purpose |
+|------|---------|
+| `001_therapy_platform.sql` | Base schema (39 tables, 4-role RLS, helper functions, indexes, seed data) |
+| `002_clinical_features.sql` | Clinical features (anamnese, treatment plans, evolution notes, rooms, pgvector) |
 
 ---
 
