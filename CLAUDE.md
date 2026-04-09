@@ -74,6 +74,14 @@ Cross-cutting code lives in `shared/` to avoid duplication across products:
 - `query-client.ts` — `createQueryClient` with shared defaults
 - `notifications.ts` — `createNotificationHooks` factory + `Notificacao`, `ContagemNaoLidas` types
 - `components/ErrorBoundary.tsx`, `components/SSOCallback.tsx`
+- `design-system/tokens.css` — **Single source of truth** for CSS custom properties (colors, radii, sidebar tokens, dark mode). All product `index.css` files import this instead of defining their own tokens.
+- `design-system/tailwind.config.base.ts` — Shared Tailwind theme config. Products extend via `{ presets: [base] }`. Registers all color tokens: primary (light/dark), success, warning, danger, info, sidebar, and status colors.
+- `design-system/components/AppShell.tsx` — Unified layout shell: dark sidebar + header + content. Handles responsive off-canvas sidebar on mobile.
+- `design-system/components/Sidebar.tsx` — Generic, prop-driven sidebar with collapsible `NavGroup`s. Products pass their own nav data.
+- `design-system/components/Header.tsx` — Generic header with hamburger, user avatar dropdown, and `actions` slot for product-specific UI (notifications, etc.).
+- `design-system/index.ts` — Barrel export for all design system components and types.
+
+**Design system principle**: One change to `tokens.css` or `tailwind.config.base.ts` affects all products simultaneously. Products customize via nav data props, not by forking components.
 
 All shared backend modules use `from __future__ import annotations` for Python 3.9 compatibility.
 
