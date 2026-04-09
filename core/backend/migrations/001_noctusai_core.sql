@@ -487,3 +487,189 @@ VALUES (
     '#10b981',
     true
 ) ON CONFLICT (slug) DO NOTHING;
+
+-- ============================================================
+-- 17. RLS HELPER FUNCTIONS (unified pattern)
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.current_user_id()
+  RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = public
+AS $$ SELECT (SELECT auth.uid()); $$;
+
+CREATE OR REPLACE FUNCTION public.current_org_id()
+  RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = public
+AS $$ SELECT (SELECT (auth.jwt() ->> 'org_id'))::uuid; $$;
+
+CREATE OR REPLACE FUNCTION public.is_platform_admin()
+  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = public
+AS $$ SELECT EXISTS (
+  SELECT 1 FROM public.noctus_users
+  WHERE id = (SELECT auth.uid()) AND role = 'admin'
+); $$;
+
+-- ============================================================
+-- 18. PROVISIONING LIFECYCLE
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.provision_erp(p_org_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, erp
+AS $$
+BEGIN
+  INSERT INTO erp.site_config (org_id, nome_imobiliaria, ativo)
+  VALUES (p_org_id, 'Minha Imobiliária', true)
+  ON CONFLICT DO NOTHING;
+  INSERT INTO public.audit_logs (user_id, org_id, action, resource_type, details)
+  VALUES (NULL, p_org_id, 'provision', 'product', '{"product": "erp-imobiliario", "status": "provisioned"}'::jsonb);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.provision_personal_finance(p_org_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.audit_logs (user_id, org_id, action, resource_type, details)
+  VALUES (NULL, p_org_id, 'provision', 'product', '{"product": "personal-finance", "status": "provisioned"}'::jsonb);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.provision_therapy(p_org_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.audit_logs (user_id, org_id, action, resource_type, details)
+  VALUES (NULL, p_org_id, 'provision', 'product', '{"product": "therapy-platform", "status": "provisioned"}'::jsonb);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.deprovision_product(p_org_id uuid, p_product_slug text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.audit_logs (user_id, org_id, action, resource_type, details)
+  VALUES (NULL, p_org_id, 'deprovision', 'product',
+    jsonb_build_object('product', p_product_slug, 'status', 'deprovisioned'));
+  INSERT INTO public.notifications (user_id, org_id, type, title, message, metadata)
+  SELECT nu.id, p_org_id, 'system',
+    'Licença revogada',
+    'O acesso ao produto ' || p_product_slug || ' foi revogado para sua organização.',
+    jsonb_build_object('product', p_product_slug, 'action', 'revoked')
+  FROM public.noctus_users nu WHERE nu.org_id = p_org_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.on_license_change()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_slug text;
+  v_org_id uuid;
+BEGIN
+  SELECT slug INTO v_slug FROM public.products WHERE id = NEW.product_id;
+  v_org_id := NEW.org_id;
+  IF TG_OP = 'INSERT' AND NEW.status = 'active' THEN
+    CASE v_slug
+      WHEN 'erp-imobiliario' THEN PERFORM public.provision_erp(v_org_id);
+      WHEN 'personal-finance' THEN PERFORM public.provision_personal_finance(v_org_id);
+      WHEN 'therapy-platform' THEN PERFORM public.provision_therapy(v_org_id);
+      ELSE NULL;
+    END CASE;
+    INSERT INTO public.notifications (user_id, org_id, type, title, message, metadata)
+    SELECT nu.id, v_org_id, 'system',
+      'Novo produto disponível',
+      'Sua organização agora tem acesso ao ' || COALESCE((SELECT name FROM public.products WHERE id = NEW.product_id), v_slug) || '!',
+      jsonb_build_object('product', v_slug, 'license_id', NEW.id, 'action', 'granted')
+    FROM public.noctus_users nu WHERE nu.org_id = v_org_id;
+  ELSIF TG_OP = 'UPDATE' AND OLD.status = 'active' AND NEW.status = 'revoked' THEN
+    PERFORM public.deprovision_product(v_org_id, v_slug);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS license_provisioning_trigger ON public.licenses;
+CREATE TRIGGER license_provisioning_trigger
+  AFTER INSERT OR UPDATE ON public.licenses
+  FOR EACH ROW EXECUTE FUNCTION public.on_license_change();
+
+-- ============================================================
+-- 19. USAGE REPORTING
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.product_usage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL REFERENCES public.organizations(id),
+  product_id uuid NOT NULL REFERENCES public.products(id),
+  metric text NOT NULL,
+  value bigint NOT NULL DEFAULT 0,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT product_usage_unique UNIQUE (org_id, product_id, metric, recorded_at)
+);
+
+ALTER TABLE public.product_usage ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "service_role_bypass" ON public.product_usage FOR ALL TO service_role USING (true);
+CREATE POLICY "admin_read" ON public.product_usage FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) IN (SELECT id FROM public.noctus_users WHERE role = 'admin'));
+CREATE POLICY "org_read_own" ON public.product_usage FOR SELECT TO authenticated
+  USING (org_id IN (SELECT noctus_users.org_id FROM noctus_users WHERE noctus_users.id = (SELECT auth.uid())));
+
+CREATE INDEX idx_product_usage_org ON public.product_usage(org_id);
+CREATE INDEX idx_product_usage_recorded ON public.product_usage(recorded_at DESC);
+
+CREATE OR REPLACE FUNCTION public.snapshot_product_usage()
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  lic RECORD;
+  v_slug text;
+  v_active_users bigint;
+  v_total_records bigint;
+  v_now timestamptz := now();
+BEGIN
+  FOR lic IN
+    SELECT l.org_id, l.product_id, p.slug
+    FROM public.licenses l JOIN public.products p ON p.id = l.product_id
+    WHERE l.status = 'active'
+  LOOP
+    v_slug := lic.slug;
+    v_active_users := 0;
+    v_total_records := 0;
+    CASE v_slug
+      WHEN 'erp-imobiliario' THEN
+        SELECT COUNT(DISTINCT usuario_id) INTO v_active_users
+        FROM erp.user_actions_log WHERE created_at > v_now - interval '30 days';
+        SELECT (
+          (SELECT COUNT(*) FROM erp.ativos WHERE org_id = lic.org_id) +
+          (SELECT COUNT(*) FROM erp.clientes WHERE org_id = lic.org_id) +
+          (SELECT COUNT(*) FROM erp.condominios WHERE org_id = lic.org_id)
+        ) INTO v_total_records;
+      WHEN 'personal-finance' THEN
+        SELECT COUNT(DISTINCT user_id) INTO v_active_users
+        FROM "personal-finance".transacoes WHERE created_at > v_now - interval '30 days';
+        SELECT (
+          (SELECT COUNT(*) FROM "personal-finance".contas) +
+          (SELECT COUNT(*) FROM "personal-finance".transacoes) +
+          (SELECT COUNT(*) FROM "personal-finance".categorias WHERE user_id IS NOT NULL)
+        ) INTO v_total_records;
+      WHEN 'therapy-platform' THEN
+        SELECT COUNT(DISTINCT therapist_id) + COUNT(DISTINCT patient_id) INTO v_active_users
+        FROM therapy.appointments WHERE created_at > v_now - interval '30 days';
+        SELECT (
+          (SELECT COUNT(*) FROM therapy.appointments) +
+          (SELECT COUNT(*) FROM therapy.session_records) +
+          (SELECT COUNT(*) FROM therapy.reviews)
+        ) INTO v_total_records;
+      ELSE CONTINUE;
+    END CASE;
+    INSERT INTO public.product_usage (org_id, product_id, metric, value, recorded_at)
+    VALUES
+      (lic.org_id, lic.product_id, 'active_users_30d', v_active_users, v_now),
+      (lic.org_id, lic.product_id, 'total_records', v_total_records, v_now)
+    ON CONFLICT (org_id, product_id, metric, recorded_at) DO UPDATE SET value = EXCLUDED.value;
+  END LOOP;
+END;
+$$;
+
+SELECT cron.schedule('daily-usage-snapshot', '0 3 * * *', 'SELECT public.snapshot_product_usage()');

@@ -25,6 +25,7 @@ from app.routers import team, roles
 from app.routers import onboarding, analytics, oauth
 from app.routers import entitlements, notifications, webhooks, audit_logs
 from app.routers import settings as settings_router
+from app.routers import usage
 
 app.include_router(auth.router)
 app.include_router(organizations.router)
@@ -46,6 +47,7 @@ app.include_router(notifications.router)
 app.include_router(webhooks.router)
 app.include_router(audit_logs.router)
 app.include_router(settings_router.router)
+app.include_router(usage.router)
 
 
 @app.get("/")

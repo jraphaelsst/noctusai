@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **multi-tenant, multi-product SaaS monorepo**. Each organization (tenant) signs up once on the core platform and gets access to licensed products. Tenant isolation is enforced at the database level via Supabase RLS policies scoped to `org_id`, so data from one organization is never visible to another. Products are independently deployable but share authentication and tenant context through SSO.
 
-- **`core/`** — NoctusAI Platform foundation (20 routers, 8 services): authentication, organizations, products, licenses, SSO, notifications, webhooks, audit logs, settings. Manages tenants, user-to-org mapping, and cross-product access. Every user belongs to an organization; every product access requires an active license for that org.
+- **`core/`** — NoctusAI Platform foundation (21 routers, 8 services): authentication, organizations, products, licenses, SSO, notifications, webhooks, audit logs, settings, usage reporting. Manages tenants, user-to-org mapping, and cross-product access. Every user belongs to an organization; every product access requires an active license for that org. License grants trigger automatic provisioning via database trigger.
 - **`products/erp-imobiliario/`** — Real estate CRM product with 48 routers and 40 services: client management, property listings (ativos), sales funnel, AI matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting. All data is scoped to the user's organization.
 - **`products/personal-finance/`** — Personal finance tracker product: multi-account transaction management, budgets (orcamentos), recurring transactions, investment portfolio tracking (carteiras), stock watchlists with real-time quotes (yfinance), reports, and dashboard analytics. Uses the same FastAPI + Supabase backend / React + TypeScript frontend stack.
 - **`products/therapy-platform/`** — Online therapy platform with 7 routers and 6 services: therapist/patient/clinic profiles, directory discovery, reviews, admin approval, and notifications. 4 user roles (platform_admin, clinic_admin, therapist, patient) with role-based layouts. Auth is direct Supabase Auth (NOT NoctusAI SSO). Multi-tenant via `clinic_id` (not `org_id`). Schema: `therapy`. Backend port 8003, frontend port 8095. 39 database tables covering identity, scheduling, video sessions, clinical AI, financials, messaging, and reviews.
@@ -242,8 +242,15 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 - **Error handling**: Raise `HTTPException` for simple cases. Use custom `AppException` subclasses for structured errors. All exceptions are caught by centralized handlers in `main.py`. Both backends register a `postgrest_exception_handler` that catches Supabase PostgREST `APIError` with code `PGRST116` (`.single()` returning 0 rows) and converts it to a 404 response.
 - **Logging**: Structured JSON in production, human-readable in dev. Every request gets a correlation ID via middleware.
 - **Security defaults**: `debug` defaults to `False` across all backends (core, ERP, personal-finance, therapy). `jwt_secret` defaults to a dev-only placeholder that triggers a validation error in production. Docs endpoints are disabled when `not debug`. Leaked password protection is enabled in Supabase Auth (checks passwords against HaveIBeenPwned.org).
-- **RLS InitPlan optimization**: All RLS policies wrap `auth.uid()`, `auth.jwt()`, and `current_setting()` calls in subselects — `(SELECT auth.uid())` instead of `auth.uid()` — to prevent per-row re-evaluation. The therapy schema uses helper functions `therapy.current_user_role()` and `therapy.current_clinic_id()` for the same purpose. Never write a new RLS policy with a bare `auth.uid()` or `auth.jwt()` call.
-- **Function search_path**: All PostgreSQL functions must include `SET search_path = <schema>, public` to prevent search path injection. This applies to both `erp` and `personal-finance` schema functions.
+- **RLS helper functions (unified pattern)**: All schemas use STABLE SECURITY DEFINER helper functions to extract identity from JWT, evaluated once per query. For new RLS policies, prefer helpers over raw `auth.uid()`/`auth.jwt()`:
+  - **`public`**: `current_user_id()`, `current_org_id()`, `is_platform_admin()`
+  - **`erp`**: `erp.current_user_id()`, `erp.current_org_id()` + `has_role(uid, role)` for ERP-specific roles
+  - **`personal-finance`**: `"personal-finance".user_org_id()` (pre-existing)
+  - **`therapy`**: `therapy.current_user_role()`, `therapy.current_clinic_id()`
+  - Existing policies still use `(SELECT auth.uid())` subselect pattern (equivalent performance). New policies should prefer the helper functions for readability.
+- **Function search_path**: All PostgreSQL functions must include `SET search_path = <schema>, public` to prevent search path injection. This applies to all product schemas.
+- **Provisioning lifecycle**: A database trigger (`on_license_change`) on `public.licenses` automatically provisions product-specific defaults when a license is granted and sends notifications on revocation. Product-specific functions: `provision_erp()`, `provision_personal_finance()`, `provision_therapy()`.
+- **Usage reporting**: `public.product_usage` table tracks per-org, per-product metrics (active_users_30d, total_records). `snapshot_product_usage()` function computes metrics across all schemas. Runs daily via pg_cron at 3 AM UTC. Admin endpoint: `GET /api/admin/usage`. Manual trigger: `POST /api/admin/usage/snapshot`.
 
 ### Frontend Patterns
 
@@ -355,8 +362,9 @@ Admin-guarded endpoints: `POST /api/products`, `POST /api/licenses`, `DELETE /ap
 - **`webhook_deliveries`** — Delivery attempt log per endpoint (payload, response_status, attempts, status)
 - **`platform_settings`** — Global platform key-value config (service role only)
 - **`org_settings`** — Per-org key-value settings with unique `(org_id, key)` constraint
+- **`product_usage`** — Per-org, per-product usage metrics (active_users_30d, total_records). Snapshotted daily via pg_cron.
 
-All tables are defined in `core/backend/migrations/001_noctusai_core.sql` (15 tables total for fresh deploys).
+All tables are defined in `core/backend/migrations/001_noctusai_core.sql` (16 tables total for fresh deploys).
 
 ### Frontend (`core/frontend/src/`)
 - **`lib/auth-context.tsx`** — `AuthProvider` + `useAuth()` hook providing `{ user, organization, isAdmin }` globally
@@ -389,8 +397,6 @@ All 129 tables across all 4 schemas have RLS enabled. Security was comprehensive
 
 ### Known Gaps (Future Work)
 
-- **Provisioning lifecycle**: When a license is created in `public.licenses`, no mechanism bootstraps per-org data in the target product schema. The `license.granted` webhook fires to external URLs only, not to product backends.
-- **Usage reporting**: Products don't report metrics back to core for billing/admin dashboards.
 - **ERP `ativos` SELECT policy is `USING(true)`**: All authenticated users can read all ativos (cross-org). This is by current design (org filtering happens at the application layer) but is a candidate for tightening.
 
 ## Database Schema Separation
@@ -406,7 +412,7 @@ Each product backend's `database.py` uses `ClientOptions(schema="<schema>")` so 
 **Supabase Dashboard** must have all product schemas (`erp`, `personal-finance`, `therapy`) in the "Exposed schemas" list (Project Settings → API) for PostgREST to accept the `Accept-Profile` header.
 
 ### Core migration files (`core/backend/migrations/`):
-- `001_noctusai_core.sql` — Full core schema (15 tables, RLS policies with InitPlan optimization, FK indexes, seed data) for fresh deploys. All RLS policies use `(SELECT auth.uid())` subselect pattern. Includes `roles_read_own_org` SELECT policy.
+- `001_noctusai_core.sql` — Full core schema (16 tables incl. product_usage, RLS policies with InitPlan optimization, FK indexes, helper functions, provisioning trigger, usage snapshot, seed data) for fresh deploys. All RLS policies use `(SELECT auth.uid())` subselect pattern. Includes `roles_read_own_org` SELECT policy, `on_license_change` trigger, `snapshot_product_usage()` function, pg_cron daily job.
 - `002_missing_tables.sql` — Adds 6 tables (notifications, audit_logs, webhooks, settings) to existing databases
 - `003_license_history.sql` — Modifies licenses table for multiple records per org+product
 
