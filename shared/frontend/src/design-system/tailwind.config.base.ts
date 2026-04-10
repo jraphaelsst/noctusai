@@ -2,19 +2,31 @@
  * NoctusAI Global Design System — Tailwind Base Config
  *
  * Single source of truth for Tailwind theme extensions.
- * All products extend this via: { presets: [base] }
+ * All products MUST extend this via: { presets: [base] }
  *
  * Usage in product tailwind.config.ts:
- *   import base from "@noctusai/shared/design-system/tailwind.config.base";
- *   export default { presets: [base], content: ["./src/**\/*.{ts,tsx}"] };
+ *   import base from "../../shared/frontend/src/design-system/tailwind.config.base";
+ *   // or for products one level deeper:
+ *   import base from "../../../shared/frontend/src/design-system/tailwind.config.base";
+ *   export default { presets: [base], content: ["./src/**\/*.{ts,tsx}"] } satisfies Config;
+ *
+ * NOTE: This file must NOT import external packages (e.g. tailwindcss-animate)
+ * because Tailwind's jiti loader resolves from the importing file's node_modules,
+ * not from this file's location. Products include the plugin in their own config.
  */
 import type { Config } from "tailwindcss";
-import tailwindcssAnimate from "tailwindcss-animate";
 
 const config: Config = {
   darkMode: ["class"],
   content: [],
   theme: {
+    container: {
+      center: true,
+      padding: "2rem",
+      screens: {
+        "2xl": "1400px",
+      },
+    },
     extend: {
       colors: {
         background: "hsl(var(--background))",
@@ -105,7 +117,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [tailwindcssAnimate],
+  plugins: [],
 };
 
 export default config;
