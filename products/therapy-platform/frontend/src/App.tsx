@@ -7,11 +7,8 @@ import { AuthProvider } from "@/components/auth/AuthProvider";
 import { useAuthStore } from "@/store/authStore";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
 
-// Layouts
-import { AdminLayout } from "@/components/layout/AdminLayout";
-import { ClinicLayout } from "@/components/layout/ClinicLayout";
-import { TherapistLayout } from "@/components/layout/TherapistLayout";
-import { PatientLayout } from "@/components/layout/PatientLayout";
+// Layout (unified — role-based nav switching inside a single Layout.tsx)
+import { Layout } from "@/components/layout/Layout";
 
 // ── Lazy-loaded pages ───────────────────────────────────────
 
@@ -106,7 +103,7 @@ const queryClient = new QueryClient({
 
 function AdminRoutes() {
   return (
-    <AdminLayout>
+    <Layout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<AdminDashboard />} />
@@ -128,13 +125,13 @@ function AdminRoutes() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-    </AdminLayout>
+    </Layout>
   );
 }
 
 function ClinicRoutes() {
   return (
-    <ClinicLayout>
+    <Layout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<ClinicDashboard />} />
@@ -148,13 +145,13 @@ function ClinicRoutes() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-    </ClinicLayout>
+    </Layout>
   );
 }
 
 function TherapistRoutes() {
   return (
-    <TherapistLayout>
+    <Layout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<TherapistDashboard />} />
@@ -176,13 +173,13 @@ function TherapistRoutes() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-    </TherapistLayout>
+    </Layout>
   );
 }
 
 function PatientRoutes() {
   return (
-    <PatientLayout>
+    <Layout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<PatientDashboard />} />
@@ -203,19 +200,13 @@ function PatientRoutes() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-    </PatientLayout>
+    </Layout>
   );
 }
 
-// Directory pages wrapped in the user's own layout
+// Directory pages wrapped in the unified Layout (role-based nav is automatic)
 function DirectoryWithLayout({ children }: { children: React.ReactNode }) {
-  const { user } = useAuthStore();
-  const role = user?.user_metadata?.role as string | undefined;
-
-  if (role === "admin") return <AdminLayout>{children}</AdminLayout>;
-  if (role === "clinica") return <ClinicLayout>{children}</ClinicLayout>;
-  if (role === "terapeuta") return <TherapistLayout>{children}</TherapistLayout>;
-  return <PatientLayout>{children}</PatientLayout>;
+  return <Layout>{children}</Layout>;
 }
 
 // ── Authenticated routing ───────────────────────────────────

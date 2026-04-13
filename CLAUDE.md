@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **multi-tenant, multi-product SaaS monorepo**. Each organization (tenant) signs up once on the core platform and gets access to licensed products. Tenant isolation is enforced at the database level via Supabase RLS policies scoped to `org_id`, so data from one organization is never visible to another. Products are independently deployable but share authentication and tenant context through SSO.
 
-- **`core/`** — NoctusAI Platform foundation (21 routers, 9 services): authentication, organizations, products, licenses, SSO, notifications, webhooks, audit logs, settings, usage reporting. Manages tenants, user-to-org mapping, and cross-product access. Every user belongs to an organization; every product access requires an active license for that org. License grants trigger automatic provisioning via database trigger. See `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`.
+- **`core/`** — NoctusAI Platform foundation (23 routers, 9 services): authentication, organizations, products, licenses, SSO, notifications, webhooks, audit logs, settings, usage reporting, users, templates. Manages tenants, user-to-org mapping, and cross-product access. Every user belongs to an organization; every product access requires an active license for that org. License grants trigger automatic provisioning via database trigger. See `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`.
 - **`products/erp-imobiliario/`** — Real estate CRM product with 50 routers and 42 services: client management, property listings (ativos), sales funnel, AI matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, notifications, Meta Ads integration, and compliance reporting. All data is scoped to the user's organization. See `KNOWLEDGE-BASE/CONTEXT/backend/02-ERP.md`.
 - **`products/personal-finance/`** — Personal finance tracker product with 16 routers and 14 services: multi-account transaction management, budgets (orcamentos), recurring transactions, investment portfolio tracking (carteiras), stock watchlists with real-time quotes (yfinance), reports, and dashboard analytics. See `KNOWLEDGE-BASE/CONTEXT/backend/03-PF.md`.
 - **`products/therapy-platform/`** — Online therapy platform with 39 routers and 38 services: therapist/patient/clinic profiles, scheduling, video sessions (LiveKit), clinical AI (transcription, summaries, longitudinal analysis, crisis detection), wallets, payments (Stripe Connect), messaging, reviews. 4 user roles (platform_admin, clinic_admin, therapist, patient) with role-based layouts. Auth is direct Supabase Auth (NOT NoctusAI SSO). Multi-tenant via `clinic_id` (not `org_id`). Schema: `therapy`. Backend port 8003, frontend port 8095. See `KNOWLEDGE-BASE/CONTEXT/backend/06-THERAPY.md`.
@@ -80,23 +80,59 @@ Cross-cutting code lives in `shared/` to avoid duplication across products:
 - `design-system/tailwind.config.base.ts` — Shared Tailwind theme config. Products extend via `{ presets: [base] }`. Registers all color tokens: primary (light/dark), success, warning, danger, info, sidebar, and status colors.
 - `design-system/components/AppShell.tsx` — Unified layout shell: dark sidebar + header + content. Handles responsive off-canvas sidebar on mobile.
 - `design-system/components/Sidebar.tsx` — Generic, prop-driven sidebar with collapsible `NavGroup`s. Products pass their own nav data.
-- `design-system/components/Header.tsx` — Generic header with hamburger, user avatar dropdown, and `actions` slot for product-specific UI (notifications, etc.).
-- `design-system/index.ts` — Barrel export for all design system components and types.
+- `design-system/components/Header.tsx` — Full-featured header: HoverCard user card (avatar, name, role), edit profile form, password change form, dark/light theme toggle, logout. Products pass user data and callbacks via props. Responsive: mobile-first with touch-friendly tap targets.
+- `design-system/ui/hover-card.tsx` — Shared Radix HoverCard primitive with fade/zoom animations.
+- `design-system/useTheme.ts` — Dark/light theme hook with localStorage + DOM sync + optional DB persistence callback.
+- `design-system/useActivityRefresh.ts` — Proactive token refresh hook: monitors user activity, refreshes token every 5 minutes while active, lets token expire on inactivity.
+- `design-system/index.ts` — Barrel export for all design system components, hooks, and types.
 
-**Design system principle**: One change to `tokens.css` or `tailwind.config.base.ts` affects all products simultaneously. Products customize via nav data props, not by forking components.
+**Design system principles**:
+- One change to `tokens.css`, `tailwind.config.base.ts`, or shared components affects all products simultaneously.
+- Products customize via nav data props and callbacks, not by forking components.
+- **Mobile-first, 3-tier responsive**: All shared components are designed for mobile first (`h-10` tap targets, fluid widths), then tablet (`sm:`/`md:` — 2-col grids, compact inputs), then desktop (`lg:`/`xl:` — full layouts). Every component must look correct at 375px, 768px, and 1440px.
+
+**THE Product Layout Pattern (mandatory for all products, including core):**
+
+Every product (including the core platform) MUST have a single `components/layout/Layout.tsx` that follows this exact structure:
+
+```
+1. Imports: AppShell, Sidebar, Header, useTheme, useActivityRefresh from @noctusai/shared/design-system
+2. Constants: NAV_GROUPS (static NavGroup[]), BRAND config, ROLE_LABELS, BackToCore footer
+3. For role-based products: switch NAV_GROUPS based on user role (still ONE file, no separate layouts)
+4. For feature-flagged products: filter NAV_GROUPS inline (e.g., ERP's status_pagina query)
+5. Layout function: AppShell → Sidebar(brand + navGroups) + SharedHeader(user + theme + actions)
+6. Content wrapper: <div className="p-4 sm:p-6 lg:p-8">{children}</div>
+7. Products (not core): logoutBehavior="redirect" + BackToCore footer in sidebar
+8. Core: logoutBehavior="signout" + no BackToCore
+9. All products: useTheme() + useActivityRefresh() + NotificationBell in header actions
+```
+
+No product may create local Sidebar or Header wrapper components. No product may have multiple layout files (AdminLayout, UserLayout, etc.) — role branching happens inside the single Layout.tsx via nav data switching. The only exception is `PublicLayout.tsx` for unauthenticated pages (landing, directory, login).
 
 All shared backend modules use `from __future__ import annotations` for Python 3.9 compatibility.
 
 ## Python Virtual Environment
 
-A **single root-level venv** (`venv/`) is shared by all backends. The root `requirements.txt` is the merged superset of both per-backend files. Per-backend `requirements.txt` files are kept for independent Docker deploys.
+A **single root-level venv** (`venv/`) is shared by all backends, running **Python 3.11+**. The root `requirements.txt` is the merged superset of all per-backend files. Per-backend `requirements.txt` files are kept for independent Docker deploys.
 
 ```bash
 # First-time setup (or after pulling new deps)
-python3 -m venv venv
+python3.11 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+pip install -e shared/backend
 ```
+
+## Product Seed Template
+
+New products are bootstrapped from `templates/product-seed/`. Copy it, find-and-replace the placeholders, and start building.
+
+```bash
+cp -r templates/product-seed products/my-product
+# Replace: {{PRODUCT_NAME}}, {{PRODUCT_SLUG}}, {{SCHEMA_NAME}}, {{BACKEND_PORT}}, {{FRONTEND_PORT}}, {{PRODUCT_ICON}}
+```
+
+The seed includes pre-wired: FastAPI backend (shared app factory, config, database, dependencies, notifications router, test fixtures), React frontend (shared design system, AppShell + Sidebar + Header, auth store, API client, SSO callback, theme toggle), and a migration template with RLS helpers. All shared infrastructure is consumed, not duplicated.
 
 ## Commands
 
@@ -168,7 +204,7 @@ bash start.sh    # Creates root venv, installs deps, starts all backends + front
 
 ## Testing
 
-Tests use **pytest** with a fully mocked Supabase layer (351 core tests, 1,634 ERP tests, 473 PF tests, 1,021 therapy tests — 3,479 total). Key fixtures are in `tests/conftest.py`:
+Tests use **pytest** with a fully mocked Supabase layer (389 core tests, 1,634 ERP tests, 473 PF tests, 1,021 therapy tests — 3,517 total). Key fixtures are in `tests/conftest.py`:
 
 - `MockSupabaseClient` / `MockQueryBuilder` — Chainable query builder that simulates Supabase PostgREST
 - `AuthClient` — Wraps FastAPI `TestClient` with automatic `Authorization: Bearer` headers
@@ -264,6 +300,11 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 
 ### Frontend Patterns
 
+- **Mobile-first responsive design (3-tier)**: All UI must be designed mobile-first, then enhanced for tablet, then desktop. Use Tailwind breakpoints progressively — base styles are mobile, then layer `sm:` (640px), `md:` (768px), `lg:` (1024px), `xl:` (1280px). The three tiers:
+  - **Mobile** (base, <640px): Single column, `h-10`+ tap targets (44px min), full-width cards (`w-[calc(100vw-2rem)]`), collapsible sidebars, hamburger nav.
+  - **Tablet** (`sm:`/`md:`, 640-1024px): 2-column grids (`sm:grid-cols-2`), sidebar visible (`md:block`), compact inputs (`md:h-9`), medium card widths (`sm:w-80 md:w-96`).
+  - **Desktop** (`lg:`/`xl:`, 1024px+): 3-4 column grids (`lg:grid-cols-3 xl:grid-cols-4`), full sidebar, relaxed spacing.
+  - Test at: 375px (iPhone SE), 768px (iPad), 1024px (iPad landscape), 1440px (desktop).
 - **Toasts**: Use `import { toast } from 'sonner'`. Pattern: `toast.success("Msg")`, `toast.error("Msg", { description: "Details" })`. Never use the old `useToast` hook (deleted).
 - **Centralized constants**: Status/type label maps live in `lib/constants.ts` (e.g., `PROPOSTA_STATUS_CONFIG`, `CONTRATO_STATUS_CONFIG`). All labels use proper Portuguese accents ("Concluído", "Locação", "Reunião"). Import from `@/lib/constants` — never define local copies.
 - **Centralized utilities**: `formatCurrency()`, `formatDate()`, `getTodayAtMidnight()` live in `lib/utils.ts`. Never define local `formatCurrency` or inline `Intl.NumberFormat`.
@@ -278,9 +319,17 @@ Frontend uses `VITE_`-prefixed vars in their own `.env` files (security boundary
 
 ### Token Refresh & 401 Retry (All Products)
 
-Supabase JWTs expire after ~1 hour. `supabase.auth.getSession()` returns a **cached** token that may already be expired — it does NOT auto-refresh. The auto-refresh (`onAuthStateChange`) happens asynchronously and there is a gap between expiry and refresh. During this gap, API calls fail with 401.
+Supabase JWTs expire after ~1 hour. Two complementary mechanisms ensure uninterrupted sessions:
 
-**Solution — automatic retry on 401 at the shared API client level:**
+**1. Proactive activity-based refresh** (`useActivityRefresh` hook from `@noctusai/shared/design-system`):
+- Monitors user activity (mousemove, keydown, scroll, click, touch)
+- Every 5 minutes, checks if user was active since last check
+- If active: calls `supabase.auth.refreshSession()` (products) or `POST /api/auth/refresh` (Core) — token renewed before it expires
+- If inactive: does nothing — token expires naturally for security
+- Wired into every product's layout or auth provider
+- Core stores both `access_token` and `refresh_token` in localStorage
+
+**2. Reactive 401 retry** at the shared API client level (fallback):
 
 1. **Shared `createApiClient`** (`shared/frontend/src/api.ts`) accepts an `onTokenExpired` callback. When any request returns 401, the client calls `onTokenExpired()` to force a session refresh, then retries the request exactly once with the new token.
 
@@ -360,7 +409,7 @@ The core platform includes a **subscription management system** with admin enfor
 - **`routers/subscriptions.py`** — Org-to-plan assignments. Admin manages; users can read their own via `/api/subscriptions/me`.
 - **`routers/api_keys.py`** — Stripe-like API key management (`noctus_k_...`). Keys are hashed (SHA-256), only prefix stored for display. Full key returned once on creation.
 
-Admin-guarded endpoints: `POST /api/products`, `POST /api/licenses`, `DELETE /api/licenses/{id}`, all plan/subscription write operations, `GET /api/admin/api-keys`.
+Admin-guarded endpoints: `POST /api/products`, `POST /api/licenses`, `DELETE /api/licenses/{id}`, all plan/subscription write operations, `GET /api/admin/api-keys`, `GET/PATCH/DELETE /api/admin/users`.
 
 ### Database tables (Supabase — `public` schema)
 - **`plans`** — Plan definitions with pricing, limits, Stripe-ready fields
@@ -500,3 +549,60 @@ External integrations follow one of two patterns depending on whether a credenti
 **Pattern for new integrations**: If a credential is the core requirement for a feature (the feature cannot produce real results without it), validate upfront in the router and block with 422. If a credential enhances results but the feature works without it, return a clear placeholder string in the relevant field so the UI can display it.
 
 Integrations: InfoSimples (certidões), OpenAI (AI features, embeddings, certidão analysis), Resend (email), ClickSign/DocuSign/D4Sign (digital signatures), Meta Graph API (Lead Ads, campaign sync), WAHA/Meta Business API (WhatsApp), Supabase Storage (file uploads), reportlab (PDF generation).
+
+## Creating a New Product
+
+The `templates/product-seed/` directory is the canonical template for all products. **Every product is a copy of this seed, customized with domain-specific data.**
+
+### Seed-Core Sync Rule (Mandatory)
+
+The product seed template MUST stay in sync with the core platform patterns. When any of these change, the seed MUST be updated in the same commit:
+
+- **Shared design system** (tokens.css, tailwind base, AppShell, Sidebar, Header, hooks)
+- **Backend bootstrap** (app_factory, config pattern, dependencies pattern, database.py pattern)
+- **Test fixtures** (conftest.py MockSupabaseClient, AuthClient pattern)
+- **Layout pattern** (single Layout.tsx per product)
+- **Auth pattern** (get_current_user, get_org_id, token refresh)
+- **Notification pattern** (core proxy via get_core_client)
+
+Every digital environment (core, ERP, PF, therapy, and all future products) is a different digital object inside the ecosystem, but they are all of the same type and must follow the same pattern. The seed is the source of truth for that pattern.
+
+### Step-by-Step: New Product Creation
+
+```bash
+# 1. Copy the seed
+cp -r templates/product-seed products/<your-product>
+
+# 2. Replace ALL placeholders:
+#    {{PRODUCT_NAME}}     → Human-readable name (e.g., "My Product")
+#    {{PRODUCT_SLUG}}     → URL-safe slug (e.g., "my-product")
+#    {{SCHEMA_NAME}}      → PostgreSQL schema (e.g., "my_product")
+#    {{BACKEND_PORT}}     → Unique port (e.g., 8004)
+#    {{FRONTEND_PORT}}    → Unique port (e.g., 8100)
+#    {{PRODUCT_ICON}}     → Lucide icon component name (e.g., "Briefcase")
+
+# 3. Backend setup
+source venv/bin/activate
+pip install -r products/<your-product>/backend/requirements.txt
+
+# 4. Frontend setup
+cd products/<your-product>/frontend && npm install
+
+# 5. Database: run migrations/001_<schema>.sql in Supabase SQL Editor
+#    - Create the schema
+#    - Enable RLS on all tables
+#    - Use (SELECT auth.uid()) pattern in all policies
+#    - Add SET search_path to all functions
+
+# 6. Register product: INSERT into public.products via admin panel
+
+# 7. Add to start.sh, root requirements.txt, and .env (VITE_ vars)
+```
+
+### What the Seed Provides (pre-wired)
+
+**Backend**: FastAPI + shared app_factory, Pydantic config with root .env resolution, Supabase client with schema targeting (get_admin_client, get_user_client, get_core_client), auth dependencies, rate limiter, notifications router (proxies to core), health check, test fixtures with auto-patching conftest.
+
+**Frontend**: Vite + React + TypeScript, shared design system (tokens.css import, tailwind base preset), single Layout.tsx with AppShell + Sidebar + Header, SSO callback, auth store, API client with 401 retry, NotificationBell, useTheme, useActivityRefresh.
+
+**The product only needs to add**: domain-specific routers/services/schemas, nav items in Layout.tsx, pages, hooks, and the migration SQL.

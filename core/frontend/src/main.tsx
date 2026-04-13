@@ -9,7 +9,7 @@ import { Pricing } from './pages/Pricing';
 import { BillingSettings } from './pages/BillingSettings';
 import { CheckoutSuccess } from './pages/CheckoutSuccess';
 import { CheckoutCancel } from './pages/CheckoutCancel';
-import { AdminLayout } from './components/AdminLayout';
+import { Layout as AdminLayout } from './components/layout/Layout';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
 import { AdminOrganizations } from './pages/admin/AdminOrganizations';
 import { AdminSubscriptions } from './pages/admin/AdminSubscriptions';
@@ -20,6 +20,9 @@ import { AdminBilling } from './pages/admin/AdminBilling';
 import { AdminWebhooks } from './pages/admin/AdminWebhooks';
 import { AdminAnalytics } from './pages/admin/AdminAnalytics';
 import { AdminSettings } from './pages/admin/AdminSettings';
+import { AdminUsers } from './pages/admin/AdminUsers';
+import { AdminLogoutBehavior } from './pages/admin/AdminLogoutBehavior';
+import { AdminTemplates } from './pages/admin/AdminTemplates';
 import { Onboarding } from './pages/Onboarding';
 import { TeamManagement } from './pages/TeamManagement';
 import { AcceptInvite } from './pages/AcceptInvite';
@@ -30,14 +33,24 @@ import './index.css';
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { loading } = useAuth();
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
-  if (loading) return <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>;
+  if (loading) return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+      <p className="text-sm text-muted-foreground">Carregando...</p>
+    </div>
+  );
   return <>{children}</>;
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { isAdmin, loading } = useAuth();
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
-  if (loading) return <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>;
+  if (loading) return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+      <p className="text-sm text-muted-foreground">Carregando...</p>
+    </div>
+  );
   if (!isAdmin) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
@@ -64,6 +77,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           {/* Admin routes */}
           <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
             <Route index element={<AdminDashboard />} />
+            <Route path="users" element={<AdminUsers />} />
             <Route path="orgs" element={<AdminOrganizations />} />
             <Route path="subs" element={<AdminSubscriptions />} />
             <Route path="api-keys" element={<AdminApiKeys />} />
@@ -73,6 +87,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="webhooks" element={<AdminWebhooks />} />
             <Route path="analytics" element={<AdminAnalytics />} />
             <Route path="settings" element={<AdminSettings />} />
+            <Route path="logout-behavior" element={<AdminLogoutBehavior />} />
+            <Route path="templates" element={<AdminTemplates />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
