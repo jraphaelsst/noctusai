@@ -134,6 +134,13 @@ async def login(request: Request, body: LoginRequest):
         except Exception:
             pass
 
+        # Enforce concurrent session cap (best-effort)
+        try:
+            admin_db = get_admin_client()
+            admin_db.rpc("enforce_session_cap", {"p_user_id": str(response.user.id)}).execute()
+        except Exception:
+            pass
+
         return {
             "access_token": response.session.access_token,
             "refresh_token": response.session.refresh_token,
@@ -163,14 +170,9 @@ async def get_me(authorization: Optional[str] = Header(None)):
     # Get organization
     org_result = db.table("organizations").select("*").eq("id", org_id).single().execute()
 
-    # Get licensed products for this org
-    licenses_result = db.table("licenses").select(
-        "*, products(*)"
-    ).eq("org_id", org_id).eq("status", "active").execute()
-
-    licensed_product_ids = [
-        lic["product_id"] for lic in (licenses_result.data or [])
-    ]
+    # Get licensed products for this org (checks expiry)
+    from app.dependencies import get_licensed_product_ids
+    licensed_product_ids = get_licensed_product_ids(db, org_id)
 
     # Get all products (for the marketplace view)
     all_products = db.table("products").select("*").eq("ativo", True).order("nome").execute()
@@ -192,6 +194,95 @@ async def get_me(authorization: Optional[str] = Header(None)):
 class ProfileUpdate(BaseModel):
     nome: Optional[str] = None
     avatar_url: Optional[str] = None
+
+
+class PasswordChange(BaseModel):
+    new_password: str
+
+
+@router.post("/change-password")
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    body: PasswordChange,
+    authorization: Optional[str] = Header(None),
+):
+    """Change the current user's password."""
+    user, token = await get_current_user(authorization)
+
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="A senha deve ter no mínimo 8 caracteres")
+
+    db = get_admin_client()
+    try:
+        db.auth.admin.update_user_by_id(user.id, {"password": body.new_password})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Revoke all other sessions for this user (best-effort)
+    try:
+        db.auth.admin.sign_out(str(user.id), scope="others")
+    except Exception:
+        pass
+
+    # Audit log (best-effort)
+    try:
+        from app.services import audit_service
+        await audit_service.log(
+            user_id=str(user.id), org_id=None,
+            action="password_change", resource_type="user", resource_id=str(user.id),
+            request=request,
+        )
+    except Exception:
+        pass
+
+    return {"ok": True, "message": "Senha atualizada com sucesso"}
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post("/refresh")
+@limiter.limit("10/minute")
+async def refresh_token(request: Request, body: RefreshRequest):
+    """Exchange a refresh token for a new access token."""
+    client = create_client(settings.supabase_url, settings.supabase_anon_key)
+    try:
+        response = client.auth.refresh_session(body.refresh_token)
+        if not response.session:
+            raise HTTPException(status_code=401, detail="Refresh token inválido")
+
+        # Update last_active_at (best-effort)
+        if response.user:
+            try:
+                admin_db = get_admin_client()
+                admin_db.table("noctus_users").update(
+                    {"last_active_at": "now()"}
+                ).eq("id", str(response.user.id)).execute()
+            except Exception:
+                pass
+
+            # Audit log (best-effort)
+            try:
+                from app.services import audit_service
+                await audit_service.log(
+                    user_id=str(response.user.id), org_id=None,
+                    action="token_refresh", resource_type="user",
+                    resource_id=str(response.user.id),
+                    request=request,
+                )
+            except Exception:
+                pass
+
+        return {
+            "access_token": response.session.access_token,
+            "refresh_token": response.session.refresh_token,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Falha ao renovar token")
 
 
 @router.patch("/profile")

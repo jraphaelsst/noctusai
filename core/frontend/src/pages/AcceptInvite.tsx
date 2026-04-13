@@ -113,9 +113,9 @@ export function AcceptInvite() {
   // Loading state
   if (status === 'loading') {
     return (
-      <div className="loading-screen">
-        <div className="spinner" />
-        <p>Carregando convite...</p>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+        <p className="mt-4 text-muted-foreground">Carregando convite...</p>
       </div>
     );
   }
@@ -123,9 +123,9 @@ export function AcceptInvite() {
   // Accepting state
   if (status === 'accepting') {
     return (
-      <div className="loading-screen">
-        <div className="spinner" />
-        <p>Aceitando convite...</p>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+        <p className="mt-4 text-muted-foreground">Aceitando convite...</p>
       </div>
     );
   }
@@ -133,17 +133,18 @@ export function AcceptInvite() {
   // Accepted state
   if (status === 'accepted') {
     return (
-      <div className="invite-page">
-        <div className="invite-card">
-          <div className="invite-card-icon invite-card-icon-success">&#10003;</div>
-          <h2>Convite aceito!</h2>
-          <p className="invite-card-text">
-            Você agora faz parte da organização como <strong>{role || 'membro'}</strong>.
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-2xl font-bold text-green-600">
+            &#10003;
+          </div>
+          <h2 className="mb-3 text-2xl font-bold text-foreground">Convite aceito!</h2>
+          <p className="mb-6 text-muted-foreground">
+            Você agora faz parte da organização como <strong className="text-foreground">{role || 'membro'}</strong>.
           </p>
           <button
-            className="btn-primary"
+            className="rounded-md bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             onClick={() => navigate('/')}
-            style={{ marginTop: '24px' }}
           >
             Ir para o Dashboard
           </button>
@@ -155,15 +156,16 @@ export function AcceptInvite() {
   // Error state
   if (status === 'error') {
     return (
-      <div className="invite-page">
-        <div className="invite-card">
-          <div className="invite-card-icon invite-card-icon-error">!</div>
-          <h2>Erro no convite</h2>
-          <p className="invite-card-text">{error}</p>
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 text-center shadow-sm">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-2xl font-bold text-red-600">
+            !
+          </div>
+          <h2 className="mb-3 text-2xl font-bold text-foreground">Erro no convite</h2>
+          <p className="mb-6 text-muted-foreground">{error}</p>
           <button
-            className="btn-primary"
+            className="rounded-md bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             onClick={() => navigate('/')}
-            style={{ marginTop: '24px' }}
           >
             Ir para o Dashboard
           </button>
@@ -174,45 +176,51 @@ export function AcceptInvite() {
 
   // Needs login / signup
   return (
-    <div className="invite-page">
-      <div className="invite-card">
-        <div className="login-header" style={{ marginBottom: '24px' }}>
-          <div className="logo">
-            <span className="logo-icon">⚡</span>
-            <h1>NoctusAI</h1>
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 shadow-sm">
+        <div className="mb-6 text-center">
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-2xl">⚡</span>
+            <h1 className="text-2xl font-bold text-foreground">NoctusAI</h1>
           </div>
-          <p className="subtitle">Você recebeu um convite para uma organização</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Você recebeu um convite para uma organização
+          </p>
         </div>
 
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
+        )}
 
         {signupMode ? (
-          <form onSubmit={handleSignupAndAccept}>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px' }}>
+          <form onSubmit={handleSignupAndAccept} className="space-y-4">
+            <h2 className="text-lg font-semibold text-foreground">
               Criar conta e aceitar convite
             </h2>
-            <div className="field">
-              <label>Nome</label>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-foreground">Nome</label>
               <input
                 type="text"
                 placeholder="Seu nome completo"
                 value={nome}
                 onChange={e => setNome(e.target.value)}
                 required
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
-            <div className="field">
-              <label>E-mail</label>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-foreground">E-mail</label>
               <input
                 type="email"
                 placeholder="seu@email.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 required
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
-            <div className="field">
-              <label>Senha</label>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-foreground">Senha</label>
               <input
                 type="password"
                 placeholder="Mínimo 6 caracteres"
@@ -220,50 +228,61 @@ export function AcceptInvite() {
                 onChange={e => setPassword(e.target.value)}
                 required
                 minLength={6}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
-            <button type="submit" className="btn-primary" disabled={submitting}>
+            <button
+              type="submit"
+              className="w-full rounded-md bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+            >
               Criar conta e aceitar
             </button>
             <button
               type="button"
-              className="btn-link"
+              className="w-full text-sm text-primary hover:underline"
               onClick={() => setSignupMode(false)}
             >
               Já tenho uma conta
             </button>
           </form>
         ) : (
-          <form onSubmit={handleLoginAndAccept}>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px' }}>
+          <form onSubmit={handleLoginAndAccept} className="space-y-4">
+            <h2 className="text-lg font-semibold text-foreground">
               Entrar e aceitar convite
             </h2>
-            <div className="field">
-              <label>E-mail</label>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-foreground">E-mail</label>
               <input
                 type="email"
                 placeholder="seu@email.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 required
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
-            <div className="field">
-              <label>Senha</label>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-foreground">Senha</label>
               <input
                 type="password"
                 placeholder="Sua senha"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 required
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
-            <button type="submit" className="btn-primary" disabled={submitting}>
+            <button
+              type="submit"
+              className="w-full rounded-md bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+            >
               Entrar e aceitar
             </button>
             <button
               type="button"
-              className="btn-link"
+              className="w-full text-sm text-primary hover:underline"
               onClick={() => setSignupMode(true)}
             >
               Não tenho conta — criar agora

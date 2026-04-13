@@ -91,6 +91,9 @@ class MockQueryBuilder:
     def ilike(self, *a, **k):
         return self
 
+    def or_(self, *a, **k):
+        return self
+
     def order(self, *a, **k):
         return self
 
@@ -358,6 +361,9 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm, mock
         ("app.routers.usage.get_current_user", mock_get_user),
         ("app.routers.usage.get_current_admin", mock_get_admin),
         ("app.routers.usage.get_org_id", mock_get_org_id),
+        # Users router (admin)
+        ("app.routers.users.get_admin_client", mock_sb),
+        ("app.routers.users.get_current_admin", mock_get_admin),
     ]
 
 

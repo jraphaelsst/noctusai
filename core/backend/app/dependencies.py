@@ -1,12 +1,21 @@
 """
 NoctusAI Core — Auth dependencies and JWT helpers.
 """
+import re
 import jwt
 import datetime
+from datetime import datetime as dt, timezone
 from typing import Optional, Tuple, List
 from fastapi import Header, HTTPException
 from app.config import settings
 from app.database import get_supabase_client, get_admin_client
+
+
+def _parse_timestamp(value: str) -> dt:
+    """Parse Supabase timestamp to datetime. Handles '2026-04-09 00:00:00+00' format."""
+    ts = str(value).replace("Z", "+00:00").replace(" ", "T")
+    ts = re.sub(r'([+-]\d{2})$', r'\1:00', ts)
+    return dt.fromisoformat(ts)
 
 
 async def get_current_user(authorization: Optional[str] = Header(None)):
@@ -99,6 +108,61 @@ async def get_org_id(user) -> str:
     if not profile.data or not profile.data.get("org_id"):
         raise HTTPException(status_code=404, detail="Perfil ou organização não encontrada")
     return profile.data["org_id"]
+
+
+def check_org_license(db, org_id: str, product_id: str) -> bool:
+    """Check if an org has a valid, non-expired license for a product.
+
+    A license is valid when:
+    - status = 'active'
+    - fim IS NULL (permanent) OR fim > now()
+    """
+    result = db.table("licenses").select("id, fim").eq(
+        "org_id", org_id
+    ).eq("product_id", product_id).eq("status", "active").execute()
+
+    if not result.data:
+        return False
+
+    now = dt.now(timezone.utc)
+    for lic in result.data:
+        fim = lic.get("fim")
+        if fim is None:
+            return True
+        try:
+            if _parse_timestamp(fim) > now:
+                return True
+        except (ValueError, TypeError):
+            continue
+
+    return False
+
+
+def get_licensed_product_ids(db, org_id: str) -> list:
+    """Get list of product IDs the org has valid licenses for.
+
+    Filters out expired licenses (fim is not null AND fim <= now()).
+    """
+    result = db.table("licenses").select(
+        "product_id, fim"
+    ).eq("org_id", org_id).eq("status", "active").execute()
+
+    if not result.data:
+        return []
+
+    now = dt.now(timezone.utc)
+    valid_ids = []
+    for lic in result.data:
+        fim = lic.get("fim")
+        if fim is None:
+            valid_ids.append(lic["product_id"])
+        else:
+            try:
+                if _parse_timestamp(fim) > now:
+                    valid_ids.append(lic["product_id"])
+            except (ValueError, TypeError):
+                continue
+    return valid_ids
 
 
 def create_sso_token(user_id: str, org_id: str, product_slug: str,

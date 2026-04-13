@@ -75,7 +75,7 @@ export function AdminSettings() {
   }
 
   async function handleDelete(key: string) {
-    if (!confirm(`Remover configuração "${key}"?`)) return;
+    if (!confirm(`Remover configuracao "${key}"?`)) return;
     try {
       await api.delete(`/api/settings/platform/${key}`);
       fetchSettings();
@@ -85,67 +85,99 @@ export function AdminSettings() {
   }
 
   if (loading) {
-    return <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        <p className="ml-3 text-muted-foreground">Carregando...</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <div className="admin-page-header">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="admin-page-title">Configurações da Plataforma</h1>
-          <p className="admin-page-subtitle">{settings.length} configurações</p>
+          <h1 className="text-2xl font-bold text-foreground">Configuracoes da Plataforma</h1>
+          <p className="text-muted-foreground mt-1">{settings.length} configuracoes</p>
         </div>
-        <button className="btn-primary admin-btn" onClick={openCreate}>
-          + Nova Configuração
+        <button
+          className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+          onClick={openCreate}
+        >
+          + Nova Configuracao
         </button>
       </div>
 
-      <div className="admin-table-wrapper">
-        <table className="admin-table">
+      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
           <thead>
-            <tr>
-              <th>Chave</th>
-              <th>Valor</th>
-              <th>Descrição</th>
-              <th>Atualizado em</th>
-              <th>Ações</th>
+            <tr className="border-b border-border bg-muted/50">
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Chave</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Valor</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Descricao</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Atualizado em</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
             {settings.map(s => (
-              <tr key={s.key}>
-                <td className="admin-table-primary"><code>{s.key}</code></td>
-                <td>
+              <tr key={s.key} className="hover:bg-muted/50 transition-colors">
+                <td className="px-4 py-3 font-medium text-foreground">
+                  <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{s.key}</code>
+                </td>
+                <td className="px-4 py-3">
                   {s.is_secret
-                    ? <span className="badge badge-sm">secreto</span>
-                    : <code>{s.value}</code>
+                    ? <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">secreto</span>
+                    : <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{s.value}</code>
                   }
                 </td>
-                <td>{s.description || '-'}</td>
-                <td>{s.updated_at ? new Date(s.updated_at).toLocaleDateString('pt-BR') : '-'}</td>
-                <td>
-                  <button className="btn-sm" onClick={() => openEdit(s)}>Editar</button>
-                  {' '}
-                  <button className="btn-sm btn-danger" onClick={() => handleDelete(s.key)}>Remover</button>
+                <td className="px-4 py-3 text-muted-foreground">{s.description || '-'}</td>
+                <td className="px-4 py-3 text-muted-foreground">{s.updated_at ? new Date(s.updated_at).toLocaleDateString('pt-BR') : '-'}</td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-2">
+                    <button
+                      className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+                      onClick={() => openEdit(s)}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
+                      onClick={() => handleDelete(s.key)}
+                    >
+                      Remover
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
             {settings.length === 0 && (
-              <tr><td colSpan={5} className="admin-table-empty">Nenhuma configuração encontrada</td></tr>
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                  Nenhuma configuracao encontrada
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
       </div>
 
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>{editKey && settings.some(s => s.key === editKey) ? 'Editar Configuração' : 'Nova Configuração'}</h2>
-            <form onSubmit={handleSave}>
-              <div className="field">
-                <label>Chave</label>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowModal(false)}>
+          <div className="bg-card rounded-lg border border-border shadow-lg w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-foreground mb-4">
+              {editKey && settings.some(s => s.key === editKey) ? 'Editar Configuracao' : 'Nova Configuracao'}
+            </h2>
+            <form onSubmit={handleSave} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Chave</label>
                 {settings.some(s => s.key === editKey) ? (
-                  <input type="text" value={editKey} disabled />
+                  <input
+                    type="text"
+                    value={editKey}
+                    disabled
+                    className="w-full h-10 rounded-md border border-border bg-muted px-3 text-sm text-muted-foreground"
+                  />
                 ) : (
                   <>
                     <input
@@ -155,6 +187,7 @@ export function AdminSettings() {
                       placeholder="ex: openai_api_key"
                       required
                       list="suggested-keys"
+                      className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                     />
                     <datalist id="suggested-keys">
                       {SUGGESTED_KEYS.filter(k => !settings.some(s => s.key === k)).map(k => (
@@ -164,38 +197,51 @@ export function AdminSettings() {
                   </>
                 )}
               </div>
-              <div className="field">
-                <label>Valor</label>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Valor</label>
                 <input
                   type={editIsSecret ? 'password' : 'text'}
                   value={editValue}
                   onChange={e => setEditValue(e.target.value)}
-                  placeholder={editIsSecret ? 'Digite o novo valor...' : 'Valor da configuração'}
+                  placeholder={editIsSecret ? 'Digite o novo valor...' : 'Valor da configuracao'}
                   required
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
               </div>
-              <div className="field">
-                <label>Descrição (opcional)</label>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Descricao (opcional)</label>
                 <input
                   type="text"
                   value={editDescription}
                   onChange={e => setEditDescription(e.target.value)}
-                  placeholder="Descrição da configuração"
+                  placeholder="Descricao da configuracao"
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
               </div>
-              <div className="field">
-                <label className="admin-scope-option">
+              <div>
+                <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
                   <input
                     type="checkbox"
                     checked={editIsSecret}
                     onChange={e => setEditIsSecret(e.target.checked)}
+                    className="rounded border-border"
                   />
-                  Valor secreto (será mascarado na listagem)
+                  Valor secreto (sera mascarado na listagem)
                 </label>
               </div>
-              <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary admin-btn" disabled={saving}>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  className="border border-border bg-card text-foreground rounded-md px-4 py-2 text-sm hover:bg-accent transition-colors"
+                  onClick={() => setShowModal(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  disabled={saving}
+                >
                   {saving ? 'Salvando...' : 'Salvar'}
                 </button>
               </div>

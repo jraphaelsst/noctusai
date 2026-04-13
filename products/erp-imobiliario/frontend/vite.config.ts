@@ -67,7 +67,18 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
       "@noctusai/shared": path.resolve(__dirname, "../../../shared/frontend/src"),
     },
-    dedupe: ["react", "react-dom", "zustand", "@tanstack/react-query"],
+    // Ensure packages imported by shared code (outside this project tree)
+    // resolve from this project's node_modules rather than from the shared directory
+    dedupe: [
+      "react",
+      "react-dom",
+      "react-router-dom",
+      "zustand",
+      "@tanstack/react-query",
+      "lucide-react",
+      "@radix-ui/react-hover-card",
+      "@radix-ui/react-collapsible",
+    ],
   },
   test: {
     globals: true,

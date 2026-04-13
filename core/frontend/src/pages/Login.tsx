@@ -41,6 +41,10 @@ export function Login() {
       }
       const res = await api.post('/api/auth/login', { email, password });
       setToken(res.access_token);
+      if (res.refresh_token) {
+        const { setRefreshToken } = await import('../lib/api');
+        setRefreshToken(res.refresh_token);
+      }
       await refresh();
       navigate('/');
     } catch (err: any) {
@@ -73,73 +77,119 @@ export function Login() {
   }
 
   return (
-    <div className="login-container">
-      <div className="login-card">
-        <div className="login-header">
-          <div className="logo">
-            <span className="logo-icon">⚡</span>
-            <h1>NoctusAI</h1>
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-card rounded-lg border border-border shadow-md p-8">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <span className="text-2xl">⚡</span>
+            <h1 className="text-2xl font-bold text-foreground">NoctusAI</h1>
           </div>
-          <p className="subtitle">Plataforma de Produtos Digitais AI-First</p>
+          <p className="text-sm text-muted-foreground">Plataforma de Produtos Digitais AI-First</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="login-form">
-          <h2>{isSignup ? 'Criar conta' : 'Entrar'}</h2>
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <h2 className="text-lg font-semibold text-foreground">
+            {isSignup ? 'Criar conta' : 'Entrar'}
+          </h2>
 
           {isSignup && (
             <>
-              <div className="field">
-                <label>Seu nome</label>
-                <input type="text" value={nome} onChange={e => setNome(e.target.value)}
-                       placeholder="João Silva" required />
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Seu nome</label>
+                <input
+                  type="text"
+                  value={nome}
+                  onChange={e => setNome(e.target.value)}
+                  placeholder="João Silva"
+                  required
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+                />
               </div>
-              <div className="field">
-                <label>Nome da empresa</label>
-                <input type="text" value={empresa} onChange={e => setEmpresa(e.target.value)}
-                       placeholder="Imobiliária Silva" required />
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Nome da empresa</label>
+                <input
+                  type="text"
+                  value={empresa}
+                  onChange={e => setEmpresa(e.target.value)}
+                  placeholder="Imobiliária Silva"
+                  required
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+                />
               </div>
             </>
           )}
 
-          <div className="field">
-            <label>Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                   placeholder="voce@empresa.com" required />
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-foreground">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="voce@empresa.com"
+              required
+              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+            />
           </div>
 
-          <div className="field">
-            <label>Senha</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                   placeholder="••••••••" required minLength={6} />
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-foreground">Senha</label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="••••••••"
+              required
+              minLength={6}
+              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+            />
           </div>
 
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <div className="rounded-md bg-danger-light px-3 py-2 text-sm text-danger-foreground">
+              {error}
+            </div>
+          )}
 
-          <button type="submit" disabled={loading} className="btn-primary">
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full h-10 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             {loading ? 'Carregando...' : isSignup ? 'Criar conta' : 'Entrar'}
           </button>
 
-          <button type="button" className="btn-link" onClick={() => { setIsSignup(!isSignup); setError(''); }}>
+          <button
+            type="button"
+            className="w-full text-sm text-primary hover:text-primary/80 transition-colors"
+            onClick={() => { setIsSignup(!isSignup); setError(''); }}
+          >
             {isSignup ? 'Já tem conta? Entrar' : 'Não tem conta? Criar agora'}
           </button>
         </form>
 
         {/* OAuth Section */}
         {oauthProviders.length > 0 && (
-          <div className="oauth-section">
-            <div className="oauth-divider">
-              <span>ou continuar com</span>
+          <div className="mt-6">
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">ou continuar com</span>
+              </div>
             </div>
-            <div className="oauth-buttons">
+            <div className="grid gap-2">
               {oauthProviders.map(provider => (
                 <button
                   key={provider.id}
                   type="button"
-                  className={`btn-oauth btn-${provider.id === 'azure' ? 'microsoft' : provider.id}`}
+                  className="w-full h-10 rounded-md border border-input bg-background text-sm font-medium text-foreground hover:bg-accent transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={() => handleOAuth(provider)}
                   disabled={oauthLoading}
                 >
-                  <span className="oauth-icon">{getOAuthIcon(provider.id)}</span>
+                  <span className="font-bold">{getOAuthIcon(provider.id)}</span>
                   {getOAuthLabel(provider.id)}
                 </button>
               ))}

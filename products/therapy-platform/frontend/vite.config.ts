@@ -13,6 +13,6 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
       "@noctusai/shared": path.resolve(__dirname, "../../../shared/frontend/src"),
     },
-    dedupe: ["react", "react-dom", "zustand", "@tanstack/react-query"],
+    dedupe: ["react", "react-dom", "zustand", "@tanstack/react-query", "lucide-react", "@radix-ui/react-hover-card", "@radix-ui/react-collapsible"],
   },
 });

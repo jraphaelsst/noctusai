@@ -28,10 +28,12 @@ import { TeamManagement } from './pages/TeamManagement';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { AccountSettings } from './pages/AccountSettings';
 import { OrgSettings } from './pages/OrgSettings';
+import { InactivityWarning } from '@noctusai/shared/design-system/InactivityWarning';
+import { api, clearToken, getRefreshToken, setToken, setRefreshToken } from './lib/api';
 import './index.css';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { loading } = useAuth();
+  const { loading, logout } = useAuth();
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
   if (loading) return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
@@ -39,7 +41,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
       <p className="text-sm text-muted-foreground">Carregando...</p>
     </div>
   );
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      <InactivityWarning
+        onExtend={async () => {
+          const rt = getRefreshToken();
+          if (!rt) return;
+          const res = await api.post('/api/auth/refresh', { refresh_token: rt });
+          if (res.access_token) setToken(res.access_token);
+          if (res.refresh_token) setRefreshToken(res.refresh_token);
+        }}
+        onExpired={() => { logout(); window.location.href = '/login'; }}
+      />
+    </>
+  );
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {

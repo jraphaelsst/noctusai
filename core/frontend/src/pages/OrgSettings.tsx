@@ -78,75 +78,63 @@ export function OrgSettings() {
   }
 
   if (loading) {
-    return <div style={{ textAlign: 'center', padding: 60 }}>Carregando...</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <p className="text-muted-foreground">Carregando...</p>
+      </div>
+    );
   }
 
   return (
-    <div style={{ maxWidth: 700, margin: '40px auto', padding: '0 20px' }}>
+    <div className="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-10">
       <button
         onClick={() => navigate('/')}
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: '#2563eb', marginBottom: 20, fontSize: 14,
-        }}
+        className="mb-5 text-sm text-primary hover:underline"
       >
         &larr; Voltar ao Dashboard
       </button>
-      <h1 style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 8 }}>
+      <h1 className="mb-2 text-2xl font-bold text-foreground">
         Configurações da Organização
       </h1>
-      <p style={{ color: '#6b7280', marginBottom: 32 }}>
+      <p className="mb-8 text-sm text-muted-foreground">
         Gerencie chaves de API e preferências da sua organização.
       </p>
 
       {/* Existing settings */}
       {settings.length > 0 && (
-        <div style={{ marginBottom: 32 }}>
+        <div className="mb-8 space-y-2">
           {settings.map(s => (
             <div
               key={s.id}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '14px 16px', marginBottom: 8, borderRadius: 8,
-                border: '1px solid #e5e7eb', background: '#fff',
-              }}
+              className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3.5"
             >
               <div>
-                <strong style={{ fontFamily: 'monospace' }}>{s.key}</strong>
-                <div style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>
+                <strong className="font-mono text-sm text-foreground">{s.key}</strong>
+                <div className="mt-0.5 text-xs text-muted-foreground">
                   {s.is_secret
                     ? (revealed[s.key] ? s.value : '********')
                     : s.value
                   }
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="flex gap-2">
                 {s.is_secret && (
                   <button
                     onClick={() => toggleReveal(s.key)}
-                    style={{
-                      padding: '4px 10px', borderRadius: 4, border: '1px solid #d1d5db',
-                      background: 'white', cursor: 'pointer', fontSize: 12,
-                    }}
+                    className="rounded-md border border-border bg-background px-2.5 py-1 text-xs text-foreground hover:bg-muted"
                   >
                     {revealed[s.key] ? 'Ocultar' : 'Revelar'}
                   </button>
                 )}
                 <button
                   onClick={() => startEdit(s)}
-                  style={{
-                    padding: '4px 10px', borderRadius: 4, border: '1px solid #d1d5db',
-                    background: 'white', cursor: 'pointer', fontSize: 12,
-                  }}
+                  className="rounded-md border border-border bg-background px-2.5 py-1 text-xs text-foreground hover:bg-muted"
                 >
                   Editar
                 </button>
                 <button
                   onClick={() => handleDelete(s.key)}
-                  style={{
-                    padding: '4px 10px', borderRadius: 4, border: '1px solid #fca5a5',
-                    background: '#fef2f2', color: '#991b1b', cursor: 'pointer', fontSize: 12,
-                  }}
+                  className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs text-red-700 hover:bg-red-100"
                 >
                   Remover
                 </button>
@@ -157,58 +145,51 @@ export function OrgSettings() {
       )}
 
       {/* Add/Edit form */}
-      <div style={{
-        padding: 20, borderRadius: 8, border: '1px solid #e5e7eb', background: '#f9fafb',
-      }}>
-        <h3 style={{ marginBottom: 16, fontSize: 16 }}>
+      <div className="rounded-lg border border-border bg-muted/30 p-5">
+        <h3 className="mb-4 text-base font-semibold text-foreground">
           {editKey && settings.some(s => s.key === editKey) ? 'Editar Configuração' : 'Adicionar Configuração'}
         </h3>
-        <form onSubmit={handleSave}>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', fontWeight: 500, marginBottom: 4 }}>Chave</label>
+        <form onSubmit={handleSave} className="space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-foreground">Chave</label>
             <input
               type="text"
               value={editKey}
               onChange={e => setEditKey(e.target.value)}
               placeholder="ex: openai_api_key"
               required
-              style={{
-                width: '100%', padding: '8px 12px', borderRadius: 6,
-                border: '1px solid #d1d5db',
-              }}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', fontWeight: 500, marginBottom: 4 }}>Valor</label>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-foreground">Valor</label>
             <input
               type={editIsSecret ? 'password' : 'text'}
               value={editValue}
               onChange={e => setEditValue(e.target.value)}
               placeholder="Valor da configuração"
               required
-              style={{
-                width: '100%', padding: '8px 12px', borderRadius: 6,
-                border: '1px solid #d1d5db',
-              }}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div>
+            <label className="flex items-center gap-2 text-sm text-foreground">
               <input
                 type="checkbox"
                 checked={editIsSecret}
                 onChange={e => setEditIsSecret(e.target.checked)}
+                className="h-4 w-4 rounded border-border"
               />
               Valor secreto
             </label>
           </div>
 
           {message && (
-            <p style={{
-              marginBottom: 12, padding: '8px 12px', borderRadius: 6,
-              background: message.includes('sucesso') ? '#dcfce7' : '#fef2f2',
-              color: message.includes('sucesso') ? '#166534' : '#991b1b',
-            }}>
+            <p className={`rounded-md px-3 py-2 text-sm ${
+              message.includes('sucesso')
+                ? 'bg-green-50 text-green-800'
+                : 'bg-red-50 text-red-800'
+            }`}>
               {message}
             </p>
           )}
@@ -216,12 +197,7 @@ export function OrgSettings() {
           <button
             type="submit"
             disabled={saving}
-            style={{
-              padding: '10px 24px', borderRadius: 6, border: 'none',
-              background: '#2563eb', color: 'white', fontWeight: 500,
-              cursor: saving ? 'not-allowed' : 'pointer',
-              opacity: saving ? 0.7 : 1,
-            }}
+            className="rounded-md bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {saving ? 'Salvando...' : 'Salvar'}
           </button>

@@ -16,9 +16,9 @@ import {
   LogOut,
   PackageOpen,
 } from 'lucide-react';
-import { useAuth } from '../lib/auth-context';
-import { api } from '../lib/api';
-import { NotificationBell } from './NotificationBell';
+import { useAuth } from '../../lib/auth-context';
+import { api } from '../../lib/api';
+import { NotificationBell } from '../NotificationBell';
 import { AppShell, Sidebar, Header, useTheme } from '@noctusai/shared/design-system';
 import type { NavGroup, NavItem } from '@noctusai/shared/design-system';
 

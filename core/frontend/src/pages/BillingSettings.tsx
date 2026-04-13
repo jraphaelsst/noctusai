@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
 import { formatCurrency, formatDate } from '../lib/utils';
+import { NotificationBell } from '../components/NotificationBell';
+import { Header, useTheme } from "@noctusai/shared/design-system";
 
 interface BillingPlan {
   id: string;
@@ -56,12 +58,13 @@ interface Invoice {
 }
 
 export function BillingSettings() {
-  const { user, organization, loading: authLoading, logout } = useAuth();
+  const { user, organization, isAdmin, loading: authLoading, logout } = useAuth();
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     if (authLoading) return;
@@ -98,15 +101,15 @@ export function BillingSettings() {
     }
   }
 
-  function getStatusBadgeClass(status: string): string {
+  function getStatusBadgeClasses(status: string): string {
     switch (status) {
-      case 'active': return 'badge-active';
-      case 'trialing': return 'badge-warning';
+      case 'active': return 'bg-green-100 text-green-800';
+      case 'trialing': return 'bg-yellow-100 text-yellow-800';
       case 'canceled':
       case 'expired':
       case 'past_due':
-        return 'badge-danger';
-      default: return '';
+        return 'bg-red-100 text-red-800';
+      default: return 'bg-muted text-muted-foreground';
     }
   }
 
@@ -132,14 +135,14 @@ export function BillingSettings() {
     }
   }
 
-  function getInvoiceStatusBadge(status: string): string {
+  function getInvoiceStatusClasses(status: string): string {
     switch (status) {
-      case 'paid': return 'badge-active';
-      case 'open': return 'badge-warning';
+      case 'paid': return 'bg-green-100 text-green-800';
+      case 'open': return 'bg-yellow-100 text-yellow-800';
       case 'void':
       case 'uncollectible':
-        return 'badge-danger';
-      default: return '';
+        return 'bg-red-100 text-red-800';
+      default: return 'bg-muted text-muted-foreground';
     }
   }
 
@@ -150,140 +153,153 @@ export function BillingSettings() {
 
   if (authLoading || loading) {
     return (
-      <div className="loading-screen">
-        <div className="spinner" />
-        <p>Carregando faturamento...</p>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+        <p className="mt-4 text-muted-foreground">Carregando faturamento...</p>
       </div>
     );
   }
 
   return (
-    <div className="dashboard">
-      <header className="dashboard-header">
-        <div className="header-left">
-          <span className="logo-icon">⚡</span>
-          <h1>NoctusAI</h1>
-        </div>
-        <div className="header-right">
-          <div className="user-info">
-            <span className="user-name">{user?.nome}</span>
-            <span className="org-name">{organization?.nome}</span>
+    <div className="min-h-screen bg-background">
+      <Header
+        user={{ name: user?.nome || '', email: user?.email || '', role: isAdmin ? 'Administrador' : 'Membro' }}
+        onLogout={handleLogout}
+        theme={theme}
+        onThemeToggle={toggleTheme}
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              className="h-9 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+              onClick={() => navigate('/')}
+            >
+              Voltar
+            </button>
+            <NotificationBell />
           </div>
-          <button className="btn-secondary" onClick={() => navigate('/')}>Voltar</button>
-          <button className="btn-logout" onClick={handleLogout}>Sair</button>
-        </div>
-      </header>
+        }
+      />
 
-      <main className="billing-page">
-        <div className="billing-header">
+      <main className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-10">
+        <div className="mb-8 flex items-center justify-between">
           <div>
-            <h2>Faturamento</h2>
-            <p>Gerencie seu plano e histórico de pagamentos</p>
+            <h2 className="text-2xl font-bold text-foreground">Faturamento</h2>
+            <p className="mt-1 text-muted-foreground">Gerencie seu plano e histórico de pagamentos</p>
           </div>
-          <button className="btn-secondary" onClick={() => navigate('/pricing')}>
+          <button
+            className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
+            onClick={() => navigate('/pricing')}
+          >
             Ver Planos
           </button>
         </div>
 
         {/* Current Plan Card */}
-        <div className="billing-plan-card">
-          <div className="billing-plan-info">
-            <div className="billing-plan-top">
-              <h3>{billing?.plan?.name || 'Sem plano'}</h3>
-              {billing?.subscription && (
-                <span className={`badge ${getStatusBadgeClass(billing.subscription.status)}`}>
-                  {getStatusLabel(billing.subscription.status)}
-                </span>
-              )}
-            </div>
-            {billing && (
-              <div className="billing-plan-details">
-                <div className="billing-detail">
-                  <span className="billing-detail-label">Valor</span>
-                  <span className="billing-detail-value">
-                    {formatCurrency(billing.plan?.price_monthly ?? 0)}
-                    {(billing.plan?.price_monthly ?? 0) > 0 && (
-                      <span className="billing-detail-period">/mes</span>
-                    )}
+        <div className="mb-8 rounded-lg border border-border bg-card p-6 shadow-sm">
+          <div className="mb-4 flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg font-semibold text-foreground">
+                  {billing?.plan?.name || 'Sem plano'}
+                </h3>
+                {billing?.subscription && (
+                  <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getStatusBadgeClasses(billing.subscription.status)}`}>
+                    {getStatusLabel(billing.subscription.status)}
                   </span>
-                </div>
-                <div className="billing-detail">
-                  <span className="billing-detail-label">Proxima cobranca</span>
-                  <span className="billing-detail-value">
-                    {billing.subscription?.metadata?.cancel_at_period_end
-                      ? 'Cancela em ' + formatDate(billing.next_invoice?.next_payment_attempt)
-                      : formatDate(billing.next_invoice?.next_payment_attempt)
-                    }
-                  </span>
-                </div>
-                {billing.payment_method && (
-                  <div className="billing-detail">
-                    <span className="billing-detail-label">Pagamento</span>
-                    <span className="billing-detail-value">
-                      {billing.payment_method.brand} **** {billing.payment_method.last4}
-                    </span>
-                  </div>
                 )}
               </div>
-            )}
-            {Boolean(billing?.subscription?.metadata?.cancel_at_period_end) && (
-              <div className="billing-cancel-notice">
-                Seu plano sera cancelado ao final do periodo atual.
-              </div>
-            )}
+              {billing && (
+                <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                  <div>
+                    <span className="block text-xs text-muted-foreground">Valor</span>
+                    <span className="text-sm font-medium text-foreground">
+                      {formatCurrency(billing.plan?.price_monthly ?? 0)}
+                      {(billing.plan?.price_monthly ?? 0) > 0 && (
+                        <span className="text-muted-foreground">/mes</span>
+                      )}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-muted-foreground">Proxima cobranca</span>
+                    <span className="text-sm font-medium text-foreground">
+                      {billing.subscription?.metadata?.cancel_at_period_end
+                        ? 'Cancela em ' + formatDate(billing.next_invoice?.next_payment_attempt)
+                        : formatDate(billing.next_invoice?.next_payment_attempt)
+                      }
+                    </span>
+                  </div>
+                  {billing.payment_method && (
+                    <div>
+                      <span className="block text-xs text-muted-foreground">Pagamento</span>
+                      <span className="text-sm font-medium text-foreground">
+                        {billing.payment_method.brand} **** {billing.payment_method.last4}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {Boolean(billing?.subscription?.metadata?.cancel_at_period_end) && (
+                <div className="mt-4 rounded-md bg-yellow-50 px-4 py-2 text-sm text-yellow-800">
+                  Seu plano sera cancelado ao final do periodo atual.
+                </div>
+              )}
+            </div>
           </div>
-          <div className="billing-plan-actions">
+          <div className="flex items-center gap-3 border-t border-border pt-4">
             <button
-              className="btn-primary billing-portal-btn"
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={openPortal}
               disabled={portalLoading}
             >
               {portalLoading ? 'Redirecionando...' : 'Gerenciar Pagamento'}
             </button>
-            <button className="btn-secondary" onClick={() => navigate('/pricing')}>
+            <button
+              className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
+              onClick={() => navigate('/pricing')}
+            >
               Alterar Plano
             </button>
           </div>
         </div>
 
         {/* Invoices */}
-        <div className="billing-invoices">
-          <h3>Histórico de Faturas</h3>
+        <div>
+          <h3 className="mb-4 text-lg font-semibold text-foreground">Histórico de Faturas</h3>
           {invoices.length > 0 ? (
-            <div className="admin-table-wrapper">
-              <table className="admin-table">
-                <thead>
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-border bg-muted/50">
                   <tr>
-                    <th>Data</th>
-                    <th>Descrição</th>
-                    <th>Valor</th>
-                    <th>Status</th>
-                    <th>Ações</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Data</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Descrição</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Valor</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Status</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-border">
                   {invoices.map(invoice => (
-                    <tr key={invoice.id}>
-                      <td>{formatDate(invoice.date)}</td>
-                      <td>{invoice.description || 'Fatura NoctusAI'}</td>
-                      <td className="admin-table-primary">{formatCurrency(invoice.amount)}</td>
-                      <td>
-                        <span className={`badge badge-sm ${getInvoiceStatusBadge(invoice.status)}`}>
+                    <tr key={invoice.id} className="bg-card">
+                      <td className="px-4 py-3 text-foreground">{formatDate(invoice.date)}</td>
+                      <td className="px-4 py-3 text-foreground">{invoice.description || 'Fatura NoctusAI'}</td>
+                      <td className="px-4 py-3 font-medium text-foreground">{formatCurrency(invoice.amount)}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getInvoiceStatusClasses(invoice.status)}`}>
                           {getInvoiceStatusLabel(invoice.status)}
                         </span>
                       </td>
-                      <td>
+                      <td className="px-4 py-3">
                         {invoice.pdf_url ? (
                           <a
                             href={invoice.pdf_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="btn-sm"
+                            className="rounded-md border border-border px-3 py-1 text-xs font-medium text-foreground hover:bg-muted"
                           >
                             PDF
                           </a>
                         ) : (
-                          <span className="billing-no-pdf">--</span>
+                          <span className="text-muted-foreground">--</span>
                         )}
                       </td>
                     </tr>
@@ -292,8 +308,8 @@ export function BillingSettings() {
               </table>
             </div>
           ) : (
-            <div className="billing-empty-invoices">
-              <p>Nenhuma fatura encontrada.</p>
+            <div className="rounded-lg border border-border bg-card py-12 text-center">
+              <p className="text-muted-foreground">Nenhuma fatura encontrada.</p>
             </div>
           )}
         </div>

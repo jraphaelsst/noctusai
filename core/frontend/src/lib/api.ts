@@ -20,8 +20,17 @@ export function setToken(token: string) {
   localStorage.setItem('noctus_token', token);
 }
 
+export function setRefreshToken(token: string) {
+  localStorage.setItem('noctus_refresh_token', token);
+}
+
+export function getRefreshToken(): string | null {
+  return localStorage.getItem('noctus_refresh_token');
+}
+
 export function clearToken() {
   localStorage.removeItem('noctus_token');
+  localStorage.removeItem('noctus_refresh_token');
 }
 
 export function isAuthenticated(): boolean {

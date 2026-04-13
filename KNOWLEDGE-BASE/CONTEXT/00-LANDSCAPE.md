@@ -25,11 +25,11 @@ A **multi-tenant, multi-product SaaS platform**. Organizations sign up once on t
 
 | Product | Routers | Services | Tests | Test Files |
 |---------|---------|----------|-------|------------|
-| Core | 21 | 9 | 351 | 26 |
+| Core | 23 | 9 | 389 | 28 |
 | ERP | 50 | 42 | 1,634 | 98 |
 | PF | 16 | 14 | 473 | 37 |
 | Therapy | 39 | 38 | 1,021 | 62 |
-| **Total** | **126** | **103** | **3,479** | **223** |
+| **Total** | **128** | **103** | **3,517** | **225** |
 
 ---
 
@@ -119,7 +119,7 @@ Note: Therapy Platform uses **direct Supabase Auth** (not SSO through Core). Mul
 
 ## Testing Strategy
 
-**Dual-layer testing**: Mock-based unit tests for speed (3,479 tests: Core 351, ERP 1,634, PF 473, Therapy 1,021) + real-DB integration tests (~25 tests per backend) for confidence. Mock tests use `MockSupabaseClient` and run without credentials. Real-DB tests in `tests/realdb/` hit a live Supabase instance to verify SQL filtering, FK/CHECK constraints, cascade deletes, PostgREST errors, and RLS org isolation — auto-skip without credentials.
+**Dual-layer testing**: Mock-based unit tests for speed (3,517 tests: Core 389, ERP 1,634, PF 473, Therapy 1,021) + real-DB integration tests (~25 tests per backend) for confidence. Mock tests use `MockSupabaseClient` and run without credentials. Real-DB tests in `tests/realdb/` hit a live Supabase instance to verify SQL filtering, FK/CHECK constraints, cascade deletes, PostgREST errors, and RLS org isolation — auto-skip without credentials.
 
 ## Legacy Data Migration (`migratingDB/`)
 

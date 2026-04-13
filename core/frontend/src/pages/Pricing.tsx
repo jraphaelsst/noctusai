@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
+import { NotificationBell } from '../components/NotificationBell';
+import { Header, useTheme } from "@noctusai/shared/design-system";
 
 interface Plan {
   id: string;
@@ -18,12 +20,13 @@ interface Plan {
 }
 
 export function Pricing() {
-  const { user, organization, loading: authLoading, logout } = useAuth();
+  const { user, organization, isAdmin, loading: authLoading, logout } = useAuth();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     if (authLoading) return;
@@ -99,9 +102,9 @@ export function Pricing() {
 
   if (authLoading || loading) {
     return (
-      <div className="loading-screen">
-        <div className="spinner" />
-        <p>Carregando planos...</p>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+        <p className="mt-4 text-muted-foreground">Carregando planos...</p>
       </div>
     );
   }
@@ -109,75 +112,107 @@ export function Pricing() {
   const yearlySavings = plans.length > 0 && plans.some(p => p.price_yearly > 0 && p.price_monthly > 0);
 
   return (
-    <div className="dashboard">
-      <header className="dashboard-header">
-        <div className="header-left">
-          <span className="logo-icon">⚡</span>
-          <h1>NoctusAI</h1>
-        </div>
-        <div className="header-right">
-          <div className="user-info">
-            <span className="user-name">{user?.nome}</span>
-            <span className="org-name">{organization?.nome}</span>
+    <div className="min-h-screen bg-background">
+      <Header
+        user={{ name: user?.nome || '', email: user?.email || '', role: isAdmin ? 'Administrador' : 'Membro' }}
+        onLogout={handleLogout}
+        theme={theme}
+        onThemeToggle={toggleTheme}
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              className="h-9 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+              onClick={() => navigate('/')}
+            >
+              Voltar
+            </button>
+            <NotificationBell />
           </div>
-          <button className="btn-secondary" onClick={() => navigate('/')}>Voltar</button>
-          <button className="btn-logout" onClick={handleLogout}>Sair</button>
-        </div>
-      </header>
+        }
+      />
 
-      <main className="pricing-page">
-        <div className="pricing-header">
-          <h2>Escolha seu plano</h2>
-          <p>Encontre o plano ideal para sua organização. Todos incluem acesso à plataforma NoctusAI.</p>
+      <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-6 sm:py-10 lg:py-12">
+        <div className="mb-10 text-center">
+          <h2 className="text-3xl font-bold text-foreground">Escolha seu plano</h2>
+          <p className="mt-2 text-muted-foreground">
+            Encontre o plano ideal para sua organização. Todos incluem acesso à plataforma NoctusAI.
+          </p>
         </div>
 
         {yearlySavings && (
-          <div className="pricing-toggle">
+          <div className="mb-10 flex items-center justify-center gap-1 rounded-lg bg-muted p-1">
             <button
-              className={`pricing-toggle-btn ${billingPeriod === 'monthly' ? 'active' : ''}`}
+              className={`rounded-md px-6 py-2 text-sm font-medium transition-colors ${
+                billingPeriod === 'monthly'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
               onClick={() => setBillingPeriod('monthly')}
             >
               Mensal
             </button>
             <button
-              className={`pricing-toggle-btn ${billingPeriod === 'yearly' ? 'active' : ''}`}
+              className={`flex items-center gap-2 rounded-md px-6 py-2 text-sm font-medium transition-colors ${
+                billingPeriod === 'yearly'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
               onClick={() => setBillingPeriod('yearly')}
             >
               Anual
-              <span className="pricing-toggle-save">Economize</span>
+              <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
+                Economize
+              </span>
             </button>
           </div>
         )}
 
-        <div className="pricing-grid">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {plans.map(plan => (
-            <div key={plan.id} className={`pricing-card ${isPopular(plan) ? 'popular' : ''}`}>
-              {isPopular(plan) && <div className="pricing-popular-tag">Mais Popular</div>}
-              <div className="pricing-card-header">
-                <h3>{plan.name}</h3>
-                {plan.description && <p>{plan.description}</p>}
+            <div
+              key={plan.id}
+              className={`relative flex flex-col rounded-lg border shadow-sm p-6 ${
+                isPopular(plan)
+                  ? 'border-primary bg-card ring-2 ring-primary'
+                  : 'border-border bg-card'
+              }`}
+            >
+              {isPopular(plan) && (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-primary px-4 py-1 text-xs font-semibold text-primary-foreground">
+                  Mais Popular
+                </div>
+              )}
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold text-foreground">{plan.name}</h3>
+                {plan.description && (
+                  <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
+                )}
               </div>
 
-              <div className="pricing-price">
-                <span className="pricing-price-value">{formatPrice(plan)}</span>
+              <div className="mb-6">
+                <span className="text-3xl font-bold text-foreground">{formatPrice(plan)}</span>
                 {(billingPeriod === 'monthly' ? plan.price_monthly : plan.price_yearly) > 0 && (
-                  <span className="pricing-price-period">
+                  <span className="ml-1 text-sm text-muted-foreground">
                     /{billingPeriod === 'monthly' ? 'mês' : 'ano'}
                   </span>
                 )}
               </div>
 
-              <ul className="pricing-features">
+              <ul className="mb-6 flex-1 space-y-3">
                 {getFeatureList(plan).map((feature, i) => (
-                  <li key={i}>
-                    <span className="pricing-feature-check">✓</span>
+                  <li key={i} className="flex items-center gap-2 text-sm text-foreground">
+                    <span className="font-bold text-primary">✓</span>
                     {feature}
                   </li>
                 ))}
               </ul>
 
               <button
-                className={`pricing-cta ${isPopular(plan) ? 'btn-primary' : 'btn-secondary'}`}
+                className={`w-full rounded-md px-4 py-2.5 text-sm font-medium transition-colors ${
+                  isPopular(plan)
+                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                    : 'border border-border bg-background text-foreground hover:bg-muted'
+                } disabled:cursor-not-allowed disabled:opacity-50`}
                 onClick={() => handleCheckout(plan.id)}
                 disabled={checkingOut === plan.id}
               >
@@ -187,9 +222,14 @@ export function Pricing() {
           ))}
 
           {plans.length === 0 && (
-            <div className="pricing-empty">
-              <p>Nenhum plano disponível no momento.</p>
-              <button className="btn-secondary" onClick={() => navigate('/')}>Voltar ao Dashboard</button>
+            <div className="col-span-full py-12 text-center">
+              <p className="text-muted-foreground">Nenhum plano disponível no momento.</p>
+              <button
+                className="mt-4 rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
+                onClick={() => navigate('/')}
+              >
+                Voltar ao Dashboard
+              </button>
             </div>
           )}
         </div>

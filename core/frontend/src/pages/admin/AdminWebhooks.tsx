@@ -37,6 +37,12 @@ const EVENT_OPTIONS = [
   '*',
 ];
 
+function deliveryStatusClasses(status: string): string {
+  if (status === 'success') return 'bg-success/10 text-success';
+  if (status === 'failed') return 'bg-danger/10 text-danger';
+  return 'bg-warning/10 text-warning';
+}
+
 export function AdminWebhooks() {
   const [endpoints, setEndpoints] = useState<WebhookEndpoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,12 +50,10 @@ export function AdminWebhooks() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
 
-  // Form state
   const [formUrl, setFormUrl] = useState('');
   const [formEvents, setFormEvents] = useState<string[]>([]);
   const [formActive, setFormActive] = useState(true);
 
-  // Deliveries view
   const [viewDeliveriesId, setViewDeliveriesId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
@@ -92,7 +96,6 @@ export function AdminWebhooks() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-
     try {
       if (editingId) {
         await api.patch(`/api/webhooks/${editingId}`, {
@@ -158,7 +161,6 @@ export function AdminWebhooks() {
     setRetryingId(delivery.id);
     try {
       await api.post(`/api/webhooks/deliveries/${delivery.id}/retry`);
-      // Refresh deliveries list
       if (viewDeliveriesId) {
         await fetchDeliveries(viewDeliveriesId);
       }
@@ -175,90 +177,113 @@ export function AdminWebhooks() {
     );
   }
 
-  function statusBadge(status: string) {
-    if (status === 'success') return 'badge-active';
-    if (status === 'failed') return 'badge-danger';
-    return 'badge-warning';
-  }
-
   if (loading) {
-    return <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        <p className="ml-3 text-muted-foreground">Carregando...</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <div className="admin-page-header">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="admin-page-title">Webhooks</h1>
-          <p className="admin-page-subtitle">
+          <h1 className="text-2xl font-bold text-foreground">Webhooks</h1>
+          <p className="text-muted-foreground mt-1">
             {endpoints.length} endpoint{endpoints.length !== 1 ? 's' : ''} configurado{endpoints.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <button className="btn-primary admin-btn" onClick={openCreate}>
+        <button
+          className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+          onClick={openCreate}
+        >
           + Novo Webhook
         </button>
       </div>
 
       {/* Created secret alert */}
       {createdSecret && (
-        <div className="admin-alert admin-alert-warning">
-          <strong>Webhook criado!</strong> Copie o signing secret agora, ele não será exibido novamente:
-          <code className="admin-key-display">{createdSecret}</code>
-          <button className="btn-sm" onClick={() => { navigator.clipboard.writeText(createdSecret); }}>
+        <div className="mb-4 bg-warning/10 border border-warning/30 rounded-lg p-4 flex flex-wrap items-center gap-3">
+          <span className="text-sm font-medium text-foreground">Webhook criado! Copie o signing secret agora, ele nao sera exibido novamente:</span>
+          <code className="bg-muted px-3 py-1.5 rounded text-sm font-mono break-all">{createdSecret}</code>
+          <button
+            className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+            onClick={() => { navigator.clipboard.writeText(createdSecret); }}
+          >
             Copiar
           </button>
-          <button className="btn-sm" onClick={() => { setCreatedSecret(null); setShowCreate(false); resetForm(); }}>
+          <button
+            className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+            onClick={() => { setCreatedSecret(null); setShowCreate(false); resetForm(); }}
+          >
             Fechar
           </button>
         </div>
       )}
 
       {/* Endpoints table */}
-      <div className="admin-table-wrapper">
-        <table className="admin-table">
+      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
           <thead>
-            <tr>
-              <th>URL</th>
-              <th>Eventos</th>
-              <th>Status</th>
-              <th>Criado em</th>
-              <th>Ações</th>
+            <tr className="border-b border-border bg-muted/50">
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">URL</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Eventos</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Criado em</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
             {endpoints.map(ep => (
-              <tr key={ep.id} className={!ep.is_active ? 'admin-row-inactive' : ''}>
-                <td className="admin-table-primary webhook-url-cell">{ep.url}</td>
-                <td>
-                  <div className="webhook-events-list">
+              <tr key={ep.id} className={`hover:bg-muted/50 transition-colors ${!ep.is_active ? 'opacity-50' : ''}`}>
+                <td className="px-4 py-3 font-medium text-foreground max-w-xs truncate">{ep.url}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
                     {(ep.events || []).length === 0 ? (
-                      <span className="badge badge-sm">todos</span>
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">todos</span>
                     ) : (
                       (ep.events || []).map(ev => (
-                        <span key={ev} className="badge badge-sm">{ev}</span>
+                        <span key={ev} className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">{ev}</span>
                       ))
                     )}
                   </div>
                 </td>
-                <td>
+                <td className="px-4 py-3">
                   <button
-                    className={`webhook-toggle ${ep.is_active ? 'webhook-toggle-active' : ''}`}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      ep.is_active ? 'bg-success' : 'bg-muted'
+                    }`}
                     onClick={() => handleToggleActive(ep)}
                     title={ep.is_active ? 'Desativar' : 'Ativar'}
                   >
-                    <span className="webhook-toggle-slider" />
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        ep.is_active ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
                   </button>
                 </td>
-                <td>{new Date(ep.created_at).toLocaleDateString('pt-BR')}</td>
-                <td>
-                  <div className="webhook-actions">
-                    <button className="btn-sm" onClick={() => fetchDeliveries(ep.id)}>
+                <td className="px-4 py-3 text-muted-foreground">{new Date(ep.created_at).toLocaleDateString('pt-BR')}</td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-2">
+                    <button
+                      className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+                      onClick={() => fetchDeliveries(ep.id)}
+                    >
                       Entregas
                     </button>
-                    <button className="btn-sm" onClick={() => openEdit(ep)}>
+                    <button
+                      className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+                      onClick={() => openEdit(ep)}
+                    >
                       Editar
                     </button>
-                    <button className="btn-sm btn-danger" onClick={() => handleDelete(ep.id)}>
+                    <button
+                      className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
+                      onClick={() => handleDelete(ep.id)}
+                    >
                       Excluir
                     </button>
                   </div>
@@ -266,7 +291,11 @@ export function AdminWebhooks() {
               </tr>
             ))}
             {endpoints.length === 0 && (
-              <tr><td colSpan={5} className="admin-table-empty">Nenhum webhook configurado</td></tr>
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                  Nenhum webhook configurado
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -274,95 +303,100 @@ export function AdminWebhooks() {
 
       {/* Deliveries view */}
       {viewDeliveriesId && (
-        <div className="webhook-deliveries-section">
-          <div className="webhook-deliveries-header">
-            <h2>Log de Entregas</h2>
-            <button className="btn-sm" onClick={() => { setViewDeliveriesId(null); setDeliveries([]); }}>
+        <div className="mt-6 bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/50">
+            <h2 className="text-lg font-semibold text-foreground">Log de Entregas</h2>
+            <button
+              className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+              onClick={() => { setViewDeliveriesId(null); setDeliveries([]); }}
+            >
               Fechar
             </button>
           </div>
 
           {deliveriesLoading ? (
-            <div className="notification-empty">Carregando...</div>
+            <div className="p-6 text-center text-muted-foreground">Carregando...</div>
           ) : deliveries.length === 0 ? (
-            <div className="notification-empty" style={{ padding: '24px', textAlign: 'center' as const }}>
+            <div className="p-6 text-center text-muted-foreground">
               Nenhuma entrega registrada
             </div>
           ) : (
-            <div className="admin-table-wrapper">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Evento</th>
-                    <th>Status</th>
-                    <th>HTTP</th>
-                    <th>Tentativas</th>
-                    <th>Data</th>
-                    <th>Resposta</th>
-                    <th>Ações</th>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Evento</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">HTTP</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Tentativas</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Data</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Resposta</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {deliveries.map(d => (
+                  <tr key={d.id} className="hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{d.event_type}</code>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${deliveryStatusClasses(d.status)}`}>
+                        {d.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-foreground">{d.response_status || '\u2014'}</td>
+                    <td className="px-4 py-3 text-foreground">{d.attempts}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{new Date(d.created_at).toLocaleString('pt-BR')}</td>
+                    <td className="px-4 py-3 text-muted-foreground max-w-xs truncate">
+                      {d.response_body ? d.response_body.substring(0, 100) : '\u2014'}
+                    </td>
+                    <td className="px-4 py-3">
+                      {d.status !== 'success' && (
+                        <button
+                          className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors disabled:opacity-50"
+                          onClick={() => handleRetryDelivery(d)}
+                          disabled={retryingId === d.id}
+                        >
+                          {retryingId === d.id ? 'Reenviando...' : 'Reenviar'}
+                        </button>
+                      )}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {deliveries.map(d => (
-                    <tr key={d.id}>
-                      <td><code>{d.event_type}</code></td>
-                      <td>
-                        <span className={`badge badge-sm ${statusBadge(d.status)}`}>
-                          {d.status}
-                        </span>
-                      </td>
-                      <td>{d.response_status || '—'}</td>
-                      <td>{d.attempts}</td>
-                      <td>{new Date(d.created_at).toLocaleString('pt-BR')}</td>
-                      <td className="webhook-response-cell">
-                        {d.response_body ? d.response_body.substring(0, 100) : '—'}
-                      </td>
-                      <td>
-                        {d.status !== 'success' && (
-                          <button
-                            className="btn-sm"
-                            onClick={() => handleRetryDelivery(d)}
-                            disabled={retryingId === d.id}
-                          >
-                            {retryingId === d.id ? 'Reenviando...' : 'Reenviar'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       )}
 
       {/* Create/Edit Modal */}
       {showCreate && !createdSecret && (
-        <div className="modal-overlay" onClick={() => { setShowCreate(false); resetForm(); }}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>{editingId ? 'Editar Webhook' : 'Novo Webhook'}</h2>
-            <form onSubmit={handleSubmit}>
-              <div className="field">
-                <label>URL de destino</label>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => { setShowCreate(false); resetForm(); }}>
+          <div className="bg-card rounded-lg border border-border shadow-lg w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-foreground mb-4">{editingId ? 'Editar Webhook' : 'Novo Webhook'}</h2>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">URL de destino</label>
                 <input
                   type="url"
                   value={formUrl}
                   onChange={e => setFormUrl(e.target.value)}
                   placeholder="https://example.com/webhooks"
                   required
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
               </div>
 
-              <div className="field">
-                <label>Eventos</label>
-                <div className="webhook-events-grid">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Eventos</label>
+                <div className="grid grid-cols-2 gap-2">
                   {EVENT_OPTIONS.map(event => (
-                    <label key={event} className="admin-scope-option">
+                    <label key={event} className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
                       <input
                         type="checkbox"
                         checked={formEvents.includes(event)}
                         onChange={() => toggleEvent(event)}
+                        className="rounded border-border"
                       />
                       {event === '*' ? 'Todos (*)' : event}
                     </label>
@@ -370,22 +404,30 @@ export function AdminWebhooks() {
                 </div>
               </div>
 
-              <div className="field">
-                <label className="admin-scope-option">
+              <div>
+                <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
                   <input
                     type="checkbox"
                     checked={formActive}
                     onChange={e => setFormActive(e.target.checked)}
+                    className="rounded border-border"
                   />
                   Ativo
                 </label>
               </div>
 
-              <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => { setShowCreate(false); resetForm(); }}>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  className="border border-border bg-card text-foreground rounded-md px-4 py-2 text-sm hover:bg-accent transition-colors"
+                  onClick={() => { setShowCreate(false); resetForm(); }}
+                >
                   Cancelar
                 </button>
-                <button type="submit" className="btn-primary admin-btn">
+                <button
+                  type="submit"
+                  className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+                >
                   {editingId ? 'Salvar' : 'Criar Webhook'}
                 </button>
               </div>

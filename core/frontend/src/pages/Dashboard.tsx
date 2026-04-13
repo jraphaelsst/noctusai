@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
 import { NotificationBell } from '../components/NotificationBell';
+import { Header, useTheme } from "@noctusai/shared/design-system";
 
 interface Product {
   id: string;
@@ -24,12 +25,13 @@ interface Subscription {
 }
 
 export function Dashboard() {
-  const { user, organization, isAdmin, loading: authLoading, logout } = useAuth();
+  const { user, organization, isAdmin, loading: authLoading, logout, refresh } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [launching, setLaunching] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     if (authLoading) return;
@@ -88,58 +90,68 @@ export function Dashboard() {
 
   if (authLoading || loading) {
     return (
-      <div className="loading-screen">
-        <div className="spinner" />
-        <p>Carregando NoctusAI...</p>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+        <p className="text-sm text-muted-foreground">Carregando NoctusAI...</p>
       </div>
     );
   }
 
+  const headerUser = {
+    name: user?.nome || '',
+    email: user?.email || '',
+    role: isAdmin ? 'Administrador' : 'Membro',
+  };
+
+  const handleUpdateProfile = async (data: { name: string; email: string; phone: string }) => {
+    await api.patch('/api/auth/profile', { nome: data.name });
+    refresh();
+  };
+
+  const handleUpdatePassword = async (newPassword: string) => {
+    await api.post('/api/auth/change-password', { new_password: newPassword });
+  };
+
   return (
-    <div className="dashboard">
-      {/* Header */}
-      <header className="dashboard-header">
-        <div className="header-left">
-          <span className="logo-icon">⚡</span>
-          <h1>NoctusAI</h1>
-        </div>
-        <div className="header-right">
-          {isAdmin && (
-            <button className="btn-admin" onClick={() => navigate('/admin')}>
-              Admin Panel
-            </button>
-          )}
-          <NotificationBell />
-          <div className="user-info">
-            <span className="user-name">{user?.nome}</span>
-            <span className="org-name">
-              {organization?.nome}
-              {isTestOrg && (
-                <span className="badge badge-sm badge-inline test-badge">Conta Teste</span>
-              )}
-              {subscription && !isTestOrg && (
-                <span className={`badge badge-sm badge-inline ${subscription.status === 'active' ? 'badge-active' : ''}`}>
-                  {subscription.plans?.name || subscription.status}
-                </span>
-              )}
-            </span>
+    <div className="min-h-screen bg-background">
+      <Header
+        variant="dark"
+        user={headerUser}
+        onLogout={handleLogout}
+        theme={theme}
+        onThemeToggle={toggleTheme}
+        onUpdateProfile={handleUpdateProfile}
+        onUpdatePassword={handleUpdatePassword}
+        actions={
+          <div className="flex items-center gap-2">
+            {isAdmin && (
+              <button
+                className="h-9 rounded-md bg-primary text-primary-foreground px-4 text-sm font-medium hover:bg-primary/90 transition-colors"
+                onClick={() => navigate('/admin')}
+              >
+                Admin Panel
+              </button>
+            )}
+            <NotificationBell />
           </div>
-          <button className="btn-logout" onClick={handleLogout}>Sair</button>
-        </div>
-      </header>
+        }
+      />
 
       {/* Main content */}
-      <main className="dashboard-main">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
         {/* Trial countdown */}
         {isTrial && trialDays !== null && (
-          <div className="trial-info">
-            <span className="trial-info-icon">⏳</span>
-            <span>
+          <div className="mb-6 rounded-lg border border-warning bg-warning-light px-4 py-3 flex items-center gap-3 text-sm">
+            <span className="text-lg">⏳</span>
+            <span className="text-warning-foreground flex-1">
               {trialDays > 0
                 ? `Seu período de teste expira em ${trialDays} dia${trialDays !== 1 ? 's' : ''}.`
                 : 'Seu período de teste expirou.'}
             </span>
-            <button className="trial-info-btn" onClick={() => navigate('/pricing')}>
+            <button
+              className="rounded-md bg-warning text-warning-foreground px-4 py-1.5 text-sm font-medium hover:opacity-90 transition-opacity"
+              onClick={() => navigate('/pricing')}
+            >
               Assinar agora
             </button>
           </div>
@@ -147,45 +159,71 @@ export function Dashboard() {
 
         {/* Upgrade banner for free orgs (not test) */}
         {isFreeOrg && !isTestOrg && !isTrial && (
-          <div className="upgrade-banner">
-            <div className="upgrade-banner-content">
-              <div className="upgrade-banner-text">
-                <strong>Desbloqueie todo o potencial do NoctusAI</strong>
-                <p>Atualize seu plano para acessar recursos avançados, mais usuários e suporte prioritário.</p>
-              </div>
-              <button className="upgrade-banner-btn" onClick={() => navigate('/pricing')}>
-                Ver planos
-              </button>
+          <div className="mb-6 rounded-lg border border-primary/20 bg-primary/5 p-5 flex items-center gap-4">
+            <div className="flex-1">
+              <p className="font-semibold text-foreground">Desbloqueie todo o potencial do NoctusAI</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Atualize seu plano para acessar recursos avançados, mais usuários e suporte prioritário.
+              </p>
             </div>
+            <button
+              className="rounded-md bg-primary text-primary-foreground px-5 py-2 text-sm font-medium hover:bg-primary/90 transition-colors whitespace-nowrap"
+              onClick={() => navigate('/pricing')}
+            >
+              Ver planos
+            </button>
           </div>
         )}
 
-        <section className="welcome">
-          <h2>Bem-vindo, {user?.nome?.split(' ')[0]}!</h2>
-          <p>Seus produtos NoctusAI</p>
-        </section>
+        {/* Welcome */}
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-foreground">
+            Bem-vindo, {user?.nome?.split(' ')[0]}!
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Seus produtos NoctusAI
+            {isTestOrg && (
+              <span className="ml-2 inline-flex items-center rounded-full bg-warning-light text-warning-foreground px-2.5 py-0.5 text-xs font-medium">
+                Conta Teste
+              </span>
+            )}
+            {subscription && !isTestOrg && (
+              <span className={`ml-2 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                subscription.status === 'active'
+                  ? 'bg-success-light text-success-foreground'
+                  : 'bg-muted text-muted-foreground'
+              }`}>
+                {subscription.plans?.name || subscription.status}
+              </span>
+            )}
+          </p>
+        </div>
 
-        <section className="products-grid">
+        {/* Products grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[...products].sort((a, b) => Number(b.has_access) - Number(a.has_access)).map(product => (
             <div
               key={product.id}
-              className={`product-card ${product.has_access ? 'unlocked' : 'locked'}`}
+              className={`bg-card rounded-lg border border-border shadow-sm p-6 transition-all ${
+                product.has_access
+                  ? 'cursor-pointer hover:shadow-md hover:border-primary/30'
+                  : 'opacity-60 cursor-not-allowed'
+              }`}
               onClick={() => launchProduct(product)}
-              style={{ '--product-color': product.cor } as React.CSSProperties}
             >
-              <div className="product-icon">{product.icone}</div>
-              <h3>{product.nome}</h3>
-              <p>{product.descricao}</p>
+              <div className="text-3xl mb-3">{product.icone}</div>
+              <h3 className="text-lg font-semibold text-foreground mb-1">{product.nome}</h3>
+              <p className="text-sm text-muted-foreground mb-4">{product.descricao}</p>
 
               {product.has_access ? (
-                <div className="product-status unlocked">
-                  <span className="status-dot">●</span>
+                <div className="flex items-center gap-1.5 text-sm font-medium text-success-foreground">
+                  <span className="text-success">●</span>
                   {launching === product.slug ? 'Abrindo...' : 'Acessar'}
-                  <span className="arrow">→</span>
+                  <span className="ml-auto">→</span>
                 </div>
               ) : (
-                <div className="product-status locked">
-                  <span className="lock-icon">🔒</span>
+                <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <span>🔒</span>
                   Solicitar acesso
                 </div>
               )}
@@ -198,16 +236,21 @@ export function Dashboard() {
             { nome: 'CRM Vendas', icone: '📊', desc: 'Funil de vendas inteligente com IA' },
             { nome: 'BI Analytics', icone: '📈', desc: 'Dashboards e relatórios avançados' },
           ].map((p, i) => (
-            <div key={`soon-${i}`} className="product-card coming-soon">
-              <div className="product-icon">{p.icone}</div>
-              <h3>{p.nome}</h3>
-              <p>{p.desc}</p>
-              <div className="product-status locked">
-                <span className="soon-badge">Em breve</span>
+            <div
+              key={`soon-${i}`}
+              className="bg-card rounded-lg border border-border border-dashed shadow-sm p-6 opacity-50"
+            >
+              <div className="text-3xl mb-3">{p.icone}</div>
+              <h3 className="text-lg font-semibold text-foreground mb-1">{p.nome}</h3>
+              <p className="text-sm text-muted-foreground mb-4">{p.desc}</p>
+              <div className="flex items-center">
+                <span className="inline-flex items-center rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-xs font-medium">
+                  Em breve
+                </span>
               </div>
             </div>
           ))}
-        </section>
+        </div>
       </main>
     </div>
   );

@@ -36,54 +36,47 @@ export function AccountSettings() {
   }
 
   return (
-    <div style={{ maxWidth: 600, margin: '40px auto', padding: '0 20px' }}>
+    <div className="mx-auto max-w-xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-10">
       <button
         onClick={() => navigate('/')}
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: '#2563eb', marginBottom: 20, fontSize: 14,
-        }}
+        className="mb-5 text-sm text-primary hover:underline"
       >
         &larr; Voltar ao Dashboard
       </button>
-      <h1 style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 24 }}>
+      <h1 className="mb-6 text-2xl font-bold text-foreground">
         Configurações da Conta
       </h1>
 
-      <form onSubmit={handleSave}>
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', fontWeight: 500, marginBottom: 4 }}>
+      <form onSubmit={handleSave} className="space-y-4">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-foreground">
             E-mail
           </label>
           <input
             type="email"
             value={user?.email || ''}
             disabled
-            style={{
-              width: '100%', padding: '8px 12px', borderRadius: 6,
-              border: '1px solid #d1d5db', background: '#f9fafb', color: '#6b7280',
-            }}
+            className="h-10 w-full rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground"
           />
-          <small style={{ color: '#9ca3af' }}>O e-mail não pode ser alterado por aqui.</small>
+          <p className="mt-1 text-xs text-muted-foreground">
+            O e-mail não pode ser alterado por aqui.
+          </p>
         </div>
 
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', fontWeight: 500, marginBottom: 4 }}>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-foreground">
             Nome
           </label>
           <input
             type="text"
             value={nome}
             onChange={e => setNome(e.target.value)}
-            style={{
-              width: '100%', padding: '8px 12px', borderRadius: 6,
-              border: '1px solid #d1d5db',
-            }}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
 
-        <div style={{ marginBottom: 24 }}>
-          <label style={{ display: 'block', fontWeight: 500, marginBottom: 4 }}>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-foreground">
             URL do Avatar
           </label>
           <input
@@ -91,19 +84,16 @@ export function AccountSettings() {
             value={avatarUrl}
             onChange={e => setAvatarUrl(e.target.value)}
             placeholder="https://..."
-            style={{
-              width: '100%', padding: '8px 12px', borderRadius: 6,
-              border: '1px solid #d1d5db',
-            }}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
 
         {message && (
-          <p style={{
-            marginBottom: 16, padding: '8px 12px', borderRadius: 6,
-            background: message.includes('sucesso') ? '#dcfce7' : '#fef2f2',
-            color: message.includes('sucesso') ? '#166534' : '#991b1b',
-          }}>
+          <p className={`rounded-md px-3 py-2 text-sm ${
+            message.includes('sucesso')
+              ? 'bg-green-50 text-green-800'
+              : 'bg-red-50 text-red-800'
+          }`}>
             {message}
           </p>
         )}
@@ -111,12 +101,7 @@ export function AccountSettings() {
         <button
           type="submit"
           disabled={saving}
-          style={{
-            padding: '10px 24px', borderRadius: 6, border: 'none',
-            background: '#2563eb', color: 'white', fontWeight: 500,
-            cursor: saving ? 'not-allowed' : 'pointer',
-            opacity: saving ? 0.7 : 1,
-          }}
+          className="rounded-md bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
         >
           {saving ? 'Salvando...' : 'Salvar Alterações'}
         </button>

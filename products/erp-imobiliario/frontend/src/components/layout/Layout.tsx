@@ -21,6 +21,7 @@ import {
   Header as SharedHeader,
   useTheme,
   useActivityRefresh,
+  InactivityWarning,
 } from "@noctusai/shared/design-system";
 import type { NavGroup, NavItem } from "@noctusai/shared/design-system";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -307,6 +308,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <div className="p-4 sm:p-6 lg:p-8">
         {children}
       </div>
+      <InactivityWarning
+        onExtend={async () => { await supabase.auth.refreshSession(); }}
+        onExpired={() => { supabase.auth.signOut(); }}
+      />
     </AppShell>
   );
 }

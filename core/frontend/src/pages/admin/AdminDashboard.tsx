@@ -37,6 +37,15 @@ interface ProductStats {
   total: number;
 }
 
+const STAT_CARDS = [
+  { key: 'totalOrgs', label: 'Organizacoes', icon: '🏢' },
+  { key: 'totalProducts', label: 'Produtos', icon: '📦' },
+  { key: 'activeLicenses', label: 'Licencas Ativas', icon: '🔓' },
+  { key: 'activeSubscriptions', label: 'Assinaturas Ativas', icon: '💳' },
+  { key: 'totalApiKeys', label: 'Chaves API', icon: '🔑' },
+  { key: 'totalPlans', label: 'Planos', icon: '📋' },
+] as const;
+
 export function AdminDashboard() {
   const [stats, setStats] = useState<Stats>({
     totalOrgs: 0, activeSubscriptions: 0, totalApiKeys: 0,
@@ -71,7 +80,6 @@ export function AdminDashboard() {
           activeLicenses: activeLicenses.length,
         });
 
-        // Per-product license breakdown
         const pStats: ProductStats[] = productList.map((p) => {
           const pLicenses = licenseList.filter((l) => l.product_id === p.id);
           return {
@@ -81,7 +89,6 @@ export function AdminDashboard() {
             total: pLicenses.length,
           };
         });
-        // Sort by active licenses descending
         pStats.sort((a, b) => b.active - a.active);
         setProductStats(pStats);
       } catch (err) {
@@ -94,99 +101,94 @@ export function AdminDashboard() {
   }, []);
 
   if (loading) {
-    return <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        <p className="ml-3 text-muted-foreground">Carregando...</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <h1 className="admin-page-title">Dashboard</h1>
-      <p className="admin-page-subtitle">Visão geral da plataforma NoctusAI</p>
+      <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+      <p className="text-muted-foreground mt-1">Visao geral da plataforma NoctusAI</p>
 
-      <div className="admin-stats-grid">
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">🏢</div>
-          <div className="admin-stat-value">{stats.totalOrgs}</div>
-          <div className="admin-stat-label">Organizações</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">📦</div>
-          <div className="admin-stat-value">{stats.totalProducts}</div>
-          <div className="admin-stat-label">Produtos</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">🔓</div>
-          <div className="admin-stat-value">{stats.activeLicenses}</div>
-          <div className="admin-stat-label">Licenças Ativas</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">💳</div>
-          <div className="admin-stat-value">{stats.activeSubscriptions}</div>
-          <div className="admin-stat-label">Assinaturas Ativas</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">🔑</div>
-          <div className="admin-stat-value">{stats.totalApiKeys}</div>
-          <div className="admin-stat-label">Chaves API</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">📋</div>
-          <div className="admin-stat-value">{stats.totalPlans}</div>
-          <div className="admin-stat-label">Planos</div>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+        {STAT_CARDS.map(({ key, label, icon }) => (
+          <div key={key} className="bg-card rounded-lg border border-border shadow-sm p-6">
+            <div className="text-2xl mb-2">{icon}</div>
+            <div className="text-3xl font-bold text-foreground">{stats[key]}</div>
+            <div className="text-sm text-muted-foreground mt-1">{label}</div>
+          </div>
+        ))}
       </div>
 
       {/* Products Overview */}
-      <div style={{ marginTop: '2rem' }}>
-        <div className="admin-page-header">
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="admin-page-title" style={{ fontSize: '1.25rem' }}>Produtos</h2>
-            <p className="admin-page-subtitle">Licenças por produto</p>
+            <h2 className="text-lg font-semibold text-foreground">Produtos</h2>
+            <p className="text-sm text-muted-foreground">Licencas por produto</p>
           </div>
-          <button className="btn-secondary" onClick={() => navigate('/admin/products')}>
+          <button
+            className="border border-border bg-card text-foreground rounded-md px-4 py-2 text-sm hover:bg-accent transition-colors"
+            onClick={() => navigate('/admin/products')}
+          >
             Ver todos
           </button>
         </div>
 
-        <div className="admin-table-wrapper">
-          <table className="admin-table">
+        <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
             <thead>
-              <tr>
-                <th>Produto</th>
-                <th>Status</th>
-                <th>Ativas</th>
-                <th>Revogadas</th>
-                <th>Total</th>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Produto</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Ativas</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Revogadas</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Total</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {productStats.map(({ product, active, revoked, total }) => (
                 <tr
                   key={product.id}
-                  style={{ cursor: 'pointer' }}
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => navigate('/admin/products')}
                 >
-                  <td className="admin-table-primary">
-                    <span style={{ marginRight: '0.5rem' }}>{product.icone || '📦'}</span>
+                  <td className="px-4 py-3 font-medium text-foreground">
+                    <span className="mr-2">{product.icone || '📦'}</span>
                     {product.nome}
                   </td>
-                  <td>
-                    <span className={`badge ${product.ativo ? 'badge-active' : 'badge-danger'}`}>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                      product.ativo
+                        ? 'bg-success/10 text-success'
+                        : 'bg-danger/10 text-danger'
+                    }`}>
                       {product.ativo ? 'Ativo' : 'Inativo'}
                     </span>
                   </td>
-                  <td>
-                    <span className="badge badge-active">{active}</span>
+                  <td className="px-4 py-3">
+                    <span className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium bg-success/10 text-success">
+                      {active}
+                    </span>
                   </td>
-                  <td>
+                  <td className="px-4 py-3">
                     {revoked > 0
-                      ? <span className="badge badge-danger">{revoked}</span>
-                      : <span style={{ color: '#64748b' }}>0</span>}
+                      ? <span className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium bg-danger/10 text-danger">{revoked}</span>
+                      : <span className="text-muted-foreground">0</span>}
                   </td>
-                  <td>{total}</td>
+                  <td className="px-4 py-3 text-foreground">{total}</td>
                 </tr>
               ))}
               {productStats.length === 0 && (
-                <tr><td colSpan={5} className="admin-table-empty">Nenhum produto cadastrado</td></tr>
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                    Nenhum produto cadastrado
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>

@@ -65,61 +65,87 @@ export function AdminApiKeys() {
   }
 
   if (loading) {
-    return <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        <p className="ml-3 text-muted-foreground">Carregando...</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <div className="admin-page-header">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="admin-page-title">Chaves API</h1>
-          <p className="admin-page-subtitle">{keys.filter(k => k.is_active).length} chaves ativas</p>
+          <h1 className="text-2xl font-bold text-foreground">Chaves API</h1>
+          <p className="text-muted-foreground mt-1">{keys.filter(k => k.is_active).length} chaves ativas</p>
         </div>
-        <button className="btn-primary admin-btn" onClick={() => { setShowCreate(true); setCreatedKey(null); }}>
+        <button
+          className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+          onClick={() => { setShowCreate(true); setCreatedKey(null); }}
+        >
           + Nova Chave
         </button>
       </div>
 
       {/* Newly created key warning */}
       {createdKey && (
-        <div className="admin-alert admin-alert-warning">
-          <strong>Chave criada!</strong> Copie agora, ela não será exibida novamente:
-          <code className="admin-key-display">{createdKey}</code>
-          <button className="btn-sm" onClick={() => { navigator.clipboard.writeText(createdKey); }}>
+        <div className="mb-4 bg-warning/10 border border-warning/30 rounded-lg p-4 flex flex-wrap items-center gap-3">
+          <span className="text-sm font-medium text-foreground">Chave criada! Copie agora, ela nao sera exibida novamente:</span>
+          <code className="bg-muted px-3 py-1.5 rounded text-sm font-mono break-all">{createdKey}</code>
+          <button
+            className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+            onClick={() => { navigator.clipboard.writeText(createdKey); }}
+          >
             Copiar
           </button>
         </div>
       )}
 
-      <div className="admin-table-wrapper">
-        <table className="admin-table">
+      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
           <thead>
-            <tr>
-              <th>Nome</th>
-              <th>Organização</th>
-              <th>Prefixo</th>
-              <th>Escopos</th>
-              <th>Status</th>
-              <th>Criada em</th>
-              <th>Ações</th>
+            <tr className="border-b border-border bg-muted/50">
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Nome</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Organizacao</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Prefixo</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Escopos</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Criada em</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
             {keys.map(key => (
-              <tr key={key.id} className={!key.is_active ? 'admin-row-inactive' : ''}>
-                <td className="admin-table-primary">{key.name}</td>
-                <td>{key.organizations?.nome || key.org_id}</td>
-                <td><code>{key.key_prefix}...</code></td>
-                <td>{(key.scopes || []).map(s => <span key={s} className="badge badge-sm">{s}</span>)}</td>
-                <td>
-                  <span className={`badge ${key.is_active ? 'badge-active' : 'badge-danger'}`}>
+              <tr key={key.id} className={`hover:bg-muted/50 transition-colors ${!key.is_active ? 'opacity-50' : ''}`}>
+                <td className="px-4 py-3 font-medium text-foreground">{key.name}</td>
+                <td className="px-4 py-3 text-foreground">{key.organizations?.nome || key.org_id}</td>
+                <td className="px-4 py-3">
+                  <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{key.key_prefix}...</code>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {(key.scopes || []).map(s => (
+                      <span key={s} className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                    key.is_active ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+                  }`}>
                     {key.is_active ? 'Ativa' : 'Revogada'}
                   </span>
                 </td>
-                <td>{new Date(key.created_at).toLocaleDateString('pt-BR')}</td>
-                <td>
+                <td className="px-4 py-3 text-muted-foreground">{new Date(key.created_at).toLocaleDateString('pt-BR')}</td>
+                <td className="px-4 py-3">
                   {key.is_active && (
-                    <button className="btn-sm btn-danger" onClick={() => handleRevoke(key.id)}>
+                    <button
+                      className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
+                      onClick={() => handleRevoke(key.id)}
+                    >
                       Revogar
                     </button>
                   )}
@@ -127,7 +153,11 @@ export function AdminApiKeys() {
               </tr>
             ))}
             {keys.length === 0 && (
-              <tr><td colSpan={7} className="admin-table-empty">Nenhuma chave API encontrada</td></tr>
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                  Nenhuma chave API encontrada
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -135,38 +165,51 @@ export function AdminApiKeys() {
 
       {/* Create Modal */}
       {showCreate && !createdKey && (
-        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>Nova Chave API</h2>
-            <form onSubmit={handleCreate}>
-              <div className="field">
-                <label>Nome</label>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
+          <div className="bg-card rounded-lg border border-border shadow-lg w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-foreground mb-4">Nova Chave API</h2>
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Nome</label>
                 <input
                   type="text"
                   value={newKeyName}
                   onChange={e => setNewKeyName(e.target.value)}
-                  placeholder="Ex: Integração Zapier"
+                  placeholder="Ex: Integracao Zapier"
                   required
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
               </div>
-              <div className="field">
-                <label>Escopos</label>
-                <div className="admin-scopes">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Escopos</label>
+                <div className="flex flex-wrap gap-4">
                   {['read', 'write', 'admin'].map(scope => (
-                    <label key={scope} className="admin-scope-option">
+                    <label key={scope} className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
                       <input
                         type="checkbox"
                         checked={newKeyScopes.includes(scope)}
                         onChange={() => toggleScope(scope)}
+                        className="rounded border-border"
                       />
                       {scope}
                     </label>
                   ))}
                 </div>
               </div>
-              <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary admin-btn">Criar Chave</button>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  className="border border-border bg-card text-foreground rounded-md px-4 py-2 text-sm hover:bg-accent transition-colors"
+                  onClick={() => setShowCreate(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+                >
+                  Criar Chave
+                </button>
               </div>
             </form>
           </div>

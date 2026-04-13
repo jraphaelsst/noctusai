@@ -207,9 +207,9 @@ export function Onboarding() {
 
   if (loading) {
     return (
-      <div className="loading-screen">
-        <div className="spinner" />
-        <p>Carregando onboarding...</p>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+        <p className="mt-4 text-muted-foreground">Carregando onboarding...</p>
       </div>
     );
   }
@@ -217,87 +217,111 @@ export function Onboarding() {
   const progressPercentage = status?.progress.percentage || 0;
 
   return (
-    <div className="onboarding-page">
-      <div className="onboarding-container">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 sm:px-6 lg:px-8 py-6 sm:py-10 lg:py-12">
+      <div className="w-full max-w-2xl">
         {/* Header */}
-        <div className="onboarding-header">
-          <div className="logo">
-            <span className="logo-icon">⚡</span>
-            <h1>NoctusAI</h1>
+        <div className="mb-8 text-center">
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-2xl">⚡</span>
+            <h1 className="text-2xl font-bold text-foreground">NoctusAI</h1>
           </div>
-          <p className="subtitle">Configure sua conta em poucos passos</p>
+          <p className="mt-2 text-muted-foreground">Configure sua conta em poucos passos</p>
         </div>
 
         {/* Progress bar */}
-        <div className="onboarding-progress">
-          <div className="onboarding-progress-bar">
+        <div className="mb-8">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
             <div
-              className="onboarding-progress-fill"
+              className="h-full rounded-full bg-primary transition-all duration-300"
               style={{ width: `${progressPercentage}%` }}
             />
           </div>
-          <div className="onboarding-progress-steps">
+          <div className="mt-4 flex justify-between">
             {STEP_KEYS.map((key, idx) => (
-              <div
+              <button
                 key={key}
-                className={`onboarding-progress-step ${
-                  idx === currentStep ? 'active' : ''
-                } ${status?.steps[key] ? 'completed' : ''}`}
+                className="flex flex-col items-center gap-1.5"
                 onClick={() => setCurrentStep(idx)}
               >
-                <div className="onboarding-step-number">
+                <div
+                  className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors ${
+                    status?.steps[key]
+                      ? 'bg-primary text-primary-foreground'
+                      : idx === currentStep
+                        ? 'border-2 border-primary bg-background text-primary'
+                        : 'border border-border bg-muted text-muted-foreground'
+                  }`}
+                >
                   {status?.steps[key] ? '✓' : idx + 1}
                 </div>
-                <span className="onboarding-step-label">{STEP_LABELS[key].title}</span>
-              </div>
+                <span className={`hidden text-xs sm:block ${
+                  idx === currentStep ? 'font-medium text-foreground' : 'text-muted-foreground'
+                }`}>
+                  {STEP_LABELS[key].title}
+                </span>
+              </button>
             ))}
           </div>
         </div>
 
         {/* Step content */}
-        <div className="onboarding-step">
-          <h2>{STEP_LABELS[STEP_KEYS[currentStep]].title}</h2>
-          <p className="onboarding-step-desc">{STEP_LABELS[STEP_KEYS[currentStep]].description}</p>
+        <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-foreground">
+            {STEP_LABELS[STEP_KEYS[currentStep]].title}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {STEP_LABELS[STEP_KEYS[currentStep]].description}
+          </p>
 
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <div className="mt-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-800">
+              {error}
+            </div>
+          )}
 
           {/* Step 1: Company Details */}
           {currentStep === 0 && (
-            <div className="onboarding-form">
-              <div className="field">
-                <label>Nome da empresa</label>
+            <div className="mt-6 space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-foreground">
+                  Nome da empresa
+                </label>
                 <input
                   type="text"
                   value={companyNome}
                   onChange={e => setCompanyNome(e.target.value)}
                   placeholder="Minha Empresa Ltda"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
-              <div className="field">
-                <label>CNPJ</label>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-foreground">CNPJ</label>
                 <input
                   type="text"
                   value={companyCnpj}
                   onChange={e => setCompanyCnpj(e.target.value)}
                   placeholder="00.000.000/0001-00"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
-              <div className="field">
-                <label>Telefone</label>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-foreground">Telefone</label>
                 <input
                   type="text"
                   value={companyTelefone}
                   onChange={e => setCompanyTelefone(e.target.value)}
                   placeholder="(11) 99999-0000"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
-              <div className="field">
-                <label>Endereco</label>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-foreground">Endereco</label>
                 <input
                   type="text"
                   value={companyEndereco}
                   onChange={e => setCompanyEndereco(e.target.value)}
                   placeholder="Rua Exemplo, 123 - Sao Paulo, SP"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
             </div>
@@ -305,30 +329,44 @@ export function Onboarding() {
 
           {/* Step 2: Choose Plan */}
           {currentStep === 1 && (
-            <div className="onboarding-plans">
+            <div className="mt-6">
               {plans.length === 0 ? (
-                <p className="onboarding-empty">Nenhum plano disponivel no momento.</p>
+                <p className="py-8 text-center text-muted-foreground">
+                  Nenhum plano disponivel no momento.
+                </p>
               ) : (
-                <div className="onboarding-plans-grid">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {plans.map(plan => (
-                    <div
+                    <button
                       key={plan.id}
-                      className={`onboarding-plan-card ${selectedPlan === plan.id ? 'selected' : ''}`}
+                      type="button"
+                      className={`rounded-lg border p-4 text-left transition-colors ${
+                        selectedPlan === plan.id
+                          ? 'border-primary bg-primary/5 ring-2 ring-primary'
+                          : 'border-border bg-card hover:border-primary/50'
+                      }`}
                       onClick={() => setSelectedPlan(plan.id)}
                     >
-                      <h3>{plan.name}</h3>
-                      <p>{plan.description || 'Plano ' + plan.name}</p>
-                      <div className="onboarding-plan-price">
-                        <span className="onboarding-plan-value">
+                      <h3 className="font-semibold text-foreground">{plan.name}</h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {plan.description || 'Plano ' + plan.name}
+                      </p>
+                      <div className="mt-3">
+                        <span className="text-lg font-bold text-foreground">
                           {plan.price_monthly === 0 ? 'Gratis' : `R$ ${plan.price_monthly}`}
                         </span>
-                        {plan.price_monthly > 0 && <span className="onboarding-plan-period">/mes</span>}
+                        {plan.price_monthly > 0 && (
+                          <span className="text-sm text-muted-foreground">/mes</span>
+                        )}
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
-              <button className="btn-link" onClick={() => navigate('/pricing')}>
+              <button
+                className="mt-4 text-sm text-primary hover:underline"
+                onClick={() => navigate('/pricing')}
+              >
                 Ver todos os planos em detalhes
               </button>
             </div>
@@ -336,21 +374,20 @@ export function Onboarding() {
 
           {/* Step 3: Invite Team */}
           {currentStep === 2 && (
-            <div className="onboarding-invite">
+            <div className="mt-6 space-y-3">
               {inviteEmails.map((email, idx) => (
-                <div key={idx} className="onboarding-invite-row">
-                  <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={e => updateEmail(idx, e.target.value)}
-                      placeholder="colega@empresa.com"
-                    />
-                  </div>
+                <div key={idx} className="flex items-center gap-2">
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => updateEmail(idx, e.target.value)}
+                    placeholder="colega@empresa.com"
+                    className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
                   {inviteEmails.length > 1 && (
                     <button
                       type="button"
-                      className="btn-sm btn-danger"
+                      className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100"
                       onClick={() => removeEmail(idx)}
                     >
                       Remover
@@ -358,7 +395,11 @@ export function Onboarding() {
                   )}
                 </div>
               ))}
-              <button type="button" className="btn-link" onClick={addEmailField}>
+              <button
+                type="button"
+                className="text-sm text-primary hover:underline"
+                onClick={addEmailField}
+              >
                 + Adicionar outro email
               </button>
             </div>
@@ -366,28 +407,33 @@ export function Onboarding() {
 
           {/* Step 4: Enable Product */}
           {currentStep === 3 && (
-            <div className="onboarding-products">
+            <div className="mt-6">
               {products.length === 0 ? (
-                <p className="onboarding-empty">
+                <p className="py-8 text-center text-muted-foreground">
                   Nenhum produto disponivel para ativacao. Voce podera solicitar acesso no painel principal.
                 </p>
               ) : (
-                <div className="onboarding-products-grid">
+                <div className="grid gap-4 sm:grid-cols-2">
                   {products.map(product => (
-                    <div
+                    <button
                       key={product.id}
-                      className={`onboarding-product-card ${
-                        selectedProducts.includes(product.slug) ? 'selected' : ''
+                      type="button"
+                      className={`rounded-lg border p-4 text-left transition-colors ${
+                        selectedProducts.includes(product.slug)
+                          ? 'border-primary bg-primary/5 ring-2 ring-primary'
+                          : 'border-border bg-card hover:border-primary/50'
                       }`}
                       onClick={() => toggleProduct(product.slug)}
                     >
-                      <div className="onboarding-product-icon">{product.icone}</div>
-                      <h3>{product.nome}</h3>
-                      <p>{product.descricao}</p>
-                      <div className="onboarding-product-check">
+                      <div className="mb-2 text-2xl">{product.icone}</div>
+                      <h3 className="font-semibold text-foreground">{product.nome}</h3>
+                      <p className="mt-1 text-xs text-muted-foreground">{product.descricao}</p>
+                      <div className={`mt-3 text-xs font-medium ${
+                        selectedProducts.includes(product.slug) ? 'text-primary' : 'text-muted-foreground'
+                      }`}>
                         {selectedProducts.includes(product.slug) ? '✓ Selecionado' : 'Clique para selecionar'}
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -396,20 +442,27 @@ export function Onboarding() {
         </div>
 
         {/* Actions */}
-        <div className="onboarding-actions">
-          <div className="onboarding-actions-left">
+        <div className="mt-6 flex items-center justify-between">
+          <div>
             {currentStep > 0 && (
-              <button className="btn-secondary" onClick={handleBack}>
+              <button
+                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
+                onClick={handleBack}
+              >
                 Voltar
               </button>
             )}
           </div>
-          <div className="onboarding-actions-right">
-            <button className="btn-secondary" onClick={handleSkip} disabled={saving}>
+          <div className="flex items-center gap-3">
+            <button
+              className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={handleSkip}
+              disabled={saving}
+            >
               Pular
             </button>
             <button
-              className="btn-primary"
+              className="rounded-md bg-primary px-6 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={saving}
               onClick={() => {
                 if (currentStep === 0) handleCompanySubmit();

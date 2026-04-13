@@ -117,9 +117,9 @@ export function NotificationBell() {
   }
 
   return (
-    <div className="notification-bell" ref={dropdownRef}>
+    <div className="relative" ref={dropdownRef}>
       <button
-        className="notification-bell-btn"
+        className="relative rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
         onClick={() => setOpen(!open)}
         aria-label="Notificações"
       >
@@ -128,42 +128,53 @@ export function NotificationBell() {
           <path d="M13.73 21a2 2 0 0 1-3.46 0" />
         </svg>
         {unreadCount > 0 && (
-          <span className="notification-bell-badge">
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="notification-dropdown">
-          <div className="notification-dropdown-header">
-            <h3>Notificações</h3>
+        <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h3 className="text-sm font-semibold text-foreground">Notificações</h3>
             {unreadCount > 0 && (
-              <button className="notification-mark-all" onClick={markAllAsRead}>
+              <button
+                className="text-xs text-primary hover:underline"
+                onClick={markAllAsRead}
+              >
                 Marcar todas como lidas
               </button>
             )}
           </div>
 
-          <div className="notification-dropdown-body">
+          <div className="max-h-96 overflow-y-auto">
             {loading && notifications.length === 0 ? (
-              <div className="notification-empty">Carregando...</div>
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Carregando...
+              </div>
             ) : notifications.length === 0 ? (
-              <div className="notification-empty">Nenhuma notificação</div>
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Nenhuma notificação
+              </div>
             ) : (
               notifications.map(n => (
                 <div
                   key={n.id}
-                  className={`notification-item ${!n.read ? 'notification-unread' : ''}`}
+                  className={`flex cursor-pointer items-start gap-3 border-b border-border px-4 py-3 transition-colors hover:bg-muted/50 ${
+                    !n.read ? 'bg-primary/5' : ''
+                  }`}
                   onClick={() => { if (!n.read) markAsRead(n.id); }}
                 >
-                  <span className="notification-item-icon">{typeIcon(n.type)}</span>
-                  <div className="notification-item-content">
-                    <div className="notification-item-title">{n.title}</div>
-                    <div className="notification-item-message">{n.message}</div>
-                    <div className="notification-item-time">{timeAgo(n.created_at)}</div>
+                  <span className="mt-0.5 text-base">{typeIcon(n.type)}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-foreground">{n.title}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">{n.message}</div>
+                    <div className="mt-1 text-[10px] text-muted-foreground">{timeAgo(n.created_at)}</div>
                   </div>
-                  {!n.read && <span className="notification-item-dot" />}
+                  {!n.read && (
+                    <span className="mt-2 h-2 w-2 flex-shrink-0 rounded-full bg-primary" />
+                  )}
                 </div>
               ))
             )}

@@ -39,27 +39,28 @@ const EMPTY_PRODUCT_FORM = {
   cor: '#6366f1',
 };
 
+function statusBadgeClasses(s: string): string {
+  if (s === 'active') return 'bg-success/10 text-success';
+  if (s === 'revoked') return 'bg-danger/10 text-danger';
+  return 'bg-muted text-muted-foreground';
+}
+
 export function AdminProducts() {
   const [products, setProducts] = useState<Product[]>([]);
   const [licenses, setLicenses] = useState<License[]>([]);
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Product CRUD
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [productForm, setProductForm] = useState(EMPTY_PRODUCT_FORM);
 
-  // Product detail view
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productLicenses, setProductLicenses] = useState<License[]>([]);
   const [loadingLicenses, setLoadingLicenses] = useState(false);
 
-  // License grant modal
   const [showLicenseModal, setShowLicenseModal] = useState(false);
   const [licenseForm, setLicenseForm] = useState({ org_id: '', fim: '' });
-
-  // License status filter: 'all' | 'active' | 'revoked'
   const [licenseFilter, setLicenseFilter] = useState<'all' | 'active' | 'revoked'>('all');
 
   async function fetchProducts() {
@@ -107,12 +108,9 @@ export function AdminProducts() {
     Promise.all([fetchProducts(), fetchOrgs(), fetchAllLicenses()]);
   }, []);
 
-  // Count active licenses per product
   function licenseCount(productId: string) {
     return licenses.filter(l => l.product_id === productId && l.status === 'active').length;
   }
-
-  // --- Product CRUD ---
 
   function openCreateProduct() {
     setEditingProductId(null);
@@ -144,7 +142,6 @@ export function AdminProducts() {
       }
       setShowProductModal(false);
       await Promise.all([fetchProducts(), fetchAllLicenses()]);
-      // Refresh detail view if editing the selected product
       if (selectedProduct && editingProductId === selectedProduct.id) {
         const res = await api.get(`/api/products/${selectedProduct.id}`);
         setSelectedProduct(res.data);
@@ -172,8 +169,6 @@ export function AdminProducts() {
     setLicenseFilter('all');
     fetchProductLicenses(product.id);
   }
-
-  // --- License Management ---
 
   function openGrantLicense() {
     setLicenseForm({ org_id: '', fim: '' });
@@ -203,7 +198,7 @@ export function AdminProducts() {
   }
 
   async function handleRevokeLicense(licenseId: string) {
-    if (!confirm('Revogar acesso desta organização?')) return;
+    if (!confirm('Revogar acesso desta organizacao?')) return;
     try {
       await api.delete(`/api/licenses/${licenseId}`);
       if (selectedProduct) {
@@ -213,12 +208,6 @@ export function AdminProducts() {
       alert(err.message);
     }
   }
-
-  const statusClass = (s: string) => {
-    if (s === 'active') return 'badge-active';
-    if (s === 'revoked') return 'badge-danger';
-    return '';
-  };
 
   function formatTimeDistance(dateStr: string, future: boolean): string {
     const now = new Date();
@@ -232,115 +221,127 @@ export function AdminProducts() {
       const months = Math.floor(remainDays / 30);
       return future
         ? `Faltam ${years}a${months > 0 ? ` ${months}m` : ''}`
-        : `${years}a${months > 0 ? ` ${months}m` : ''} atrás`;
+        : `${years}a${months > 0 ? ` ${months}m` : ''} atras`;
     }
     if (days >= 30) {
       const months = Math.floor(days / 30);
       const remainDays = days % 30;
       return future
         ? `Faltam ${months}m${remainDays > 0 ? ` ${remainDays}d` : ''}`
-        : `${months}m${remainDays > 0 ? ` ${remainDays}d` : ''} atrás`;
+        : `${months}m${remainDays > 0 ? ` ${remainDays}d` : ''} atras`;
     }
-    if (days > 0) return future ? `Faltam ${days}d` : `${days}d atrás`;
+    if (days > 0) return future ? `Faltam ${days}d` : `${days}d atras`;
     const hours = Math.floor(diffMs / (1000 * 60 * 60));
-    if (hours > 0) return future ? `Faltam ${hours}h` : `${hours}h atrás`;
+    if (hours > 0) return future ? `Faltam ${hours}h` : `${hours}h atras`;
     return future ? 'Expira hoje' : 'Agora';
   }
 
-  function licenseTimeInfo(lic: License): { text: string; color: string } {
+  function licenseTimeInfo(lic: License): { text: string; className: string } {
     if (lic.status === 'revoked' && lic.fim) {
-      return { text: formatTimeDistance(lic.fim, false), color: '#ef4444' };
+      return { text: formatTimeDistance(lic.fim, false), className: 'text-danger' };
     }
     if (lic.status === 'active' && lic.fim) {
       const daysLeft = Math.floor((new Date(lic.fim).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-      if (daysLeft < 0) return { text: 'Expirada', color: '#ef4444' };
-      if (daysLeft <= 7) return { text: formatTimeDistance(lic.fim, true), color: '#f59e0b' };
-      if (daysLeft <= 30) return { text: formatTimeDistance(lic.fim, true), color: '#eab308' };
-      return { text: formatTimeDistance(lic.fim, true), color: '#22c55e' };
+      if (daysLeft < 0) return { text: 'Expirada', className: 'text-danger' };
+      if (daysLeft <= 7) return { text: formatTimeDistance(lic.fim, true), className: 'text-warning' };
+      if (daysLeft <= 30) return { text: formatTimeDistance(lic.fim, true), className: 'text-warning' };
+      return { text: formatTimeDistance(lic.fim, true), className: 'text-success' };
     }
-    return { text: '—', color: '#94a3b8' };
+    return { text: '\u2014', className: 'text-muted-foreground' };
   }
 
   function renderProductModal() {
     if (!showProductModal) return null;
     return (
-      <div className="modal-overlay" onClick={() => setShowProductModal(false)}>
-        <div className="modal-content" onClick={e => e.stopPropagation()}>
-          <h2>{editingProductId ? 'Editar Produto' : 'Novo Produto'}</h2>
-          <form onSubmit={handleProductSubmit}>
-            <div className="field">
-              <label>Nome</label>
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowProductModal(false)}>
+        <div className="bg-card rounded-lg border border-border shadow-lg w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <h2 className="text-lg font-semibold text-foreground mb-4">{editingProductId ? 'Editar Produto' : 'Novo Produto'}</h2>
+          <form onSubmit={handleProductSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Nome</label>
               <input
                 type="text"
                 value={productForm.nome}
                 onChange={e => setProductForm({ ...productForm, nome: e.target.value })}
-                placeholder="Ex: ERP Imobiliário"
+                placeholder="Ex: ERP Imobiliario"
                 required
+                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
             {!editingProductId && (
-              <div className="field">
-                <label>Slug</label>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Slug</label>
                 <input
                   type="text"
                   value={productForm.slug}
                   onChange={e => setProductForm({ ...productForm, slug: e.target.value })}
                   placeholder="Ex: erp-imobiliario"
                   required
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
               </div>
             )}
-            <div className="field">
-              <label>Descrição</label>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Descricao</label>
               <input
                 type="text"
                 value={productForm.descricao}
                 onChange={e => setProductForm({ ...productForm, descricao: e.target.value })}
-                placeholder="Descrição do produto"
+                placeholder="Descricao do produto"
+                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
-            <div className="field">
-              <label>Ícone (emoji)</label>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Icone (emoji)</label>
               <input
                 type="text"
                 value={productForm.icone}
                 onChange={e => setProductForm({ ...productForm, icone: e.target.value })}
                 placeholder="Ex: 🏠"
+                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
-            <div className="field">
-              <label>URL Base</label>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">URL Base</label>
               <input
                 type="text"
                 value={productForm.url_base}
                 onChange={e => setProductForm({ ...productForm, url_base: e.target.value })}
                 placeholder="Ex: http://localhost:8080"
                 required={!editingProductId}
+                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
-            <div className="field">
-              <label>Cor</label>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Cor</label>
+              <div className="flex gap-2 items-center">
                 <input
                   type="color"
                   value={productForm.cor}
                   onChange={e => setProductForm({ ...productForm, cor: e.target.value })}
-                  style={{ width: 40, height: 32, padding: 0, border: 'none', cursor: 'pointer' }}
+                  className="w-10 h-8 p-0 border-none cursor-pointer rounded"
                 />
                 <input
                   type="text"
                   value={productForm.cor}
                   onChange={e => setProductForm({ ...productForm, cor: e.target.value })}
                   placeholder="#6366f1"
-                  style={{ flex: 1 }}
+                  className="flex-1 h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
               </div>
             </div>
-            <div className="modal-actions">
-              <button type="button" className="btn-secondary" onClick={() => setShowProductModal(false)}>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                className="border border-border bg-card text-foreground rounded-md px-4 py-2 text-sm hover:bg-accent transition-colors"
+                onClick={() => setShowProductModal(false)}
+              >
                 Cancelar
               </button>
-              <button type="submit" className="btn-primary admin-btn">
+              <button
+                type="submit"
+                className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+              >
                 {editingProductId ? 'Salvar' : 'Criar'}
               </button>
             </div>
@@ -350,41 +351,52 @@ export function AdminProducts() {
     );
   }
 
-  // Orgs that already have an active license for this product
   const orgsWithAccess = new Set(
     productLicenses.filter(l => l.status === 'active').map(l => l.org_id)
   );
   const availableOrgs = orgs.filter(o => !orgsWithAccess.has(o.id));
 
   if (loading) {
-    return <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        <p className="ml-3 text-muted-foreground">Carregando...</p>
+      </div>
+    );
   }
 
   // --- Detail View ---
   if (selectedProduct) {
+    const filteredLicenses = productLicenses.filter(l => licenseFilter === 'all' || l.status === licenseFilter);
+
     return (
       <div>
-        <div className="admin-page-header">
+        <div className="flex items-center justify-between mb-6">
           <div>
             <button
-              className="btn-secondary"
+              className="border border-border bg-card text-foreground rounded-md px-3 py-1.5 text-sm hover:bg-accent transition-colors mb-2"
               onClick={() => setSelectedProduct(null)}
-              style={{ marginBottom: '0.5rem' }}
             >
               &larr; Voltar
             </button>
-            <h1 className="admin-page-title">
-              {selectedProduct.icone && <span style={{ marginRight: '0.5rem' }}>{selectedProduct.icone}</span>}
+            <h1 className="text-2xl font-bold text-foreground">
+              {selectedProduct.icone && <span className="mr-2">{selectedProduct.icone}</span>}
               {selectedProduct.nome}
             </h1>
-            <p className="admin-page-subtitle">{selectedProduct.slug}</p>
+            <p className="text-muted-foreground mt-1">{selectedProduct.slug}</p>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button className="btn-primary admin-btn" onClick={() => openEditProduct(selectedProduct)}>
+          <div className="flex gap-2">
+            <button
+              className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+              onClick={() => openEditProduct(selectedProduct)}
+            >
               Editar
             </button>
             {selectedProduct.ativo && (
-              <button className="btn-sm btn-danger" onClick={() => handleDeactivateProduct(selectedProduct.id)}>
+              <button
+                className="text-sm bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
+                onClick={() => handleDeactivateProduct(selectedProduct.id)}
+              >
                 Desativar
               </button>
             )}
@@ -392,28 +404,23 @@ export function AdminProducts() {
         </div>
 
         {/* Product Info */}
-        <div className="admin-table-wrapper" style={{ marginBottom: '2rem', padding: '1.5rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div><strong>Descrição:</strong> {selectedProduct.descricao || 'Sem descrição'}</div>
-            <div><strong>URL Base:</strong> {selectedProduct.url_base}</div>
-            <div>
-              <strong>Cor:</strong>{' '}
+        <div className="bg-card rounded-lg border border-border shadow-sm p-6 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+            <div><strong className="text-foreground">Descricao:</strong> <span className="text-muted-foreground">{selectedProduct.descricao || 'Sem descricao'}</span></div>
+            <div><strong className="text-foreground">URL Base:</strong> <span className="text-muted-foreground">{selectedProduct.url_base}</span></div>
+            <div className="flex items-center gap-2">
+              <strong className="text-foreground">Cor:</strong>
               <span
-                style={{
-                  display: 'inline-block',
-                  width: 14,
-                  height: 14,
-                  borderRadius: '50%',
-                  backgroundColor: selectedProduct.cor,
-                  verticalAlign: 'middle',
-                  marginRight: '0.25rem',
-                }}
+                className="inline-block w-3.5 h-3.5 rounded-full"
+                style={{ backgroundColor: selectedProduct.cor }}
               />
-              {selectedProduct.cor}
+              <span className="text-muted-foreground">{selectedProduct.cor}</span>
             </div>
-            <div>
-              <strong>Status:</strong>{' '}
-              <span className={`badge ${selectedProduct.ativo ? 'badge-active' : 'badge-danger'}`}>
+            <div className="flex items-center gap-2">
+              <strong className="text-foreground">Status:</strong>
+              <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                selectedProduct.ativo ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+              }`}>
                 {selectedProduct.ativo ? 'Ativo' : 'Inativo'}
               </span>
             </div>
@@ -421,27 +428,33 @@ export function AdminProducts() {
         </div>
 
         {/* License Management */}
-        <div className="admin-page-header">
+        <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="admin-page-title" style={{ fontSize: '1.25rem' }}>Licenças</h2>
-            <p className="admin-page-subtitle">
+            <h2 className="text-lg font-semibold text-foreground">Licencas</h2>
+            <p className="text-sm text-muted-foreground">
               {productLicenses.filter(l => l.status === 'active').length} ativas
               {productLicenses.filter(l => l.status === 'revoked').length > 0 &&
-                ` · ${productLicenses.filter(l => l.status === 'revoked').length} revogadas`}
+                ` \u00B7 ${productLicenses.filter(l => l.status === 'revoked').length} revogadas`}
             </p>
           </div>
-          <button className="btn-primary admin-btn" onClick={openGrantLicense}>
+          <button
+            className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+            onClick={openGrantLicense}
+          >
             + Conceder Acesso
           </button>
         </div>
 
         {/* License Filter */}
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        <div className="flex gap-2 mb-4">
           {(['all', 'active', 'revoked'] as const).map(filter => (
             <button
               key={filter}
-              className={licenseFilter === filter ? 'btn-primary admin-btn' : 'btn-secondary'}
-              style={{ padding: '0.35rem 0.75rem', fontSize: '0.85rem' }}
+              className={`text-sm rounded-md px-3 py-1.5 transition-colors ${
+                licenseFilter === filter
+                  ? 'bg-primary text-primary-foreground'
+                  : 'border border-border bg-card text-foreground hover:bg-accent'
+              }`}
               onClick={() => setLicenseFilter(filter)}
             >
               {filter === 'all' ? 'Todas' : filter === 'active' ? 'Ativas' : 'Revogadas'}
@@ -450,56 +463,67 @@ export function AdminProducts() {
         </div>
 
         {loadingLicenses ? (
-          <div className="loading-screen"><div className="spinner" /><p>Carregando...</p></div>
+          <div className="flex items-center justify-center h-32">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            <p className="ml-3 text-muted-foreground">Carregando...</p>
+          </div>
         ) : (
-          <div className="admin-table-wrapper">
-            <table className="admin-table">
+          <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
               <thead>
-                <tr>
-                  <th>Organização</th>
-                  <th>Status</th>
-                  <th>Data de Concessão</th>
-                  <th>Validade</th>
-                  <th>Tempo</th>
-                  <th>Ações</th>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Organizacao</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Data de Concessao</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Validade</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Tempo</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
                 </tr>
               </thead>
-              <tbody>
-                {productLicenses
-                  .filter(l => licenseFilter === 'all' || l.status === licenseFilter)
-                  .map(lic => (
-                  <tr key={lic.id}>
-                    <td className="admin-table-primary">
-                      {lic.organizations?.nome || lic.org_id}
-                    </td>
-                    <td>
-                      <span className={`badge ${statusClass(lic.status)}`}>{lic.status}</span>
-                    </td>
-                    <td>{new Date(lic.created_at).toLocaleDateString('pt-BR')}</td>
-                    <td>
-                      {lic.status === 'revoked' && lic.fim
-                        ? `Revogada em ${new Date(lic.fim).toLocaleDateString('pt-BR')}`
-                        : lic.fim
-                          ? new Date(lic.fim).toLocaleDateString('pt-BR')
-                          : 'Sem validade'}
-                    </td>
-                    <td style={{ color: licenseTimeInfo(lic).color, fontWeight: 500, fontSize: '0.85rem' }}>
-                      {licenseTimeInfo(lic).text}
-                    </td>
-                    <td>
-                      {lic.status === 'active' && (
-                        <button className="btn-sm btn-danger" onClick={() => handleRevokeLicense(lic.id)}>
-                          Revogar
-                        </button>
-                      )}
+              <tbody className="divide-y divide-border">
+                {filteredLicenses.map(lic => {
+                  const timeInfo = licenseTimeInfo(lic);
+                  return (
+                    <tr key={lic.id} className="hover:bg-muted/50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-foreground">
+                        {lic.organizations?.nome || lic.org_id}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${statusBadgeClasses(lic.status)}`}>
+                          {lic.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{new Date(lic.created_at).toLocaleDateString('pt-BR')}</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {lic.status === 'revoked' && lic.fim
+                          ? `Revogada em ${new Date(lic.fim).toLocaleDateString('pt-BR')}`
+                          : lic.fim
+                            ? new Date(lic.fim).toLocaleDateString('pt-BR')
+                            : 'Sem validade'}
+                      </td>
+                      <td className={`px-4 py-3 font-medium text-sm ${timeInfo.className}`}>
+                        {timeInfo.text}
+                      </td>
+                      <td className="px-4 py-3">
+                        {lic.status === 'active' && (
+                          <button
+                            className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
+                            onClick={() => handleRevokeLicense(lic.id)}
+                          >
+                            Revogar
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredLicenses.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                      {licenseFilter === 'all' ? 'Nenhuma organizacao com acesso' :
+                       licenseFilter === 'active' ? 'Nenhuma licenca ativa' : 'Nenhuma licenca revogada'}
                     </td>
                   </tr>
-                ))}
-                {productLicenses.filter(l => licenseFilter === 'all' || l.status === licenseFilter).length === 0 && (
-                  <tr><td colSpan={6} className="admin-table-empty">
-                    {licenseFilter === 'all' ? 'Nenhuma organização com acesso' :
-                     licenseFilter === 'active' ? 'Nenhuma licença ativa' : 'Nenhuma licença revogada'}
-                  </td></tr>
                 )}
               </tbody>
             </table>
@@ -508,19 +532,20 @@ export function AdminProducts() {
 
         {/* Grant License Modal */}
         {showLicenseModal && (
-          <div className="modal-overlay" onClick={() => setShowLicenseModal(false)}>
-            <div className="modal-content" onClick={e => e.stopPropagation()}>
-              <h2>Conceder Acesso</h2>
-              <p style={{ color: '#94a3b8', marginBottom: '1rem' }}>
-                Selecione a organização que receberá acesso a <strong>{selectedProduct.nome}</strong>.
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowLicenseModal(false)}>
+            <div className="bg-card rounded-lg border border-border shadow-lg w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+              <h2 className="text-lg font-semibold text-foreground mb-2">Conceder Acesso</h2>
+              <p className="text-sm text-muted-foreground mb-4">
+                Selecione a organizacao que recebera acesso a <strong>{selectedProduct.nome}</strong>.
               </p>
-              <form onSubmit={handleGrantLicense}>
-                <div className="field">
-                  <label>Organização</label>
+              <form onSubmit={handleGrantLicense} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Organizacao</label>
                   <select
                     value={licenseForm.org_id}
                     onChange={e => setLicenseForm(prev => ({ ...prev, org_id: e.target.value }))}
                     required
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                   >
                     <option value="">Selecione...</option>
                     {availableOrgs.map(o => (
@@ -528,14 +553,14 @@ export function AdminProducts() {
                     ))}
                   </select>
                   {availableOrgs.length === 0 && (
-                    <p style={{ color: '#f59e0b', fontSize: '0.85rem', marginTop: '0.5rem' }}>
-                      Todas as organizações já possuem acesso a este produto.
+                    <p className="text-xs text-warning mt-2">
+                      Todas as organizacoes ja possuem acesso a este produto.
                     </p>
                   )}
                 </div>
-                <div className="field">
-                  <label>Validade</label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Validade</label>
+                  <div className="flex flex-wrap gap-2 mb-2">
                     {[
                       { label: '7 dias', days: 7 },
                       { label: '30 dias', days: 30 },
@@ -546,8 +571,7 @@ export function AdminProducts() {
                       <button
                         key={preset.days}
                         type="button"
-                        className="btn-secondary"
-                        style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
+                        className="text-xs border border-border bg-card text-foreground rounded-md px-2.5 py-1 hover:bg-accent transition-colors"
                         onClick={() => setPresetDays(preset.days)}
                       >
                         {preset.label}
@@ -556,8 +580,7 @@ export function AdminProducts() {
                     {licenseForm.fim && (
                       <button
                         type="button"
-                        className="btn-secondary"
-                        style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', color: '#f59e0b' }}
+                        className="text-xs border border-border bg-card text-warning rounded-md px-2.5 py-1 hover:bg-accent transition-colors"
                         onClick={() => setLicenseForm(prev => ({ ...prev, fim: '' }))}
                       >
                         Sem validade
@@ -569,18 +592,27 @@ export function AdminProducts() {
                     value={licenseForm.fim}
                     onChange={e => setLicenseForm(prev => ({ ...prev, fim: e.target.value }))}
                     min={new Date().toISOString().split('T')[0]}
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                   />
-                  <p style={{ color: '#94a3b8', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                  <p className="text-xs text-muted-foreground mt-1">
                     {licenseForm.fim
                       ? `Expira em ${new Date(licenseForm.fim + 'T00:00:00').toLocaleDateString('pt-BR')}`
                       : 'Sem validade (acesso permanente)'}
                   </p>
                 </div>
-                <div className="modal-actions">
-                  <button type="button" className="btn-secondary" onClick={() => setShowLicenseModal(false)}>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    className="border border-border bg-card text-foreground rounded-md px-4 py-2 text-sm hover:bg-accent transition-colors"
+                    onClick={() => setShowLicenseModal(false)}
+                  >
                     Cancelar
                   </button>
-                  <button type="submit" className="btn-primary admin-btn" disabled={availableOrgs.length === 0}>
+                  <button
+                    type="submit"
+                    className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    disabled={availableOrgs.length === 0}
+                  >
                     Conceder
                   </button>
                 </div>
@@ -597,67 +629,72 @@ export function AdminProducts() {
   // --- List View ---
   return (
     <div>
-      <div className="admin-page-header">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="admin-page-title">Produtos</h1>
-          <p className="admin-page-subtitle">{products.length} produtos cadastrados</p>
+          <h1 className="text-2xl font-bold text-foreground">Produtos</h1>
+          <p className="text-muted-foreground mt-1">{products.length} produtos cadastrados</p>
         </div>
-        <button className="btn-primary admin-btn" onClick={openCreateProduct}>
+        <button
+          className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+          onClick={openCreateProduct}
+        >
           + Novo Produto
         </button>
       </div>
 
-      <div className="admin-table-wrapper">
-        <table className="admin-table">
+      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
           <thead>
-            <tr>
-              <th>Nome</th>
-              <th>Slug</th>
-              <th>URL Base</th>
-              <th>Cor</th>
-              <th>Status</th>
-              <th>Licenças</th>
-              <th>Ações</th>
+            <tr className="border-b border-border bg-muted/50">
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Nome</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Slug</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">URL Base</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Cor</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Licencas</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
             {products.map(product => (
               <tr
                 key={product.id}
-                style={{ cursor: 'pointer' }}
+                className="cursor-pointer hover:bg-muted/50 transition-colors"
                 onClick={() => selectProduct(product)}
               >
-                <td className="admin-table-primary">
-                  {product.icone && <span style={{ marginRight: '0.5rem' }}>{product.icone}</span>}
+                <td className="px-4 py-3 font-medium text-foreground">
+                  {product.icone && <span className="mr-2">{product.icone}</span>}
                   {product.nome}
                 </td>
-                <td>{product.slug}</td>
-                <td>{product.url_base}</td>
-                <td>
+                <td className="px-4 py-3 text-foreground">{product.slug}</td>
+                <td className="px-4 py-3 text-muted-foreground">{product.url_base}</td>
+                <td className="px-4 py-3">
                   <span
-                    style={{
-                      display: 'inline-block',
-                      width: 14,
-                      height: 14,
-                      borderRadius: '50%',
-                      backgroundColor: product.cor,
-                      verticalAlign: 'middle',
-                    }}
+                    className="inline-block w-3.5 h-3.5 rounded-full"
+                    style={{ backgroundColor: product.cor }}
                   />
                 </td>
-                <td>
-                  <span className={`badge ${product.ativo ? 'badge-active' : 'badge-danger'}`}>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                    product.ativo ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+                  }`}>
                     {product.ativo ? 'Ativo' : 'Inativo'}
                   </span>
                 </td>
-                <td>{licenseCount(product.id)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: '0.5rem' }} onClick={e => e.stopPropagation()}>
-                    <button className="btn-sm" onClick={() => openEditProduct(product)}>
+                <td className="px-4 py-3 text-foreground">{licenseCount(product.id)}</td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+                    <button
+                      className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+                      onClick={() => openEditProduct(product)}
+                    >
                       Editar
                     </button>
                     {product.ativo && (
-                      <button className="btn-sm btn-danger" onClick={() => handleDeactivateProduct(product.id)}>
+                      <button
+                        className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
+                        onClick={() => handleDeactivateProduct(product.id)}
+                      >
                         Desativar
                       </button>
                     )}
@@ -666,7 +703,11 @@ export function AdminProducts() {
               </tr>
             ))}
             {products.length === 0 && (
-              <tr><td colSpan={7} className="admin-table-empty">Nenhum produto cadastrado. Crie o primeiro!</td></tr>
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                  Nenhum produto cadastrado. Crie o primeiro!
+                </td>
+              </tr>
             )}
           </tbody>
         </table>

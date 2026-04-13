@@ -93,16 +93,13 @@ async def generate_sso_token(body: SSOTokenRequest, authorization: Optional[str]
     org_id = profile.data["org_id"]
     role = profile.data.get("role", "user")
 
-    # Check if org has access to product
+    # Check if org has access to product (including expiry check)
     product = db.table("products").select("id, slug").eq("slug", body.product_slug).single().execute()
     if not product.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
-    license_check = db.table("licenses").select("id").eq(
-        "org_id", org_id
-    ).eq("product_id", product.data["id"]).eq("status", "active").execute()
-
-    if not license_check.data:
+    from app.dependencies import check_org_license
+    if not check_org_license(db, org_id, product.data["id"]):
         raise HTTPException(status_code=403, detail="Organização não tem acesso a este produto")
 
     # Generate SSO token
@@ -151,12 +148,9 @@ async def launch_product(product_slug: str, authorization: Optional[str] = Heade
     if not product.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
-    # Check license
-    license_check = db.table("licenses").select("id").eq(
-        "org_id", org_id
-    ).eq("product_id", product.data["id"]).eq("status", "active").execute()
-
-    if not license_check.data:
+    # Check license (including expiry)
+    from app.dependencies import check_org_license
+    if not check_org_license(db, org_id, product.data["id"]):
         raise HTTPException(status_code=403, detail="Sem acesso a este produto")
 
     # Generate SSO token

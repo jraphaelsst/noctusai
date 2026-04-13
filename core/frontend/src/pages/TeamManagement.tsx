@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
+import { NotificationBell } from '../components/NotificationBell';
+import { Header, useTheme } from "@noctusai/shared/design-system";
 
 interface Member {
   id: string;
@@ -30,8 +32,9 @@ interface Role {
 }
 
 export function TeamManagement() {
-  const { user, organization, logout } = useAuth();
+  const { user, organization, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -132,82 +135,87 @@ export function TeamManagement() {
 
   if (loading) {
     return (
-      <div className="loading-screen">
-        <div className="spinner" />
-        <p>Carregando equipe...</p>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
+        <p className="mt-4 text-muted-foreground">Carregando equipe...</p>
       </div>
     );
   }
 
   return (
-    <div className="dashboard">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="dashboard-header">
-        <div className="header-left">
-          <span className="logo-icon">⚡</span>
-          <h1>NoctusAI</h1>
-        </div>
-        <div className="header-right">
-          <button className="btn-sm" onClick={() => navigate('/')}>
-            Dashboard
-          </button>
-          <div className="user-info">
-            <span className="user-name">{user?.nome}</span>
-            <span className="org-name">{organization?.nome}</span>
+      <Header
+        user={{ name: user?.nome || '', email: user?.email || '', role: isAdmin ? 'Administrador' : 'Membro' }}
+        onLogout={handleLogout}
+        theme={theme}
+        onThemeToggle={toggleTheme}
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              className="h-9 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+              onClick={() => navigate('/')}
+            >
+              Dashboard
+            </button>
+            <NotificationBell />
           </div>
-          <button className="btn-logout" onClick={handleLogout}>Sair</button>
-        </div>
-      </header>
+        }
+      />
 
       {/* Main */}
-      <main className="team-page">
-        <div className="team-page-header">
+      <main className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-10">
+        <div className="mb-8 flex items-center justify-between">
           <div>
-            <h2 className="team-page-title">Equipe</h2>
-            <p className="team-page-subtitle">
+            <h2 className="text-2xl font-bold text-foreground">Equipe</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
               {members.length} membro{members.length !== 1 ? 's' : ''} na organização
             </p>
           </div>
           <button
-            className="btn-primary team-invite-btn"
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             onClick={() => setShowInviteModal(true)}
           >
             Convidar
           </button>
         </div>
 
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
+        )}
 
         {/* Members Table */}
-        <div className="admin-table-wrapper">
-          <table className="admin-table">
-            <thead>
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-border bg-muted/50">
               <tr>
-                <th>Nome</th>
-                <th>E-mail</th>
-                <th>Papel</th>
-                <th>Entrou em</th>
-                <th>Ações</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Nome</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">E-mail</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Papel</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Entrou em</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {members.map(member => (
-                <tr key={member.id}>
-                  <td className="admin-table-primary">
+                <tr key={member.id} className="bg-card">
+                  <td className="px-4 py-3 font-medium text-foreground">
                     {member.nome}
                     {member.id === user?.id && (
-                      <span className="badge badge-sm badge-inline">Você</span>
+                      <span className="ml-2 inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                        Você
+                      </span>
                     )}
                   </td>
-                  <td>{member.email}</td>
-                  <td>
+                  <td className="px-4 py-3 text-foreground">{member.email}</td>
+                  <td className="px-4 py-3">
                     {member.org_role === 'owner' || member.id === user?.id ? (
-                      <span className="badge">
+                      <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">
                         {getRoleName(member.org_role, roles)}
                       </span>
                     ) : (
                       <select
-                        className="role-select"
+                        className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                         value={member.org_role || 'member'}
                         onChange={e => handleRoleChange(member.id, e.target.value)}
                       >
@@ -219,15 +227,15 @@ export function TeamManagement() {
                       </select>
                     )}
                   </td>
-                  <td>
+                  <td className="px-4 py-3 text-foreground">
                     {member.created_at
                       ? new Date(member.created_at).toLocaleDateString('pt-BR')
                       : '—'}
                   </td>
-                  <td>
+                  <td className="px-4 py-3">
                     {member.id !== user?.id && member.org_role !== 'owner' && (
                       <button
-                        className="btn-sm btn-danger"
+                        className="rounded-md border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                         onClick={() => setConfirmRemove(member)}
                       >
                         Remover
@@ -238,7 +246,7 @@ export function TeamManagement() {
               ))}
               {members.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="admin-table-empty">
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
                     Nenhum membro encontrado
                   </td>
                 </tr>
@@ -248,50 +256,52 @@ export function TeamManagement() {
         </div>
 
         {/* Pending Invitations */}
-        <section className="pending-invitations">
-          <h3 className="pending-invitations-title">
+        <section className="mt-10">
+          <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold text-foreground">
             Convites pendentes
             {invitations.length > 0 && (
-              <span className="badge badge-sm badge-warning badge-inline">
+              <span className="inline-flex rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800">
                 {invitations.length}
               </span>
             )}
           </h3>
 
           {invitations.length === 0 ? (
-            <p className="pending-invitations-empty">Nenhum convite pendente</p>
+            <p className="text-sm text-muted-foreground">Nenhum convite pendente</p>
           ) : (
-            <div className="admin-table-wrapper">
-              <table className="admin-table">
-                <thead>
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-border bg-muted/50">
                   <tr>
-                    <th>E-mail</th>
-                    <th>Papel</th>
-                    <th>Expira em</th>
-                    <th>Enviado em</th>
-                    <th>Ações</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">E-mail</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Papel</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Expira em</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Enviado em</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-border">
                   {invitations.map(inv => (
-                    <tr key={inv.id}>
-                      <td className="admin-table-primary">{inv.email}</td>
-                      <td>
-                        <span className="badge">{getRoleName(inv.role, roles)}</span>
+                    <tr key={inv.id} className="bg-card">
+                      <td className="px-4 py-3 font-medium text-foreground">{inv.email}</td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">
+                          {getRoleName(inv.role, roles)}
+                        </span>
                       </td>
-                      <td>
+                      <td className="px-4 py-3 text-foreground">
                         {inv.expires_at
                           ? new Date(inv.expires_at).toLocaleDateString('pt-BR')
                           : '—'}
                       </td>
-                      <td>
+                      <td className="px-4 py-3 text-foreground">
                         {inv.created_at
                           ? new Date(inv.created_at).toLocaleDateString('pt-BR')
                           : '—'}
                       </td>
-                      <td>
+                      <td className="px-4 py-3">
                         <button
-                          className="btn-sm btn-danger"
+                          className="rounded-md border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                           onClick={() => handleCancelInvite(inv.id)}
                         >
                           Cancelar
@@ -308,26 +318,38 @@ export function TeamManagement() {
 
       {/* Invite Modal */}
       {showInviteModal && (
-        <div className="modal-overlay" onClick={() => setShowInviteModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>Convidar membro</h2>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowInviteModal(false)}
+        >
+          <div
+            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="mb-4 text-lg font-semibold text-foreground">Convidar membro</h2>
             <form onSubmit={handleInvite}>
-              {inviteError && <div className="error">{inviteError}</div>}
-              <div className="field">
-                <label>E-mail</label>
+              {inviteError && (
+                <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-800">
+                  {inviteError}
+                </div>
+              )}
+              <div className="mb-4">
+                <label className="mb-1 block text-sm font-medium text-foreground">E-mail</label>
                 <input
                   type="email"
                   placeholder="colaborador@empresa.com"
                   value={inviteEmail}
                   onChange={e => setInviteEmail(e.target.value)}
                   required
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
-              <div className="field">
-                <label>Papel</label>
+              <div className="mb-6">
+                <label className="mb-1 block text-sm font-medium text-foreground">Papel</label>
                 <select
                   value={inviteRole}
                   onChange={e => setInviteRole(e.target.value)}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 >
                   {assignableRoles.map(role => (
                     <option key={role.slug} value={role.slug}>
@@ -336,19 +358,18 @@ export function TeamManagement() {
                   ))}
                 </select>
               </div>
-              <div className="modal-actions">
+              <div className="flex justify-end gap-3">
                 <button
                   type="button"
-                  className="btn-secondary"
+                  className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
                   onClick={() => setShowInviteModal(false)}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="btn-primary"
+                  className="rounded-md bg-primary px-6 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={inviting || !inviteEmail}
-                  style={{ width: 'auto', padding: '10px 24px' }}
                 >
                   {inviting ? 'Enviando...' : 'Enviar convite'}
                 </button>
@@ -360,28 +381,29 @@ export function TeamManagement() {
 
       {/* Confirm Remove Modal */}
       {confirmRemove && (
-        <div className="modal-overlay" onClick={() => setConfirmRemove(null)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>Remover membro</h2>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '24px' }}>
-              Tem certeza que deseja remover <strong>{confirmRemove.nome}</strong> ({confirmRemove.email}) da organização? Esta ação não pode ser desfeita.
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setConfirmRemove(null)}
+        >
+          <div
+            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="mb-2 text-lg font-semibold text-foreground">Remover membro</h2>
+            <p className="mb-6 text-sm text-muted-foreground">
+              Tem certeza que deseja remover <strong className="text-foreground">{confirmRemove.nome}</strong> ({confirmRemove.email}) da organização? Esta ação não pode ser desfeita.
             </p>
-            <div className="modal-actions">
+            <div className="flex justify-end gap-3">
               <button
-                className="btn-secondary"
+                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted"
                 onClick={() => setConfirmRemove(null)}
               >
                 Cancelar
               </button>
               <button
-                className="btn-primary"
+                className="rounded-md bg-red-600 px-6 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={handleRemoveMember}
                 disabled={removing}
-                style={{
-                  width: 'auto',
-                  padding: '10px 24px',
-                  background: 'var(--danger)',
-                }}
               >
                 {removing ? 'Removendo...' : 'Confirmar remoção'}
               </button>

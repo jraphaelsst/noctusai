@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { api, clearToken, setToken, isAuthenticated } from './api';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { api, clearToken, setToken, isAuthenticated, getRefreshToken, setRefreshToken } from './api';
+import { useActivityRefresh } from '@noctusai/shared/design-system/useActivityRefresh';
 
 interface User {
   id: string;
@@ -102,6 +103,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearToken();
     setState({ user: null, organization: null, isAdmin: false, loading: false });
   }
+
+  // Proactive token refresh while user is active (every 5 min)
+  const handleTokenRefresh = useCallback(async () => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return;
+    try {
+      const res = await api.post('/api/auth/refresh', { refresh_token: refreshToken });
+      if (res.access_token) setToken(res.access_token);
+      if (res.refresh_token) setRefreshToken(res.refresh_token);
+    } catch {
+      // Refresh failed — token expired, user will be redirected on next API call
+    }
+  }, []);
+
+  useActivityRefresh({
+    onRefresh: handleTokenRefresh,
+    enabled: !!state.user,
+  });
 
   return (
     <AuthContext.Provider value={{ ...state, logout, refresh: fetchProfile }}>

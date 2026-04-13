@@ -50,13 +50,13 @@ function formatMonth(monthStr: string): string {
   }
 }
 
-function statusBadgeClass(status: string): string {
+function statusBadgeClasses(status: string): string {
   switch (status) {
-    case 'active': return 'badge-active';
-    case 'trial': return 'badge-warning';
+    case 'active': return 'bg-success/10 text-success';
+    case 'trial': return 'bg-warning/10 text-warning';
     case 'canceled':
-    case 'expired': return 'badge-danger';
-    default: return '';
+    case 'expired': return 'bg-danger/10 text-danger';
+    default: return 'bg-muted text-muted-foreground';
   }
 }
 
@@ -99,57 +99,60 @@ export function AdminAnalytics() {
   }, []);
 
   if (loading) {
-    return <div className="loading-screen"><div className="spinner" /><p>Carregando analytics...</p></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        <p className="ml-3 text-muted-foreground">Carregando analytics...</p>
+      </div>
+    );
   }
 
+  const kpiCards = [
+    { icon: '💰', value: overview ? formatCurrency(overview.mrr) : '-', label: 'MRR' },
+    { icon: '🏢', value: overview?.total_orgs ?? 0, label: 'Total Organizacoes' },
+    { icon: '✅', value: overview?.active_orgs ?? 0, label: 'Orgs Ativas' },
+    { icon: '👥', value: overview?.total_users ?? 0, label: 'Total Usuarios' },
+    { icon: '📉', value: `${overview?.churn_rate ?? 0}%`, label: 'Churn (30d)' },
+  ];
+
   return (
-    <div className="analytics-page">
-      <div className="admin-page-header">
+    <div>
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="admin-page-title">Analytics</h1>
-          <p className="admin-page-subtitle">Metricas e saude da plataforma</p>
+          <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
+          <p className="text-muted-foreground mt-1">Metricas e saude da plataforma</p>
         </div>
       </div>
 
       {/* KPI Cards */}
-      <div className="admin-stats-grid">
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">💰</div>
-          <div className="admin-stat-value">{overview ? formatCurrency(overview.mrr) : '-'}</div>
-          <div className="admin-stat-label">MRR</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">🏢</div>
-          <div className="admin-stat-value">{overview?.total_orgs ?? 0}</div>
-          <div className="admin-stat-label">Total Organizacoes</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">✅</div>
-          <div className="admin-stat-value">{overview?.active_orgs ?? 0}</div>
-          <div className="admin-stat-label">Orgs Ativas</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">👥</div>
-          <div className="admin-stat-value">{overview?.total_users ?? 0}</div>
-          <div className="admin-stat-label">Total Usuarios</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-icon">📉</div>
-          <div className="admin-stat-value">{overview?.churn_rate ?? 0}%</div>
-          <div className="admin-stat-label">Churn (30d)</div>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        {kpiCards.map(({ icon, value, label }) => (
+          <div key={label} className="bg-card rounded-lg border border-border shadow-sm p-6">
+            <div className="text-2xl mb-2">{icon}</div>
+            <div className="text-2xl font-bold text-foreground">{value}</div>
+            <div className="text-sm text-muted-foreground mt-1">{label}</div>
+          </div>
+        ))}
       </div>
 
       {/* Tab Navigation */}
-      <div className="analytics-tabs">
+      <div className="flex gap-1 mt-8 mb-4 border-b border-border">
         <button
-          className={`analytics-tab ${activeTab === 'revenue' ? 'active' : ''}`}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === 'revenue'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
           onClick={() => setActiveTab('revenue')}
         >
           Receita Mensal
         </button>
         <button
-          className={`analytics-tab ${activeTab === 'tenants' ? 'active' : ''}`}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === 'tenants'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
           onClick={() => setActiveTab('tenants')}
         >
           Saude dos Tenants
@@ -158,38 +161,42 @@ export function AdminAnalytics() {
 
       {/* Revenue Table */}
       {activeTab === 'revenue' && (
-        <div className="admin-table-wrapper">
-          <table className="admin-table">
+        <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
             <thead>
-              <tr>
-                <th>Mes</th>
-                <th>Novas Assinaturas</th>
-                <th>Canceladas</th>
-                <th>MRR</th>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Mes</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Novas Assinaturas</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Canceladas</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">MRR</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {revenue.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="admin-table-empty">
+                  <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
                     Nenhum dado de receita disponivel
                   </td>
                 </tr>
               ) : (
                 revenue.map(row => (
-                  <tr key={row.month}>
-                    <td className="admin-table-primary">{formatMonth(row.month)}</td>
-                    <td>
-                      <span className="badge badge-sm badge-active">+{row.new_subs}</span>
+                  <tr key={row.month} className="hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-3 font-medium text-foreground">{formatMonth(row.month)}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-success/10 text-success">
+                        +{row.new_subs}
+                      </span>
                     </td>
-                    <td>
+                    <td className="px-4 py-3">
                       {row.churned > 0 ? (
-                        <span className="badge badge-sm badge-danger">-{row.churned}</span>
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-danger/10 text-danger">
+                          -{row.churned}
+                        </span>
                       ) : (
-                        <span className="badge badge-sm">0</span>
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">0</span>
                       )}
                     </td>
-                    <td className="admin-table-primary">{formatCurrency(row.mrr)}</td>
+                    <td className="px-4 py-3 font-medium text-foreground">{formatCurrency(row.mrr)}</td>
                   </tr>
                 ))
               )}
@@ -200,38 +207,38 @@ export function AdminAnalytics() {
 
       {/* Tenants Table */}
       {activeTab === 'tenants' && (
-        <div className="admin-table-wrapper">
-          <table className="admin-table">
+        <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
             <thead>
-              <tr>
-                <th>Organizacao</th>
-                <th>Usuarios</th>
-                <th>Plano</th>
-                <th>Status</th>
-                <th>Ultima Atividade</th>
-                <th>Criado em</th>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Organizacao</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Usuarios</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Plano</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Ultima Atividade</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Criado em</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {tenants.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="admin-table-empty">
+                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                     Nenhum tenant encontrado
                   </td>
                 </tr>
               ) : (
                 tenants.map(tenant => (
-                  <tr key={tenant.org_id}>
-                    <td className="admin-table-primary">{tenant.org_nome}</td>
-                    <td>{tenant.user_count}</td>
-                    <td>{tenant.plan}</td>
-                    <td>
-                      <span className={`badge badge-sm ${statusBadgeClass(tenant.status)}`}>
+                  <tr key={tenant.org_id} className="hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-3 font-medium text-foreground">{tenant.org_nome}</td>
+                    <td className="px-4 py-3 text-foreground">{tenant.user_count}</td>
+                    <td className="px-4 py-3 text-foreground">{tenant.plan}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClasses(tenant.status)}`}>
                         {statusLabel(tenant.status)}
                       </span>
                     </td>
-                    <td>{formatDate(tenant.last_active)}</td>
-                    <td>{formatDate(tenant.created_at)}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{formatDate(tenant.last_active)}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{formatDate(tenant.created_at)}</td>
                   </tr>
                 ))
               )}
