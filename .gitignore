@@ -31,5 +31,9 @@ playwright-report/
 blob-report/
 playwright/.cache/
 
+# Seed backups (local safety net — git handles real versioning)
+.backup/
+.seed-syncing
+
 # Benchmark / reference projects
 Benchmark Systems/
