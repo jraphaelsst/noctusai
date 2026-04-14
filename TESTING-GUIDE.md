@@ -1,282 +1,485 @@
 # NoctusAI Platform — Manual Testing Guide
 
+> Test everything through the UI. If it can't be done through the UI, it's a missing feature.
+
 ## Pre-requisites
 
-1. Run `bash scripts/setup.sh` (if not done already)
-2. Ensure `.env` has all required keys (especially `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`)
-3. Start all services: `bash start.sh`
+- [ ] `bash scripts/setup.sh` completed
+- [ ] `.env` file configured with all keys
+- [ ] `bash start.sh` running (all 5 backends + 5 frontends)
+- [ ] Supabase Dashboard: `seed` added to "Exposed schemas" (Project Settings → API)
+
+Services running:
+- Core: http://localhost:5173 (frontend) / http://localhost:8000 (API)
+- ERP: http://localhost:8080 / http://localhost:8001
+- PF: http://localhost:8090 / http://localhost:8002
+- Therapy: http://localhost:8095 / http://localhost:8003
+- Seed: http://localhost:8100 / http://localhost:8004
 
 ---
 
-## 1. Supabase Configuration (one-time)
+## 1. Core Platform — Registration & Org Setup
 
-### 1.1 Add "seed" to Exposed Schemas
+### 1.1 Landing / Login Page
 
-1. Open Supabase Dashboard → your project
-2. Go to **Project Settings** → **API** (left sidebar)
-3. Scroll to **"Exposed schemas"**
-4. Current list should show: `public, erp, personal-finance, therapy`
-5. Add `seed` to the list
-6. Click **Save**
-7. Wait ~30 seconds for PostgREST to reload
+- [ ] Open http://localhost:5173
+- [ ] Page loads without errors (no white screen, no console errors)
+- [ ] "NoctusAI" branding visible
+- [ ] Login form shows: email field, password field, submit button
+- [ ] Signup toggle exists ("Criar conta" or similar)
+- [ ] Form validates: try submitting empty → error messages appear
+- [ ] Form validates: try invalid email format → error message
+- [ ] Form validates: try password less than 6 chars → error message
 
-**Verify:** Open `https://YOUR-PROJECT.supabase.co/rest/v1/` with header `Accept-Profile: seed` — should not return an error.
+### 1.2 New User Registration
 
-### 1.2 Register Seed Product
+- [ ] Toggle to signup mode
+- [ ] Fill in: Nome, Email (use a real email you can check), Empresa, Password
+- [ ] Submit → should succeed, redirect to dashboard
+- [ ] Check email inbox: welcome email received (if Resend configured)
+- [ ] If no email: check server logs for `Email (not sent — no provider)`
 
-Run this in Supabase SQL Editor or via MCP:
+### 1.3 Core Dashboard (first login)
 
-```sql
-INSERT INTO public.products (nome, slug, descricao, icone, url_base, cor, ativo)
-VALUES ('Seed Product', 'seed', 'Reference implementation', '🌱', 'http://localhost:8100', '#22c55e', true)
-ON CONFLICT (slug) DO NOTHING;
-```
+- [ ] Dashboard loads with "Bem-vindo, [Name]!" greeting
+- [ ] Header shows: user name, email, role badge, theme toggle, logout button
+- [ ] User card (hover/click on avatar): shows name, email, role
+- [ ] Products grid visible (may show "Solicitar acesso" since no licenses yet)
+- [ ] If org is new/free: upgrade banner or trial info visible
+- [ ] Theme toggle works: click → switches dark/light, persists on reload
 
----
+### 1.4 Profile Edit
 
-## 2. SSO Flow Testing
+- [ ] Click on user avatar/name in header → profile card opens
+- [ ] Click "Editar" → edit form appears
+- [ ] Change name → save → name updates in header immediately
+- [ ] Change password → save → logout → login with new password works
+- [ ] Cancel edit → form closes, no changes applied
 
-### 2.1 Core → ERP via SSO
+### 1.5 Admin Panel (if admin user)
 
-- [ ] **Step 1:** Open `http://localhost:5173` (Core)
-- [ ] **Step 2:** Log in as org owner
-- [ ] **Step 3:** Dashboard shows products with "Acessar" button
-- [ ] **Step 4:** Click ERP product card
-- [ ] **Step 5:** New tab opens at `http://localhost:8080/sso?token=...`
-- [ ] **Step 6:** SSO callback processes, redirects to `/dashboard`
-- [ ] **Step 7:** Sidebar shows org name as subtitle
-- [ ] **Step 8:** Sidebar shows "Back to NoctusAI" link at bottom
-- [ ] **Step 9:** Header shows "Administrador" role (if org owner)
-
-**Expected:** Smooth redirect, no errors, admin access in ERP.
-
-### 2.2 Core → PF via SSO
-
-- [ ] Repeat steps above for PF (`http://localhost:8090`)
-- [ ] Verify org name in sidebar subtitle
-- [ ] Verify admin role in header
-
-### 2.3 Core → Therapy via SSO
-
-- [ ] Repeat for Therapy (`http://localhost:8095`)
-- [ ] Should see admin dashboard (if org_role=owner/admin or noctus_role=admin)
-
-### 2.4 Core → Seed via SSO
-
-- [ ] Repeat for Seed (`http://localhost:8100`)
-- [ ] Dashboard should show "Stack Status" card with user/org info
-
-### 2.5 SSO Logout Redirect
-
-- [ ] In any product (entered via SSO), click logout
-- [ ] **Expected:** Redirects to NoctusAI Core (`http://localhost:5173`), NOT to product login
+- [ ] "Admin Panel" button visible in header (only for admins)
+- [ ] Click → navigates to /admin
+- [ ] Admin sidebar shows: Dashboard, Organizacoes, Usuarios, Subscriptions, API Keys, Plans, Products, Webhooks, Settings
+- [ ] Each admin page loads without errors
+- [ ] Admin → Usuarios: shows user list with role badges
+- [ ] Admin → Usuarios → Edit: can change org_role (dropdown shows all 7 roles: Proprietario, Administrador, Gerente, Membro, Visualizador, Desenvolvedor, Teste)
+- [ ] Save role change → role updates in list
 
 ---
 
-## 3. Direct Login Testing
+## 2. Core — Team Management
 
-### 3.1 ERP Direct Login
+### 2.1 Team Page
 
-- [ ] Open `http://localhost:8080` (not via SSO)
-- [ ] Should see Landing page with "Entrar" button
-- [ ] Click "Entrar" → Login page
-- [ ] Log in with Supabase credentials
-- [ ] **Expected:** Redirects to `/dashboard`, no "Back to NoctusAI" link (not SSO)
+- [ ] Navigate to Team Management page
+- [ ] Shows "Membros" section with current org members
+- [ ] Shows "Convites Pendentes" section (empty initially)
+- [ ] "Convidar" button visible
 
-### 3.2 PF Direct Login
+### 2.2 Invite a Member
 
-- [ ] Open `http://localhost:8090`
-- [ ] Landing page → Login → Dashboard
-- [ ] No "Back to NoctusAI" (direct login, not SSO)
+- [ ] Click "Convidar"
+- [ ] Modal/form appears: email field, role dropdown
+- [ ] Role dropdown shows available roles
+- [ ] Enter a real email address you can check
+- [ ] Select role (e.g. "Membro")
+- [ ] Submit → success message
+- [ ] New invitation appears in "Convites Pendentes" with: email, role, expiry date
+- [ ] Check inbox: invitation email arrives with "Aceitar Convite" button
 
-### 3.3 Therapy Direct Login
+### 2.3 Duplicate Invite
 
-- [ ] Open `http://localhost:8095`
-- [ ] Landing page → Login → Role-based dashboard
+- [ ] Try inviting the same email again
+- [ ] Expected: error message "Ja existe um convite pendente para este email"
 
-### 3.4 Direct Logout Redirect
+### 2.4 Cancel Invite
 
-- [ ] Log in directly (not via SSO) to any product
+- [ ] Click cancel/X on a pending invitation
+- [ ] Invitation disappears from pending list
+- [ ] If you try the old invitation link: should show error "Convite ja foi utilizado ou cancelado"
+
+### 2.5 Accept Invite (open in incognito/different browser)
+
+- [ ] Open the invitation link from the email
+- [ ] AcceptInvite page loads: shows org name, role
+- [ ] Form shows: email (read-only), nome field, password field
+- [ ] Submit with empty fields → validation errors
+- [ ] Submit with password < 6 chars → validation error
+- [ ] Fill in correctly → submit → "Convite aceito!" success screen
+- [ ] Click "Ir para o login" → redirects to login
+- [ ] Log in with the new credentials → Core dashboard loads
+- [ ] New member visible in team list (back in admin's browser)
+
+---
+
+## 3. SSO — Core to Products
+
+### 3.1 License Setup
+
+- [ ] In Core admin panel: go to Products → verify ERP/PF/Therapy/Seed are listed
+- [ ] Go to Licenses (or the mechanism to grant access) → grant your org a license for each product
+- [ ] Return to Dashboard → products should now show "Acessar" (green dot)
+
+### 3.2 SSO into ERP
+
+- [ ] On Core Dashboard, click ERP product card
+- [ ] New tab opens at http://localhost:8080/sso?token=...
+- [ ] Loading spinner: "Autenticando via NoctusAI..."
+- [ ] Redirects to ERP dashboard
+- [ ] **Sidebar checks:**
+  - [ ] Brand icon + title visible at top
+  - [ ] Org name visible as subtitle (not hardcoded)
+  - [ ] Navigation groups visible (Principal, Comercial, Financeiro, etc.)
+  - [ ] "Voltar ao NoctusAI" link at bottom of sidebar
+  - [ ] Sidebar is collapsible (hamburger on mobile)
+- [ ] **Header checks:**
+  - [ ] User name + email visible
+  - [ ] Role badge shows "Administrador" (if org owner/admin)
+  - [ ] Theme toggle works
+  - [ ] Notification bell visible (with badge count if notifications exist)
+  - [ ] Profile edit works (change name → saves)
+- [ ] **Admin features visible:** Equipe, Usuarios, Admin pages in sidebar
+
+### 3.3 SSO into PF
+
+- [ ] Click PF product card on Core Dashboard
+- [ ] Same SSO flow → PF dashboard
+- [ ] Sidebar: "Financas Pessoais" brand, org name subtitle, nav groups (Principal, Planejamento, Investimentos, Relatorios)
+- [ ] "Voltar ao NoctusAI" visible
+- [ ] "Equipe" nav item visible (if admin)
+
+### 3.4 SSO into Therapy
+
+- [ ] Click Therapy product card
+- [ ] SSO → Therapy admin dashboard
+- [ ] Role-based nav: should see Admin nav groups (Principal, Operacional, Sistema)
+- [ ] "Voltar ao NoctusAI" visible
+
+### 3.5 SSO into Seed
+
+- [ ] Click Seed product card
+- [ ] SSO → Seed dashboard
+- [ ] Dashboard shows "Stack Status" card with user info, org info, SSO context
+- [ ] This validates the entire shared stack is wired correctly
+
+### 3.6 SSO Logout
+
+- [ ] In any product (entered via SSO), click Logout
+- [ ] Expected: redirects to Core (http://localhost:5173), NOT to product login
+- [ ] Core dashboard loads (you're still logged in on Core)
+
+---
+
+## 4. Direct Login — Product Landing Pages
+
+### 4.1 ERP Landing Page
+
+- [ ] Open http://localhost:8080 in a fresh browser (not logged in)
+- [ ] Landing page loads: hero section, feature cards, "Entrar" CTA
+- [ ] **Visual checks:**
+  - [ ] Responsive: resize to mobile (375px) → single column, no overflow
+  - [ ] Resize to tablet (768px) → 2-column grid
+  - [ ] Resize to desktop (1440px) → 3-column grid
+- [ ] "Entrar" button → navigates to /login
+- [ ] Navbar is sticky on scroll
+
+### 4.2 ERP Login Page
+
+- [ ] Login page loads with Building2 icon, "ERP Imobiliario" title
+- [ ] "Esqueceu a senha?" link visible
+- [ ] "Acesse pelo NoctusAI" link at bottom
+- [ ] Submit empty form → validation errors
+- [ ] Submit invalid email → error
+- [ ] Submit wrong password → toast error "Erro ao entrar"
+- [ ] Submit correct credentials → redirects to /dashboard
+- [ ] No "Voltar ao NoctusAI" in sidebar (direct login, not SSO)
+
+### 4.3 PF Landing Page
+
+- [ ] Open http://localhost:8090
+- [ ] Landing page: hero, feature cards, "Por que usar?" section
+- [ ] Responsive layout works at 375px / 768px / 1440px
+- [ ] "Entrar" → login page
+- [ ] Login with DollarSign icon, "Financas Pessoais" title
+- [ ] Same validation tests as ERP
+
+### 4.4 Therapy Landing Page
+
+- [ ] Open http://localhost:8095
+- [ ] Full landing page: hero, features, how-it-works, FAQ
+- [ ] "Entrar" → login, "Criar conta" → register
+- [ ] Login works, redirects to role-based dashboard
+
+### 4.5 Seed Landing Page
+
+- [ ] Open http://localhost:8100
+- [ ] Minimal landing: "Seed Product" hero, login CTA
+- [ ] Login works with Sprout icon branding
+
+### 4.6 Direct Login Logout
+
+- [ ] Log in directly to any product (not via SSO)
 - [ ] Click logout
-- [ ] **Expected:** Redirects to `/login` (product's own login page), NOT to Core
+- [ ] Expected: redirects to /login (product's own), NOT to Core
 
 ---
 
-## 4. Invitation Flow Testing
+## 5. ERP — Team Invitations (Product-Level)
 
-### 4.1 ERP: Invite Employee
+### 5.1 Navigate to Equipe
 
-- [ ] **Step 1:** Log in to ERP as admin
-- [ ] **Step 2:** Navigate to "Equipe" page (sidebar → Painel de Controle → Equipe)
-- [ ] **Step 3:** Click "Convidar" button
-- [ ] **Step 4:** Enter email + select role (e.g. "Corretor")
-- [ ] **Step 5:** Click submit
-- [ ] **Step 6:** Invitation appears in "Convites Pendentes" section
-- [ ] **Step 7:** Check email inbox — invitation email should arrive from NoctusAI
+- [ ] Log in to ERP as admin (via SSO or direct)
+- [ ] Sidebar → Painel de Controle → "Equipe"
+- [ ] Page loads: "Membros" section + "Convites Pendentes"
+- [ ] Current user visible in members list with "Admin" badge
 
-**If RESEND_API_KEY is set:** Real email arrives with "Aceitar Convite" button.
-**If not set:** Check server logs for `Email (not sent — no provider): to=...`
+### 5.2 Invite a Corretor
 
-### 4.2 Accept Invitation
+- [ ] Click "Convidar"
+- [ ] Dialog appears: email field, role dropdown
+- [ ] Role dropdown shows: Administrador, Coordenador, Desenvolvedor, Corretor
+- [ ] Enter a real email, select "Corretor"
+- [ ] Submit → toast "Convite enviado" (or similar)
+- [ ] Invitation appears in pending list with: email, "Corretor" badge, expiry
 
-- [ ] **Step 1:** Open the invitation link (or manually go to `http://localhost:8080/accept-invite/TOKEN`)
-- [ ] **Step 2:** Form shows: email (read-only), nome, password fields
-- [ ] **Step 3:** Fill in nome + password (min 6 chars)
-- [ ] **Step 4:** Click "Aceitar e Criar Conta"
-- [ ] **Step 5:** Success screen: "Convite aceito!"
-- [ ] **Step 6:** Click "Ir para o login"
-- [ ] **Step 7:** Log in with the email + password just set
-- [ ] **Step 8:** Should see corretor-level dashboard (limited nav)
+### 5.3 Accept ERP Invitation (different browser/incognito)
 
-### 4.3 Cancel Invitation
+- [ ] Open invitation link from email
+- [ ] Page loads: ERP branding (Building2 icon), form with email + nome + password
+- [ ] Fill in nome and password → submit
+- [ ] Success: "Convite aceito!"
+- [ ] Navigate to login → log in with new credentials
+- [ ] Dashboard loads with corretor-level nav (limited menu — no admin pages)
+- [ ] Sidebar does NOT show "Painel de Controle" (corretor can't see admin pages)
 
-- [ ] Create a new invitation
-- [ ] Click the cancel button (X) on the pending invitation
-- [ ] **Expected:** Invitation disappears from pending list
+### 5.4 Verify Corretor Restrictions
 
-### 4.4 Duplicate Email
+- [ ] As corretor: try navigating to /equipe directly → should be redirected or see access denied
+- [ ] As corretor: sidebar shows only corretor-visible pages
+- [ ] As corretor: no "Voltar ao NoctusAI" (they logged in directly, not SSO)
 
-- [ ] Try inviting an email that's already a member
-- [ ] **Expected:** Error "Este email ja e membro da organizacao" (409)
+### 5.5 Admin Removes Corretor
 
-### 4.5 PF Invitation
+- [ ] Switch back to admin browser
+- [ ] Equipe page → find the corretor in members list
+- [ ] Click remove button → confirmation dialog
+- [ ] Confirm → member removed from list
+- [ ] Corretor's next page load should fail (session invalidated or data gone)
 
-- [ ] Repeat invite flow in PF (admin → invite member → accept → login)
-- [ ] PF roles: admin / member
+### 5.6 Admin Changes Role
 
-### 4.6 Therapy Invitation (Admin → Clinic)
-
-- [ ] Log in to Therapy as platform_admin
-- [ ] (Note: invite UI is in backend only for now — test via API)
-- [ ] `POST /api/invitations` with `{ email, role: "clinic_admin", invite_type: "platform_to_clinic" }`
-- [ ] Verify invitation created
-
-### 4.7 Therapy: Therapist → Patient (Bound)
-
-- [ ] Log in as therapist
-- [ ] `POST /api/invitations` with `{ email, role: "patient", invite_type: "therapist_to_patient" }`
-- [ ] Accept invitation
-- [ ] Verify patient profile has `therapist_id` binding
+- [ ] Invite another user → they accept → appear as member
+- [ ] On Equipe page, find the member
+- [ ] Click role dropdown/edit → change to "Coordenador"
+- [ ] Save → role badge updates
+- [ ] The user's sidebar should update on next load to show coordenador-level pages
 
 ---
 
-## 5. Password Recovery Testing
+## 6. PF — Team Invitations
 
-### 5.1 Forgot Password Flow
+### 6.1 PF Team Management
 
-- [ ] **Step 1:** Go to any product's login page
-- [ ] **Step 2:** Click "Esqueceu a senha?"
-- [ ] **Step 3:** Enter email
-- [ ] **Step 4:** Click "Enviar Link"
-- [ ] **Step 5:** Success screen: "Email enviado!"
-- [ ] **Step 6:** Check inbox for Supabase password reset email
-- [ ] **Step 7:** Click reset link → set new password
-- [ ] **Step 8:** Log in with new password
+- [ ] Log in to PF as admin
+- [ ] Navigate to "Equipe" page
+- [ ] Invite a member (email + "Membro" role)
+- [ ] Invitation appears in pending list
+- [ ] Accept in incognito → new user can log in
+- [ ] New user sees member-level nav
 
-**Note:** Supabase sends the reset email directly (not via Resend). The email comes from Supabase's configured sender.
+### 6.2 PF Remove Member
 
----
-
-## 6. Role & Access Control Testing
-
-### 6.1 Dev Role — Page Visibility
-
-- [ ] Assign a user the "dev" org_role (via Core admin panel → Users)
-- [ ] Set a page to "desenvolvimento" status in the product's `status_pagina` table:
-  ```sql
-  UPDATE erp.status_pagina SET status = 'desenvolvimento' WHERE nome_pagina = 'matching';
-  ```
-- [ ] Log in as dev user → should see the page with "DEV" badge
-- [ ] Log in as regular member → page should be HIDDEN from sidebar
-- [ ] Log in as owner → should see it (owners see everything)
-
-### 6.2 Admin Cannot Remove Owner
-
-- [ ] As admin, try to remove the org owner from the team
-- [ ] **Expected:** Error 400/403 "Cannot remove owner"
-
-### 6.3 Member Cannot Invite
-
-- [ ] Log in as a regular member (not admin/owner)
-- [ ] Try to access team management or call invite API
-- [ ] **Expected:** 403 "Acesso restrito a administradores"
+- [ ] Admin removes the member from Equipe page
+- [ ] Member disappears from list
 
 ---
 
-## 7. Context Awareness Testing
+## 7. Therapy — Multi-Type Invitations
 
-### 7.1 Trial Subscription Banner
+> Note: Therapy invite UI is currently backend-only for some flows. Test via the AcceptInvite page for acceptance, and via API for creation where no UI exists yet.
 
-- [ ] Set a subscription to "trial" with `expires_at` within 7 days:
-  ```sql
-  UPDATE public.subscriptions SET status = 'trial', expires_at = now() + interval '3 days' WHERE org_id = 'YOUR_ORG_ID';
-  ```
-- [ ] SSO into any product
-- [ ] **Expected:** Yellow banner at top: "Periodo de teste expira em 3 dias."
+### 7.1 AcceptInvite Page
 
-### 7.2 License Expiry Warning
+- [ ] Navigate to http://localhost:8095/accept-invite/FAKE-TOKEN
+- [ ] Should show error: "Convite nao encontrado"
+- [ ] Navigate to a valid token URL (if you have one from API testing)
+- [ ] Form loads: Heart icon, "Plataforma de Terapia", email + nome + password
+- [ ] Submit → success
 
-- [ ] Set a license `fim` within 7 days:
-  ```sql
-  UPDATE public.licenses SET fim = now() + interval '5 days' WHERE org_id = 'YOUR_ORG_ID' AND product_id = 'PRODUCT_ID';
-  ```
-- [ ] SSO into that product
-- [ ] **Expected:** Red banner: "Licenca expira em 5 dias."
+### 7.2 Therapy Login + Role-Based Nav
 
-### 7.3 Org Name in Sidebar
-
-- [ ] SSO into any product
-- [ ] **Expected:** Sidebar subtitle shows org name (not hardcoded product name)
+- [ ] Log in as different roles and verify nav:
+  - [ ] **platform_admin**: sees Admin nav (Dashboard, Terapeutas, Clinicas, Pacientes, etc.)
+  - [ ] **clinic_admin**: sees Clinic nav (Dashboard, Terapeutas, Pacientes, Financeiro)
+  - [ ] **therapist**: sees Therapist nav (Dashboard, Agenda, Pacientes, Sessoes, etc.)
+  - [ ] **patient**: sees Patient nav (Dashboard, Encontrar Terapeuta, Minha Agenda, etc.)
 
 ---
 
-## 8. Health Check Verification
+## 8. Password Recovery
 
-All backends should respond to health checks:
+### 8.1 ERP Forgot Password
 
-```bash
-curl http://localhost:8000/api/health   # Core
-curl http://localhost:8001/api/health   # ERP
-curl http://localhost:8002/api/health   # PF
-curl http://localhost:8003/api/health   # Therapy
-curl http://localhost:8004/api/health   # Seed
-```
+- [ ] Go to http://localhost:8080/login
+- [ ] Click "Esqueceu a senha?"
+- [ ] Forgot password page loads: Building2 icon, email field
+- [ ] Submit empty → validation error
+- [ ] Submit valid email → success screen: "Email enviado!" with checkmark
+- [ ] "Voltar ao login" link → goes back to /login
+- [ ] Check inbox: Supabase sends password reset email
+- [ ] Click reset link → opens Supabase password reset form
+- [ ] Set new password → log in with new password
 
-**Expected response format:**
-```json
-{"status": "ok", "product": "Product Name", "version": "0.x.0"}
-```
+### 8.2 PF Forgot Password
+
+- [ ] Same flow at http://localhost:8090/forgot-password
+- [ ] DollarSign icon branding
+- [ ] Reset works
+
+### 8.3 Therapy Forgot Password
+
+- [ ] Same flow at http://localhost:8095/forgot-password
+- [ ] Heart icon branding
+- [ ] Reset works
+
+---
+
+## 9. Notification System
+
+### 9.1 Notification Bell
+
+- [ ] In any product, check the header for notification bell icon
+- [ ] Click bell → dropdown/popover opens
+- [ ] If no notifications: shows "Nenhuma notificacao" or empty state
+- [ ] Bell shows badge count if unread notifications exist
+
+### 9.2 Create a Notification (via Core)
+
+- [ ] In Core, perform an action that generates a notification (e.g. team invite)
+- [ ] Switch to a product → bell should show updated count
+- [ ] Click bell → notification visible in list
+- [ ] Click "Marcar como lida" → notification marked, count decreases
+- [ ] "Marcar todas como lidas" → all cleared
+
+---
+
+## 10. Theme & Responsiveness
+
+### 10.1 Dark Mode
+
+- [ ] In any product, click theme toggle in header
+- [ ] Entire UI switches to dark mode: sidebar, content, cards, forms
+- [ ] Reload page → dark mode persists (stored in localStorage)
+- [ ] Toggle back → light mode, persists
+
+### 10.2 Mobile Responsiveness
+
+For each product (ERP, PF, Therapy, Seed):
+
+- [ ] Resize browser to 375px width (or use DevTools mobile simulation)
+- [ ] Sidebar collapses to hamburger menu
+- [ ] Click hamburger → sidebar slides in as overlay
+- [ ] Click outside sidebar → closes
+- [ ] All content is single-column, no horizontal overflow
+- [ ] Buttons/inputs are at least 44px tall (tap-friendly)
+- [ ] Forms are usable on mobile
+
+### 10.3 Tablet
+
+- [ ] Resize to 768px
+- [ ] Layout adjusts: 2-column grids where applicable
+- [ ] Sidebar may be visible or collapsible depending on product
+
+---
+
+## 11. Error States & Edge Cases
+
+### 11.1 404 Page
+
+For each product:
+- [ ] Navigate to a non-existent URL (e.g. /this-page-does-not-exist)
+- [ ] 404 page loads: "Pagina nao encontrada" message
+- [ ] "Voltar" and "Ir ao Inicio" buttons work
+
+### 11.2 Expired Session
+
+- [ ] Log in to a product
+- [ ] Wait for token to expire (~1 hour) OR manually clear localStorage
+- [ ] Try to navigate → should auto-refresh token OR redirect to login
+- [ ] No infinite error loops
+
+### 11.3 Invalid SSO Token
+
+- [ ] Navigate to http://localhost:8080/sso?token=INVALID
+- [ ] Error screen: "Erro no login SSO" with retry button and "Voltar ao NoctusAI" link
+
+### 11.4 Network Error
+
+- [ ] Stop a backend (kill the uvicorn process)
+- [ ] Try to use the product → error toasts appear (not white screen)
+- [ ] Restart backend → product recovers on next request
+
+---
+
+## 12. Health Checks
+
+Open each URL in browser or curl:
+
+- [ ] http://localhost:8000/api/health → `{"status": "ok", "product": "NoctusAI Core", "version": "..."}`
+- [ ] http://localhost:8001/api/health → `{"status": "ok", "product": "ERP Imobiliario", "version": "..."}`
+- [ ] http://localhost:8002/api/health → `{"status": "ok", "product": "Personal Finance", "version": "..."}`
+- [ ] http://localhost:8003/api/health → `{"status": "ok", "product": "Therapy Platform", "version": "..."}`
+- [ ] http://localhost:8004/api/health → `{"status": "ok", "product": "Seed Product", "version": "..."}`
 
 ---
 
 ## Test Results Log
 
-_Record results here as you test._
-
-| # | Test | Date | Result | Notes |
-|---|------|------|--------|-------|
-| 1.1 | Seed exposed schema | | | |
-| 2.1 | Core → ERP SSO | | | |
-| 2.2 | Core → PF SSO | | | |
-| 2.3 | Core → Therapy SSO | | | |
-| 2.4 | Core → Seed SSO | | | |
-| 2.5 | SSO logout redirect | | | |
-| 3.1 | ERP direct login | | | |
-| 3.2 | PF direct login | | | |
-| 3.3 | Therapy direct login | | | |
-| 3.4 | Direct logout redirect | | | |
-| 4.1 | ERP invite employee | | | |
-| 4.2 | Accept invitation | | | |
-| 4.3 | Cancel invitation | | | |
-| 4.4 | Duplicate email | | | |
-| 4.5 | PF invitation | | | |
-| 4.6 | Therapy admin→clinic | | | |
-| 4.7 | Therapist→patient bound | | | |
-| 5.1 | Forgot password | | | |
-| 6.1 | Dev role visibility | | | |
-| 6.2 | Cannot remove owner | | | |
-| 6.3 | Member cannot invite | | | |
-| 7.1 | Trial banner | | | |
-| 7.2 | License expiry warning | | | |
-| 7.3 | Org name in sidebar | | | |
-| 8 | Health checks (5 products) | | | |
+| Section | Test | Date | Pass/Fail | Notes |
+|---------|------|------|-----------|-------|
+| 1.1 | Core login page loads | | | |
+| 1.2 | New user registration | | | |
+| 1.3 | Dashboard loads correctly | | | |
+| 1.4 | Profile edit works | | | |
+| 1.5 | Admin panel accessible | | | |
+| 2.1 | Team page loads | | | |
+| 2.2 | Invite member | | | |
+| 2.3 | Duplicate invite blocked | | | |
+| 2.4 | Cancel invite | | | |
+| 2.5 | Accept invite | | | |
+| 3.1 | Licenses granted | | | |
+| 3.2 | SSO → ERP | | | |
+| 3.3 | SSO → PF | | | |
+| 3.4 | SSO → Therapy | | | |
+| 3.5 | SSO → Seed | | | |
+| 3.6 | SSO logout → Core | | | |
+| 4.1 | ERP landing page | | | |
+| 4.2 | ERP direct login | | | |
+| 4.3 | PF landing + login | | | |
+| 4.4 | Therapy landing + login | | | |
+| 4.5 | Seed landing + login | | | |
+| 4.6 | Direct logout → /login | | | |
+| 5.1 | ERP Equipe page | | | |
+| 5.2 | ERP invite corretor | | | |
+| 5.3 | Accept ERP invite | | | |
+| 5.4 | Corretor restrictions | | | |
+| 5.5 | Admin removes member | | | |
+| 5.6 | Admin changes role | | | |
+| 6.1 | PF team management | | | |
+| 6.2 | PF remove member | | | |
+| 7.1 | Therapy AcceptInvite | | | |
+| 7.2 | Therapy role-based nav | | | |
+| 8.1 | ERP forgot password | | | |
+| 8.2 | PF forgot password | | | |
+| 8.3 | Therapy forgot password | | | |
+| 9.1 | Notification bell | | | |
+| 9.2 | Notification lifecycle | | | |
+| 10.1 | Dark mode toggle | | | |
+| 10.2 | Mobile responsiveness | | | |
+| 10.3 | Tablet layout | | | |
+| 11.1 | 404 pages | | | |
+| 11.2 | Expired session | | | |
+| 11.3 | Invalid SSO token | | | |
+| 11.4 | Network error recovery | | | |
+| 12 | Health checks (5 products) | | | |
