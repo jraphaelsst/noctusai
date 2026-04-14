@@ -7,6 +7,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Layout } from "@/components/layout/Layout";
 import { useAuthStore } from "@/store/authStore";
 import { createQueryClient } from "@noctusai/shared/query-client";
+import { PageSkeleton } from "@noctusai/shared/design-system";
 
 const queryClient = createQueryClient();
 
@@ -29,14 +30,6 @@ const Patrimonio = lazy(() => import("@/pages/Patrimonio"));
 const Operacoes = lazy(() => import("@/pages/Operacoes"));
 const Relatorios = lazy(() => import("@/pages/Relatorios"));
 const SSOCallback = lazy(() => import("@/pages/SSOCallback"));
-
-function PageSkeleton() {
-  return (
-    <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
-    </div>
-  );
-}
 
 function AppContent() {
   const { user, isInitialized } = useAuthStore();

@@ -5,7 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { useAuthStore } from "@/store/authStore";
-import { PageSkeleton } from "@/components/ui/page-skeleton";
+import { PageSkeleton } from "@noctusai/shared/design-system";
+import { resolveSSORoles } from "@noctusai/shared";
 
 // Layout (unified — role-based nav switching inside a single Layout.tsx)
 import { Layout } from "@/components/layout/Layout";
@@ -211,9 +212,19 @@ function DirectoryWithLayout({ children }: { children: React.ReactNode }) {
 
 // ── Authenticated routing ───────────────────────────────────
 
+function resolveTherapyRole(user: any): string | undefined {
+  const meta = user?.user_metadata;
+  if (!meta) return undefined;
+  // Shared SSO role resolution (org owner/admin or NoctusAI admin)
+  const { isProductAdmin } = resolveSSORoles(meta);
+  if (isProductAdmin) return "admin";
+  // Direct registration (therapy-native users)
+  return meta.role as string | undefined;
+}
+
 function AuthenticatedRoutes() {
   const { user } = useAuthStore();
-  const role = user?.user_metadata?.role as string | undefined;
+  const role = resolveTherapyRole(user);
 
   // Determine the default dashboard path based on role
   const dashboardPath =

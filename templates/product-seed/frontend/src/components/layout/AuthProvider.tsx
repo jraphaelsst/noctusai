@@ -1,22 +1,5 @@
-import { useEffect } from "react";
-import { useAuthStore } from "@/store/authStore";
-import { useSupabaseAuthInit } from "@noctusai/shared/auth";
-import { supabase } from "@/integrations/supabase/client";
+import { createAuthProvider } from '@noctusai/shared/components';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuthStore } from '@/store/authStore';
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { setUser, setInitialized } = useAuthStore();
-
-  useSupabaseAuthInit(supabase, {
-    onUser: (user) => setUser(user),
-    onSignOut: () => setUser(null),
-  });
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setInitialized();
-    });
-  }, []);
-
-  return <>{children}</>;
-}
+export const AuthProvider = createAuthProvider(supabase, useAuthStore);

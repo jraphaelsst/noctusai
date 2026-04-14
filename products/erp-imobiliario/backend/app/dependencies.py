@@ -4,7 +4,7 @@ Handles JWT auth token extraction and Supabase client creation.
 """
 from typing import Optional
 from fastapi import Header, HTTPException
-from noctusai_shared.auth import first_or_none  # noqa: F401
+from noctusai_shared.auth import first_or_none, resolve_sso_role  # noqa: F401
 from app.database import get_supabase_client
 
 
@@ -39,6 +39,20 @@ def get_org_id(user, *, required: bool = False) -> Optional[str]:
     if not org_id and required:
         raise HTTPException(status_code=400, detail="Organização não encontrada no perfil do usuário")
     return org_id or None
+
+
+def get_user_role(user) -> str:
+    """Resolve the user's role for ERP access.
+
+    Uses shared ``resolve_sso_role()`` first (org owner/admin or NoctusAI
+    admin → 'platform_admin'), then falls through to ERP-native role from
+    metadata.  ERP also uses the ``erp.user_roles`` DB table on the
+    frontend for finer-grained nav filtering.
+    """
+    sso = resolve_sso_role(user)
+    if sso:
+        return sso
+    return (user.user_metadata or {}).get("role", "user")
 
 
 def get_user_client(token: str):

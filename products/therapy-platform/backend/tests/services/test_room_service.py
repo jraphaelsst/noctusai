@@ -5,7 +5,7 @@ Covers: room CRUD, booking creation, conflict detection, booking deletion.
 """
 import pytest
 
-from tests.conftest import MockSelectBuilder, MockSupabaseClient
+from tests.conftest import MockRequestBuilder, MockSupabaseClient
 from app.services import room_service
 
 
@@ -118,14 +118,14 @@ class TestCreateBooking:
         def phased_table(name):
             call_count["n"] += 1
             if name == "rooms":
-                return MockSelectBuilder([SAMPLE_ROOM])
+                return MockRequestBuilder([SAMPLE_ROOM])
             if name == "room_bookings":
                 if call_count["n"] == 2:
                     # Conflict check: no existing booking
-                    return MockSelectBuilder([])
+                    return MockRequestBuilder([])
                 else:
                     # Insert: return new booking
-                    return MockSelectBuilder([SAMPLE_BOOKING])
+                    return MockRequestBuilder([SAMPLE_BOOKING])
             return original_table(name)
 
         db.table = phased_table

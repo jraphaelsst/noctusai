@@ -8,6 +8,7 @@ import {
 } from "@noctusai/shared/design-system";
 import type { NavGroup } from "@noctusai/shared/design-system";
 import { NotificationBell } from "@/components/NotificationBell";
+import { resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining } from "@noctusai/shared";
 import { toast } from "sonner";
 import { LayoutDashboard, ChevronLeft, {{PRODUCT_ICON}} } from "lucide-react";
 
@@ -40,9 +41,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore();
   const { theme, toggleTheme } = useTheme();
 
-  const handleLogout = () => {
-    // Products redirect to NoctusAI dashboard — SSO stays active
-    window.location.href = CORE_URL;
+  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const trialDays = isTrial(ssoCtx) ? subscriptionDaysRemaining(ssoCtx) : null;
+  const licenseDays = licenseDaysRemaining(ssoCtx);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    if (ssoCtx.isSSO) {
+      window.location.href = CORE_URL;
+    } else {
+      window.location.href = "/login";
+    }
   };
 
   const handleUpdateProfile = async (data: { name: string; email: string; phone: string }) => {
@@ -70,9 +79,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Sidebar
           brandIcon={{{PRODUCT_ICON}}}
           brandTitle="{{PRODUCT_NAME}}"
-          brandSubtitle="NoctusAI"
+          brandSubtitle={ssoCtx.org.name || "NoctusAI"}
           navGroups={NAV_GROUPS}
-          footerContent={BackToCore}
+          footerContent={ssoCtx.isSSO ? BackToCore : undefined}
         />
       }
       header={({ onMenuToggle }) => (
@@ -81,7 +90,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             name: userName,
             email: user?.email || "",
             phone: user?.user_metadata?.phone || user?.phone || "",
-            role: "{{PRODUCT_NAME}}",
+            role: ssoCtx.isProductAdmin ? "Administrador" : "{{PRODUCT_NAME}}",
           }}
           onMenuToggle={onMenuToggle}
           logoutBehavior="redirect"
@@ -96,6 +105,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
       )}
     >
       <div className="p-4 sm:p-6 lg:p-8">
+        {trialDays !== null && trialDays <= 7 && (
+          <div className="mb-4 rounded-lg border border-warning bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
+            {trialDays > 0
+              ? `Periodo de teste expira em ${trialDays} dia${trialDays !== 1 ? "s" : ""}.`
+              : "Periodo de teste expirado."}
+          </div>
+        )}
+        {licenseDays !== null && licenseDays <= 7 && (
+          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {licenseDays > 0
+              ? `Licenca expira em ${licenseDays} dia${licenseDays !== 1 ? "s" : ""}.`
+              : "Licenca expirada."}
+          </div>
+        )}
         {children}
       </div>
     </AppShell>

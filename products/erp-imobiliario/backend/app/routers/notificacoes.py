@@ -18,27 +18,10 @@ from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, get_org_id, first_or_none
 from app.database import get_core_client
 from app.responses import success_response, paginated_response, ok_response
+from noctusai_shared.notifications import map_notification_to_pt
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notificacoes", tags=["notificacoes"])
-
-
-# ── Field Mapping (core English → ERP Portuguese) ────────────────────
-
-def _map_to_pt(row: dict) -> dict:
-    """Map core notification fields to Portuguese for the frontend."""
-    return {
-        "id": row.get("id"),
-        "user_id": row.get("user_id"),
-        "org_id": row.get("org_id"),
-        "tipo": row.get("type"),
-        "titulo": row.get("title"),
-        "mensagem": row.get("message"),
-        "metadata": row.get("metadata"),
-        "is_read": row.get("read", False),
-        "link": (row.get("metadata") or {}).get("link"),
-        "created_at": row.get("created_at"),
-    }
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -70,7 +53,7 @@ async def listar_notificacoes(
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
 
-    mapped = [_map_to_pt(r) for r in (result.data or [])]
+    mapped = [map_notification_to_pt(r) for r in (result.data or [])]
     return paginated_response(mapped, result.count or 0, page, page_size)
 
 
@@ -112,7 +95,7 @@ async def marcar_como_lida(
     if not row:
         raise HTTPException(status_code=404, detail="Notificação não encontrada")
 
-    return success_response(_map_to_pt(row))
+    return success_response(map_notification_to_pt(row))
 
 
 @router.post("/ler-todas")

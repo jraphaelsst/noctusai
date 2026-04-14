@@ -6,7 +6,7 @@ evolution note creation and pagination.
 """
 import pytest
 
-from tests.conftest import MockSelectBuilder, MockSupabaseClient
+from tests.conftest import MockRequestBuilder, MockSupabaseClient
 from app.services import clinical_records_service
 
 
@@ -73,10 +73,10 @@ class TestCreateAnamnese:
                 call_count["n"] += 1
                 if call_count["n"] == 1:
                     # Uniqueness check: no existing record
-                    return MockSelectBuilder([])
+                    return MockRequestBuilder([])
                 else:
                     # Insert: return new record
-                    return MockSelectBuilder([SAMPLE_ANAMNESE])
+                    return MockRequestBuilder([SAMPLE_ANAMNESE])
             return original_table(name)
 
         db.table = phased_table

@@ -6,6 +6,7 @@ correctly — closures capture references at import time.
 """
 from typing import Optional
 from fastapi import Header, HTTPException
+from noctusai_shared.auth import first_or_none, resolve_sso_role  # noqa: F401
 from app.database import get_supabase_client
 
 
@@ -27,9 +28,16 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
 
 
 def get_user_role(user) -> str:
-    """Extract user role from metadata. Override with product-specific roles."""
-    metadata = user.user_metadata or {}
-    return metadata.get("role", "user")
+    """Resolve the user's role.
+
+    Uses shared ``resolve_sso_role()`` first (org owner/admin or NoctusAI
+    admin → 'platform_admin'), then falls through to product-specific roles.
+    Customize the fallback with your product's role hierarchy.
+    """
+    sso = resolve_sso_role(user)
+    if sso:
+        return sso
+    return (user.user_metadata or {}).get("role", "user")
 
 
 def get_org_id(user) -> str:

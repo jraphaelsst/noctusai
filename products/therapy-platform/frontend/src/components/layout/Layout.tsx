@@ -23,14 +23,17 @@ import {
 } from "@noctusai/shared/design-system";
 import type { NavGroup, NavItem } from "@noctusai/shared/design-system";
 import { NotificationBell } from "@/components/NotificationBell";
+import { resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining } from "@noctusai/shared";
 import { toast } from "sonner";
 import {
   LayoutDashboard, CalendarDays, Users, ClipboardList, UserCircle,
   DollarSign, Star, Settings, MessageSquare, Brain, Heart,
   CheckSquare, BarChart3, AlertTriangle, Building2, Search,
   TrendingUp, Wallet, Smile, BookOpen, Receipt, HeadphonesIcon,
-  ShieldCheck, ReceiptText,
+  ShieldCheck, ReceiptText, ChevronLeft,
 } from "lucide-react";
+
+const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
 
 // ── Role labels ──────────────────────────────────────────────
 
@@ -208,6 +211,18 @@ function getNavForRole(role: string): { groups: NavGroup[]; standalone: NavItem[
   }
 }
 
+// ── Back to NoctusAI (shown for SSO users) ─────────────────
+
+const BackToCore = (
+  <a
+    href={CORE_URL}
+    className="flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+  >
+    <ChevronLeft className="h-4 w-4 shrink-0" />
+    Voltar ao NoctusAI
+  </a>
+);
+
 // ── Layout ───────────────────────────────────────────────────
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -219,9 +234,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
     onRefresh: useCallback(async () => { await supabase.auth.refreshSession(); }, []),
   });
 
-  const userRole = (user?.user_metadata?.role as string) || "paciente";
+  const meta = user?.user_metadata;
+  const ssoCtx = resolveSSOContext(meta);
+  const { isSSO, isProductAdmin } = ssoCtx;
+  const userRole: string =
+    isProductAdmin ? "admin" :
+    (meta?.role as string) || "paciente";
   const { groups, standalone } = getNavForRole(userRole);
   const brand = BRAND_CONFIG[userRole] || BRAND_CONFIG.paciente;
+  const trialDays = isTrial(ssoCtx) ? subscriptionDaysRemaining(ssoCtx) : null;
+  const licenseDays = licenseDaysRemaining(ssoCtx);
 
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
@@ -229,8 +251,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
       toast.error("Erro ao sair da conta");
       return;
     }
-    toast.success("Logout realizado com sucesso");
-    navigate("/login");
+    // SSO users go back to NoctusAI core; direct users go to login
+    if (isSSO) {
+      window.location.href = CORE_URL;
+    } else {
+      toast.success("Logout realizado com sucesso");
+      navigate("/login");
+    }
   };
 
   const handleUpdateProfile = async (data: { name: string; email: string; phone: string }) => {
@@ -258,9 +285,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Sidebar
           brandIcon={Heart}
           brandTitle={brand.title}
-          brandSubtitle={brand.subtitle}
+          brandSubtitle={ssoCtx.org.name || brand.subtitle}
           navGroups={groups}
           standaloneItems={standalone}
+          footerContent={isSSO ? BackToCore : undefined}
         />
       }
       header={({ onMenuToggle }) => (
@@ -282,6 +310,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
       )}
     >
       <div className="p-4 sm:p-6 lg:p-8">
+        {trialDays !== null && trialDays <= 7 && (
+          <div className="mb-4 rounded-lg border border-warning bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
+            {trialDays > 0
+              ? `Periodo de teste expira em ${trialDays} dia${trialDays !== 1 ? "s" : ""}.`
+              : "Periodo de teste expirado."}
+          </div>
+        )}
+        {licenseDays !== null && licenseDays <= 7 && (
+          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {licenseDays > 0
+              ? `Licenca expira em ${licenseDays} dia${licenseDays !== 1 ? "s" : ""}.`
+              : "Licenca expirada."}
+          </div>
+        )}
         {children}
       </div>
     </AppShell>

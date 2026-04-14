@@ -7,9 +7,9 @@ import { Layout } from "./components/layout/Layout";
 import { AuthProvider } from "./components/auth/AuthProvider";
 import { LoginForm } from "./components/auth/LoginForm";
 import { useAuthStore } from "./store/authStore";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { createQueryClient } from "@noctusai/shared/query-client";
+import { PageSkeleton } from "@noctusai/shared/design-system";
 
 // Lazy load das páginas para melhor performance inicial
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -70,18 +70,6 @@ const Matriculas = lazy(() => import("./pages/Matriculas"));
 
 const queryClient = createQueryClient();
 
-const PageSkeleton = () => (
-  <div className="container mx-auto p-6 space-y-4">
-    <Skeleton className="h-12 w-64" />
-    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-      <Skeleton className="h-32" />
-      <Skeleton className="h-32" />
-      <Skeleton className="h-32" />
-      <Skeleton className="h-32" />
-    </div>
-    <Skeleton className="h-96" />
-  </div>
-);
 
 function AuthenticatedRoutes() {
   return (

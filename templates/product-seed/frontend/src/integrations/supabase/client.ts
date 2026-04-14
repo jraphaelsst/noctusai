@@ -1,8 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
+import { createProductSupabase } from '@noctusai/shared';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-export const supabase = createClient(supabaseUrl, supabaseKey, {
-  db: { schema: "{{SCHEMA_NAME}}" },
-});
+export const supabase = createProductSupabase('{{SCHEMA_NAME}}');

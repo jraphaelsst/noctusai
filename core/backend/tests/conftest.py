@@ -1,6 +1,10 @@
 """
 Pytest configuration and shared fixtures for NoctusAI Core backend tests.
 Uses mocking to avoid requiring a live Supabase instance.
+
+All mock classes are imported from the shared testing package
+(noctusai_shared.testing). Core-specific fixtures (client, admin_client,
+unauth_client) and the _build_patches() helper remain here.
 """
 import contextlib
 import pytest
@@ -8,221 +12,122 @@ import pytest
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
-from typing import Optional
-from unittest.mock import MagicMock, AsyncMock, patch
+
+
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
+# ---------------------------------------------------------------------------
+# Shared mock imports (re-exported for backwards compat)
+# ---------------------------------------------------------------------------
+
+from noctusai_shared.testing import (  # noqa: F401
+    MockSupabaseResponse,
+    MockSelectBuilder,
+    MockFilterBuilder,
+    MockQueryBuilder as _SharedMockQueryBuilder,
+    MockRequestBuilder as _SharedMockRequestBuilder,
+    MockSupabaseClient as _SharedMockSupabaseClient,
+    MockUser,
+    MockUserResponse,
+    AuthClient,
+)
+
 
 # ---------------------------------------------------------------------------
-# Mock Supabase layer
+# Core-specific insert-data tracking (backwards compat)
+#
+# The old Core MockQueryBuilder captured insert payloads and returned them
+# via execute() when the table had no pre-set data.  This lets router code
+# like ``result = db.table("x").insert(data).execute(); result.data[0]``
+# work even when the test sets the table to [].
 # ---------------------------------------------------------------------------
 
-class MockSupabaseResponse:
-    """Simulates a Supabase PostgREST response."""
+class MockQueryBuilder(_SharedMockQueryBuilder):
+    """Core QueryBuilder with insert-data fallback."""
 
-    def __init__(self, data=None, error=None, count=None):
-        self.data = data or []
-        self.error = error
-        self.count = count
-
-
-class MockQueryBuilder:
-    """Chainable mock that simulates Supabase PostgREST query builder.
-
-    When `.single()` is called before `.execute()`, the response data is
-    unwrapped: if the underlying data is a list, the first element (a dict)
-    is returned — matching real Supabase PostgREST behaviour where `single()`
-    returns a single record instead of a list.
-
-    Supports a response queue: if initialized with a list via
-    ``MockQueryBuilder(data, queue=True)``, each ``.execute()`` call pops
-    and returns the next item from the list, allowing different responses
-    for successive queries on the same table.
-    """
-
-    def __init__(self, data=None, queue=False):
-        self._queue = None
-        if queue and isinstance(data, list):
-            self._queue = list(data)  # copy
-            self._data = data[0] if data else []
-        else:
-            self._data = data or []
-        self._single = False
-        self._insert_data = None
-
-    def select(self, *a, **k):
-        return self
-
-    def insert(self, row_data=None, *a, **k):
-        # Capture the inserted data so execute() can return it when the
-        # table's mock data is empty (simulating a real insert that returns
-        # the newly created row).
-        if row_data is not None:
-            self._insert_data = row_data if isinstance(row_data, list) else [row_data]
-        return self
-
-    def update(self, *a, **k):
-        return self
-
-    def upsert(self, *a, **k):
-        return self
-
-    def delete(self, *a, **k):
-        return self
-
-    def eq(self, *a, **k):
-        return self
-
-    def neq(self, *a, **k):
-        return self
-
-    def in_(self, *a, **k):
-        return self
-
-    def is_(self, *a, **k):
-        return self
-
-    def gte(self, *a, **k):
-        return self
-
-    def lte(self, *a, **k):
-        return self
-
-    def ilike(self, *a, **k):
-        return self
-
-    def or_(self, *a, **k):
-        return self
-
-    def order(self, *a, **k):
-        return self
-
-    def limit(self, *a, **k):
-        return self
-
-    def range(self, *a, **k):
-        return self
-
-    def single(self):
-        self._single = True
-        return self
+    def __init__(self, data=None, response_queue=None, response_idx=None,
+                 insert_data=None):
+        super().__init__(data=data, response_queue=response_queue,
+                         response_idx=response_idx)
+        self._insert_data = insert_data
 
     def execute(self):
-        # If a response queue is active, pop the next item
-        if self._queue is not None and len(self._queue) > 0:
-            data = self._queue.pop(0)
-        else:
-            data = self._data
-        # If an insert was performed and the table had no data, return the
-        # inserted rows so that router code like ``result.data[0]`` works.
         if self._insert_data is not None:
-            if not data or (isinstance(data, list) and len(data) == 0):
-                data = self._insert_data
-            self._insert_data = None
-        # Reset _single flag for next query chain on the same builder
-        if self._single:
-            self._single = False
-            # Unwrap: if data is a list with items, return the first element
-            # (mimics Supabase PostgREST .single() which returns a record, not a list)
-            if isinstance(data, list) and len(data) > 0:
-                data = data[0]
-            elif isinstance(data, list) and len(data) == 0:
-                data = None
-        return MockSupabaseResponse(data=data)
+            if not self._data or (isinstance(self._data, list) and len(self._data) == 0):
+                self._data = self._insert_data
+        return self._do_execute()
 
 
-class MockSupabaseClient:
-    """Mocked Supabase client with table-level data control."""
+class MockRequestBuilder(_SharedMockRequestBuilder):
+    """Core RequestBuilder that captures insert data for fallback."""
 
-    def __init__(self, data=None):
-        self._data = data
-        self.auth = MagicMock()
-        self.auth.admin = MagicMock()
-        self._tables = {}
+    def insert(self, row_data=None, *a, **k):
+        insert_data = None
+        if row_data is not None:
+            insert_data = row_data if isinstance(row_data, list) else [row_data]
+        return MockQueryBuilder(
+            self._data,
+            response_queue=self._response_queue,
+            response_idx=self._response_idx,
+            insert_data=insert_data,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Core-specific MockSupabaseClient with insert-data tracking + compat
+# ---------------------------------------------------------------------------
+
+class MockSupabaseClient(_SharedMockSupabaseClient):
+    """Core-compatible MockSupabaseClient.
+
+    Uses ``MockRequestBuilder`` (with insert-data fallback) for all tables.
+
+    Adds ``set_table_responses(name, responses)`` which wraps raw data items
+    into ``MockSupabaseResponse`` objects before delegating to the shared
+    ``set_sequential_responses`` method.  This preserves backwards
+    compatibility with existing Core tests that pass plain dicts/lists::
+
+        mock_sb.set_table_responses("noctus_users", [
+            {"org_id": "org-1"},   # first execute()
+            [],                     # second execute()
+        ])
+    """
 
     def table(self, name):
         if name not in self._tables:
-            self._tables[name] = MockQueryBuilder(self._data)
+            self._tables[name] = MockRequestBuilder(self._data)
         return self._tables[name]
 
     def set_table_data(self, name, data):
         """Set mock data for a specific table."""
-        self._tables[name] = MockQueryBuilder(data)
+        self._tables[name] = MockRequestBuilder(data)
 
     def set_table_responses(self, name, responses):
         """Set a queue of mock responses for a specific table.
 
-        Each call to ``.execute()`` on this table will pop the next item
-        from the queue.  When the queue is exhausted, subsequent calls
-        return the last item.
+        Each call to ``.execute()`` on this table will return the next item
+        from the queue wrapped in a ``MockSupabaseResponse``.  When the
+        queue is exhausted, subsequent calls return empty data.
 
-        Example::
-
-            mock_sb.set_table_responses("noctus_users", [
-                {"id": "u1", "org_id": "o1"},   # first execute()
-                [],                               # second execute()
-            ])
+        ``responses`` should be a list of raw data values (dicts or lists).
+        Each is normalised: a bare dict becomes ``[dict]``, a list stays
+        as-is.
         """
-        self._tables[name] = MockQueryBuilder(responses, queue=True)
-
-    def rpc(self, name):
-        return MockQueryBuilder(["2026-02-24"])
-
-
-class MockUser:
-    """Simulates a Supabase auth user object."""
-
-    def __init__(self, id="test-user-123", email="test@example.com"):
-        self.id = id
-        self.email = email
-        self.user_metadata = {}
-
-
-class MockUserResponse:
-    """Simulates a Supabase auth.get_user() response."""
-
-    def __init__(self, user=None):
-        self.user = user or MockUser()
+        wrapped = []
+        for item in responses:
+            if isinstance(item, dict):
+                wrapped.append(MockSupabaseResponse(data=[item]))
+            elif isinstance(item, list):
+                wrapped.append(MockSupabaseResponse(data=item))
+            else:
+                wrapped.append(MockSupabaseResponse(data=item))
+        self.set_sequential_responses(name, wrapped)
 
 
 # ---------------------------------------------------------------------------
-# Auth wrapper for TestClient
+# Core-specific UnauthClient (kept for backwards compat)
 # ---------------------------------------------------------------------------
-
-class AuthClient:
-    """
-    Wraps a TestClient and adds Authorization header to every request.
-    Also holds references to mock objects for assertions in tests.
-    """
-
-    def __init__(self, tc: TestClient, mock_sb: MockSupabaseClient):
-        self._tc = tc
-        self._mock_supabase = mock_sb
-        self._headers = {"Authorization": "Bearer test-token-valid"}
-
-    @property
-    def mock_supabase(self) -> MockSupabaseClient:
-        return self._mock_supabase
-
-    def get(self, url, **kwargs):
-        return self._tc.get(url, headers=self._headers, **kwargs)
-
-    def post(self, url, **kwargs):
-        return self._tc.post(url, headers=self._headers, **kwargs)
-
-    def patch(self, url, **kwargs):
-        return self._tc.patch(url, headers=self._headers, **kwargs)
-
-    def delete(self, url, **kwargs):
-        return self._tc.delete(url, headers=self._headers, **kwargs)
-
-    def put(self, url, **kwargs):
-        return self._tc.put(url, headers=self._headers, **kwargs)
-
-    def raw(self) -> TestClient:
-        """Access the underlying TestClient without auth headers."""
-        return self._tc
-
 
 class UnauthClient:
     """TestClient wrapper that sends requests WITHOUT auth headers."""

@@ -4,6 +4,7 @@ import { Layout } from "@/components/layout/Layout";
 import { Login } from "@/pages/Login";
 import { Dashboard } from "@/pages/Dashboard";
 import { SSOCallback } from "@noctusai/shared/components/SSOCallback";
+import { PageSkeleton } from "@noctusai/shared/design-system";
 import { supabase } from "@/integrations/supabase/client";
 
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
@@ -12,11 +13,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isInitialized } = useAuthStore();
 
   if (!isInitialized) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-      </div>
-    );
+    return <PageSkeleton />;
   }
 
   if (!user) return <Navigate to="/login" replace />;

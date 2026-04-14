@@ -1,18 +1,11 @@
 import { useEffect } from 'react';
+import { createAuthProvider } from '@noctusai/shared/components';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthStore } from '@/store/authStore';
-import { useSupabaseAuthInit } from '@noctusai/shared/auth';
 
-interface AuthProviderProps {
-  children: React.ReactNode;
-}
+const BaseAuthProvider = createAuthProvider(supabase, useAuthStore);
 
-export function AuthProvider({ children }: AuthProviderProps) {
-  const { setUser, setInitialized } = useAuthStore();
-
-  // Core auth initialization (session + listener) via shared hook
-  useSupabaseAuthInit(supabase, setUser, setInitialized);
-
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ERP-specific: update last activity
   const updateLastActivity = async (userId: string) => {
     try {
@@ -78,5 +71,5 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return () => clearInterval(interval);
   }, []);
 
-  return <>{children}</>;
+  return <BaseAuthProvider>{children}</BaseAuthProvider>;
 }

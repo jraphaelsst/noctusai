@@ -166,14 +166,21 @@ def get_licensed_product_ids(db, org_id: str) -> list:
 
 
 def create_sso_token(user_id: str, org_id: str, product_slug: str,
-                     email: str, role: str = "user") -> str:
-    """Create a short-lived SSO token for product access."""
+                     email: str, role: str = "user",
+                     org_role: str = "member") -> str:
+    """Create a short-lived SSO token for product access.
+
+    ``role`` is the NoctusAI platform-level role (admin / manager / user).
+    ``org_role`` is the user's role within their org (owner / admin / member / viewer).
+    Products use ``org_role`` to decide product-level admin access.
+    """
     payload = {
         "sub": user_id,
         "org_id": org_id,
         "product": product_slug,
         "email": email,
         "role": role,
+        "org_role": org_role,
         "type": "sso",
         "exp": datetime.datetime.utcnow() + datetime.timedelta(
             minutes=settings.sso_token_expiration_minutes

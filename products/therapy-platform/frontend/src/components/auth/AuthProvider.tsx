@@ -1,21 +1,16 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuthStore } from '@/store/authStore';
-import { useSupabaseAuthInit } from '@noctusai/shared/auth';
+import { createAuthProvider } from '@noctusai/shared/components';
 import { useActivityRefresh } from '@noctusai/shared/design-system/useActivityRefresh';
 import { InactivityWarning } from '@noctusai/shared/design-system/InactivityWarning';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuthStore } from '@/store/authStore';
 
-interface AuthProviderProps {
-  children: React.ReactNode;
-}
+const BaseAuthProvider = createAuthProvider(supabase, useAuthStore);
 
-export function AuthProvider({ children }: AuthProviderProps) {
-  const { user, setUser, setInitialized } = useAuthStore();
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore();
   const navigate = useNavigate();
-
-  // Core auth initialization (session + listener) via shared hook
-  useSupabaseAuthInit(supabase, setUser, setInitialized);
 
   // Proactive token refresh while user is active
   useActivityRefresh({
@@ -24,7 +19,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   });
 
   return (
-    <>
+    <BaseAuthProvider>
       {children}
       {user && (
         <InactivityWarning
@@ -32,6 +27,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
           onExpired={() => { supabase.auth.signOut(); navigate('/login'); }}
         />
       )}
-    </>
+    </BaseAuthProvider>
   );
 }

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 from fastapi import Header, HTTPException
-from noctusai_shared.auth import first_or_none  # noqa: F401
+from noctusai_shared.auth import first_or_none, resolve_sso_role  # noqa: F401
 from app.database import get_supabase_client
 
 logger = logging.getLogger(__name__)
@@ -39,16 +39,22 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
 def get_user_role(user) -> str:
     """Determine the user's role from their metadata.
 
-    Role is stored in user_metadata during registration. For platform
-    admins, the role is set via seed/internal tooling.
+    Uses shared ``resolve_sso_role()`` first (handles org_role + noctus_role),
+    then falls through to therapy-native roles from direct registration.
 
     Returns one of: 'platform_admin', 'clinic_admin', 'therapist', 'patient'.
     """
+    # SSO-derived admin access (org owner/admin or NoctusAI admin)
+    sso = resolve_sso_role(user)
+    if sso:
+        return sso
+
+    # Direct registration (therapy-native users)
     metadata = user.user_metadata or {}
     role = metadata.get("role")
     if role in ("platform_admin", "clinic_admin", "therapist", "patient"):
         return role
-    # Default to patient if role not set (shouldn't happen with proper registration)
+
     return "patient"
 
 

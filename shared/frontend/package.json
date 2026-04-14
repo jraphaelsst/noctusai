@@ -12,6 +12,7 @@
     "./hooks": "./src/hooks.ts",
     "./stores": "./src/stores.ts",
     "./query-client": "./src/query-client.ts",
+    "./supabase": "./src/supabase.ts",
     "./components": "./src/components/index.ts"
   },
   "peerDependencies": {

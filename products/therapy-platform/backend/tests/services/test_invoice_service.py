@@ -5,7 +5,7 @@ Covers: generation, duplicate prevention, listing by role.
 """
 import pytest
 
-from tests.conftest import MockSelectBuilder, MockSupabaseClient
+from tests.conftest import MockRequestBuilder, MockSupabaseClient
 from app.services import invoice_service
 
 
@@ -38,14 +38,14 @@ class TestGenerateInvoice:
         def phased_table(name):
             call_count["n"] += 1
             if name == "financial_transactions":
-                return MockSelectBuilder([SAMPLE_TRANSACTION])
+                return MockRequestBuilder([SAMPLE_TRANSACTION])
             if name == "invoices":
                 if call_count["n"] == 2:
                     # Duplicate check: no existing invoice
-                    return MockSelectBuilder([])
+                    return MockRequestBuilder([])
                 else:
                     # Insert: return new invoice
-                    return MockSelectBuilder([SAMPLE_INVOICE])
+                    return MockRequestBuilder([SAMPLE_INVOICE])
             return original_table(name)
 
         db.table = phased_table

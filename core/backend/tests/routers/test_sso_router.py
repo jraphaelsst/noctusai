@@ -197,12 +197,18 @@ class TestLaunchProduct:
 # POST /api/sso/session — Exchange SSO token for Supabase session
 # ---------------------------------------------------------------------------
 
-def _make_sso_token(email="user@test.com", org_id="org-123", expired=False, token_type="sso"):
+def _make_sso_token(
+    email="user@test.com", org_id="org-123", expired=False, token_type="sso",
+    role="user", org_role="member", product="therapy-platform",
+):
     """Create a valid SSO JWT token for testing."""
     payload = {
         "sub": "user-uid-123",
         "email": email,
         "org_id": org_id,
+        "role": role,
+        "org_role": org_role,
+        "product": product,
         "type": token_type,
         "exp": (int(time.time()) - 600) if expired else (int(time.time()) + 300),
     }
@@ -450,3 +456,187 @@ class TestSSOSessionErrors:
         assert resp.status_code == 500
         msg = _get_error_message(resp)
         assert "ConnectionError" in msg
+
+
+# ---------------------------------------------------------------------------
+# SSO token includes org_role
+# ---------------------------------------------------------------------------
+
+
+class TestSSOTokenOrgRole:
+    """Verify that the SSO token generation includes org_role from noctus_users."""
+
+    def test_token_includes_org_role(self, client):
+        """Token payload should contain org_role from user profile."""
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123",
+            "org_id": "org-1",
+            "role": "user",
+            "org_role": "owner",
+            "email": "test@example.com",
+        })
+        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp"})
+        mock_sb.set_table_data("licenses", [{"id": "lic-1", "status": "active", "fim": None}])
+
+        resp = client.post("/api/sso/token", json={"product_slug": "erp"})
+        assert resp.status_code == 200
+
+        sso_token = resp.json()["sso_token"]
+        payload = jwt.decode(sso_token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        assert payload["org_role"] == "owner"
+        assert payload["role"] == "user"
+
+    def test_token_defaults_org_role_to_member(self, client):
+        """When org_role is missing from profile, default to 'member'."""
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123",
+            "org_id": "org-1",
+            "role": "user",
+            # org_role intentionally missing
+        })
+        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp"})
+        mock_sb.set_table_data("licenses", [{"id": "lic-1", "status": "active", "fim": None}])
+
+        resp = client.post("/api/sso/token", json={"product_slug": "erp"})
+        assert resp.status_code == 200
+
+        sso_token = resp.json()["sso_token"]
+        payload = jwt.decode(sso_token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        assert payload["org_role"] == "member"
+
+
+class TestSSOSessionMetadataSync:
+    """Verify that /api/sso/session syncs noctus_role and org_role into user_metadata."""
+
+    def test_syncs_metadata_on_session(self, sso_session_client):
+        """Session creation should update user_metadata with role info."""
+        client, mock_admin = sso_session_client
+        token = _make_sso_token(role="admin", org_role="owner")
+
+        resp = client.post("/api/sso/session", json={"token": token})
+        assert resp.status_code == 200
+
+        # Verify update_user_by_id was called with the right metadata
+        mock_admin.auth.admin.update_user_by_id.assert_called_once_with(
+            "user-uid-123",
+            {"user_metadata": {
+                "noctus_role": "admin",
+                "org_role": "owner",
+                "org_id": "org-123",
+            }},
+        )
+
+    def test_syncs_member_role(self, sso_session_client):
+        """Regular users get their org_role synced too."""
+        client, mock_admin = sso_session_client
+        token = _make_sso_token(role="user", org_role="member")
+
+        resp = client.post("/api/sso/session", json={"token": token})
+        assert resp.status_code == 200
+
+        mock_admin.auth.admin.update_user_by_id.assert_called_once_with(
+            "user-uid-123",
+            {"user_metadata": {
+                "noctus_role": "user",
+                "org_role": "member",
+                "org_id": "org-123",
+            }},
+        )
+
+    def test_metadata_sync_failure_does_not_block_session(self, sso_session_client):
+        """If metadata update fails, session should still be created."""
+        client, mock_admin = sso_session_client
+        mock_admin.auth.admin.update_user_by_id.side_effect = Exception("update failed")
+
+        token = _make_sso_token()
+        resp = client.post("/api/sso/session", json={"token": token})
+
+        assert resp.status_code == 200
+        assert resp.json()["access_token"] == "sb-access-token"
+
+
+class TestSSOSessionContextEnrichment:
+    """Verify /api/sso/session enriches metadata with org, plan, and license info."""
+
+    def test_enriches_with_org_info(self, sso_session_client):
+        """Org name and logo should be synced into metadata."""
+        client, mock_admin = sso_session_client
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("organizations", {
+            "nome": "Acme Corp",
+            "logo_url": "https://example.com/logo.png",
+        })
+
+        token = _make_sso_token()
+        resp = client.post("/api/sso/session", json={"token": token})
+        assert resp.status_code == 200
+
+        call_args = mock_admin.auth.admin.update_user_by_id.call_args
+        metadata = call_args[0][1]["user_metadata"]
+        assert metadata["org_name"] == "Acme Corp"
+        assert metadata["org_logo_url"] == "https://example.com/logo.png"
+
+    def test_enriches_with_subscription_plan(self, sso_session_client):
+        """Subscription status and plan info should be synced."""
+        client, mock_admin = sso_session_client
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("subscriptions", [{
+            "status": "active",
+            "expires_at": None,
+            "plans": {"slug": "pro", "max_users": 50, "max_products": 10, "features": {"ai": True}},
+        }])
+
+        token = _make_sso_token()
+        resp = client.post("/api/sso/session", json={"token": token})
+        assert resp.status_code == 200
+
+        call_args = mock_admin.auth.admin.update_user_by_id.call_args
+        metadata = call_args[0][1]["user_metadata"]
+        assert metadata["plan_slug"] == "pro"
+        assert metadata["plan_max_users"] == 50
+        assert metadata["subscription_status"] == "active"
+        assert metadata["plan_features"] == {"ai": True}
+
+    def test_enriches_with_license_expiry(self, sso_session_client):
+        """License expiry for the target product should be synced."""
+        client, mock_admin = sso_session_client
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
+        mock_sb.set_table_data("licenses", [{"fim": "2026-12-31T00:00:00+00:00"}])
+
+        token = _make_sso_token()
+        resp = client.post("/api/sso/session", json={"token": token})
+        assert resp.status_code == 200
+
+        call_args = mock_admin.auth.admin.update_user_by_id.call_args
+        metadata = call_args[0][1]["user_metadata"]
+        assert metadata["license_expires_at"] == "2026-12-31T00:00:00+00:00"
+
+    def test_graceful_when_no_subscription(self, sso_session_client):
+        """Missing subscription should not add plan fields but should not fail."""
+        client, mock_admin = sso_session_client
+        # No subscription data set → enrichment finds nothing
+
+        token = _make_sso_token()
+        resp = client.post("/api/sso/session", json={"token": token})
+        assert resp.status_code == 200
+
+        call_args = mock_admin.auth.admin.update_user_by_id.call_args
+        metadata = call_args[0][1]["user_metadata"]
+        # Base fields always present
+        assert metadata["noctus_role"] == "user"
+        assert metadata["org_role"] == "member"
+        # Plan fields should NOT be present (no subscription found)
+        assert "plan_slug" not in metadata
+
+    def test_enrichment_failure_does_not_block_session(self, sso_session_client):
+        """Even if enrichment queries fail entirely, session should still work."""
+        client, mock_admin = sso_session_client
+
+        token = _make_sso_token()
+        resp = client.post("/api/sso/session", json={"token": token})
+
+        assert resp.status_code == 200
+        assert resp.json()["access_token"] == "sb-access-token"

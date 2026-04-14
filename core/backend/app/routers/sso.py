@@ -92,6 +92,7 @@ async def generate_sso_token(body: SSOTokenRequest, authorization: Optional[str]
 
     org_id = profile.data["org_id"]
     role = profile.data.get("role", "user")
+    org_role = profile.data.get("org_role", "member")
 
     # Check if org has access to product (including expiry check)
     product = db.table("products").select("id, slug").eq("slug", body.product_slug).single().execute()
@@ -109,6 +110,7 @@ async def generate_sso_token(body: SSOTokenRequest, authorization: Optional[str]
         product_slug=body.product_slug,
         email=user.email,
         role=role,
+        org_role=org_role,
     )
 
     logger.info(f"SSO token generated for user={user.id} product={body.product_slug}")
@@ -136,12 +138,13 @@ async def launch_product(product_slug: str, authorization: Optional[str] = Heade
     db = get_admin_client()
 
     # Get user profile
-    profile = db.table("noctus_users").select("org_id, role").eq("id", user.id).single().execute()
+    profile = db.table("noctus_users").select("org_id, role, org_role").eq("id", user.id).single().execute()
     if not profile.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
     org_id = profile.data["org_id"]
     role = profile.data.get("role", "user")
+    org_role = profile.data.get("org_role", "member")
 
     # Get product
     product = db.table("products").select("*").eq("slug", product_slug).single().execute()
@@ -160,6 +163,7 @@ async def launch_product(product_slug: str, authorization: Optional[str] = Heade
         product_slug=product_slug,
         email=user.email,
         role=role,
+        org_role=org_role,
     )
 
     # Redirect to product with token
@@ -170,6 +174,70 @@ async def launch_product(product_slug: str, authorization: Optional[str] = Heade
 # ---------------------------------------------------------------------------
 # POST /api/sso/session — Exchange SSO token for a Supabase session
 # ---------------------------------------------------------------------------
+
+
+def _enrich_sso_metadata(db, metadata: dict, org_id: str | None, product_slug: str | None) -> None:
+    """Enrich SSO metadata dict with org, subscription plan, and license info.
+
+    All queries are best-effort — failures are logged but never block session
+    creation.  Fields are set to None when the corresponding record doesn't
+    exist (e.g. no subscription yet).
+    """
+    # ── Org info ──────────────────────────────────────────────
+    if org_id:
+        try:
+            org = db.table("organizations").select(
+                "nome, logo_url"
+            ).eq("id", org_id).single().execute()
+            if org.data:
+                metadata["org_name"] = org.data.get("nome")
+                metadata["org_logo_url"] = org.data.get("logo_url")
+        except Exception as exc:
+            logger.debug("SSO enrich: org query failed: %s", exc)
+
+    # ── Subscription + plan ───────────────────────────────────
+    if org_id:
+        try:
+            sub = db.table("subscriptions").select(
+                "status, expires_at, plans(slug, max_users, max_products, features)"
+            ).eq("org_id", org_id).eq("status", "active").limit(1).execute()
+
+            if not sub.data:
+                # Try trial
+                sub = db.table("subscriptions").select(
+                    "status, expires_at, plans(slug, max_users, max_products, features)"
+                ).eq("org_id", org_id).eq("status", "trial").limit(1).execute()
+
+            if sub.data:
+                row = sub.data[0]
+                plan = row.get("plans") or {}
+                metadata["subscription_status"] = row.get("status")
+                metadata["subscription_expires_at"] = row.get("expires_at")
+                metadata["plan_slug"] = plan.get("slug")
+                metadata["plan_max_users"] = plan.get("max_users")
+                metadata["plan_max_products"] = plan.get("max_products")
+                metadata["plan_features"] = plan.get("features")
+        except Exception as exc:
+            logger.debug("SSO enrich: subscription query failed: %s", exc)
+
+    # ── License expiry for this specific product ──────────────
+    if org_id and product_slug:
+        try:
+            product = db.table("products").select("id").eq(
+                "slug", product_slug
+            ).limit(1).execute()
+            if product.data:
+                product_id = product.data[0]["id"]
+                lic = db.table("licenses").select("fim").eq(
+                    "org_id", org_id
+                ).eq("product_id", product_id).eq(
+                    "status", "active"
+                ).limit(1).execute()
+                if lic.data:
+                    metadata["license_expires_at"] = lic.data[0].get("fim")
+        except Exception as exc:
+            logger.debug("SSO enrich: license query failed: %s", exc)
+
 
 class SSOSessionRequest(BaseModel):
     token: str
@@ -274,8 +342,9 @@ async def sso_session(body: SSOSessionRequest):
     Flow:
     1. Decode JWT using shared jwt_secret (via verify_sso_token)
     2. Extract email from payload (user already exists — same Supabase project)
-    3. Generate a Supabase session (access_token + refresh_token), with caching
-    4. Return tokens to the frontend
+    3. Sync NoctusAI role + org_id into user_metadata (so products know the role)
+    4. Generate a Supabase session (access_token + refresh_token), with caching
+    5. Return tokens to the frontend
     """
     payload = verify_sso_token(body.token)
     email = payload.get("email")
@@ -283,7 +352,40 @@ async def sso_session(body: SSOSessionRequest):
     if not email:
         raise HTTPException(status_code=400, detail="Token SSO sem email")
 
-    logger.info("SSO session para email=%s, org=%s", email, payload.get("org_id"))
+    user_id = payload.get("sub")
+    noctus_role = payload.get("role", "user")
+    org_role = payload.get("org_role", "member")
+    org_id = payload.get("org_id")
+
+    logger.info(
+        "SSO session para email=%s, org=%s, role=%s, org_role=%s",
+        email, org_id, noctus_role, org_role,
+    )
+
+    # Sync full SSO context into user_metadata so products are "aware"
+    # of the user's role, org, subscription plan, and license status.
+    # Supabase merges user_metadata (shallow), so existing fields are preserved.
+    # This runs before _generate_session, so newly-created sessions include
+    # the updated metadata.  Cached sessions (≤55s) have prior update's data.
+    if supabase_admin and user_id:
+        try:
+            metadata_update: dict = {
+                "noctus_role": noctus_role,
+                "org_role": org_role,
+            }
+            if org_id:
+                metadata_update["org_id"] = org_id
+
+            # Enrich with org, subscription, and license context
+            db = get_admin_client()
+            product_slug = payload.get("product")
+            _enrich_sso_metadata(db, metadata_update, org_id, product_slug)
+
+            supabase_admin.auth.admin.update_user_by_id(
+                user_id, {"user_metadata": metadata_update}
+            )
+        except Exception as exc:
+            logger.warning("Failed to sync metadata to user_metadata: %s", exc)
 
     try:
         session = _generate_session(email)

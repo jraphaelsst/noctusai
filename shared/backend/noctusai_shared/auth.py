@@ -73,3 +73,102 @@ def make_get_current_user(get_supabase_client_fn):
             _get_supabase_client=get_supabase_client_fn,
         )
     return _get_current_user
+
+
+# ---------------------------------------------------------------------------
+# SSO role resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_sso_role(user) -> Optional[str]:
+    """Check SSO metadata for product-level admin access.
+
+    When a user enters a product via SSO from the NoctusAI Core platform,
+    the Core's ``/api/sso/session`` endpoint syncs ``org_role`` and
+    ``noctus_role`` into the user's ``user_metadata``.
+
+    Resolution order:
+    1. ``org_role`` in (owner, admin) → ``"platform_admin"`` — the user's
+       org bought the product license; they manage it.
+    2. ``noctus_role == "admin"`` → ``"platform_admin"`` — NoctusAI
+       platform admins have full access to every product.
+    3. Otherwise → ``None`` — caller falls through to product-specific
+       role logic (e.g. therapy-native roles, ERP DB roles).
+
+    Products should call this first in their ``get_user_role()``::
+
+        def get_user_role(user) -> str:
+            sso = resolve_sso_role(user)
+            if sso:
+                return sso
+            # … product-specific logic …
+    """
+    metadata = getattr(user, "user_metadata", None) or {}
+    if metadata.get("org_role") in ("owner", "admin"):
+        return "platform_admin"
+    if metadata.get("noctus_role") == "admin":
+        return "platform_admin"
+    return None
+
+
+def get_sso_context(user) -> dict:
+    """Extract all SSO-synced context from user_metadata.
+
+    Returns a dict with keys: ``noctus_role``, ``org_role``, ``org_id``,
+    ``org_name``, ``org_logo_url``, ``plan_slug``, ``plan_max_users``,
+    ``plan_max_products``, ``plan_features``, ``subscription_status``,
+    ``subscription_expires_at``, ``license_expires_at``.
+
+    All values default to None when not present in metadata.
+    Products can use this in services to check plan limits, display
+    org branding, or show license/trial warnings.
+    """
+    metadata = getattr(user, "user_metadata", None) or {}
+    keys = (
+        "noctus_role", "org_role", "org_id",
+        "org_name", "org_logo_url",
+        "plan_slug", "plan_max_users", "plan_max_products", "plan_features",
+        "subscription_status", "subscription_expires_at",
+        "license_expires_at",
+    )
+    return {k: metadata.get(k) for k in keys}
+
+
+def require_role(get_user_role_fn, *allowed_roles: str):
+    """FastAPI dependency factory that enforces role-based access.
+
+    Parameters:
+        get_user_role_fn: A callable ``(user) -> str`` that returns
+            the resolved role for the user. Each product provides its own.
+        *allowed_roles: Role strings that are permitted (e.g.
+            ``"platform_admin"``, ``"clinic_admin"``).
+
+    Returns a FastAPI dependency that can be used with ``Depends()``.
+
+    Usage::
+
+        from noctusai_shared.auth import require_role
+        from app.dependencies import get_current_user, get_user_role
+
+        admin_only = require_role(get_user_role, "platform_admin")
+
+        @router.get("/admin/dashboard")
+        async def dashboard(
+            auth=Depends(get_current_user),
+            _=Depends(admin_only),
+        ):
+            ...
+    """
+    async def _check_role(authorization: Optional[str] = Header(None)):
+        user, token = await get_current_user(
+            authorization,
+            _get_supabase_client=None,  # overridden by product wrapper
+        )
+        role = get_user_role_fn(user)
+        if role not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Acesso negado. Restrito a: {', '.join(allowed_roles)}",
+            )
+        return user, token, role
+    return _check_role
