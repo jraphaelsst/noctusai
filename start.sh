@@ -139,6 +139,26 @@ echo "[Therapy Frontend] Iniciando na porta 8095..."
 (cd "$THERAPY_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8095) &
 PIDS+=($!)
 
+# --- Seed Backend (porta 8004) ---
+SEED_BACKEND="$ROOT_DIR/products/seed/backend"
+if [ -d "$SEED_BACKEND" ]; then
+  echo "[Seed Backend] Iniciando na porta 8004..."
+  "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8004 --reload --app-dir "$SEED_BACKEND" &
+  PIDS+=($!)
+fi
+
+# --- Seed Frontend (porta 8100) ---
+SEED_FRONTEND="$ROOT_DIR/products/seed/frontend"
+if [ -d "$SEED_FRONTEND" ]; then
+  if [ ! -d "$SEED_FRONTEND/node_modules" ]; then
+    echo "[Seed Frontend] Instalando dependencias..."
+    (cd "$SEED_FRONTEND" && npm install)
+  fi
+  echo "[Seed Frontend] Iniciando na porta 8100..."
+  (cd "$SEED_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8100) &
+  PIDS+=($!)
+fi
+
 echo ""
 echo "============================================"
 echo "  Servicos iniciados:"
@@ -146,10 +166,12 @@ echo "  Core Backend     → http://localhost:8000"
 echo "  ERP Backend      → http://localhost:8001"
 echo "  PF Backend       → http://localhost:8002"
 echo "  Therapy Backend  → http://localhost:8003"
+echo "  Seed Backend     → http://localhost:8004"
 echo "  Core Frontend    → http://localhost:5173"
 echo "  ERP Frontend     → http://localhost:8080"
 echo "  PF Frontend      → http://localhost:8090"
 echo "  Therapy Frontend → http://localhost:8095"
+echo "  Seed Frontend    → http://localhost:8100"
 echo "============================================"
 echo ""
 echo "Pressione Ctrl+C para parar todos os servicos."

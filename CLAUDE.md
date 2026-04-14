@@ -19,6 +19,7 @@ Multi-tenant, multi-product SaaS monorepo. Stack: **FastAPI + Supabase** backend
 | **ERP** (`products/erp-imobiliario/`) | `erp` | 8001/8080 | `org_id` | SSO + direct login |
 | **PF** (`products/personal-finance/`) | `personal-finance` | 8002/8090 | `org_id` | SSO + direct login |
 | **Therapy** (`products/therapy-platform/`) | `therapy` | 8003/8095 | `clinic_id` | Direct Supabase Auth |
+| **Seed** (`products/seed/`) | `seed` | 8004/8100 | `org_id` | SSO + direct login |
 
 Per-product docs: `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`, `02-ERP.md`, `03-PF.md`, `06-THERAPY.md`.
 
@@ -45,7 +46,7 @@ One `Layout.tsx` per product using shared AppShell + Sidebar + Header. Nav switc
 
 **After cloning**: `bash scripts/setup.sh` — installs git hooks, venv, all deps. Run once.
 **Start servers**: `bash start.sh` or `uvicorn app.main:app --reload --port <PORT> --app-dir <backend>`
-**Tests**: `cd <product>/backend && pytest` — 3,653 total (410 core, 1661 ERP, 502 PF, 1080 therapy).
+**Tests**: `cd <product>/backend && pytest` — 3,662 total (410 core, 1661 ERP, 502 PF, 1080 therapy, 9 seed).
 **Scripts**: `scripts/README.md` documents all scripts and git hooks. Key: `setup.sh` (first-time), `sync-seed-template.sh` (seed→template auto-sync, runs via post-commit hook).
 
 ## Environment

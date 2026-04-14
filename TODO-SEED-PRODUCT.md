@@ -26,8 +26,8 @@ Git handles full version history (`git log -- products/seed/`).
 
 ## Checklist: Build the Live Seed Product
 
-### Phase 1: Backend
-- [ ] Create `products/seed/backend/` directory structure
+### Phase 1: Backend (DONE)
+- [x] Create `products/seed/backend/` directory structure
 - [ ] `app/config.py` — SeedSettings extending BaseAppSettings (port 8004)
 - [ ] `app/database.py` — Supabase client targeting schema "seed"
 - [ ] `app/dependencies.py` — get_current_user, get_user_role (with resolve_sso_role), get_org_id
@@ -44,16 +44,16 @@ Git handles full version history (`git log -- products/seed/`).
 - [ ] `tests/routers/test_health.py` — basic health check test
 - [ ] `tests/routers/test_team_router.py` — invitation flow tests
 
-### Phase 2: Database
-- [ ] `migrations/001_seed.sql` — minimal schema:
+### Phase 2: Database (DONE)
+- [x] `migrations/001_seed.sql` — minimal schema:
   - `seed.status_pagina` (page status)
   - `seed.invitations` (team invitations)
   - RLS policies
   - Seed data for initial pages
 - [ ] Register "Seed" product in `public.products` table
 
-### Phase 3: Frontend
-- [ ] Create `products/seed/frontend/` with Vite + React + TypeScript
+### Phase 3: Frontend (DONE)
+- [x] Create `products/seed/frontend/` with Vite + React + TypeScript
 - [ ] `package.json` — deps matching other products
 - [ ] `vite.config.ts` — with shared aliases (@noctusai/shared, @/)
 - [ ] `tsconfig.json` — matching other products
@@ -79,15 +79,16 @@ Git handles full version history (`git log -- products/seed/`).
 - [ ] `src/pages/NotFound.tsx` — 404 page
 - [ ] `src/index.css` — imports shared tokens.css
 
-### Phase 4: Integration
-- [ ] Add to `start.sh` (port 8004 backend, port 8100 frontend)
-- [ ] Add to root `.env` if needed
-- [ ] Create frontend `.env` with VITE_ vars
-- [ ] Verify: `pytest` passes
-- [ ] Verify: `npx vite build` passes
-- [ ] Verify: SSO from Core works
-- [ ] Verify: Direct login works
-- [ ] Verify: Team invitation flow works
+### Phase 4: Integration (DONE)
+- [x] Added to `start.sh` (port 8004 backend, port 8100 frontend)
+- [x] 9 backend tests passing
+- [x] Frontend builds clean
+- [x] Added to CLAUDE.md architecture table
+- [ ] Create frontend `.env` with VITE_ vars (on deployment)
+- [ ] Register "Seed" product in `public.products` table (on deployment)
+- [ ] Run `001_seed.sql` migration in Supabase (on deployment)
+- [ ] Verify SSO from Core works (on deployment)
+- [ ] Verify direct login works (on deployment)
 
 ### Phase 5: Auto-Sync Mechanism (DONE)
 - [x] `scripts/sync-seed-template.sh` — copies seed → template with placeholder substitution + validation
