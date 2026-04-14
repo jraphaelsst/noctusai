@@ -25,8 +25,8 @@ AI-first design: every feature should be buildable with AI assistance and eventu
 | Check-ins | `checkins` | `/api/goals/{id}/checkin` | Daily habit completions |
 | Schedule | `eventos` | `/api/schedule` | Calendar events with reminders, locations, colors |
 | Notes | `notas` | `/api/notes` | Quick notes with tags, search, pinning |
-| Focus | `sessoes_foco` | TBD | Pomodoro / deep work sessions linked to tasks |
-| Metrics | `metricas_produtividade` | TBD | Daily productivity snapshots and scoring |
+| Focus | `sessoes_foco` | `/api/foco` | Pomodoro / deep work sessions linked to tasks |
+| Metrics | `metricas_produtividade` | `/api/metricas` | Daily productivity snapshots and scoring |
 | Team | `invitations` | `/api/team` | Organization member management |
 
 ## Development Guidelines
