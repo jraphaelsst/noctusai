@@ -31,6 +31,10 @@ export type { CrudHookOptions } from './hooks';
 // Query client
 export { createQueryClient } from './query-client';
 
+// Environment
+export { env, validateEnv, generateEnvExample, ENV_VARS } from './env';
+export type { ProductEnv } from './env';
+
 // Supabase
 export { createProductSupabase } from './supabase';
 

@@ -1,6 +1,6 @@
 # 05 — Database Context
 
-> Supabase PostgreSQL · RLS per org/role · 4 schemas
+> Supabase PostgreSQL · RLS per org/role · 5 schemas
 > RLS rules and access patterns: see CLAUDE.md
 
 ## Schema Architecture
@@ -11,6 +11,8 @@
 | `erp` | 60+ | ERP | `org_id` |
 | `personal-finance` | 10 | PF | `org_id` |
 | `therapy` | 39+ | Therapy | `clinic_id` |
+| `seed` | 2 | Seed | `org_id` |
+| `daily_life` | 14 | Daily Life | `org_id` |
 
 Each backend uses `ClientOptions(schema="<schema>")`. Auth hook functions stay in `public` (triggered by `auth.users`).
 

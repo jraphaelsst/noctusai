@@ -1,5 +1,5 @@
 -- ============================================================================
--- Seed Product schema
+-- {{PRODUCT_NAME}} schema
 -- Schema: seed
 -- Description: Minimal product schema that proves the entire shared stack works.
 -- ============================================================================

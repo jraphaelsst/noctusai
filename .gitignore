@@ -9,7 +9,7 @@ venv/
 .env
 .env.local
 .env.*.local
-.env.example
+# NOTE: .env.example is NOT ignored — it's a template with placeholder values, not secrets
 
 # Build
 dist/

@@ -114,9 +114,20 @@ Import: `import { ... } from '@noctusai/shared'`
 
 `createNotificationHooks(api, useAuthStore)` → `useNotificacoes`, `useContagemNaoLidas`, `useMarcarComoLida`, `useMarcarTodasComoLidas`.
 
+### `env.ts` — Shared Environment Configuration
+
+| Export | Purpose |
+|--------|---------|
+| `env` | Typed access to all VITE_ product env vars with fallbacks |
+| `validateEnv()` | Call in `main.tsx` — logs missing required vars to console |
+| `generateEnvExample(port)` | Generates `.env.example` content for a given backend port |
+| `ENV_VARS` | Definition object for all required vars (viteKey, description, required, defaultDev) |
+
+Required vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`. Optional with defaults: `VITE_BACKEND_API_URL`, `VITE_CORE_URL`, `VITE_CORE_API_URL`.
+
 ### `supabase.ts`
 
-`createProductSupabase(schema?)` — creates client with env vars + optional schema targeting.
+`createProductSupabase(schema?)` — creates client using `env.SUPABASE_URL` + `env.SUPABASE_PUBLISHABLE_KEY` from shared env module.
 
 ### `utils.ts`
 

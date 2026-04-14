@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for Seed Product backend tests.
+Pytest configuration and shared fixtures for {{PRODUCT_NAME}} backend tests.
 Mock classes imported from noctusai_shared.testing — products only define fixtures.
 """
 import pytest

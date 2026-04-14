@@ -1,5 +1,5 @@
 """
-Tests for Team Management router — /api/team (Seed Product)
+Tests for Team Management router — /api/team ({{PRODUCT_NAME}})
 
 Covers: invite flow, accept flow, list invitations, list members,
 cancel invitation, and remove member.

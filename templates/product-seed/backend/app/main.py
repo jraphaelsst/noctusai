@@ -1,8 +1,8 @@
 """
-NoctusAI Seed Product — FastAPI Backend
+NoctusAI {{PRODUCT_NAME}} — FastAPI Backend
 
-Entry point for the Seed Product API server.
-Run with: uvicorn app.main:app --reload --port 8004
+Entry point for the {{PRODUCT_NAME}} API server.
+Run with: uvicorn app.main:app --reload --port {{BACKEND_PORT}}
 """
 import logging
 
@@ -15,12 +15,12 @@ from app.rate_limit import limiter
 from noctusai_shared.logging_config import configure_logging
 from noctusai_shared.app_factory import configure_app
 
-configure_logging(debug=settings.debug, json_logs=not settings.debug, app_name="seed")
+configure_logging(debug=settings.debug, json_logs=not settings.debug, app_name="{{SCHEMA_NAME}}")
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="NoctusAI Seed Product API",
+    title="NoctusAI {{PRODUCT_NAME}} API",
     description="Seed product — minimal viable product that proves the entire shared stack works",
     version="0.1.0",
     docs_url="/docs" if settings.debug else None,

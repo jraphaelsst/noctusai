@@ -1,8 +1,8 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { Sprout } from "lucide-react";
+import { {{PRODUCT_ICON}} } from "lucide-react";
 import { AcceptInvitePage } from "@noctusai/shared/design-system";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:8004";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:{{BACKEND_PORT}}";
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
 
 export default function SeedAcceptInvite() {
@@ -11,8 +11,8 @@ export default function SeedAcceptInvite() {
 
   return (
     <AcceptInvitePage
-      productName="Seed Product"
-      brandIcon={Sprout}
+      productName="{{PRODUCT_NAME}}"
+      brandIcon={{{PRODUCT_ICON}}}
       acceptEndpoint="/api/team/accept"
       apiBaseUrl={BACKEND_URL}
       token={token}

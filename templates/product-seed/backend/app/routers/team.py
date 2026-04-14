@@ -1,5 +1,5 @@
 """
-Team Management Router — Invitations and member management for Seed Product.
+Team Management Router — Invitations and member management for {{PRODUCT_NAME}}.
 
 Uses the shared invitation system (noctusai_shared.invitations) for token
 generation, validation, and lifecycle.  Admin operations (invite, cancel)
@@ -41,7 +41,7 @@ SEED_ROLE_LABELS = {
 }
 
 # Frontend base URL for invitation links
-SEED_FRONTEND_URL = "http://localhost:8004"
+SEED_FRONTEND_URL = "http://localhost:{{BACKEND_PORT}}"
 
 INVITATIONS_TABLE = "invitations"
 
@@ -181,7 +181,7 @@ async def convidar_membro(body: InviteBody, authorization: Optional[str] = Heade
 
     send_product_invitation_email(
         to=body.email,
-        product_name="Seed Product",
+        product_name="{{PRODUCT_NAME}}",
         org_name=org_name,
         role_label=role_label,
         invite_token=invite["token"],

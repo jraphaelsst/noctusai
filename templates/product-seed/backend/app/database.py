@@ -1,8 +1,8 @@
 """
 Supabase database client setup.
 
-All seed product tables live in the "seed" schema.
-The make_supabase_client call passes schema="seed" so supabase-py sends
+All seed product tables live in the "{{SCHEMA_NAME}}" schema.
+The make_supabase_client call passes schema="{{SCHEMA_NAME}}" so supabase-py sends
 Accept-Profile / Content-Profile headers, routing queries to the correct schema.
 """
 from typing import Optional
@@ -13,7 +13,7 @@ from app.config import settings
 
 def get_supabase_client(access_token: Optional[str] = None) -> Client:
     """
-    Create a Supabase client targeting the "seed" schema.
+    Create a Supabase client targeting the "{{SCHEMA_NAME}}" schema.
 
     Args:
         access_token: If provided, creates a client authenticated as this user.
@@ -23,7 +23,7 @@ def get_supabase_client(access_token: Optional[str] = None) -> Client:
         url=settings.supabase_url,
         anon_key=settings.supabase_anon_key,
         service_role_key=settings.supabase_service_role_key,
-        schema="seed",
+        schema="{{SCHEMA_NAME}}",
         access_token=access_token,
     )
 

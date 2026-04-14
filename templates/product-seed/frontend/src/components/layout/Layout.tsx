@@ -1,5 +1,5 @@
 /**
- * Seed Product — Unified Layout
+ * {{PRODUCT_NAME}} — Unified Layout
  *
  * Follows THE NoctusAI product layout pattern:
  * - Single Layout.tsx per product
@@ -29,7 +29,7 @@ import {
 import type { NavGroupWithRoute } from "@noctusai/shared";
 import { toast } from "sonner";
 import {
-  LayoutDashboard, Users, ChevronLeft, Sprout, Home,
+  LayoutDashboard, Users, ChevronLeft, {{PRODUCT_ICON}}, Home,
 } from "lucide-react";
 
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
@@ -95,7 +95,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // Page status filtering — gracefully falls back if table doesn't exist
   const { data: statusPaginas } = usePageStatus(supabase, !!user);
   const navGroups: NavGroup[] = statusPaginas?.length
-    ? filterNavByPageStatus(NAV_GROUPS_WITH_ROUTES, statusPaginas, user?.user_metadata?.org_role)
+    ? filterNavByPageStatus(NAV_GROUPS_WITH_ROUTES, statusPaginas, ssoCtx.org.role)
     : NAV_GROUPS_FALLBACK;
 
   const handleLogout = async () => {
@@ -128,14 +128,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const userRole = ssoCtx.isProductAdmin
     ? "Administrador"
-    : ROLE_LABELS[user?.user_metadata?.org_role] || "Seed Product";
+    : ROLE_LABELS[ssoCtx.org.role] || "{{PRODUCT_NAME}}";
 
   return (
     <AppShell
       sidebar={
         <Sidebar
-          brandIcon={Sprout}
-          brandTitle="Seed Product"
+          brandIcon={{{PRODUCT_ICON}}}
+          brandTitle="{{PRODUCT_NAME}}"
           brandSubtitle={ssoCtx.org.name || "NoctusAI"}
           navGroups={navGroups}
           footerContent={ssoCtx.isSSO ? BackToCore : undefined}

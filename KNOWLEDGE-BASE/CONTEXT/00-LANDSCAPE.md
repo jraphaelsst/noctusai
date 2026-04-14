@@ -10,6 +10,8 @@
 | **ERP** | `products/erp-imobiliario/` | Real estate CRM: clients, properties, matching, sales funnel, financial, WhatsApp | 8001/8080 |
 | **PF** | `products/personal-finance/` | Finance tracker: accounts, transactions, budgets, portfolios, watchlists | 8002/8090 |
 | **Therapy** | `products/therapy-platform/` | Online therapy: video sessions, scheduling, clinical AI, wallets, messaging | 8003/8095 |
+| **Seed** | `products/seed/` | Minimal reference implementation proving shared stack | 8004/8100 |
+| **Daily Life** | `products/daily-life/` | Personal productivity hub: tasks, goals, habits, schedule, notes, focus | 8005/8110 |
 
 Architecture, stack, tenant isolation, and shared packages: see **CLAUDE.md**.
 
@@ -21,7 +23,9 @@ Architecture, stack, tenant isolation, and shared packages: see **CLAUDE.md**.
 | ERP | 50 | 42 | 1,634 | 98 |
 | PF | 16 | 14 | 473 | 37 |
 | Therapy | 39 | 38 | 1,021 | 62 |
-| **Total** | **128** | **103** | **3,517** | **225** |
+| Seed | 3 | 0 | 9 | 1 |
+| Daily Life | 7 | 0 | TBD | 0 |
+| **Total** | **138** | **103** | **3,526+** | **226** |
 
 ## External Services
 

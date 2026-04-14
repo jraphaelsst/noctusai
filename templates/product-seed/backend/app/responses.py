@@ -1,5 +1,5 @@
 """
-Standardized response utilities for the Seed Product API.
+Standardized response utilities for the {{PRODUCT_NAME}} API.
 
 Re-exports everything from the shared package so that existing
 ``from app.responses import ...`` imports continue to work.

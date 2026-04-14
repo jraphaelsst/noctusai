@@ -9,14 +9,14 @@ _ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
 
 
 class SeedSettings(BaseAppSettings):
-    """Seed Product specific application settings."""
+    """{{PRODUCT_NAME}} specific application settings."""
 
     # JWT / SSO
     jwt_secret: str = "noctus-dev-secret-change-in-prod"
     core_api_url: str = "http://localhost:8000"
 
     # CORS — Seed frontend default port
-    cors_origins: str = "http://localhost:8004,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "http://localhost:{{BACKEND_PORT}},http://localhost:5173,http://localhost:3000"
 
     @field_validator('jwt_secret')
     @classmethod

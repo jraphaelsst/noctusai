@@ -29,7 +29,7 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
 
 
 def get_user_role(user) -> str:
-    """Resolve the user's role for Seed Product access.
+    """Resolve the user's role for {{PRODUCT_NAME}} access.
 
     Uses shared ``resolve_sso_role()`` first (org owner/admin or NoctusAI
     admin -> 'platform_admin'). Seed has no role tiers, so non-admin users

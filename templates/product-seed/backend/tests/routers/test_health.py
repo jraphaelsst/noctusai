@@ -1,5 +1,5 @@
 """
-Tests for Health check endpoint — /api/health (Seed Product)
+Tests for Health check endpoint — /api/health ({{PRODUCT_NAME}})
 """
 
 
@@ -10,5 +10,5 @@ class TestHealthCheck:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
-        assert data["product"] == "Seed Product"
+        assert data["product"] == "{{PRODUCT_NAME}}"
         assert data["version"] == "0.1.0"

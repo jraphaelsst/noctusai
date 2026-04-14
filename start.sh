@@ -14,7 +14,7 @@ if [ ! -f "$ROOT_DIR/.env" ]; then
   exit 1
 fi
 
-PORTS=(8000 8001 8002 8003 5173 8080 8090 8095)
+PORTS=(8000 8001 8002 8003 8005 5173 8080 8090 8095 8110)
 PIDS=()
 
 # Kill a process and all its descendants
@@ -159,19 +159,41 @@ if [ -d "$SEED_FRONTEND" ]; then
   PIDS+=($!)
 fi
 
+# --- Daily Life Backend (porta 8005) ---
+DL_BACKEND="$ROOT_DIR/products/daily-life/backend"
+if [ -d "$DL_BACKEND" ]; then
+  echo "[Daily Life Backend] Iniciando na porta 8005..."
+  "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8005 --reload --app-dir "$DL_BACKEND" &
+  PIDS+=($!)
+fi
+
+# --- Daily Life Frontend (porta 8110) ---
+DL_FRONTEND="$ROOT_DIR/products/daily-life/frontend"
+if [ -d "$DL_FRONTEND" ]; then
+  if [ ! -d "$DL_FRONTEND/node_modules" ]; then
+    echo "[Daily Life Frontend] Instalando dependencias..."
+    (cd "$DL_FRONTEND" && npm install)
+  fi
+  echo "[Daily Life Frontend] Iniciando na porta 8110..."
+  (cd "$DL_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8110) &
+  PIDS+=($!)
+fi
+
 echo ""
 echo "============================================"
 echo "  Servicos iniciados:"
-echo "  Core Backend     → http://localhost:8000"
-echo "  ERP Backend      → http://localhost:8001"
-echo "  PF Backend       → http://localhost:8002"
-echo "  Therapy Backend  → http://localhost:8003"
-echo "  Seed Backend     → http://localhost:8004"
-echo "  Core Frontend    → http://localhost:5173"
-echo "  ERP Frontend     → http://localhost:8080"
-echo "  PF Frontend      → http://localhost:8090"
-echo "  Therapy Frontend → http://localhost:8095"
-echo "  Seed Frontend    → http://localhost:8100"
+echo "  Core Backend       → http://localhost:8000"
+echo "  ERP Backend        → http://localhost:8001"
+echo "  PF Backend         → http://localhost:8002"
+echo "  Therapy Backend    → http://localhost:8003"
+echo "  Seed Backend       → http://localhost:8004"
+echo "  Daily Life Backend → http://localhost:8005"
+echo "  Core Frontend      → http://localhost:5173"
+echo "  ERP Frontend       → http://localhost:8080"
+echo "  PF Frontend        → http://localhost:8090"
+echo "  Therapy Frontend   → http://localhost:8095"
+echo "  Seed Frontend      → http://localhost:8100"
+echo "  Daily Life Frontend→ http://localhost:8110"
 echo "============================================"
 echo ""
 echo "Pressione Ctrl+C para parar todos os servicos."

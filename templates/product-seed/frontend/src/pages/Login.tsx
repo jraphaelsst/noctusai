@@ -1,5 +1,5 @@
 import { useNavigate, Link } from "react-router-dom";
-import { Sprout } from "lucide-react";
+import { {{PRODUCT_ICON}} } from "lucide-react";
 import { LoginForm } from "@noctusai/shared/design-system";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -11,8 +11,8 @@ export default function Login() {
   return (
     <div className="relative">
       <LoginForm
-        brandIcon={Sprout}
-        brandTitle="Seed Product"
+        brandIcon={{{PRODUCT_ICON}}}
+        brandTitle="{{PRODUCT_NAME}}"
         brandSubtitle="A minimal NoctusAI product"
         supabase={supabase}
         onSuccess={() => navigate("/")}

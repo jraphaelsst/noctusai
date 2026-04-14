@@ -1,10 +1,10 @@
 /**
- * Seed Product API client — powered by the shared factory.
+ * {{PRODUCT_NAME}} API client — powered by the shared factory.
  */
 import { createApiClient } from '@noctusai/shared/api';
 import { supabase } from '@/integrations/supabase/client';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8004';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:{{BACKEND_PORT}}';
 
 export const api = createApiClient({
   getBaseUrl: () => BACKEND_URL,
