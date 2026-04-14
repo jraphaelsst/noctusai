@@ -4,6 +4,8 @@
 
 - **No workarounds.** Always use the real API/SDK/framework. No monkeypatches, shims, or hacks.
 - **DRY.** Single authoritative source for every piece of logic. Three similar blocks → extract to shared.
+- **Componentize everything.** When you build something a product needs, ask: "will another product need this?" If yes (or maybe), build it as a shared component from the start. Check `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` before writing anything — it might already exist. The shared library is the platform's validated, reusable code. Every extraction reduces maintenance burden as the platform grows. Duplicate code is tech debt; shared components are assets.
+- **Module-scope imports.** All Python imports go at the top of the file (module scope). Never defer imports to inside functions or after object creation unless solving a documented circular dependency. Module-scope imports fail fast at startup, making bugs visible immediately.
 - **Docs stay in sync.** Every commit updates `CLAUDE.md` and `KNOWLEDGE-BASE/`.
 - **`KNOWLEDGE-BASE/`** = platform context (architecture, inventories). `CLAUDE.md` = behavioral rules.
 
@@ -27,19 +29,17 @@ State: **Zustand** (global UI), **TanStack Query** (server state).
 
 ### Shared Packages
 
-**Full catalog**: `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` — check before building anything.
+**Full catalog**: `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` — **always check before building anything**.
 
-**Backend** (`noctusai_shared`): auth (SSO role resolution, context), roles (7-role hierarchy), invitations (token-based team invites), email_templates (Resend-powered), notifications (field mapping), page_status (dev-gated pages), responses, exceptions, middleware, logging, database, config, app_factory, testing (MockSupabaseClient, MockUser, AuthClient).
-
-**Frontend** (`@noctusai/shared`): api (createApiClient + 401 retry), sso (resolveSSORoles, resolveSSOContext), roles (ORG_ROLE_LABELS, isDevOrOwner), page-status (usePageStatus, filterNavByPageStatus), auth, stores, hooks, notifications, supabase (createProductSupabase), components (SSOCallback, createAuthProvider).
-
-**Design System** (`@noctusai/shared/design-system`): AppShell, Sidebar, Header, NotificationBell, LoginForm, AcceptInvitePage, ForgotPasswordPage, PageSkeleton, InactivityWarning, useTheme, useActivityRefresh, tokens.css, tailwind.config.base.ts.
+- **Backend** (`noctusai_shared`): auth, roles, invitations, email_templates, notifications, page_status, responses, exceptions, middleware, logging, database, config, app_factory, testing.
+- **Frontend** (`@noctusai/shared`): api, sso, roles, page-status, auth, stores, hooks, notifications, supabase, components.
+- **Design System** (`@noctusai/shared/design-system`): AppShell, Sidebar, Header, NotificationBell, LoginForm, AcceptInvitePage, ForgotPasswordPage, PageSkeleton, InactivityWarning, useTheme, tokens.css.
 
 > `get_current_user` is NOT shared — lives in each product's `dependencies.py` for test mock compatibility.
 
 ### Product Layout Pattern
 
-One `Layout.tsx` per product. Imports shared AppShell + Sidebar + Header + useTheme. Nav data switched by role (no separate layout files). SSO users get BackToCore link + redirect logout. Page visibility filtered by `usePageStatus` + `filterNavByPageStatus`.
+One `Layout.tsx` per product using shared AppShell + Sidebar + Header. Nav switched by role. SSO users get BackToCore + redirect logout. Pages filtered by `usePageStatus` + `filterNavByPageStatus`.
 
 ## Setup
 
