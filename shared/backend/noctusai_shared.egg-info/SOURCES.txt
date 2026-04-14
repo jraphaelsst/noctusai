@@ -7,10 +7,16 @@ noctusai_shared/database.py
 noctusai_shared/exceptions.py
 noctusai_shared/logging_config.py
 noctusai_shared/middleware.py
+noctusai_shared/notifications.py
+noctusai_shared/page_status.py
 noctusai_shared/rate_limit.py
 noctusai_shared/responses.py
+noctusai_shared/roles.py
 noctusai_shared.egg-info/PKG-INFO
 noctusai_shared.egg-info/SOURCES.txt
 noctusai_shared.egg-info/dependency_links.txt
 noctusai_shared.egg-info/requires.txt
 noctusai_shared.egg-info/top_level.txt
+noctusai_shared/testing/__init__.py
+noctusai_shared/testing/clients.py
+noctusai_shared/testing/mocks.py

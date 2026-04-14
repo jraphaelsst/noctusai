@@ -24,15 +24,21 @@ POST   /api/team/accept-invite         — Accept invitation by token
 -- );
 -- ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
 """
-import secrets
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.services.permissions import check_permission
+from noctusai_shared.invitations import (
+    create_invitation,
+    validate_invitation,
+    accept_invitation as mark_accepted,
+    cancel_invitation,
+    list_pending_invitations,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/team", tags=["Team"])
@@ -141,21 +147,6 @@ async def convidar_membro(
             detail="Este e-mail já pertence a um membro da organização",
         )
 
-    # Ensure there isn't a pending invite for this email in this org
-    pending = (
-        db.table("invitations")
-        .select("id")
-        .eq("org_id", org_id)
-        .eq("email", body.email)
-        .eq("status", "pending")
-        .execute()
-    )
-    if pending.data:
-        raise HTTPException(
-            status_code=409,
-            detail="Já existe um convite pendente para este e-mail",
-        )
-
     # Validate that the target role exists
     role_check = (
         db.table("roles")
@@ -166,22 +157,11 @@ async def convidar_membro(
     if not role_check.data:
         raise HTTPException(status_code=400, detail="Papel inválido")
 
-    invite_token = secrets.token_urlsafe(32)
-
-    invite_data = {
-        "org_id": org_id,
-        "email": body.email,
-        "role": body.role,
-        "invited_by": user.id,
-        "token": invite_token,
-        "status": "pending",
-    }
-
-    result = db.table("invitations").insert(invite_data).execute()
-    if not result.data:
-        raise HTTPException(status_code=500, detail="Erro ao criar convite")
-
-    logger.info(f"Invitation created for {body.email} to org={org_id}")
+    # Create invitation via shared helper (checks pending duplicates internally)
+    invite_record = create_invitation(
+        db, "invitations", org_id, body.email, body.role, user.id,
+    )
+    invite_token = invite_record["token"]
 
     # Audit log, notification, and webhook dispatch (best-effort)
     try:
@@ -189,7 +169,7 @@ async def convidar_membro(
         await audit_service.log(
             user_id=user.id, org_id=org_id,
             action="invite", resource_type="invitation",
-            resource_id=result.data[0]["id"],
+            resource_id=invite_record["id"],
         )
     except Exception:
         pass
@@ -208,7 +188,7 @@ async def convidar_membro(
         await webhook_delivery.dispatch(
             org_id=org_id,
             event_type="team.invite_sent",
-            payload={"email": body.email, "role": body.role, "invitation_id": result.data[0]["id"]},
+            payload={"email": body.email, "role": body.role, "invitation_id": invite_record["id"]},
         )
     except Exception:
         pass
@@ -231,7 +211,7 @@ async def convidar_membro(
     except Exception as exc:
         logger.warning(f"Failed to send invitation email: {exc}")
 
-    return {"data": result.data[0]}
+    return {"data": invite_record}
 
 
 @router.delete("/{user_id}")
@@ -387,16 +367,7 @@ async def listar_convites(authorization: Optional[str] = Header(None)):
             detail="Você não tem permissão para ver convites",
         )
 
-    result = (
-        db.table("invitations")
-        .select("id, email, role, status, invited_by, expires_at, created_at")
-        .eq("org_id", org_id)
-        .eq("status", "pending")
-        .order("created_at", desc=True)
-        .execute()
-    )
-
-    return {"data": result.data or []}
+    return {"data": list_pending_invitations(db, "invitations", org_id)}
 
 
 @router.delete("/invitations/{invitation_id}")
@@ -411,29 +382,7 @@ async def cancelar_convite(
     profile = await _require_team_manage(user, db)
     org_id = profile["org_id"]
 
-    # Verify the invitation belongs to this org and is still pending
-    invite = (
-        db.table("invitations")
-        .select("id, org_id, status")
-        .eq("id", invitation_id)
-        .eq("org_id", org_id)
-        .eq("status", "pending")
-        .single()
-        .execute()
-    )
-    if not invite.data:
-        raise HTTPException(status_code=404, detail="Convite não encontrado")
-
-    result = (
-        db.table("invitations")
-        .update({"status": "canceled"})
-        .eq("id", invitation_id)
-        .execute()
-    )
-    if not result.data:
-        raise HTTPException(status_code=500, detail="Erro ao cancelar convite")
-
-    logger.info(f"Invitation {invitation_id} canceled")
+    cancel_invitation(db, "invitations", invitation_id, org_id)
     return {"message": "Convite cancelado com sucesso"}
 
 
@@ -451,24 +400,8 @@ async def aceitar_convite(
     """
     db = get_admin_client()
 
-    # Look up the invitation by token
-    invite = (
-        db.table("invitations")
-        .select("id, org_id, email, role, status, expires_at")
-        .eq("token", body.token)
-        .single()
-        .execute()
-    )
-    if not invite.data:
-        raise HTTPException(status_code=404, detail="Convite não encontrado")
-
-    invite_data = invite.data
-
-    if invite_data["status"] != "pending":
-        raise HTTPException(
-            status_code=400,
-            detail="Este convite já foi utilizado ou cancelado",
-        )
+    # Validate the invitation (checks pending + not expired)
+    invite_data = validate_invitation(db, "invitations", body.token)
 
     # If user is authenticated, use their identity
     authenticated_user = None
@@ -533,15 +466,7 @@ async def aceitar_convite(
                 detail="Faça login ou forneça seu nome para aceitar o convite",
             )
 
-    # Mark the invitation as accepted
-    db.table("invitations").update({
-        "status": "accepted",
-    }).eq("id", invite_data["id"]).execute()
-
-    logger.info(
-        f"Invitation {invite_data['id']} accepted for email={invite_data['email']} "
-        f"org={invite_data['org_id']}"
-    )
+    mark_accepted(db, "invitations", invite_data["id"])
 
     return {
         "message": "Convite aceito com sucesso",

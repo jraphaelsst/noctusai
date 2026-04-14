@@ -26,7 +26,15 @@ export { PageSkeleton } from "./components/PageSkeleton";
 export { LoginForm } from "./components/LoginForm";
 export type { LoginFormProps } from "./components/LoginForm";
 
+export { ForgotPasswordPage } from "./components/ForgotPasswordPage";
+export type { ForgotPasswordPageProps } from "./components/ForgotPasswordPage";
+
 export { NotificationBell } from "./components/NotificationBell";
 export type { NotificationBellProps, NotificationHooks } from "./components/NotificationBell";
+
+export { PoweredByFooter } from "./components/PoweredByFooter";
+
+export { AcceptInvitePage } from "./components/AcceptInvitePage";
+export type { AcceptInvitePageProps } from "./components/AcceptInvitePage";
 
 export { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";

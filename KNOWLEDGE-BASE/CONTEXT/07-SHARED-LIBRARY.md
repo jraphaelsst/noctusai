@@ -17,6 +17,44 @@ Installed via `pip install -e shared/backend`. Import as `from noctusai_shared.<
 | `get_current_user(authorization, *, _get_supabase_client)` | JWT validation (base — use product wrapper) | Products define own `get_current_user` in `dependencies.py` |
 | `make_get_current_user(get_supabase_client_fn)` | Factory for product-specific `get_current_user` | `get_current_user = make_get_current_user(get_supabase_client)` |
 
+### `roles.py` — Role System Constants
+
+| Export | Purpose |
+|--------|---------|
+| `ORG_ROLES` | Tuple of all 7 valid org_role values |
+| `ADMIN_ROLES` | (owner, admin) — manage team + billing |
+| `MANAGE_TEAM_ROLES` | (owner, admin, manager) — can invite/remove |
+| `DEV_ROLES` | (owner, dev) — see in-development pages |
+| `ORG_ROLE_LABELS` | Portuguese labels for UI display |
+| `is_dev_or_owner(role)` | Check if user can see dev pages |
+| `can_manage_team(role)` | Check if user can invite/remove |
+| `can_manage_billing(role)` | Check if user can manage billing |
+
+### `invitations.py` — Invitation System
+
+| Function | Purpose |
+|----------|---------|
+| `generate_invite_token()` | Cryptographically secure 32-char token |
+| `create_invitation(db, table, org_id, email, role, invited_by)` | Creates invitation record, checks duplicates |
+| `validate_invitation(db, table, token)` | Validates token: exists, pending, not expired |
+| `accept_invitation(db, table, invitation_id)` | Marks invitation as accepted |
+| `cancel_invitation(db, table, invitation_id, org_id)` | Cancels pending invitation |
+| `list_pending_invitations(db, table, org_id)` | Lists pending invitations for an org |
+| `expire_old_invitations(db, table)` | Cleanup: marks expired invitations |
+
+### `email_templates.py` — Product-Branded Emails
+
+| Function | Purpose |
+|----------|---------|
+| `send_product_invitation_email(to, product_name, org_name, role_label, invite_token, invited_by, base_url)` | Branded invitation email with accept button |
+| `send_password_reset_email(to, product_name, reset_url)` | Branded password reset email |
+
+### `page_status.py` — Dev-Gated Page Visibility
+
+| Function | Purpose |
+|----------|---------|
+| `get_visible_pages(db, user_org_role)` | Returns list of visible page route names based on role |
+
 ### `notifications.py` — Notification Field Mapping
 
 | Function | Purpose |
@@ -114,6 +152,30 @@ Consumed via Vite path alias. Import as `import { ... } from '@noctusai/shared'`
 | `createApiClient(options)` | Factory with `safeFetch`, 401 retry via `onTokenExpired`, auto-auth headers |
 | `extractErrorMessage(error)` | Extract user-friendly error message from API responses |
 
+### `roles.ts` — Role System Constants
+
+| Export | Purpose |
+|--------|---------|
+| `ORG_ROLES` | Array of all 7 valid org_role values |
+| `ADMIN_ROLES`, `DEV_ROLES`, `MANAGE_TEAM_ROLES`, `PRODUCT_ADMIN_ROLES` | Role group constants |
+| `ASSIGNABLE_ROLES` | Roles that can be assigned (excludes owner) |
+| `ORG_ROLE_LABELS` | Portuguese labels: `{ owner: "Proprietario", ... }` |
+| `isDevOrOwner(orgRole)` | Check for dev page visibility |
+| `canManageTeam(orgRole)` | Check for invite/remove permission |
+| `canManageBilling(orgRole)` | Check for billing access |
+
+**Type:** `OrgRole`
+
+### `page-status.ts` — Dev-Gated Page Visibility
+
+| Export | Purpose |
+|--------|---------|
+| `usePageStatus(supabase)` | TanStack Query hook — fetches status_pagina table (10min staleTime) |
+| `isPageVisible(route, statusPaginas, orgRole)` | Check if a specific page is visible to user |
+| `filterNavByPageStatus(groups, statusPaginas, orgRole)` | Filter nav groups: hides dev/disabled pages, adds DEV badge |
+
+**Types:** `StatusPagina`, `NavItemWithRoute`, `NavGroupWithRoute`
+
 ### `sso.ts` — SSO Context & Role Resolution
 
 | Export | Purpose |
@@ -201,7 +263,10 @@ Import as `import { ... } from '@noctusai/shared/design-system'`.
 |-----------|---------|
 | `NotificationBell` | Bell icon + popover with notification list + mark-as-read. Accepts `hooks` object from `createNotificationHooks`. |
 | `LoginForm` | Supabase-based email/password form with configurable branding. Props: `brandIcon`, `brandTitle`, `supabase`, `onSuccess`, `showForgotPassword?`, `showRegisterLink?`. |
+| `AcceptInvitePage` | Full invitation acceptance flow: validates token, signup form (nome + password), calls accept endpoint. Props: `productName`, `brandIcon`, `acceptEndpoint`, `apiBaseUrl`. |
+| `ForgotPasswordPage` | Password reset via Supabase `resetPasswordForEmail`. Props: `brandIcon`, `brandTitle`, `supabase`, `loginPath?`. |
 | `PageSkeleton` | Loading placeholder: animated dashboard skeleton (title bar + card grid + content area). |
+| `PoweredByFooter` | "Technology by NoctusAI" footer (sidebar + landing variants). Built but not applied yet — needs design polish. |
 | `InactivityWarning` | Session expiry warning with extend/logout actions. |
 | `HoverCard` | Radix-based hover card with fade/zoom animations. |
 

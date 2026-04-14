@@ -73,7 +73,7 @@ class TestInviteMember:
         #   2. insert → returns the new invitation
         mock_sb.set_table_responses("invitations", [
             [],  # no pending invites
-            [{"id": "inv-1", "email": "new@example.com", "role": "member", "status": "pending"}],
+            [{"id": "inv-1", "email": "new@example.com", "role": "member", "status": "pending", "token": "mock-token"}],
         ])
         mock_sb.set_table_data("roles", [{"id": "r1", "slug": "member"}])
         mock_sb.set_table_data("organizations", {"id": "org-1", "nome": "Test Org"})

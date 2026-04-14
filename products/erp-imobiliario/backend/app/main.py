@@ -25,6 +25,7 @@ from app.routers import (
     certidoes,
     matriculas,
     configuracoes,
+    team,
 )
 from app.rate_limit import limiter
 from app.logging_config import configure_logging
@@ -122,6 +123,7 @@ app.include_router(recorrencia.router)
 app.include_router(certidoes.router)
 app.include_router(matriculas.router)
 app.include_router(configuracoes.router)
+app.include_router(team.router)
 
 
 @app.get("/health")

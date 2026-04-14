@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, Tags, PiggyBank, Target,
   TrendingUp, Eye, CalendarClock, Landmark, FileBarChart, ArrowUpDown,
-  ChevronLeft, DollarSign, Home, BarChart3, LineChart,
+  ChevronLeft, DollarSign, Home, BarChart3, LineChart, Users,
 } from "lucide-react";
 
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
@@ -64,6 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { name: "Patrimonio", href: "/patrimonio", icon: Landmark },
       { name: "Relatorios", href: "/relatorios", icon: FileBarChart },
+      { name: "Equipe", href: "/equipe", icon: Users },
     ],
   },
 ];

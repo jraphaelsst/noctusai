@@ -30,6 +30,9 @@ const Patrimonio = lazy(() => import("@/pages/Patrimonio"));
 const Operacoes = lazy(() => import("@/pages/Operacoes"));
 const Relatorios = lazy(() => import("@/pages/Relatorios"));
 const SSOCallback = lazy(() => import("@/pages/SSOCallback"));
+const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
+const Equipe = lazy(() => import("@/pages/Equipe"));
+const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 
 function AppContent() {
   const { user, isInitialized } = useAuthStore();
@@ -64,6 +67,7 @@ function AppContent() {
             <Route path="/recorrentes" element={<Recorrentes />} />
             <Route path="/patrimonio" element={<Patrimonio />} />
             <Route path="/relatorios" element={<Relatorios />} />
+            <Route path="/equipe" element={<Equipe />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
@@ -77,6 +81,8 @@ function AppRoutes() {
     <Suspense fallback={<PageSkeleton />}>
       <Routes>
         <Route path="/sso" element={<SSOCallback />} />
+        <Route path="/accept-invite/:token" element={<AcceptInvite />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/*" element={<AppContent />} />
       </Routes>
     </Suspense>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { Search, Pencil, Trash2, X } from 'lucide-react';
+import { ORG_ROLE_LABELS, ASSIGNABLE_ROLES } from '@noctusai/shared';
 
 interface User {
   id: string;
@@ -17,14 +18,7 @@ interface User {
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
   manager: 'Gerente',
-  user: 'Usuário',
-};
-
-const ORG_ROLE_LABELS: Record<string, string> = {
-  owner: 'Dono',
-  admin: 'Admin',
-  member: 'Membro',
-  viewer: 'Visualizador',
+  user: 'Usuario',
 };
 
 export function AdminUsers() {
@@ -252,10 +246,10 @@ export function AdminUsers() {
                   onChange={(e) => setEditForm({ ...editForm, org_role: e.target.value })}
                   className="w-full h-10 md:h-9 rounded-md border border-border bg-background px-3 text-sm"
                 >
-                  <option value="member">Membro</option>
-                  <option value="viewer">Visualizador</option>
-                  <option value="admin">Admin</option>
-                  <option value="owner">Dono</option>
+                  <option value="owner">{ORG_ROLE_LABELS.owner}</option>
+                  {ASSIGNABLE_ROLES.map((r) => (
+                    <option key={r} value={r}>{ORG_ROLE_LABELS[r]}</option>
+                  ))}
                 </select>
               </div>
               <div className="flex gap-2 pt-2">

@@ -20,6 +20,7 @@ const Register = lazy(() => import("./pages/Register"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SSOCallback = lazy(() => import("./pages/SSOCallback"));
+const AcceptInvite = lazy(() => import("./pages/AcceptInvite"));
 const Messages = lazy(() => import("./pages/Messages"));
 const TermsOfUse = lazy(() => import("./pages/TermsOfUse"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
@@ -311,6 +312,7 @@ function AppContent() {
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/sso" element={<SSOCallback />} />
+          <Route path="/accept-invite/:token" element={<AcceptInvite />} />
           {/* Public directory access */}
           <Route path="/therapists" element={<TherapistDirectory />} />
           <Route path="/therapists/:id" element={<TherapistProfile />} />

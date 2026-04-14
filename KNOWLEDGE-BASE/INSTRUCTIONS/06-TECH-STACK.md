@@ -11,6 +11,7 @@
 | **Orchestration** | n8n (self-hosted) | Agentic workflow engine, MCP client/server |
 | **LLM** | Claude / GPT (configurable) | Agent brain, reasoning, tool selection |
 | **Frontend** | React 18 + TypeScript + Vite | Web application UI |
+
 | **Styling** | Tailwind CSS + shadcn/ui | Utility-first styling, component library |
 | **Routing** | React Router v6 | Client-side routing |
 | **Server State** | TanStack Query (React Query) | Data fetching, caching, sync (ERP) |

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, setToken } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 
+
 interface OAuthProvider {
   id: string;
   name: string;
@@ -77,7 +78,7 @@ export function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-md bg-card rounded-lg border border-border shadow-md p-8">
         {/* Header */}
         <div className="text-center mb-8">

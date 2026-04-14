@@ -7,22 +7,17 @@
  *
  * Core platform does NOT use this — it has its own REST-based login.
  * SSO-only products (ERP, PF) don't use this either.
+ *
+ * Zero external dependencies beyond React + sonner + supabase + lucide.
+ * Uses plain useState for form state (no react-hook-form dependency).
  */
 import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { toast } from "sonner";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LucideIcon } from "lucide-react";
 import { Loader2 } from "lucide-react";
 
-const loginSchema = z.object({
-  email: z.string().email("Email invalido"),
-  password: z.string().min(6, "Senha deve ter no minimo 6 caracteres"),
-});
-
-type LoginFormData = z.infer<typeof loginSchema>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySupabaseClient = { auth: any };
 
 export interface LoginFormProps {
   /** Lucide icon component displayed above the title */
@@ -32,7 +27,7 @@ export interface LoginFormProps {
   /** Optional subtitle below the title */
   brandSubtitle?: string;
   /** Supabase client instance for authentication */
-  supabase: SupabaseClient;
+  supabase: AnySupabaseClient;
   /** Called after successful login */
   onSuccess: () => void;
   /** Show "Forgot password?" link (default false) */
@@ -49,10 +44,6 @@ export interface LoginFormProps {
   renderLink?: (props: { to: string; className?: string; children: React.ReactNode }) => React.ReactNode;
 }
 
-/**
- * Default link renderer using a plain <a> tag.
- * Products should pass their router's Link component via renderLink.
- */
 function DefaultLink({ to, className, children }: { to: string; className?: string; children: React.ReactNode }) {
   return <a href={to} className={className}>{children}</a>;
 }
@@ -70,25 +61,37 @@ export function LoginForm({
   showGoogleOAuth = false,
   renderLink,
 }: LoginFormProps) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const LinkComponent = renderLink ?? DefaultLink;
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<LoginFormData>({
-    resolver: zodResolver(loginSchema),
-  });
+  function validate(): boolean {
+    let valid = true;
+    setEmailError("");
+    setPasswordError("");
 
-  const onSubmit = async (data: LoginFormData) => {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setEmailError("Email invalido");
+      valid = false;
+    }
+    if (!password || password.length < 6) {
+      setPasswordError("Senha deve ter no minimo 6 caracteres");
+      valid = false;
+    }
+    return valid;
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!validate()) return;
+
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: data.email,
-        password: data.password,
-      });
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
         toast.error("Erro ao entrar", { description: error.message });
@@ -102,7 +105,9 @@ export function LoginForm({
     } finally {
       setIsLoading(false);
     }
-  };
+  }
+
+  const inputCls = "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background p-4">
@@ -111,18 +116,14 @@ export function LoginForm({
         <div className="flex flex-col items-center p-6 pb-2">
           <BrandIcon className="h-10 w-10 text-primary mb-2" />
           <h1 className="text-2xl font-semibold text-foreground">Entrar</h1>
-          {brandSubtitle ? (
-            <p className="text-sm text-muted-foreground mt-1">{brandSubtitle}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground mt-1">
-              Acesse sua conta no {brandTitle}
-            </p>
-          )}
+          <p className="text-sm text-muted-foreground mt-1">
+            {brandSubtitle || `Acesse sua conta no ${brandTitle}`}
+          </p>
         </div>
 
         {/* Form */}
         <div className="p-6 pt-4">
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <label htmlFor="login-email" className="text-sm font-medium text-foreground">
                 Email
@@ -131,12 +132,11 @@ export function LoginForm({
                 id="login-email"
                 type="email"
                 placeholder="seu@email.com"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                {...register("email")}
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); setEmailError(""); }}
+                className={inputCls}
               />
-              {errors.email && (
-                <p className="text-xs text-destructive">{errors.email.message}</p>
-              )}
+              {emailError && <p className="text-xs text-destructive">{emailError}</p>}
             </div>
 
             <div className="space-y-2">
@@ -154,12 +154,11 @@ export function LoginForm({
                 id="login-password"
                 type="password"
                 placeholder="******"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                {...register("password")}
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setPasswordError(""); }}
+                className={inputCls}
               />
-              {errors.password && (
-                <p className="text-xs text-destructive">{errors.password.message}</p>
-              )}
+              {passwordError && <p className="text-xs text-destructive">{passwordError}</p>}
             </div>
 
             <button

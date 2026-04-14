@@ -67,6 +67,9 @@ const WhatsAppInbox = lazy(() => import("./pages/WhatsAppInbox"));
 const NotificacoesPage = lazy(() => import("./pages/Notificacoes"));
 const Certidoes = lazy(() => import("./pages/Certidoes"));
 const Matriculas = lazy(() => import("./pages/Matriculas"));
+const AcceptInvite = lazy(() => import("./pages/AcceptInvite"));
+const Equipe = lazy(() => import("./pages/Equipe"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
 
 const queryClient = createQueryClient();
 
@@ -128,6 +131,7 @@ function AuthenticatedRoutes() {
           <Route path="/notificacoes" element={<NotificacoesPage />} />
           <Route path="/certidoes" element={<Certidoes />} />
           <Route path="/matriculas" element={<Matriculas />} />
+          <Route path="/equipe" element={<Equipe />} />
           <Route path="/log-acoes" element={<LogAcoes />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -160,8 +164,10 @@ const App = () => (
             <ErrorBoundary>
               <Suspense fallback={<PageSkeleton />}>
                 <Routes>
-                  {/* Public route: SSO callback (must work without auth) */}
+                  {/* Public routes (must work without auth) */}
                   <Route path="/sso" element={<SSOCallback />} />
+                  <Route path="/accept-invite/:token" element={<AcceptInvite />} />
+                  <Route path="/forgot-password" element={<ForgotPassword />} />
                   {/* All other routes require authentication */}
                   <Route path="/*" element={<AppContent />} />
                 </Routes>

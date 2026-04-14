@@ -18,27 +18,14 @@ export function Login() {
   }, [isInitialized, user]);
 
   return (
-    <>
-      <LoginForm
-        brandIcon={ {{PRODUCT_ICON}} }
-        brandTitle="{{PRODUCT_NAME}}"
-        supabase={supabase}
-        onSuccess={() => navigate("/")}
-        renderLink={({ to, className, children }) => (
-          <Link to={to} className={className}>{children}</Link>
-        )}
-      />
-      <div className="fixed bottom-4 left-0 right-0 text-center">
-        <p className="text-xs text-muted-foreground">
-          Ou acesse pelo{" "}
-          <a
-            href={CORE_URL}
-            className="text-primary hover:underline font-medium"
-          >
-            painel NoctusAI
-          </a>
-        </p>
-      </div>
-    </>
+    <LoginForm
+      brandIcon={ {{PRODUCT_ICON}} }
+      brandTitle="{{PRODUCT_NAME}}"
+      supabase={supabase}
+      onSuccess={() => navigate("/")}
+      renderLink={({ to, className, children }) => (
+        <Link to={to} className={className}>{children}</Link>
+      )}
+    />
   );
 }

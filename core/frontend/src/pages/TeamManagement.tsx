@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import { NotificationBell } from '../components/NotificationBell';
 import { Header, useTheme } from "@noctusai/shared/design-system";
+import { ORG_ROLE_LABELS } from "@noctusai/shared";
 
 interface Member {
   id: string;
@@ -420,12 +421,5 @@ function getRoleName(slug: string, roles: Role[]): string {
   const role = roles.find(r => r.slug === slug);
   if (role) return role.name;
 
-  // Fallback display names
-  const fallback: Record<string, string> = {
-    owner: 'Proprietário',
-    admin: 'Administrador',
-    member: 'Membro',
-    viewer: 'Visualizador',
-  };
-  return fallback[slug] || slug;
+  return ORG_ROLE_LABELS[slug as keyof typeof ORG_ROLE_LABELS] || slug;
 }

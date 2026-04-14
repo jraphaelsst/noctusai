@@ -14,7 +14,7 @@
 import { useCallback } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AppShell,
   Sidebar as SharedSidebar,
@@ -23,9 +23,12 @@ import {
   useActivityRefresh,
   InactivityWarning,
 } from "@noctusai/shared/design-system";
-import type { NavGroup, NavItem } from "@noctusai/shared/design-system";
 import { NotificationBell } from "@/components/NotificationBell";
-import { resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining } from "@noctusai/shared";
+import {
+  resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
+  usePageStatus, filterNavByPageStatus, isPageVisible as sharedIsPageVisible, isDevOrOwner,
+} from "@noctusai/shared";
+import type { NavItemWithRoute, NavGroupWithRoute } from "@noctusai/shared";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { useIsAdmin } from "@/hooks/useUserRole";
@@ -38,7 +41,7 @@ import {
   Mail, BarChart3, Sparkles, Settings, DollarSign, Percent, CalendarDays,
   FileBox, MapPin, Key, Globe, Trophy, GitBranch, Store, MessageSquare,
   Megaphone, ClipboardList, CreditCard, Building, Search, BellRing, Instagram,
-  Briefcase, ScrollText, Hammer, ChevronLeft, CheckCircle2,
+  Briefcase, ScrollText, Hammer, ChevronLeft, CheckCircle2, UserPlus,
 } from "lucide-react";
 
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
@@ -59,10 +62,7 @@ const getRolesLabel = (roles: string[]) => {
 
 // ── Nav item with route key for status_pagina filtering ──────
 
-interface ERPNavItem extends NavItem { route: string }
-interface ERPNavGroup extends NavGroup { items: ERPNavItem[] }
-
-const ALL_NAV_GROUPS: ERPNavGroup[] = [
+const ALL_NAV_GROUPS: NavGroupWithRoute[] = [
   {
     key: "principal", label: "Principal", icon: Home, defaultOpen: true,
     items: [
@@ -144,32 +144,21 @@ const ALL_NAV_GROUPS: ERPNavGroup[] = [
   },
 ];
 
-const ALL_STANDALONE: ERPNavItem[] = [
+const ALL_STANDALONE: NavItemWithRoute[] = [
   { name: "Distribuicao", href: "/distribuicao", icon: GitBranch, route: "distribuicao" },
   { name: "Filiais", href: "/filiais", icon: Building, route: "filiais" },
   { name: "Configuracoes", href: "/configuracoes", icon: Settings, route: "configuracoes" },
 ];
 
-const PAINEL_GROUP: ERPNavGroup = {
+const PAINEL_GROUP: NavGroupWithRoute = {
   key: "painel", label: "Painel de Controle", icon: Shield, defaultOpen: true,
   items: [
     { name: "Usuarios", href: "/usuarios", icon: Users, route: "usuarios" },
+    { name: "Equipe", href: "/equipe", icon: UserPlus, route: "equipe" },
     { name: "Admin", href: "/admin", icon: Shield, route: "admin" },
     { name: "Log de Acoes", href: "/log-acoes", icon: CheckCircle2, route: "log-acoes" },
   ],
 };
-
-// ── Nav filtering (status_pagina feature flags) ──────────────
-
-function toNavItem(item: ERPNavItem, statusPaginas: any[], isAdminOrDev: boolean): NavItem {
-  const base: NavItem = { name: item.name, href: item.href, icon: item.icon };
-  if (isAdminOrDev) {
-    const status = statusPaginas.find((p: any) => p.nome_pagina === item.route);
-    if (status?.status === "desenvolvimento") base.badge = "DEV";
-    else if (status?.status === "producao") base.badge = "OK";
-  }
-  return base;
-}
 
 const BackToCore = (
   <a
@@ -209,42 +198,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const trialDays = isTrial(ssoCtx) ? subscriptionDaysRemaining(ssoCtx) : null;
   const licenseDays = licenseDaysRemaining(ssoCtx);
 
-  // Feature flag filtering via status_pagina
-  const { data: statusPaginas = [] } = useQuery({
-    queryKey: ["status-paginas"],
-    queryFn: async () => {
-      const { data } = await supabase.from("status_pagina").select("*");
-      return data || [];
-    },
-  });
+  // Feature flag filtering via status_pagina (shared utilities)
+  const { data: statusPaginas = [] } = usePageStatus(supabase);
 
-  const isPageVisible = (route: string) =>
-    statusPaginas.some((p: any) => p.nome_pagina === route);
+  // Effective role for dev visibility: SSO org_role OR ERP DB roles
+  const effectiveDevRole = isDevOrOwner(ssoCtx.org_role) || roles.includes("dev") || roles.includes("admin")
+    ? "dev"   // grant dev visibility
+    : ssoCtx.org_role ?? null;
 
-  const filteredGroups: NavGroup[] = ALL_NAV_GROUPS
-    .map((group) => ({
-      key: group.key, label: group.label, icon: group.icon, defaultOpen: group.defaultOpen,
-      items: group.items
-        .filter((item) => isPageVisible(item.route))
-        .map((item) => toNavItem(item, statusPaginas, isAdminOrDev)),
-    }))
-    .filter((group) => group.items.length > 0);
+  // Filter nav groups + admin panel together via shared utility
+  const allGroups = isAdminOrDev ? [...ALL_NAV_GROUPS, PAINEL_GROUP] : ALL_NAV_GROUPS;
+  const filteredGroups = filterNavByPageStatus(allGroups, statusPaginas, effectiveDevRole);
 
-  // Admin panel group
-  const painelItems = PAINEL_GROUP.items
-    .filter((item) => isPageVisible(item.route))
-    .map((item) => toNavItem(item, statusPaginas, isAdminOrDev));
-  if (painelItems.length > 0) {
-    filteredGroups.push({
-      key: PAINEL_GROUP.key, label: PAINEL_GROUP.label,
-      icon: PAINEL_GROUP.icon, defaultOpen: PAINEL_GROUP.defaultOpen,
-      items: painelItems,
-    });
-  }
-
-  const filteredStandalone: NavItem[] = ALL_STANDALONE
-    .filter((item) => isPageVisible(item.route))
-    .map((item) => toNavItem(item, statusPaginas, isAdminOrDev));
+  // Filter standalone items using shared isPageVisible
+  const filteredStandalone = ALL_STANDALONE
+    .filter((item) => sharedIsPageVisible(item.route, statusPaginas, effectiveDevRole))
+    .map(({ route: _route, ...rest }) => rest);
 
   // Auth handlers — SSO users go back to Core; direct users sign out locally
   const handleLogout = async () => {

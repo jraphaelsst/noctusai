@@ -58,6 +58,7 @@ from app.routers import (
     dashboard_bi,
     evolution_notes,
     homework,
+    invitations,
     invoices,
     lgpd,
     longitudinal,
@@ -123,6 +124,7 @@ app.include_router(invoices.router)
 app.include_router(dashboard_bi.router)
 app.include_router(whatsapp_therapy.router)
 app.include_router(crisis.router)
+app.include_router(invitations.router)
 
 
 @app.get("/health")
