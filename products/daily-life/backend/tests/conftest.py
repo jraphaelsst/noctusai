@@ -33,10 +33,6 @@ def client():
     with patch("app.database.get_supabase_client", return_value=mock_sb), \
          patch("app.dependencies.get_supabase_client", return_value=mock_sb), \
          patch("app.database.get_core_client", return_value=mock_sb), \
-         patch("app.routers.tasks.get_supabase_client", return_value=mock_sb), \
-         patch("app.routers.goals.get_supabase_client", return_value=mock_sb), \
-         patch("app.routers.schedule.get_supabase_client", return_value=mock_sb), \
-         patch("app.routers.notes.get_supabase_client", return_value=mock_sb), \
          patch("app.routers.notificacoes.get_core_client", return_value=mock_sb), \
          patch("app.routers.team.get_core_client", return_value=mock_sb), \
          patch("app.routers.team.get_admin_client", return_value=mock_sb):

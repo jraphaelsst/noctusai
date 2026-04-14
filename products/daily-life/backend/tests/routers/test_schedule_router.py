@@ -217,3 +217,44 @@ class TestDeleteEvent:
         client.mock_supabase.set_table_data("eventos", [])
         resp = client.delete("/api/schedule/nonexistent")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Recurring events
+# ---------------------------------------------------------------------------
+
+class TestRecurringEvents:
+    def test_create_recurring_event(self, client):
+        client.mock_supabase.set_table_data("eventos", [{
+            **SAMPLE_EVENT, "recorrencia": "semanal", "recorrencia_fim": "2026-05-14"
+        }])
+        resp = client.post("/api/schedule", json={
+            "titulo": "Weekly standup",
+            "data_inicio": "2026-04-14T09:00:00",
+            "recorrencia": "semanal",
+            "recorrencia_fim": "2026-05-14",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["data"]["recorrencia"] == "semanal"
+
+    def test_create_event_default_no_recurrence(self, client):
+        client.mock_supabase.set_table_data("eventos", [{**SAMPLE_EVENT, "recorrencia": "nenhuma"}])
+        resp = client.post("/api/schedule", json={
+            "titulo": "One-time event",
+            "data_inicio": "2026-04-14T09:00:00",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["data"]["recorrencia"] == "nenhuma"
+
+    def test_create_invalid_recurrence(self, client):
+        resp = client.post("/api/schedule", json={
+            "titulo": "Bad",
+            "data_inicio": "2026-04-14T09:00:00",
+            "recorrencia": "cada_dois_dias",
+        })
+        assert resp.status_code == 422
+
+    def test_update_recurrence(self, client):
+        client.mock_supabase.set_table_data("eventos", [{**SAMPLE_EVENT, "recorrencia": "diario"}])
+        resp = client.patch("/api/schedule/event-1", json={"recorrencia": "diario"})
+        assert resp.status_code == 200

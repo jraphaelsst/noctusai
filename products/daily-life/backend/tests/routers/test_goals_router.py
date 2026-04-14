@@ -152,10 +152,18 @@ class TestCreateGoal:
 # ---------------------------------------------------------------------------
 
 class TestGetGoal:
-    def test_get_goal_returns_405(self, client):
-        """Goals router does not define GET /{goal_id} — only PATCH/DELETE at that path."""
+    def test_get_goal(self, client):
+        """GET /api/goals/{id} returns a single goal."""
+        client.mock_supabase.set_table_data("metas", SAMPLE_GOAL)
         resp = client.get("/api/goals/goal-1")
-        assert resp.status_code == 405
+        assert resp.status_code == 200
+        assert resp.json()["data"]["id"] == "goal-1"
+
+    def test_get_goal_not_found(self, client):
+        """GET /api/goals/{id} returns 404 when not found."""
+        client.mock_supabase.set_table_data("metas", None)
+        resp = client.get("/api/goals/goal-999")
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

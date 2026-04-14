@@ -52,6 +52,45 @@ class TestListNotes:
         assert len(data) == 1
         assert data[0]["titulo"] == "Ideias para projeto"
 
+    def test_list_notes_search_by_conteudo(self, client):
+        """Search should match notes by conteudo, not just titulo."""
+        note_match_conteudo = {
+            **SAMPLE_NOTE,
+            "id": "note-3",
+            "titulo": "Anotacao generica",
+            "conteudo": "Lembrar de comprar ingredientes para o jantar",
+        }
+        client.mock_supabase.set_table_data("notas", [note_match_conteudo])
+        resp = client.get("/api/notes", params={"busca": "ingredientes"})
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == "note-3"
+        # The term "ingredientes" appears only in conteudo, not titulo
+        assert "ingredientes" in data[0]["conteudo"]
+        assert "ingredientes" not in data[0]["titulo"]
+
+    def test_list_notes_search_multi_field(self, client):
+        """Search with busca should match across both titulo and conteudo via .or_()."""
+        note_titulo_match = {
+            **SAMPLE_NOTE,
+            "id": "note-t",
+            "titulo": "Receita de bolo",
+            "conteudo": "Farinha e ovos",
+        }
+        note_conteudo_match = {
+            **SAMPLE_NOTE,
+            "id": "note-c",
+            "titulo": "Lista de compras",
+            "conteudo": "Comprar bolo na padaria",
+        }
+        # Both notes match "bolo" — one in titulo, one in conteudo
+        client.mock_supabase.set_table_data("notas", [note_titulo_match, note_conteudo_match])
+        resp = client.get("/api/notes", params={"busca": "bolo"})
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert len(data) == 2
+
     def test_list_notes_filter_categoria(self, client):
         client.mock_supabase.set_table_data("notas", [SAMPLE_NOTE])
         resp = client.get("/api/notes", params={"categoria": "trabalho"})
