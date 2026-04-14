@@ -118,18 +118,7 @@ fi
 # ── Step 3: Replace values with placeholders ─────────────────
 log "Step 3: Replacing product values with placeholders..."
 
-# Mapping: seed value → placeholder
-declare -A REPLACEMENTS=(
-    ["Seed Product"]="{{PRODUCT_NAME}}"
-    ["Seed"]="{{PRODUCT_NAME}}"
-    ["seed-product"]="{{PRODUCT_SLUG}}"
-    ["\"seed\""]="\"{{SCHEMA_NAME}}\""
-    ["'seed'"]="'{{SCHEMA_NAME}}'"
-    ["8004"]="{{BACKEND_PORT}}"
-    ["8100"]="{{FRONTEND_PORT}}"
-    ["Sprout"]="{{PRODUCT_ICON}}"
-)
-
+# Replacements are done in order — longer strings first to avoid partial matches
 if [ "$DRY_RUN" != "--dry" ]; then
     # Process all text files in template
     find "$TEMPLATE" -type f \( \
@@ -139,16 +128,19 @@ if [ "$DRY_RUN" != "--dry" ]; then
         -o -name "*.yaml" -o -name "*.toml" -o -name "*.cfg" \
         -o -name "*.txt" -o -name "*.env.example" \
     \) | while read -r file; do
-        for key in "${!REPLACEMENTS[@]}"; do
-            placeholder="${REPLACEMENTS[$key]}"
-            # Use perl for reliable find-and-replace (handles special chars)
-            perl -pi -e "s/\Q${key}\E/${placeholder}/g" "$file" 2>/dev/null || true
-        done
+        # Order matters: longest match first
+        perl -pi -e 's/Seed Product/{{PRODUCT_NAME}}/g' "$file" 2>/dev/null || true
+        perl -pi -e 's/seed-product/{{PRODUCT_SLUG}}/g' "$file" 2>/dev/null || true
+        perl -pi -e 's/"seed"/"{{SCHEMA_NAME}}"/g' "$file" 2>/dev/null || true
+        perl -pi -e "s/'seed'/'{{SCHEMA_NAME}}'/g" "$file" 2>/dev/null || true
+        perl -pi -e 's/Sprout/{{PRODUCT_ICON}}/g' "$file" 2>/dev/null || true
+        perl -pi -e 's/\b8004\b/{{BACKEND_PORT}}/g' "$file" 2>/dev/null || true
+        perl -pi -e 's/\b8100\b/{{FRONTEND_PORT}}/g' "$file" 2>/dev/null || true
     done
 
     log "Replaced product values with placeholders"
 else
-    log "Would replace: Seed→{{PRODUCT_NAME}}, seed→{{SCHEMA_NAME}}, 8004→{{BACKEND_PORT}}, 8100→{{FRONTEND_PORT}}, Sprout→{{PRODUCT_ICON}}"
+    log "Would replace: Seed Product→{{PRODUCT_NAME}}, seed→{{SCHEMA_NAME}}, 8004→{{BACKEND_PORT}}, 8100→{{FRONTEND_PORT}}, Sprout→{{PRODUCT_ICON}}"
 fi
 
 # ── Step 4: Validate ─────────────────────────────────────────
