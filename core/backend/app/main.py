@@ -13,6 +13,8 @@ app = FastAPI(
     title="NoctusAI Core",
     description="AI-first ERP Platform — Core API",
     version="1.0.0",
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
 )
 
 # Apply shared configuration (Sentry, CORS, exception handlers, middleware, rate limiting)
@@ -65,4 +67,4 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "product": "core", "version": "1.0.0"}

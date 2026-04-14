@@ -66,12 +66,7 @@ app = FastAPI(
 )
 
 # Apply shared configuration (Sentry, CORS, exception handlers, middleware, rate limiting)
-configure_app(
-    app, settings, limiter=limiter,
-    cors_expose_headers=[
-        "X-Correlation-ID", "X-Response-Time-Ms", "Content-Disposition",
-    ],
-)
+configure_app(app, settings, limiter=limiter)
 
 # Register routers
 app.include_router(ativos.router)
@@ -129,4 +124,4 @@ app.include_router(team.router)
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "product": "erp-imobiliario", "version": "0.2.0"}

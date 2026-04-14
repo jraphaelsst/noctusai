@@ -37,6 +37,7 @@ const Patrimonio = lazy(() => import("@/pages/Patrimonio"));
 const Operacoes = lazy(() => import("@/pages/Operacoes"));
 const Relatorios = lazy(() => import("@/pages/Relatorios"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
+const NotFound = lazy(() => import("@/pages/NotFound"));
 
 function AppContent() {
   const { user, isInitialized } = useAuthStore();
@@ -72,7 +73,7 @@ function AppContent() {
             <Route path="/patrimonio" element={<Patrimonio />} />
             <Route path="/relatorios" element={<Relatorios />} />
             <Route path="/equipe" element={<Equipe />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
       </ErrorBoundary>

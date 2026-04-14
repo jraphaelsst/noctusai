@@ -12,38 +12,6 @@ from app.config import settings
 from app.rate_limit import limiter
 from app.logging_config import configure_logging
 from noctusai_shared.app_factory import configure_app
-
-logger = logging.getLogger(__name__)
-
-# Configure structured logging
-configure_logging(debug=settings.debug, json_logs=not settings.debug)
-
-# Production safety checks
-if not settings.debug and not settings.jwt_secret:
-    raise RuntimeError(
-        "JWT_SECRET must be set in production. "
-        "Set DEBUG=true for development or provide a secure JWT_SECRET."
-    )
-
-
-# Create app
-app = FastAPI(
-    title="NoctusAI Therapy Platform API",
-    description="Backend API for online therapy: video sessions, scheduling, clinical management, and financials",
-    version="0.1.0",
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
-)
-
-# Apply shared configuration (Sentry, CORS, exception handlers, middleware, rate limiting)
-configure_app(
-    app, settings, limiter=limiter,
-    cors_expose_headers=[
-        "X-Correlation-ID", "X-Response-Time-Ms", "Content-Disposition",
-    ],
-)
-
-# Register routers
 from app.routers import (
     admin,
     admin_financials,
@@ -75,7 +43,7 @@ from app.routers import (
     rooms,
     session_journal,
     sessions,
-    settings,
+    settings as settings_router,
     support,
     therapeutic_journal,
     therapists,
@@ -85,6 +53,31 @@ from app.routers import (
     whatsapp_therapy,
     treatment_plans,
 )
+
+logger = logging.getLogger(__name__)
+
+# Configure structured logging
+configure_logging(debug=settings.debug, json_logs=not settings.debug)
+
+# Production safety checks
+if not settings.debug and not settings.jwt_secret:
+    raise RuntimeError(
+        "JWT_SECRET must be set in production. "
+        "Set DEBUG=true for development or provide a secure JWT_SECRET."
+    )
+
+
+# Create app
+app = FastAPI(
+    title="NoctusAI Therapy Platform API",
+    description="Backend API for online therapy: video sessions, scheduling, clinical management, and financials",
+    version="0.1.0",
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+)
+
+# Apply shared configuration (Sentry, CORS, exception handlers, middleware, rate limiting)
+configure_app(app, settings, limiter=limiter)
 
 app.include_router(auth.router)
 app.include_router(therapists.router)
@@ -110,7 +103,7 @@ app.include_router(refunds.router)
 app.include_router(messaging.router)
 app.include_router(support.router)
 app.include_router(attachments.router)
-app.include_router(settings.router)
+app.include_router(settings_router.router)
 app.include_router(lgpd.router)
 app.include_router(anamnese.router)
 app.include_router(treatment_plans.router)

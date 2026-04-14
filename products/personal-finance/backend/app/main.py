@@ -35,8 +35,8 @@ app = FastAPI(
     title="NoctusAI Financas Pessoais API",
     description="Backend API for personal finance management, investments, and portfolio tracking",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
 )
 

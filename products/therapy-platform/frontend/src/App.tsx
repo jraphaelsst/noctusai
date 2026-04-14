@@ -1,11 +1,12 @@
 import { lazy, Suspense } from "react";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { useAuthStore } from "@/store/authStore";
 import { PageSkeleton } from "@noctusai/shared/design-system";
+import { createQueryClient } from "@noctusai/shared/query-client";
 import { resolveSSORoles } from "@noctusai/shared";
 
 // Layout (unified — role-based nav switching inside a single Layout.tsx)
@@ -91,15 +92,7 @@ const TherapistProfile = lazy(() => import("./pages/TherapistProfile"));
 const ClinicDirectory = lazy(() => import("./pages/ClinicDirectory"));
 const ClinicProfile = lazy(() => import("./pages/ClinicProfile"));
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      refetchOnWindowFocus: false,
-      staleTime: 2 * 60 * 1000,
-    },
-  },
-});
+const queryClient = createQueryClient();
 
 // ── Role-based route groups ─────────────────────────────────
 

@@ -15,13 +15,7 @@ app = FastAPI(
     redoc_url="/redoc" if settings.debug else None,
 )
 
-configure_app(
-    app,
-    cors_origins=settings.cors_origins,
-    debug=settings.debug,
-    limiter=limiter,
-    exposed_headers=["X-Correlation-ID", "X-Response-Time-Ms"],
-)
+configure_app(app, settings, limiter=limiter)
 
 # Register routers
 app.include_router(health.router)

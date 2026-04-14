@@ -106,7 +106,7 @@ def configure_app(
         "X-Requested-With", "X-Correlation-ID", "X-Request-ID",
     ]
     _expose_headers = cors_expose_headers or [
-        "X-Correlation-ID", "X-Response-Time-Ms",
+        "X-Correlation-ID", "X-Response-Time-Ms", "Content-Disposition",
     ]
 
     app.add_middleware(
