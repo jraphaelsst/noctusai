@@ -11,7 +11,14 @@ import { PageSkeleton } from "@noctusai/shared/design-system";
 
 const queryClient = createQueryClient();
 
-// Lazy pages
+// Lazy pages — public
+const Landing = lazy(() => import("@/pages/Landing"));
+const Login = lazy(() => import("@/pages/Login"));
+const SSOCallback = lazy(() => import("@/pages/SSOCallback"));
+const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
+const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
+
+// Lazy pages — authenticated
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Contas = lazy(() => import("@/pages/Contas"));
 const Transacoes = lazy(() => import("@/pages/Transacoes"));
@@ -29,10 +36,7 @@ const Recorrentes = lazy(() => import("@/pages/Recorrentes"));
 const Patrimonio = lazy(() => import("@/pages/Patrimonio"));
 const Operacoes = lazy(() => import("@/pages/Operacoes"));
 const Relatorios = lazy(() => import("@/pages/Relatorios"));
-const SSOCallback = lazy(() => import("@/pages/SSOCallback"));
-const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
-const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 
 function AppContent() {
   const { user, isInitialized } = useAuthStore();
@@ -42,7 +46,7 @@ function AppContent() {
   }
 
   if (!user) {
-    return <Navigate to="/sso" replace />;
+    return <Navigate to="/landing" replace />;
   }
 
   return (
@@ -80,6 +84,8 @@ function AppRoutes() {
   return (
     <Suspense fallback={<PageSkeleton />}>
       <Routes>
+        <Route path="/landing" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
         <Route path="/sso" element={<SSOCallback />} />
         <Route path="/accept-invite/:token" element={<AcceptInvite />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />

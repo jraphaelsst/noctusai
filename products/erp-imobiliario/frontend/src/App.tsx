@@ -1,17 +1,18 @@
-import { useState, lazy, Suspense } from "react";
+import { lazy, Suspense } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "./components/layout/Layout";
 import { AuthProvider } from "./components/auth/AuthProvider";
-import { LoginForm } from "./components/auth/LoginForm";
 import { useAuthStore } from "./store/authStore";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { createQueryClient } from "@noctusai/shared/query-client";
 import { PageSkeleton } from "@noctusai/shared/design-system";
 
 // Lazy load das páginas para melhor performance inicial
+const Landing = lazy(() => import("./pages/Landing"));
+const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const SSOCallback = lazy(() => import("./pages/SSOCallback"));
 const Metas = lazy(() => import("./pages/Metas"));
@@ -79,7 +80,7 @@ function AuthenticatedRoutes() {
     <Layout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/funil" element={<Funil />} />
           <Route path="/clientes" element={<Clientes />} />
           <Route path="/clientes/:id" element={<ClienteDetalhes />} />
@@ -142,17 +143,31 @@ function AuthenticatedRoutes() {
 
 function AppContent() {
   const { user, isInitialized } = useAuthStore();
-  const [isSignUp, setIsSignUp] = useState(false);
 
   if (!isInitialized) {
     return <PageSkeleton />;
   }
 
-  if (!user) {
-    return <LoginForm onToggleMode={() => setIsSignUp(!isSignUp)} isSignUp={isSignUp} />;
+  // Authenticated: show app routes (/ redirects to /dashboard)
+  if (user) {
+    return (
+      <Routes>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/*" element={<AuthenticatedRoutes />} />
+      </Routes>
+    );
   }
 
-  return <AuthenticatedRoutes />;
+  // Not authenticated: show public pages
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
+  );
 }
 
 const App = () => (
@@ -168,7 +183,7 @@ const App = () => (
                   <Route path="/sso" element={<SSOCallback />} />
                   <Route path="/accept-invite/:token" element={<AcceptInvite />} />
                   <Route path="/forgot-password" element={<ForgotPassword />} />
-                  {/* All other routes require authentication */}
+                  {/* All other routes — AppContent handles auth gating */}
                   <Route path="/*" element={<AppContent />} />
                 </Routes>
               </Suspense>

@@ -66,7 +66,7 @@ const ALL_NAV_GROUPS: NavGroupWithRoute[] = [
   {
     key: "principal", label: "Principal", icon: Home, defaultOpen: true,
     items: [
-      { name: "Dashboard", href: "/", icon: Home, route: "dashboard" },
+      { name: "Dashboard", href: "/dashboard", icon: Home, route: "dashboard" },
       { name: "Funil de Vendas", href: "/funil", icon: LayoutDashboard, route: "funil" },
       { name: "Clientes", href: "/clientes", icon: UserCircle, route: "clientes" },
       { name: "Metas", href: "/metas", icon: Target, route: "metas" },

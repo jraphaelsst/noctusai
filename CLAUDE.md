@@ -45,7 +45,7 @@ One `Layout.tsx` per product. Imports shared AppShell + Sidebar + Header + useTh
 
 **Venv**: `python3.11 -m venv venv && pip install -r requirements.txt && pip install -e shared/backend`
 **Servers**: `bash start.sh` or `uvicorn app.main:app --reload --port <PORT> --app-dir <backend>`
-**Tests**: `cd <product>/backend && pytest` — 3,585 total (399 core, 1649 ERP, 483 PF, 1054 therapy)
+**Tests**: `cd <product>/backend && pytest` — 3,653 total (410 core, 1661 ERP, 502 PF, 1080 therapy). Integration e2e tests in `tests/integration/`.
 
 ## Environment
 
