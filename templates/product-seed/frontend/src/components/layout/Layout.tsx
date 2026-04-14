@@ -95,7 +95,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // Page status filtering — gracefully falls back if table doesn't exist
   const { data: statusPaginas } = usePageStatus(supabase, !!user);
   const navGroups: NavGroup[] = statusPaginas?.length
-    ? filterNavByPageStatus(NAV_GROUPS_WITH_ROUTES, statusPaginas, ssoCtx.org.role)
+    ? filterNavByPageStatus(NAV_GROUPS_WITH_ROUTES, statusPaginas, user?.user_metadata?.org_role)
     : NAV_GROUPS_FALLBACK;
 
   const handleLogout = async () => {
@@ -128,7 +128,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const userRole = ssoCtx.isProductAdmin
     ? "Administrador"
-    : ROLE_LABELS[ssoCtx.org.role] || "Seed Product";
+    : ROLE_LABELS[user?.user_metadata?.org_role] || "Seed Product";
 
   return (
     <AppShell

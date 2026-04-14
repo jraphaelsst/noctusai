@@ -74,10 +74,10 @@ The shared infrastructure layer that all products depend on.
 - [x] PF migration `004_status_pagina.sql` created (seeds 12 routes)
 - [x] Therapy migration `002_status_pagina.sql` created (seeds 46 routes)
 - [x] ERP already had it — verified compatible with shared pattern
-- [ ] PF Layout: wire usePageStatus + filterNavByPageStatus (migration must run first)
-- [ ] Therapy Layout: wire usePageStatus + filterNavByPageStatus (migration must run first)
-- [ ] Seed Layout: wire usePageStatus template
-- [ ] Core: evaluate if needed (Core has admin pages only)
+- [x] PF Layout: wired usePageStatus + filterNavByPageStatus (graceful fallback when migration not run)
+- [x] Therapy Layout: wired usePageStatus + filterNavByPageStatus (all 4 role navs + standalone items)
+- [x] Seed Layout: already wired (verified + fixed ssoCtx.org.role → user_metadata.org_role)
+- [x] Core: not needed (Core has admin pages only, no status_pagina table)
 
 ### 2.3.3 — Shared Invitation System (DONE)
 

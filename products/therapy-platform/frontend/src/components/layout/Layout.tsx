@@ -23,7 +23,11 @@ import {
 } from "@noctusai/shared/design-system";
 import type { NavGroup, NavItem } from "@noctusai/shared/design-system";
 import { NotificationBell } from "@/components/NotificationBell";
-import { resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining } from "@noctusai/shared";
+import {
+  resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
+  usePageStatus, filterNavByPageStatus,
+} from "@noctusai/shared";
+import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/shared";
 import { toast } from "sonner";
 import {
   LayoutDashboard, CalendarDays, Users, ClipboardList, UserCircle,
@@ -46,17 +50,17 @@ const ROLE_LABELS: Record<string, string> = {
 
 // ── Nav data per role ────────────────────────────────────────
 
-const ADMIN_NAV: NavGroup[] = [
+const ADMIN_NAV: NavGroupWithRoute[] = [
   {
     key: "principal",
     label: "Principal",
     icon: LayoutDashboard,
     defaultOpen: true,
     items: [
-      { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
-      { name: "Terapeutas", href: "/admin/terapeutas", icon: Users },
-      { name: "Clinicas", href: "/admin/clinicas", icon: Building2 },
-      { name: "Pacientes", href: "/admin/pacientes", icon: UserCircle },
+      { name: "Dashboard", href: "/admin", icon: LayoutDashboard, route: "admin-dashboard" },
+      { name: "Terapeutas", href: "/admin/terapeutas", icon: Users, route: "admin-terapeutas" },
+      { name: "Clinicas", href: "/admin/clinicas", icon: Building2, route: "admin-clinicas" },
+      { name: "Pacientes", href: "/admin/pacientes", icon: UserCircle, route: "admin-pacientes" },
     ],
   },
   {
@@ -65,9 +69,9 @@ const ADMIN_NAV: NavGroup[] = [
     icon: CalendarDays,
     defaultOpen: true,
     items: [
-      { name: "Agendamentos", href: "/admin/agendamentos", icon: CalendarDays },
-      { name: "Financeiro", href: "/admin/financeiro", icon: DollarSign },
-      { name: "Reembolsos", href: "/admin/reembolsos", icon: ReceiptText },
+      { name: "Agendamentos", href: "/admin/agendamentos", icon: CalendarDays, route: "admin-agendamentos" },
+      { name: "Financeiro", href: "/admin/financeiro", icon: DollarSign, route: "admin-financeiro" },
+      { name: "Reembolsos", href: "/admin/reembolsos", icon: ReceiptText, route: "admin-reembolsos" },
     ],
   },
   {
@@ -76,27 +80,27 @@ const ADMIN_NAV: NavGroup[] = [
     icon: Settings,
     defaultOpen: false,
     items: [
-      { name: "Configuracoes", href: "/admin/configuracoes", icon: Settings },
-      { name: "Prompts IA", href: "/admin/prompts-ia", icon: Brain },
-      { name: "Suporte", href: "/admin/suporte", icon: HeadphonesIcon },
-      { name: "Moderacao", href: "/admin/moderacao", icon: ShieldCheck },
-      { name: "Alertas de Crise", href: "/admin/alertas-crise", icon: AlertTriangle },
-      { name: "Avaliacoes", href: "/admin/avaliacoes", icon: Star },
+      { name: "Configuracoes", href: "/admin/configuracoes", icon: Settings, route: "admin-configuracoes" },
+      { name: "Prompts IA", href: "/admin/prompts-ia", icon: Brain, route: "admin-prompts-ia" },
+      { name: "Suporte", href: "/admin/suporte", icon: HeadphonesIcon, route: "admin-suporte" },
+      { name: "Moderacao", href: "/admin/moderacao", icon: ShieldCheck, route: "admin-moderacao" },
+      { name: "Alertas de Crise", href: "/admin/alertas-crise", icon: AlertTriangle, route: "admin-alertas-crise" },
+      { name: "Avaliacoes", href: "/admin/avaliacoes", icon: Star, route: "admin-avaliacoes" },
     ],
   },
 ];
 
-const CLINIC_NAV: NavGroup[] = [
+const CLINIC_NAV: NavGroupWithRoute[] = [
   {
     key: "principal",
     label: "Principal",
     icon: LayoutDashboard,
     defaultOpen: true,
     items: [
-      { name: "Dashboard", href: "/clinic", icon: LayoutDashboard },
-      { name: "Terapeutas", href: "/clinic/terapeutas", icon: Users },
-      { name: "Pacientes", href: "/clinic/pacientes", icon: UserCircle },
-      { name: "Agendamentos", href: "/clinic/agendamentos", icon: CalendarDays },
+      { name: "Dashboard", href: "/clinic", icon: LayoutDashboard, route: "clinic-dashboard" },
+      { name: "Terapeutas", href: "/clinic/terapeutas", icon: Users, route: "clinic-terapeutas" },
+      { name: "Pacientes", href: "/clinic/pacientes", icon: UserCircle, route: "clinic-pacientes" },
+      { name: "Agendamentos", href: "/clinic/agendamentos", icon: CalendarDays, route: "clinic-agendamentos" },
     ],
   },
   {
@@ -105,28 +109,28 @@ const CLINIC_NAV: NavGroup[] = [
     icon: DollarSign,
     defaultOpen: true,
     items: [
-      { name: "Financeiro", href: "/clinic/financeiro", icon: DollarSign },
-      { name: "Mensagens", href: "/clinic/mensagens", icon: MessageSquare },
-      { name: "Avaliacoes", href: "/clinic/avaliacoes", icon: Star },
+      { name: "Financeiro", href: "/clinic/financeiro", icon: DollarSign, route: "clinic-financeiro" },
+      { name: "Mensagens", href: "/clinic/mensagens", icon: MessageSquare, route: "clinic-mensagens" },
+      { name: "Avaliacoes", href: "/clinic/avaliacoes", icon: Star, route: "clinic-avaliacoes" },
     ],
   },
 ];
-const CLINIC_STANDALONE: NavItem[] = [
-  { name: "Configuracoes", href: "/clinic/configuracoes", icon: Settings },
+const CLINIC_STANDALONE: NavItemWithRoute[] = [
+  { name: "Configuracoes", href: "/clinic/configuracoes", icon: Settings, route: "clinic-configuracoes" },
 ];
 
-const THERAPIST_NAV: NavGroup[] = [
+const THERAPIST_NAV: NavGroupWithRoute[] = [
   {
     key: "consultorio",
     label: "Consultorio",
     icon: Brain,
     defaultOpen: true,
     items: [
-      { name: "Dashboard", href: "/therapist", icon: LayoutDashboard },
-      { name: "Agenda", href: "/therapist/agenda", icon: CalendarDays },
-      { name: "Pacientes", href: "/therapist/pacientes", icon: Users },
-      { name: "Sessoes", href: "/therapist/sessoes", icon: ClipboardList },
-      { name: "Prontuario", href: "/therapist/prontuario", icon: ClipboardList },
+      { name: "Dashboard", href: "/therapist", icon: LayoutDashboard, route: "therapist-dashboard" },
+      { name: "Agenda", href: "/therapist/agenda", icon: CalendarDays, route: "therapist-agenda" },
+      { name: "Pacientes", href: "/therapist/pacientes", icon: Users, route: "therapist-pacientes" },
+      { name: "Sessoes", href: "/therapist/sessoes", icon: ClipboardList, route: "therapist-sessoes" },
+      { name: "Prontuario", href: "/therapist/prontuario", icon: ClipboardList, route: "therapist-prontuario" },
     ],
   },
   {
@@ -135,29 +139,29 @@ const THERAPIST_NAV: NavGroup[] = [
     icon: DollarSign,
     defaultOpen: true,
     items: [
-      { name: "Financeiro", href: "/therapist/financeiro", icon: DollarSign },
-      { name: "Tarefas", href: "/therapist/tarefas-terapeuticas", icon: CheckSquare },
-      { name: "Dashboard", href: "/therapist/bi", icon: BarChart3 },
-      { name: "Alertas", href: "/therapist/alertas-crise", icon: AlertTriangle },
-      { name: "Avaliacoes", href: "/therapist/avaliacoes", icon: Star },
-      { name: "Mensagens", href: "/therapist/mensagens", icon: MessageSquare },
+      { name: "Financeiro", href: "/therapist/financeiro", icon: DollarSign, route: "therapist-financeiro" },
+      { name: "Tarefas", href: "/therapist/tarefas-terapeuticas", icon: CheckSquare, route: "therapist-tarefas" },
+      { name: "Dashboard", href: "/therapist/bi", icon: BarChart3, route: "therapist-bi" },
+      { name: "Alertas", href: "/therapist/alertas-crise", icon: AlertTriangle, route: "therapist-alertas-crise" },
+      { name: "Avaliacoes", href: "/therapist/avaliacoes", icon: Star, route: "therapist-avaliacoes" },
+      { name: "Mensagens", href: "/therapist/mensagens", icon: MessageSquare, route: "therapist-mensagens" },
     ],
   },
 ];
-const THERAPIST_STANDALONE: NavItem[] = [
-  { name: "Configuracoes", href: "/therapist/configuracoes", icon: Settings },
+const THERAPIST_STANDALONE: NavItemWithRoute[] = [
+  { name: "Configuracoes", href: "/therapist/configuracoes", icon: Settings, route: "therapist-configuracoes" },
 ];
 
-const PATIENT_NAV: NavGroup[] = [
+const PATIENT_NAV: NavGroupWithRoute[] = [
   {
     key: "principal",
     label: "Principal",
     icon: Heart,
     defaultOpen: true,
     items: [
-      { name: "Dashboard", href: "/patient", icon: LayoutDashboard },
-      { name: "Encontrar Terapeuta", href: "/therapists", icon: Search },
-      { name: "Explorar Clinicas", href: "/clinics", icon: Building2 },
+      { name: "Dashboard", href: "/patient", icon: LayoutDashboard, route: "patient-dashboard" },
+      { name: "Encontrar Terapeuta", href: "/therapists", icon: Search, route: "patient-encontrar-terapeuta" },
+      { name: "Explorar Clinicas", href: "/clinics", icon: Building2, route: "patient-explorar-clinicas" },
     ],
   },
   {
@@ -166,12 +170,12 @@ const PATIENT_NAV: NavGroup[] = [
     icon: ClipboardList,
     defaultOpen: true,
     items: [
-      { name: "Minha Agenda", href: "/patient/agenda", icon: CalendarDays },
-      { name: "Minhas Sessoes", href: "/patient/sessoes", icon: ClipboardList },
-      { name: "Minha Jornada", href: "/patient/jornada", icon: TrendingUp },
-      { name: "Humor", href: "/patient/humor", icon: Smile },
-      { name: "Diario", href: "/patient/diario", icon: BookOpen },
-      { name: "Tarefas", href: "/patient/tarefas", icon: CheckSquare },
+      { name: "Minha Agenda", href: "/patient/agenda", icon: CalendarDays, route: "patient-agenda" },
+      { name: "Minhas Sessoes", href: "/patient/sessoes", icon: ClipboardList, route: "patient-sessoes" },
+      { name: "Minha Jornada", href: "/patient/jornada", icon: TrendingUp, route: "patient-jornada" },
+      { name: "Humor", href: "/patient/humor", icon: Smile, route: "patient-humor" },
+      { name: "Diario", href: "/patient/diario", icon: BookOpen, route: "patient-diario" },
+      { name: "Tarefas", href: "/patient/tarefas", icon: CheckSquare, route: "patient-tarefas" },
     ],
   },
   {
@@ -180,15 +184,15 @@ const PATIENT_NAV: NavGroup[] = [
     icon: Wallet,
     defaultOpen: false,
     items: [
-      { name: "Minha Carteira", href: "/patient/carteira", icon: Wallet },
-      { name: "Recibos", href: "/patient/recibos", icon: Receipt },
-      { name: "Avaliacoes", href: "/patient/avaliacoes", icon: Star },
-      { name: "Mensagens", href: "/patient/mensagens", icon: MessageSquare },
+      { name: "Minha Carteira", href: "/patient/carteira", icon: Wallet, route: "patient-carteira" },
+      { name: "Recibos", href: "/patient/recibos", icon: Receipt, route: "patient-recibos" },
+      { name: "Avaliacoes", href: "/patient/avaliacoes", icon: Star, route: "patient-avaliacoes" },
+      { name: "Mensagens", href: "/patient/mensagens", icon: MessageSquare, route: "patient-mensagens" },
     ],
   },
 ];
-const PATIENT_STANDALONE: NavItem[] = [
-  { name: "Configuracoes", href: "/patient/configuracoes", icon: Settings },
+const PATIENT_STANDALONE: NavItemWithRoute[] = [
+  { name: "Configuracoes", href: "/patient/configuracoes", icon: Settings, route: "patient-configuracoes" },
 ];
 
 // ── Brand info per role ──────────────────────────────────────
@@ -202,13 +206,21 @@ const BRAND_CONFIG: Record<string, { title: string; subtitle: string }> = {
 
 // ── Nav resolver ─────────────────────────────────────────────
 
-function getNavForRole(role: string): { groups: NavGroup[]; standalone: NavItem[] } {
+function getNavForRole(role: string): { groups: NavGroupWithRoute[]; standalone: NavItemWithRoute[] } {
   switch (role) {
     case "admin": return { groups: ADMIN_NAV, standalone: [] };
     case "clinica": return { groups: CLINIC_NAV, standalone: CLINIC_STANDALONE };
     case "terapeuta": return { groups: THERAPIST_NAV, standalone: THERAPIST_STANDALONE };
     default: return { groups: PATIENT_NAV, standalone: PATIENT_STANDALONE };
   }
+}
+
+/** Strip route fields from nav data for fallback when status_pagina table doesn't exist */
+function stripRoutes(groups: NavGroupWithRoute[]): NavGroup[] {
+  return groups.map((g) => ({ ...g, items: g.items.map(({ route: _r, ...rest }) => rest) })) as NavGroup[];
+}
+function stripRouteFromItems(items: NavItemWithRoute[]): NavItem[] {
+  return items.map(({ route: _r, ...rest }) => rest) as NavItem[];
 }
 
 // ── Back to NoctusAI (shown for SSO users) ─────────────────
@@ -240,10 +252,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const userRole: string =
     isProductAdmin ? "admin" :
     (meta?.role as string) || "paciente";
-  const { groups, standalone } = getNavForRole(userRole);
+  const { groups: rawGroups, standalone: rawStandalone } = getNavForRole(userRole);
   const brand = BRAND_CONFIG[userRole] || BRAND_CONFIG.paciente;
   const trialDays = isTrial(ssoCtx) ? subscriptionDaysRemaining(ssoCtx) : null;
   const licenseDays = licenseDaysRemaining(ssoCtx);
+
+  // Page status filtering — gracefully falls back if table doesn't exist
+  const { data: statusPaginas } = usePageStatus(supabase, !!user);
+  const groups = statusPaginas?.length
+    ? filterNavByPageStatus(rawGroups, statusPaginas, user?.user_metadata?.org_role) as NavGroup[]
+    : stripRoutes(rawGroups);
+  const standalone = statusPaginas?.length
+    ? filterNavByPageStatus(
+        [{ key: "_standalone", label: "", items: rawStandalone }],
+        statusPaginas,
+        user?.user_metadata?.org_role,
+      ).flatMap((g) => g.items) as NavItem[]
+    : stripRouteFromItems(rawStandalone);
 
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();

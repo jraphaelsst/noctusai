@@ -11,7 +11,11 @@ import {
 } from "@noctusai/shared/design-system";
 import type { NavGroup } from "@noctusai/shared/design-system";
 import { NotificationBell } from "@/components/NotificationBell";
-import { resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining } from "@noctusai/shared";
+import {
+  resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
+  usePageStatus, filterNavByPageStatus,
+} from "@noctusai/shared";
+import type { NavGroupWithRoute } from "@noctusai/shared";
 import { toast } from "sonner";
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, Tags, PiggyBank, Target,
@@ -21,17 +25,19 @@ import {
 
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
 
-const NAV_GROUPS: NavGroup[] = [
+// ── Nav groups with route keys for page status filtering ──────────────
+
+const NAV_GROUPS_WITH_ROUTES: NavGroupWithRoute[] = [
   {
     key: "principal",
     label: "Principal",
     icon: Home,
     defaultOpen: true,
     items: [
-      { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Contas", href: "/contas", icon: Wallet },
-      { name: "Transacoes", href: "/transacoes", icon: ArrowLeftRight },
-      { name: "Categorias", href: "/categorias", icon: Tags },
+      { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
+      { name: "Contas", href: "/contas", icon: Wallet, route: "contas" },
+      { name: "Transacoes", href: "/transacoes", icon: ArrowLeftRight, route: "transacoes" },
+      { name: "Categorias", href: "/categorias", icon: Tags, route: "categorias" },
     ],
   },
   {
@@ -40,9 +46,9 @@ const NAV_GROUPS: NavGroup[] = [
     icon: BarChart3,
     defaultOpen: true,
     items: [
-      { name: "Orcamentos", href: "/orcamentos", icon: PiggyBank },
-      { name: "Metas", href: "/metas", icon: Target },
-      { name: "Recorrentes", href: "/recorrentes", icon: CalendarClock },
+      { name: "Orcamentos", href: "/orcamentos", icon: PiggyBank, route: "orcamentos" },
+      { name: "Metas", href: "/metas", icon: Target, route: "metas" },
+      { name: "Recorrentes", href: "/recorrentes", icon: CalendarClock, route: "recorrentes" },
     ],
   },
   {
@@ -51,9 +57,9 @@ const NAV_GROUPS: NavGroup[] = [
     icon: LineChart,
     defaultOpen: true,
     items: [
-      { name: "Investimentos", href: "/carteira", icon: TrendingUp },
-      { name: "Watchlist", href: "/watchlist", icon: Eye },
-      { name: "Operacoes", href: "/operacoes", icon: ArrowUpDown },
+      { name: "Investimentos", href: "/carteira", icon: TrendingUp, route: "carteira" },
+      { name: "Watchlist", href: "/watchlist", icon: Eye, route: "watchlist" },
+      { name: "Operacoes", href: "/operacoes", icon: ArrowUpDown, route: "operacoes" },
     ],
   },
   {
@@ -62,12 +68,19 @@ const NAV_GROUPS: NavGroup[] = [
     icon: FileBarChart,
     defaultOpen: true,
     items: [
-      { name: "Patrimonio", href: "/patrimonio", icon: Landmark },
-      { name: "Relatorios", href: "/relatorios", icon: FileBarChart },
-      { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Patrimonio", href: "/patrimonio", icon: Landmark, route: "patrimonio" },
+      { name: "Relatorios", href: "/relatorios", icon: FileBarChart, route: "relatorios" },
+      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
   },
 ];
+
+// ── Fallback nav groups (when no status_pagina table exists) ──────────
+
+const NAV_GROUPS_FALLBACK: NavGroup[] = NAV_GROUPS_WITH_ROUTES.map((g) => ({
+  ...g,
+  items: g.items.map(({ route: _route, ...rest }) => rest),
+})) as NavGroup[];
 
 const BackToCore = (
   <a
@@ -90,6 +103,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const trialDays = isTrial(ssoCtx) ? subscriptionDaysRemaining(ssoCtx) : null;
   const licenseDays = licenseDaysRemaining(ssoCtx);
+
+  // Page status filtering — gracefully falls back if table doesn't exist
+  const { data: statusPaginas } = usePageStatus(supabase, !!user);
+  const navGroups = statusPaginas?.length
+    ? filterNavByPageStatus(NAV_GROUPS_WITH_ROUTES, statusPaginas, user?.user_metadata?.org_role) as NavGroup[]
+    : NAV_GROUPS_FALLBACK;
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -126,7 +145,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           brandIcon={DollarSign}
           brandTitle="Financas Pessoais"
           brandSubtitle={ssoCtx.org.name || "NoctusAI"}
-          navGroups={NAV_GROUPS}
+          navGroups={navGroups}
           footerContent={ssoCtx.isSSO ? BackToCore : undefined}
         />
       }
