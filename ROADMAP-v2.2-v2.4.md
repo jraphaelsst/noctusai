@@ -141,7 +141,9 @@ The shared infrastructure layer that all products depend on.
 - [x] Resend API key configured in .env
 - [x] Shared email templates created (send_product_invitation_email, send_password_reset_email)
 - [x] All product routers use shared email templates
-- [ ] Verify email delivery works end-to-end (requires running migration + live test)
+- [x] All migrations run via Supabase MCP: PF status_pagina, PF invitations, Therapy status_pagina, Therapy invitations, ERP invitations, Seed schema (status_pagina + invitations)
+- [ ] Add `seed` to Supabase Dashboard "Exposed schemas" (manual: Project Settings → API)
+- [ ] Verify email delivery works end-to-end (live test)
 - [ ] Test: invite → email received → link works → password set → login
 
 ### 2.3.7 — Tests for v2.3 (DONE)

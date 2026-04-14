@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS "personal-finance".invitations (
 
 ALTER TABLE "personal-finance".invitations ENABLE ROW LEVEL SECURITY;
 
--- Org-scoped via user_org_id() helper
+-- Org-scoped via JWT org_id
 CREATE POLICY "invitations_select_own_org" ON "personal-finance".invitations FOR SELECT TO authenticated
-  USING (org_id = "personal-finance".user_org_id());
+  USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
 
 CREATE INDEX idx_pf_invitations_org ON "personal-finance".invitations(org_id);
 CREATE INDEX idx_pf_invitations_token ON "personal-finance".invitations(token);
