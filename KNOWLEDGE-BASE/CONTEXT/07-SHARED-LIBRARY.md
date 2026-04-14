@@ -160,4 +160,15 @@ Import: `import { ... } from '@noctusai/shared/design-system'`
 2. **Frontend**: `shared/frontend/src/<module>.ts`, export from `index.ts`
 3. **Design system**: `shared/frontend/src/design-system/components/`, export from `design-system/index.ts`
 4. **Document**: Update this file
-5. **Update seed**: If all products should have it, update `templates/product-seed/`
+5. **Update seed product**: `products/seed/` — the live reference implementation. Template auto-syncs via post-commit hook.
+
+## Scripts & Automation
+
+| Script | Purpose | Run when |
+|--------|---------|----------|
+| `scripts/setup.sh` | Full repo setup (hooks + venv + deps) | Once after `git clone` |
+| `scripts/sync-seed-template.sh` | Sync seed → template with `{{PLACEHOLDERS}}` | Automatic via hook, or manual |
+| `scripts/install-hooks.sh` | Git hooks only (subset of setup.sh) | If hooks need reinstalling |
+| `start.sh` | Start all backend + frontend servers | When developing |
+
+The post-commit hook auto-syncs `products/seed/` → `templates/product-seed/` on every commit that touches the seed. See `scripts/README.md` for details.

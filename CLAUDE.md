@@ -43,9 +43,10 @@ One `Layout.tsx` per product using shared AppShell + Sidebar + Header. Nav switc
 
 ## Setup
 
-**Venv**: `python3.11 -m venv venv && pip install -r requirements.txt && pip install -e shared/backend`
-**Servers**: `bash start.sh` or `uvicorn app.main:app --reload --port <PORT> --app-dir <backend>`
-**Tests**: `cd <product>/backend && pytest` — 3,653 total (410 core, 1661 ERP, 502 PF, 1080 therapy). Integration e2e tests in `tests/integration/`.
+**After cloning**: `bash scripts/setup.sh` — installs git hooks, venv, all deps. Run once.
+**Start servers**: `bash start.sh` or `uvicorn app.main:app --reload --port <PORT> --app-dir <backend>`
+**Tests**: `cd <product>/backend && pytest` — 3,653 total (410 core, 1661 ERP, 502 PF, 1080 therapy).
+**Scripts**: `scripts/README.md` documents all scripts and git hooks. Key: `setup.sh` (first-time), `sync-seed-template.sh` (seed→template auto-sync, runs via post-commit hook).
 
 ## Environment
 
@@ -82,4 +83,6 @@ Platform concern — `public.notifications` table. Product routers at `/api/noti
 
 ## Creating a New Product
 
-Copy `templates/product-seed/`, replace placeholders, install deps, run migrations, register product. Seed provides: shared app_factory, config, database, dependencies with SSO role resolution, notifications, team invitations template, Layout with page status, LoginForm, AcceptInvite, ForgotPassword, NotificationBell, tests.
+Copy `templates/product-seed/`, replace placeholders (`{{PRODUCT_NAME}}`, `{{SCHEMA_NAME}}`, `{{BACKEND_PORT}}`, `{{FRONTEND_PORT}}`, `{{PRODUCT_ICON}}`), install deps, run migrations, register product.
+
+The template is **auto-generated** from the live seed product (`products/seed/`) via `scripts/sync-seed-template.sh`. The post-commit hook keeps them in sync — edit the seed, template updates automatically. See `scripts/README.md` for details and `TODO-SEED-PRODUCT.md` for the seed build checklist.
