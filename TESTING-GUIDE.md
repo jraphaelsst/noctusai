@@ -431,6 +431,121 @@ Open each URL in browser or curl:
 - [ ] http://localhost:8002/api/health → `{"status": "ok", "product": "Personal Finance", "version": "..."}`
 - [ ] http://localhost:8003/api/health → `{"status": "ok", "product": "Therapy Platform", "version": "..."}`
 - [ ] http://localhost:8004/api/health → `{"status": "ok", "product": "Seed Product", "version": "..."}`
+- [ ] http://localhost:8005/api/health → `{"status": "ok", "product": "NoctusAI Daily Life", "version": "..."}`
+
+---
+
+## 13. Daily Life — Feature Pages
+
+### 13.1 Tarefas (Tasks)
+
+- [ ] Navigate to /tarefas
+- [ ] Stats cards visible at top (total, pendentes, em progresso, concluidas)
+- [ ] Click "Nova Tarefa" → modal opens
+- [ ] Create task: fill titulo, descricao, select prioridade "Alta", add categoria, set data_vencimento
+- [ ] Submit → task appears in list with red "Alta" badge
+- [ ] Create another task with "Baixa" prioridade → green badge
+- [ ] Filter by status: select "Pendente" → only pending tasks shown
+- [ ] Filter by prioridade: select "Alta" → only high priority shown
+- [ ] Click a task → edit modal opens with current values
+- [ ] Change status to "Concluida" → save → task shows strikethrough or completed badge
+- [ ] Delete a task → confirm dialog → task removed
+- [ ] Verify stats update after changes
+- [ ] Overdue tasks: set data_vencimento to yesterday → date shows in red
+
+### 13.2 Metas (Goals & Habits)
+
+- [ ] Navigate to /metas
+- [ ] Click "Nova Meta" → modal opens
+- [ ] Create a goal: titulo, tipo="Meta", meta_valor=100, unidade="km", data_limite
+- [ ] Submit → goal card shows with progress bar at 0%
+- [ ] Create a habit: titulo, tipo="Habito", frequencia="Diario"
+- [ ] Submit → habit card shows with purple badge and frequency indicator
+- [ ] Filter by tipo: select "Habito" → only habits shown
+- [ ] On a habit card: click "Registrar" → check-in modal opens
+- [ ] Fill valor=10, nota="Morning run" → submit
+- [ ] Progress bar updates (10/100 = 10%)
+- [ ] Register another check-in: valor=15 → progress updates to 25%
+- [ ] Expand check-in history → shows both entries with dates and values
+- [ ] Edit goal: change meta_valor → save → progress % recalculates
+- [ ] Delete goal → confirm → removed
+
+### 13.3 Agenda (Schedule)
+
+- [ ] Navigate to /agenda
+- [ ] Month navigation: click prev/next → month label changes
+- [ ] Click "Novo Evento" → modal opens
+- [ ] Create event: titulo, data_inicio, data_fim, local, select a color
+- [ ] Submit → event appears with colored dot
+- [ ] Create all-day event: toggle dia_inteiro on → datetime inputs become date-only
+- [ ] Submit → shows "Dia inteiro" badge
+- [ ] Create recurring event: select recorrencia="Semanal", set recorrencia_fim 1 month out
+- [ ] Submit → recurring event shows 🔄 badge
+- [ ] Set lembrete_minutos=15 → event shows reminder badge
+- [ ] Click an event → edit modal with current values
+- [ ] Change color → save → dot color updates
+- [ ] Delete event → confirm → removed
+- [ ] Click "Hoje" → navigates back to current month
+
+### 13.4 Notas (Notes)
+
+- [ ] Navigate to /notas
+- [ ] Click "Nova Nota" → modal opens
+- [ ] Create note: titulo, conteudo (multiline text), tags "trabalho, importante"
+- [ ] Submit → note card shows with truncated content preview and tag chips
+- [ ] Create another note with fixada=true → pinned note shows pin icon and appears first
+- [ ] Type in search box → results filter as you type (debounced)
+- [ ] Search a word only in conteudo (not titulo) → note still found
+- [ ] Click pin icon on unpinned note → becomes pinned, moves to top
+- [ ] Click pin icon on pinned note → unpinned, moves down
+- [ ] Edit note: change content → save → content updates
+- [ ] Delete note → confirm → removed
+- [ ] Tags display as colored chips with consistent colors
+
+---
+
+## 14. Resend Email Verification
+
+- [ ] Start all services
+- [ ] In ERP, go to Equipe → invite a real email address
+- [ ] Check server logs: confirm email sending attempted (not "not sent — no provider")
+- [ ] Check email inbox: invitation email arrives from NoctusAI
+- [ ] Email shows: product name, org name, role, inviter name, "Aceitar Convite" button
+- [ ] Click the button → opens AcceptInvite page in browser
+- [ ] Complete acceptance → verify full flow works end-to-end
+- [ ] Repeat for PF: invite → email → accept
+- [ ] Test forgot password: go to /forgot-password → enter email → Supabase sends reset email
+
+---
+
+## 15. Therapy Admin Invite UI (backend-only for now)
+
+> Note: Therapy invitation creation has no frontend UI yet. Test via API.
+
+- [ ] Start Therapy backend
+- [ ] Using curl or Postman, as platform_admin:
+  - `POST /api/invitations` with `{ "email": "clinic@test.com", "role": "clinic_admin", "invite_type": "platform_to_clinic" }`
+  - Verify 200 response with invitation record
+- [ ] Validate the token: `GET /api/invitations/accept/validate?token=TOKEN`
+- [ ] Accept: `POST /api/invitations/accept` with `{ "token": "TOKEN", "nome": "Test Clinic", "password": "123456" }`
+- [ ] As therapist, invite a patient:
+  - `POST /api/invitations` with `{ "email": "patient@test.com", "role": "patient", "invite_type": "therapist_to_patient" }`
+- [ ] As patient, try to invite → 403
+
+---
+
+## 16. Daily Life — Focus & Metrics (desenvolvimento)
+
+> These pages are flagged as "desenvolvimento" in status_pagina. Only dev/owner roles can see them.
+
+- [ ] Log in as a user with "dev" org_role → sidebar shows "Foco" and "Metricas" with DEV badge
+- [ ] Log in as regular member → "Foco" and "Metricas" NOT visible in sidebar
+- [ ] As dev user, test via API:
+  - `POST /api/foco` with `{ "tipo": "pomodoro", "duracao_minutos": 25 }`
+  - `GET /api/foco` → returns session list
+  - `GET /api/foco/stats` → returns totals
+  - `POST /api/metricas` with `{ "data": "2026-04-14", "score": 85 }`
+  - `GET /api/metricas/resumo` → returns averages and streaks
 
 ---
 
@@ -482,4 +597,11 @@ Open each URL in browser or curl:
 | 11.2 | Expired session | | | |
 | 11.3 | Invalid SSO token | | | |
 | 11.4 | Network error recovery | | | |
-| 12 | Health checks (5 products) | | | |
+| 12 | Health checks (6 products) | | | |
+| 13.1 | Daily Life Tarefas | | | |
+| 13.2 | Daily Life Metas | | | |
+| 13.3 | Daily Life Agenda | | | |
+| 13.4 | Daily Life Notas | | | |
+| 14 | Resend email verification | | | |
+| 15 | Therapy admin invite (API) | | | |
+| 16 | Daily Life Focus + Metrics (dev) | | | |

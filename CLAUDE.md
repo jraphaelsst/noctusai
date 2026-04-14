@@ -8,6 +8,7 @@
 - **Module-scope imports.** All Python imports go at the top of the file (module scope). Never defer imports to inside functions or after object creation unless solving a documented circular dependency. Module-scope imports fail fast at startup, making bugs visible immediately.
 - **Docs stay in sync.** Every commit updates `CLAUDE.md` and `KNOWLEDGE-BASE/`.
 - **`KNOWLEDGE-BASE/`** = platform context (architecture, inventories). `CLAUDE.md` = behavioral rules.
+- **Every product has a `README.md` and `MASTER-PROMPT.md`.** README explains what the product does. MASTER-PROMPT is the authoritative development guide (purpose, architecture, domains, testing, dependencies). New products must include both from day one.
 
 ## Architecture
 
@@ -20,8 +21,9 @@ Multi-tenant, multi-product SaaS monorepo. Stack: **FastAPI + Supabase** backend
 | **PF** (`products/personal-finance/`) | `personal-finance` | 8002/8090 | `org_id` | SSO + direct login |
 | **Therapy** (`products/therapy-platform/`) | `therapy` | 8003/8095 | `clinic_id` | Direct Supabase Auth |
 | **Seed** (`products/seed/`) | `seed` | 8004/8100 | `org_id` | SSO + direct login |
+| **Daily Life** (`products/daily-life/`) | `daily_life` | 8005/8110 | `org_id` | SSO + direct login |
 
-Per-product docs: `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`, `02-ERP.md`, `03-PF.md`, `06-THERAPY.md`.
+Per-product docs: `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`, `02-ERP.md`, `03-PF.md`, `06-THERAPY.md`, `08-DAILY-LIFE.md`.
 
 ### Backend: `routers/ → services/ → schemas/` + `dependencies.py`, `database.py`
 ### Frontend: `pages/ → components/ → hooks/ → store/ → lib/`
@@ -46,13 +48,18 @@ One `Layout.tsx` per product using shared AppShell + Sidebar + Header. Nav switc
 
 **After cloning**: `bash scripts/setup.sh` — installs git hooks, venv, all deps. Run once.
 **Start servers**: `bash start.sh` or `uvicorn app.main:app --reload --port <PORT> --app-dir <backend>`
-**Tests**: `cd <product>/backend && pytest` — 3,662 total (410 core, 1661 ERP, 502 PF, 1080 therapy, 9 seed).
+**Tests**: `cd <product>/backend && pytest` — 3,869 total (410 core, 1661 ERP, 502 PF, 1080 therapy, 9 seed, 207 daily-life).
 **Scripts**: `scripts/README.md` documents all scripts and git hooks. Key: `setup.sh` (first-time), `sync-seed-template.sh` (seed→template auto-sync, runs via post-commit hook).
 
 ## Environment
 
 Single root `.env` for all backends. `VITE_`-prefixed vars per frontend.
 Key: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `RESEND_API_KEY`.
+
+**Every frontend must have a `.env.example`** listing all required `VITE_` vars with placeholder values. Standard vars for products:
+- `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` — required by shared `createProductSupabase()`
+- `VITE_BACKEND_API_URL` — product backend URL (e.g. `http://localhost:8005`)
+- `VITE_CORE_URL`, `VITE_CORE_API_URL` — core platform URLs for SSO and navigation
 
 ## Backend Patterns
 
@@ -80,10 +87,17 @@ Platform concern — `public.notifications` table. Product routers at `/api/noti
 
 ## Database & RLS
 
-129+ tables across 4 schemas, all RLS-enabled. Rules: `(SELECT auth.uid())` not bare, `SET search_path` on all functions, HaveIBeenPwned enabled.
+143+ tables across 5 schemas, all RLS-enabled. Rules: `(SELECT auth.uid())` not bare, `SET search_path` on all functions, HaveIBeenPwned enabled.
 
 ## Creating a New Product
 
 Copy `templates/product-seed/`, replace placeholders (`{{PRODUCT_NAME}}`, `{{SCHEMA_NAME}}`, `{{BACKEND_PORT}}`, `{{FRONTEND_PORT}}`, `{{PRODUCT_ICON}}`), install deps, run migrations, register product.
+
+**New product checklist** (mandatory files from day one):
+1. `README.md` — what the product does, stack, ports, features
+2. `MASTER-PROMPT.md` — authoritative development guide
+3. `frontend/.env.example` — all required `VITE_` vars with placeholders
+4. `backend/migrations/001_<schema>.sql` — full schema with RLS
+5. Registration in `start.sh` with backend + frontend blocks
 
 The template is **auto-generated** from the live seed product (`products/seed/`) via `scripts/sync-seed-template.sh`. The post-commit hook keeps them in sync — edit the seed, template updates automatically. See `scripts/README.md` for details and `TODO-SEED-PRODUCT.md` for the seed build checklist.
