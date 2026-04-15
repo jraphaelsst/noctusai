@@ -65,9 +65,9 @@ cd products/daily-life/backend && pytest
 - **Shared frontend**: `@noctusai/shared` (api, sso, roles, page-status, auth, stores, hooks, notifications, supabase, components)
 - **Design system**: `@noctusai/shared/design-system` (AppShell, Sidebar, Header, LoginForm, etc.)
 
-## Parallel Development Track
+## Related System
 
-This product has a twin: a standalone agent-based CLI productivity system (documented in `daily.md`). Both share the same starting point and Supabase database schema (`daily_life`). The standalone version uses the `agno` library for AI agents executing daily automation tasks (meetings, emails, schedules). In the future, both tracks may converge into a single commercial product — the platform version serving as the web UI and the agent version as the automation backend.
+A separate standalone CLI productivity system exists outside this repo (`/Users/rapha/Documents/Daily Life/`). It uses the same Supabase project but a different schema (`automation_ai`). This product uses `daily_life` schema. They are architecturally independent — do not read or write across schemas.
 
 ## Roadmap (MVP)
 

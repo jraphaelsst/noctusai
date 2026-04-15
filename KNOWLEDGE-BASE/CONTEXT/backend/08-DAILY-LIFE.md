@@ -50,6 +50,6 @@ Personal productivity hub. Schema: `daily_life`. Backend port: 8005. Frontend po
 - Focus sessions optionally link to a task via `tarefa_id` FK (SET NULL on delete)
 - Productivity metrics are daily snapshots with UNIQUE(user_id, data)
 
-## Dual Development Track
+## Related System
 
-This product has a parallel standalone agent system (see `daily.md`). Both share the same schema. The agent system uses the `agno` library for terminal-based AI automation with a three-tier command resolution engine: direct commands (free) -> pattern matching (free) -> LLM reasoning via agno (costs tokens). The `learned_promotions` table powers a self-learning loop that promotes repeated LLM interactions to patterns after 3 successful occurrences. Future convergence planned.
+A separate standalone CLI system exists outside this repo. It uses the same Supabase project but a different schema (`automation_ai`). This product uses `daily_life`. They are architecturally independent.

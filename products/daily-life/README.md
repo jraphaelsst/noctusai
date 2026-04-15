@@ -58,6 +58,6 @@ cd products/daily-life/frontend && npm run dev
 - `GET /api/notificacoes` — Notifications proxy
 - `GET /api/health` — Health check
 
-## Future Vision
+## Related System
 
-This product has a parallel development track as a standalone AI-first productivity system (see `daily.md` at repo root). The platform version and the standalone agent-based version share the same starting point and database schema, enabling future convergence into a unified commercial product.
+A separate standalone CLI productivity system exists outside this repo. It uses the same Supabase project but a different schema (`automation_ai`). This product uses `daily_life`. They are architecturally independent.
