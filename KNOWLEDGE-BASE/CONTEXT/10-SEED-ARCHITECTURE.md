@@ -214,6 +214,20 @@ fastapi==0.115.0
 
 You do NOT create: health.py, notificacoes.py, team.py — the framework provides them automatically.
 
+## New Product Checklist (complete before committing)
+
+When creating a new product, ALL of these must be done before the first commit:
+
+1. **Backend**: `main.py` uses `create_product_app()`, domain routers + services + schemas, tests passing
+2. **Frontend**: `App.tsx` uses `createProductApp()` + `createProductLayout()`, `vite.config.ts` uses `createViteConfig()`
+3. **Frontend hooks**: TanStack Query hooks wired to backend API (`useContacts`, `useCampaigns`, etc.)
+4. **Frontend pages**: Real pages with API integration — NOT placeholders. Pages must fetch, submit, show loading.
+5. **Database**: Migration applied via Supabase MCP
+6. **Tests**: Backend tests passing, frontend builds
+7. **Docs**: README.md + MASTER-PROMPT.md
+
+"Scaffolded" is NOT "complete." Both backend and frontend must be at the same maturity level.
+
 ## Rules
 
 1. **Never duplicate seed code in a product.** If it's structural, it belongs in the seed.

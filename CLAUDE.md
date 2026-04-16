@@ -3,6 +3,7 @@
 ## Engineering Philosophy
 
 - **Seed first. Always.** Every product inherits its structural backbone from `seed/`. When creating a new product, import `create_product_app()` (backend) and `createProductApp()` / `createProductLayout()` (frontend) from the seed framework. Do NOT copy-paste structural code. Do NOT re-implement auth, routing, layout, database clients, health checks, team management, or notifications — they come from the seed. This is not optional, not debatable, not a suggestion. The seed is the skeleton. Products are the organs. Read `seed/README.md` before building anything.
+- **No incomplete commits.** Never commit a product with mismatched maturity between backend and frontend. If the backend has working endpoints, the frontend must have real pages wired to those endpoints — not placeholders. "Scaffolded" is not "complete." Both sides must be at the same level before committing. If one side is incomplete, flag it to the user before committing.
 - **No quick fixes.** Never patch symptoms. If your fix requires touching multiple products for the same reason, you're fixing a symptom, not the root cause. Step back. The fix belongs in one place (seed, lib, or a shared config) and propagates automatically. Spend 30 minutes on a proper solution over 5 minutes on a hack that creates future work. Infrastructure before features, root cause before symptoms.
 - **No workarounds.** Always use the real API/SDK/framework. No monkeypatches, shims, or hacks.
 - **DRY.** Single authoritative source for every piece of logic. Three similar blocks → extract to shared.
@@ -86,6 +87,7 @@ Key: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECR
 - **Mobile-first 3-tier**: base → `sm:`/`md:` → `lg:`/`xl:`. Test at 375/768/1440px.
 - **Toasts**: `sonner` only. **Constants**: `lib/constants.ts`. **Utils**: `lib/utils.ts`.
 - **TanStack Query**: `enabled: !!user`, appropriate `staleTime`, correct `invalidateQueries`.
+- **Hooks in dedicated files, always.** Every domain entity gets its own hook file (`hooks/useContacts.ts`, `hooks/useCampaigns.ts`). Never inline hooks in page components, even for simple products. Products grow — extracted hooks are ready when a second page needs the same data. No refactoring needed.
 - **Token refresh**: `useActivityRefresh` (proactive) + `onTokenExpired` in api-client (reactive 401 retry).
 
 ## Notifications
