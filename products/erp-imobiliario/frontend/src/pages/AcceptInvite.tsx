@@ -6,7 +6,7 @@
  */
 import { useNavigate, useParams } from "react-router-dom";
 import { Building2 } from "lucide-react";
-import { AcceptInvitePage } from "@noctusai/shared/design-system";
+import { AcceptInvitePage } from "@noctusai/lib/design-system";
 
 const API_URL = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:8001";
 

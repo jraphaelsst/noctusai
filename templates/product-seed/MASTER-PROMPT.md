@@ -65,7 +65,7 @@ Do NOT edit `templates/product-seed/` directly -- edit the seed, and the templat
 
 ## Development Guidelines
 
-- Follow shared patterns from noctusai_shared (auth, roles, invitations, responses, exceptions)
+- Follow shared patterns from noctusai_lib (auth, roles, invitations, responses, exceptions)
 - Router -> Service -> Schema pattern (though seed is simple enough to skip services)
 - RLS policies use `(SELECT auth.uid())` pattern on all tables
 - Portuguese for business domain names, English for technical/framework code
@@ -84,6 +84,6 @@ cd products/seed/backend && pytest
 
 ## Dependencies
 
-- Shared backend: `noctusai_shared`
-- Shared frontend: `@noctusai/shared` + `@noctusai/shared/design-system`
+- Shared backend: `noctusai_lib`
+- Shared frontend: `@noctusai/lib` + `@noctusai/lib/design-system`
 - Supabase: Auth, database, RLS

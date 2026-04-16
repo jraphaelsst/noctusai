@@ -12,7 +12,7 @@
  * Add to the product's Layout.tsx (alongside useActivityRefresh):
  *
  * ```tsx
- * import { InactivityWarning } from "@noctusai/shared/design-system";
+ * import { InactivityWarning } from "@noctusai/lib/design-system";
  * import { supabase } from "@/integrations/supabase/client";
  *
  * // Inside Layout component return:

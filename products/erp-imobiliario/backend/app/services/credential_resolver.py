@@ -16,7 +16,7 @@ their own resolution logic.
 import logging
 from typing import Optional
 
-from noctusai_shared.database import make_supabase_client
+from noctusai_lib.database import make_supabase_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)

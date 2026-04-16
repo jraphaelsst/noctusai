@@ -5,7 +5,7 @@ The seed is the spine of every product. All products inherit their
 structural infrastructure from here. Change the seed, change all products.
 
 Two layers:
-  - seed/lib/  (noctusai_shared) = reusable code library (auth, roles, utils)
+  - seed/lib/  (noctusai_lib) = reusable code library (auth, roles, utils)
   - seed/framework/ (noctusai_seed)  = structural framework (app factory, database, deps)
 
 Products import from both. Domain-specific code lives in the product only.

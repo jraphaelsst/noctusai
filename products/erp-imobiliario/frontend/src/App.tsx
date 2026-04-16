@@ -11,9 +11,9 @@ import { useAuthStore } from "@/store/authStore";
 import { supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "@/components/NotificationBell";
 import { useERPLayoutEnrichment } from "@/hooks/useLayoutEnrichment";
-import type { NavGroupWithRoute } from "@noctusai/shared";
-import type { NavGroup } from "@noctusai/shared/design-system";
-import type { NavItemWithRoute } from "@noctusai/shared";
+import type { NavGroupWithRoute } from "@noctusai/lib";
+import type { NavGroup } from "@noctusai/lib/design-system";
+import type { NavItemWithRoute } from "@noctusai/lib";
 import {
   Home, Target, Building2, LayoutDashboard, UserCircle, HomeIcon,
   ArrowLeftRight, FileText, ScrollText, Building, Percent, DollarSign,

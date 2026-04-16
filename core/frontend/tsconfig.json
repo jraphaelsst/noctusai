@@ -24,10 +24,10 @@
             "@/*": [
                 "./src/*"
             ],
-            "@noctusai/shared/*": [
+            "@noctusai/lib/*": [
                 "../../seed/frontend/lib/src/*"
             ],
-            "@noctusai/shared": [
+            "@noctusai/lib": [
                 "../../seed/frontend/lib/src/index.ts"
             ],
             "@noctusai/seed/*": [

@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.services.permissions import check_permission
-from noctusai_shared.invitations import (
+from noctusai_lib.invitations import (
     create_invitation,
     validate_invitation,
     accept_invitation as mark_accepted,

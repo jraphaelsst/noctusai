@@ -4,7 +4,7 @@ NoctusAI Core — Configuration settings.
 from pathlib import Path
 from typing import Optional
 from pydantic import field_validator
-from noctusai_shared.config import BaseAppSettings
+from noctusai_lib.config import BaseAppSettings
 
 _ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 

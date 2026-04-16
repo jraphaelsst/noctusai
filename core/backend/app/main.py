@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from app.config import settings
 from app.rate_limit import limiter
 from app.logging_config import configure_logging
-from noctusai_shared.app_factory import configure_app
+from noctusai_lib.app_factory import configure_app
 
 configure_logging(debug=settings.debug, json_logs=not settings.debug)
 

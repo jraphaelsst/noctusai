@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api, clearToken, setToken, isAuthenticated, getRefreshToken, setRefreshToken } from './api';
-import { useActivityRefresh } from '@noctusai/shared/design-system/useActivityRefresh';
+import { useActivityRefresh } from '@noctusai/lib/design-system/useActivityRefresh';
 
 interface User {
   id: string;

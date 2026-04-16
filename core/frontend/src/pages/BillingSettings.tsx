@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
 import { formatCurrency, formatDate } from '../lib/utils';
 import { NotificationBell } from '../components/NotificationBell';
-import { Header, useTheme } from "@noctusai/shared/design-system";
+import { Header, useTheme } from "@noctusai/lib/design-system";
 
 interface BillingPlan {
   id: string;

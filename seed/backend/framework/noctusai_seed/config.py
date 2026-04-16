@@ -6,7 +6,7 @@ The structural fields (JWT, CORS, core URL) are standardized here.
 """
 from pathlib import Path
 from pydantic import field_validator
-from noctusai_shared.config import BaseAppSettings
+from noctusai_lib.config import BaseAppSettings
 
 _ROOT_ENV = Path(__file__).resolve().parents[5] / ".env"
 

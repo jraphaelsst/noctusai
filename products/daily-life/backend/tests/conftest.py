@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from noctusai_shared.testing import (
+from noctusai_lib.testing import (
     MockSupabaseResponse,
     MockSelectBuilder,
     MockFilterBuilder,

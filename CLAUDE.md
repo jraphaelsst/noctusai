@@ -41,7 +41,7 @@ Read `seed/README.md` for the full architecture. The seed has two layers:
 
 | Layer | Package | Location | Purpose |
 |-------|---------|----------|---------|
-| **Shared Library** | `noctusai_shared` / `@noctusai/shared` | `seed/lib/` | Reusable code (auth, roles, hooks, components, utils) |
+| **Shared Library** | `noctusai_lib` / `@noctusai/lib` | `seed/lib/` | Reusable code (auth, roles, hooks, components, utils) |
 | **Framework** | `noctusai_seed` / `@noctusai/seed` | `seed/framework/` | Structural bones (app factory, database, deps, routing) |
 
 Products import from both. Domain-specific code lives in the product only. **Never duplicate seed code in a product.**
@@ -72,9 +72,9 @@ Key: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECR
 
 - **Auth**: `await get_current_user(authorization)` → `(user, token)`. Core admin: `get_current_admin()`.
 - **SSO**: `resolve_sso_role(user)` checks `org_role` (owner/admin → platform_admin) then `noctus_role` (admin → platform_admin). Frontend: `resolveSSORoles()` → `{ isSSO, isProductAdmin }`.
-- **7-role hierarchy**: owner, admin, manager, member, viewer, dev, test. Constants in `noctusai_shared/roles.py`. Dev/owner see in-development pages. Admin/owner manage team+billing.
+- **7-role hierarchy**: owner, admin, manager, member, viewer, dev, test. Constants in `noctusai_lib/roles.py`. Dev/owner see in-development pages. Admin/owner manage team+billing.
 - **Page status**: `status_pagina` table per schema (producao/desenvolvimento/desativado). `usePageStatus()` + `filterNavByPageStatus()` on frontend.
-- **Invitations**: `noctusai_shared/invitations.py` — create_invitation, validate, accept, cancel. Email via `send_product_invitation_email()`. Each product has `routers/team.py`. Therapy extends with invite types + binding.
+- **Invitations**: `noctusai_lib/invitations.py` — create_invitation, validate, accept, cancel. Email via `send_product_invitation_email()`. Each product has `routers/team.py`. Therapy extends with invite types + binding.
 - **Responses**: paginated_response / success_response / ok_response.
 - **N+1 zero tolerance**: `.in_("id", ids)` for reads, `.insert(rows)` for batch writes. Never loop `db.table()`.
 - **Router → Service**: Business logic in services. Routers are thin.

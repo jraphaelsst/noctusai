@@ -1,5 +1,5 @@
 """Tests for the notifications (notificacoes) router — provided by seed framework."""
-from noctusai_shared.testing import MockSupabaseResponse
+from noctusai_lib.testing import MockSupabaseResponse
 
 
 MOCK_NOTIFICATION = {

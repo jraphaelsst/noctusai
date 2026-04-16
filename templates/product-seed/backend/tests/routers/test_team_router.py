@@ -5,7 +5,7 @@ These tests validate that the framework's standard team router works
 correctly when consumed by the seed product.
 """
 from unittest.mock import MagicMock, patch
-from noctusai_shared.testing import MockSupabaseResponse
+from noctusai_lib.testing import MockSupabaseResponse
 
 
 USER_ID = "test-user-123"

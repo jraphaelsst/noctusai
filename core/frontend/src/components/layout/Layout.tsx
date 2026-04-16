@@ -19,8 +19,8 @@ import {
 import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
 import { NotificationBell } from '../NotificationBell';
-import { AppShell, Sidebar, Header, useTheme } from '@noctusai/shared/design-system';
-import type { NavGroup, NavItem } from '@noctusai/shared/design-system';
+import { AppShell, Sidebar, Header, useTheme } from '@noctusai/lib/design-system';
+import type { NavGroup, NavItem } from '@noctusai/lib/design-system';
 
 const NAV_GROUPS: NavGroup[] = [
   {

@@ -7,7 +7,7 @@ validate token, and cancel invitation.
 """
 import pytest
 from unittest.mock import MagicMock, patch
-from noctusai_shared.testing import MockSupabaseResponse
+from noctusai_lib.testing import MockSupabaseResponse
 
 # Default MockUser id
 USER_ID = "test-user-123"

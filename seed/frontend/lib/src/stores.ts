@@ -3,11 +3,11 @@
  *
  * Usage:
  *   // authStore.ts
- *   import { createAuthStore } from '@noctusai/shared/stores';
+ *   import { createAuthStore } from '@noctusai/lib/stores';
  *   export const useAuthStore = createAuthStore();
  *
  *   // filtrosStore.ts
- *   import { createFiltrosStore } from '@noctusai/shared/stores';
+ *   import { createFiltrosStore } from '@noctusai/lib/stores';
  *   export const useFiltrosStore = createFiltrosStore('erp-filtros', 'global');
  */
 import { create } from 'zustand';

@@ -2,9 +2,9 @@
 
 > Check here before building anything new. If it exists, use it.
 
-## Backend: `noctusai_shared` (Python)
+## Backend: `noctusai_lib` (Python)
 
-Install: `pip install -e seed/backend/lib`. Import: `from noctusai_shared.<module> import ...`
+Install: `pip install -e seed/backend/lib`. Import: `from noctusai_lib.<module> import ...`
 
 ### `auth.py` — Authentication & SSO
 
@@ -78,9 +78,9 @@ Install: `pip install -e seed/backend/lib`. Import: `from noctusai_shared.<modul
 
 ---
 
-## Frontend: `@noctusai/shared` (TypeScript)
+## Frontend: `@noctusai/lib` (TypeScript)
 
-Import: `import { ... } from '@noctusai/shared'`
+Import: `import { ... } from '@noctusai/lib'`
 
 ### `api.ts` — HTTP Client
 
@@ -139,9 +139,9 @@ Required vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`. Optional wi
 
 ---
 
-## Design System: `@noctusai/shared/design-system`
+## Design System: `@noctusai/lib/design-system`
 
-Import: `import { ... } from '@noctusai/shared/design-system'`
+Import: `import { ... } from '@noctusai/lib/design-system'`
 
 ### Layout
 
@@ -167,7 +167,7 @@ Import: `import { ... } from '@noctusai/shared/design-system'`
 
 ## Adding Shared Code
 
-1. **Backend**: `seed/backend/lib/noctusai_shared/<module>.py`
+1. **Backend**: `seed/backend/lib/noctusai_lib/<module>.py`
 2. **Frontend**: `seed/frontend/lib/src/<module>.ts`, export from `index.ts`
 3. **Design system**: `seed/frontend/lib/src/design-system/components/`, export from `design-system/index.ts`
 4. **Document**: Update this file

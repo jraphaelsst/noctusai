@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_org_id, get_user_client
 from app.services.tasks_service import get_prioridade_ordem, compute_task_stats
-from noctusai_shared.responses import success_response, paginated_response, ok_response
-from noctusai_shared.auth import first_or_none
+from noctusai_lib.responses import success_response, paginated_response, ok_response
+from noctusai_lib.auth import first_or_none
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tasks", tags=["Tasks"])

@@ -12,8 +12,8 @@
  * trial/license warnings, activity refresh, inactivity warning.
  */
 import { createProductLayout } from "@noctusai/seed";
-import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/shared";
-import type { NavGroup, NavItem } from "@noctusai/shared/design-system";
+import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
+import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import { useAuthStore } from "@/store/authStore";
 import { supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "@/components/NotificationBell";

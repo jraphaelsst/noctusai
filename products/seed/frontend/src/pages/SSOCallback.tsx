@@ -1,4 +1,4 @@
-import { SSOCallback } from '@noctusai/shared/components';
+import { SSOCallback } from '@noctusai/lib/components';
 import { supabase } from '@/integrations/supabase/client';
 
 const CORE_API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:8000';

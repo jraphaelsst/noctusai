@@ -20,7 +20,7 @@ Usage::
 import logging
 from typing import Optional
 from fastapi import Header, HTTPException
-from noctusai_shared.auth import resolve_sso_role
+from noctusai_lib.auth import resolve_sso_role
 
 logger = logging.getLogger(__name__)
 

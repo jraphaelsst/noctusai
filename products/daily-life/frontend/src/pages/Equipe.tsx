@@ -3,7 +3,7 @@ import { useAuthStore } from "@/store/authStore";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
 import { Users, UserPlus, Trash2, Loader2, Mail, X } from "lucide-react";
-import { resolveSSOContext } from "@noctusai/shared";
+import { resolveSSOContext } from "@noctusai/lib";
 
 interface Member {
   id: string;

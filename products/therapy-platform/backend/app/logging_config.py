@@ -5,8 +5,8 @@ Re-exports everything from the shared package and adds
 product-specific logger suppression.
 """
 import logging
-from noctusai_shared.logging_config import *  # noqa: F401,F403
-from noctusai_shared.logging_config import configure_logging as _configure_logging
+from noctusai_lib.logging_config import *  # noqa: F401,F403
+from noctusai_lib.logging_config import configure_logging as _configure_logging
 
 
 def configure_logging(debug: bool = True, json_logs: bool = False, app_name: str = "therapy-platform") -> None:

@@ -1,4 +1,4 @@
-import { createAuthProvider } from '@noctusai/shared/components';
+import { createAuthProvider } from '@noctusai/lib/components';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthStore } from '@/store/authStore';
 

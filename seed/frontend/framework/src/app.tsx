@@ -10,9 +10,9 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { ErrorBoundary, createAuthProvider, SSOCallback } from "@noctusai/shared";
-import { createQueryClient } from "@noctusai/shared/query-client";
-import { PageSkeleton } from "@noctusai/shared/design-system";
+import { ErrorBoundary, createAuthProvider, SSOCallback } from "@noctusai/lib";
+import { createQueryClient } from "@noctusai/lib/query-client";
+import { PageSkeleton } from "@noctusai/lib/design-system";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface ProductRoute {

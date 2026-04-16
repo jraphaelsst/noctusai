@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from noctusai_shared.middleware import get_correlation_id
+from noctusai_lib.middleware import get_correlation_id
 
 # Keys from LogRecord.__dict__ that are internal and should not appear
 # in the structured output.

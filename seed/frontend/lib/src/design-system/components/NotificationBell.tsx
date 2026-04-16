@@ -5,7 +5,7 @@
  * regardless of which UI primitives they have installed.
  *
  * Usage:
- *   import { NotificationBell } from "@noctusai/shared/design-system";
+ *   import { NotificationBell } from "@noctusai/lib/design-system";
  *   import { useNotificacoes, useContagemNaoLidas, useMarcarComoLida, useMarcarTodasComoLidas } from "@/hooks/useNotificacoes";
  *
  *   <NotificationBell

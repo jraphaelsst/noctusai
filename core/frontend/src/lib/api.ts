@@ -1,7 +1,7 @@
 /**
  * NoctusAI Core -- API Client (powered by shared factory)
  */
-import { createApiClient } from '@noctusai/shared/api';
+import { createApiClient } from '@noctusai/lib/api';
 
 const API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:8000';
 

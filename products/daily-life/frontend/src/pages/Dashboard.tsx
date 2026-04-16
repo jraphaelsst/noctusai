@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@/store/authStore";
 import { api } from "@/lib/api-client";
-import { resolveSSOContext } from "@noctusai/shared";
+import { resolveSSOContext } from "@noctusai/lib";
 import {
   CalendarCheck, ListTodo, Target, Calendar, StickyNote,
   Loader2, TrendingUp, Flame, CheckCircle2,

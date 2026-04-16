@@ -117,7 +117,7 @@ Role-based page directories:
 
 ## Development Guidelines
 
-- Follow shared patterns from noctusai_shared (auth, roles, invitations, responses, exceptions)
+- Follow shared patterns from noctusai_lib (auth, roles, invitations, responses, exceptions)
 - Router -> Service -> Schema pattern; routers are thin, business logic in services
 - RLS policies use `(SELECT auth.uid())` pattern on all tables
 - Portuguese for business domain names, English for technical/framework code
@@ -139,8 +139,8 @@ cd products/therapy-platform/backend && pytest
 
 ## Dependencies
 
-- Shared backend: `noctusai_shared`
-- Shared frontend: `@noctusai/shared` + `@noctusai/shared/design-system`
+- Shared backend: `noctusai_lib`
+- Shared frontend: `@noctusai/lib` + `@noctusai/lib/design-system`
 - LiveKit: video therapy sessions (`THERAPY_LIVEKIT_URL`, `_API_KEY`, `_API_SECRET`)
 - Stripe Connect: marketplace payments (`THERAPY_STRIPE_CONNECT_CLIENT_ID`)
 - OpenAI GPT: session summaries, longitudinal analysis, crisis detection

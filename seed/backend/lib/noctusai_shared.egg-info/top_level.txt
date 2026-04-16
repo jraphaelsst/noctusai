@@ -1,1 +1,1 @@
-noctusai_shared
+noctusai_lib

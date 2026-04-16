@@ -37,9 +37,9 @@
 - [x] `app/dependencies.py` — `get_current_user()`, `get_user_role()` (checks therapist_profiles/patient_profiles/clinics), `require_role()` factory, `get_clinic_id_for_user()`, `get_user_client()`, `get_admin_client()`, `log_action()`
 - [x] `app/rate_limit.py` — `create_limiter(redis_url=settings.redis_url)`
 - [x] `app/logging_config.py` — re-export from shared + suppress livekit/stripe loggers
-- [x] `app/responses.py` — `from noctusai_shared.responses import *`
-- [x] `app/exceptions.py` — `from noctusai_shared.exceptions import *`
-- [x] `app/middleware.py` — `from noctusai_shared.middleware import *`
+- [x] `app/responses.py` — `from noctusai_lib.responses import *`
+- [x] `app/exceptions.py` — `from noctusai_lib.exceptions import *`
+- [x] `app/middleware.py` — `from noctusai_lib.middleware import *`
 - [x] `app/main.py` — FastAPI app with title "NoctusAI Therapy Platform API", `configure_app()`, `/health` endpoint, no routers
 - [x] `app/routers/__init__.py` — empty
 
@@ -151,8 +151,8 @@
 
 ### 1.6 Frontend Scaffold
 - [x] `package.json` — name "noctusai-therapy-platform", same deps as PF (radix, tanstack, zustand, sonner, react-router-dom, shadcn, tailwindcss)
-- [x] `vite.config.ts` — port 8095, `@/` alias, `@noctusai/shared` alias
-- [x] `tsconfig.json` — base config with `@/*` and `@noctusai/shared/*` paths
+- [x] `vite.config.ts` — port 8095, `@/` alias, `@noctusai/lib` alias
+- [x] `tsconfig.json` — base config with `@/*` and `@noctusai/lib/*` paths
 - [x] `tsconfig.app.json` — app-specific TS config
 - [x] `tsconfig.node.json` — build tool TS config
 - [x] `tailwind.config.ts` — therapy theme, purple/violet primary (hsl 262 80% 50%)

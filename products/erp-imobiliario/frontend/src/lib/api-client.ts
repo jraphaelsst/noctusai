@@ -3,7 +3,7 @@
  * All data operations go through the FastAPI backend.
  * The only direct Supabase usage is for auth (login/signup/session).
  */
-import { createApiClient } from '@noctusai/shared/api';
+import { createApiClient } from '@noctusai/lib/api';
 import { supabase } from '@/integrations/supabase/client';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';

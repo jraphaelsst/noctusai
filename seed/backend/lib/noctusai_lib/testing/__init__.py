@@ -7,7 +7,7 @@ these instead of defining their own mock classes.
 
 Usage in a product's conftest.py::
 
-    from noctusai_shared.testing import (
+    from noctusai_lib.testing import (
         MockSupabaseResponse,
         MockSelectBuilder,
         MockFilterBuilder,
@@ -21,7 +21,7 @@ Usage in a product's conftest.py::
 """
 from __future__ import annotations
 
-from noctusai_shared.testing.mocks import (
+from noctusai_lib.testing.mocks import (
     MockSupabaseResponse,
     _MockExecuteMixin,
     MockSelectBuilder,
@@ -30,7 +30,7 @@ from noctusai_shared.testing.mocks import (
     MockRequestBuilder,
     MockSupabaseClient,
 )
-from noctusai_shared.testing.clients import (
+from noctusai_lib.testing.clients import (
     MockUser,
     MockUserResponse,
     AuthClient,

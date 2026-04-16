@@ -7,7 +7,7 @@ Everything built in today's session. Ready to commit.
 ### SSO Role Resolution
 - [x] Core SSO `/session` syncs `noctus_role`, `org_role`, `org_id` into user_metadata
 - [x] Core SSO token includes `org_role` from `noctus_users`
-- [x] Shared backend: `resolve_sso_role(user)` in `noctusai_shared/auth.py`
+- [x] Shared backend: `resolve_sso_role(user)` in `noctusai_lib/auth.py`
 - [x] Shared frontend: `resolveSSORoles(metadata)` in `sso.ts`
 - [x] All products use shared SSO role resolution (Therapy, ERP, PF, Seed)
 - [x] NoctusAI admins get full platform_admin access in every product
@@ -27,7 +27,7 @@ Everything built in today's session. Ready to commit.
 - [x] Direct users logout → redirect to /login (all products)
 
 ### Shared Library Extraction (8 items)
-- [x] 1. Test infrastructure → `noctusai_shared/testing/` (MockSupabaseClient, MockUser, AuthClient)
+- [x] 1. Test infrastructure → `noctusai_lib/testing/` (MockSupabaseClient, MockUser, AuthClient)
 - [x] 2. Supabase client factory → `createProductSupabase(schema)`
 - [x] 3. Notification field mapping → `map_notification_to_pt()`
 - [x] 4. AuthProvider factory → `createAuthProvider(supabase, useAuthStore)`
@@ -59,7 +59,7 @@ The shared infrastructure layer that all products depend on.
 
 7 roles: owner, admin, manager, member, viewer, dev, test.
 
-- [x] Shared backend `noctusai_shared/roles.py`: ORG_ROLES, ADMIN_ROLES, DEV_ROLES, helpers
+- [x] Shared backend `noctusai_lib/roles.py`: ORG_ROLES, ADMIN_ROLES, DEV_ROLES, helpers
 - [x] Shared frontend `roles.ts`: constants, labels, isDevOrOwner(), canManageTeam()
 - [x] Core `AdminUsers.tsx`: dropdown uses shared ASSIGNABLE_ROLES + ORG_ROLE_LABELS
 - [x] Core `TeamManagement.tsx`: fallback labels use shared ORG_ROLE_LABELS
@@ -82,8 +82,8 @@ The shared infrastructure layer that all products depend on.
 ### 2.3.3 — Shared Invitation System (DONE)
 
 **Shared backend:**
-- [x] `noctusai_shared/invitations.py`: generate_invite_token, create_invitation, validate_invitation, accept_invitation, cancel_invitation, list_pending_invitations, expire_old_invitations
-- [x] `noctusai_shared/email_templates.py`: send_product_invitation_email, send_password_reset_email
+- [x] `noctusai_lib/invitations.py`: generate_invite_token, create_invitation, validate_invitation, accept_invitation, cancel_invitation, list_pending_invitations, expire_old_invitations
+- [x] `noctusai_lib/email_templates.py`: send_product_invitation_email, send_password_reset_email
 
 **Database migrations:**
 - [x] ERP: `008_invitations.sql` (erp.invitations + RLS + indexes)

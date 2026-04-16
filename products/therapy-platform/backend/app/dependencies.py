@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import Header, HTTPException
 
 from noctusai_seed import create_database_module, create_dependencies
-from noctusai_shared.auth import first_or_none, resolve_sso_role  # noqa: F401
+from noctusai_lib.auth import first_or_none, resolve_sso_role  # noqa: F401
 from app.config import settings
 
 logger = logging.getLogger(__name__)

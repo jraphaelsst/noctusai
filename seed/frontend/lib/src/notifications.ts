@@ -7,7 +7,7 @@
  * them via `/api/notificacoes` with Portuguese field names.
  *
  * Usage in a product:
- *   import { createNotificationHooks } from '@noctusai/shared/notifications';
+ *   import { createNotificationHooks } from '@noctusai/lib/notifications';
  *   import { api } from '@/lib/api-client';
  *   import { useAuthStore } from '@/store/authStore';
  *   export const {

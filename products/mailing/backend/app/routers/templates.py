@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from app.dependencies import get_current_user, get_org_id, get_admin_client
 from app.schemas.templates import TemplateCreate, TemplateUpdate, TemplatePreviewRequest, TemplateSendTestRequest
 from app.services.template_service import TemplateService
-from noctusai_shared.responses import success_response
+from noctusai_lib.responses import success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/templates", tags=["Templates"])

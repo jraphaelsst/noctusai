@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { Search, Pencil, Trash2, X } from 'lucide-react';
-import { ORG_ROLE_LABELS, ASSIGNABLE_ROLES } from '@noctusai/shared';
+import { ORG_ROLE_LABELS, ASSIGNABLE_ROLES } from '@noctusai/lib';
 
 interface User {
   id: string;

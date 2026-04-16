@@ -28,7 +28,7 @@ import { TeamManagement } from './pages/TeamManagement';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { AccountSettings } from './pages/AccountSettings';
 import { OrgSettings } from './pages/OrgSettings';
-import { InactivityWarning } from '@noctusai/shared/design-system/InactivityWarning';
+import { InactivityWarning } from '@noctusai/lib/design-system/InactivityWarning';
 import { api, clearToken, getRefreshToken, setToken, setRefreshToken } from './lib/api';
 import './index.css';
 

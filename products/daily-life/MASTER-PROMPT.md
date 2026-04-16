@@ -31,7 +31,7 @@ AI-first design: every feature should be buildable with AI assistance and eventu
 
 ## Development Guidelines
 
-- Follow shared patterns from `noctusai_shared` — auth, invitations, notifications, responses
+- Follow shared patterns from `noctusai_lib` — auth, invitations, notifications, responses
 - Router -> Service pattern: business logic in services, routers are thin
 - RLS policies use `(SELECT auth.uid())` pattern — all tables are user-scoped
 - Portuguese for business domain (`tarefas`, `metas`, `notas`), English for technical
@@ -61,9 +61,9 @@ cd products/daily-life/backend && pytest
 
 ## Dependencies
 
-- **Shared backend**: `noctusai_shared` (auth, roles, invitations, email_templates, notifications, page_status, responses, exceptions, middleware, app_factory, database, config, testing)
-- **Shared frontend**: `@noctusai/shared` (api, sso, roles, page-status, auth, stores, hooks, notifications, supabase, components)
-- **Design system**: `@noctusai/shared/design-system` (AppShell, Sidebar, Header, LoginForm, etc.)
+- **Shared backend**: `noctusai_lib` (auth, roles, invitations, email_templates, notifications, page_status, responses, exceptions, middleware, app_factory, database, config, testing)
+- **Shared frontend**: `@noctusai/lib` (api, sso, roles, page-status, auth, stores, hooks, notifications, supabase, components)
+- **Design system**: `@noctusai/lib/design-system` (AppShell, Sidebar, Header, LoginForm, etc.)
 
 ## Related System
 

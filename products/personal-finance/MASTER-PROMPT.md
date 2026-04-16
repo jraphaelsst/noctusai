@@ -53,7 +53,7 @@ Dashboard, Contas, ContaDetalhes, Categorias, Operacoes, Orcamentos, OrcamentoDe
 
 ## Development Guidelines
 
-- Follow shared patterns from noctusai_shared (auth, roles, invitations, responses, exceptions)
+- Follow shared patterns from noctusai_lib (auth, roles, invitations, responses, exceptions)
 - Router -> Service -> Schema pattern; routers are thin, business logic in services
 - RLS policies use `(SELECT auth.uid())` pattern on all tables
 - Portuguese for business domain names, English for technical/framework code
@@ -72,8 +72,8 @@ cd products/personal-finance/backend && pytest
 
 ## Dependencies
 
-- Shared backend: `noctusai_shared`
-- Shared frontend: `@noctusai/shared` + `@noctusai/shared/design-system`
+- Shared backend: `noctusai_lib`
+- Shared frontend: `@noctusai/lib` + `@noctusai/lib/design-system`
 - yfinance: real-time stock/asset quotes for watchlists and portfolio valuation
 - APScheduler: recurring transaction auto-processing
 - Supabase: Auth, database, RLS

@@ -21,16 +21,16 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
-from noctusai_shared.invitations import (
+from noctusai_lib.invitations import (
     create_invitation,
     validate_invitation,
     accept_invitation,
     cancel_invitation,
     list_pending_invitations,
 )
-from noctusai_shared.email_templates import send_product_invitation_email
-from noctusai_shared.notifications import map_notification_to_pt
-from noctusai_shared.roles import ORG_ROLE_LABELS
+from noctusai_lib.email_templates import send_product_invitation_email
+from noctusai_lib.notifications import map_notification_to_pt
+from noctusai_lib.roles import ORG_ROLE_LABELS
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "NoctusAI Seed Framework — structural bones for all products"
 requires-python = ">=3.11"
 dependencies = [
-    "noctusai-shared",
+    "noctusai-lib",
     "fastapi>=0.115.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.2",

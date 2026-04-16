@@ -8,8 +8,8 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import { useAuthStore } from "@/store/authStore";
 import { supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "@/components/NotificationBell";
-import type { NavGroupWithRoute } from "@noctusai/shared";
-import type { NavGroup } from "@noctusai/shared/design-system";
+import type { NavGroupWithRoute } from "@noctusai/lib";
+import type { NavGroup } from "@noctusai/lib/design-system";
 import {
   LayoutDashboard, Users, Home, Mail, Send,
   UserCircle, ListFilter, FileText, GitBranch,

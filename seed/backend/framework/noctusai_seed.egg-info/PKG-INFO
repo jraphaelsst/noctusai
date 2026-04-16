@@ -3,7 +3,7 @@ Name: noctusai-seed
 Version: 0.1.0
 Summary: NoctusAI Seed Framework — structural bones for all products
 Requires-Python: >=3.11
-Requires-Dist: noctusai-shared
+Requires-Dist: noctusai-lib
 Requires-Dist: fastapi>=0.115.0
 Requires-Dist: pydantic>=2.9.0
 Requires-Dist: pydantic-settings>=2.5.2

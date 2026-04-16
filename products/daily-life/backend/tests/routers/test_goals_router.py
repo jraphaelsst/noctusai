@@ -1,7 +1,7 @@
 """Tests for the Goals & Habits router — /api/goals endpoints."""
 from datetime import date, timedelta
 
-from noctusai_shared.testing import MockSupabaseResponse
+from noctusai_lib.testing import MockSupabaseResponse
 
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 TODAY = date.today().isoformat()

@@ -11,7 +11,7 @@ client's schema targeting.
 
 Usage in a product's team router::
 
-    from noctusai_shared.invitations import (
+    from noctusai_lib.invitations import (
         generate_invite_token,
         create_invitation,
         validate_invitation,

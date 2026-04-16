@@ -55,7 +55,7 @@ Git handles full version history (`git log -- products/seed/`).
 ### Phase 3: Frontend (DONE)
 - [x] Create `products/seed/frontend/` with Vite + React + TypeScript
 - [ ] `package.json` — deps matching other products
-- [ ] `vite.config.ts` — with shared aliases (@noctusai/shared, @/)
+- [ ] `vite.config.ts` — with shared aliases (@noctusai/lib, @/)
 - [ ] `tsconfig.json` — matching other products
 - [ ] `tailwind.config.ts` — extending shared base
 - [ ] `postcss.config.js`

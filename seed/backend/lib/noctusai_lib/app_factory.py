@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from noctusai_shared.exceptions import (
+from noctusai_lib.exceptions import (
     AppException,
     app_exception_handler,
     http_exception_handler,
@@ -22,7 +22,7 @@ from noctusai_shared.exceptions import (
     postgrest_exception_handler,
     generic_exception_handler,
 )
-from noctusai_shared.middleware import CorrelationIdMiddleware, RequestLoggingMiddleware
+from noctusai_lib.middleware import CorrelationIdMiddleware, RequestLoggingMiddleware
 
 
 def configure_app(

@@ -1,4 +1,4 @@
-import { NotificationBell as SharedNotificationBell } from "@noctusai/shared/design-system";
+import { NotificationBell as SharedNotificationBell } from "@noctusai/lib/design-system";
 import {
   useNotificacoes,
   useContagemNaoLidas,

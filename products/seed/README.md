@@ -22,8 +22,8 @@ cd products/seed/frontend && npm run dev
 
 ## Key Features
 
-- Proves shared backend library (`noctusai_shared`) integration
-- Proves shared frontend library (`@noctusai/shared`) integration
+- Proves shared backend library (`noctusai_lib`) integration
+- Proves shared frontend library (`@noctusai/lib`) integration
 - SSO authentication flow
 - Role-based layout with AppShell, Sidebar, and Header
 - Page status filtering

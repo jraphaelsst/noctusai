@@ -1,1 +1,1 @@
-export { ErrorBoundary, withErrorBoundary } from '@noctusai/shared/components';
+export { ErrorBoundary, withErrorBoundary } from '@noctusai/lib/components';

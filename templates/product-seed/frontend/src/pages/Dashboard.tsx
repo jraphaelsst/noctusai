@@ -1,5 +1,5 @@
 import { useAuthStore } from "@/store/authStore";
-import { resolveSSOContext } from "@noctusai/shared";
+import { resolveSSOContext } from "@noctusai/lib";
 import { {{PRODUCT_ICON}}, Users, CheckCircle2 } from "lucide-react";
 
 export default function Dashboard() {

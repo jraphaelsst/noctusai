@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createAuthProvider } from '@noctusai/shared/components';
-import { useActivityRefresh } from '@noctusai/shared/design-system/useActivityRefresh';
-import { InactivityWarning } from '@noctusai/shared/design-system/InactivityWarning';
+import { createAuthProvider } from '@noctusai/lib/components';
+import { useActivityRefresh } from '@noctusai/lib/design-system/useActivityRefresh';
+import { InactivityWarning } from '@noctusai/lib/design-system/InactivityWarning';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthStore } from '@/store/authStore';
 

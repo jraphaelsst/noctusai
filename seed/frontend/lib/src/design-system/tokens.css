@@ -3,7 +3,7 @@
  * Single source of truth for all products.
  *
  * Usage in product index.css:
- *   @import "@noctusai/shared/design-system/tokens.css";
+ *   @import "@noctusai/lib/design-system/tokens.css";
  *   @tailwind base;
  *   @tailwind components;
  *   @tailwind utilities;

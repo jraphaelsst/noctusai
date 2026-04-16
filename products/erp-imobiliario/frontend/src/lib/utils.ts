@@ -1,5 +1,5 @@
 // Re-export shared utilities so existing `import { cn } from '@/lib/utils'` keeps working
-export { cn, formatCurrency, formatDate, getTodayAtMidnight, stripTime } from '@noctusai/shared/utils';
+export { cn, formatCurrency, formatDate, getTodayAtMidnight, stripTime } from '@noctusai/lib/utils';
 
 export function formatPhoneNumber(value: string): string {
   const cleaned = value.replace(/\D/g, '');

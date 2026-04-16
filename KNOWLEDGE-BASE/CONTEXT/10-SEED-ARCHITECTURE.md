@@ -6,7 +6,7 @@
 
 | Layer | Backend Package | Frontend Package | Location | Purpose |
 |-------|----------------|-----------------|----------|---------|
-| Shared Library | `noctusai_shared` | `@noctusai/shared` | `seed/lib/` | Reusable code: auth, roles, hooks, components, utils |
+| Shared Library | `noctusai_lib` | `@noctusai/lib` | `seed/lib/` | Reusable code: auth, roles, hooks, components, utils |
 | Framework | `noctusai_seed` | `@noctusai/seed` | `seed/framework/` | Structural bones: app factory, database, deps, routing |
 
 ## Backend Framework API (`noctusai_seed`)
@@ -60,8 +60,8 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import { useAuthStore } from "@/store/authStore";
 import { supabase } from "@/integrations/supabase/client";
 import { NotificationBell } from "@/components/NotificationBell";
-import type { NavGroupWithRoute } from "@noctusai/shared";
-import type { NavGroup } from "@noctusai/shared/design-system";
+import type { NavGroupWithRoute } from "@noctusai/lib";
+import type { NavGroup } from "@noctusai/lib/design-system";
 import { LayoutDashboard, Users, Home, Mail } from "lucide-react";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));

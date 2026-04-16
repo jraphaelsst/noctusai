@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import { NotificationBell } from '../components/NotificationBell';
-import { Header, useTheme } from "@noctusai/shared/design-system";
-import { ORG_ROLE_LABELS } from "@noctusai/shared";
+import { Header, useTheme } from "@noctusai/lib/design-system";
+import { ORG_ROLE_LABELS } from "@noctusai/lib";
 
 interface Member {
   id: string;

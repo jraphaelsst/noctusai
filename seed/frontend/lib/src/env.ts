@@ -5,15 +5,15 @@
  * provides typed access, and validates at startup.
  *
  * Usage in product main.tsx:
- *   import { validateEnv } from '@noctusai/shared';
+ *   import { validateEnv } from '@noctusai/lib';
  *   validateEnv();  // throws with clear message if vars are missing
  *
  * Usage for typed access:
- *   import { env } from '@noctusai/shared';
+ *   import { env } from '@noctusai/lib';
  *   console.log(env.BACKEND_API_URL);
  *
  * Generating .env.example:
- *   import { generateEnvExample } from '@noctusai/shared';
+ *   import { generateEnvExample } from '@noctusai/lib';
  *   console.log(generateEnvExample(8005));
  */
 

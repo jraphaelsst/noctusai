@@ -16,13 +16,13 @@ import {
   useTheme,
   useActivityRefresh,
   InactivityWarning,
-} from "@noctusai/shared/design-system";
-import type { NavGroup, NavItem } from "@noctusai/shared/design-system";
+} from "@noctusai/lib/design-system";
+import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
   resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
   usePageStatus, filterNavByPageStatus,
-} from "@noctusai/shared";
-import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/shared";
+} from "@noctusai/lib";
+import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 import { toast } from "sonner";
 import { ChevronLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";

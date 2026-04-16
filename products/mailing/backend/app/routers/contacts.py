@@ -7,7 +7,7 @@ from app.dependencies import get_current_user, get_org_id, get_admin_client
 from app.schemas.contacts import ContactCreate, ContactUpdate, ContactImport
 
 from app.services.contact_service import ContactService
-from noctusai_shared.responses import success_response, paginated_response
+from noctusai_lib.responses import success_response, paginated_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/contacts", tags=["Contacts"])

@@ -1,3 +1,3 @@
-import { createAuthStore } from '@noctusai/shared/stores';
+import { createAuthStore } from '@noctusai/lib/stores';
 
 export const useAuthStore = createAuthStore();

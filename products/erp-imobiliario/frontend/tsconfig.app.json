@@ -24,8 +24,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@noctusai/shared/*": ["../../../seed/frontend/lib/src/*"],
-      "@noctusai/shared": ["../../../seed/frontend/lib/src/index.ts"],
+      "@noctusai/lib/*": ["../../../seed/frontend/lib/src/*"],
+      "@noctusai/lib": ["../../../seed/frontend/lib/src/index.ts"],
       "@noctusai/seed/*": ["../../../seed/frontend/framework/src/*"],
       "@noctusai/seed": ["../../../seed/frontend/framework/src/index.ts"]
     }

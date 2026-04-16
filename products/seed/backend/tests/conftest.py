@@ -8,7 +8,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from noctusai_shared.testing import (  # noqa: F401 — re-exported for test imports
+from noctusai_lib.testing import (  # noqa: F401 — re-exported for test imports
     MockSupabaseResponse,
     MockSelectBuilder,
     MockFilterBuilder,

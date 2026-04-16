@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
 import { NotificationBell } from '../components/NotificationBell';
-import { Header, useTheme } from "@noctusai/shared/design-system";
+import { Header, useTheme } from "@noctusai/lib/design-system";
 
 interface Product {
   id: string;

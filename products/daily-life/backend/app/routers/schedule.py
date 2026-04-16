@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_org_id, get_user_client
 from app.services.schedule_service import expandir_recorrencias
-from noctusai_shared.responses import success_response, paginated_response, ok_response
-from noctusai_shared.auth import first_or_none
+from noctusai_lib.responses import success_response, paginated_response, ok_response
+from noctusai_lib.auth import first_or_none
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/schedule", tags=["Schedule"])

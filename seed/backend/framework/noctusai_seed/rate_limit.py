@@ -8,7 +8,7 @@ Products can create a limiter by just importing from the framework::
 
 Or use the lib's create_limiter directly if they need more control.
 """
-from noctusai_shared.rate_limit import create_limiter
+from noctusai_lib.rate_limit import create_limiter
 
 
 def create_product_limiter(settings):

@@ -14,11 +14,11 @@ import { useUserRoles } from "@/hooks/useUserRoles";
 import { useIsAdmin } from "@/hooks/useUserRole";
 import { useUpdateProfile } from "@/hooks/useProfiles";
 import { useQueryClient } from "@tanstack/react-query";
-import { resolveSSOContext, isDevOrOwner } from "@noctusai/shared";
+import { resolveSSOContext, isDevOrOwner } from "@noctusai/lib";
 import { useAuthStore } from "@/store/authStore";
 import { toast } from "sonner";
 import type { LayoutEnrichment } from "@noctusai/seed";
-import type { NavGroupWithRoute } from "@noctusai/shared";
+import type { NavGroupWithRoute } from "@noctusai/lib";
 import { Users, UserPlus, Shield, CheckCircle2 } from "lucide-react";
 
 const ROLE_LABELS: Record<string, string> = {

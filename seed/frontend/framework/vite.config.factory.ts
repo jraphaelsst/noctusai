@@ -96,7 +96,7 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
     resolve: {
       alias: {
         "@": path.resolve(productDir, "./src"),
-        "@noctusai/shared": seedLib,
+        "@noctusai/lib": seedLib,
         "@noctusai/seed": seedFramework,
         ...packageAliases,
       },

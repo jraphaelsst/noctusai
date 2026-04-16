@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 # ---------------------------------------------------------------------------
 # Import shared mocks and re-export for backwards compatibility
 # ---------------------------------------------------------------------------
-from noctusai_shared.testing import (  # noqa: F401 — re-exported
+from noctusai_lib.testing import (  # noqa: F401 — re-exported
     MockSupabaseResponse,
     MockSelectBuilder,
     MockFilterBuilder,

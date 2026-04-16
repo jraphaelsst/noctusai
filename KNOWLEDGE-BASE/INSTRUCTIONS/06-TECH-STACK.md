@@ -188,7 +188,7 @@ project-root/
 │   └── WORKFLOWS/               # n8n workflow exports (reference 03-AGENTIC-WORKFLOWS.md)
 │
 ├── shared/                      # Cross-cutting shared code
-│   ├── backend/noctusai_shared/ # Python: exceptions, responses, middleware, logging, config, database, app_factory
+│   ├── backend/noctusai_lib/ # Python: exceptions, responses, middleware, logging, config, database, app_factory
 │   └── frontend/src/            # TypeScript: api, utils, auth, stores, hooks, components (via @shared/* alias)
 │
 ├── docker-compose.yml           # Local dev: 6 services

@@ -1,6 +1,6 @@
 import { lazy } from "react";
 import { createProductApp } from "@noctusai/seed";
-import { resolveSSORoles } from "@noctusai/shared";
+import { resolveSSORoles } from "@noctusai/lib";
 import { AdminLayout, ClinicLayout, TherapistLayout, PatientLayout } from "@/layouts";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthStore } from "@/store/authStore";

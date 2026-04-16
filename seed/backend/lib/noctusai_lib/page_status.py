@@ -11,7 +11,7 @@ Status values:
 """
 from __future__ import annotations
 
-from noctusai_shared.roles import DEV_ROLES
+from noctusai_lib.roles import DEV_ROLES
 
 
 def get_visible_pages(db, user_org_role: str | None = None) -> list[str]:

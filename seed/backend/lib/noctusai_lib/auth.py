@@ -62,7 +62,7 @@ def make_get_current_user(get_supabase_client_fn):
 
     Usage in each product's dependencies.py:
 
-        from noctusai_shared.auth import make_get_current_user, first_or_none
+        from noctusai_lib.auth import make_get_current_user, first_or_none
         from app.database import get_supabase_client
 
         get_current_user = make_get_current_user(get_supabase_client)
@@ -147,7 +147,7 @@ def require_role(get_user_role_fn, *allowed_roles: str):
 
     Usage::
 
-        from noctusai_shared.auth import require_role
+        from noctusai_lib.auth import require_role
         from app.dependencies import get_current_user, get_user_role
 
         admin_only = require_role(get_user_role, "platform_admin")

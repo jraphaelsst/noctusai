@@ -7,10 +7,10 @@ The `seed/` directory is the structural foundation of the entire NoctusAI platfo
 ```
 seed/
   backend/
-    lib/          noctusai_shared    Code library (auth, roles, invitations, testing)
+    lib/          noctusai_lib    Code library (auth, roles, invitations, testing)
     framework/    noctusai_seed      Structural framework (app factory, database, deps, routers)
   frontend/
-    lib/          @noctusai/shared   Code library (api, sso, hooks, design-system)
+    lib/          @noctusai/lib   Code library (api, sso, hooks, design-system)
     framework/    @noctusai/seed     Structural framework (createProductApp, createProductLayout, createViteConfig)
 ```
 
@@ -18,10 +18,10 @@ seed/
 
 Reusable, atomic code that products import as functions and components.
 
-- **Backend** (`noctusai_shared`): auth, roles, invitations, email_templates, notifications, config, database, app_factory, exceptions, middleware, logging, testing
-- **Frontend** (`@noctusai/shared`): api, sso, roles, page-status, auth, stores, hooks, notifications, supabase, components, design-system
+- **Backend** (`noctusai_lib`): auth, roles, invitations, email_templates, notifications, config, database, app_factory, exceptions, middleware, logging, testing
+- **Frontend** (`@noctusai/lib`): api, sso, roles, page-status, auth, stores, hooks, notifications, supabase, components, design-system
 
-**How products consume it:** `from noctusai_shared.auth import ...` / `import { ... } from '@noctusai/shared'`
+**How products consume it:** `from noctusai_lib.auth import ...` / `import { ... } from '@noctusai/lib'`
 
 ### Layer 2: Framework (`seed/backend/framework/` + `seed/frontend/framework/`)
 
@@ -103,8 +103,8 @@ TooltipProvider, QueryClient, AuthProvider, ErrorBoundary, Suspense, routing, pa
 ```
 seed/
   backend/
-    lib/                        noctusai_shared (pip install -e seed/backend/lib)
-      noctusai_shared/
+    lib/                        noctusai_lib (pip install -e seed/backend/lib)
+      noctusai_lib/
         auth.py                 JWT validation, SSO resolution
         roles.py                7-role hierarchy constants
         invitations.py          Invitation lifecycle
@@ -128,7 +128,7 @@ seed/
         routers.py              create_standard_routers()
         rate_limit.py           create_product_limiter()
   frontend/
-    lib/                        @noctusai/shared (via Vite alias)
+    lib/                        @noctusai/lib (via Vite alias)
       src/
         api.ts                  HTTP client factory
         auth.ts                 useSupabaseAuthInit

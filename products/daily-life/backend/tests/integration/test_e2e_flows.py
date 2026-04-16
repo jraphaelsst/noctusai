@@ -8,7 +8,7 @@ between queries.
 from datetime import date, timedelta, datetime
 from unittest.mock import MagicMock, patch
 
-from noctusai_shared.testing import MockSupabaseResponse, MockUser, MockUserResponse
+from noctusai_lib.testing import MockSupabaseResponse, MockUser, MockUserResponse
 
 
 TODAY = date.today().isoformat()

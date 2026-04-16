@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_admin
-from noctusai_shared.responses import paginated_response, success_response, ok_response, calculate_pagination
+from noctusai_lib.responses import paginated_response, success_response, ok_response, calculate_pagination
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/users", tags=["Admin Users"])

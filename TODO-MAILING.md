@@ -59,7 +59,7 @@
 - [ ] `app/dependencies.py` — get_current_user, get_org_id, get_user_role, get_admin_client
 - [ ] `app/main.py` — app factory with lifespan (scheduler start/stop)
 - [ ] `app/rate_limit.py` — create_limiter
-- [ ] `app/responses.py` — re-export from noctusai_shared
+- [ ] `app/responses.py` — re-export from noctusai_lib
 - [ ] `app/scheduler.py` — APScheduler (3 jobs: send loop 30s, scheduled campaigns 1min, automations 5min)
 - [ ] `app/credential_resolver.py` — per-org Resend API key resolution
 

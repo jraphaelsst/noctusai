@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "noctusai-shared"
+name = "noctusai-lib"
 version = "0.1.0"
-description = "Shared backend utilities for all NoctusAI backends"
+description = "Backend code library for all NoctusAI products"
 requires-python = ">=3.9"
 dependencies = [
     "fastapi>=0.115.0",
@@ -18,4 +18,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["noctusai_shared*"]
+include = ["noctusai_lib*"]

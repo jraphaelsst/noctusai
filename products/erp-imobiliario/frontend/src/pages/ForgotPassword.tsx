@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { ForgotPasswordPage } from "@noctusai/shared/design-system";
+import { ForgotPasswordPage } from "@noctusai/lib/design-system";
 import { Building2 } from "lucide-react";
 
 export default function ForgotPassword() {

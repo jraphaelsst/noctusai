@@ -29,12 +29,12 @@ from app.dependencies import (
     log_action,
 )
 from app.responses import ok_response, paginated_response, success_response
-from noctusai_shared.invitations import (
+from noctusai_lib.invitations import (
     accept_invitation,
     generate_invite_token,
     validate_invitation,
 )
-from noctusai_shared.email_templates import send_product_invitation_email
+from noctusai_lib.email_templates import send_product_invitation_email
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/invitations", tags=["Invitations"])

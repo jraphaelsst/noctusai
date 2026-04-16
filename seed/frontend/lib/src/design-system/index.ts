@@ -4,8 +4,8 @@
  * Export all shared design system components, hooks, and types.
  *
  * Usage:
- *   import { AppShell, Sidebar, Header, useTheme } from "@noctusai/shared/design-system";
- *   import type { NavGroup, NavItem, HeaderProps, HeaderUser } from "@noctusai/shared/design-system";
+ *   import { AppShell, Sidebar, Header, useTheme } from "@noctusai/lib/design-system";
+ *   import type { NavGroup, NavItem, HeaderProps, HeaderUser } from "@noctusai/lib/design-system";
  */
 
 export { AppShell } from "./components/AppShell";

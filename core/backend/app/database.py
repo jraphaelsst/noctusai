@@ -5,7 +5,7 @@ Core uses the default "public" schema (no schema override needed).
 """
 from typing import Optional
 from supabase import Client
-from noctusai_shared.database import make_supabase_client
+from noctusai_lib.database import make_supabase_client
 from app.config import settings
 
 

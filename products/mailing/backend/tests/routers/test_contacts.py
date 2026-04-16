@@ -1,5 +1,5 @@
 """Tests for contacts router."""
-from noctusai_shared.testing import MockSupabaseResponse
+from noctusai_lib.testing import MockSupabaseResponse
 
 
 MOCK_CONTACT = {

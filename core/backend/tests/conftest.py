@@ -3,7 +3,7 @@ Pytest configuration and shared fixtures for NoctusAI Core backend tests.
 Uses mocking to avoid requiring a live Supabase instance.
 
 All mock classes are imported from the shared testing package
-(noctusai_shared.testing). Core-specific fixtures (client, admin_client,
+(noctusai_lib.testing). Core-specific fixtures (client, admin_client,
 unauth_client) and the _build_patches() helper remain here.
 """
 import contextlib
@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 # Shared mock imports (re-exported for backwards compat)
 # ---------------------------------------------------------------------------
 
-from noctusai_shared.testing import (  # noqa: F401
+from noctusai_lib.testing import (  # noqa: F401
     MockSupabaseResponse,
     MockSelectBuilder,
     MockFilterBuilder,

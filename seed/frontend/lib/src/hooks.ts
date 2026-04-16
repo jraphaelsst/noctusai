@@ -8,7 +8,7 @@
  *
  * Usage example:
  * ```ts
- * import { createCrudHooks } from '@noctusai/shared/hooks';
+ * import { createCrudHooks } from '@noctusai/lib/hooks';
  * import { api } from '@/lib/api-client';
  * import { useAuthStore } from '@/store/authStore';
  *

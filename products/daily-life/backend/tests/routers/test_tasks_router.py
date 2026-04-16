@@ -1,7 +1,7 @@
 """Tests for the Tasks router — /api/tasks endpoints."""
 from datetime import date, timedelta
 
-from noctusai_shared.testing import MockSupabaseResponse
+from noctusai_lib.testing import MockSupabaseResponse
 
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 YESTERDAY = (date.today() - timedelta(days=1)).isoformat()

@@ -1,7 +1,7 @@
 """
 Pytest fixtures for the Therapy Platform backend.
 
-Uses shared mock infrastructure from noctusai_shared.testing. Re-exports
+Uses shared mock infrastructure from noctusai_lib.testing. Re-exports
 all shared classes for backwards compatibility (tests import from conftest).
 
 Key difference from ERP/PF: no org_id. Instead, users have roles
@@ -11,7 +11,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from noctusai_shared.testing import (
+from noctusai_lib.testing import (
     MockSupabaseResponse,
     MockSelectBuilder,
     MockFilterBuilder,

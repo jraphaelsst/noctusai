@@ -1,7 +1,7 @@
 /**
  * Shared utility functions for the NoctusAI Core frontend.
  */
-export { cn, formatDate, getTodayAtMidnight, stripTime } from '@noctusai/shared/utils';
+export { cn, formatDate, getTodayAtMidnight, stripTime } from '@noctusai/lib/utils';
 
 // Core has its own formatCurrency that returns "Gratis" for 0/null
 export function formatCurrency(value: number | null | undefined): string {

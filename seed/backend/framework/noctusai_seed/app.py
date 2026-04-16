@@ -28,8 +28,8 @@ from typing import Callable, Optional
 
 from fastapi import FastAPI
 
-from noctusai_shared.logging_config import configure_logging
-from noctusai_shared.app_factory import configure_app
+from noctusai_lib.logging_config import configure_logging
+from noctusai_lib.app_factory import configure_app
 
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
