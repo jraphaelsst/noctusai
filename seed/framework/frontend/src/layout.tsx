@@ -21,12 +21,12 @@ import {
   useActivityRefresh,
   InactivityWarning,
 } from "@noctusai/shared/design-system";
-import type { NavGroup } from "@noctusai/shared/design-system";
+import type { NavGroup, NavItem } from "@noctusai/shared/design-system";
 import {
   resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
   usePageStatus, filterNavByPageStatus,
 } from "@noctusai/shared";
-import type { NavGroupWithRoute } from "@noctusai/shared";
+import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/shared";
 import { toast } from "sonner";
 import { ChevronLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -48,10 +48,18 @@ export interface ProductLayoutConfig {
   useAuthStore: () => { user: any };
   /** Notification bell component */
   NotificationBell: React.ComponentType;
+  /** Standalone nav items (displayed below groups, separated by border) */
+  standaloneItems?: NavItemWithRoute[];
+  /** Fallback standalone items when status_pagina table doesn't exist */
+  standaloneItemsFallback?: NavItem[];
   /** Role labels for display (e.g. { admin: "Administrador" }) */
   roleLabels?: Record<string, string>;
   /** Default role label when no match (e.g. "Membro") */
   defaultRoleLabel?: string;
+  /** Override role label directly (bypasses SSO role resolution for display) */
+  roleLabelOverride?: string;
+  /** Override brand subtitle (instead of using org name from SSO context) */
+  brandSubtitleOverride?: string;
 }
 
 const DEFAULT_ROLE_LABELS: Record<string, string> = {
@@ -82,11 +90,15 @@ export function createProductLayout(config: ProductLayoutConfig) {
     brandTitle,
     navGroups: navGroupsWithRoutes,
     navGroupsFallback,
+    standaloneItems: standaloneWithRoutes,
+    standaloneItemsFallback,
     supabase,
     useAuthStore,
     NotificationBell,
     roleLabels = DEFAULT_ROLE_LABELS,
     defaultRoleLabel = "Membro",
+    roleLabelOverride,
+    brandSubtitleOverride,
   } = config;
 
   return function Layout({ children }: { children: React.ReactNode }) {
@@ -105,6 +117,17 @@ export function createProductLayout(config: ProductLayoutConfig) {
     const navGroups = (statusPaginas?.length
       ? filterNavByPageStatus(navGroupsWithRoutes, statusPaginas, ssoCtx.org.role)
       : navGroupsFallback) as NavGroup[];
+
+    // Standalone items (e.g. Settings) — filter by page status when available
+    const standaloneItems: NavItem[] = standaloneWithRoutes?.length
+      ? (statusPaginas?.length
+          ? filterNavByPageStatus(
+              [{ key: "_standalone", label: "", items: standaloneWithRoutes }],
+              statusPaginas,
+              ssoCtx.org.role,
+            ).flatMap((g) => g.items) as NavItem[]
+          : (standaloneItemsFallback || standaloneWithRoutes.map(({ route: _r, ...rest }) => rest) as NavItem[]))
+      : [];
 
     const handleLogout = async () => {
       await supabase.auth.signOut();
@@ -130,9 +153,8 @@ export function createProductLayout(config: ProductLayoutConfig) {
       || user?.email?.split("@")[0]
       || "Usuario";
 
-    const userRole = ssoCtx.isProductAdmin
-      ? "Administrador"
-      : roleLabels[ssoCtx.org.role] || defaultRoleLabel;
+    const userRole = roleLabelOverride
+      || (ssoCtx.isProductAdmin ? "Administrador" : roleLabels[ssoCtx.org.role] || defaultRoleLabel);
 
     return (
       <AppShell
@@ -140,8 +162,9 @@ export function createProductLayout(config: ProductLayoutConfig) {
           <Sidebar
             brandIcon={brandIcon}
             brandTitle={brandTitle}
-            brandSubtitle={ssoCtx.org.name || "NoctusAI"}
+            brandSubtitle={brandSubtitleOverride || ssoCtx.org.name || "NoctusAI"}
             navGroups={navGroups}
+            standaloneItems={standaloneItems.length > 0 ? standaloneItems : undefined}
             footerContent={ssoCtx.isSSO ? BackToCore : undefined}
           />
         }

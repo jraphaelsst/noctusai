@@ -9,8 +9,8 @@ import { PageSkeleton } from "@noctusai/shared/design-system";
 import { createQueryClient } from "@noctusai/shared/query-client";
 import { resolveSSORoles } from "@noctusai/shared";
 
-// Layout (unified — role-based nav switching inside a single Layout.tsx)
-import { Layout } from "@/components/layout/Layout";
+// Role-based layouts from seed framework
+import { AdminLayout, ClinicLayout, TherapistLayout, PatientLayout } from "@/layouts";
 
 // ── Lazy-loaded pages ───────────────────────────────────────
 
@@ -98,7 +98,7 @@ const queryClient = createQueryClient();
 
 function AdminRoutes() {
   return (
-    <Layout>
+    <AdminLayout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<AdminDashboard />} />
@@ -120,13 +120,13 @@ function AdminRoutes() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-    </Layout>
+    </AdminLayout>
   );
 }
 
 function ClinicRoutes() {
   return (
-    <Layout>
+    <ClinicLayout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<ClinicDashboard />} />
@@ -140,13 +140,13 @@ function ClinicRoutes() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-    </Layout>
+    </ClinicLayout>
   );
 }
 
 function TherapistRoutes() {
   return (
-    <Layout>
+    <TherapistLayout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<TherapistDashboard />} />
@@ -168,13 +168,13 @@ function TherapistRoutes() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-    </Layout>
+    </TherapistLayout>
   );
 }
 
 function PatientRoutes() {
   return (
-    <Layout>
+    <PatientLayout>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<PatientDashboard />} />
@@ -195,13 +195,13 @@ function PatientRoutes() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-    </Layout>
+    </PatientLayout>
   );
 }
 
-// Directory pages wrapped in the unified Layout (role-based nav is automatic)
+// Directory pages use the patient layout (role-neutral, most permissive nav)
 function DirectoryWithLayout({ children }: { children: React.ReactNode }) {
-  return <Layout>{children}</Layout>;
+  return <PatientLayout>{children}</PatientLayout>;
 }
 
 // ── Authenticated routing ───────────────────────────────────

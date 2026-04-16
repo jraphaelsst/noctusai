@@ -102,8 +102,13 @@ def check_frontend_compliance(product_path: Path) -> list[dict]:
     # Check App.tsx uses framework (if it exists)
     if app_tsx.exists():
         app_content = app_tsx.read_text()
-        if "createProductApp" in app_content or "createProductLayout" in app_content:
-            pass  # compliant
+        uses_framework = (
+            "createProductApp" in app_content
+            or "createProductLayout" in app_content
+            or "@noctusai/seed" in app_content
+        )
+        if uses_framework:
+            pass  # compliant — uses framework (may have custom routing on top)
         elif "QueryClientProvider" in app_content and "BrowserRouter" in app_content:
             issues.append({
                 "product": name,
@@ -113,10 +118,22 @@ def check_frontend_compliance(product_path: Path) -> list[dict]:
             })
 
     # Check for Layout.tsx that should not exist (framework provides it)
+    # Exception: if the product uses createProductLayout elsewhere (e.g. layouts.ts for role-based routing)
     layout_file = product_path / "frontend" / "src" / "components" / "layout" / "Layout.tsx"
     if layout_file.exists():
         layout_content = layout_file.read_text()
-        if "createProductLayout" not in layout_content:
+        # Check if createProductLayout is used anywhere in the frontend src
+        src_dir = product_path / "frontend" / "src"
+        uses_framework_layout = any(
+            "createProductLayout" in f.read_text()
+            for f in src_dir.rglob("*.ts")
+            if f.is_file()
+        ) or any(
+            "createProductLayout" in f.read_text()
+            for f in src_dir.rglob("*.tsx")
+            if f.is_file()
+        )
+        if "createProductLayout" not in layout_content and not uses_framework_layout:
             issues.append({
                 "product": name,
                 "file": "frontend/src/components/layout/Layout.tsx",

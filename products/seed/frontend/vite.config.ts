@@ -1,3 +1,3 @@
-import { createViteConfig } from "../../../seed/framework/frontend/src/vite";
+import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
 
 export default createViteConfig({ port: 8100 });

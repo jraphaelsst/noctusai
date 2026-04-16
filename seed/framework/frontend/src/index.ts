@@ -6,12 +6,16 @@
  *
  *   - createProductApp()    → Full App component (routing, auth, providers)
  *   - createProductLayout() → Layout component (sidebar, header, nav)
+ *   - createViteConfig()    → Vite build config (imported separately via path)
  *
  * Products just provide their config (name, icon, pages, nav groups).
  * The seed handles everything structural.
  */
 export { createProductApp } from './app';
 export { createProductLayout } from './layout';
-export { createViteConfig } from './vite';
 export type { ProductAppConfig, ProductRoute } from './app';
 export type { ProductLayoutConfig } from './layout';
+
+// createViteConfig lives at seed/framework/frontend/vite.config.factory.ts
+// It's config-time code (not app-time), so it's NOT in src/ and NOT bundled.
+// Products import it directly: import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";

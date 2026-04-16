@@ -1,4 +1,4 @@
-import { createViteConfig } from "../../../seed/framework/frontend/src/vite";
+import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
 import { componentTagger } from "lovable-tagger";
 import { VitePWA } from "vite-plugin-pwa";
 

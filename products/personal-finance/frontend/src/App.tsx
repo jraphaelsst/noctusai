@@ -1,110 +1,138 @@
-import { Suspense, lazy } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
-import { AuthProvider } from "@/components/auth/AuthProvider";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { Layout } from "@/components/layout/Layout";
+/**
+ * Personal Finance App — born from the seed frontend framework.
+ *
+ * Financial management: accounts, transactions, budgets, goals, investments.
+ */
+import { lazy } from "react";
+import { createProductApp, createProductLayout } from "@noctusai/seed";
 import { useAuthStore } from "@/store/authStore";
-import { createQueryClient } from "@noctusai/shared/query-client";
-import { PageSkeleton } from "@noctusai/shared/design-system";
+import { supabase } from "@/integrations/supabase/client";
+import { NotificationBell } from "@/components/NotificationBell";
+import type { NavGroupWithRoute } from "@noctusai/shared";
+import type { NavGroup } from "@noctusai/shared/design-system";
+import {
+  LayoutDashboard, Users, Home, DollarSign, Wallet, ArrowLeftRight,
+  Tags, PiggyBank, Target, CalendarClock, LineChart, TrendingUp,
+  Eye, ArrowUpDown, FileBarChart, Landmark,
+} from "lucide-react";
 
-const queryClient = createQueryClient();
-
-// Lazy pages — public
+// Pages
 const Landing = lazy(() => import("@/pages/Landing"));
 const Login = lazy(() => import("@/pages/Login"));
-const SSOCallback = lazy(() => import("@/pages/SSOCallback"));
 const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
-
-// Lazy pages — authenticated
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Contas = lazy(() => import("@/pages/Contas"));
+const ContaDetalhes = lazy(() => import("@/pages/ContaDetalhes"));
 const Transacoes = lazy(() => import("@/pages/Transacoes"));
+const Categorias = lazy(() => import("@/pages/Categorias"));
 const Orcamentos = lazy(() => import("@/pages/Orcamentos"));
+const OrcamentoDetalhes = lazy(() => import("@/pages/OrcamentoDetalhes"));
 const Metas = lazy(() => import("@/pages/Metas"));
+const MetaDetalhes = lazy(() => import("@/pages/MetaDetalhes"));
+const Recorrentes = lazy(() => import("@/pages/Recorrentes"));
 const Carteira = lazy(() => import("@/pages/Carteira"));
 const CarteiraDetalhes = lazy(() => import("@/pages/CarteiraDetalhes"));
 const Watchlist = lazy(() => import("@/pages/Watchlist"));
-const ContaDetalhes = lazy(() => import("@/pages/ContaDetalhes"));
-const OrcamentoDetalhes = lazy(() => import("@/pages/OrcamentoDetalhes"));
-const MetaDetalhes = lazy(() => import("@/pages/MetaDetalhes"));
 const WatchlistDetalhes = lazy(() => import("@/pages/WatchlistDetalhes"));
-const Categorias = lazy(() => import("@/pages/Categorias"));
-const Recorrentes = lazy(() => import("@/pages/Recorrentes"));
-const Patrimonio = lazy(() => import("@/pages/Patrimonio"));
 const Operacoes = lazy(() => import("@/pages/Operacoes"));
+const Patrimonio = lazy(() => import("@/pages/Patrimonio"));
 const Relatorios = lazy(() => import("@/pages/Relatorios"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
-function AppContent() {
-  const { user, isInitialized } = useAuthStore();
+// Nav
+const NAV_GROUPS: NavGroupWithRoute[] = [
+  {
+    key: "principal",
+    label: "Principal",
+    icon: Home,
+    defaultOpen: true,
+    items: [
+      { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
+      { name: "Contas", href: "/contas", icon: Wallet, route: "contas" },
+      { name: "Transacoes", href: "/transacoes", icon: ArrowLeftRight, route: "transacoes" },
+      { name: "Categorias", href: "/categorias", icon: Tags, route: "categorias" },
+    ],
+  },
+  {
+    key: "planejamento",
+    label: "Planejamento",
+    icon: Target,
+    defaultOpen: true,
+    items: [
+      { name: "Orcamentos", href: "/orcamentos", icon: PiggyBank, route: "orcamentos" },
+      { name: "Metas", href: "/metas", icon: Target, route: "metas" },
+      { name: "Recorrentes", href: "/recorrentes", icon: CalendarClock, route: "recorrentes" },
+    ],
+  },
+  {
+    key: "investimentos",
+    label: "Investimentos",
+    icon: LineChart,
+    defaultOpen: true,
+    items: [
+      { name: "Investimentos", href: "/carteira", icon: TrendingUp, route: "carteira" },
+      { name: "Watchlist", href: "/watchlist", icon: Eye, route: "watchlist" },
+      { name: "Operacoes", href: "/operacoes", icon: ArrowUpDown, route: "operacoes" },
+    ],
+  },
+  {
+    key: "relatorios",
+    label: "Relatorios",
+    icon: FileBarChart,
+    defaultOpen: true,
+    items: [
+      { name: "Patrimonio", href: "/patrimonio", icon: Landmark, route: "patrimonio" },
+      { name: "Relatorios", href: "/relatorios", icon: FileBarChart, route: "relatorios" },
+      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+    ],
+  },
+];
 
-  if (!isInitialized) {
-    return <PageSkeleton />;
-  }
+const NAV_FALLBACK: NavGroup[] = NAV_GROUPS.map(g => ({
+  ...g,
+  items: g.items.map(({ route, ...item }) => item),
+})) as NavGroup[];
 
-  if (!user) {
-    return <Navigate to="/landing" replace />;
-  }
+const Layout = createProductLayout({
+  brandIcon: DollarSign,
+  brandTitle: "Financas Pessoais",
+  navGroups: NAV_GROUPS,
+  navGroupsFallback: NAV_FALLBACK,
+  supabase,
+  useAuthStore,
+  NotificationBell,
+  defaultRoleLabel: "Financas Pessoais",
+});
 
-  return (
-    <Layout>
-      <ErrorBoundary>
-        <Suspense fallback={<PageSkeleton />}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/contas" element={<Contas />} />
-            <Route path="/contas/:id" element={<ContaDetalhes />} />
-            <Route path="/transacoes" element={<Transacoes />} />
-            <Route path="/categorias" element={<Categorias />} />
-            <Route path="/orcamentos" element={<Orcamentos />} />
-            <Route path="/orcamentos/:id" element={<OrcamentoDetalhes />} />
-            <Route path="/metas" element={<Metas />} />
-            <Route path="/metas/:id" element={<MetaDetalhes />} />
-            <Route path="/carteira" element={<Carteira />} />
-            <Route path="/carteira/:id" element={<CarteiraDetalhes />} />
-            <Route path="/watchlist" element={<Watchlist />} />
-            <Route path="/watchlist/:id" element={<WatchlistDetalhes />} />
-            <Route path="/operacoes" element={<Operacoes />} />
-            <Route path="/recorrentes" element={<Recorrentes />} />
-            <Route path="/patrimonio" element={<Patrimonio />} />
-            <Route path="/relatorios" element={<Relatorios />} />
-            <Route path="/equipe" element={<Equipe />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-      </ErrorBoundary>
-    </Layout>
-  );
-}
-
-function AppRoutes() {
-  return (
-    <Suspense fallback={<PageSkeleton />}>
-      <Routes>
-        <Route path="/landing" element={<Landing />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/sso" element={<SSOCallback />} />
-        <Route path="/accept-invite/:token" element={<AcceptInvite />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/*" element={<AppContent />} />
-      </Routes>
-    </Suspense>
-  );
-}
-
-export default function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
-      </BrowserRouter>
-      <Toaster richColors position="top-right" />
-    </QueryClientProvider>
-  );
-}
+export default createProductApp({
+  routes: [
+    { path: "/", component: Dashboard },
+    { path: "/contas", component: Contas },
+    { path: "/contas/:id", component: ContaDetalhes },
+    { path: "/transacoes", component: Transacoes },
+    { path: "/categorias", component: Categorias },
+    { path: "/orcamentos", component: Orcamentos },
+    { path: "/orcamentos/:id", component: OrcamentoDetalhes },
+    { path: "/metas", component: Metas },
+    { path: "/metas/:id", component: MetaDetalhes },
+    { path: "/recorrentes", component: Recorrentes },
+    { path: "/carteira", component: Carteira },
+    { path: "/carteira/:id", component: CarteiraDetalhes },
+    { path: "/watchlist", component: Watchlist },
+    { path: "/watchlist/:id", component: WatchlistDetalhes },
+    { path: "/operacoes", component: Operacoes },
+    { path: "/patrimonio", component: Patrimonio },
+    { path: "/relatorios", component: Relatorios },
+    { path: "/equipe", component: Equipe },
+  ],
+  Layout,
+  supabase,
+  useAuthStore,
+  Landing,
+  Login,
+  AcceptInvite,
+  ForgotPassword,
+  NotFound,
+});
