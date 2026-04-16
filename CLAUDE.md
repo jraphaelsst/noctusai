@@ -79,13 +79,14 @@ Rules:
 
 ## Environment
 
-Single root `.env` for all backends. `VITE_`-prefixed vars per frontend.
-Key: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `RESEND_API_KEY`.
+**Single root `.env` for everything** — backends AND frontends. No per-product `.env` files.
 
-**Every frontend must have a `.env.example`** listing all required `VITE_` vars with placeholder values. Standard vars for products:
-- `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` — required by shared `createProductSupabase()`
-- `VITE_BACKEND_API_URL` — product backend URL (e.g. `http://localhost:8005`)
-- `VITE_CORE_URL`, `VITE_CORE_API_URL` — core platform URLs for SSO and navigation
+Backend vars: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `RESEND_API_KEY`.
+Frontend vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_CORE_URL`, `VITE_CORE_API_URL`.
+
+The `createViteConfig()` factory sets `envDir` to the repo root so all frontends read from the same `.env`. Product-specific vars (`VITE_BACKEND_API_URL`) are injected by the factory based on the port config — never in `.env`.
+
+**Rule: VITE_ prefix = public only.** Vite embeds all VITE_ vars in the client JS bundle. Never add secret keys with the VITE_ prefix. Use non-prefixed vars for secrets (they stay server-side).
 
 ## Backend Patterns
 

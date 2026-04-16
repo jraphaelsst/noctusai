@@ -2,33 +2,25 @@
  * Shared Vite configuration factory for NoctusAI products.
  *
  * Products call createViteConfig() instead of manually wiring aliases.
- * The factory handles all resolution for seed/lib and seed/framework
- * imports, so products never need to add package aliases when the
- * framework or lib adds new dependencies.
+ * The factory handles:
+ *   - Seed lib + framework alias resolution
+ *   - Framework dependency deduplication
+ *   - envDir → repo root (single .env for all frontends)
+ *   - VITE_BACKEND_API_URL injection from port config
  *
- * Usage in a product's vite.config.ts:
- *
- *   import { createViteConfig } from "../../../seed/frontend/framework/src/vite";
- *   export default createViteConfig({ port: 8120 });
- *
- * For products that need custom config (PWA, plugins, etc.):
- *
- *   import { createViteConfig } from "../../../seed/frontend/framework/src/vite";
- *   export default createViteConfig({
- *     port: 8120,
- *     extend: (config) => {
- *       config.plugins.push(VitePWA({ ... }));
- *       return config;
- *     },
- *   });
+ * Usage:
+ *   import { createViteConfig } from "../../../seed/frontend/framework/vite.config.factory";
+ *   export default createViteConfig({ port: 8120, backendPort: 8006 });
  */
 import path from "path";
 import react from "@vitejs/plugin-react-swc";
 import type { UserConfig } from "vite";
 
 interface ViteConfigOptions {
-  /** Dev server port */
+  /** Frontend dev server port */
   port: number;
+  /** Backend API port — injected as VITE_BACKEND_API_URL (default: port - 114 heuristic, or specify explicitly) */
+  backendPort?: number;
   /** Additional Vite plugins */
   plugins?: any[];
   /** Custom extend function for advanced configs (ERP PWA, etc.) */
@@ -36,14 +28,9 @@ interface ViteConfigOptions {
 }
 
 /**
- * Resolve the paths from a product's frontend directory.
- *
- * Works for both products/<name>/frontend (3 levels up to repo root)
- * and core/frontend (2 levels up to repo root).
+ * Resolve paths from a product's frontend directory.
  */
 function resolveFromProductDir(productDir: string) {
-  // core/frontend is 2 levels deep; products/<name>/frontend is 3 levels deep.
-  // Check if grandparent is "products" (products/<name>/frontend).
   const grandparent = path.basename(path.resolve(productDir, "../.."));
   const isProduct = grandparent === "products";
   const repoRoot = isProduct
@@ -59,9 +46,6 @@ function resolveFromProductDir(productDir: string) {
 /**
  * Packages imported by the seed framework and lib that need to resolve
  * from the product's node_modules. Listed here ONCE — never in products.
- *
- * When the framework adds a new dependency, add it here.
- * All products get the fix automatically.
  */
 const FRAMEWORK_DEPS = [
   "react",
@@ -77,14 +61,28 @@ const FRAMEWORK_DEPS = [
   "@supabase/supabase-js",
 ];
 
-export function createViteConfig(options: ViteConfigOptions): UserConfig {
-  const { port, plugins = [], extend } = options;
+/**
+ * Backend port mapping — each frontend port maps to its backend.
+ * Used when backendPort is not explicitly provided.
+ */
+const PORT_MAP: Record<number, number> = {
+  5173: 8000,  // Core
+  8080: 8001,  // ERP
+  8090: 8002,  // PF
+  8095: 8003,  // Therapy
+  8100: 8004,  // Seed
+  8110: 8005,  // Daily Life
+  8120: 8006,  // Mailing
+};
 
-  // __dirname won't work here since this file is imported by the product.
-  // The product's vite.config.ts should pass __dirname or we detect from cwd.
-  // For now, we resolve relative to process.cwd() which Vite sets to the project root.
+export function createViteConfig(options: ViteConfigOptions): UserConfig {
+  const { port, backendPort, plugins = [], extend } = options;
+
   const productDir = process.cwd();
-  const { seedLib, seedFramework, nodeModules } = resolveFromProductDir(productDir);
+  const { repoRoot, seedLib, seedFramework, nodeModules } = resolveFromProductDir(productDir);
+
+  // Resolve backend port: explicit > port map > fallback
+  const resolvedBackendPort = backendPort || PORT_MAP[port] || 8000;
 
   const config: UserConfig = {
     server: {
@@ -92,18 +90,26 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
       port,
     },
     plugins: [react(), ...plugins],
+
+    // Read .env from repo root — single source of truth for all frontends.
+    // Shared vars (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY, VITE_CORE_URL)
+    // live in root .env. Product-specific vars are injected below via define.
+    envDir: repoRoot,
+
+    // Inject product-specific env vars that differ per product.
+    // These override anything in .env for this specific product.
+    define: {
+      "import.meta.env.VITE_BACKEND_API_URL": JSON.stringify(`http://localhost:${resolvedBackendPort}`),
+    },
+
     resolve: {
       alias: {
         "@": path.resolve(productDir, "./src"),
         "@noctusai/lib": seedLib,
         "@noctusai/seed": seedFramework,
       },
-      // dedupe ensures all imports of these packages resolve to the product's
-      // node_modules — even when imported from seed lib files outside the project root.
       dedupe: FRAMEWORK_DEPS,
     },
-    // Pre-bundle seed lib imports so Vite's dev server resolves them from the
-    // product's node_modules with correct ESM exports.
     optimizeDeps: {
       include: FRAMEWORK_DEPS.map((dep) => `@noctusai/lib > ${dep}`),
     },
