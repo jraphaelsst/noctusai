@@ -1,13 +1,13 @@
 # {{PRODUCT_NAME}}
 
-Minimal viable product that serves as a reference implementation for the entire NoctusAI shared stack. Used as the source for the product template (`templates/product-seed/`).
+Minimal reference implementation — the spine with no organs. Proves that both seed packages (`noctusai_lib` + `noctusai_seed` backend, `@noctusai/lib` + `@noctusai/seed` frontend) work end-to-end. Source of truth for the product template (`templates/product-seed/`).
 
 ## Stack
 
-- **Backend**: FastAPI (port {{BACKEND_PORT}})
-- **Frontend**: React + TypeScript + Vite (port {{FRONTEND_PORT}})
+- **Backend**: FastAPI via `create_product_app()` from `noctusai_seed` (port {{BACKEND_PORT}})
+- **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed` (port {{FRONTEND_PORT}})
+- **Build**: `createViteConfig()` from seed framework (3-line vite.config.ts)
 - **Database**: Supabase (schema: `seed`)
-- **Tenant key**: `org_id`
 - **Auth**: SSO + direct login
 
 ## Running
@@ -20,12 +20,19 @@ uvicorn app.main:app --reload --port {{BACKEND_PORT}} --app-dir products/seed/ba
 cd products/seed/frontend && npm run dev
 ```
 
-## Key Features
+## What it proves
 
-- Proves shared backend library (`noctusai_lib`) integration
-- Proves shared frontend library (`@noctusai/lib`) integration
+- `create_product_app()` works (health, team, notifications — all from framework)
+- `createProductApp()` + `createProductLayout()` works (routing, auth, sidebar, header)
+- `createViteConfig()` works (alias resolution, dependency deduplication)
 - SSO authentication flow
-- Role-based layout with AppShell, Sidebar, and Header
 - Page status filtering
 - Notification proxying
-- Auto-synced to `templates/product-seed/` via post-commit hook
+- Team/invitation management
+- Template auto-sync (post-commit hook → `templates/product-seed/`)
+
+## Tests
+
+```bash
+cd products/seed/backend && pytest  # 6 tests
+```
