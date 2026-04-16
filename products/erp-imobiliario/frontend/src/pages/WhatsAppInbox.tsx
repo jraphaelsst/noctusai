@@ -3,32 +3,18 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api-client";
-import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useWhatsAppConversations,
+  useWhatsAppMessages,
+  useWhatsAppConfig,
+  useSendWhatsAppMessage,
+} from "@/hooks/useWhatsAppInbox";
 import {
   MessageSquare, Send, Search, Phone, User, Check, CheckCheck,
   AlertCircle, RefreshCw,
 } from "lucide-react";
 import { CardListSkeleton } from "@/components/ui/page-skeleton";
-
-interface Conversation {
-  phone: string;
-  last_message: string;
-  last_time: string;
-  unread: number;
-  cliente_nome?: string;
-}
-
-interface Message {
-  id: string;
-  phone: string;
-  direction: string;
-  message: string;
-  message_type: string;
-  status: string;
-  created_at: string;
-}
 
 function formatTime(dateStr: string) {
   if (!dateStr) return "";
@@ -55,50 +41,10 @@ export default function WhatsAppInbox() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
 
-  // Fetch conversations (grouped by phone)
-  const { data: conversations = [], isLoading: loadingConversations } = useQuery({
-    queryKey: ["whatsapp-conversations"],
-    queryFn: async () => {
-      const result = await api.get("/api/whatsapp/conversations");
-      return (result.data || []) as Conversation[];
-    },
-    refetchInterval: 15000,
-  });
-
-  // Fetch messages for selected conversation
-  const { data: messages = [], isLoading: loadingMessages } = useQuery({
-    queryKey: ["whatsapp-messages", selectedPhone],
-    queryFn: async () => {
-      if (!selectedPhone) return [];
-      const result = await api.get("/api/whatsapp/messages", { phone: selectedPhone });
-      return (result.data || []) as Message[];
-    },
-    enabled: !!selectedPhone,
-    refetchInterval: 5000,
-  });
-
-  // Fetch WhatsApp config status
-  const { data: configStatus } = useQuery({
-    queryKey: ["whatsapp-config"],
-    queryFn: async () => {
-      const result = await api.get("/api/whatsapp/config");
-      return result.data;
-    },
-    retry: false,
-  });
-
-  // Send message mutation
-  const sendMessage = useMutation({
-    mutationFn: async ({ phone, message }: { phone: string; message: string }) => {
-      return api.post("/api/whatsapp/send", { phone, message });
-    },
-    onSuccess: () => {
-      setMessageText("");
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-messages", selectedPhone] });
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
-    },
-    onError: () => toast.error("Erro ao enviar mensagem"),
-  });
+  const { data: conversations = [], isLoading: loadingConversations } = useWhatsAppConversations();
+  const { data: messages = [], isLoading: loadingMessages } = useWhatsAppMessages(selectedPhone);
+  const { data: configStatus } = useWhatsAppConfig();
+  const sendMessage = useSendWhatsAppMessage(selectedPhone);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -111,7 +57,10 @@ export default function WhatsAppInbox() {
 
   const handleSend = () => {
     if (!selectedPhone || !messageText.trim()) return;
-    sendMessage.mutate({ phone: selectedPhone, message: messageText.trim() });
+    sendMessage.mutate(
+      { phone: selectedPhone, message: messageText.trim() },
+      { onSuccess: () => setMessageText("") },
+    );
   };
 
   return (

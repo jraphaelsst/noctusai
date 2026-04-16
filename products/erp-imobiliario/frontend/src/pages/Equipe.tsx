@@ -42,33 +42,16 @@ import {
   XCircle,
 } from "lucide-react";
 import { useIsAdmin } from "@/hooks/useUserRole";
-import { api } from "@/lib/api-client";
+import {
+  useTeamMembers,
+  useTeamInvitations,
+  useSendInvite,
+  useCancelInvite,
+  useRemoveMember,
+} from "@/hooks/useEquipe";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@/store/authStore";
-
-// ── Types ────────────────────────────────────────────────────
-
-interface TeamMember {
-  id: string;
-  nome: string;
-  email: string;
-  telefone?: string;
-  avatar?: string;
-  roles: string[];
-  created_at: string;
-}
-
-interface Invitation {
-  id: string;
-  email: string;
-  role: string;
-  expires_at: string;
-  created_at: string;
-  status: string;
-}
 
 // ── Role config ──────────────────────────────────────────────
 
@@ -97,8 +80,6 @@ const AVAILABLE_ROLES = [
 
 export default function Equipe() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const { user } = useAuthStore();
   const { isAdmin, isLoading: isLoadingRole } = useIsAdmin();
 
   // Modal state
@@ -121,70 +102,24 @@ export default function Equipe() {
   const {
     data: members = [],
     isLoading: loadingMembers,
-  } = useQuery<TeamMember[]>({
-    queryKey: ["team-members"],
-    queryFn: async () => {
-      const res = await api.get("/api/team");
-      return res.data ?? res;
-    },
-    enabled: !!user && isAdmin,
-  });
+  } = useTeamMembers(isAdmin);
 
   const {
     data: invitations = [],
     isLoading: loadingInvitations,
-  } = useQuery<Invitation[]>({
-    queryKey: ["team-invitations"],
-    queryFn: async () => {
-      const res = await api.get("/api/team/invitations");
-      return res.data ?? res;
-    },
-    enabled: !!user && isAdmin,
-  });
+  } = useTeamInvitations(isAdmin);
 
   // ── Mutations ────────────────────────────────────────────
 
-  const sendInvite = useMutation({
-    mutationFn: async (data: { email: string; role: string }) => {
-      return api.post("/api/team/invite", data);
-    },
-    onSuccess: () => {
-      toast.success("Convite enviado com sucesso!");
-      queryClient.invalidateQueries({ queryKey: ["team-invitations"] });
-      setInviteOpen(false);
-      setInviteEmail("");
-      setInviteRole("corretor");
-    },
-    onError: (err: Error) => {
-      toast.error("Erro ao enviar convite", { description: err.message });
-    },
+  const sendInvite = useSendInvite(() => {
+    setInviteOpen(false);
+    setInviteEmail("");
+    setInviteRole("corretor");
   });
 
-  const cancelInvite = useMutation({
-    mutationFn: async (id: string) => {
-      return api.delete(`/api/team/invitations/${id}`);
-    },
-    onSuccess: () => {
-      toast.success("Convite cancelado.");
-      queryClient.invalidateQueries({ queryKey: ["team-invitations"] });
-    },
-    onError: (err: Error) => {
-      toast.error("Erro ao cancelar convite", { description: err.message });
-    },
-  });
+  const cancelInvite = useCancelInvite();
 
-  const removeMember = useMutation({
-    mutationFn: async (id: string) => {
-      return api.delete(`/api/team/members/${id}`);
-    },
-    onSuccess: () => {
-      toast.success("Membro removido da equipe.");
-      queryClient.invalidateQueries({ queryKey: ["team-members"] });
-    },
-    onError: (err: Error) => {
-      toast.error("Erro ao remover membro", { description: err.message });
-    },
-  });
+  const removeMember = useRemoveMember();
 
   // ── Handlers ─────────────────────────────────────────────
 

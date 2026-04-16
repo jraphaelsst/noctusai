@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import HTTPException
 from noctusai_seed import create_database_module, create_dependencies
+from noctusai_lib.action_log import log_action as _shared_log_action
 from noctusai_lib.auth import first_or_none, resolve_sso_role  # noqa: F401
 from app.config import settings
 
@@ -43,15 +44,7 @@ def get_org_id(user, *, required: bool = False) -> Optional[str]:
 def log_action(user_id: str, tipo_acao: str, tipo_entidade: str,
                entidade_id: Optional[str] = None, descricao: str = "", detalhes: Optional[dict] = None):
     """Server-side action logging. Always runs with service role."""
-    admin = get_admin_client()
-    try:
-        admin.table("user_actions_log").insert({
-            "usuario_id": user_id,
-            "tipo_acao": tipo_acao,
-            "tipo_entidade": tipo_entidade,
-            "entidade_id": entidade_id,
-            "descricao": descricao,
-            "detalhes": detalhes or {},
-        }).execute()
-    except Exception as e:
-        logger.warning(f"Failed to log action: {e}")
+    _shared_log_action(
+        get_admin_client(), "user_actions_log", "usuario_id",
+        user_id, tipo_acao, tipo_entidade, entidade_id, descricao, detalhes,
+    )

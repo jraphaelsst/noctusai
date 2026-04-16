@@ -1,8 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuthStore } from '@/store/authStore';
-import { useIsAdmin } from '@/hooks/useUserRole';
+import { useNegociacoes } from '@/hooks/useNegociacoes';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,37 +8,12 @@ import { formatCurrency, formatDate } from '@/lib/utils';
 import { NEGOCIACAO_STATUS_CONFIG } from '@/lib/constants';
 import { FileText, TrendingUp, Clock, CheckCircle2 } from 'lucide-react';
 import { CardListSkeleton } from '@/components/ui/page-skeleton';
-import { Negociacao, StatusNegociacao } from '@/types/imoveis';
+import { StatusNegociacao } from '@/types/imoveis';
 
 export default function Negociacoes() {
-  const { user } = useAuthStore();
-  const { isAdmin } = useIsAdmin();
   const [filtroStatus, setFiltroStatus] = useState<StatusNegociacao | 'todas'>('todas');
 
-  const { data: negociacoes = [], isLoading } = useQuery({
-    queryKey: ['negociacoes', user?.id, filtroStatus],
-    queryFn: async () => {
-      if (!user) return [];
-
-      let query = supabase
-        .from('negociacoes')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!isAdmin) {
-        query = query.or(`cliente_proprietario_id.eq.${user.id},cliente_ofertante_id.eq.${user.id}`);
-      }
-
-      if (filtroStatus !== 'todas') {
-        query = query.eq('status_etapa', filtroStatus);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as Negociacao[];
-    },
-    enabled: !!user,
-  });
+  const { data: negociacoes = [], isLoading } = useNegociacoes(filtroStatus);
 
   // Estatísticas
   const stats = {
