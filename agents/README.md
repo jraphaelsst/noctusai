@@ -19,16 +19,25 @@ See [`agents/keeper/README.md`](keeper/README.md) for full documentation.
 
 ## Adding Future Agents
 
+```
+agents/
+  proposals/           Shared — all agents write proposals here
+  shared/              Shared — config, models, repo utilities
+  keeper/              Agent: fixer + improver
+  <future-agent>/      Each agent gets its own directory
+```
+
 Each agent follows the same structure:
 
 ```
-agents/
-  <agent-name>/
-    __init__.py
-    __main__.py      # python -m agents.<name>
-    main.py          # Core logic
-    README.md        # Required, synced with behavior
+agents/<agent-name>/
+  __init__.py
+  __main__.py          # python -m agents.<name>
+  main.py              # Core logic
+  README.md            # Required, synced with behavior
 ```
+
+Proposals go to `agents/proposals/` — one folder, all agents. When a future agent generates proposals, they land in the same place.
 
 ## Rules
 

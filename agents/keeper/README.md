@@ -47,7 +47,7 @@ Analyzers:
 
 AI brain (GPT-4o): semantic analysis, cross-product reasoning, prioritized proposals.
 
-All findings → proposals in `agents/keeper/proposals/`. Never auto-fixes.
+All findings → proposals in `agents/proposals/`. Never auto-fixes.
 
 ## Proposal Lifecycle
 
@@ -80,5 +80,6 @@ agents/keeper/
   ai_brain.py           AI reasoning over findings
   fixes.py              Auto-fix functions
   proposer.py           Proposal generation + dedup
-  proposals/            Generated proposals
+
+# Proposals live at agents/proposals/ (shared across all agents)
 ```

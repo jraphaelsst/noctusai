@@ -9,7 +9,7 @@ from pathlib import Path
 
 from agents.shared.config import REPO_ROOT
 
-PROPOSALS_DIR = REPO_ROOT / "agents" / "scientist" / "proposals"
+PROPOSALS_DIR = REPO_ROOT / "agents" / "proposals"
 
 
 def _slug(title: str) -> str:
