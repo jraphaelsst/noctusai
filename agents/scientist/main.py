@@ -248,7 +248,7 @@ def main():
             elif p.get("type") == "error":
                 print(f"  {RED}{p['message']}{RESET}")
     elif not args.analyze:
-        print(f"\n  {YELLOW}AI synthesis skipped — ANTHROPIC_API_KEY not set{RESET}")
+        print(f"\n  {YELLOW}AI synthesis skipped — OPENAI_API_KEY not set{RESET}")
 
     # Summary
     proposals = list_proposals()
@@ -260,7 +260,7 @@ def main():
     if is_ai_available():
         print(f"  AI brain: active")
     else:
-        print(f"  AI brain: disabled (set ANTHROPIC_API_KEY to enable)")
+        print(f"  AI brain: disabled (set OPENAI_API_KEY to enable)")
     print("-" * 60)
     print()
 

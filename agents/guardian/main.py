@@ -65,7 +65,7 @@ def main():
     parser = argparse.ArgumentParser(description="Seed Guardian — validate seed compliance")
     parser.add_argument("--product", help="Check a single product")
     parser.add_argument("--check", help="Run a specific hard check only")
-    parser.add_argument("--advisory", action="store_true", help="Include AI advisory checks (requires ANTHROPIC_API_KEY)")
+    parser.add_argument("--advisory", action="store_true", help="Include AI advisory checks (requires OPENAI_API_KEY)")
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     args = parser.parse_args()
 

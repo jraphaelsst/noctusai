@@ -16,7 +16,7 @@ import json
 import logging
 from typing import Optional
 
-from agents.shared.models import ask_claude, is_ai_available
+from agents.shared.models import ask_ai, is_ai_available
 from agents.shared.config import REPO_ROOT
 from agents.shared.repo import read_file
 from agents.scientist.proposer import generate_proposal
@@ -41,7 +41,7 @@ def analyze_findings(findings: dict) -> list[dict]:
     3. Generate concrete improvement proposals
     """
     if not is_ai_available():
-        return [{"type": "info", "message": "AI brain skipped — ANTHROPIC_API_KEY not set"}]
+        return [{"type": "info", "message": "AI brain skipped — OPENAI_API_KEY not set"}]
 
     context = _load_platform_context()
 
@@ -79,7 +79,7 @@ Output one JSON object per line. Only output real, actionable proposals. No vagu
 If the platform is in good shape with no significant improvements needed, output:
 {{"title": "Platform healthy", "status": "no_proposals"}}"""
 
-    response = ask_claude(
+    response = ask_ai(
         prompt=prompt,
         system="You are a senior platform architect. Be specific, concrete, and practical. Every proposal must include actual steps, not just descriptions.",
         model="claude-sonnet-4-6",
@@ -143,7 +143,7 @@ Consider: functions like "log_action" are likely the same across products. Funct
 Output your assessment as JSON lines:
 {{"function": "name", "same_logic": true/false, "confidence": "high/medium/low", "recommendation": "extract to seed lib" or "keep separate — different domain logic"}}"""
 
-    return ask_claude(
+    return ask_ai(
         prompt=prompt,
         system="You are a code architect evaluating whether functions should be shared or kept separate.",
         max_tokens=2048,

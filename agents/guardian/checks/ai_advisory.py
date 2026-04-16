@@ -5,14 +5,14 @@ This is the Guardian's AI-powered extension. It doesn't block CI — it warns.
 When a new rule is added to CLAUDE.md, the advisory layer automatically
 enforces it without anyone writing a new check.
 
-Requires ANTHROPIC_API_KEY in .env.
+Requires OPENAI_API_KEY in .env.
 """
 import logging
 from pathlib import Path
 
 from agents.shared.config import REPO_ROOT, list_products
 from agents.shared.repo import read_file, find_files
-from agents.shared.models import ask_claude, is_ai_available
+from agents.shared.models import ask_ai, is_ai_available
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def run_advisory(product_path: Path = None) -> list[dict]:
     Returns list of advisory findings (warnings, not blockers).
     """
     if not is_ai_available():
-        return [{"type": "info", "message": "AI advisory skipped — ANTHROPIC_API_KEY not set"}]
+        return [{"type": "info", "message": "AI advisory skipped — OPENAI_API_KEY not set"}]
 
     rules = _load_rules()
     if not rules:
@@ -114,7 +114,7 @@ If the code is fully compliant, output:
 
 Output ONLY JSON lines, nothing else."""
 
-        response = ask_claude(
+        response = ask_ai(
             prompt=prompt,
             system="You are a strict code auditor. Only report real rule violations. No false positives.",
             max_tokens=2048,

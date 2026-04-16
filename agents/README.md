@@ -36,7 +36,6 @@ pip install -r agents/requirements.txt
 
 Required env vars in `.env`:
 ```
-ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 ```
 
