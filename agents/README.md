@@ -1,17 +1,53 @@
 # NoctusAI Seed Agents
 
-Two agents that protect and evolve the seed infrastructure.
+Two agents orchestrated in a pipeline that protects and evolves the platform.
 
-## Agents
+## Single Command
 
-| Agent | Purpose | Command | AI |
-|-------|---------|---------|-----|
-| **Guardian** | Validate compliance, block drift | `python -m agents.guardian` | Hard checks (deterministic) + advisory (GPT-4o) |
-| **Scientist** | Discover improvements, propose changes | `python -m agents.scientist` | File analyzers + AI brain (GPT-4o) |
+```bash
+python -m agents              # Full pipeline: Guardian → Scientist
+```
 
-Each agent has its own `README.md` with full documentation:
-- [`agents/guardian/README.md`](guardian/README.md)
-- [`agents/scientist/README.md`](scientist/README.md)
+That's it. One command runs everything:
+
+1. **Guardian** validates platform compliance (pass/fail)
+2. If Guardian **passes** → **Scientist** discovers improvements
+3. If Guardian **fails** → Scientist is **skipped** (fix the foundation first)
+
+## Orchestration
+
+```
+python -m agents
+    │
+    ├── GUARDIAN (is the platform healthy?)
+    │     ├── Hard checks: seed compliance, path references
+    │     ├── Score: 0-100 per product
+    │     └── Result: PASS (100) or FAIL (<100)
+    │
+    ├── if FAIL → stop. Fix issues. Re-run.
+    │
+    └── if PASS → SCIENTIST (how can we improve?)
+          ├── File analyzers: patterns, deps, structure, tests
+          ├── AI brain: semantic analysis via GPT-4o
+          └── Proposals saved to agents/scientist/proposals/
+```
+
+Guardian gates the Scientist. No point discovering improvements if the foundation is broken.
+
+## Commands
+
+```bash
+python -m agents                    # Full pipeline (recommended)
+python -m agents --advisory         # Full pipeline + Guardian AI advisory
+python -m agents --guardian         # Guardian only
+python -m agents --scientist        # Scientist only (skip Guardian gate)
+```
+
+## Individual Agent Docs
+
+Each agent has its own README with detailed documentation:
+- [`agents/guardian/README.md`](guardian/README.md) — checks, scoring, AI advisory
+- [`agents/scientist/README.md`](scientist/README.md) — analyzers, proposals, dedup, AI brain
 
 ## Setup
 
@@ -24,30 +60,33 @@ Required in root `.env`:
 OPENAI_API_KEY=sk-...
 ```
 
-Without the key, both agents still work — Guardian runs hard checks only, Scientist runs file analyzers only. AI features are additive, not required.
+Without the key, both agents work — Guardian runs hard checks, Scientist runs file analyzers. AI features are additive.
 
 ## Architecture
 
 ```
 agents/
-  shared/              Utilities used by both agents
+  __main__.py          Orchestration — Guardian → Scientist pipeline
+  shared/              Shared utilities
     config.py          Repo paths, product discovery
-    models.py          OpenAI API wrapper (ask_ai, is_ai_available)
-    repo.py            File reading, import extraction, test runner
-  guardian/            Seed Guardian — stability agent
-    README.md          Full documentation (required)
+    models.py          OpenAI API wrapper
+    repo.py            File reading, imports, test runner
+  guardian/             Stability agent
+    README.md          Documentation (required, synced)
+    main.py            Standalone entry point
     checks/            Modular validation checks
-    main.py            CLI entry point
-  scientist/           Seed Scientist — innovation agent
-    README.md          Full documentation (required)
+  scientist/           Innovation agent
+    README.md          Documentation (required, synced)
+    main.py            Standalone entry point
     analyzers/         Modular analysis modules
     ai_brain.py        AI reasoning over findings
     proposer.py        Proposal generation + deduplication
-    proposals/         Generated proposals (markdown)
+    proposals/         Generated proposals
 ```
 
 ## Rules
 
-- **Every agent must have a README.md.** The README is the agent's documentation. It must explain: what the agent does, how to run it, what checks/analyzers it has, and how its output works.
-- **READMEs must stay in sync.** When an agent's behavior changes (new check, new analyzer, new CLI flag), update its README in the same commit. Stale docs are worse than no docs.
-- **New agents follow the same pattern.** `agents/<name>/README.md`, `agents/<name>/main.py`, `agents/<name>/__main__.py`, `agents/<name>/__init__.py`.
+- **Every agent must have a README.md** — synced with behavior in the same commit.
+- **Single run, full analysis.** Each agent completes its entire workflow in one invocation. No multi-step manual runs.
+- **Proposals are deduplicated.** Running agents multiple times produces the same proposal count (unless the codebase changed).
+- **Guardian gates Scientist.** Fix compliance before seeking improvements.
