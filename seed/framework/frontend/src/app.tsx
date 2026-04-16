@@ -1,15 +1,9 @@
 /**
  * Product Application Factory
  *
- * Creates a complete App component with the standard NoctusAI pattern:
- * - QueryClientProvider + TooltipProvider (structural providers)
- * - BrowserRouter with auth-gated routing
- * - Standard public routes (landing, login, SSO, accept-invite, forgot-password)
- * - Lazy-loaded pages with Suspense + PageSkeleton
- * - ErrorBoundary wrapper
- * - Toaster (sonner)
- *
- * Products only provide: their authenticated routes and the Layout component.
+ * Creates a complete App component with the standard NoctusAI pattern.
+ * Supports both flat routing (most products) and role-based routing
+ * (products like Therapy with admin/therapist/patient roles).
  */
 import { Suspense, type LazyExoticComponent } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
@@ -26,18 +20,56 @@ export interface ProductRoute {
   component: LazyExoticComponent<any>;
 }
 
-export interface ProductAppConfig {
+/** Role-based route configuration — each role gets its own routes + layout */
+export interface RoleRouteConfig {
+  /** Routes for this role */
   routes: ProductRoute[];
+  /** Layout component for this role (from createProductLayout) */
   Layout: React.ComponentType<{ children: React.ReactNode }>;
+  /** Root path prefix for this role (e.g. "/admin", "/therapist") */
+  pathPrefix?: string;
+}
+
+export interface ProductAppConfig {
+  /** Flat routes — for products with a single role/layout */
+  routes?: ProductRoute[];
+  /** Layout for flat routing */
+  Layout?: React.ComponentType<{ children: React.ReactNode }>;
+  /** Supabase client */
   supabase: SupabaseClient<any, any, any>;
-  /** Full auth store hook — must return { user, isInitialized, setUser, setInitialized } */
+  /** Full auth store hook */
   useAuthStore: () => any;
+  /** Standard public pages */
   Landing?: LazyExoticComponent<any>;
   Login?: LazyExoticComponent<any>;
   AcceptInvite?: LazyExoticComponent<any>;
   ForgotPassword?: LazyExoticComponent<any>;
   NotFound?: LazyExoticComponent<any>;
+  /** Additional public routes (no auth) */
   publicRoutes?: ProductRoute[];
+  /**
+   * Role-based routing — for products with multiple user roles.
+   * Map of role key → { routes, Layout, pathPrefix }.
+   * Used with `resolveRole` to determine which role config to show.
+   */
+  roleRoutes?: Record<string, RoleRouteConfig>;
+  /**
+   * Resolve the user's role from auth metadata.
+   * Returns a key that matches one of the `roleRoutes` keys.
+   * Required when `roleRoutes` is provided.
+   */
+  resolveRole?: (user: any) => string;
+  /**
+   * Default redirect path after login.
+   * For flat routing: defaults to "/".
+   * For role routing: overrides the role-based redirect.
+   */
+  defaultRedirect?: string;
+  /**
+   * Routes that should render WITHOUT the Layout wrapper.
+   * Useful for full-screen pages like video sessions.
+   */
+  unwrappedRoutes?: ProductRoute[];
 }
 
 export function createProductApp(config: ProductAppConfig) {
@@ -52,22 +84,18 @@ export function createProductApp(config: ProductAppConfig) {
     ForgotPassword,
     NotFound,
     publicRoutes = [],
+    roleRoutes,
+    resolveRole,
+    defaultRedirect,
+    unwrappedRoutes = [],
   } = config;
 
   const queryClient = createQueryClient();
   const AuthProvider = createAuthProvider(supabase, useAuthStore);
 
-  function AppContent() {
-    const { user, isInitialized } = useAuthStore();
-
-    if (!isInitialized) {
-      return <PageSkeleton />;
-    }
-
-    if (!user) {
-      return <Navigate to="/landing" replace />;
-    }
-
+  // Flat routing — single Layout, single set of routes
+  function FlatContent() {
+    if (!Layout || !routes) return null;
     return (
       <Layout>
         <ErrorBoundary>
@@ -81,6 +109,81 @@ export function createProductApp(config: ProductAppConfig) {
           </Suspense>
         </ErrorBoundary>
       </Layout>
+    );
+  }
+
+  // Role-based routing — different Layout + routes per role
+  function RoleContent() {
+    const { user } = useAuthStore();
+    if (!roleRoutes || !resolveRole || !user) return null;
+
+    const role = resolveRole(user);
+    const roleConfig = roleRoutes[role];
+    if (!roleConfig) return NotFound ? <NotFound /> : null;
+
+    const { routes: roleSpecificRoutes, Layout: RoleLayout, pathPrefix } = roleConfig;
+
+    return (
+      <RoleLayout>
+        <ErrorBoundary>
+          <Suspense fallback={<PageSkeleton />}>
+            <Routes>
+              {roleSpecificRoutes.map(({ path, component: Component }) => (
+                <Route key={path} path={path} element={<Component />} />
+              ))}
+              {NotFound && <Route path="*" element={<NotFound />} />}
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
+      </RoleLayout>
+    );
+  }
+
+  function AppContent() {
+    const { user, isInitialized } = useAuthStore();
+
+    if (!isInitialized) {
+      return <PageSkeleton />;
+    }
+
+    if (!user) {
+      return <Navigate to="/landing" replace />;
+    }
+
+    // Determine redirect path
+    const redirect = defaultRedirect || (roleRoutes && resolveRole
+      ? (() => {
+          const role = resolveRole(user);
+          const rc = roleRoutes[role];
+          return rc?.pathPrefix || rc?.routes[0]?.path || "/";
+        })()
+      : "/");
+
+    return (
+      <Routes>
+        {/* Unwrapped routes (no Layout — e.g. full-screen video sessions) */}
+        {unwrappedRoutes.map(({ path, component: Component }) => (
+          <Route key={path} path={path} element={
+            <Suspense fallback={<PageSkeleton />}><Component /></Suspense>
+          } />
+        ))}
+
+        {/* Role-based routing */}
+        {roleRoutes && Object.entries(roleRoutes).map(([roleKey, rc]) => (
+          rc.pathPrefix
+            ? <Route key={roleKey} path={`${rc.pathPrefix}/*`} element={<RoleContent />} />
+            : null
+        ))}
+
+        {/* Default redirect for role routing */}
+        {roleRoutes && <Route path="/" element={<Navigate to={redirect} replace />} />}
+
+        {/* Flat routing */}
+        {routes && <Route path="/*" element={<FlatContent />} />}
+
+        {/* Catch-all for role routing without prefix */}
+        {roleRoutes && !routes && <Route path="/*" element={<RoleContent />} />}
+      </Routes>
     );
   }
 

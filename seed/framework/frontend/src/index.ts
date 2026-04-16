@@ -13,8 +13,8 @@
  */
 export { createProductApp } from './app';
 export { createProductLayout } from './layout';
-export type { ProductAppConfig, ProductRoute } from './app';
-export type { ProductLayoutConfig } from './layout';
+export type { ProductAppConfig, ProductRoute, RoleRouteConfig } from './app';
+export type { ProductLayoutConfig, LayoutEnrichment } from './layout';
 
 // createViteConfig lives at seed/framework/frontend/vite.config.factory.ts
 // It's config-time code (not app-time), so it's NOT in src/ and NOT bundled.

@@ -1,16 +1,12 @@
 /**
  * Product Layout Factory
  *
- * Creates a Layout component with the standard NoctusAI pattern:
- * - AppShell with Sidebar + Header
- * - Page status filtering (dev-gated pages)
- * - SSO context resolution
- * - Trial/license expiration warnings
- * - Activity refresh + inactivity warning
- * - Profile update handlers
- * - "Back to Core" link for SSO users
+ * Creates a Layout component with the standard NoctusAI pattern.
+ * Products provide static config (nav, brand) and optional enrichment
+ * hooks for domain-specific data (DB profiles, roles, theme persistence).
  *
- * Products only provide: brandIcon, brandTitle, navGroups, and supabase client.
+ * The enrichment hook (`useLayoutEnrichment`) is the extension point
+ * that makes ANY product framework-first — no matter how complex.
  */
 import { useCallback } from "react";
 import {
@@ -33,33 +29,62 @@ import type { LucideIcon } from "lucide-react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 type AnySupabaseClient = SupabaseClient<any, any, any>;
 
+/**
+ * Enrichment data returned by the optional useLayoutEnrichment hook.
+ * Products use this to inject domain-specific data into the framework layout.
+ */
+export interface LayoutEnrichment {
+  /** Override user display name (e.g. from product DB profile) */
+  userName?: string;
+  /** Override user email */
+  userEmail?: string;
+  /** Override user phone */
+  userPhone?: string;
+  /** User avatar URL (not available from auth metadata) */
+  userAvatar?: string;
+  /** Override role label display */
+  roleLabel?: string;
+  /** Extra nav groups to add conditionally (e.g. admin panel) */
+  extraNavGroups?: NavGroupWithRoute[];
+  /** Override the effective dev role for page visibility (e.g. "dev" to show dev pages) */
+  effectiveDevRole?: string | null;
+  /** Whether the enrichment data is still loading */
+  isLoading?: boolean;
+  /** Whether email field is editable in profile editor */
+  canEditEmail?: boolean;
+  /** Custom profile update handler (overrides default auth.updateUser) */
+  onUpdateProfile?: (data: { name: string; email: string; phone: string }) => Promise<void>;
+  /** Custom theme persistence callback (e.g. save to DB) */
+  onThemePersist?: (theme: string) => void;
+  /** Initial theme from DB (overrides localStorage) */
+  initialTheme?: "light" | "dark";
+  /** Any extra user props to pass to SharedHeader */
+  headerUserProps?: Record<string, any>;
+}
+
 export interface ProductLayoutConfig {
-  /** Brand icon displayed in sidebar */
   brandIcon: LucideIcon;
-  /** Product name displayed in sidebar */
   brandTitle: string;
-  /** Nav groups with route keys for page status filtering */
   navGroups: NavGroupWithRoute[];
-  /** Fallback nav groups when status_pagina table doesn't exist */
   navGroupsFallback: NavGroup[];
-  /** Supabase client instance */
   supabase: AnySupabaseClient;
-  /** Auth store hook (returns { user }) */
   useAuthStore: () => { user: any };
-  /** Notification bell component */
   NotificationBell: React.ComponentType;
-  /** Standalone nav items (displayed below groups, separated by border) */
   standaloneItems?: NavItemWithRoute[];
-  /** Fallback standalone items when status_pagina table doesn't exist */
   standaloneItemsFallback?: NavItem[];
-  /** Role labels for display (e.g. { admin: "Administrador" }) */
   roleLabels?: Record<string, string>;
-  /** Default role label when no match (e.g. "Membro") */
   defaultRoleLabel?: string;
-  /** Override role label directly (bypasses SSO role resolution for display) */
   roleLabelOverride?: string;
-  /** Override brand subtitle (instead of using org name from SSO context) */
   brandSubtitleOverride?: string;
+  /**
+   * Optional enrichment hook — the extension point that makes any product
+   * framework-first, no matter how complex its layout needs are.
+   *
+   * Called inside the Layout component (follows React hooks rules).
+   * Returns domain-specific overrides: DB profile data, conditional nav,
+   * theme persistence, role labels, loading state.
+   */
+  useLayoutEnrichment?: () => LayoutEnrichment;
 }
 
 const DEFAULT_ROLE_LABELS: Record<string, string> = {
@@ -99,32 +124,62 @@ export function createProductLayout(config: ProductLayoutConfig) {
     defaultRoleLabel = "Membro",
     roleLabelOverride,
     brandSubtitleOverride,
+    useLayoutEnrichment,
   } = config;
 
   return function Layout({ children }: { children: React.ReactNode }) {
     const { user } = useAuthStore();
-    const { theme, toggleTheme } = useTheme();
+
+    // Call enrichment hook if provided (must be called unconditionally — hooks rules)
+    const enrichment: LayoutEnrichment = useLayoutEnrichment ? useLayoutEnrichment() : {};
+
+    // Theme — supports DB persistence via enrichment
+    const { theme, toggleTheme } = useTheme({
+      initialTheme: enrichment.initialTheme,
+      onPersist: enrichment.onThemePersist,
+    });
 
     useActivityRefresh({
       onRefresh: useCallback(async () => { await supabase.auth.refreshSession(); }, []),
     });
 
+    // If enrichment is loading, show loading state
+    if (enrichment.isLoading) {
+      return (
+        <header className="h-14 sm:h-16 bg-card border-b border-border px-4 sm:px-6 flex items-center justify-end">
+          <p className="text-sm font-medium text-muted-foreground">Carregando...</p>
+        </header>
+      );
+    }
+
     const ssoCtx = resolveSSOContext(user?.user_metadata);
     const trialDays = isTrial(ssoCtx) ? subscriptionDaysRemaining(ssoCtx) : null;
     const licenseDays = licenseDaysRemaining(ssoCtx);
+    const effectiveRole = enrichment.effectiveDevRole ?? ssoCtx.org.role;
+
+    // Merge base nav groups + conditional extra groups from enrichment
+    const allNavGroups = enrichment.extraNavGroups?.length
+      ? [...navGroupsWithRoutes, ...enrichment.extraNavGroups]
+      : navGroupsWithRoutes;
+
+    const allNavFallback = enrichment.extraNavGroups?.length
+      ? [...navGroupsFallback, ...enrichment.extraNavGroups.map(g => ({
+          ...g, items: g.items.map(({ route, ...item }) => item),
+        })) as NavGroup[]]
+      : navGroupsFallback;
 
     const { data: statusPaginas } = usePageStatus(supabase, !!user);
     const navGroups = (statusPaginas?.length
-      ? filterNavByPageStatus(navGroupsWithRoutes, statusPaginas, ssoCtx.org.role)
-      : navGroupsFallback) as NavGroup[];
+      ? filterNavByPageStatus(allNavGroups, statusPaginas, effectiveRole)
+      : allNavFallback) as NavGroup[];
 
-    // Standalone items (e.g. Settings) — filter by page status when available
+    // Standalone items
     const standaloneItems: NavItem[] = standaloneWithRoutes?.length
       ? (statusPaginas?.length
           ? filterNavByPageStatus(
               [{ key: "_standalone", label: "", items: standaloneWithRoutes }],
               statusPaginas,
-              ssoCtx.org.role,
+              effectiveRole,
             ).flatMap((g) => g.items) as NavItem[]
           : (standaloneItemsFallback || standaloneWithRoutes.map(({ route: _r, ...rest }) => rest) as NavItem[]))
       : [];
@@ -134,13 +189,14 @@ export function createProductLayout(config: ProductLayoutConfig) {
       window.location.href = ssoCtx.isSSO ? CORE_URL : "/login";
     };
 
-    const handleUpdateProfile = async (data: { name: string; email: string; phone: string }) => {
+    // Profile update — use enrichment override or default auth.updateUser
+    const handleUpdateProfile = enrichment.onUpdateProfile || (async (data: { name: string; email: string; phone: string }) => {
       const { error } = await supabase.auth.updateUser({
         data: { full_name: data.name, phone: data.phone },
       });
       if (error) throw error;
       toast.success("Perfil atualizado com sucesso!");
-    };
+    });
 
     const handleUpdatePassword = async (newPassword: string) => {
       const { error } = await supabase.auth.updateUser({ password: newPassword });
@@ -148,12 +204,15 @@ export function createProductLayout(config: ProductLayoutConfig) {
       toast.success("Senha atualizada com sucesso!");
     };
 
-    const userName = user?.user_metadata?.full_name
+    // User display — enrichment overrides auth metadata
+    const userName = enrichment.userName
+      || user?.user_metadata?.full_name
       || user?.user_metadata?.name
       || user?.email?.split("@")[0]
       || "Usuario";
 
-    const userRole = roleLabelOverride
+    const userRole = enrichment.roleLabel
+      || roleLabelOverride
       || (ssoCtx.isProductAdmin ? "Administrador" : roleLabels[ssoCtx.org.role] || defaultRoleLabel);
 
     return (
@@ -172,9 +231,11 @@ export function createProductLayout(config: ProductLayoutConfig) {
           <SharedHeader
             user={{
               name: userName,
-              email: user?.email || "",
-              phone: user?.user_metadata?.phone || user?.phone || "",
+              email: enrichment.userEmail || user?.email || "",
+              phone: enrichment.userPhone || user?.user_metadata?.phone || user?.phone || "",
               role: userRole,
+              ...(enrichment.userAvatar && { avatar: enrichment.userAvatar }),
+              ...(enrichment.headerUserProps || {}),
             }}
             onMenuToggle={onMenuToggle}
             logoutBehavior="redirect"
@@ -183,6 +244,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
             theme={theme}
             onThemeToggle={toggleTheme}
             actions={<NotificationBell />}
+            canEditEmail={enrichment.canEditEmail}
             onUpdateProfile={handleUpdateProfile}
             onUpdatePassword={handleUpdatePassword}
           />

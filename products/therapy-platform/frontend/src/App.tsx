@@ -1,27 +1,15 @@
-import { lazy, Suspense } from "react";
-import { Toaster } from "sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/components/auth/AuthProvider";
-import { useAuthStore } from "@/store/authStore";
-import { PageSkeleton } from "@noctusai/shared/design-system";
-import { createQueryClient } from "@noctusai/shared/query-client";
+import { lazy } from "react";
+import { createProductApp } from "@noctusai/seed";
 import { resolveSSORoles } from "@noctusai/shared";
-
-// Role-based layouts from seed framework
 import { AdminLayout, ClinicLayout, TherapistLayout, PatientLayout } from "@/layouts";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuthStore } from "@/store/authStore";
 
 // ── Lazy-loaded pages ───────────────────────────────────────
 
 // Public
 const Landing = lazy(() => import("./pages/Landing"));
-const Login = lazy(() => import("./pages/Login"));
 const Register = lazy(() => import("./pages/Register"));
-const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const SSOCallback = lazy(() => import("./pages/SSOCallback"));
-const AcceptInvite = lazy(() => import("./pages/AcceptInvite"));
 const Messages = lazy(() => import("./pages/Messages"));
 const TermsOfUse = lazy(() => import("./pages/TermsOfUse"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
@@ -86,257 +74,130 @@ const PatientInvoices = lazy(() => import("./pages/patient/Invoices"));
 // Session (full-screen — no layout)
 const Session = lazy(() => import("./pages/Session"));
 
-// Directory (any authenticated user)
+// Directory (any user — public + authenticated)
 const TherapistDirectory = lazy(() => import("./pages/TherapistDirectory"));
 const TherapistProfile = lazy(() => import("./pages/TherapistProfile"));
 const ClinicDirectory = lazy(() => import("./pages/ClinicDirectory"));
 const ClinicProfile = lazy(() => import("./pages/ClinicProfile"));
 
-const queryClient = createQueryClient();
+// ── Role resolver ──────────────────────────────────────────
 
-// ── Role-based route groups ─────────────────────────────────
-
-function AdminRoutes() {
-  return (
-    <AdminLayout>
-      <Suspense fallback={<PageSkeleton />}>
-        <Routes>
-          <Route path="/" element={<AdminDashboard />} />
-          <Route path="/terapeutas" element={<AdminTherapists />} />
-          <Route path="/terapeutas/:id" element={<AdminTherapistDetail />} />
-          <Route path="/clinicas" element={<AdminClinics />} />
-          <Route path="/clinicas/:id" element={<AdminClinicDetail />} />
-          <Route path="/pacientes" element={<AdminPatients />} />
-          <Route path="/pacientes/:id" element={<AdminPatientDetail />} />
-          <Route path="/agendamentos" element={<AdminAppointments />} />
-          <Route path="/financeiro" element={<AdminFinancials />} />
-          <Route path="/reembolsos" element={<AdminRefunds />} />
-          <Route path="/configuracoes" element={<AdminSettings />} />
-          <Route path="/prompts-ia" element={<AdminAIPrompts />} />
-          <Route path="/suporte" element={<AdminSupport />} />
-          <Route path="/moderacao" element={<AdminModeration />} />
-          <Route path="/alertas-crise" element={<AdminCrisisAlerts />} />
-          <Route path="/avaliacoes" element={<AdminReviews />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Suspense>
-    </AdminLayout>
-  );
-}
-
-function ClinicRoutes() {
-  return (
-    <ClinicLayout>
-      <Suspense fallback={<PageSkeleton />}>
-        <Routes>
-          <Route path="/" element={<ClinicDashboard />} />
-          <Route path="/terapeutas" element={<ClinicTherapists />} />
-          <Route path="/pacientes" element={<ClinicPatients />} />
-          <Route path="/agendamentos" element={<ClinicDashboard />} />
-          <Route path="/financeiro" element={<ClinicFinancials />} />
-          <Route path="/mensagens" element={<Messages />} />
-          <Route path="/avaliacoes" element={<ClinicDashboard />} />
-          <Route path="/configuracoes" element={<ClinicSettings />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Suspense>
-    </ClinicLayout>
-  );
-}
-
-function TherapistRoutes() {
-  return (
-    <TherapistLayout>
-      <Suspense fallback={<PageSkeleton />}>
-        <Routes>
-          <Route path="/" element={<TherapistDashboard />} />
-          <Route path="/agenda" element={<TherapistCalendar />} />
-          <Route path="/agenda/disponibilidade" element={<TherapistAvailabilitySettings />} />
-          <Route path="/recorrentes" element={<TherapistRecurringSchedules />} />
-          <Route path="/pacientes" element={<TherapistPatients />} />
-          <Route path="/pacientes/:id" element={<TherapistPatientProfile />} />
-          <Route path="/sessoes" element={<TherapistDashboard />} />
-          <Route path="/sessoes/:id" element={<TherapistSessionDetail />} />
-          <Route path="/financeiro" element={<TherapistFinancials />} />
-          <Route path="/avaliacoes" element={<TherapistReviews />} />
-          <Route path="/mensagens" element={<Messages />} />
-          <Route path="/prontuario" element={<TherapistClinicalRecords />} />
-          <Route path="/tarefas-terapeuticas" element={<TherapistHomeworkManager />} />
-          <Route path="/bi" element={<TherapistBiDashboard />} />
-          <Route path="/alertas-crise" element={<TherapistCrisisAlerts />} />
-          <Route path="/configuracoes" element={<TherapistSettings />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Suspense>
-    </TherapistLayout>
-  );
-}
-
-function PatientRoutes() {
-  return (
-    <PatientLayout>
-      <Suspense fallback={<PageSkeleton />}>
-        <Routes>
-          <Route path="/" element={<PatientDashboard />} />
-          <Route path="/agenda" element={<PatientCalendar />} />
-          <Route path="/recorrentes" element={<PatientRecurringSchedules />} />
-          <Route path="/sessoes" element={<PatientSessionHistory />} />
-          <Route path="/sessoes/:id" element={<PatientSessionDetail />} />
-          <Route path="/jornada" element={<PatientJourney />} />
-          <Route path="/carteira" element={<PatientWallet />} />
-          <Route path="/configuracoes/pagamentos" element={<PatientPaymentMethods />} />
-          <Route path="/mensagens" element={<Messages />} />
-          <Route path="/avaliacoes" element={<PatientReviews />} />
-          <Route path="/humor" element={<PatientMoodTracker />} />
-          <Route path="/diario" element={<PatientDiary />} />
-          <Route path="/tarefas" element={<PatientHomework />} />
-          <Route path="/recibos" element={<PatientInvoices />} />
-          <Route path="/configuracoes" element={<PatientSettings />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Suspense>
-    </PatientLayout>
-  );
-}
-
-// Directory pages use the patient layout (role-neutral, most permissive nav)
-function DirectoryWithLayout({ children }: { children: React.ReactNode }) {
-  return <PatientLayout>{children}</PatientLayout>;
-}
-
-// ── Authenticated routing ───────────────────────────────────
-
-function resolveTherapyRole(user: any): string | undefined {
+function resolveTherapyRole(user: any): string {
   const meta = user?.user_metadata;
-  if (!meta) return undefined;
+  if (!meta) return "paciente";
   // Shared SSO role resolution (org owner/admin or NoctusAI admin)
   const { isProductAdmin } = resolveSSORoles(meta);
   if (isProductAdmin) return "admin";
   // Direct registration (therapy-native users)
-  return meta.role as string | undefined;
+  return (meta.role as string) || "paciente";
 }
 
-function AuthenticatedRoutes() {
-  const { user } = useAuthStore();
-  const role = resolveTherapyRole(user);
+// ── App via seed framework ─────────────────────────────────
 
-  // Determine the default dashboard path based on role
-  const dashboardPath =
-    role === "admin" ? "/admin" :
-    role === "clinica" ? "/clinic" :
-    role === "terapeuta" ? "/therapist" :
-    "/patient";
+export default createProductApp({
+  supabase,
+  useAuthStore,
+  resolveRole: resolveTherapyRole,
 
-  return (
-    <Suspense fallback={<PageSkeleton />}>
-      <Routes>
-        {/* Root redirects to role-specific dashboard */}
-        <Route path="/" element={<Navigate to={dashboardPath} replace />} />
+  roleRoutes: {
+    admin: {
+      pathPrefix: "/admin",
+      Layout: AdminLayout,
+      routes: [
+        { path: "/", component: AdminDashboard },
+        { path: "/terapeutas", component: AdminTherapists },
+        { path: "/terapeutas/:id", component: AdminTherapistDetail },
+        { path: "/clinicas", component: AdminClinics },
+        { path: "/clinicas/:id", component: AdminClinicDetail },
+        { path: "/pacientes", component: AdminPatients },
+        { path: "/pacientes/:id", component: AdminPatientDetail },
+        { path: "/agendamentos", component: AdminAppointments },
+        { path: "/financeiro", component: AdminFinancials },
+        { path: "/reembolsos", component: AdminRefunds },
+        { path: "/configuracoes", component: AdminSettings },
+        { path: "/prompts-ia", component: AdminAIPrompts },
+        { path: "/suporte", component: AdminSupport },
+        { path: "/moderacao", component: AdminModeration },
+        { path: "/alertas-crise", component: AdminCrisisAlerts },
+        { path: "/avaliacoes", component: AdminReviews },
+      ],
+    },
+    clinica: {
+      pathPrefix: "/clinic",
+      Layout: ClinicLayout,
+      routes: [
+        { path: "/", component: ClinicDashboard },
+        { path: "/terapeutas", component: ClinicTherapists },
+        { path: "/pacientes", component: ClinicPatients },
+        { path: "/agendamentos", component: ClinicDashboard },
+        { path: "/financeiro", component: ClinicFinancials },
+        { path: "/mensagens", component: Messages },
+        { path: "/avaliacoes", component: ClinicDashboard },
+        { path: "/configuracoes", component: ClinicSettings },
+      ],
+    },
+    terapeuta: {
+      pathPrefix: "/therapist",
+      Layout: TherapistLayout,
+      routes: [
+        { path: "/", component: TherapistDashboard },
+        { path: "/agenda", component: TherapistCalendar },
+        { path: "/agenda/disponibilidade", component: TherapistAvailabilitySettings },
+        { path: "/recorrentes", component: TherapistRecurringSchedules },
+        { path: "/pacientes", component: TherapistPatients },
+        { path: "/pacientes/:id", component: TherapistPatientProfile },
+        { path: "/sessoes", component: TherapistDashboard },
+        { path: "/sessoes/:id", component: TherapistSessionDetail },
+        { path: "/financeiro", component: TherapistFinancials },
+        { path: "/avaliacoes", component: TherapistReviews },
+        { path: "/mensagens", component: Messages },
+        { path: "/prontuario", component: TherapistClinicalRecords },
+        { path: "/tarefas-terapeuticas", component: TherapistHomeworkManager },
+        { path: "/bi", component: TherapistBiDashboard },
+        { path: "/alertas-crise", component: TherapistCrisisAlerts },
+        { path: "/configuracoes", component: TherapistSettings },
+      ],
+    },
+    paciente: {
+      pathPrefix: "/patient",
+      Layout: PatientLayout,
+      routes: [
+        { path: "/", component: PatientDashboard },
+        { path: "/agenda", component: PatientCalendar },
+        { path: "/recorrentes", component: PatientRecurringSchedules },
+        { path: "/sessoes", component: PatientSessionHistory },
+        { path: "/sessoes/:id", component: PatientSessionDetail },
+        { path: "/jornada", component: PatientJourney },
+        { path: "/carteira", component: PatientWallet },
+        { path: "/configuracoes/pagamentos", component: PatientPaymentMethods },
+        { path: "/mensagens", component: Messages },
+        { path: "/avaliacoes", component: PatientReviews },
+        { path: "/humor", component: PatientMoodTracker },
+        { path: "/diario", component: PatientDiary },
+        { path: "/tarefas", component: PatientHomework },
+        { path: "/recibos", component: PatientInvoices },
+        { path: "/configuracoes", component: PatientSettings },
+      ],
+    },
+  },
 
-        {/* Full-screen session page — no layout wrapper */}
-        <Route path="/session/:appointmentId" element={<Session />} />
+  unwrappedRoutes: [
+    { path: "/session/:appointmentId", component: Session },
+  ],
 
-        {/* Role-scoped layouts */}
-        <Route path="/admin/*" element={<AdminRoutes />} />
-        <Route path="/clinic/*" element={<ClinicRoutes />} />
-        <Route path="/therapist/*" element={<TherapistRoutes />} />
-        <Route path="/patient/*" element={<PatientRoutes />} />
+  publicRoutes: [
+    { path: "/register", component: Register },
+    { path: "/therapists", component: TherapistDirectory },
+    { path: "/therapists/:id", component: TherapistProfile },
+    { path: "/clinics", component: ClinicDirectory },
+    { path: "/clinics/:id", component: ClinicProfile },
+    { path: "/termos", component: TermsOfUse },
+    { path: "/privacidade", component: PrivacyPolicy },
+  ],
 
-        {/* Directory pages — accessible by any authenticated user */}
-        <Route
-          path="/therapists"
-          element={
-            <DirectoryWithLayout>
-              <TherapistDirectory />
-            </DirectoryWithLayout>
-          }
-        />
-        <Route
-          path="/therapists/:id"
-          element={
-            <DirectoryWithLayout>
-              <TherapistProfile />
-            </DirectoryWithLayout>
-          }
-        />
-        <Route
-          path="/clinics"
-          element={
-            <DirectoryWithLayout>
-              <ClinicDirectory />
-            </DirectoryWithLayout>
-          }
-        />
-        <Route
-          path="/clinics/:id"
-          element={
-            <DirectoryWithLayout>
-              <ClinicProfile />
-            </DirectoryWithLayout>
-          }
-        />
-
-        {/* Legal pages — accessible when authenticated too */}
-        <Route path="/termos" element={<TermsOfUse />} />
-        <Route path="/privacidade" element={<PrivacyPolicy />} />
-
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </Suspense>
-  );
-}
-
-// ── App content — auth gate ─────────────────────────────────
-
-function AppContent() {
-  const { user, isInitialized } = useAuthStore();
-
-  if (!isInitialized) {
-    return <PageSkeleton />;
-  }
-
-  // Unauthenticated users see public routes
-  if (!user) {
-    return (
-      <Suspense fallback={<PageSkeleton />}>
-        <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/sso" element={<SSOCallback />} />
-          <Route path="/accept-invite/:token" element={<AcceptInvite />} />
-          {/* Public directory access */}
-          <Route path="/therapists" element={<TherapistDirectory />} />
-          <Route path="/therapists/:id" element={<TherapistProfile />} />
-          <Route path="/clinics" element={<ClinicDirectory />} />
-          <Route path="/clinics/:id" element={<ClinicProfile />} />
-          {/* Legal pages */}
-          <Route path="/termos" element={<TermsOfUse />} />
-          <Route path="/privacidade" element={<PrivacyPolicy />} />
-          {/* Redirect everything else to login */}
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
-      </Suspense>
-    );
-  }
-
-  return <AuthenticatedRoutes />;
-}
-
-// ── Root App ────────────────────────────────────────────────
-
-export default function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <BrowserRouter>
-          <AuthProvider>
-            <AppContent />
-            <Toaster richColors position="top-right" />
-          </AuthProvider>
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
-  );
-}
+  Landing,
+  Login: lazy(() => import("./pages/Login")),
+  AcceptInvite: lazy(() => import("./pages/AcceptInvite")),
+  ForgotPassword: lazy(() => import("./pages/ForgotPassword")),
+  NotFound: lazy(() => import("./pages/NotFound")),
+});
