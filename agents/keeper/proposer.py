@@ -1,7 +1,12 @@
 """
-Proposal Generator — creates structured improvement proposals from analyzer findings.
+Proposal Generator — creates structured improvement proposals.
 
-Each proposal is saved as a markdown file in agents/scientist/proposals/.
+Proposals live in agents/proposals/, organized by agent:
+  agents/proposals/keeper-20260416-153635-extract-criar-meta.md
+  agents/proposals/reviewer-20260417-091200-missing-error-handling.md
+
+The agent name prefix scopes proposals so you can filter by agent
+while keeping everything in one folder.
 """
 import json
 from datetime import datetime
@@ -18,23 +23,16 @@ def _slug(title: str) -> str:
 
 
 def _extract_key_entity(title: str) -> str:
-    """Extract the key entity from a proposal title for fuzzy matching.
-
-    'Extract criar_meta to seed lib' → 'criar_meta'
-    'Centralize criar_evento Function' → 'criar_evento'
-    'Standardize Python dependency versions' → 'standardize-python-dependency'
-    """
+    """Extract the key entity from a proposal title for fuzzy matching."""
     import re
-    # Look for quoted or specific function names
     match = re.search(r"['\"]?(\w+_\w+)['\"]?", title)
     if match:
         return match.group(1).lower()
-    # Fall back to slug
     return _slug(title)[:30]
 
 
-def _proposal_exists(title: str) -> bool:
-    """Check if a proposal with this title (or similar entity) already exists."""
+def _proposal_exists(title: str, agent: str) -> bool:
+    """Check if a proposal with this title (or similar entity) already exists for any agent."""
     if not PROPOSALS_DIR.exists():
         return False
 
@@ -42,11 +40,11 @@ def _proposal_exists(title: str) -> bool:
     key_entity = _extract_key_entity(title)
 
     for f in PROPOSALS_DIR.glob("*.md"):
+        if f.name == "README.md":
+            continue
         fname = f.stem.lower()
-        # Exact slug match
         if slug in fname:
             return True
-        # Key entity match (catches 'extract X' vs 'centralize X' vs 'consolidate X')
         if key_entity and len(key_entity) > 5 and key_entity in fname:
             return True
     return False
@@ -60,14 +58,17 @@ def generate_proposal(
     severity: str = "medium",
     effort: str = "medium",
     findings: list[dict] = None,
+    agent: str = "keeper",
 ) -> Path:
     """Generate a structured improvement proposal.
 
-    Returns the path to the saved proposal file, or the existing one if
-    a proposal with the same title already exists (deduplication).
+    Args:
+        agent: Name of the agent creating this proposal (e.g. "keeper", "reviewer").
+               Used as filename prefix for scoping.
+
+    Returns the path to the saved proposal file, or existing one if deduplicated.
     """
-    # Dedup: don't create duplicate proposals across runs
-    if _proposal_exists(title):
+    if _proposal_exists(title, agent):
         slug = _slug(title)
         for f in PROPOSALS_DIR.glob("*.md"):
             if slug in f.stem:
@@ -76,7 +77,7 @@ def generate_proposal(
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     slug = _slug(title)
-    filename = f"{timestamp}-{slug}.md"
+    filename = f"{agent}-{timestamp}-{slug}.md"
     filepath = PROPOSALS_DIR / filename
 
     findings_section = ""
@@ -87,6 +88,7 @@ def generate_proposal(
 
     content = f"""# Proposal: {title}
 
+**Agent:** {agent}
 **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M")}
 **Severity:** {severity}
 **Effort:** {effort}
@@ -109,7 +111,7 @@ _To be assessed during review._
 
 - [ ] All affected products updated
 - [ ] All tests pass
-- [ ] Guardian score remains 100/100
+- [ ] Keeper validates clean (100/100)
 - [ ] Documentation updated
 
 ## Decision
@@ -124,25 +126,34 @@ _To be assessed during review._
     return filepath
 
 
-def list_proposals() -> list[dict]:
-    """List all existing proposals."""
+def list_proposals(agent: str = None) -> list[dict]:
+    """List proposals. Optionally filter by agent name."""
     proposals = []
     if not PROPOSALS_DIR.exists():
         return proposals
 
     for f in sorted(PROPOSALS_DIR.glob("*.md")):
-        if f.name == ".gitkeep":
+        if f.name in (".gitkeep", "README.md"):
             continue
+
+        # Extract agent from filename (agent-timestamp-slug.md)
+        parts = f.stem.split("-", 1)
+        file_agent = parts[0] if len(parts) > 1 and not parts[0].isdigit() else "unknown"
+
+        if agent and file_agent != agent:
+            continue
+
         content = f.read_text()
         status = "pending"
-        if "**Status:** accepted" in content.lower():
+        if "**status:** accepted" in content.lower():
             status = "accepted"
-        elif "**Status:** rejected" in content.lower():
+        elif "**status:** rejected" in content.lower():
             status = "rejected"
 
         proposals.append({
             "file": f.name,
             "path": str(f),
+            "agent": file_agent,
             "status": status,
         })
 
