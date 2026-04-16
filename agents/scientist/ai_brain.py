@@ -82,7 +82,7 @@ If the platform is in good shape with no significant improvements needed, output
     response = ask_ai(
         prompt=prompt,
         system="You are a senior platform architect. Be specific, concrete, and practical. Every proposal must include actual steps, not just descriptions.",
-        model="claude-sonnet-4-6",
+        model="standard",
         max_tokens=4096,
         temperature=0.4,
     )
