@@ -19,7 +19,7 @@ from typing import Optional
 from agents.shared.models import ask_ai, is_ai_available
 from agents.shared.config import REPO_ROOT
 from agents.shared.repo import read_file
-from agents.scientist.proposer import generate_proposal
+from agents.keeper.proposer import generate_proposal
 
 logger = logging.getLogger(__name__)
 
