@@ -14,6 +14,10 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+# Silence APScheduler's verbose DEBUG logging (job execution, next wakeup, etc.)
+# Only our job functions log meaningful info when there's actual work.
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 from app.config import settings
 from app.database import get_admin_client
 from app.services.send_service import SendService

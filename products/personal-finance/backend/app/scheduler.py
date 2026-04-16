@@ -11,6 +11,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+# Silence APScheduler's verbose DEBUG logging
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 from app.dependencies import get_admin_client
 from app.services.recorrentes_service import RecorrentesService
 
