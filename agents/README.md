@@ -2,45 +2,48 @@
 
 Two agents orchestrated in a pipeline that protects and evolves the platform.
 
-## Single Command
+## Two Modes
 
+### Pipeline mode (assess)
 ```bash
-python -m agents              # Full pipeline: Guardian → Scientist
+python -m agents                    # Guardian → Scientist
 ```
 
-That's it. One command runs everything:
+### Heal mode (fix)
+```bash
+python -m agents --heal             # detect → fix → verify → repeat until clean
+python -m agents --heal --product mailing  # heal a specific product
+```
 
-1. **Guardian** validates platform compliance (pass/fail)
-2. If Guardian **passes** → **Scientist** discovers improvements
-3. If Guardian **fails** → Scientist is **skipped** (fix the foundation first)
+**Heal mode is the development loop.** After changing code, run `--heal`. The agents detect issues, auto-fix what's deterministic, create proposals for what needs human review, and re-run until the platform is clean. Like Claude Code's break-fix cycle — iterate until working.
 
-## Orchestration
+## How it works
 
 ```
-python -m agents
+python -m agents --heal
     │
-    ├── GUARDIAN (is the platform healthy?)
-    │     ├── Hard checks: seed compliance, path references
-    │     ├── Score: 0-100 per product
-    │     └── Result: PASS (100) or FAIL (<100)
+    ├── GUARDIAN — detect issues
+    │     ├── Deterministic issue? → AUTO-FIX → re-run to verify
+    │     ├── Non-deterministic?   → CREATE PROPOSAL for human review
+    │     └── Repeat until clean (max 10 iterations)
     │
-    ├── if FAIL → stop. Fix issues. Re-run.
-    │
-    └── if PASS → SCIENTIST (how can we improve?)
+    └── if clean → SCIENTIST — discover improvements
           ├── File analyzers: patterns, deps, structure, tests
-          ├── AI brain: semantic analysis via GPT-4o
-          └── Proposals saved to agents/scientist/proposals/
+          ├── AI brain: reasoning via GPT-4o
+          └── All findings → PROPOSALS (never auto-fix)
 ```
 
-Guardian gates the Scientist. No point discovering improvements if the foundation is broken.
+**Key rule:** Deterministic issues are auto-fixed. Non-deterministic issues become proposals. The Scientist never auto-fixes — it always proposes.
 
 ## Commands
 
 ```bash
-python -m agents                    # Full pipeline (recommended)
-python -m agents --advisory         # Full pipeline + Guardian AI advisory
-python -m agents --guardian         # Guardian only
-python -m agents --scientist        # Scientist only (skip Guardian gate)
+python -m agents                            # Full pipeline (assess only)
+python -m agents --heal                     # Heal: fix loop + scientist
+python -m agents --heal --product mailing   # Heal a specific product
+python -m agents --heal --advisory          # Heal + AI advisory (proposals)
+python -m agents --guardian                 # Guardian only
+python -m agents --scientist                # Scientist only
 ```
 
 ## Individual Agent Docs
