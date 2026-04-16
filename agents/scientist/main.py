@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from agents.scientist.analyzers import pattern_finder, dependency_audit, structure_analyzer
+from agents.scientist.analyzers import pattern_finder, dependency_audit, structure_analyzer, test_coverage
 from agents.scientist.proposer import generate_proposal, list_proposals
 
 GREEN = "\033[92m"
@@ -151,6 +151,43 @@ def run_structure():
     return results
 
 
+def run_tests():
+    """Run test coverage analysis."""
+    print(f"\n{BLUE}--- Test Coverage ---{RESET}\n")
+    results = test_coverage.run_all()
+
+    issues = results["test_issues"]
+    if issues:
+        print(f"  {YELLOW}Test coverage gaps:{RESET}")
+        for issue in issues:
+            color = RED if issue["severity"] in ("critical", "high") else YELLOW
+            layer = issue.get("layer", "")
+            print(f"    {color}[{issue['severity']}]{RESET} {issue['product']}: {issue['issue']}")
+        generate_proposal(
+            title="Fill test coverage gaps",
+            problem=f"{len(issues)} test coverage gaps found across products.",
+            solution="Add missing test layers per the testing standard in CLAUDE.md.",
+            affected_products=list(set(i["product"] for i in issues)),
+            severity="high",
+            effort="medium",
+            findings=issues,
+        )
+        print(f"    {GREEN}→ Proposal generated{RESET}")
+    else:
+        print(f"  {GREEN}All products meet testing standard{RESET}")
+
+    print(f"\n  {BOLD}Test Matrix:{RESET}")
+    matrix = results["test_matrix"]
+    print(f"  {'Product':<20} {'Routers':<9} {'Services':<9} {'Integr.':<9} {'E2E':<5} {'Auth':<6} {'Edge':<6}")
+    print(f"  {'─'*20} {'─'*9} {'─'*9} {'─'*9} {'─'*5} {'─'*6} {'─'*6}")
+    for m in matrix:
+        e2e = f"{GREEN}✓{RESET}" if m["e2e"] else f"{RED}✗{RESET}"
+        auth = f"{GREEN}✓{RESET}" if m["auth_boundary"] else f"{RED}✗{RESET}"
+        print(f"  {m['product']:<20} {m['routers']:<9} {m['services']:<9} {m['integration']:<9} {e2e:<14} {auth:<15} {m['edge_cases']:<6}")
+
+    return results
+
+
 def show_proposals():
     """List existing proposals."""
     print(f"\n{BLUE}--- Proposals ---{RESET}\n")
@@ -166,7 +203,7 @@ def show_proposals():
 
 def main():
     parser = argparse.ArgumentParser(description="Seed Scientist — discover improvements")
-    parser.add_argument("--analyze", choices=["patterns", "deps", "structure"], help="Run specific analyzer")
+    parser.add_argument("--analyze", choices=["patterns", "deps", "structure", "tests"], help="Run specific analyzer")
     parser.add_argument("--proposals", action="store_true", help="List proposals")
     parser.add_argument("--json", action="store_true", help="Output JSON")
     args = parser.parse_args()
@@ -189,6 +226,8 @@ def main():
         results["deps"] = run_deps()
     if args.analyze == "structure" or not args.analyze:
         results["structure"] = run_structure()
+    if args.analyze == "tests" or not args.analyze:
+        results["tests"] = run_tests()
 
     # Summary
     proposals = list_proposals()

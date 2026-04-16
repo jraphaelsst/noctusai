@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import field_validator
 from noctusai_lib.config import BaseAppSettings
 
-_ROOT_ENV = Path(__file__).resolve().parents[5] / ".env"
+_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
 
 
 class ProductSettings(BaseAppSettings):

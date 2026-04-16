@@ -56,7 +56,25 @@ Products import from both. Domain-specific code lives in the product only. **Nev
 
 **After cloning**: `bash scripts/setup.sh` — installs git hooks, venv, all deps. Run once.
 **Start servers**: `bash start.sh` or `uvicorn app.main:app --reload --port <PORT> --app-dir <backend>`
-**Tests**: `cd <product>/backend && pytest` — 3,869 total (410 core, 1661 ERP, 502 PF, 1080 therapy, 9 seed, 207 daily-life).
+**Tests**: `cd <product>/backend && pytest`
+
+## Testing Standards
+
+Every product must have three test layers. No product ships without all three.
+
+| Layer | What it tests | Where | When to write |
+|-------|-------------|-------|---------------|
+| **Unit** (routers) | Individual endpoints — CRUD, auth, validation, error handling | `tests/routers/test_*.py` | One per domain router |
+| **Unit** (services) | Business logic in isolation — calculations, transformations, state machines | `tests/services/test_*.py` | One per service with non-trivial logic |
+| **Integration** | Cross-service flows — campaign references template + list, automation enrolls contacts | `tests/integration/test_*.py` | When entities reference each other |
+| **E2E** | Full user journeys — create contact → template → campaign → send → verify stats | `tests/integration/test_e2e_flows.py` | One per product, covers the golden path |
+
+Rules:
+- **Unit tests**: mock the database (`MockSupabaseClient`). Test one endpoint at a time.
+- **Integration tests**: mock the database but test multi-step flows where step N depends on step N-1.
+- **E2E tests**: simulate a real user journey through multiple endpoints. Each test is a story.
+- **All tests must be deterministic**: no hardcoded dates (use `date.today()`), no external API calls, no network.
+- **Auth boundary tests**: every product must verify that unauthenticated requests return 401 for all protected endpoints.
 **Scripts**: `scripts/README.md` documents all scripts and git hooks. Key: `setup.sh` (first-time), `sync-seed-template.sh` (seed→template auto-sync, runs via post-commit hook).
 
 ## Environment

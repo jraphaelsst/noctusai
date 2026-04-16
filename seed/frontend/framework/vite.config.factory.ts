@@ -42,8 +42,13 @@ interface ViteConfigOptions {
  * and core/frontend (2 levels up to repo root).
  */
 function resolveFromProductDir(productDir: string) {
-  // Detect if we're in core/frontend (2 levels) or products/<name>/frontend (3 levels)
-  const repoRoot = path.resolve(productDir, "../../.."); // default: products/<name>/frontend → repo root
+  // core/frontend is 2 levels deep; products/<name>/frontend is 3 levels deep.
+  // Check if grandparent is "products" (products/<name>/frontend).
+  const grandparent = path.basename(path.resolve(productDir, "../.."));
+  const isProduct = grandparent === "products";
+  const repoRoot = isProduct
+    ? path.resolve(productDir, "../../..")
+    : path.resolve(productDir, "../..");
   const seedLib = path.resolve(repoRoot, "seed/frontend/lib/src");
   const seedFramework = path.resolve(repoRoot, "seed/frontend/framework/src");
   const nodeModules = path.resolve(productDir, "node_modules");
