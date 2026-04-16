@@ -12,5 +12,6 @@
  */
 export { createProductApp } from './app';
 export { createProductLayout } from './layout';
+export { createViteConfig } from './vite';
 export type { ProductAppConfig, ProductRoute } from './app';
 export type { ProductLayoutConfig } from './layout';

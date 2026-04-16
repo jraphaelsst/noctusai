@@ -63,6 +63,7 @@ export interface SSOLicenseInfo {
 export interface SSOOrgInfo {
   name: string | null;
   logoUrl: string | null;
+  role: string;
 }
 
 export interface SSOContext extends SSORoleInfo {
@@ -101,6 +102,7 @@ export function resolveSSOContext(metadata: Metadata): SSOContext {
     org: {
       name: m.org_name ?? null,
       logoUrl: m.org_logo_url ?? null,
+      role: m.org_role ?? 'member',
     },
   };
 }

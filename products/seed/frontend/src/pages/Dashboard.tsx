@@ -36,7 +36,7 @@ export default function Dashboard() {
           <StatusItem label="Org Role" value={ssoCtx.org.role || "N/A"} />
           <StatusItem label="SSO" value={ssoCtx.isSSO ? "Yes" : "No"} />
           <StatusItem label="Product Admin" value={ssoCtx.isProductAdmin ? "Yes" : "No"} />
-          <StatusItem label="Plan" value={ssoCtx.subscription?.plan || "N/A"} />
+          <StatusItem label="Plan" value={ssoCtx.plan?.slug || "N/A"} />
         </div>
       </div>
 

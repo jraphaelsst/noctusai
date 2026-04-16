@@ -31,6 +31,7 @@ import { toast } from "sonner";
 import { ChevronLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { SupabaseClient } from "@supabase/supabase-js";
+type AnySupabaseClient = SupabaseClient<any, any, any>;
 
 export interface ProductLayoutConfig {
   /** Brand icon displayed in sidebar */
@@ -42,7 +43,7 @@ export interface ProductLayoutConfig {
   /** Fallback nav groups when status_pagina table doesn't exist */
   navGroupsFallback: NavGroup[];
   /** Supabase client instance */
-  supabase: SupabaseClient;
+  supabase: AnySupabaseClient;
   /** Auth store hook (returns { user }) */
   useAuthStore: () => { user: any };
   /** Notification bell component */
@@ -101,9 +102,9 @@ export function createProductLayout(config: ProductLayoutConfig) {
     const licenseDays = licenseDaysRemaining(ssoCtx);
 
     const { data: statusPaginas } = usePageStatus(supabase, !!user);
-    const navGroups: NavGroup[] = statusPaginas?.length
+    const navGroups = (statusPaginas?.length
       ? filterNavByPageStatus(navGroupsWithRoutes, statusPaginas, ssoCtx.org.role)
-      : navGroupsFallback;
+      : navGroupsFallback) as NavGroup[];
 
     const handleLogout = async () => {
       await supabase.auth.signOut();
