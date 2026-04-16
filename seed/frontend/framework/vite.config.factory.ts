@@ -86,12 +86,6 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
   const productDir = process.cwd();
   const { seedLib, seedFramework, nodeModules } = resolveFromProductDir(productDir);
 
-  // Build package aliases — resolve ALL framework deps from the product's node_modules
-  const packageAliases: Record<string, string> = {};
-  for (const dep of FRAMEWORK_DEPS) {
-    packageAliases[dep] = path.resolve(nodeModules, dep);
-  }
-
   const config: UserConfig = {
     server: {
       host: "0.0.0.0",
@@ -103,9 +97,15 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
         "@": path.resolve(productDir, "./src"),
         "@noctusai/lib": seedLib,
         "@noctusai/seed": seedFramework,
-        ...packageAliases,
       },
+      // dedupe ensures all imports of these packages resolve to the product's
+      // node_modules — even when imported from seed lib files outside the project root.
       dedupe: FRAMEWORK_DEPS,
+    },
+    // Pre-bundle seed lib imports so Vite's dev server resolves them from the
+    // product's node_modules with correct ESM exports.
+    optimizeDeps: {
+      include: FRAMEWORK_DEPS.map((dep) => `@noctusai/lib > ${dep}`),
     },
   };
 

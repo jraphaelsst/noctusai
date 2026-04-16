@@ -62,6 +62,16 @@ echo ""
 # Kill leftover processes from previous runs
 free_ports
 
+# Install frontend deps if node_modules is missing or package.json changed since last install
+ensure_frontend_deps() {
+  local dir="$1"
+  local name="$2"
+  if [ ! -d "$dir/node_modules" ] || [ "$dir/package.json" -nt "$dir/node_modules/.package-lock.json" ]; then
+    echo "[$name] Instalando dependencias..."
+    (cd "$dir" && npm install --prefer-offline --no-audit --no-fund -q)
+  fi
+}
+
 # --- Single root venv (shared by all backends) ---
 VENV="$ROOT_DIR/venv"
 if [ ! -d "$VENV" ]; then
@@ -85,22 +95,14 @@ PIDS+=($!)
 
 # --- Core Frontend (porta 5173) ---
 CORE_FRONTEND="$ROOT_DIR/core/frontend"
-if [ ! -d "$CORE_FRONTEND/node_modules" ]; then
-  echo "[Core Frontend] Instalando dependencias..."
-  (cd "$CORE_FRONTEND" && npm install)
-fi
-
+ensure_frontend_deps "$CORE_FRONTEND" "Core Frontend"
 echo "[Core Frontend] Iniciando na porta 5173..."
 (cd "$CORE_FRONTEND" && exec npx vite --host 0.0.0.0 --port 5173) &
 PIDS+=($!)
 
 # --- ERP Frontend (porta 8080) ---
 ERP_FRONTEND="$ROOT_DIR/products/erp-imobiliario/frontend"
-if [ ! -d "$ERP_FRONTEND/node_modules" ]; then
-  echo "[ERP Frontend] Instalando dependencias..."
-  (cd "$ERP_FRONTEND" && npm install)
-fi
-
+ensure_frontend_deps "$ERP_FRONTEND" "ERP Frontend"
 echo "[ERP Frontend] Iniciando na porta 8080..."
 (cd "$ERP_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8080) &
 PIDS+=($!)
@@ -113,11 +115,7 @@ PIDS+=($!)
 
 # --- Personal Finance Frontend (porta 8090) ---
 PF_FRONTEND="$ROOT_DIR/products/personal-finance/frontend"
-if [ ! -d "$PF_FRONTEND/node_modules" ]; then
-  echo "[PF Frontend] Instalando dependencias..."
-  (cd "$PF_FRONTEND" && npm install)
-fi
-
+ensure_frontend_deps "$PF_FRONTEND" "PF Frontend"
 echo "[PF Frontend] Iniciando na porta 8090..."
 (cd "$PF_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8090) &
 PIDS+=($!)
@@ -130,11 +128,7 @@ PIDS+=($!)
 
 # --- Therapy Frontend (porta 8095) ---
 THERAPY_FRONTEND="$ROOT_DIR/products/therapy-platform/frontend"
-if [ ! -d "$THERAPY_FRONTEND/node_modules" ]; then
-  echo "[Therapy Frontend] Instalando dependencias..."
-  (cd "$THERAPY_FRONTEND" && npm install)
-fi
-
+ensure_frontend_deps "$THERAPY_FRONTEND" "Therapy Frontend"
 echo "[Therapy Frontend] Iniciando na porta 8095..."
 (cd "$THERAPY_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8095) &
 PIDS+=($!)
@@ -150,10 +144,7 @@ fi
 # --- Seed Frontend (porta 8100) ---
 SEED_FRONTEND="$ROOT_DIR/products/seed/frontend"
 if [ -d "$SEED_FRONTEND" ]; then
-  if [ ! -d "$SEED_FRONTEND/node_modules" ]; then
-    echo "[Seed Frontend] Instalando dependencias..."
-    (cd "$SEED_FRONTEND" && npm install)
-  fi
+  ensure_frontend_deps "$SEED_FRONTEND" "Seed Frontend"
   echo "[Seed Frontend] Iniciando na porta 8100..."
   (cd "$SEED_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8100) &
   PIDS+=($!)
@@ -170,34 +161,32 @@ fi
 # --- Daily Life Frontend (porta 8110) ---
 DL_FRONTEND="$ROOT_DIR/products/daily-life/frontend"
 if [ -d "$DL_FRONTEND" ]; then
-  if [ ! -d "$DL_FRONTEND/node_modules" ]; then
-    echo "[Daily Life Frontend] Instalando dependencias..."
-    (cd "$DL_FRONTEND" && npm install)
-  fi
+  ensure_frontend_deps "$DL_FRONTEND" "Daily Life Frontend"
   echo "[Daily Life Frontend] Iniciando na porta 8110..."
   (cd "$DL_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8110) &
   PIDS+=($!)
 fi
 
 # --- Mailing Backend (porta 8006) ---
-MAIL_BACKEND="$ROOT_DIR/products/mailing/backend"
-if [ -d "$MAIL_BACKEND" ]; then
-  echo "[Mailing Backend] Iniciando na porta 8006..."
-  "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8006 --reload --app-dir "$MAIL_BACKEND" &
-  PIDS+=($!)
-fi
+# NOTE: Skipped until 001_mailing.sql migration is run and "mailing" schema is
+# exposed in Supabase PostgREST config. Without the schema, the scheduler
+# spams PGRST106 errors every 30s. Uncomment when ready.
+# MAIL_BACKEND="$ROOT_DIR/products/mailing/backend"
+# if [ -d "$MAIL_BACKEND" ]; then
+#   echo "[Mailing Backend] Iniciando na porta 8006..."
+#   "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8006 --reload --app-dir "$MAIL_BACKEND" &
+#   PIDS+=($!)
+# fi
 
 # --- Mailing Frontend (porta 8120) ---
-MAIL_FRONTEND="$ROOT_DIR/products/mailing/frontend"
-if [ -d "$MAIL_FRONTEND" ] && [ -f "$MAIL_FRONTEND/package.json" ]; then
-  if [ ! -d "$MAIL_FRONTEND/node_modules" ]; then
-    echo "[Mailing Frontend] Instalando dependencias..."
-    (cd "$MAIL_FRONTEND" && npm install)
-  fi
-  echo "[Mailing Frontend] Iniciando na porta 8120..."
-  (cd "$MAIL_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8120) &
-  PIDS+=($!)
-fi
+# NOTE: Skipped — mailing backend not running yet (see above).
+# MAIL_FRONTEND="$ROOT_DIR/products/mailing/frontend"
+# if [ -d "$MAIL_FRONTEND" ] && [ -f "$MAIL_FRONTEND/package.json" ]; then
+#   ensure_frontend_deps "$MAIL_FRONTEND" "Mailing Frontend"
+#   echo "[Mailing Frontend] Iniciando na porta 8120..."
+#   (cd "$MAIL_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8120) &
+#   PIDS+=($!)
+# fi
 
 echo ""
 echo "============================================"
@@ -214,8 +203,7 @@ echo "  PF Frontend        → http://localhost:8090"
 echo "  Therapy Frontend   → http://localhost:8095"
 echo "  Seed Frontend      → http://localhost:8100"
 echo "  Daily Life Frontend→ http://localhost:8110"
-echo "  Mailing Backend   → http://localhost:8006"
-echo "  Mailing Frontend  → http://localhost:8120"
+echo "  Mailing            → (skipped — run migration first)"
 echo "============================================"
 echo ""
 echo "Pressione Ctrl+C para parar todos os servicos."

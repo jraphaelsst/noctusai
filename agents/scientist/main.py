@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.scientist.analyzers import pattern_finder, dependency_audit, structure_analyzer, test_coverage
 from agents.scientist.proposer import generate_proposal, list_proposals
+from agents.scientist.ai_brain import analyze_findings, deep_analyze_duplication
+from agents.shared.models import is_ai_available
 
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -229,6 +231,25 @@ def main():
     if args.analyze == "tests" or not args.analyze:
         results["tests"] = run_tests()
 
+    # ── AI Brain: reason over combined findings ──────────────
+    if not args.analyze and is_ai_available():
+        print(f"\n{BLUE}--- AI Synthesis ---{RESET}\n")
+        print(f"  Sending findings to AI brain for deep analysis...")
+        ai_proposals = analyze_findings(results)
+        results["ai_proposals"] = ai_proposals
+
+        for p in ai_proposals:
+            if p.get("type") == "healthy":
+                print(f"  {GREEN}Platform is in good shape — no AI proposals{RESET}")
+            elif p.get("type") == "proposal":
+                print(f"  {GREEN}→ AI proposal:{RESET} {p['title']} [{p['severity']}/{p['effort']}]")
+            elif p.get("type") == "info":
+                print(f"  {p['message']}")
+            elif p.get("type") == "error":
+                print(f"  {RED}{p['message']}{RESET}")
+    elif not args.analyze:
+        print(f"\n  {YELLOW}AI synthesis skipped — ANTHROPIC_API_KEY not set{RESET}")
+
     # Summary
     proposals = list_proposals()
     pending = len([p for p in proposals if p["status"] == "pending"])
@@ -236,6 +257,10 @@ def main():
     print()
     print("-" * 60)
     print(f"  Analysis complete  |  Proposals: {pending} pending")
+    if is_ai_available():
+        print(f"  AI brain: active")
+    else:
+        print(f"  AI brain: disabled (set ANTHROPIC_API_KEY to enable)")
     print("-" * 60)
     print()
 
