@@ -1,8 +1,11 @@
 import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@/store/authStore";
-import { api } from "@/lib/api-client";
-import { toast } from "sonner";
+import {
+  useAgenda,
+  useCreateEvento,
+  useUpdateEvento,
+  useDeleteEvento,
+} from "@/hooks/useAgenda";
+import type { Evento, EventoForm } from "@/hooks/useAgenda";
 import {
   Calendar,
   Plus,
@@ -16,48 +19,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface Evento {
-  id: string;
-  titulo: string;
-  descricao?: string;
-  categoria?: string;
-  data_inicio: string;
-  data_fim?: string;
-  dia_inteiro: boolean;
-  local?: string;
-  lembrete_minutos?: number;
-  cor?: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PaginatedResponse {
-  data: Evento[];
-  pagination: {
-    page: number;
-    page_size: number;
-    total: number;
-    total_pages: number;
-  };
-}
-
-interface EventoForm {
-  titulo: string;
-  descricao: string;
-  data_inicio: string;
-  data_fim: string;
-  dia_inteiro: boolean;
-  cor: string;
-  local: string;
-  lembrete_minutos: string;
-  categoria: string;
-}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -115,9 +76,6 @@ function toLocalDatetime(iso: string): string {
 // ---------------------------------------------------------------------------
 
 export default function Agenda() {
-  const { user } = useAuthStore();
-  const queryClient = useQueryClient();
-
   // Date navigation
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const year = currentDate.getFullYear();
@@ -134,52 +92,22 @@ export default function Agenda() {
   const [formData, setFormData] = useState<EventoForm>(EMPTY_FORM);
   const [confirmDelete, setConfirmDelete] = useState<Evento | null>(null);
 
-  // ---- Queries ----
+  // ---------------------------------------------------------------------------
+  // Hooks
+  // ---------------------------------------------------------------------------
 
-  const { data: response, isLoading } = useQuery<PaginatedResponse>({
-    queryKey: ["agenda", inicio, fim, page],
-    queryFn: () => api.get(`/api/schedule?data_inicio=${inicio}&data_fim=${fim}&page=${page}&page_size=${pageSize}`),
-    enabled: !!user,
-    staleTime: 2 * 60 * 1000,
-  });
+  const { data: response, isLoading } = useAgenda(inicio, fim, page, pageSize);
+
+  const createMutation = useCreateEvento(() => closeModal());
+  const updateMutation = useUpdateEvento(() => closeModal());
+  const deleteMutation = useDeleteEvento(() => setConfirmDelete(null));
 
   const eventos = response?.data ?? [];
   const pagination = response?.pagination;
 
-  // ---- Mutations ----
-
-  const createMutation = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.post("/api/schedule", body),
-    onSuccess: () => {
-      toast.success("Evento criado com sucesso");
-      queryClient.invalidateQueries({ queryKey: ["agenda"] });
-      closeModal();
-    },
-    onError: (err: any) => toast.error("Erro ao criar evento", { description: err?.message }),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
-      api.patch(`/api/schedule/${id}`, body),
-    onSuccess: () => {
-      toast.success("Evento atualizado");
-      queryClient.invalidateQueries({ queryKey: ["agenda"] });
-      closeModal();
-    },
-    onError: (err: any) => toast.error("Erro ao atualizar evento", { description: err?.message }),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/schedule/${id}`),
-    onSuccess: () => {
-      toast.success("Evento removido");
-      queryClient.invalidateQueries({ queryKey: ["agenda"] });
-      setConfirmDelete(null);
-    },
-    onError: (err: any) => toast.error("Erro ao remover evento", { description: err?.message }),
-  });
-
-  // ---- Handlers ----
+  // ---------------------------------------------------------------------------
+  // Handlers
+  // ---------------------------------------------------------------------------
 
   function closeModal() {
     setShowModal(false);
@@ -248,7 +176,9 @@ export default function Agenda() {
   const isSaving = createMutation.isPending || updateMutation.isPending;
   const monthLabel = currentDate.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
-  // ---- Render ----
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <div className="space-y-6">

@@ -1,8 +1,12 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@/store/authStore";
-import { api } from "@/lib/api-client";
-import { toast } from "sonner";
+import {
+  useTarefas,
+  useTarefaStats,
+  useCreateTarefa,
+  useUpdateTarefa,
+  useDeleteTarefa,
+} from "@/hooks/useTarefas";
+import type { Tarefa, TarefaForm } from "@/hooks/useTarefas";
 import {
   ListTodo,
   Plus,
@@ -17,38 +21,6 @@ import {
   Clock,
   Ban,
 } from "lucide-react";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface Tarefa {
-  id: string;
-  titulo: string;
-  descricao?: string;
-  prioridade: "alta" | "media" | "baixa";
-  status: "pendente" | "em_progresso" | "concluida" | "cancelada";
-  categoria?: string;
-  data_vencimento?: string;
-  created_at: string;
-}
-
-interface TarefaForm {
-  titulo: string;
-  descricao: string;
-  prioridade: "alta" | "media" | "baixa";
-  categoria: string;
-  data_vencimento: string;
-  status: "pendente" | "em_progresso" | "concluida" | "cancelada";
-}
-
-interface Stats {
-  total: number;
-  pendentes: number;
-  em_progresso: number;
-  concluidas: number;
-  canceladas: number;
-}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -83,9 +55,6 @@ const PAGE_SIZE = 20;
 // ---------------------------------------------------------------------------
 
 export default function Tarefas() {
-  const { user } = useAuthStore();
-  const qc = useQueryClient();
-
   // Filters
   const [statusFilter, setStatusFilter] = useState("");
   const [prioridadeFilter, setPrioridadeFilter] = useState("");
@@ -99,72 +68,25 @@ export default function Tarefas() {
   const [confirmDelete, setConfirmDelete] = useState<Tarefa | null>(null);
 
   // ---------------------------------------------------------------------------
-  // Queries
+  // Hooks
   // ---------------------------------------------------------------------------
 
-  const buildParams = () => {
-    const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
-    if (statusFilter) params.set("status", statusFilter);
-    if (prioridadeFilter) params.set("prioridade", prioridadeFilter);
-    if (categoriaFilter) params.set("categoria", categoriaFilter);
-    return params.toString();
-  };
-
-  const { data: tarefasRes, isLoading } = useQuery({
-    queryKey: ["tarefas", page, statusFilter, prioridadeFilter, categoriaFilter],
-    queryFn: () => api.get<{ data: Tarefa[]; total: number; page: number; page_size: number }>(`/api/tasks?${buildParams()}`),
-    enabled: !!user,
-    staleTime: 2 * 60 * 1000,
+  const { data: tarefasRes, isLoading } = useTarefas(page, {
+    status: statusFilter,
+    prioridade: prioridadeFilter,
+    categoria: categoriaFilter,
   });
 
-  const { data: statsRes } = useQuery({
-    queryKey: ["tarefas-stats"],
-    queryFn: () => api.get<{ data: Stats }>("/api/tasks/stats/resumo"),
-    enabled: !!user,
-    staleTime: 2 * 60 * 1000,
-  });
+  const { data: statsRes } = useTarefaStats();
+
+  const createMutation = useCreateTarefa(() => closeModal());
+  const updateMutation = useUpdateTarefa(() => closeModal());
+  const deleteMutation = useDeleteTarefa(() => setConfirmDelete(null));
 
   const tarefas = tarefasRes?.data ?? [];
   const total = tarefasRes?.total ?? 0;
   const stats = statsRes?.data ?? null;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  // ---------------------------------------------------------------------------
-  // Mutations
-  // ---------------------------------------------------------------------------
-
-  const createMutation = useMutation({
-    mutationFn: (body: Partial<TarefaForm>) => api.post("/api/tasks", body),
-    onSuccess: () => {
-      toast.success("Tarefa criada com sucesso");
-      qc.invalidateQueries({ queryKey: ["tarefas"] });
-      qc.invalidateQueries({ queryKey: ["tarefas-stats"] });
-      closeModal();
-    },
-    onError: (err: any) => toast.error("Erro ao criar tarefa", { description: err?.message }),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch(`/api/tasks/${id}`, body),
-    onSuccess: () => {
-      toast.success("Tarefa atualizada");
-      qc.invalidateQueries({ queryKey: ["tarefas"] });
-      qc.invalidateQueries({ queryKey: ["tarefas-stats"] });
-      closeModal();
-    },
-    onError: (err: any) => toast.error("Erro ao atualizar tarefa", { description: err?.message }),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/tasks/${id}`),
-    onSuccess: () => {
-      toast.success("Tarefa removida");
-      qc.invalidateQueries({ queryKey: ["tarefas"] });
-      qc.invalidateQueries({ queryKey: ["tarefas-stats"] });
-      setConfirmDelete(null);
-    },
-    onError: (err: any) => toast.error("Erro ao remover tarefa", { description: err?.message }),
-  });
 
   // ---------------------------------------------------------------------------
   // Helpers

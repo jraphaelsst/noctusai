@@ -1,4 +1,4 @@
-# Plan: Seed Agents — Guardian + Lab
+# Plan: Seed Agents — Guardian + Scientist
 
 > Two AI-powered agents that protect and evolve the seed infrastructure.
 > Location: `agents/` at repo root.
@@ -30,7 +30,7 @@
 
 **Schedule:** Runs on-demand or via cron (e.g., daily, or after every commit).
 
-### 2. Seed Lab (Innovation Agent)
+### 2. Seed Scientist (Innovation Agent)
 
 **Purpose:** Experiment, discover, and propose improvements to the seed infrastructure. This agent is the R&D department — it explores what could be better, builds prototypes, tests them in isolation, and presents results for human approval.
 
@@ -87,9 +87,9 @@ agents/
       doc_sync.py               Check CLAUDE.md + KNOWLEDGE-BASE accuracy
     scoring.py                  Health score calculator (0-100 per product)
     reporter.py                 Generate health report (JSON + Markdown)
-  lab/                          Seed Lab agent
-    README.md                   Lab-specific docs
-    main.py                     Entry point: `python -m agents.lab`
+  lab/                          Seed Scientist agent
+    README.md                   Scientist-specific docs
+    main.py                     Entry point: `python -m agents.scientist`
     analyzers/                  Analysis modules
       __init__.py
       pattern_finder.py         Find repeated patterns across products
@@ -163,50 +163,50 @@ agents/
   - CLI: `python -m agents.guardian --check seed_compliance` (single check)
   - Output: report to console + optional file
 
-### Phase 3 — Seed Lab (innovation agent)
+### Phase 3 — Seed Scientist (innovation agent)
 
-- [ ] Build `agents/lab/analyzers/pattern_finder.py`:
+- [ ] Build `agents/scientist/analyzers/pattern_finder.py`:
   - Scan all products for repeated code patterns
   - Use AI (Claude API) to identify extraction opportunities
   - Suggest what should become shared components or seed framework additions
-- [ ] Build `agents/lab/analyzers/dependency_audit.py`:
+- [ ] Build `agents/scientist/analyzers/dependency_audit.py`:
   - Check all requirements.txt and package.json for outdated packages
   - Check for known vulnerabilities (query PyPI, npm audit)
   - Suggest updates with risk assessment
-- [ ] Build `agents/lab/analyzers/ecosystem_scanner.py`:
+- [ ] Build `agents/scientist/analyzers/ecosystem_scanner.py`:
   - Use AI to research latest FastAPI, Supabase, React best practices
   - Compare current seed patterns against ecosystem recommendations
   - Generate "what we could adopt" reports
-- [ ] Build `agents/lab/analyzers/performance_profiler.py`:
+- [ ] Build `agents/scientist/analyzers/performance_profiler.py`:
   - Benchmark key seed operations (app startup, auth flow, database client creation)
   - Identify bottlenecks
   - Suggest optimizations
-- [ ] Build `agents/lab/proposer.py`:
+- [ ] Build `agents/scientist/proposer.py`:
   - Generate structured improvement proposals (Markdown):
     - Problem statement
     - Proposed solution (with code)
     - Trade-offs and risks
     - Test results / benchmarks
     - Implementation effort estimate
-  - Save to `agents/lab/proposals/`
-- [ ] Build `agents/lab/experimenter.py`:
+  - Save to `agents/scientist/proposals/`
+- [ ] Build `agents/scientist/experimenter.py`:
   - Create isolated git branches for experiments
   - Apply proposed changes
   - Run all tests to verify nothing breaks
   - Report results
   - Clean up branches (never auto-merge)
-- [ ] Build `agents/lab/main.py`:
-  - CLI: `python -m agents.lab` (run all analyzers)
-  - CLI: `python -m agents.lab --analyze patterns` (single analyzer)
-  - CLI: `python -m agents.lab --experiment proposal-001` (run experiment)
-  - Output: proposals to `agents/lab/proposals/`
+- [ ] Build `agents/scientist/main.py`:
+  - CLI: `python -m agents.scientist` (run all analyzers)
+  - CLI: `python -m agents.scientist --analyze patterns` (single analyzer)
+  - CLI: `python -m agents.scientist --experiment proposal-001` (run experiment)
+  - Output: proposals to `agents/scientist/proposals/`
 
 ### Phase 4 — Integration & Automation
 
 - [ ] Add agents to `scripts/setup.sh` (install agent dependencies)
 - [ ] Create GitHub Actions workflow for Guardian (runs on PR, blocks merge if score < threshold)
 - [ ] Create scheduled Guardian run (daily health check, report to Slack/email)
-- [ ] Create scheduled Lab run (weekly analysis, proposals saved to repo)
+- [ ] Create scheduled Scientist run (weekly analysis, proposals saved to repo)
 - [ ] Add `agents/` section to CLAUDE.md
 - [ ] Document in KNOWLEDGE-BASE
 
@@ -220,7 +220,7 @@ agents/
   - Use: Send product file + seed framework file → "Is this product correctly inheriting from the seed?"
 - **No OpenAI needed** — Guardian is deterministic + Claude analysis
 
-### Lab Agent
+### Scientist Agent
 - **Claude API** — pattern analysis, improvement proposals, code generation
   - Model: `claude-sonnet-4-6` for analysis, `claude-opus-4-6` for complex proposals
   - Use: Send codebase context → "What patterns could be extracted? What improvements would strengthen the seed?"
@@ -244,7 +244,7 @@ OPENAI_API_KEY=sk-...
 
 # Agent Configuration (optional)
 AGENT_GUARDIAN_THRESHOLD=80        # Minimum health score to pass CI
-AGENT_LAB_MODEL=claude-sonnet-4-6  # Default model for lab analysis
+AGENT_SCIENTIST_MODEL=claude-sonnet-4-6  # Default model for scientist analysis
 ```
 
 ---
@@ -261,14 +261,14 @@ python -m agents.guardian --product mailing
 # Run Guardian — single check
 python -m agents.guardian --check seed_compliance
 
-# Run Lab — find improvement opportunities
-python -m agents.lab
+# Run Scientist — find improvement opportunities
+python -m agents.scientist
 
-# Run Lab — specific analysis
-python -m agents.lab --analyze patterns
+# Run Scientist — specific analysis
+python -m agents.scientist --analyze patterns
 
-# Run Lab — test a proposal
-python -m agents.lab --experiment proposal-001
+# Run Scientist — test a proposal
+python -m agents.scientist --experiment proposal-001
 ```
 
 ---
@@ -281,7 +281,7 @@ python -m agents.lab --experiment proposal-001
 - Zero false positives (every flagged issue is real)
 - JSON report consumable by CI/CD
 
-### Lab
+### Scientist
 - Generates at least 1 actionable proposal per week
 - Every proposal includes working code + test results
 - Never auto-merges (human approval required)

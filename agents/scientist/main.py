@@ -1,15 +1,15 @@
 """
-Seed Lab — discovers improvements and generates proposals.
+Seed Scientist — discovers improvements and generates proposals.
 
 Usage:
-  python -m agents.lab                          # Full analysis
-  python -m agents.lab --analyze patterns       # Single analyzer
-  python -m agents.lab --analyze deps           # Dependency audit
-  python -m agents.lab --analyze structure      # Structure analysis
-  python -m agents.lab --proposals              # List proposals
+  python -m agents.scientist                          # Full analysis
+  python -m agents.scientist --analyze patterns       # Single analyzer
+  python -m agents.scientist --analyze deps           # Dependency audit
+  python -m agents.scientist --analyze structure      # Structure analysis
+  python -m agents.scientist --proposals              # List proposals
 
 Analyzers discover issues. The proposer turns them into actionable
-improvement proposals saved to agents/lab/proposals/.
+improvement proposals saved to agents/scientist/proposals/.
 """
 import argparse
 import json
@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from agents.lab.analyzers import pattern_finder, dependency_audit, structure_analyzer
-from agents.lab.proposer import generate_proposal, list_proposals
+from agents.scientist.analyzers import pattern_finder, dependency_audit, structure_analyzer
+from agents.scientist.proposer import generate_proposal, list_proposals
 
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -165,7 +165,7 @@ def show_proposals():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Seed Lab — discover improvements")
+    parser = argparse.ArgumentParser(description="Seed Scientist — discover improvements")
     parser.add_argument("--analyze", choices=["patterns", "deps", "structure"], help="Run specific analyzer")
     parser.add_argument("--proposals", action="store_true", help="List proposals")
     parser.add_argument("--json", action="store_true", help="Output JSON")
@@ -173,7 +173,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  Seed Lab — Platform Improvement Analysis")
+    print("  Seed Scientist — Platform Improvement Analysis")
     print("=" * 60)
 
     if args.proposals:

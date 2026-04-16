@@ -16,17 +16,17 @@ python -m agents.guardian --check seed_compliance  # Single check
 
 **Output:** Health score (0-100) per product + detailed issue report.
 
-### Seed Lab (Innovation)
+### Seed Scientist (Innovation)
 
 Experiments, discovers improvements, and proposes changes. Analyzes code patterns, audits dependencies, researches ecosystem trends, and builds prototypes in isolated branches.
 
 ```bash
-python -m agents.lab                               # Full analysis
-python -m agents.lab --analyze patterns            # Pattern analysis
-python -m agents.lab --experiment proposal-001     # Test a proposal
+python -m agents.scientist                               # Full analysis
+python -m agents.scientist --analyze patterns            # Pattern analysis
+python -m agents.scientist --experiment proposal-001     # Test a proposal
 ```
 
-**Output:** Improvement proposals in `agents/lab/proposals/`.
+**Output:** Improvement proposals in `agents/scientist/proposals/`.
 
 ## Setup
 
@@ -45,6 +45,6 @@ OPENAI_API_KEY=sk-...
 - **AI Models:** Anthropic Claude API (primary) + OpenAI API (embeddings)
 - **Shared utilities:** `agents/shared/` — config, model wrappers, repo analysis, reporting
 - **Guardian checks:** `agents/guardian/checks/` — modular validation checks
-- **Lab analyzers:** `agents/lab/analyzers/` — modular analysis modules
+- **Scientist analyzers:** `agents/scientist/analyzers/` — modular analysis modules
 
 See `PLAN-SEED-AGENTS.md` at repo root for the full implementation plan.

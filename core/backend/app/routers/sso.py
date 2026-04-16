@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/sso", tags=["SSO"])
 # SSO session cache (shared across all products)
 # ---------------------------------------------------------------------------
 
-_CACHE_TTL = 55  # seconds — below Supabase's 60s rate limit
+_CACHE_TTL = 3500  # seconds (~58 min) — cache for nearly the full session lifetime (1h)
 
 
 class _SSOSessionCache:

@@ -1,8 +1,12 @@
 import { useState, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@/store/authStore";
-import { api } from "@/lib/api-client";
-import { toast } from "sonner";
+import {
+  useNotas,
+  useCreateNota,
+  useUpdateNota,
+  useDeleteNota,
+  usePinNota,
+} from "@/hooks/useNotas";
+import type { Nota, NotaForm } from "@/hooks/useNotas";
 import {
   StickyNote,
   Plus,
@@ -13,39 +17,6 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface Nota {
-  id: string;
-  titulo: string;
-  conteudo?: string;
-  categoria?: string;
-  tags: string[];
-  fixada: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PaginatedResponse {
-  data: Nota[];
-  pagination: {
-    page: number;
-    page_size: number;
-    total: number;
-    total_pages: number;
-  };
-}
-
-interface NotaForm {
-  titulo: string;
-  conteudo: string;
-  tags: string;
-  fixada: boolean;
-  categoria: string;
-}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -99,9 +70,6 @@ function useDebounce(delay: number) {
 // ---------------------------------------------------------------------------
 
 export default function Notas() {
-  const { user } = useAuthStore();
-  const queryClient = useQueryClient();
-
   // Search
   const [searchInput, setSearchInput] = useState("");
   const [busca, setBusca] = useState("");
@@ -117,67 +85,23 @@ export default function Notas() {
   const [formData, setFormData] = useState<NotaForm>(EMPTY_FORM);
   const [confirmDelete, setConfirmDelete] = useState<Nota | null>(null);
 
-  // ---- Queries ----
+  // ---------------------------------------------------------------------------
+  // Hooks
+  // ---------------------------------------------------------------------------
 
-  const queryParams = new URLSearchParams();
-  queryParams.set("page", String(page));
-  queryParams.set("page_size", String(pageSize));
-  if (busca) queryParams.set("busca", busca);
+  const { data: response, isLoading } = useNotas(busca, page, pageSize);
 
-  const { data: response, isLoading } = useQuery<PaginatedResponse>({
-    queryKey: ["notas", busca, page],
-    queryFn: () => api.get(`/api/notes?${queryParams.toString()}`),
-    enabled: !!user,
-    staleTime: 2 * 60 * 1000,
-  });
+  const createMutation = useCreateNota(() => closeModal());
+  const updateMutation = useUpdateNota(() => closeModal());
+  const deleteMutation = useDeleteNota(() => setConfirmDelete(null));
+  const pinMutation = usePinNota();
 
   const notas = response?.data ?? [];
   const pagination = response?.pagination;
 
-  // ---- Mutations ----
-
-  const createMutation = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.post("/api/notes", body),
-    onSuccess: () => {
-      toast.success("Nota criada com sucesso");
-      queryClient.invalidateQueries({ queryKey: ["notas"] });
-      closeModal();
-    },
-    onError: (err: any) => toast.error("Erro ao criar nota", { description: err?.message }),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
-      api.patch(`/api/notes/${id}`, body),
-    onSuccess: () => {
-      toast.success("Nota atualizada");
-      queryClient.invalidateQueries({ queryKey: ["notas"] });
-      closeModal();
-    },
-    onError: (err: any) => toast.error("Erro ao atualizar nota", { description: err?.message }),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/notes/${id}`),
-    onSuccess: () => {
-      toast.success("Nota removida");
-      queryClient.invalidateQueries({ queryKey: ["notas"] });
-      setConfirmDelete(null);
-    },
-    onError: (err: any) => toast.error("Erro ao remover nota", { description: err?.message }),
-  });
-
-  const pinMutation = useMutation({
-    mutationFn: ({ id, fixada }: { id: string; fixada: boolean }) =>
-      api.patch(`/api/notes/${id}`, { fixada }),
-    onSuccess: (_data, vars) => {
-      toast.success(vars.fixada ? "Nota fixada" : "Nota desafixada");
-      queryClient.invalidateQueries({ queryKey: ["notas"] });
-    },
-    onError: (err: any) => toast.error("Erro ao fixar nota", { description: err?.message }),
-  });
-
-  // ---- Handlers ----
+  // ---------------------------------------------------------------------------
+  // Handlers
+  // ---------------------------------------------------------------------------
 
   function closeModal() {
     setShowModal(false);
@@ -235,7 +159,9 @@ export default function Notas() {
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
-  // ---- Render ----
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <div className="space-y-6">

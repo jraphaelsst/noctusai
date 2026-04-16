@@ -1,27 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
+import {
+  useDashboardTaskStats,
+  useDashboardMetrics,
+  useDashboardTodayEvents,
+} from "@/hooks/useDashboard";
 import { useAuthStore } from "@/store/authStore";
-import { api } from "@/lib/api-client";
 import { resolveSSOContext } from "@noctusai/lib";
 import {
   CalendarCheck, ListTodo, Target, Calendar, StickyNote,
   Loader2, TrendingUp, Flame, CheckCircle2,
 } from "lucide-react";
-
-interface TaskStats {
-  total: number;
-  pendente: number;
-  em_progresso: number;
-  concluida: number;
-  cancelada: number;
-}
-
-interface MetricsResume {
-  dias_analisados: number;
-  score_medio: number | null;
-  total_tarefas_concluidas: number;
-  total_checkins: number;
-  streak_dias: number;
-}
 
 export default function Dashboard() {
   const { user } = useAuthStore();
@@ -32,30 +19,9 @@ export default function Dashboard() {
     || user?.email?.split("@")[0]
     || "Usuario";
 
-  const { data: taskStats } = useQuery<{ data: TaskStats }>({
-    queryKey: ["dashboard-task-stats"],
-    queryFn: () => api.get("/api/tasks/stats/resumo"),
-    enabled: !!user,
-    staleTime: 60_000,
-  });
-
-  const { data: metricsRes } = useQuery<{ data: MetricsResume }>({
-    queryKey: ["dashboard-metrics"],
-    queryFn: () => api.get("/api/metricas/resumo?dias=7"),
-    enabled: !!user,
-    staleTime: 60_000,
-  });
-
-  const { data: todayEventsRes } = useQuery<{ data: any[]; pagination: any }>({
-    queryKey: ["dashboard-today-events"],
-    queryFn: () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-      return api.get(`/api/schedule?data_inicio=${today}T00:00:00&data_fim=${tomorrow}T00:00:00&page_size=10`);
-    },
-    enabled: !!user,
-    staleTime: 60_000,
-  });
+  const { data: taskStats } = useDashboardTaskStats();
+  const { data: metricsRes } = useDashboardMetrics();
+  const { data: todayEventsRes } = useDashboardTodayEvents();
 
   const stats = taskStats?.data;
   const metrics = metricsRes?.data;

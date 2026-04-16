@@ -1,7 +1,7 @@
 """
 Proposal Generator — creates structured improvement proposals from analyzer findings.
 
-Each proposal is saved as a markdown file in agents/lab/proposals/.
+Each proposal is saved as a markdown file in agents/scientist/proposals/.
 """
 import json
 from datetime import datetime
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from agents.shared.config import REPO_ROOT
 
-PROPOSALS_DIR = REPO_ROOT / "agents" / "lab" / "proposals"
+PROPOSALS_DIR = REPO_ROOT / "agents" / "scientist" / "proposals"
 
 
 def generate_proposal(

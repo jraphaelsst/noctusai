@@ -1,8 +1,13 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@/store/authStore";
-import { api } from "@/lib/api-client";
-import { toast } from "sonner";
+import {
+  useMetas,
+  useCheckins,
+  useCreateMeta,
+  useUpdateMeta,
+  useDeleteMeta,
+  useCheckinMeta,
+} from "@/hooks/useMetas";
+import type { Meta, MetaForm, CheckInForm } from "@/hooks/useMetas";
 import {
   Target,
   Plus,
@@ -18,52 +23,6 @@ import {
   Repeat,
   TrendingUp,
 } from "lucide-react";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface Meta {
-  id: string;
-  titulo: string;
-  descricao?: string;
-  tipo: "meta" | "habito";
-  categoria?: string;
-  meta_valor?: number;
-  valor_atual: number;
-  unidade?: string;
-  frequencia?: "diario" | "semanal" | "mensal";
-  data_limite?: string;
-  status: "ativa" | "concluida" | "pausada" | "cancelada";
-  created_at: string;
-}
-
-interface MetaForm {
-  titulo: string;
-  descricao: string;
-  tipo: "meta" | "habito";
-  categoria: string;
-  meta_valor: string;
-  unidade: string;
-  frequencia: string;
-  data_limite: string;
-  status: "ativa" | "concluida" | "pausada" | "cancelada";
-}
-
-interface CheckIn {
-  id: string;
-  meta_id: string;
-  data: string;
-  valor: number;
-  nota?: string;
-  created_at: string;
-}
-
-interface CheckInForm {
-  data: string;
-  valor: string;
-  nota: string;
-}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -112,9 +71,6 @@ const PAGE_SIZE = 20;
 // ---------------------------------------------------------------------------
 
 export default function Metas() {
-  const { user } = useAuthStore();
-  const qc = useQueryClient();
-
   // Filters
   const [tipoFilter, setTipoFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -132,81 +88,28 @@ export default function Metas() {
   const [expandedCheckins, setExpandedCheckins] = useState<string | null>(null);
 
   // ---------------------------------------------------------------------------
-  // Queries
+  // Hooks
   // ---------------------------------------------------------------------------
 
-  const buildParams = () => {
-    const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
-    if (tipoFilter) params.set("tipo", tipoFilter);
-    if (statusFilter) params.set("status", statusFilter);
-    return params.toString();
-  };
-
-  const { data: metasRes, isLoading } = useQuery({
-    queryKey: ["metas", page, tipoFilter, statusFilter],
-    queryFn: () => api.get<{ data: Meta[]; total: number }>(`/api/goals?${buildParams()}`),
-    enabled: !!user,
-    staleTime: 2 * 60 * 1000,
+  const { data: metasRes, isLoading } = useMetas(page, {
+    tipo: tipoFilter,
+    status: statusFilter,
   });
 
-  const { data: checkinsRes } = useQuery({
-    queryKey: ["checkins", expandedCheckins],
-    queryFn: () => api.get<{ data: CheckIn[] }>(`/api/goals/${expandedCheckins}/checkins?page=1&page_size=10`),
-    enabled: !!user && !!expandedCheckins,
-    staleTime: 30 * 1000,
+  const { data: checkinsRes } = useCheckins(expandedCheckins);
+
+  const createMutation = useCreateMeta(() => closeModal());
+  const updateMutation = useUpdateMeta(() => closeModal());
+  const deleteMutation = useDeleteMeta(() => setConfirmDelete(null));
+  const checkinMutation = useCheckinMeta(() => {
+    setCheckinGoalId(null);
+    setCheckinForm(EMPTY_CHECKIN);
   });
 
   const metas = metasRes?.data ?? [];
   const total = metasRes?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const checkins = checkinsRes?.data ?? [];
-
-  // ---------------------------------------------------------------------------
-  // Mutations
-  // ---------------------------------------------------------------------------
-
-  const createMutation = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.post("/api/goals", body),
-    onSuccess: () => {
-      toast.success("Meta criada com sucesso");
-      qc.invalidateQueries({ queryKey: ["metas"] });
-      closeModal();
-    },
-    onError: (err: any) => toast.error("Erro ao criar meta", { description: err?.message }),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch(`/api/goals/${id}`, body),
-    onSuccess: () => {
-      toast.success("Meta atualizada");
-      qc.invalidateQueries({ queryKey: ["metas"] });
-      closeModal();
-    },
-    onError: (err: any) => toast.error("Erro ao atualizar meta", { description: err?.message }),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/goals/${id}`),
-    onSuccess: () => {
-      toast.success("Meta removida");
-      qc.invalidateQueries({ queryKey: ["metas"] });
-      setConfirmDelete(null);
-    },
-    onError: (err: any) => toast.error("Erro ao remover meta", { description: err?.message }),
-  });
-
-  const checkinMutation = useMutation({
-    mutationFn: ({ goalId, body }: { goalId: string; body: Record<string, unknown> }) =>
-      api.post(`/api/goals/${goalId}/checkin`, body),
-    onSuccess: (_data, vars) => {
-      toast.success("Check-in registrado");
-      qc.invalidateQueries({ queryKey: ["metas"] });
-      qc.invalidateQueries({ queryKey: ["checkins", vars.goalId] });
-      setCheckinGoalId(null);
-      setCheckinForm(EMPTY_CHECKIN);
-    },
-    onError: (err: any) => toast.error("Erro ao registrar check-in", { description: err?.message }),
-  });
 
   // ---------------------------------------------------------------------------
   // Helpers
