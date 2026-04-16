@@ -12,6 +12,46 @@ from agents.shared.config import REPO_ROOT
 PROPOSALS_DIR = REPO_ROOT / "agents" / "scientist" / "proposals"
 
 
+def _slug(title: str) -> str:
+    """Generate a filename slug from a title."""
+    return title.lower().replace(" ", "-").replace("'", "").replace("/", "-")[:50]
+
+
+def _extract_key_entity(title: str) -> str:
+    """Extract the key entity from a proposal title for fuzzy matching.
+
+    'Extract criar_meta to seed lib' → 'criar_meta'
+    'Centralize criar_evento Function' → 'criar_evento'
+    'Standardize Python dependency versions' → 'standardize-python-dependency'
+    """
+    import re
+    # Look for quoted or specific function names
+    match = re.search(r"['\"]?(\w+_\w+)['\"]?", title)
+    if match:
+        return match.group(1).lower()
+    # Fall back to slug
+    return _slug(title)[:30]
+
+
+def _proposal_exists(title: str) -> bool:
+    """Check if a proposal with this title (or similar entity) already exists."""
+    if not PROPOSALS_DIR.exists():
+        return False
+
+    slug = _slug(title)
+    key_entity = _extract_key_entity(title)
+
+    for f in PROPOSALS_DIR.glob("*.md"):
+        fname = f.stem.lower()
+        # Exact slug match
+        if slug in fname:
+            return True
+        # Key entity match (catches 'extract X' vs 'centralize X' vs 'consolidate X')
+        if key_entity and len(key_entity) > 5 and key_entity in fname:
+            return True
+    return False
+
+
 def generate_proposal(
     title: str,
     problem: str,
@@ -23,10 +63,19 @@ def generate_proposal(
 ) -> Path:
     """Generate a structured improvement proposal.
 
-    Returns the path to the saved proposal file.
+    Returns the path to the saved proposal file, or the existing one if
+    a proposal with the same title already exists (deduplication).
     """
+    # Dedup: don't create duplicate proposals across runs
+    if _proposal_exists(title):
+        slug = _slug(title)
+        for f in PROPOSALS_DIR.glob("*.md"):
+            if slug in f.stem:
+                return f
+        return PROPOSALS_DIR / "deduplicated"
+
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    slug = title.lower().replace(" ", "-").replace("/", "-")[:50]
+    slug = _slug(title)
     filename = f"{timestamp}-{slug}.md"
     filepath = PROPOSALS_DIR / filename
 

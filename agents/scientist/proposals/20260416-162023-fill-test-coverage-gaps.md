@@ -1,6 +1,6 @@
 # Proposal: Fill test coverage gaps
 
-**Generated:** 2026-04-16 15:32
+**Generated:** 2026-04-16 16:20
 **Severity:** high
 **Effort:** medium
 **Affected products:** personal-finance

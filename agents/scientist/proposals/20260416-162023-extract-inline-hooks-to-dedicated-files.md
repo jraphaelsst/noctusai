@@ -1,6 +1,6 @@
 # Proposal: Extract inline hooks to dedicated files
 
-**Generated:** 2026-04-16 15:34
+**Generated:** 2026-04-16 16:20
 **Severity:** low
 **Effort:** low
 **Affected products:** erp-imobiliario, therapy-platform
