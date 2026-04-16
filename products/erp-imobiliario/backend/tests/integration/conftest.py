@@ -349,8 +349,9 @@ def integration_client():
     mock_sb = StatefulMockClient()
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse())
 
-    with patch("app.database.get_supabase_client", return_value=mock_sb), \
-         patch("app.dependencies.get_supabase_client", return_value=mock_sb), \
+    with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
          patch("app.dependencies.log_action", MagicMock()):
 
         from app.main import app

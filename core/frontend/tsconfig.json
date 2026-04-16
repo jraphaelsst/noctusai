@@ -25,16 +25,16 @@
                 "./src/*"
             ],
             "@noctusai/shared/*": [
-                "../../shared/frontend/src/*"
+                "../../seed/lib/frontend/src/*"
             ],
             "@noctusai/shared": [
-                "../../shared/frontend/src/index.ts"
+                "../../seed/lib/frontend/src/index.ts"
             ]
         },
         "baseUrl": "."
     },
     "include": [
         "src",
-        "../../shared/frontend/src"
+        "../../seed/lib/frontend/src"
     ]
 }

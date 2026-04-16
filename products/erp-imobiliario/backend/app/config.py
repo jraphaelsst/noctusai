@@ -1,18 +1,13 @@
 """
-Configuration settings loaded from environment variables.
+ERP Imobiliario configuration — extends seed framework.
 """
-from pathlib import Path
 from typing import Optional
-from noctusai_shared.config import BaseAppSettings
 
-_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+from noctusai_seed import ProductSettings
 
 
-class Settings(BaseAppSettings):
+class ERPSettings(ProductSettings):
     """ERP-specific application settings."""
-
-    # JWT / SSO
-    core_api_url: str = "http://localhost:8000"
 
     # CORS — ERP frontend default port
     cors_origins: str = "http://localhost:8080,http://localhost:5173,http://localhost:3000"
@@ -36,10 +31,5 @@ class Settings(BaseAppSettings):
     d4sign_api_token: Optional[str] = None
     d4sign_crypt_key: Optional[str] = None
 
-    class Config:
-        env_file = str(_ROOT_ENV)
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
-
-settings = Settings()
+settings = ERPSettings()

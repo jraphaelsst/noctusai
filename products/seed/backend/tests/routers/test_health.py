@@ -1,5 +1,5 @@
 """
-Tests for Health check endpoint — /api/health (Seed Product)
+Tests for Health check endpoint — provided by seed framework.
 """
 
 

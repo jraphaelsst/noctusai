@@ -21,7 +21,7 @@ This installs everything: git hooks, Python venv, backend deps, frontend deps.
 **What it does:**
 1. Installs git hooks (post-commit: seed auto-sync)
 2. Creates Python 3.11 venv + installs all backend requirements
-3. Installs `noctusai_shared` in dev mode (`pip install -e shared/backend`)
+3. Installs `noctusai_shared` in dev mode (`pip install -e seed/lib/backend`)
 4. Runs `npm install` in every product frontend
 5. Verifies `.env` exists
 

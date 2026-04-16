@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "noctusai-seed"
+version = "0.1.0"
+description = "NoctusAI Seed Framework — structural bones for all products"
+requires-python = ">=3.11"
+dependencies = [
+    "noctusai-shared",
+    "fastapi>=0.115.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.2",
+    "supabase>=2.9.1",
+    "PyJWT>=2.9.0",
+    "httpx>=0.27.0",
+    "slowapi>=0.1.9",
+]
+
+[tool.setuptools.packages.find]
+include = ["noctusai_seed*"]

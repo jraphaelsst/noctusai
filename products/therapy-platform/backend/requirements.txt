@@ -3,7 +3,8 @@
 # For full-stack dev, use the root requirements.txt instead.
 
 # Shared package (editable install)
--e shared/backend
+-e seed/lib/backend
+-e seed/framework/backend
 
 # Core framework
 fastapi==0.115.0

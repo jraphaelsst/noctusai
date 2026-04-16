@@ -65,7 +65,7 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "@noctusai/shared": path.resolve(__dirname, "../../../shared/frontend/src"),
+      "@noctusai/shared": path.resolve(__dirname, "../../../seed/lib/frontend/src"),
     },
     // Ensure packages imported by shared code (outside this project tree)
     // resolve from this project's node_modules rather than from the shared directory

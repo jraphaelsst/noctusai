@@ -5,8 +5,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@noctusai/shared/*": ["../../../shared/frontend/src/*"],
-      "@noctusai/shared": ["../../../shared/frontend/src/index.ts"]
+      "@noctusai/shared/*": ["../../../seed/lib/frontend/src/*"],
+      "@noctusai/shared": ["../../../seed/lib/frontend/src/index.ts"]
     },
     "noImplicitAny": false,
     "noUnusedParameters": false,

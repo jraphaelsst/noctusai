@@ -38,6 +38,10 @@ __all__ = [
 ]
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -51,15 +55,17 @@ def _make_client_context(role="therapist", clinic_id=None):
     mock_user = MockUser(role=role, clinic_id=clinic_id)
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(mock_user))
 
-    patcher1 = patch("app.dependencies.get_supabase_client", return_value=mock_sb)
-    patcher2 = patch("app.database.get_supabase_client", return_value=mock_sb)
+    patcher1 = patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb)
+    patcher2 = patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb)
+    patcher3 = patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb)
     patcher1.start()
     patcher2.start()
+    patcher3.start()
 
     from app.main import app
     tc = TestClient(app)
     client = AuthClient(tc, mock_sb)
-    return client, (patcher1, patcher2)
+    return client, (patcher1, patcher2, patcher3)
 
 
 @pytest.fixture

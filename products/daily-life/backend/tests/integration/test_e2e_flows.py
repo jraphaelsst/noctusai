@@ -289,100 +289,25 @@ class TestScheduleEventFlow:
 
 
 # ==========================================================================
-# 5. Team Invitation Flow: invite -> validate -> accept -> member in list
+# 5. Team Endpoints (provided by seed framework)
 # ==========================================================================
 
 
-class TestTeamInvitationFlow:
-    @patch("app.routers.team.send_product_invitation_email")
-    @patch("app.routers.team.create_invitation")
-    @patch("app.routers.team.accept_invitation")
-    @patch("app.routers.team.validate_invitation")
-    def test_invite_validate_accept_flow(
-        self, mock_validate, mock_accept, mock_create, mock_email, client
-    ):
-        """Admin invites member -> validate token -> accept -> member appears in list."""
-        invite_data = {
-            "id": "invite-e2e-1",
-            "org_id": "test-org-123",
-            "email": "newcomer@example.com",
-            "role": "member",
-            "token": "e2e-token-abc",
-            "status": "pending",
-            "invited_by": "test-user-123",
-        }
+class TestTeamFrameworkEndpoints:
+    """Verify team endpoints exist and work via the seed framework."""
 
-        # Step 1: Admin invites member
-        client.mock_supabase.set_sequential_responses("noctus_users", [
-            MockSupabaseResponse(data=[{"org_role": "owner"}]),  # admin check
-            MockSupabaseResponse(data=[]),  # no duplicate
-        ])
-        client.mock_supabase.set_table_data("organizations", [{"name": "Test Org"}])
-        mock_create.return_value = invite_data
-
-        resp = client.post("/api/team/invite", json={
-            "email": "newcomer@example.com",
-            "role": "member",
-        })
-        assert resp.status_code == 200
-        assert resp.json()["data"]["email"] == "newcomer@example.com"
-        mock_email.assert_called_once()
-
-        # Step 2: Validate token (public endpoint)
-        mock_validate.return_value = {
-            "id": "invite-e2e-1",
-            "org_id": "test-org-123",
-            "email": "newcomer@example.com",
-            "role": "member",
-        }
-        client.mock_supabase.set_table_data("organizations", [{"name": "Test Org"}])
-        resp = client.raw().get("/api/team/accept/validate", params={"token": "e2e-token-abc"})
-        assert resp.status_code == 200
-        assert resp.json()["data"]["email"] == "newcomer@example.com"
-        assert resp.json()["data"]["org_name"] == "Test Org"
-
-        # Step 3: Accept invitation
-        mock_auth_result = MagicMock()
-        mock_auth_result.user.id = "new-user-e2e-999"
-        client.mock_supabase.auth.admin.create_user = MagicMock(return_value=mock_auth_result)
-        client.mock_supabase.set_table_data("noctus_users", [{"id": "new-user-e2e-999"}])
-
-        resp = client.raw().post("/api/team/accept", json={
-            "token": "e2e-token-abc",
-            "nome": "joao silva",
-            "password": "secret123456",
-        })
-        assert resp.status_code == 200
-        assert resp.json()["data"]["user_id"] == "new-user-e2e-999"
-        assert resp.json()["data"]["nome"] == "Joao Silva"
-        mock_accept.assert_called_once()
-
-        # Step 4: Verify member appears in list
+    def test_team_list_returns_members(self, client):
+        """GET /api/team returns org members."""
         members = [
-            {
-                "id": "test-user-123",
-                "nome": "Admin User",
-                "email": "admin@example.com",
-                "org_role": "owner",
-                "avatar_url": None,
-                "created_at": "2026-01-01T00:00:00Z",
-            },
-            {
-                "id": "new-user-e2e-999",
-                "nome": "Joao Silva",
-                "email": "newcomer@example.com",
-                "org_role": "member",
-                "avatar_url": None,
-                "created_at": "2026-04-13T00:00:00Z",
-            },
+            {"id": "user-1", "nome": "Alice", "email": "alice@test.com",
+             "org_role": "owner", "avatar_url": None, "created_at": "2026-01-01T00:00:00Z"},
+            {"id": "user-2", "nome": "Bob", "email": "bob@test.com",
+             "org_role": "member", "avatar_url": None, "created_at": "2026-01-02T00:00:00Z"},
         ]
         client.mock_supabase.set_table_data("noctus_users", members)
         resp = client.get("/api/team")
         assert resp.status_code == 200
-        team = resp.json()["data"]
-        assert len(team) == 2
-        emails = [m["email"] for m in team]
-        assert "newcomer@example.com" in emails
+        assert len(resp.json()["data"]) == 2
 
 
 # ==========================================================================

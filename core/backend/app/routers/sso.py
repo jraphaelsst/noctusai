@@ -251,9 +251,20 @@ class SSOSessionResponse(BaseModel):
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
-    """Check if an exception is a Supabase rate limit error."""
+    """Check if an exception is a Supabase rate limit error.
+
+    Supabase GoTrue returns different error messages depending on the context:
+    - "rate limit" / "429" / "60 seconds" for explicit rate limit responses
+    - "User not allowed" when a magiclink/OTP is generated too quickly for the
+      same email (undocumented ~60s cooldown per email)
+    """
     msg = str(exc).lower()
-    return "rate" in msg and "limit" in msg or "429" in msg or "60 seconds" in msg
+    return (
+        ("rate" in msg and "limit" in msg)
+        or "429" in msg
+        or "60 seconds" in msg
+        or "user not allowed" in msg
+    )
 
 
 def _generate_session(email: str) -> dict:

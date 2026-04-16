@@ -1,12 +1,11 @@
 """
-Pytest configuration and shared fixtures for Personal Finance backend tests.
-Mock classes imported from noctusai_shared.testing — products only define fixtures.
+Pytest configuration for Personal Finance backend tests.
 """
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from noctusai_shared.testing import (  # noqa: F401 — re-exported for test imports
+from noctusai_shared.testing import (  # noqa: F401
     MockSupabaseResponse,
     MockSelectBuilder,
     MockFilterBuilder,
@@ -30,8 +29,9 @@ def client():
         MockUser(org_id="test-org-123")
     ))
 
-    with patch("app.database.get_supabase_client", return_value=mock_sb), \
-         patch("app.dependencies.get_supabase_client", return_value=mock_sb):
+    with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
 
         from app.main import app
         tc = TestClient(app)

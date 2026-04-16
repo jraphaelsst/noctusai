@@ -154,8 +154,8 @@ class TestExcluirConta:
 
 class TestHealth:
     def test_health_check(self, client):
-        response = client._tc.get("/health")
+        response = client._tc.get("/api/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["product"] == "personal-finance"
+        assert data["product"] == "Financas Pessoais"

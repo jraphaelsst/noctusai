@@ -8,32 +8,25 @@ directly via Supabase Auth — no NoctusAI SSO.
 
 Roles: platform_admin, clinic_admin, therapist, patient
 """
-from __future__ import annotations
-
 import logging
 from typing import Optional
+
 from fastapi import Header, HTTPException
+
+from noctusai_seed import create_database_module, create_dependencies
 from noctusai_shared.auth import first_or_none, resolve_sso_role  # noqa: F401
-from app.database import get_supabase_client
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+_db = create_database_module(settings, schema="therapy")
+deps = create_dependencies(_db)
 
-async def get_current_user(authorization: Optional[str] = Header(None)):
-    """Extract and validate JWT from Authorization header. Returns (user, token)."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token ausente")
-    token = authorization.replace("Bearer ", "")
-    try:
-        admin = get_supabase_client()
-        user_response = admin.auth.get_user(token)
-        if not user_response or not user_response.user:
-            raise HTTPException(status_code=401, detail="Token invalido")
-        return user_response.user, token
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
+get_current_user = deps.get_current_user
+get_user_client = deps.get_user_client
+get_admin_client = deps.get_admin_client
+
+# ── THERAPY-SPECIFIC extensions ─────────────────────────────────────
 
 
 def get_user_role(user) -> str:
@@ -91,14 +84,9 @@ def get_clinic_id_for_user(user) -> Optional[str]:
     return metadata.get("clinic_id")
 
 
-def get_user_client(token: str):
-    """Get a Supabase client authenticated as the user (respects RLS)."""
-    return get_supabase_client(token)
-
-
-def get_admin_client():
-    """Get a Supabase client with service role (bypasses RLS)."""
-    return get_supabase_client()
+def get_supabase_client(access_token=None):
+    """Backwards-compatible alias for database client creation."""
+    return _db.get_client(access_token)
 
 
 def log_action(

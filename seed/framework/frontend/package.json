@@ -1,0 +1,8 @@
+{
+  "name": "@noctusai/seed",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NoctusAI Seed Framework — structural bones for all product frontends",
+  "type": "module",
+  "main": "src/index.ts"
+}

@@ -1,36 +1,19 @@
 """
-NoctusAI {{PRODUCT_NAME}} — FastAPI Backend
+NoctusAI {{PRODUCT_NAME}} — Reference Implementation
 
-Entry point for the {{PRODUCT_NAME}} API server.
+The simplest possible product. Just the spine, no domain code.
+Proves that the seed framework works end-to-end.
+
 Run with: uvicorn app.main:app --reload --port {{BACKEND_PORT}}
 """
-import logging
-
-from fastapi import FastAPI
-
+from noctusai_seed import create_product_app
 from app.config import settings
-from app.routers import notificacoes, team
-from app.routers.health import router as health_router
 from app.rate_limit import limiter
-from noctusai_shared.logging_config import configure_logging
-from noctusai_shared.app_factory import configure_app
 
-configure_logging(debug=settings.debug, json_logs=not settings.debug, app_name="{{SCHEMA_NAME}}")
-
-logger = logging.getLogger(__name__)
-
-app = FastAPI(
-    title="NoctusAI {{PRODUCT_NAME}} API",
-    description="Seed product — minimal viable product that proves the entire shared stack works",
+app = create_product_app(
+    name="{{PRODUCT_NAME}}",
+    schema="{{SCHEMA_NAME}}",
+    settings=settings,
     version="0.1.0",
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
+    limiter=limiter,
 )
-
-# Apply shared configuration (Sentry, CORS, exception handlers, middleware, rate limiting)
-configure_app(app, settings, limiter=limiter)
-
-# Register routers
-app.include_router(health_router)
-app.include_router(notificacoes.router)
-app.include_router(team.router)

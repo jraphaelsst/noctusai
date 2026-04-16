@@ -7,7 +7,7 @@
 # What it does:
 #   1. Installs git hooks (seed auto-sync)
 #   2. Creates Python venv + installs all backend deps
-#   3. Installs shared backend package in dev mode
+#   3. Installs seed packages (shared + framework) in dev mode
 #   4. Installs frontend deps for all products
 #   5. Verifies .env exists (warns if not)
 #   6. Prints status summary
@@ -82,8 +82,9 @@ step "Step 3/5: Backend dependencies"
 pip install -q -r requirements.txt 2>/dev/null
 log "Root requirements installed"
 
-pip install -q -e shared/backend 2>/dev/null
-log "Shared backend package installed (dev mode)"
+pip install -q -e seed/lib/backend 2>/dev/null
+pip install -q -e seed/framework/backend 2>/dev/null
+log "Seed packages installed (shared + framework, dev mode)"
 
 # ── Step 4: Frontend deps ────────────────────────────────────
 step "Step 4/5: Frontend dependencies"

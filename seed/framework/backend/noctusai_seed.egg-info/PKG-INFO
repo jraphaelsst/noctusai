@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: noctusai-seed
+Version: 0.1.0
+Summary: NoctusAI Seed Framework — structural bones for all products
+Requires-Python: >=3.11
+Requires-Dist: noctusai-shared
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: pydantic>=2.9.0
+Requires-Dist: pydantic-settings>=2.5.2
+Requires-Dist: supabase>=2.9.1
+Requires-Dist: PyJWT>=2.9.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: slowapi>=0.1.9

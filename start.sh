@@ -179,6 +179,26 @@ if [ -d "$DL_FRONTEND" ]; then
   PIDS+=($!)
 fi
 
+# --- Mailing Backend (porta 8006) ---
+MAIL_BACKEND="$ROOT_DIR/products/mailing/backend"
+if [ -d "$MAIL_BACKEND" ]; then
+  echo "[Mailing Backend] Iniciando na porta 8006..."
+  "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8006 --reload --app-dir "$MAIL_BACKEND" &
+  PIDS+=($!)
+fi
+
+# --- Mailing Frontend (porta 8120) ---
+MAIL_FRONTEND="$ROOT_DIR/products/mailing/frontend"
+if [ -d "$MAIL_FRONTEND" ] && [ -f "$MAIL_FRONTEND/package.json" ]; then
+  if [ ! -d "$MAIL_FRONTEND/node_modules" ]; then
+    echo "[Mailing Frontend] Instalando dependencias..."
+    (cd "$MAIL_FRONTEND" && npm install)
+  fi
+  echo "[Mailing Frontend] Iniciando na porta 8120..."
+  (cd "$MAIL_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8120) &
+  PIDS+=($!)
+fi
+
 echo ""
 echo "============================================"
 echo "  Servicos iniciados:"
@@ -194,6 +214,8 @@ echo "  PF Frontend        → http://localhost:8090"
 echo "  Therapy Frontend   → http://localhost:8095"
 echo "  Seed Frontend      → http://localhost:8100"
 echo "  Daily Life Frontend→ http://localhost:8110"
+echo "  Mailing Backend   → http://localhost:8006"
+echo "  Mailing Frontend  → http://localhost:8120"
 echo "============================================"
 echo ""
 echo "Pressione Ctrl+C para parar todos os servicos."

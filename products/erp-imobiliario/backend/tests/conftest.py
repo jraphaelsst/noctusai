@@ -4,6 +4,9 @@ Pytest configuration and shared fixtures for ERP backend tests.
 Mock classes are imported from the shared testing package. This module
 re-exports them so existing test files that do
 ``from tests.conftest import MockSupabaseClient`` continue to work.
+
+After the seed framework migration, patches target DatabaseModule.get_client
+and DatabaseModule.get_admin_client instead of app.database.get_supabase_client.
 """
 from datetime import date
 
@@ -77,8 +80,9 @@ def client():
     mock_sb.set_rpc_data("get_data_sp", [date.today().isoformat()])
     mock_log = MagicMock()
 
-    with patch("app.database.get_supabase_client", return_value=mock_sb), \
-         patch("app.dependencies.get_supabase_client", return_value=mock_sb), \
+    with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
          patch("app.dependencies.log_action", mock_log):
 
         from app.main import app

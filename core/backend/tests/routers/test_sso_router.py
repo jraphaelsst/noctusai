@@ -405,6 +405,16 @@ class TestSSORateLimitDetection:
 
         assert resp.status_code == 429
 
+    def test_user_not_allowed_treated_as_rate_limit(self, sso_session_client):
+        """Supabase returns 'User not allowed' on rapid magiclink calls for same email."""
+        client, mock_admin = sso_session_client
+        mock_admin.auth.admin.generate_link.side_effect = Exception("AuthApiError: User not allowed")
+
+        token = _make_sso_token()
+        resp = client.post("/api/sso/session", json={"token": token})
+
+        assert resp.status_code == 429
+
 
 class TestSSOSessionSupabaseAdminNull:
     def test_returns_500_when_supabase_admin_is_none(self, client):

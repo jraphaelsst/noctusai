@@ -1,28 +1,27 @@
 """
-Shared dependencies for FastAPI routers.
-Handles JWT auth token extraction and Supabase client creation.
+Shared dependencies for FastAPI routers — seed framework + ERP extensions.
+
+Standard deps (get_current_user, get_user_role, get_user_client, get_admin_client)
+come from the seed framework. ERP-specific deps (get_org_id with required param,
+log_action) are defined here.
 """
+import logging
 from typing import Optional
-from fastapi import Header, HTTPException
+
+from fastapi import HTTPException
+from noctusai_seed import create_database_module, create_dependencies
 from noctusai_shared.auth import first_or_none, resolve_sso_role  # noqa: F401
-from app.database import get_supabase_client
+from app.config import settings
 
+_db = create_database_module(settings, schema="erp")
+deps = create_dependencies(_db)
 
-async def get_current_user(authorization: Optional[str] = Header(None)):
-    """Extract and validate JWT from Authorization header. Returns (user, token)."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token ausente")
-    token = authorization.replace("Bearer ", "")
-    try:
-        admin = get_supabase_client()
-        user_response = admin.auth.get_user(token)
-        if not user_response or not user_response.user:
-            raise HTTPException(status_code=401, detail="Token inválido")
-        return user_response.user, token
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Não autenticado")
+get_current_user = deps.get_current_user
+get_user_role = deps.get_user_role
+get_user_client = deps.get_user_client
+get_admin_client = deps.get_admin_client
+
+logger = logging.getLogger(__name__)
 
 
 def get_org_id(user, *, required: bool = False) -> Optional[str]:
@@ -37,32 +36,8 @@ def get_org_id(user, *, required: bool = False) -> Optional[str]:
     """
     org_id = (user.user_metadata or {}).get("org_id")
     if not org_id and required:
-        raise HTTPException(status_code=400, detail="Organização não encontrada no perfil do usuário")
+        raise HTTPException(status_code=400, detail="Organizacao nao encontrada no perfil do usuario")
     return org_id or None
-
-
-def get_user_role(user) -> str:
-    """Resolve the user's role for ERP access.
-
-    Uses shared ``resolve_sso_role()`` first (org owner/admin or NoctusAI
-    admin → 'platform_admin'), then falls through to ERP-native role from
-    metadata.  ERP also uses the ``erp.user_roles`` DB table on the
-    frontend for finer-grained nav filtering.
-    """
-    sso = resolve_sso_role(user)
-    if sso:
-        return sso
-    return (user.user_metadata or {}).get("role", "user")
-
-
-def get_user_client(token: str):
-    """Get a Supabase client authenticated as the user (respects RLS)."""
-    return get_supabase_client(token)
-
-
-def get_admin_client():
-    """Get a Supabase client with service role (bypasses RLS)."""
-    return get_supabase_client()
 
 
 def log_action(user_id: str, tipo_acao: str, tipo_entidade: str,
@@ -79,5 +54,4 @@ def log_action(user_id: str, tipo_acao: str, tipo_entidade: str,
             "detalhes": detalhes or {},
         }).execute()
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to log action: {e}")
+        logger.warning(f"Failed to log action: {e}")

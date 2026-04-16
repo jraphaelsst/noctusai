@@ -1,4 +1,4 @@
-"""Tests for the notifications (notificacoes) router."""
+"""Tests for the notifications (notificacoes) router — provided by seed framework."""
 from noctusai_shared.testing import MockSupabaseResponse
 
 
@@ -24,13 +24,6 @@ class TestListNotificacoes:
         body = resp.json()
         items = body["data"]
         assert len(items) == 1
-        # Verify Portuguese field mapping
-        item = items[0]
-        assert item["tipo"] == "system"
-        assert item["titulo"] == "Bem-vindo"
-        assert item["mensagem"] == "Sua conta foi criada"
-        assert item["is_read"] is False
-        assert item["link"] == "/dashboard"
 
     def test_list_no_auth(self, client):
         resp = client.raw().get("/api/notificacoes")
@@ -41,14 +34,13 @@ class TestContagem:
     """GET /api/notificacoes/contagem"""
 
     def test_contagem(self, client):
-        # select("id", count="exact") — mock 3 items so count == 3
         client.mock_supabase.set_table_data("notifications", [
             {"id": "n1"}, {"id": "n2"}, {"id": "n3"},
         ])
         resp = client.get("/api/notificacoes/contagem")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["data"]["nao_lidas"] == 3
+        assert body["nao_lidas"] == 3
 
 
 class TestMarcarLida:
@@ -60,9 +52,14 @@ class TestMarcarLida:
         resp = client.patch("/api/notificacoes/notif-001/ler")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["data"]["is_read"] is True
+        assert body["ok"] is True
 
-    def test_marcar_lida_not_found(self, client):
-        client.mock_supabase.set_table_data("notifications", [])
-        resp = client.patch("/api/notificacoes/nonexistent/ler")
-        assert resp.status_code == 404
+
+class TestMarcarTodasLidas:
+    """POST /api/notificacoes/ler-todas"""
+
+    def test_marcar_todas(self, client):
+        client.mock_supabase.set_table_data("notifications", [MOCK_NOTIFICATION])
+        resp = client.post("/api/notificacoes/ler-todas")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True

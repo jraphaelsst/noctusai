@@ -1,8 +1,12 @@
 """
 Tests for shared dependencies: auth, logging, client creation.
+
+After the seed framework migration, get_current_user / get_user_client /
+get_admin_client are provided by ProductDependencies. The ERP-specific
+extensions (get_org_id, log_action) remain in app.dependencies.
 """
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 from app.dependencies import get_current_user, log_action, get_user_client, get_admin_client
 from tests.conftest import MockSupabaseClient, MockUser, MockUserResponse
 
@@ -29,11 +33,10 @@ class TestGetCurrentUser:
 
     @pytest.mark.asyncio
     async def test_valid_token(self):
-        with patch("app.dependencies.get_supabase_client") as mock_client:
-            admin = MockSupabaseClient()
-            admin.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser("uid-123")))
-            mock_client.return_value = admin
+        admin = MockSupabaseClient()
+        admin.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser("uid-123")))
 
+        with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=admin):
             user, token = await get_current_user("Bearer valid-token")
             assert user.id == "uid-123"
             assert token == "valid-token"
@@ -41,11 +44,10 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_invalid_token_returns_401(self):
         from fastapi import HTTPException
-        with patch("app.dependencies.get_supabase_client") as mock_client:
-            admin = MockSupabaseClient()
-            admin.auth.get_user = MagicMock(side_effect=Exception("Invalid"))
-            mock_client.return_value = admin
+        admin = MockSupabaseClient()
+        admin.auth.get_user = MagicMock(side_effect=Exception("Invalid"))
 
+        with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=admin):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user("Bearer bad-token")
             assert exc_info.value.status_code == 401
@@ -53,13 +55,12 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_null_user_returns_401(self):
         from fastapi import HTTPException
-        with patch("app.dependencies.get_supabase_client") as mock_client:
-            admin = MockSupabaseClient()
-            mock_resp = MagicMock()
-            mock_resp.user = None
-            admin.auth.get_user = MagicMock(return_value=mock_resp)
-            mock_client.return_value = admin
+        admin = MockSupabaseClient()
+        mock_resp = MagicMock()
+        mock_resp.user = None
+        admin.auth.get_user = MagicMock(return_value=mock_resp)
 
+        with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=admin):
             with pytest.raises(HTTPException):
                 await get_current_user("Bearer token-no-user")
 
@@ -95,13 +96,13 @@ class TestLogAction:
 
 class TestClientCreation:
     def test_get_user_client(self):
-        with patch("app.dependencies.get_supabase_client") as mock:
-            mock.return_value = MockSupabaseClient()
+        mock_client = MockSupabaseClient()
+        with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_client) as mock:
             client = get_user_client("test-token")
             mock.assert_called_with("test-token")
 
     def test_get_admin_client(self):
-        with patch("app.dependencies.get_supabase_client") as mock:
-            mock.return_value = MockSupabaseClient()
+        mock_client = MockSupabaseClient()
+        with patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_client) as mock:
             client = get_admin_client()
-            mock.assert_called_with()  # no args = admin
+            mock.assert_called_once()

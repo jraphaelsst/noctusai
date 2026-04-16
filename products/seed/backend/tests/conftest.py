@@ -1,6 +1,8 @@
 """
 Pytest configuration and shared fixtures for Seed Product backend tests.
-Mock classes imported from noctusai_shared.testing — products only define fixtures.
+
+The seed product uses the framework (noctusai_seed), so patches target
+the framework's database module rather than product-level modules.
 """
 import pytest
 from unittest.mock import MagicMock, patch
@@ -30,8 +32,12 @@ def client():
         MockUser(org_id="test-org-123")
     ))
 
-    with patch("app.database.get_supabase_client", return_value=mock_sb), \
-         patch("app.dependencies.get_supabase_client", return_value=mock_sb):
+    with patch("app.database._db.get_client", return_value=mock_sb), \
+         patch("app.database._db.get_core_client", return_value=mock_sb), \
+         patch("app.database._db.get_admin_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
+         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
 
         from app.main import app
         tc = TestClient(app)

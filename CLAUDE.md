@@ -2,6 +2,7 @@
 
 ## Engineering Philosophy
 
+- **Seed first. Always.** Every product inherits its structural backbone from `seed/`. When creating a new product, import `create_product_app()` (backend) and `createProductApp()` / `createProductLayout()` (frontend) from the seed framework. Do NOT copy-paste structural code. Do NOT re-implement auth, routing, layout, database clients, health checks, team management, or notifications — they come from the seed. This is not optional, not debatable, not a suggestion. The seed is the skeleton. Products are the organs. Read `seed/README.md` before building anything.
 - **No workarounds.** Always use the real API/SDK/framework. No monkeypatches, shims, or hacks.
 - **DRY.** Single authoritative source for every piece of logic. Three similar blocks → extract to shared.
 - **Componentize everything.** When you build something a product needs, ask: "will another product need this?" If yes (or maybe), build it as a shared component from the start. Check `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` before writing anything — it might already exist. The shared library is the platform's validated, reusable code. Every extraction reduces maintenance burden as the platform grows. Duplicate code is tech debt; shared components are assets.
@@ -22,6 +23,7 @@ Multi-tenant, multi-product SaaS monorepo. Stack: **FastAPI + Supabase** backend
 | **Therapy** (`products/therapy-platform/`) | `therapy` | 8003/8095 | `clinic_id` | Direct Supabase Auth |
 | **Seed** (`products/seed/`) | `seed` | 8004/8100 | `org_id` | SSO + direct login |
 | **Daily Life** (`products/daily-life/`) | `daily_life` | 8005/8110 | `org_id` | SSO + direct login |
+| **Mailing** (`products/mailing/`) | `mailing` | 8006/8120 | `org_id` | SSO + direct login |
 
 Per-product docs: `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`, `02-ERP.md`, `03-PF.md`, `06-THERAPY.md`, `08-DAILY-LIFE.md`.
 
@@ -30,19 +32,23 @@ Per-product docs: `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`, `02-ERP.md`, `03-
 
 State: **Zustand** (global UI), **TanStack Query** (server state).
 
-### Shared Packages
+### The Seed — Spine of Every Product
 
-**Full catalog**: `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` — **always check before building anything**.
+**`seed/` is the structural foundation. Every product inherits from it. Change the seed, change all products.**
 
-- **Backend** (`noctusai_shared`): auth, roles, invitations, email_templates, notifications, page_status, responses, exceptions, middleware, logging, database, config, app_factory, testing.
-- **Frontend** (`@noctusai/shared`): api, sso, roles, page-status, auth, stores, hooks, notifications, supabase, components.
-- **Design System** (`@noctusai/shared/design-system`): AppShell, Sidebar, Header, NotificationBell, LoginForm, AcceptInvitePage, ForgotPasswordPage, PageSkeleton, InactivityWarning, useTheme, tokens.css.
+Read `seed/README.md` for the full architecture. The seed has two layers:
 
-> `get_current_user` is NOT shared — lives in each product's `dependencies.py` for test mock compatibility.
+| Layer | Package | Location | Purpose |
+|-------|---------|----------|---------|
+| **Shared Library** | `noctusai_shared` / `@noctusai/shared` | `seed/lib/` | Reusable code (auth, roles, hooks, components, utils) |
+| **Framework** | `noctusai_seed` / `@noctusai/seed` | `seed/framework/` | Structural bones (app factory, database, deps, routing) |
 
-### Product Layout Pattern
+Products import from both. Domain-specific code lives in the product only. **Never duplicate seed code in a product.**
 
-One `Layout.tsx` per product using shared AppShell + Sidebar + Header. Nav switched by role. SSO users get BackToCore + redirect logout. Pages filtered by `usePageStatus` + `filterNavByPageStatus`.
+- **Backend framework**: `create_product_app(name, schema, settings, routers)` → fully configured FastAPI app with health, team, notifications, CORS, Sentry, logging, JWT built in.
+- **Frontend framework**: `createProductApp(config)` → full App with routing, auth, providers, TooltipProvider. `createProductLayout(config)` → Layout with sidebar, header, page status, SSO.
+
+**Full shared library catalog**: `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` — **always check before building anything**.
 
 ## Setup
 
@@ -91,7 +97,7 @@ Platform concern — `public.notifications` table. Product routers at `/api/noti
 
 ## Creating a New Product
 
-Copy `templates/product-seed/`, replace placeholders (`{{PRODUCT_NAME}}`, `{{SCHEMA_NAME}}`, `{{BACKEND_PORT}}`, `{{FRONTEND_PORT}}`, `{{PRODUCT_ICON}}`), install deps, run migrations, register product.
+Products are born from the seed. The backend `main.py` imports `create_product_app()` from `noctusai_seed`. The frontend `App.tsx` imports `createProductApp()` from `@noctusai/seed`. Products only add domain-specific routers, services, pages, and components.
 
 **New product checklist** (mandatory files from day one):
 1. `README.md` — what the product does, stack, ports, features
@@ -99,5 +105,7 @@ Copy `templates/product-seed/`, replace placeholders (`{{PRODUCT_NAME}}`, `{{SCH
 3. `frontend/.env.example` — all required `VITE_` vars with placeholders
 4. `backend/migrations/001_<schema>.sql` — full schema with RLS
 5. Registration in `start.sh` with backend + frontend blocks
+6. `backend/app/main.py` — uses `create_product_app()` from seed framework
+7. `frontend/src/App.tsx` — uses `createProductApp()` from seed framework
 
-The template is **auto-generated** from the live seed product (`products/seed/`) via `scripts/sync-seed-template.sh`. The post-commit hook keeps them in sync — edit the seed, template updates automatically. See `scripts/README.md` for details and `TODO-SEED-PRODUCT.md` for the seed build checklist.
+The `products/seed/` directory is the **reference implementation** — the simplest possible product, just the spine with no domain code. The template at `templates/product-seed/` is auto-generated from it via `scripts/sync-seed-template.sh`.
