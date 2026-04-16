@@ -9,7 +9,7 @@
 - **DRY.** Single authoritative source for every piece of logic. Three similar blocks → extract to shared.
 - **Componentize everything.** When you build something a product needs, ask: "will another product need this?" If yes (or maybe), build it as a shared component from the start. Check `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` before writing anything — it might already exist. The shared library is the platform's validated, reusable code. Every extraction reduces maintenance burden as the platform grows. Duplicate code is tech debt; shared components are assets.
 - **Module-scope imports.** All Python imports go at the top of the file (module scope). Never defer imports to inside functions or after object creation unless solving a documented circular dependency. Module-scope imports fail fast at startup, making bugs visible immediately.
-- **Docs stay in sync.** Every commit updates `CLAUDE.md` and `KNOWLEDGE-BASE/`.
+- **Docs stay in sync.** Every commit updates `CLAUDE.md` and `KNOWLEDGE-BASE/`. Every agent must have an up-to-date `README.md`. When an agent's behavior changes, its README updates in the same commit.
 - **`KNOWLEDGE-BASE/`** = platform context (architecture, inventories). `CLAUDE.md` = behavioral rules.
 - **Every product has a `README.md` and `MASTER-PROMPT.md`.** README explains what the product does. MASTER-PROMPT is the authoritative development guide (purpose, architecture, domains, testing, dependencies). New products must include both from day one.
 

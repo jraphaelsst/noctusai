@@ -1,32 +1,17 @@
 # NoctusAI Seed Agents
 
-Two AI-powered agents that protect and evolve the seed infrastructure.
+Two agents that protect and evolve the seed infrastructure.
 
 ## Agents
 
-### Seed Guardian (Stability)
+| Agent | Purpose | Command | AI |
+|-------|---------|---------|-----|
+| **Guardian** | Validate compliance, block drift | `python -m agents.guardian` | Hard checks (deterministic) + advisory (GPT-4o) |
+| **Scientist** | Discover improvements, propose changes | `python -m agents.scientist` | File analyzers + AI brain (GPT-4o) |
 
-Monitors, validates, and ensures the seed and all products stay healthy. Detects seed compliance violations, structural code duplication, broken tests, and doc drift.
-
-```bash
-python -m agents.guardian                          # Full health check
-python -m agents.guardian --product mailing        # Single product
-python -m agents.guardian --check seed_compliance  # Single check
-```
-
-**Output:** Health score (0-100) per product + detailed issue report.
-
-### Seed Scientist (Innovation)
-
-Experiments, discovers improvements, and proposes changes. Analyzes code patterns, audits dependencies, researches ecosystem trends, and builds prototypes in isolated branches.
-
-```bash
-python -m agents.scientist                               # Full analysis
-python -m agents.scientist --analyze patterns            # Pattern analysis
-python -m agents.scientist --experiment proposal-001     # Test a proposal
-```
-
-**Output:** Improvement proposals in `agents/scientist/proposals/`.
+Each agent has its own `README.md` with full documentation:
+- [`agents/guardian/README.md`](guardian/README.md)
+- [`agents/scientist/README.md`](scientist/README.md)
 
 ## Setup
 
@@ -34,16 +19,35 @@ python -m agents.scientist --experiment proposal-001     # Test a proposal
 pip install -r agents/requirements.txt
 ```
 
-Required env vars in `.env`:
+Required in root `.env`:
 ```
 OPENAI_API_KEY=sk-...
 ```
 
+Without the key, both agents still work — Guardian runs hard checks only, Scientist runs file analyzers only. AI features are additive, not required.
+
 ## Architecture
 
-- **AI Models:** Anthropic Claude API (primary) + OpenAI API (embeddings)
-- **Shared utilities:** `agents/shared/` — config, model wrappers, repo analysis, reporting
-- **Guardian checks:** `agents/guardian/checks/` — modular validation checks
-- **Scientist analyzers:** `agents/scientist/analyzers/` — modular analysis modules
+```
+agents/
+  shared/              Utilities used by both agents
+    config.py          Repo paths, product discovery
+    models.py          OpenAI API wrapper (ask_ai, is_ai_available)
+    repo.py            File reading, import extraction, test runner
+  guardian/            Seed Guardian — stability agent
+    README.md          Full documentation (required)
+    checks/            Modular validation checks
+    main.py            CLI entry point
+  scientist/           Seed Scientist — innovation agent
+    README.md          Full documentation (required)
+    analyzers/         Modular analysis modules
+    ai_brain.py        AI reasoning over findings
+    proposer.py        Proposal generation + deduplication
+    proposals/         Generated proposals (markdown)
+```
 
-See `PLAN-SEED-AGENTS.md` at repo root for the full implementation plan.
+## Rules
+
+- **Every agent must have a README.md.** The README is the agent's documentation. It must explain: what the agent does, how to run it, what checks/analyzers it has, and how its output works.
+- **READMEs must stay in sync.** When an agent's behavior changes (new check, new analyzer, new CLI flag), update its README in the same commit. Stale docs are worse than no docs.
+- **New agents follow the same pattern.** `agents/<name>/README.md`, `agents/<name>/main.py`, `agents/<name>/__main__.py`, `agents/<name>/__init__.py`.
