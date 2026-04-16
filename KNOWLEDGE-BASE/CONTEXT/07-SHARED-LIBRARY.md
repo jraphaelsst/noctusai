@@ -4,7 +4,7 @@
 
 ## Backend: `noctusai_shared` (Python)
 
-Install: `pip install -e seed/lib/backend`. Import: `from noctusai_shared.<module> import ...`
+Install: `pip install -e seed/backend/lib`. Import: `from noctusai_shared.<module> import ...`
 
 ### `auth.py` — Authentication & SSO
 
@@ -167,9 +167,9 @@ Import: `import { ... } from '@noctusai/shared/design-system'`
 
 ## Adding Shared Code
 
-1. **Backend**: `seed/lib/backend/noctusai_shared/<module>.py`
-2. **Frontend**: `seed/lib/frontend/src/<module>.ts`, export from `index.ts`
-3. **Design system**: `seed/lib/frontend/src/design-system/components/`, export from `design-system/index.ts`
+1. **Backend**: `seed/backend/lib/noctusai_shared/<module>.py`
+2. **Frontend**: `seed/frontend/lib/src/<module>.ts`, export from `index.ts`
+3. **Design system**: `seed/frontend/lib/src/design-system/components/`, export from `design-system/index.ts`
 4. **Document**: Update this file
 5. **Update seed product**: `products/seed/` — the live reference implementation. Template auto-syncs via post-commit hook.
 

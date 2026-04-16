@@ -109,7 +109,7 @@ export default createProductApp({
 
 ### Frontend (`vite.config.ts` — 3 lines)
 ```ts
-import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
+import { createViteConfig } from "../../../seed/frontend/framework/vite.config.factory";
 export default createViteConfig({ port: 8120 });
 ```
 
@@ -206,8 +206,8 @@ get_admin_client = deps.get_admin_client
 
 ### Backend (`requirements.txt`)
 ```
--e seed/lib/backend
--e seed/framework/backend
+-e seed/backend/lib
+-e seed/backend/framework
 fastapi==0.115.0
 # ... domain deps
 ```

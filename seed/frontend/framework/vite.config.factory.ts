@@ -8,12 +8,12 @@
  *
  * Usage in a product's vite.config.ts:
  *
- *   import { createViteConfig } from "../../../seed/framework/frontend/src/vite";
+ *   import { createViteConfig } from "../../../seed/frontend/framework/src/vite";
  *   export default createViteConfig({ port: 8120 });
  *
  * For products that need custom config (PWA, plugins, etc.):
  *
- *   import { createViteConfig } from "../../../seed/framework/frontend/src/vite";
+ *   import { createViteConfig } from "../../../seed/frontend/framework/src/vite";
  *   export default createViteConfig({
  *     port: 8120,
  *     extend: (config) => {
@@ -44,8 +44,8 @@ interface ViteConfigOptions {
 function resolveFromProductDir(productDir: string) {
   // Detect if we're in core/frontend (2 levels) or products/<name>/frontend (3 levels)
   const repoRoot = path.resolve(productDir, "../../.."); // default: products/<name>/frontend → repo root
-  const seedLib = path.resolve(repoRoot, "seed/lib/frontend/src");
-  const seedFramework = path.resolve(repoRoot, "seed/framework/frontend/src");
+  const seedLib = path.resolve(repoRoot, "seed/frontend/lib/src");
+  const seedFramework = path.resolve(repoRoot, "seed/frontend/framework/src");
   const nodeModules = path.resolve(productDir, "node_modules");
 
   return { repoRoot, seedLib, seedFramework, nodeModules };

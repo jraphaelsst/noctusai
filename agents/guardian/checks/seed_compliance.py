@@ -3,7 +3,7 @@ Seed compliance check — validates that products use the seed framework.
 
 Checks:
   - Backend main.py imports create_product_app from noctusai_seed
-  - Backend requirements.txt includes -e seed/framework/backend
+  - Backend requirements.txt includes -e seed/backend/framework
   - Frontend vite.config.ts imports createViteConfig from seed framework
   - Frontend App.tsx imports from @noctusai/seed
 """
@@ -41,18 +41,18 @@ def check_backend_compliance(product_path: Path) -> list[dict]:
     # Check requirements.txt includes framework
     if req_txt.exists():
         req_content = req_txt.read_text()
-        if "seed/framework/backend" not in req_content:
+        if "seed/backend/framework" not in req_content:
             issues.append({
                 "product": name,
                 "file": "backend/requirements.txt",
-                "issue": "Missing -e seed/framework/backend dependency",
+                "issue": "Missing -e seed/backend/framework dependency",
                 "severity": "high",
             })
-        if "seed/lib/backend" not in req_content:
+        if "seed/backend/lib" not in req_content:
             issues.append({
                 "product": name,
                 "file": "backend/requirements.txt",
-                "issue": "Missing -e seed/lib/backend dependency",
+                "issue": "Missing -e seed/backend/lib dependency",
                 "severity": "high",
             })
 

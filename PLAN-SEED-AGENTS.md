@@ -129,8 +129,8 @@ agents/
   - Check every product's App.tsx imports from `@noctusai/seed`
   - Report: compliant / non-compliant / partially-migrated
 - [ ] Build `agents/guardian/checks/path_references.py`:
-  - Scan all requirements.txt for correct `seed/lib/backend` path
-  - Scan all vite.config.ts for correct `seed/lib/frontend/src` path
+  - Scan all requirements.txt for correct `seed/backend/lib` path
+  - Scan all vite.config.ts for correct `seed/frontend/lib/src` path
   - Scan all tsconfig.json for correct paths
   - Scan all tailwind.config.ts for correct paths
 - [ ] Build `agents/guardian/checks/code_duplication.py`:

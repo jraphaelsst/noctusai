@@ -2,15 +2,19 @@
 
 The `seed/` directory is the structural foundation of the entire NoctusAI platform. Every product — existing and future — inherits its infrastructure from here. **Change the seed, change all products at once.**
 
-## Architecture: Two Layers
+## Architecture: Platform-First Organization
 
 ```
 seed/
-  lib/          noctusai_shared    Code library (auth, roles, hooks, components, utils)
-  framework/    noctusai_seed      Structural framework (app factory, database, deps, routing)
+  backend/
+    lib/          noctusai_shared    Code library (auth, roles, invitations, testing)
+    framework/    noctusai_seed      Structural framework (app factory, database, deps, routers)
+  frontend/
+    lib/          @noctusai/shared   Code library (api, sso, hooks, design-system)
+    framework/    @noctusai/seed     Structural framework (createProductApp, createProductLayout, createViteConfig)
 ```
 
-### Layer 1: Shared Library (`seed/lib/`)
+### Layer 1: Shared Library (`seed/backend/lib/` + `seed/frontend/lib/`)
 
 Reusable, atomic code that products import as functions and components.
 
@@ -19,7 +23,7 @@ Reusable, atomic code that products import as functions and components.
 
 **How products consume it:** `from noctusai_shared.auth import ...` / `import { ... } from '@noctusai/shared'`
 
-### Layer 2: Framework (`seed/framework/`)
+### Layer 2: Framework (`seed/backend/framework/` + `seed/frontend/framework/`)
 
 Structural bones that define HOW a product is assembled. Products don't copy this code — they import and extend it.
 
@@ -42,8 +46,8 @@ You don't build a new spine for every organ. You attach the organ to the existin
 
 | What changed | What happens |
 |-------------|-------------|
-| Fix in `seed/lib/` | All products get the fix (it's an imported dependency) |
-| Fix in `seed/framework/` | All products get the fix (it's an imported dependency) |
+| Fix in `seed/backend/lib/` or `seed/frontend/lib/` | All products get the fix (imported dependency) |
+| Fix in `seed/backend/framework/` or `seed/frontend/framework/` | All products get the fix (imported dependency) |
 | New shared component | Available to all products immediately via import |
 | New framework feature | Available to all products immediately via import |
 
@@ -98,45 +102,49 @@ TooltipProvider, QueryClient, AuthProvider, ErrorBoundary, Suspense, routing, pa
 
 ```
 seed/
-  lib/
-    backend/
-      noctusai_shared/        Python package (pip install -e seed/lib/backend)
-        auth.py               JWT validation, SSO resolution
-        roles.py              7-role hierarchy constants
-        invitations.py        Invitation lifecycle
-        email_templates.py    Product-branded email sending
-        notifications.py      Notification field mapping
-        app_factory.py        CORS, Sentry, exception handlers
-        config.py             BaseAppSettings
-        database.py           make_supabase_client()
-        exceptions.py         AppException hierarchy
-        middleware.py          Correlation ID, request logging
-        logging_config.py     JSON/human-readable logging
-        responses.py          success_response, paginated_response
-        testing/              MockSupabaseClient, AuthClient
-    frontend/
+  backend/
+    lib/                        noctusai_shared (pip install -e seed/backend/lib)
+      noctusai_shared/
+        auth.py                 JWT validation, SSO resolution
+        roles.py                7-role hierarchy constants
+        invitations.py          Invitation lifecycle
+        email_templates.py      Product-branded email sending
+        notifications.py        Notification field mapping
+        app_factory.py          CORS, Sentry, exception handlers
+        config.py               BaseAppSettings
+        database.py             make_supabase_client()
+        exceptions.py           AppException hierarchy
+        middleware.py            Correlation ID, request logging
+        logging_config.py       JSON/human-readable logging
+        responses.py            success_response, paginated_response
+        rate_limit.py           create_limiter()
+        testing/                MockSupabaseClient, AuthClient
+    framework/                  noctusai_seed (pip install -e seed/backend/framework)
+      noctusai_seed/
+        app.py                  create_product_app()
+        config.py               ProductSettings
+        database.py             create_database_module()
+        dependencies.py         create_dependencies()
+        routers.py              create_standard_routers()
+        rate_limit.py           create_product_limiter()
+  frontend/
+    lib/                        @noctusai/shared (via Vite alias)
       src/
-        api.ts                HTTP client factory
-        auth.ts               useSupabaseAuthInit
-        roles.ts              Role constants + helpers
-        sso.ts                SSO context resolution
-        page-status.ts        Dev-gated page visibility
-        stores.ts             createAuthStore, createFiltrosStore
-        hooks.ts              createCrudHooks
-        notifications.ts      createNotificationHooks
-        env.ts                Typed env access
-        supabase.ts           createProductSupabase
-        design-system/        AppShell, Sidebar, Header, LoginForm, etc.
-  framework/
-    backend/
-      noctusai_seed/          Python package (pip install -e seed/framework/backend)
-        app.py                create_product_app()
-        config.py             ProductSettings (extends BaseAppSettings)
-        database.py           create_database_module() → DatabaseModule
-        dependencies.py       create_dependencies() → ProductDependencies
-        routers.py            create_standard_routers() → [health, notificacoes, team]
-    frontend/
+        api.ts                  HTTP client factory
+        auth.ts                 useSupabaseAuthInit
+        roles.ts                Role constants + helpers
+        sso.ts                  SSO context resolution
+        page-status.ts          Dev-gated page visibility
+        stores.ts               createAuthStore, createFiltrosStore
+        hooks.ts                createCrudHooks
+        notifications.ts        createNotificationHooks
+        env.ts                  Typed env access
+        supabase.ts             createProductSupabase
+        design-system/          AppShell, Sidebar, Header, LoginForm, etc.
+    framework/                  @noctusai/seed (via Vite alias)
       src/
-        app.tsx               createProductApp()
-        layout.tsx            createProductLayout()
+        app.tsx                 createProductApp() + roleRoutes
+        layout.tsx              createProductLayout() + useLayoutEnrichment
+        index.ts                Public exports
+      vite.config.factory.ts    createViteConfig() — shared Vite config
 ```

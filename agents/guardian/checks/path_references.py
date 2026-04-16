@@ -12,7 +12,7 @@ def check_path_references(product_path: Path) -> list[dict]:
     issues = []
     name = product_path.name
 
-    # Backend: requirements.txt should reference seed/lib/backend, not shared/backend
+    # Backend: requirements.txt should reference seed/backend/lib, not shared/backend
     req_txt = product_path / "backend" / "requirements.txt"
     if req_txt.exists():
         content = req_txt.read_text()
@@ -20,7 +20,7 @@ def check_path_references(product_path: Path) -> list[dict]:
             issues.append({
                 "product": name,
                 "file": "backend/requirements.txt",
-                "issue": "References old 'shared/backend' path — should be 'seed/lib/backend'",
+                "issue": "References old 'shared/backend' path — should be 'seed/backend/lib'",
                 "severity": "critical",
             })
 
@@ -32,7 +32,7 @@ def check_path_references(product_path: Path) -> list[dict]:
             issues.append({
                 "product": name,
                 "file": "frontend/tsconfig.json",
-                "issue": "References old 'shared/frontend' path — should be 'seed/lib/frontend'",
+                "issue": "References old 'shared/frontend' path — should be 'seed/frontend/lib'",
                 "severity": "critical",
             })
 
@@ -44,7 +44,7 @@ def check_path_references(product_path: Path) -> list[dict]:
             issues.append({
                 "product": name,
                 "file": "frontend/tailwind.config.ts",
-                "issue": "References old 'shared/frontend' path — should be 'seed/lib/frontend'",
+                "issue": "References old 'shared/frontend' path — should be 'seed/frontend/lib'",
                 "severity": "critical",
             })
 
