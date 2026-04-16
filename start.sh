@@ -14,7 +14,7 @@ if [ ! -f "$ROOT_DIR/.env" ]; then
   exit 1
 fi
 
-PORTS=(8000 8001 8002 8003 8005 5173 8080 8090 8095 8110)
+PORTS=(8000 8001 8002 8003 8004 8005 8006 5173 8080 8090 8095 8100 8110 8120)
 PIDS=()
 
 # Kill a process and all its descendants
@@ -168,25 +168,21 @@ if [ -d "$DL_FRONTEND" ]; then
 fi
 
 # --- Mailing Backend (porta 8006) ---
-# NOTE: Skipped until 001_mailing.sql migration is run and "mailing" schema is
-# exposed in Supabase PostgREST config. Without the schema, the scheduler
-# spams PGRST106 errors every 30s. Uncomment when ready.
-# MAIL_BACKEND="$ROOT_DIR/products/mailing/backend"
-# if [ -d "$MAIL_BACKEND" ]; then
-#   echo "[Mailing Backend] Iniciando na porta 8006..."
-#   "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8006 --reload --app-dir "$MAIL_BACKEND" &
-#   PIDS+=($!)
-# fi
+MAIL_BACKEND="$ROOT_DIR/products/mailing/backend"
+if [ -d "$MAIL_BACKEND" ]; then
+  echo "[Mailing Backend] Iniciando na porta 8006..."
+  "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8006 --reload --app-dir "$MAIL_BACKEND" &
+  PIDS+=($!)
+fi
 
 # --- Mailing Frontend (porta 8120) ---
-# NOTE: Skipped — mailing backend not running yet (see above).
-# MAIL_FRONTEND="$ROOT_DIR/products/mailing/frontend"
-# if [ -d "$MAIL_FRONTEND" ] && [ -f "$MAIL_FRONTEND/package.json" ]; then
-#   ensure_frontend_deps "$MAIL_FRONTEND" "Mailing Frontend"
-#   echo "[Mailing Frontend] Iniciando na porta 8120..."
-#   (cd "$MAIL_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8120) &
-#   PIDS+=($!)
-# fi
+MAIL_FRONTEND="$ROOT_DIR/products/mailing/frontend"
+if [ -d "$MAIL_FRONTEND" ] && [ -f "$MAIL_FRONTEND/package.json" ]; then
+  ensure_frontend_deps "$MAIL_FRONTEND" "Mailing Frontend"
+  echo "[Mailing Frontend] Iniciando na porta 8120..."
+  (cd "$MAIL_FRONTEND" && exec npx vite --host 0.0.0.0 --port 8120) &
+  PIDS+=($!)
+fi
 
 echo ""
 echo "============================================"
@@ -203,7 +199,8 @@ echo "  PF Frontend        → http://localhost:8090"
 echo "  Therapy Frontend   → http://localhost:8095"
 echo "  Seed Frontend      → http://localhost:8100"
 echo "  Daily Life Frontend→ http://localhost:8110"
-echo "  Mailing            → (skipped — run migration first)"
+echo "  Mailing Backend   → http://localhost:8006"
+echo "  Mailing Frontend  → http://localhost:8120"
 echo "============================================"
 echo ""
 echo "Pressione Ctrl+C para parar todos os servicos."
