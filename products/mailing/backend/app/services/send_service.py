@@ -1,0 +1,207 @@
+"""
+Core send engine — the heart of the Mailing product.
+
+Handles: recipient resolution, send_log creation, template rendering,
+Resend Batch API calls, and status tracking.
+"""
+import logging
+import re
+from typing import Optional
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+VARIABLE_PATTERN = re.compile(r"\{\{(\w+)\}\}")
+
+
+class SendService:
+    def __init__(self, db, settings):
+        self.db = db
+        self.settings = settings
+
+    def queue_campaign_sends(self, campaign_id: str, org_id: str):
+        """Resolve campaign recipients and create queued send_logs.
+
+        Returns the number of sends queued.
+        """
+        campaign = self.db.table("campaigns").select("*").eq("id", campaign_id).execute()
+        if not campaign.data:
+            return 0
+        campaign = campaign.data[0]
+
+        # Get list contacts (only active, not unsubscribed/bounced)
+        list_id = campaign.get("list_id")
+        if not list_id:
+            return 0
+
+        # Resolve contacts from list members
+        members = (self.db.table("contact_list_members")
+                   .select("contact_id, contacts(id, email, nome, empresa, status)")
+                   .eq("list_id", list_id).execute())
+
+        contacts = []
+        for m in (members.data or []):
+            c = m.get("contacts")
+            if c and c.get("status") == "active":
+                contacts.append(c)
+
+        if not contacts:
+            return 0
+
+        # Create send_log entries in batch
+        rows = [{
+            "org_id": org_id,
+            "contact_id": c["id"],
+            "email": c["email"],
+            "campaign_id": campaign_id,
+            "status": "queued",
+        } for c in contacts]
+
+        self.db.table("send_logs").insert(rows).execute()
+
+        # Update campaign total
+        self.db.table("campaigns").update({
+            "total_recipients": len(rows),
+        }).eq("id", campaign_id).execute()
+
+        logger.info("Queued %d sends for campaign %s", len(rows), campaign_id)
+        return len(rows)
+
+    async def process_queued_sends(self, batch_size: int = 100):
+        """Pick up queued send_logs and send via Resend Batch API.
+
+        Called by the scheduler every 30 seconds.
+        """
+        result = (self.db.table("send_logs").select("*, contacts(nome, empresa, email)")
+                  .eq("status", "queued")
+                  .order("created_at")
+                  .limit(batch_size)
+                  .execute())
+
+        logs = result.data or []
+        if not logs:
+            return 0
+
+        # Group by campaign for template resolution
+        by_campaign = {}
+        for log in logs:
+            cid = log.get("campaign_id") or "none"
+            by_campaign.setdefault(cid, []).append(log)
+
+        total_sent = 0
+        for campaign_id, campaign_logs in by_campaign.items():
+            sent = await self._send_batch(campaign_id, campaign_logs)
+            total_sent += sent
+
+        return total_sent
+
+    async def _send_batch(self, campaign_id: str, logs: list) -> int:
+        """Send a batch of emails via Resend Batch API."""
+        api_key = self.settings.resend_api_key
+        if not api_key:
+            logger.info("No RESEND_API_KEY — logging %d emails (dry run)", len(logs))
+            self._mark_sent(logs, dry_run=True)
+            return len(logs)
+
+        # Resolve campaign template
+        campaign = self.db.table("campaigns").select("*, templates(*)").eq("id", campaign_id).execute()
+        if not campaign.data:
+            return 0
+        campaign = campaign.data[0]
+        template = campaign.get("templates")
+        if not template:
+            return 0
+
+        subject = campaign.get("assunto_override") or template.get("assunto", "")
+        html_body = template.get("corpo_html", "")
+        from_name = campaign.get("remetente_nome") or self.settings.default_from_name
+        from_email = campaign.get("remetente_email") or self.settings.default_from_email
+
+        # Build batch payload
+        emails = []
+        for log in logs:
+            contact = log.get("contacts", {})
+            variables = {
+                "nome": contact.get("nome", ""),
+                "email": log.get("email", ""),
+                "empresa": contact.get("empresa", ""),
+            }
+            rendered_subject = self._render(subject, variables)
+            rendered_body = self._render(html_body, variables)
+
+            emails.append({
+                "from": f"{from_name} <{from_email}>",
+                "to": [log["email"]],
+                "subject": rendered_subject,
+                "html": rendered_body,
+            })
+
+        # Call Resend Batch API
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://api.resend.com/emails/batch",
+                    json=emails,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=30,
+                )
+
+            if resp.status_code == 200:
+                batch_data = resp.json().get("data", [])
+                self._mark_sent(logs, batch_data=batch_data)
+                logger.info("Sent batch of %d emails for campaign %s", len(logs), campaign_id)
+                return len(logs)
+            else:
+                logger.error("Resend batch API error: %s %s", resp.status_code, resp.text)
+                self._mark_failed(logs, f"Resend API {resp.status_code}")
+                return 0
+
+        except Exception as e:
+            logger.error("Resend batch send error: %s", e)
+            self._mark_failed(logs, str(e))
+            return 0
+
+    def _render(self, text: str, variables: dict) -> str:
+        def replacer(match):
+            key = match.group(1)
+            return str(variables.get(key, f"{{{{{key}}}}}"))
+        return VARIABLE_PATTERN.sub(replacer, text)
+
+    def _mark_sent(self, logs: list, batch_data: list = None, dry_run: bool = False):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        for i, log in enumerate(logs):
+            update = {"status": "sent", "sent_at": now}
+            if batch_data and i < len(batch_data):
+                update["resend_message_id"] = batch_data[i].get("id")
+            self.db.table("send_logs").update(update).eq("id", log["id"]).execute()
+
+        # Update campaign total_sent
+        if logs:
+            campaign_id = logs[0].get("campaign_id")
+            if campaign_id:
+                campaign = self.db.table("campaigns").select("total_sent").eq("id", campaign_id).execute()
+                if campaign.data:
+                    current = campaign.data[0].get("total_sent", 0)
+                    self.db.table("campaigns").update({
+                        "total_sent": current + len(logs)
+                    }).eq("id", campaign_id).execute()
+
+    def _mark_failed(self, logs: list, error: str):
+        for log in logs:
+            self.db.table("send_logs").update({
+                "status": "failed", "error_message": error
+            }).eq("id", log["id"]).execute()
+        if logs:
+            campaign_id = logs[0].get("campaign_id")
+            if campaign_id:
+                campaign = self.db.table("campaigns").select("total_failed").eq("id", campaign_id).execute()
+                if campaign.data:
+                    current = campaign.data[0].get("total_failed", 0)
+                    self.db.table("campaigns").update({
+                        "total_failed": current + len(logs)
+                    }).eq("id", campaign_id).execute()
