@@ -80,7 +80,7 @@ export function createNotificationHooks(
       queryKey: ['notificacoes-contagem'],
       queryFn: async () => {
         const result = await api.get('/api/notificacoes/contagem');
-        return result.data as ContagemNaoLidas;
+        return result as ContagemNaoLidas;
       },
       enabled: !!user,
       refetchInterval: 30000,

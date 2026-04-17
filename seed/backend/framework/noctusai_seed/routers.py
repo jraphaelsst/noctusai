@@ -76,7 +76,7 @@ def _create_notificacoes_router(deps) -> APIRouter:
             core.table("notifications")
             .select("id", count="exact")
             .eq("user_id", str(user.id))
-            .eq("is_read", False)
+            .eq("read", False)
             .execute()
         )
         return {"nao_lidas": result.count or 0}
@@ -85,14 +85,14 @@ def _create_notificacoes_router(deps) -> APIRouter:
     async def marcar_lida(notificacao_id: str, authorization: Optional[str] = Header(None)):
         user, _ = await deps.get_current_user(authorization)
         core = deps.get_core_client()
-        core.table("notifications").update({"is_read": True}).eq("id", notificacao_id).eq("user_id", str(user.id)).execute()
+        core.table("notifications").update({"read": True}).eq("id", notificacao_id).eq("user_id", str(user.id)).execute()
         return {"ok": True}
 
     @router.post("/ler-todas")
     async def marcar_todas_lidas(authorization: Optional[str] = Header(None)):
         user, _ = await deps.get_current_user(authorization)
         core = deps.get_core_client()
-        core.table("notifications").update({"is_read": True}).eq("user_id", str(user.id)).eq("is_read", False).execute()
+        core.table("notifications").update({"read": True}).eq("user_id", str(user.id)).eq("read", False).execute()
         return {"ok": True}
 
     return router
