@@ -1,4 +1,4 @@
-import { useAuthStore } from "@/store/authStore";
+import { useAuthStore } from '@noctusai/seed/infra';
 import { resolveSSOContext } from "@noctusai/lib";
 import { {{PRODUCT_ICON}}, Users, CheckCircle2 } from "lucide-react";
 

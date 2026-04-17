@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { createAuthProvider } from '@noctusai/lib/components';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuthStore } from '@/store/authStore';
+import { supabase, useAuthStore } from '@noctusai/seed/infra';
 
 const BaseAuthProvider = createAuthProvider(supabase, useAuthStore);
 

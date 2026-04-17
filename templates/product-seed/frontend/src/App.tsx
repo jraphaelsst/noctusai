@@ -1,15 +1,13 @@
 /**
- * {{PRODUCT_NAME}} App — born from the seed frontend framework.
+ * {{PRODUCT_NAME}} App — the simplest possible product.
  *
- * The simplest possible product frontend. Just pages + config.
- * All structural wiring (providers, routing, auth, error boundaries)
- * is inherited from createProductApp().
+ * Infrastructure comes from @/infra (one file, one createProductInfra call).
+ * Structure comes from createProductApp + createProductLayout.
+ * This file only defines pages and nav — zero boilerplate.
  */
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
-import { useAuthStore } from "@/store/authStore";
-import { supabase } from "@/integrations/supabase/client";
-import { NotificationBell } from "@/components/NotificationBell";
+import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
 import { LayoutDashboard, Users, Home, {{PRODUCT_ICON}} } from "lucide-react";
@@ -50,26 +48,22 @@ const NAV_FALLBACK: NavGroup[] = [
   },
 ];
 
-// Layout from framework
 const Layout = createProductLayout({
   brandIcon: {{PRODUCT_ICON}},
   brandTitle: "{{PRODUCT_NAME}}",
   navGroups: NAV_GROUPS,
   navGroupsFallback: NAV_FALLBACK,
-  supabase,
-  useAuthStore,
-  NotificationBell,
+  ...infra.appConfig,
+  NotificationBell: infra.NotificationBell,
 });
 
-// App from framework
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
     { path: "/equipe", component: Equipe },
   ],
   Layout,
-  supabase,
-  useAuthStore,
+  ...infra.appConfig,
   Landing,
   Login,
   AcceptInvite,

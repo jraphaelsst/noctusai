@@ -1,8 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 import { ColunaFunil, EtapaFunil, Cliente } from '@/types/clientes';
 import { toast } from 'sonner';
-import { useAuthStore } from '@/store/authStore';
 
 interface FiltrosFunil {
   busca?: string;

@@ -1,8 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { createNotificationHooks } from '@noctusai/lib/notifications';
-import { api } from '@/lib/api-client';
-import { useAuthStore } from '@/store/authStore';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 import type { NotificacaoPreferencia } from '@/types/notificacoes';
 
 export type { Notificacao, ContagemNaoLidas } from '@noctusai/lib/notifications';

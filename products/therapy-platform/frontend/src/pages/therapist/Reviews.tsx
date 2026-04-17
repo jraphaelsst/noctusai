@@ -3,9 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore, api } from '@noctusai/seed/infra';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
 import { toast } from 'sonner';
 
 interface Review {

@@ -3,7 +3,7 @@ import {
   useDashboardMetrics,
   useDashboardTodayEvents,
 } from "@/hooks/useDashboard";
-import { useAuthStore } from "@/store/authStore";
+import { useAuthStore } from '@noctusai/seed/infra';
 import { resolveSSOContext } from "@noctusai/lib";
 import {
   CalendarCheck, ListTodo, Target, Calendar, StickyNote,

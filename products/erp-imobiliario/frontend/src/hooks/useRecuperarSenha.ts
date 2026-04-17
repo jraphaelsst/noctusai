@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 
 interface RecuperarSenhaRequest {

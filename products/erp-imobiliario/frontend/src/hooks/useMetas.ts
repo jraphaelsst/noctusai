@@ -1,9 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api-client";
+import { api, useAuthStore } from '@noctusai/seed/infra';
 import { Meta, NovaMetaForm } from "@/types";
 import { toast } from "sonner";
 import { getDisplayCategoria } from "@/lib/categorias";
-import { useAuthStore } from "@/store/authStore";
 
 export function useMetas(corretorId?: string) {
   const { user } = useAuthStore();

@@ -2,8 +2,7 @@ import { lazy } from "react";
 import { createProductApp } from "@noctusai/seed";
 import { resolveSSORoles } from "@noctusai/lib";
 import { AdminLayout, ClinicLayout, TherapistLayout, PatientLayout } from "@/layouts";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuthStore } from "@/store/authStore";
+import infra from '@noctusai/seed/infra';
 
 // ── Lazy-loaded pages ───────────────────────────────────────
 
@@ -95,8 +94,7 @@ function resolveTherapyRole(user: any): string {
 // ── App via seed framework ─────────────────────────────────
 
 export default createProductApp({
-  supabase,
-  useAuthStore,
+  ...infra.appConfig,
   resolveRole: resolveTherapyRole,
 
   roleRoutes: {

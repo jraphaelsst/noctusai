@@ -5,9 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore, api } from '@noctusai/seed/infra';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
 import { useNavigate } from 'react-router-dom';
 
 interface ClinicPatient {

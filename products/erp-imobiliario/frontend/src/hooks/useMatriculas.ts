@@ -1,8 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '@/lib/api-client';
-import { useAuthStore } from '@/store/authStore';
-import { supabase } from '@/integrations/supabase/client';
+import { api, useAuthStore, supabase } from '@noctusai/seed/infra';
 
 export interface MatriculaExtracao {
   id: string;

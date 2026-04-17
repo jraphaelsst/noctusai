@@ -14,9 +14,7 @@
 import { createProductLayout } from "@noctusai/seed";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
-import { useAuthStore } from "@/store/authStore";
-import { supabase } from "@/integrations/supabase/client";
-import { NotificationBell } from "@/components/NotificationBell";
+import { useAuthStore, supabase, NotificationBell } from '@noctusai/seed/infra';
 import {
   LayoutDashboard, CalendarDays, Users, ClipboardList, UserCircle,
   DollarSign, Star, Settings, MessageSquare, Brain, Heart,

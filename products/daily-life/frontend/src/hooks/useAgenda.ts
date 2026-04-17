@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@/store/authStore";
-import { api } from "@/lib/api-client";
+import { useAuthStore, api } from '@noctusai/seed/infra';
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------

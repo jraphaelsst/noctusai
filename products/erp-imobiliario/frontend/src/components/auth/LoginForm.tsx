@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 import { loginSchema, signUpSchema } from '@/lib/validations';
 import { Eye, EyeOff } from 'lucide-react';

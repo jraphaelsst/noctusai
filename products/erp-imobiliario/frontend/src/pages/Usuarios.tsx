@@ -13,7 +13,7 @@ import { useProfiles } from "@/hooks/useProfiles";
 import { useMetas } from "@/hooks/useMetas";
 import { useIsAdmin } from "@/hooks/useUserRole";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from '@noctusai/seed/infra';
 
 export default function Usuarios() {
   const navigate = useNavigate();

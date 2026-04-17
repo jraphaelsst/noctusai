@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronUp, Star, ArrowRight,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore } from '@noctusai/seed/infra';
 import { useState } from 'react';
 
 // ── How it works steps ─────────────────────────────────────

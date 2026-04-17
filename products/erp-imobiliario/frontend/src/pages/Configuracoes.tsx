@@ -6,8 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { Settings, Key, Eye, EyeOff, Save, Trash2, Pencil, X, Plug, Loader2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
-import { api } from '@/lib/api-client';
+import { supabase, api } from '@noctusai/seed/infra';
 
 const CORE_API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:8000';
 

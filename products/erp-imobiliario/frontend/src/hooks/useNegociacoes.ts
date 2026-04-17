@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuthStore } from '@/store/authStore';
+import { supabase, useAuthStore } from '@noctusai/seed/infra';
 import { useIsAdmin } from '@/hooks/useUserRole';
 import { Negociacao, StatusNegociacao } from '@/types/imoveis';
 

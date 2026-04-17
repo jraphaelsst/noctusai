@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api-client";
-import { useAuthStore } from "@/store/authStore";
+import { api, useAuthStore } from '@noctusai/seed/infra';
 
 export type TipoAcao = 'criar' | 'editar' | 'excluir' | 'concluir' | 'arquivar' | 'desarquivar' | 'mover' | 'login' | 'logout';
 export type TipoEntidade = 'meta' | 'cliente' | 'usuario' | 'atividade' | 'config_meta' | 'auth' | 'ativo';

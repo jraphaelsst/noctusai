@@ -9,9 +9,8 @@ import { HomeIcon, ArrowLeftRight, FileText } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, useAuthStore } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
-import { useAuthStore } from '@/store/authStore';
 
 interface MatchResultsPanelProps {
   matches: Match[];

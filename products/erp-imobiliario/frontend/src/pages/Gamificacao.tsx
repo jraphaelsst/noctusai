@@ -7,7 +7,7 @@ import {
   type Conquista,
   type Pontuacao,
 } from '@/hooks/useGamificacao';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore } from '@noctusai/seed/infra';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';

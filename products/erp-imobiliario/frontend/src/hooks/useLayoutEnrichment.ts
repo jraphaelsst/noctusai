@@ -15,7 +15,7 @@ import { useIsAdmin } from "@/hooks/useUserRole";
 import { useUpdateProfile } from "@/hooks/useProfiles";
 import { useQueryClient } from "@tanstack/react-query";
 import { resolveSSOContext, isDevOrOwner } from "@noctusai/lib";
-import { useAuthStore } from "@/store/authStore";
+import { useAuthStore } from '@noctusai/seed/infra';
 import { toast } from "sonner";
 import type { LayoutEnrichment } from "@noctusai/seed";
 import type { NavGroupWithRoute } from "@noctusai/lib";

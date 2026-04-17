@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
-import { useAuthStore } from '@/store/authStore';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 import type { BiResumo, BiSessoes, BiReceita, BiCancelamento } from '@/types';
 
 const KEYS = {

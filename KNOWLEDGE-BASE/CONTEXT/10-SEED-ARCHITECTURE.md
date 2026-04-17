@@ -119,14 +119,16 @@ export default createViteConfig({ port: 8120 });
 - No manual Vite alias/dedupe configuration
 - No ErrorBoundary/Suspense/PageSkeleton wiring
 
-### Frontend files you DO create (domain-specific):
-- `src/pages/*.tsx` — product pages
+### Frontend files you DO create (domain-specific only):
+- `src/pages/*.tsx` — product pages (import `{ supabase, useAuthStore, api }` from `@noctusai/seed/infra`)
 - `src/components/*.tsx` — product components
-- `src/hooks/*.ts` — TanStack Query hooks
-- `src/store/authStore.ts` — createAuthStore() from shared
-- `src/integrations/supabase/client.ts` — createProductSupabase() from shared
-- `src/components/NotificationBell.tsx` — wraps shared NotificationBell with hooks
-- `src/hooks/useNotificacoes.ts` — createNotificationHooks() from shared
+- `src/hooks/*.ts` — TanStack Query hooks (one per domain entity)
+
+### Frontend files you do NOT create (framework provides via `@noctusai/seed/infra`):
+- No authStore.ts, AuthProvider.tsx, ErrorBoundary.tsx
+- No NotificationBell.tsx, useNotificacoes.ts
+- No supabase/client.ts, api-client.ts
+- No infra.ts — import directly from `@noctusai/seed/infra`
 
 ### Role-based routing (complex products like Therapy)
 For products with multiple user roles that need different nav structures:
@@ -213,6 +215,19 @@ fastapi==0.115.0
 ```
 
 You do NOT create: health.py, notificacoes.py, team.py — the framework provides them automatically.
+
+## Product Registration
+
+Products are registered in `public.products` table (Supabase). The Core dashboard reads from this table dynamically — no hardcoding. When creating a new product, insert a row:
+
+```sql
+INSERT INTO public.products (nome, slug, descricao, icone, url_base, cor, ativo)
+VALUES ('Product Name', 'slug', 'Description', 'LucideIcon', 'http://localhost:PORT', '#hex', true);
+```
+
+Fields: `nome` (display name), `slug` (unique identifier), `icone` (Lucide icon name), `url_base` (frontend URL), `cor` (hex color for cards), `ativo` (visible on dashboard).
+
+The dashboard shows `has_access: true/false` per product based on the org's licenses (`public.licenses` table). Unlicensed products appear grayed out.
 
 ## New Product Checklist (complete before committing)
 

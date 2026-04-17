@@ -11,8 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
-import { useAuthStore } from '@/store/authStore';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 import { useStartConversation } from '@/hooks/useConversations';
 
 interface SearchUser {

@@ -54,7 +54,7 @@ import {
 import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 import { formatDate } from '@/lib/utils';
 import { VISTORIA_STATUS_CONFIG, VISTORIA_TIPO_CONFIG } from '@/lib/constants';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore } from '@noctusai/seed/infra';
 import type {
   Vistoria,
   TipoVistoria,

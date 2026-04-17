@@ -78,8 +78,7 @@ import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 import { formatDate } from '@/lib/utils';
 import { downloadFile, authenticatedFetch, triggerBlobDownload } from '@/lib/file-download';
 import { toast } from 'sonner';
-import { useAuthStore } from '@/store/authStore';
-import { supabase } from '@/integrations/supabase/client';
+import { useAuthStore, supabase } from '@noctusai/seed/infra';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';
 

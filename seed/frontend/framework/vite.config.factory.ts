@@ -62,17 +62,18 @@ const FRAMEWORK_DEPS = [
 ];
 
 /**
- * Backend port mapping — each frontend port maps to its backend.
- * Used when backendPort is not explicitly provided.
+ * Product mapping — frontend port → backend port + schema.
+ * The factory injects both VITE_BACKEND_API_URL and VITE_PRODUCT_SCHEMA
+ * so products don't need any config files beyond vite.config.ts.
  */
-const PORT_MAP: Record<number, number> = {
-  5173: 8000,  // Core
-  8080: 8001,  // ERP
-  8090: 8002,  // PF
-  8095: 8003,  // Therapy
-  8100: 8004,  // Seed
-  8110: 8005,  // Daily Life
-  8120: 8006,  // Mailing
+const PRODUCT_MAP: Record<number, { backend: number; schema: string }> = {
+  5173: { backend: 8000, schema: "public" },       // Core
+  8080: { backend: 8001, schema: "erp" },           // ERP
+  8090: { backend: 8002, schema: "personal-finance" }, // PF
+  8095: { backend: 8003, schema: "therapy" },       // Therapy
+  8100: { backend: 8004, schema: "seed" },          // Seed
+  8110: { backend: 8005, schema: "daily_life" },    // Daily Life
+  8120: { backend: 8006, schema: "mailing" },       // Mailing
 };
 
 export function createViteConfig(options: ViteConfigOptions): UserConfig {
@@ -81,8 +82,10 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
   const productDir = process.cwd();
   const { repoRoot, seedLib, seedFramework, nodeModules } = resolveFromProductDir(productDir);
 
-  // Resolve backend port: explicit > port map > fallback
-  const resolvedBackendPort = backendPort || PORT_MAP[port] || 8000;
+  // Resolve from product map
+  const productInfo = PRODUCT_MAP[port];
+  const resolvedBackendPort = backendPort || productInfo?.backend || 8000;
+  const resolvedSchema = productInfo?.schema || "public";
 
   const config: UserConfig = {
     server: {
@@ -100,6 +103,7 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
     // These override anything in .env for this specific product.
     define: {
       "import.meta.env.VITE_BACKEND_API_URL": JSON.stringify(`http://localhost:${resolvedBackendPort}`),
+      "import.meta.env.VITE_PRODUCT_SCHEMA": JSON.stringify(resolvedSchema),
     },
 
     resolve: {

@@ -10,9 +10,8 @@ import { Input } from '@/components/ui/input';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore, api } from '@noctusai/seed/infra';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
 import { toast } from 'sonner';
 
 interface ClinicTherapist {

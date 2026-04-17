@@ -7,8 +7,7 @@
  */
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
-import { useAuthStore } from "@/store/authStore";
-import { supabase } from "@/integrations/supabase/client";
+import infra from '@noctusai/seed/infra';
 import { NotificationBell } from "@/components/NotificationBell";
 import { useERPLayoutEnrichment } from "@/hooks/useLayoutEnrichment";
 import type { NavGroupWithRoute } from "@noctusai/lib";
@@ -186,8 +185,7 @@ const Layout = createProductLayout({
   navGroups: NAV_GROUPS,
   navGroupsFallback: NAV_FALLBACK,
   standaloneItems: STANDALONE,
-  supabase,
-  useAuthStore,
+  ...infra.appConfig,
   NotificationBell,
   brandSubtitleOverride: undefined, // enrichment provides org name
   useLayoutEnrichment: useERPLayoutEnrichment,
@@ -253,8 +251,7 @@ export default createProductApp({
     { path: "/log-acoes", component: LogAcoes },
   ],
   Layout,
-  supabase,
-  useAuthStore,
+  ...infra.appConfig,
   Landing,
   Login,
   AcceptInvite,

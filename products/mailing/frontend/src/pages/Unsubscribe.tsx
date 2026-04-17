@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { api } from "@/lib/api-client";
+import { api } from '@noctusai/seed/infra';
 import { Loader2, MailX, CheckCircle, AlertCircle } from "lucide-react";
 
 type State = "idle" | "loading" | "success" | "error";

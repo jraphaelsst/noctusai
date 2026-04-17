@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api-client";
-import { useAuthStore } from "@/store/authStore";
+import { api, useAuthStore } from '@noctusai/seed/infra';
 
 export interface DashboardMetrics {
   total_contacts: number;

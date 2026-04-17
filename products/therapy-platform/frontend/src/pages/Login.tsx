@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from '@noctusai/seed/infra';
 import { LoginForm } from "@noctusai/lib/design-system";
 import { Heart } from "lucide-react";
 

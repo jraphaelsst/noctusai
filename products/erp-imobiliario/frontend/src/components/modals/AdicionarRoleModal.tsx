@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 import { UserPlus } from 'lucide-react';
 

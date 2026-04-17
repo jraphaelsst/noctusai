@@ -1,8 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '@/lib/api-client';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 import { Profile } from '@/types';
-import { useAuthStore } from '@/store/authStore';
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;

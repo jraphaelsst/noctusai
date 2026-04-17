@@ -19,8 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Plus, Target } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
-import { useAuthStore } from "@/store/authStore";
-import { api } from "@/lib/api-client";
+import { useAuthStore, api } from '@noctusai/seed/infra';
 import { useCreateMeta } from "@/hooks/useMetas";
 import { TipoMeta, CategoriaMeta } from "@/types";
 import { useIsAdmin } from "@/hooks/useUserRole";

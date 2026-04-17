@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CardListSkeleton } from '@/components/ui/page-skeleton';
-import { api } from '@/lib/api-client';
+import { api } from '@noctusai/seed/infra';
 import { useDimobPreview } from '@/hooks/useDimob';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

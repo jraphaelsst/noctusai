@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '@/lib/api-client';
-import { useAuthStore } from '@/store/authStore';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 import type { MetaConfig, MetaLead, MetaCampanha } from '@/types/meta_api';
 
 export function useMetaConfig() {

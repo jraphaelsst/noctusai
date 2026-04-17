@@ -1,9 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
-import { useAuthStore } from '@/store/authStore';
+import { api, useAuthStore, supabase } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 import type { Message } from '@/types/messaging';
-import { supabase } from '@/integrations/supabase/client';
 
 const KEYS = {
   all: ['messages'] as const,

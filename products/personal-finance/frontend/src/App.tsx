@@ -5,9 +5,7 @@
  */
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
-import { useAuthStore } from "@/store/authStore";
-import { supabase } from "@/integrations/supabase/client";
-import { NotificationBell } from "@/components/NotificationBell";
+import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
 import {
@@ -100,9 +98,8 @@ const Layout = createProductLayout({
   brandTitle: "Financas Pessoais",
   navGroups: NAV_GROUPS,
   navGroupsFallback: NAV_FALLBACK,
-  supabase,
-  useAuthStore,
-  NotificationBell,
+  ...infra.appConfig,
+  NotificationBell: infra.NotificationBell,
   defaultRoleLabel: "Financas Pessoais",
 });
 
@@ -128,8 +125,7 @@ export default createProductApp({
     { path: "/equipe", component: Equipe },
   ],
   Layout,
-  supabase,
-  useAuthStore,
+  ...infra.appConfig,
   Landing,
   Login,
   AcceptInvite,

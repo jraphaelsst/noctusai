@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from '@noctusai/seed/infra';
 import { ForgotPasswordPage } from "@noctusai/lib/design-system";
 import { DollarSign } from "lucide-react";
 

@@ -1,7 +1,7 @@
 import { useNavigate, Link } from "react-router-dom";
 import { {{PRODUCT_ICON}} } from "lucide-react";
 import { LoginForm } from "@noctusai/lib/design-system";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from '@noctusai/seed/infra';
 
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
 
