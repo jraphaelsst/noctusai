@@ -5,7 +5,7 @@
 
 ## What is NoctusAI?
 
-Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. 6 products, 1 seed framework, 1 agent system.
+Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. 6 products, 1 seed framework, 1 MCP dev toolkit.
 
 ## The Seed (most important concept)
 
@@ -62,18 +62,22 @@ Infrastructure (supabase, auth, api, notifications) comes from `@noctusai/seed/i
 
 Single root `.env` for everything. Backend vars: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, etc. Frontend vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, etc. Product-specific vars (`VITE_BACKEND_API_URL`, `VITE_PRODUCT_SCHEMA`) are injected by `createViteConfig()` — never in `.env`.
 
-## Agent System
+## MCP Dev Toolkit
 
-One agent: **Keeper** at `agents/keeper/`.
+28 tools exposed as an MCP server at `mcp/noctusai/`. CLI wrapper for humans:
 
 ```bash
-python -m agents.keeper --validate   # Check compliance (CI mode)
-python -m agents.keeper --heal       # Fix loop until clean
-python -m agents.keeper --discover   # Find improvements (AI-powered)
-python -m agents.keeper              # Full pipeline
+python mcp/noctusai/cli.py --validate   # Check compliance
+python mcp/noctusai/cli.py --heal       # Fix loop until clean
+python mcp/noctusai/cli.py --analyze    # Find improvements
+python mcp/noctusai/cli.py --discover   # AI-powered discovery
+python mcp/noctusai/cli.py --metrics    # Platform metrics
+python mcp/noctusai/cli.py --test       # Run tests
+python mcp/noctusai/cli.py --build      # Build frontends
+python mcp/noctusai/cli.py --proposals  # List proposals
 ```
 
-Proposals go to `agents/proposals/` — shared across all agents.
+Proposals go to `mcp/noctusai/proposals/`.
 
 ## Rules (read CLAUDE.md for full list)
 
@@ -82,9 +86,9 @@ The top rules you MUST follow:
 2. **No incomplete commits** — backend and frontend must be at same maturity.
 3. **No quick fixes** — solve root causes in one place, not symptoms in many.
 4. **Hooks in dedicated files** — never inline useQuery/useMutation in pages.
-5. **Keeper heals after changes** — run `python -m agents.keeper --heal` before committing.
+5. **MCP toolkit heals after changes** — run `python mcp/noctusai/cli.py --heal` before committing.
 6. **Extend framework, never go custom** — if the framework can't handle a product's needs, extend it.
-7. **Docs stay in sync** — every change updates CLAUDE.md / KNOWLEDGE-BASE / agent READMEs.
+7. **Docs stay in sync** — every change updates CLAUDE.md / KNOWLEDGE-BASE / MCP server README.
 
 ## Where to find what
 
@@ -94,7 +98,7 @@ The top rules you MUST follow:
 | Seed architecture | `seed/README.md` |
 | Shared library catalog | `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` |
 | Seed framework API | `KNOWLEDGE-BASE/CONTEXT/10-SEED-ARCHITECTURE.md` |
-| Agent system | `KNOWLEDGE-BASE/CONTEXT/11-AGENTS.md` |
+| MCP dev toolkit | `KNOWLEDGE-BASE/CONTEXT/11-AGENTS.md` |
 | Product details | `products/<name>/MASTER-PROMPT.md` |
 | Testing standards | `CLAUDE.md` → Testing Standards section |
 | Scripts & setup | `scripts/README.md` |
@@ -105,5 +109,5 @@ The top rules you MUST follow:
 - Don't create authStore.ts, ErrorBoundary.tsx, NotificationBell.tsx, etc. (framework provides via `@noctusai/seed/infra`)
 - Don't create health.py, notificacoes.py, team.py routers (framework provides via `create_product_app()`)
 - Don't inline hooks in page components (always extract to `hooks/useEntity.ts`)
-- Don't commit without running the Keeper
+- Don't commit without running `python mcp/noctusai/cli.py --heal`
 - Don't add secret keys with `VITE_` prefix (Vite exposes them to the browser)

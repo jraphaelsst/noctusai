@@ -110,7 +110,7 @@ Injects: `VITE_BACKEND_API_URL` (from PRODUCT_MAP), `VITE_PRODUCT_SCHEMA` (from 
 
 ## Development Rules
 
-1. **Every change to the seed must be tested against ALL products.** Run the Keeper: `python -m agents.keeper --validate`
+1. **Every change to the seed must be tested against ALL products.** Run: `python mcp/noctusai/cli.py --validate`
 2. **All React hooks must be called before any early return.** The `useLayoutEnrichment` pattern has an `isLoading` early return — all hooks must be above it.
 3. **Extension points must be optional and backwards-compatible.** Adding a new config field to createProductLayout must not break existing products that don't pass it.
 4. **The seed product (`products/seed/`) is the canary.** Test new framework features there first.
@@ -123,7 +123,7 @@ Injects: `VITE_BACKEND_API_URL` (from PRODUCT_MAP), `VITE_PRODUCT_SCHEMA` (from 
 cd seed/backend/lib && python -m pytest  # if tests exist
 
 # Validate all products use the seed correctly
-python -m agents.keeper --validate
+python mcp/noctusai/cli.py --validate
 
 # Build all frontends (verifies framework compiles)
 for p in seed daily-life personal-finance mailing therapy-platform erp-imobiliario; do

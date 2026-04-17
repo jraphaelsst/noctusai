@@ -1,7 +1,11 @@
-# Plan: Seed Agents — Guardian + Scientist
+# [HISTORICAL] Plan: Seed Agents — Guardian + Scientist
 
-> Two AI-powered agents that protect and evolve the seed infrastructure.
-> Location: `agents/` at repo root.
+> **STATUS: OBSOLETE.** This plan was executed and evolved into the MCP Dev Toolkit at `mcp/noctusai/`.
+> The `agents/` directory has been deleted. All 28 tools now live in the MCP server.
+> See `KNOWLEDGE-BASE/CONTEXT/11-AGENTS.md` for the current architecture.
+
+> ~~Two AI-powered agents that protect and evolve the seed infrastructure.~~
+> ~~Location: `agents/` at repo root.~~
 
 ---
 

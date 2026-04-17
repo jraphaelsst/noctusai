@@ -1,71 +1,64 @@
-# 11 — Agents
+# 11 — MCP Dev Toolkit
 
-> AI-powered agents that maintain and evolve the platform. Located at `agents/`.
+> Platform development tools exposed as an MCP server at `mcp/noctusai/`.
 
-## Current Agents
+## Tools (28 total)
 
-| Agent | Purpose | Command |
-|-------|---------|---------|
-| **Keeper** | Fixer + improver — validates, heals, discovers | `python -m agents.keeper` |
+### Context
+- noctusai_agent_context — full platform overview
+- noctusai_product_context — product structure + docs
 
-## Keeper — Three Capabilities
+### Products
+- noctusai_list_products, noctusai_get_product, noctusai_platform_metrics
 
-### Validate (`--validate`)
-Deterministic compliance checks. Fast, zero AI, CI-safe. Exits 1 on failure.
-- Seed framework compliance (create_product_app, createProductApp, no boilerplate)
-- Path reference correctness (seed/backend/lib, seed/frontend/lib)
+### Scaffold
+- noctusai_scaffold_product, noctusai_available_ports
 
-### Heal (`--heal`)
-Fix loop: detect → auto-fix deterministic → propose non-deterministic → repeat.
-- Deterministic: missing deps, old paths, boilerplate files → auto-fixed
-- Non-deterministic: structural rewrites, AI findings → proposals
-- Max 10 iterations, runs discover after clean
+### Compliance
+- noctusai_validate, noctusai_validate_product
 
-### Discover (`--discover`)
-File analyzers + AI brain. All findings → proposals (never auto-fix).
-- Pattern finder: duplicated functions, inline hooks, similar services
-- Dependency audit: version mismatches across products
-- Structure analyzer: expected files, code metrics
-- Test coverage: test layers per product
-- AI brain (GPT-4o): semantic analysis, cross-product reasoning
+### Heal
+- noctusai_heal — auto-fix loop
 
-## Proposals
+### Analyzers
+- noctusai_analyze, noctusai_analyze_patterns, noctusai_analyze_deps, noctusai_analyze_tests
 
-All agents write proposals to `agents/proposals/`. One folder, all agents.
-- Format: `YYYYMMDD-HHMMSS-slug.md`
-- Lifecycle: pending → accepted/rejected by human
-- Deduplicated: same finding = same proposal, regardless of agent or run count
+### AI
+- noctusai_ai_discover, noctusai_ai_advisory
+
+### Master Prompts
+- noctusai_sync_master_prompt, noctusai_sync_all_master_prompts, noctusai_check_master_prompt
+
+### Testing
+- noctusai_run_tests, noctusai_run_all_tests, noctusai_build_frontend, noctusai_build_all_frontends
+
+### Diff & Quality
+- noctusai_diff_against_seed, noctusai_find_orphans, noctusai_check_api_consistency
+
+### Proposals
+- noctusai_list_proposals, noctusai_accept_proposal, noctusai_reject_proposal
+
+## CLI (for humans)
+
+```bash
+python mcp/noctusai/cli.py --validate
+python mcp/noctusai/cli.py --heal
+python mcp/noctusai/cli.py --analyze
+python mcp/noctusai/cli.py --discover
+python mcp/noctusai/cli.py --metrics
+python mcp/noctusai/cli.py --test
+python mcp/noctusai/cli.py --build
+python mcp/noctusai/cli.py --proposals
+```
 
 ## Architecture
 
 ```
-agents/
-  __main__.py            → routes to keeper
-  proposals/             → shared proposals folder (all agents)
-  shared/                → config, models, repo utilities
-  keeper/                → fixer + improver
-    checks/              → validate (deterministic)
-    analyzers/           → discover (file analysis)
-    ai_brain.py          → AI reasoning (GPT-4o)
-    fixes.py             → auto-fix functions
-    proposer.py          → proposal generation + dedup
+mcp/noctusai/
+  server.py         MCP server (28 tools)
+  cli.py            CLI for humans
+  tools/            Tool implementations
+  proposals/        Shared proposals
+  .venv/            Separate venv for MCP deps
+  README.md
 ```
-
-## Development Loop
-
-After any code change: `python -m agents.keeper --heal --product <name>`
-
-The Keeper detects, fixes, verifies, repeats. Deterministic issues auto-fixed. Non-deterministic → proposals. No code ships with known violations.
-
-## Adding New Agents
-
-Each agent gets its own directory under `agents/`:
-```
-agents/<agent-name>/
-  __init__.py
-  __main__.py    # python -m agents.<name>
-  main.py
-  README.md      # required, synced
-```
-
-Use `from agents.keeper.proposer import generate_proposal` to write proposals to the shared folder.
