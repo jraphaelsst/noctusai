@@ -1,3 +1,6 @@
+# Standalone apps (not yet migrated to products/)
+adconnect/
+
 # Dependencies
 node_modules/
 __pycache__/
