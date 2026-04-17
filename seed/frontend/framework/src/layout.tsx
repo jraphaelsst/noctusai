@@ -143,6 +143,9 @@ export function createProductLayout(config: ProductLayoutConfig) {
       onRefresh: useCallback(async () => { await supabase.auth.refreshSession(); }, []),
     });
 
+    // All hooks must be called before any conditional return (Rules of Hooks).
+    const { data: statusPaginas } = usePageStatus(supabase, !!user);
+
     // If enrichment is loading, show loading state
     if (enrichment.isLoading) {
       return (
@@ -167,8 +170,6 @@ export function createProductLayout(config: ProductLayoutConfig) {
           ...g, items: g.items.map(({ route, ...item }) => item),
         })) as NavGroup[]]
       : navGroupsFallback;
-
-    const { data: statusPaginas } = usePageStatus(supabase, !!user);
     const navGroups = (statusPaginas?.length
       ? filterNavByPageStatus(allNavGroups, statusPaginas, effectiveRole)
       : allNavFallback) as NavGroup[];
