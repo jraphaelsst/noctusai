@@ -1,0 +1,6 @@
+[
+  { "id": "inv-1", "distributorId": "dist-001", "nfe": "42891", "orderId": "OMI-4521", "issueDate": "2026-02-22", "dueDate": "2026-03-24", "amount": 8340.0, "status": "em_aberto" },
+  { "id": "inv-2", "distributorId": "dist-001", "nfe": "42756", "orderId": "OMI-4465", "issueDate": "2026-02-10", "dueDate": "2026-03-12", "amount": 9420.0, "status": "pago" },
+  { "id": "inv-3", "distributorId": "dist-001", "nfe": "42588", "orderId": "OMI-4378", "issueDate": "2026-01-20", "dueDate": "2026-02-19", "amount": 11352.0, "status": "pago" },
+  { "id": "inv-4", "distributorId": "dist-001", "nfe": "42401", "orderId": "OMI-4250", "issueDate": "2025-12-15", "dueDate": "2026-01-14", "amount": 4200.0, "status": "vencido" }
+]

@@ -1,0 +1,7 @@
+[
+  { "id": "cat6", "name": "Cabos Cat.6" },
+  { "id": "cat5e", "name": "Cabos Cat.5e" },
+  { "id": "fibra", "name": "Fibra Óptica" },
+  { "id": "patch-panel", "name": "Patch Panels" },
+  { "id": "acessorios", "name": "Acessórios" }
+]

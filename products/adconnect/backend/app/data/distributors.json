@@ -1,0 +1,79 @@
+[
+  {
+    "id": "dist-001",
+    "name": "Distribuidora Exemplo LTDA",
+    "cnpj": "12.345.678/0001-90",
+    "contact": "João Silva",
+    "email": "joao@exemplo.com.br",
+    "phone": "(11) 99999-0001",
+    "city": "São Paulo",
+    "state": "SP",
+    "status": "active",
+    "smartTier": "MASTER",
+    "smartActive": true,
+    "annualRevenue": 1020000,
+    "annualGoal": 1500000,
+    "totalOrders": 42,
+    "cashbackBalance": 2130,
+    "mktBalance": 980,
+    "lastOrder": "2026-02-23",
+    "selloutCompliance": 83,
+    "paymentScore": 92,
+    "trend": "up",
+    "cnpjs": [
+      { "id": "cnpj-001", "cnpj": "12.345.678/0001-90", "razaoSocial": "Distribuidora Exemplo LTDA", "cidade": "São Paulo", "uf": "SP", "isPrimary": true },
+      { "id": "cnpj-002", "cnpj": "12.345.678/0002-71", "razaoSocial": "Distribuidora Exemplo Filial RJ LTDA", "cidade": "Rio de Janeiro", "uf": "RJ", "isPrimary": false },
+      { "id": "cnpj-003", "cnpj": "98.765.432/0001-10", "razaoSocial": "Exemplo Telecom LTDA", "cidade": "Campinas", "uf": "SP", "isPrimary": false }
+    ]
+  },
+  {
+    "id": "dist-002",
+    "name": "RedeNet Distribuição",
+    "cnpj": "22.111.333/0001-44",
+    "contact": "Marina Alves",
+    "email": "marina@redenet.com.br",
+    "phone": "(21) 98888-0022",
+    "city": "Rio de Janeiro",
+    "state": "RJ",
+    "status": "active",
+    "smartTier": "SMARTER",
+    "smartActive": true,
+    "annualRevenue": 2400000,
+    "annualGoal": 2600000,
+    "totalOrders": 86,
+    "cashbackBalance": 5100,
+    "mktBalance": 2200,
+    "lastOrder": "2026-02-24",
+    "selloutCompliance": 95,
+    "paymentScore": 98,
+    "trend": "up",
+    "cnpjs": [
+      { "id": "cnpj-101", "cnpj": "22.111.333/0001-44", "razaoSocial": "RedeNet Distribuição", "cidade": "Rio de Janeiro", "uf": "RJ", "isPrimary": true }
+    ]
+  },
+  {
+    "id": "dist-003",
+    "name": "CablePro Sul LTDA",
+    "cnpj": "55.000.888/0001-22",
+    "contact": "Carlos Mendes",
+    "email": "carlos@cablepro.com.br",
+    "phone": "(51) 97777-3345",
+    "city": "Porto Alegre",
+    "state": "RS",
+    "status": "pending",
+    "smartTier": "NONE",
+    "smartActive": false,
+    "annualRevenue": 180000,
+    "annualGoal": 500000,
+    "totalOrders": 3,
+    "cashbackBalance": 0,
+    "mktBalance": 0,
+    "lastOrder": "2026-01-30",
+    "selloutCompliance": 0,
+    "paymentScore": 70,
+    "trend": "stable",
+    "cnpjs": [
+      { "id": "cnpj-201", "cnpj": "55.000.888/0001-22", "razaoSocial": "CablePro Sul LTDA", "cidade": "Porto Alegre", "uf": "RS", "isPrimary": true }
+    ]
+  }
+]
