@@ -1,7 +1,7 @@
 # 04 — Therapy Platform Frontend
 
-> Path: `products/therapy-platform/frontend/src/` · Port: 8095 · Auth: Direct Supabase Auth
-> Standard frontend patterns: see CLAUDE.md
+> Path: `products/therapy-platform/frontend/src/` · Port: 8095 · 64 pages · 25 hooks · Auth: Direct Supabase Auth
+> Standard frontend patterns: see `../PATTERNS/frontend.md`.
 
 ## Architecture: Role-Based Routing
 

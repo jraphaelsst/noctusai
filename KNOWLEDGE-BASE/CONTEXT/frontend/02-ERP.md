@@ -1,11 +1,11 @@
-# 03 — ERP Frontend Context
+# 02 — ERP Frontend Context
 
-> Path: `products/erp-imobiliario/frontend/src/` · Port: 8080 · API: `VITE_BACKEND_API_URL`
-> Standard frontend patterns (toast, hooks, auth init, dates): see CLAUDE.md
+> Path: `products/erp-imobiliario/frontend/src/` · Port: 8080 · 60 pages · 63 hooks · API: `VITE_BACKEND_API_URL`
+> Standard frontend patterns (toast, hooks, auth init, dates): see `../PATTERNS/frontend.md`.
 
 ## Overview
 
-Full real estate CRM frontend. 54 lazy-loaded pages, 56 TanStack Query hooks, Zustand stores, shadcn/ui. Supabase client uses `db: { schema: 'erp' }`.
+Full real estate CRM frontend. 60 lazy-loaded pages, 63 TanStack Query hooks, Zustand stores, shadcn/ui. Supabase client uses `db: { schema: 'erp' }`.
 
 ## State Management
 

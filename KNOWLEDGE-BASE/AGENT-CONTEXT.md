@@ -5,7 +5,7 @@
 
 ## What is NoctusAI?
 
-Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. 6 products, 1 seed framework, 1 MCP dev toolkit.
+Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. **7 products**, 1 seed framework, 1 MCP dev toolkit. (AdConnect is a WIP scaffold at `products/adconnect/`, currently gitignored and not part of the live platform.)
 
 ## The Seed (most important concept)
 
@@ -64,11 +64,13 @@ Single root `.env` for everything. Backend vars: `SUPABASE_URL`, `SUPABASE_ANON_
 
 ## MCP Dev Toolkit
 
-28 tools exposed as an MCP server at `mcp/noctusai/`. CLI wrapper for humans:
+<!-- kb-counts:start:agent_context_tools -->
+35 tools
+<!-- kb-counts:end:agent_context_tools --> exposed as an MCP server at `mcp/noctusai/`. CLI wrapper for humans:
 
 ```bash
 python mcp/noctusai/cli.py --validate   # Check compliance
-python mcp/noctusai/cli.py --heal       # Fix loop until clean
+python mcp/noctusai/cli.py --review     # Observation-only review — LLM-authored proposals, NEVER edits code
 python mcp/noctusai/cli.py --analyze    # Find improvements
 python mcp/noctusai/cli.py --discover   # AI-powered discovery
 python mcp/noctusai/cli.py --metrics    # Platform metrics
@@ -86,22 +88,36 @@ The top rules you MUST follow:
 2. **No incomplete commits** — backend and frontend must be at same maturity.
 3. **No quick fixes** — solve root causes in one place, not symptoms in many.
 4. **Hooks in dedicated files** — never inline useQuery/useMutation in pages.
-5. **MCP toolkit heals after changes** — run `python mcp/noctusai/cli.py --heal` before committing.
+5. **MCP toolkit reviews after changes (observation-only)** — run `python mcp/noctusai/cli.py --review` before committing. Never modifies code; files LLM-authored proposals you triage manually.
 6. **Extend framework, never go custom** — if the framework can't handle a product's needs, extend it.
 7. **Docs stay in sync** — every change updates CLAUDE.md / KNOWLEDGE-BASE / MCP server README.
 
 ## Where to find what
 
+For the full catalog, open **`KNOWLEDGE-BASE/INDEX.md`** — it lists every KB file with a one-line description.
+
+Quick pointers:
+
 | Need to know... | Read... |
 |-----------------|---------|
-| Engineering rules | `CLAUDE.md` |
-| Seed architecture | `seed/README.md` |
-| Shared library catalog | `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` |
-| Seed framework API | `KNOWLEDGE-BASE/CONTEXT/10-SEED-ARCHITECTURE.md` |
-| MCP dev toolkit | `KNOWLEDGE-BASE/CONTEXT/11-AGENTS.md` |
+| Engineering rules (behavioral) | `CLAUDE.md` |
+| Engineering philosophy (elaborated) | `KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md` |
+| Platform landscape (products, ports, schemas) | `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md` |
+| Seed architecture (factories, layers) | `KNOWLEDGE-BASE/CONTEXT/03-SEED-ARCHITECTURE.md` |
+| Shared library catalog | `KNOWLEDGE-BASE/CONTEXT/04-SHARED-LIBRARY.md` |
+| Infrastructure (ports, deploy) | `KNOWLEDGE-BASE/CONTEXT/05-INFRASTRUCTURE.md` |
+| MCP dev toolkit (observation-only review) | `KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md` |
+| Gamification philosophy | `KNOWLEDGE-BASE/CONTEXT/07-GAMIFICATION.md` |
+| Backend patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md` |
+| Frontend patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/frontend.md` |
+| Testing discipline | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/testing.md` |
+| DB + RLS patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/database-rls.md` |
+| Env / `.env` conventions | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/environment.md` |
+| Notifications pattern | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/notifications.md` |
+| First-time setup | `KNOWLEDGE-BASE/CONTEXT/GUIDES/setup.md` |
+| Creating a new product | `KNOWLEDGE-BASE/CONTEXT/GUIDES/new-product.md` |
 | Product details | `products/<name>/MASTER-PROMPT.md` |
-| Testing standards | `CLAUDE.md` → Testing Standards section |
-| Scripts & setup | `scripts/README.md` |
+| Scripts & setup scripts | `scripts/README.md` |
 
 ## What NOT to do
 
@@ -109,5 +125,5 @@ The top rules you MUST follow:
 - Don't create authStore.ts, ErrorBoundary.tsx, NotificationBell.tsx, etc. (framework provides via `@noctusai/seed/infra`)
 - Don't create health.py, notificacoes.py, team.py routers (framework provides via `create_product_app()`)
 - Don't inline hooks in page components (always extract to `hooks/useEntity.ts`)
-- Don't commit without running `python mcp/noctusai/cli.py --heal`
+- Don't commit without running `python mcp/noctusai/cli.py --review` and triaging any new proposals
 - Don't add secret keys with `VITE_` prefix (Vite exposes them to the browser)

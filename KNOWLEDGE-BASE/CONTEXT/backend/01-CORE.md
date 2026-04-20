@@ -1,7 +1,7 @@
 # 01 — Core Backend Context
 
-> Path: `core/backend/app/` · Port: 8000 · Tests: 23 files
-> Standard backend patterns (auth, responses, exceptions, N+1): see CLAUDE.md
+> Path: `core/backend/app/` · Port: 8000 · 23 routers · 8 services · 31 test files · 392 test fns
+> Standard backend patterns (auth, responses, exceptions, N+1): see `../PATTERNS/backend.md`.
 
 ## Core-Specific Auth
 
@@ -13,7 +13,7 @@
 | `create_sso_token(user_id, org_id, ...)` | Short-lived JWT for product access (5 min) |
 | `verify_sso_token(token)` | Validates SSO token structure and expiry |
 
-## Routers (20)
+## Routers (23)
 
 **Auth & Identity**: auth, oauth, sso, onboarding
 **Org & Team**: organizations, team, roles

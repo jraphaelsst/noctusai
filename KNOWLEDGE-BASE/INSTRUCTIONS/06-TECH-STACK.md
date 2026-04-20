@@ -160,18 +160,18 @@ project-root/
 │   │   ├── 06-TECH-STACK.md     # Tech stack & conventions (this file)
 │   │   └── 07-TEMPLATES.md      # Reusable starting point templates
 │   ├── CONTEXT/                 # System landscape docs for agent context loading
-│   │   ├── 00-LANDSCAPE.md      # Platform overview, products, architecture
-│   │   ├── 06-INFRASTRUCTURE.md # Ports, Docker, n8n, WAHA, deployment
-│   │   ├── backend/             # Backend context docs
-│   │   │   ├── 01-CORE.md       # Core backend: 20 routers, 8 services
-│   │   │   ├── 02-ERP.md        # ERP backend: 48 routers, 40 services
-│   │   │   ├── 03-PF.md         # PF backend: 15 routers, 13 services
-│   │   │   ├── 04-DATABASE.md   # Supabase tables (public, erp, personal-finance), RLS
-│   │   │   └── 05-AI-FEATURES.md # AI service, embeddings, matching algorithm
-│   │   └── frontend/            # Frontend context docs
-│   │       ├── 01-CORE.md       # Core frontend: admin, billing, auth
-│   │       ├── 02-ERP.md        # ERP frontend: 54 pages, 56 hooks
-│   │       └── 03-PF.md         # PF frontend: 18 pages, 14 hooks
+│   │   ├── 01-PHILOSOPHY.md     # Engineering principles (elaborated mirror of CLAUDE.md)
+│   │   ├── 02-LANDSCAPE.md      # Platform overview, products, architecture
+│   │   ├── 03-SEED-ARCHITECTURE.md  # The spine: factories, layers
+│   │   ├── 04-SHARED-LIBRARY.md     # Reusable components catalog
+│   │   ├── 05-INFRASTRUCTURE.md # Ports, Docker, n8n, WAHA, deployment
+│   │   ├── 06-AGENTS.md         # MCP dev toolkit
+│   │   ├── 07-GAMIFICATION.md   # Cross-product UX philosophy
+│   │   ├── PATTERNS/            # Technical patterns (backend, frontend, testing, DB, env, notifications)
+│   │   ├── GUIDES/              # Task-oriented guides (setup, new-product)
+│   │   ├── backend/             # Per-product backend details (01-CORE, 02-ERP, 03-PF, 04-DATABASE, 05-AI-FEATURES, 06-THERAPY, 07-AUTH-SECURITY, 08-DAILY-LIFE)
+│   │   └── frontend/            # Per-product frontend details (01-CORE, 02-ERP, 03-PF, 04-THERAPY)
+│   ├── INDEX.md                  # Structural catalog of the entire KB
 │   ├── SKILLS/                  # Agent skill definitions (reference 01-SKILLS.md)
 │   │   ├── property-description/SKILL.md
 │   │   ├── lead-scoring/SKILL.md

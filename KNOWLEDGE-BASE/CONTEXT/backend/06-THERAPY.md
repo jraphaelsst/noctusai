@@ -1,6 +1,6 @@
 # 06 — Therapy Platform Backend
 
-> Path: `products/therapy-platform/backend/app/` · Port: 8003 · 39 routers · 38 services · 1,021 tests
+> Path: `products/therapy-platform/backend/app/` · Port: 8003 · 38 routers · 37 services · 64 test files · 897 test fns
 > Schema: `therapy` · Auth: Direct Supabase Auth (NOT NoctusAI SSO)
 
 ## Auth Model

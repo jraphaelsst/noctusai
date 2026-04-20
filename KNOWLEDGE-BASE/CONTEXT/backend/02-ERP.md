@@ -1,13 +1,13 @@
 # 02 — ERP Backend Context
 
-> Path: `products/erp-imobiliario/backend/app/` · Port: 8001 · 50 routers · 42 services · 1,634 tests
-> Standard backend patterns (auth, responses, exceptions, DELETE pre-checks, search, N+1, rate limiting): see CLAUDE.md
+> Path: `products/erp-imobiliario/backend/app/` · Port: 8001 · 48 routers · 41 services · 100 test files · 1,506 test fns
+> Standard backend patterns (auth, responses, exceptions, DELETE pre-checks, search, N+1, rate limiting): see `../PATTERNS/backend.md`.
 
 ## Overview
 
 Full real estate CRM backend. Handles property management, client CRM, sales funnel, AI-powered matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, Meta Ads integration, and compliance reporting.
 
-## Router Groups (50)
+## Router Groups (48)
 
 - **Core Domain**: ativos, clientes, funil, metas, condominios, profiles
 - **AI & Matching**: ai (descriptions, lead scoring, price suggestions), matching (property↔permuta)
@@ -29,7 +29,7 @@ Full real estate CRM backend. Handles property management, client CRM, sales fun
 
 ## Legacy Data
 
-264 migrated imóveis from old Django platform. Markers: `titulo_anuncio LIKE '[MOCK]%'`. See `00-LANDSCAPE.md` for details.
+264 migrated imóveis from old Django platform. Markers: `titulo_anuncio LIKE '[MOCK]%'`. See `../02-LANDSCAPE.md` for details.
 
 ## Test Patterns
 

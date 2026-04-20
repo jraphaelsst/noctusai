@@ -1,7 +1,20 @@
 # 07 — AI Features Context
 
-> ERP: `products/erp-imobiliario/backend/app/` · LLM: OpenAI GPT-4o-mini + text-embedding-3-small
-> Therapy: `products/therapy-platform/backend/app/` · LLM: OpenAI GPT + Whisper
+> **LLM access is platform-level.** Every product calls `noctusai_lib.llm` —
+> `chat_completion`, `generate_embedding`, `transcribe_audio`, `analyze_image`.
+> The seed framework auto-wires `configure_credentials()` + default
+> `LLMConfig` during `create_product_app()`. Products inherit multi-provider
+> access (OpenAI real; Anthropic + Gemini guarded stubs) without writing any
+> LLM plumbing. Credential resolution is 3-tier (org_settings →
+> platform_settings → env). Full reference:
+> `KNOWLEDGE-BASE/CONTEXT/04-SHARED-LIBRARY.md` (LLM section).
+>
+> **LGPD contract** (non-negotiable): clinical free text never lands in a
+> response cache. Every Therapy `chat_completion` call passes `cache=False`
+> — see `KNOWLEDGE-BASE/CONTEXT/PATTERNS/lgpd.md` + `LGPD-WARNINGS.md`.
+>
+> ERP: `products/erp-imobiliario/backend/app/` · defaults: gpt-4o-mini + text-embedding-3-small
+> Therapy: `products/therapy-platform/backend/app/` · defaults: gpt-4o (override) + Whisper
 
 ## ERP AI Service (`services/ai_service.py`)
 

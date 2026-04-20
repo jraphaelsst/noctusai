@@ -1,134 +1,159 @@
-# CLAUDE.md
+# CLAUDE.md · v2.0
 
-## Engineering Philosophy
+<!--
+  Version:   2.0
+  Date:      2026-04-18
+  Author:    Raphael (joaoraphaelsst@gmail.com) — product owner, platform architect
+  AI coauthor: Claude Opus 4.7 (1M context) — iterative collaboration
+  Shift:     v1 was directive-only. v2 is instructive — each rule now says
+             *what*, *what not*, *why*, and *where to deepen*.
+  Enforced:  scripts/pre-commit verifies every pointer resolves before any commit.
+-->
 
-- **Seed first. Always.** Every product inherits its structural backbone from `seed/`. When creating a new product, import `create_product_app()` (backend) and `createProductApp()` / `createProductLayout()` (frontend) from the seed framework. Do NOT copy-paste structural code. Do NOT re-implement auth, routing, layout, database clients, health checks, team management, or notifications — they come from the seed. This is not optional, not debatable, not a suggestion. The seed is the skeleton. Products are the organs. Read `seed/README.md` before building anything.
-- **MCP toolkit heals after every change.** After modifying code, run `python mcp/noctusai/cli.py --heal` on the affected product. The heal loop detects issues, auto-fixes deterministic ones, creates proposals for non-deterministic ones, re-runs to verify, and repeats until clean. No code ships with known violations. Development loop: change → `python mcp/noctusai/cli.py --heal` → commit.
-- **No incomplete commits.** Never commit a product with mismatched maturity between backend and frontend. If the backend has working endpoints, the frontend must have real pages wired to those endpoints — not placeholders. "Scaffolded" is not "complete." Both sides must be at the same level before committing. If one side is incomplete, flag it to the user before committing.
-- **No quick fixes.** Never patch symptoms. If your fix requires touching multiple products for the same reason, you're fixing a symptom, not the root cause. Step back. The fix belongs in one place (seed, lib, or a shared config) and propagates automatically. Spend 30 minutes on a proper solution over 5 minutes on a hack that creates future work. Infrastructure before features, root cause before symptoms.
-- **No workarounds.** Always use the real API/SDK/framework. No monkeypatches, shims, or hacks.
-- **DRY.** Single authoritative source for every piece of logic. Three similar blocks → extract to shared.
-- **Componentize everything.** When you build something a product needs, ask: "will another product need this?" If yes (or maybe), build it as a shared component from the start. Check `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` before writing anything — it might already exist. The shared library is the platform's validated, reusable code. Every extraction reduces maintenance burden as the platform grows. Duplicate code is tech debt; shared components are assets.
-- **Module-scope imports.** All Python imports go at the top of the file (module scope). Never defer imports to inside functions or after object creation unless solving a documented circular dependency. Module-scope imports fail fast at startup, making bugs visible immediately.
-- **Docs stay in sync.** Every commit updates `CLAUDE.md` and `KNOWLEDGE-BASE/`. The MCP server README (`mcp/noctusai/README.md`) stays current when tooling changes. Proposals live in `mcp/noctusai/proposals/`.
-- **`KNOWLEDGE-BASE/`** = platform context (architecture, inventories). `CLAUDE.md` = behavioral rules.
-- **Every product has a `README.md` and `MASTER-PROMPT.md`.** README explains what the product does. MASTER-PROMPT is the authoritative development guide (purpose, architecture, domains, testing, dependencies). New products must include both from day one.
+> **What this file is.** Claude's **outer map**. It ships with every session to
+> establish (a) the behavioral rules Claude obeys every turn and (b) where to
+> jump in `KNOWLEDGE-BASE/` for deeper context. **This file itself holds no specs
+> or technical depth** — specs live in the KB. If you find yourself writing an
+> architecture paragraph here, it belongs in `KNOWLEDGE-BASE/CONTEXT/` with a
+> pointer here.
+>
+> **What this file is NOT.** A tutorial, a changelog, a spec sheet, or a
+> reference manual. It's a thin router with behavioral rules on top.
+>
+> When you can't find something, open **`KNOWLEDGE-BASE/INDEX.md`** — the
+> authoritative catalog of every KB doc.
 
-## Architecture
+---
 
-Multi-tenant, multi-product SaaS monorepo. Stack: **FastAPI + Supabase** backend, **React + TypeScript + Vite** frontend. Tenant isolation via RLS.
+## 0 · How this file is organized
 
-| Product | Schema | Ports | Tenant key | Auth |
-|---------|--------|-------|------------|------|
-| **Core** (`core/`) | `public` | 8000/5173 | `org_id` | Custom REST API |
-| **ERP** (`products/erp-imobiliario/`) | `erp` | 8001/8080 | `org_id` | SSO + direct login |
-| **PF** (`products/personal-finance/`) | `personal-finance` | 8002/8090 | `org_id` | SSO + direct login |
-| **Therapy** (`products/therapy-platform/`) | `therapy` | 8003/8095 | `clinic_id` | Direct Supabase Auth |
-| **Seed** (`products/seed/`) | `seed` | 8004/8100 | `org_id` | SSO + direct login |
-| **Daily Life** (`products/daily-life/`) | `daily_life` | 8005/8110 | `org_id` | SSO + direct login |
-| **Mailing** (`products/mailing/`) | `mailing` | 8006/8120 | `org_id` | SSO + direct login |
+This file has four parts. Each part has a single, narrow job.
 
-Per-product docs: `KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md`, `02-ERP.md`, `03-PF.md`, `06-THERAPY.md`, `08-DAILY-LIFE.md`.
+| Section | What it does | How to use it |
+|---|---|---|
+| **§1 Engineering Philosophy** | The behavioral rules that govern every decision. | Read every session. When a rule applies, it wins. |
+| **§2 The Map** | Pointers into `KNOWLEDGE-BASE/` grouped by topic. | Open the linked file *on-demand* when depth is needed — never pre-load. |
+| **§3 When to read what** | Task → "open this first" lookup. | Before starting work, scan the table to find your entry point. |
+| **§4 Sync rule** | How this file and the KB stay aligned. | Enforced automatically by the pre-commit hook; manual runs listed for debugging. |
 
-### Backend: `routers/ → services/ → schemas/` + `dependencies.py`, `database.py`
-### Frontend: `pages/ → components/ → hooks/ → store/ → lib/`
+Each rule and pointer is instructive: we say *what to do*, *what not to do*, *why it matters*, and (where useful) *where to go for depth*.
 
-State: **Zustand** (global UI), **TanStack Query** (server state).
+---
 
-### The Seed — Spine of Every Product
+## 1 · Engineering Philosophy
 
-**`seed/` is the structural foundation. Every product inherits from it. Change the seed, change all products.**
+Behavioral rules. Short on purpose. For the long-form reasoning — history, incidents that produced the rule, edge cases — read **`KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md`**.
 
-Read `seed/README.md` for the full architecture. The seed has two layers:
+- **Seed first. Always.** Every product inherits its backbone from `seed/` — auth, routing, layout, DB clients, health, team management, notifications, page status. Don't copy-paste structural code; don't re-implement what the framework already gives you. *Structure centralized means every fix propagates to every product in one edit.* → `KNOWLEDGE-BASE/CONTEXT/03-SEED-ARCHITECTURE.md`
+- **MCP toolkit reviews after every change (observation-only).** After modifying code, run `python mcp/noctusai/cli.py --review` on the affected product. The review pass detects seed-compliance issues deterministically and asks an LLM (OpenAI, via `OPENAI_API_KEY`) to author a proposal for each in `mcp/noctusai/proposals/`. **It NEVER modifies code** — every decision goes through explicit human review. *No code ships with unreviewed violations.* Loop: change → review → triage proposals → apply manually → commit. The old auto-fix `--heal` flow was retired because deterministic text rewrites could corrupt code and the string-match checks rotted as the seed evolved. → `KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md`
+- **No incomplete commits.** Never commit a product with mismatched maturity between backend and frontend. "Scaffolded" is not "complete." If one side is real and the other is a placeholder, stop and flag it. *A commit that looks done but isn't becomes tech debt the moment it lands.*
+- **No quick fixes.** Never patch symptoms. If a fix touches multiple products for the same reason, you're fixing the wrong level. Go one layer up — the real fix lives in the seed, a shared lib, or a config — and it propagates automatically. *Thirty minutes on the root beats five minutes on a patch that generates future work.*
+- **No workarounds.** Use the real API, SDK, or framework. No monkeypatches, shims, or hacks. *If the framework can't do it, extend the framework — don't bolt onto the product.*
+- **DRY.** Three similar blocks is a pattern — extract it. Two is a coincidence. Single authoritative source for every piece of logic, every config, every doc.
+- **Componentize everything.** Before writing anything, check **`KNOWLEDGE-BASE/CONTEXT/04-SHARED-LIBRARY.md`** — it might already exist. If another product will need it, build it shared from the start. *Duplicate code is debt; shared components are assets.*
+- **Module-scope imports.** Python imports go at the top of the file. Don't defer imports into function bodies unless solving a documented circular dependency. *Top-level imports fail fast at startup; deferred imports hide bugs until a specific path runs.*
+- **Projects are living documents — and planners interrogate before designing.** Every `*-PROJECT.md` is a guideline that evolves with execution (rewrite phases, fold in optimizations, update the Change Log). *Terminology note:* NoctusAI uses *project* for what other teams call a "plan"; `*-PLAN.md` is deprecated for new files (legacy files may still exist until renamed). Before drafting or revising one, **act as a questionnaire** — ask the user clarifying questions, confirm constraints, surface edge cases. Never assume. **Always start a new project by copying `templates/PROJECT-TEMPLATE.md`**; fill placeholders, delete sections that don't apply. Commit project changes with the code. **During execution, tick tasks live** (`- [ ]` → `- [x]`, saved immediately — never batched), because the user watches the project file as a live dashboard. **Cadence is phase-by-phase by default**: execute one phase, then pause and wait for the user to say "continue" / "next phase". The user overrides with throughput instructions like "ram through 1-3" or "do all backend phases". **Phase headers carry a status icon** (METAS-PROJECT convention — see `products/erp-imobiliario/METAS-PLAN.md` pending rename): no icon = pending, `⏳` = in progress/partial, `✅` = complete, `❌` = blocked/failed. Flip to `✅` only when every sub-task inside is ticked. **Improvement flow is capture-then-synthesize**: (capture) during step implementation, drop quick specific bullets into the phase's `**Improvements:**` block — no ceremony, in-the-act notes; (synthesize) at end of phase, BEFORE flipping the header to `✅`, read the entire block, consider the whole project context, and file **ONE bundled proposal per phase** via `noctusai_file_proposal(project="<slug>", ...)` — the proposal lands in `mcp/noctusai/proposals/<project-slug>/` with `Origin: project:<slug>:phase-<N>` and filled `Context`, `Situation`, `Proposed Solution` (bundled improvements as independently-executable items), `Effects`. Not one proposal per improvement — ONE per phase, bundling them. Each bundled improvement retains individual execution (reviewer schedules separately). Then flip header to `✅`, run `python mcp/noctusai/cli.py --improvements <project.md>` to regenerate `improvements.md`. → `KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md` (Projects are living) + `KNOWLEDGE-BASE/CONTEXT/PATTERNS/proposals-and-improvements.md` (two-system protocol)
+- **Gamification is subtle.** Rankings, points, progress bars — always discrete; always with a ⓘ info icon explaining the formula; always tied to real business activity (never "logged in today"-style rewards). → `KNOWLEDGE-BASE/CONTEXT/07-GAMIFICATION.md`
+- **Docs stay in sync — and land KB-first, CLAUDE.md second.** Any commit that changes behavior also updates `CLAUDE.md`, `KNOWLEDGE-BASE/INDEX.md`, the relevant topical KB file, and (if tooling changed) `mcp/noctusai/README.md`. **Ordering matters:** when a rule changes, land the KB changes first (topical KB file + INDEX.md entry), *then* touch CLAUDE.md with the short rule + pointer. Never the reverse — CLAUDE.md is the pointer layer and pointing into KB content that doesn't yet exist strands the pointer. Tiny typo-only CLAUDE.md fixes are exempt. *The `verify-kb-sync.sh` pre-commit hook catches dangling pointers but cannot catch "wrote CLAUDE.md first then backfilled the KB" — that discipline is the agent's.* → `KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md` (Docs stay in sync)
+- **MCP migrations mirror the file.** When you apply DDL via the Supabase MCP (`apply_migration` or `execute_sql`), the same SQL **must** exist as a numbered migration file in `products/<name>/backend/migrations/NNN_<name>.sql` — commit both together. *The database is mutable state; the migration files are the authoritative replay log.* If the file drifts from what was applied, a fresh clone cannot reproduce the schema. Write the file first, then apply via MCP (or if you iterated live, back-port every change into a new file before committing). → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/database-rls.md`
+- **Supabase MCP is the agent's tool — use it proactively.** When a task needs DB access (apply a migration, audit a schema, verify RLS, seed or inspect data), the agent executes it directly through `mcp__claude_ai_Supabase__*`. **Never** ask the user to paste SQL into the Supabase editor or grant one-off permission — blanket approval stands for this repo. Still use `apply_migration` for DDL (per the rule above); `execute_sql` is for read-only inspection only.
+- **`CLAUDE.md` vs `KNOWLEDGE-BASE/` — the token budget rule.** This file is loaded every turn; keep it lean. The KB is loaded on-demand; put depth there. *The split exists to save tokens each iteration without losing knowledge — if CLAUDE.md grows, context degrades.*
+- **Every product has `README.md` + `MASTER-PROMPT.md`.** README for humans browsing the repo; MASTER-PROMPT for agents building features. Both are mandatory from day one of a new product. → `KNOWLEDGE-BASE/CONTEXT/GUIDES/new-product.md`
+- **LGPD-first, always.** Whenever code touches personal data (identity, financial, clinical, behavioral, derived embeddings, …), the LGPD lens is the first lens — before functionality, before performance, before UX. Clinical text is Art. 11 sensitive data; it never leaves the Therapy schema without a documented basis, never hits a response cache. When in doubt about an approach, call `noctusai_lgpd_flag(...)` — it records the concern in `LGPD-WARNINGS.md` and notifies the user; **it does not block.** The flag is a checklist item: it gets ticked when the concern is resolved. → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/lgpd.md`
 
-| Layer | Package | Location | Purpose |
-|-------|---------|----------|---------|
-| **Shared Library** | `noctusai_lib` / `@noctusai/lib` | `seed/lib/` | Reusable code (auth, roles, hooks, components, utils) |
-| **Framework** | `noctusai_seed` / `@noctusai/seed` | `seed/framework/` | Structural bones (app factory, database, deps, routing) |
+---
 
-Products import from both. Domain-specific code lives in the product only. **Never duplicate seed code in a product.**
+## 2 · The Map
 
-- **Backend framework**: `create_product_app(name, schema, settings, routers)` → fully configured FastAPI app with health, team, notifications, CORS, Sentry, logging, JWT built in.
-- **Frontend framework**: `createProductApp(config)` → full App with routing, auth, providers, TooltipProvider. `createProductLayout(config)` → Layout with sidebar, header, page status, SSO.
+Pointers into `KNOWLEDGE-BASE/`. Open the file *on-demand* — never pre-load. If nothing here matches, open `KNOWLEDGE-BASE/INDEX.md` for the complete catalog.
 
-**Full shared library catalog**: `KNOWLEDGE-BASE/CONTEXT/07-SHARED-LIBRARY.md` — **always check before building anything**.
+### Architecture & context — "what the platform is"
+- **Product landscape** (products, schemas, ports, stack) → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`
+- **Seed framework** (factories, layer split, how products inherit) → `KNOWLEDGE-BASE/CONTEXT/03-SEED-ARCHITECTURE.md`
+- **Shared library catalog** (check before building anything) → `KNOWLEDGE-BASE/CONTEXT/04-SHARED-LIBRARY.md`
+- **Infrastructure** (ports, deploy, self-hosted services) → `KNOWLEDGE-BASE/CONTEXT/05-INFRASTRUCTURE.md`
+- **MCP dev toolkit** (heal loop, proposals, CLI commands) → `KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md`
+- **Gamification philosophy** (subtle rankings, ⓘ icons, Metas as reference impl) → `KNOWLEDGE-BASE/CONTEXT/07-GAMIFICATION.md`
 
-## Setup
+### Patterns — "how we write it"
+Read these when writing or reviewing code in the relevant area. They capture conventions enforced across products.
+- **LLM access** (multi-provider via `noctusai_lib.llm` — never `from openai import`; `cache=False` for clinical text) → `KNOWLEDGE-BASE/CONTEXT/04-SHARED-LIBRARY.md` § `llm/`
+- **Backend patterns** (auth, SSO, RLS, N+1, service layer) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md`
+- **Frontend patterns** (TanStack Query, hooks-per-entity, mobile-first) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/frontend.md`
+- **Testing** (three-layer discipline + auth boundary) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/testing.md`
+- **Database & RLS** (subquery `auth.uid()`, `search_path`, policy templates) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/database-rls.md`
+- **Environment / `.env`** (single root, VITE_ security rule, CORS_ORIGINS) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/environment.md`
+- **Notifications** (proxy, shape, shared `NotificationBell`) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/notifications.md`
+- **Shared-library conventions** (privatize / absorb / rename rules, catalog tool) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/shared-library-conventions.md`
+- **Project execution** (phase-header checkboxes, live ticking, improvements block, retrospective tool) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`
+- **Proposals & improvements** (two-system protocol, ONE bundled proposal per phase in `proposals/<project-slug>/`, PROPOSAL-TEMPLATE.md fields, promote boundary) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/proposals-and-improvements.md`
+- **LGPD awareness** (keeper principle, the five questions, `noctusai_lgpd_flag` tool) → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/lgpd.md`
 
-**After cloning**: `bash scripts/setup.sh` — installs git hooks, venv, all deps. Run once.
-**Start servers**: `bash start.sh` or `uvicorn app.main:app --reload --port <PORT> --app-dir <backend>`
-**Tests**: `cd <product>/backend && pytest`
+### Guides — "how to do a task"
+Step-by-step procedures for specific operational tasks.
+- **First-time setup** (clone → install → run) → `KNOWLEDGE-BASE/CONTEXT/GUIDES/setup.md`
+- **Creating a new product** (mandatory files + checklist) → `KNOWLEDGE-BASE/CONTEXT/GUIDES/new-product.md`
 
-## Testing Standards
+### Per-product details
+Deep, product-specific knowledge. Open only the product you're working on.
+- Backend specs → `KNOWLEDGE-BASE/CONTEXT/backend/{01-CORE, 02-ERP, 03-PF, 04-DATABASE, 05-AI-FEATURES, 06-THERAPY, 07-AUTH-SECURITY, 08-DAILY-LIFE}.md`
+- Frontend specs → `KNOWLEDGE-BASE/CONTEXT/frontend/{01-CORE, 02-ERP, 03-PF, 04-THERAPY}.md`
 
-Every product must have three test layers. No product ships without all three.
+### Agent / skill / workflow design
+Use these when designing new agents, skills, or MCP integrations (not when building product features).
+- Entry point → `KNOWLEDGE-BASE/INSTRUCTIONS/00-MASTER.md`
 
-| Layer | What it tests | Where | When to write |
-|-------|-------------|-------|---------------|
-| **Unit** (routers) | Individual endpoints — CRUD, auth, validation, error handling | `tests/routers/test_*.py` | One per domain router |
-| **Unit** (services) | Business logic in isolation — calculations, transformations, state machines | `tests/services/test_*.py` | One per service with non-trivial logic |
-| **Integration** | Cross-service flows — campaign references template + list, automation enrolls contacts | `tests/integration/test_*.py` | When entities reference each other |
-| **E2E** | Full user journeys — create contact → template → campaign → send → verify stats | `tests/integration/test_e2e_flows.py` | One per product, covers the golden path |
+### Two maps, two audiences
+- **This file** (`CLAUDE.md`) — outer map, every session, lean.
+- **`KNOWLEDGE-BASE/INDEX.md`** — inner map, the KB's self-description with by-topic and by-situation tables.
 
-Rules:
-- **Unit tests**: mock the database (`MockSupabaseClient`). Test one endpoint at a time.
-- **Integration tests**: mock the database but test multi-step flows where step N depends on step N-1.
-- **E2E tests**: simulate a real user journey through multiple endpoints. Each test is a story.
-- **All tests must be deterministic**: no hardcoded dates (use `date.today()`), no external API calls, no network.
-- **Auth boundary tests**: every product must verify that unauthenticated requests return 401 for all protected endpoints.
-**Scripts**: `scripts/README.md` documents all scripts and git hooks. Key: `setup.sh` (first-time), `sync-seed-template.sh` (seed→template auto-sync, runs via post-commit hook).
+---
 
-## Environment
+## 3 · When to read what
 
-**Single root `.env` for everything** — backends AND frontends. No per-product `.env` files.
+Quick lookup: *before you start work*, find your situation and open the file listed.
 
-Backend vars: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `RESEND_API_KEY`.
-Frontend vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_CORE_URL`, `VITE_CORE_API_URL`.
+| Situation | Start here |
+|---|---|
+| Fresh session, need orientation | `KNOWLEDGE-BASE/AGENT-CONTEXT.md` + `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md` |
+| Writing backend code | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md` + product-specific `CONTEXT/backend/0X-*.md` |
+| Writing frontend code | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/frontend.md` + product-specific `CONTEXT/frontend/0X-*.md` |
+| Writing a migration | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/database-rls.md` + `KNOWLEDGE-BASE/CONTEXT/backend/04-DATABASE.md` |
+| Adding a shared component | `KNOWLEDGE-BASE/CONTEXT/04-SHARED-LIBRARY.md` (check first — it might exist) |
+| Creating a new product | `KNOWLEDGE-BASE/CONTEXT/GUIDES/new-product.md` + `KNOWLEDGE-BASE/CONTEXT/03-SEED-ARCHITECTURE.md` |
+| Starting a new project | Copy `templates/PROJECT-TEMPLATE.md`. Never hand-roll. |
+| Changing env vars | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/environment.md` |
+| Writing tests | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/testing.md` |
+| Touching gamified UI | `KNOWLEDGE-BASE/CONTEXT/07-GAMIFICATION.md` |
+| Designing an agent / MCP / skill | `KNOWLEDGE-BASE/INSTRUCTIONS/00-MASTER.md` |
+| Anything not listed | `KNOWLEDGE-BASE/INDEX.md` |
 
-The `createViteConfig()` factory sets `envDir` to the repo root so all frontends read from the same `.env`. Product-specific vars (`VITE_BACKEND_API_URL`) are injected by the factory based on the port config — never in `.env`.
+---
 
-**Rule: VITE_ prefix = public only.** Vite embeds all VITE_ vars in the client JS bundle. Never add secret keys with the VITE_ prefix. Use non-prefixed vars for secrets (they stay server-side).
+## 4 · Sync rule
 
-## Backend Patterns
+This file and `KNOWLEDGE-BASE/INDEX.md` must stay in sync — when you add, rename, or delete any KB file or folder, both get updated.
 
-- **Auth**: `await get_current_user(authorization)` → `(user, token)`. Core admin: `get_current_admin()`.
-- **SSO**: `resolve_sso_role(user)` checks `org_role` (owner/admin → platform_admin) then `noctus_role` (admin → platform_admin). Frontend: `resolveSSORoles()` → `{ isSSO, isProductAdmin }`.
-- **7-role hierarchy**: owner, admin, manager, member, viewer, dev, test. Constants in `noctusai_lib/roles.py`. Dev/owner see in-development pages. Admin/owner manage team+billing.
-- **Page status**: `status_pagina` table per schema (producao/desenvolvimento/desativado). `usePageStatus()` + `filterNavByPageStatus()` on frontend.
-- **Invitations**: `noctusai_lib/invitations.py` — create_invitation, validate, accept, cancel. Email via `send_product_invitation_email()`. Each product has `routers/team.py`. Therapy extends with invite types + binding.
-- **Responses**: paginated_response / success_response / ok_response.
-- **N+1 zero tolerance**: `.in_("id", ids)` for reads, `.insert(rows)` for batch writes. Never loop `db.table()`.
-- **Router → Service**: Business logic in services. Routers are thin.
-- **RLS**: All schemas use `(SELECT auth.uid())` pattern. Functions include `SET search_path`. Service role bypasses via `get_admin_client()`.
-- **Provisioning**: `on_license_change` trigger auto-provisions product defaults.
+**Pre-commit hook enforces it automatically** (`scripts/pre-commit` → installed by `scripts/install-hooks.sh`). On every commit the hook:
 
-## Frontend Patterns
+1. Syncs `products/seed/` → `templates/product-seed/` if staged.
+2. Runs `scripts/update-kb-counts.py` — regenerates auto-derived count blocks (product inventory, schema tables, MCP tools) and stages any updated docs.
+3. Runs `scripts/verify-kb-sync.sh` — **blocks the commit** if any pointer in this file doesn't resolve, or if any KB doc is missing from `INDEX.md`.
 
-- **Mobile-first 3-tier**: base → `sm:`/`md:` → `lg:`/`xl:`. Test at 375/768/1440px.
-- **Toasts**: `sonner` only. **Constants**: `lib/constants.ts`. **Utils**: `lib/utils.ts`.
-- **TanStack Query**: `enabled: !!user`, appropriate `staleTime`, correct `invalidateQueries`.
-- **Hooks in dedicated files, always.** Every domain entity gets its own hook file (`hooks/useContacts.ts`, `hooks/useCampaigns.ts`). Never inline hooks in page components, even for simple products. Products grow — extracted hooks are ready when a second page needs the same data. No refactoring needed.
-- **Token refresh**: `useActivityRefresh` (proactive) + `onTokenExpired` in api-client (reactive 401 retry).
+Manual runs (for debugging or CI):
+- `bash scripts/verify-kb-sync.sh`
+- `python scripts/update-kb-counts.py [--check]`
+- `python mcp/noctusai/cli.py --verify-kb-sync`
 
-## Notifications
+To install hooks in a fresh clone: `bash scripts/install-hooks.sh` (or the full setup: `bash scripts/setup.sh`).
 
-Platform concern — `public.notifications` table. Product routers at `/api/notificacoes` proxy via `get_core_client()` with `map_notification_to_pt()`. Frontend: shared `NotificationBell` component.
+Bypass the hook (rarely correct): `git commit --no-verify`.
 
-## Database & RLS
+---
 
-143+ tables across 5 schemas, all RLS-enabled. Rules: `(SELECT auth.uid())` not bare, `SET search_path` on all functions, HaveIBeenPwned enabled.
-
-## Creating a New Product
-
-Products are born from the seed. The backend `main.py` imports `create_product_app()` from `noctusai_seed`. The frontend `App.tsx` imports `createProductApp()` from `@noctusai/seed`. Products only add domain-specific routers, services, pages, and components.
-
-**New product checklist** (mandatory files from day one):
-1. `README.md` — what the product does, stack, ports, features
-2. `MASTER-PROMPT.md` — authoritative development guide
-3. `frontend/.env.example` — all required `VITE_` vars with placeholders
-4. `backend/migrations/001_<schema>.sql` — full schema with RLS
-5. Registration in `start.sh` with backend + frontend blocks
-6. `backend/app/main.py` — uses `create_product_app()` from seed framework
-7. `frontend/src/App.tsx` — uses `createProductApp()` from seed framework
-
-The `products/seed/` directory is the **reference implementation** — the simplest possible product, just the spine with no domain code. The template at `templates/product-seed/` is auto-generated from it via `scripts/sync-seed-template.sh`.
+<!-- Version history
+  2.0 (2026-04-18) — instructive rewrite: each rule now carries what/what-not/why/deepen.
+                     Added §0 "How this file is organized" + credits metadata.
+  1.0 (2026-04-18) — pointer/map split: specs moved to KNOWLEDGE-BASE/, CLAUDE.md became thin router.
+  0.x  — legacy: everything in one long file; spec + rules conflated.
+-->

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────
+# pre-commit hook
+#
+# Runs BEFORE every commit. Stages any auto-derived updates so they land
+# in the same commit as the human-authored changes — no post-commit amend.
+#
+# Steps:
+#   1. If any staged file is in products/seed/, sync the seed → template
+#      mirror (`sync-seed-template.sh`) and stage templates/product-seed/.
+#   2. Regenerate auto-derived KB count blocks (`update-kb-counts.py`) and
+#      stage any KB docs / CLAUDE.md that changed.
+#   3. Verify KB ↔ CLAUDE.md sync (`verify-kb-sync.sh`). ABORT the commit
+#      if any pointer is broken.
+#
+# Bypass (not recommended): git commit --no-verify
+# ──────────────────────────────────────────────────────────────
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# ─── 1. Seed → template mirror (only if seed/ files are staged) ──
+if [[ -x "$REPO_ROOT/scripts/sync-seed-template.sh" && -d "$REPO_ROOT/products/seed" ]]; then
+    STAGED_SEED=$(git diff --cached --name-only -- products/seed/ 2>/dev/null || true)
+    if [[ -n "$STAGED_SEED" ]]; then
+        echo "[pre-commit] Seed product changed — syncing template..."
+        bash "$REPO_ROOT/scripts/sync-seed-template.sh" 2>&1 | sed 's/^/[pre-commit] /'
+
+        TEMPLATE_DIFF=$(git status --porcelain -- templates/product-seed/ 2>/dev/null || true)
+        if [[ -n "$TEMPLATE_DIFF" ]]; then
+            echo "[pre-commit] Staging template changes:"
+            git add templates/product-seed/
+            git status --porcelain -- templates/product-seed/ | sed 's/^/[pre-commit]   /'
+        else
+            echo "[pre-commit] Template already matches seed — no changes needed."
+        fi
+    fi
+fi
+
+# ─── 2. KB auto-derived counts ──────────────────────────────────
+if [[ -x "$REPO_ROOT/scripts/update-kb-counts.py" ]]; then
+    PY="${PYTHON:-python3}"
+    if command -v "$PY" >/dev/null 2>&1; then
+        echo "[pre-commit] Updating KB auto-derived counts..."
+        "$PY" "$REPO_ROOT/scripts/update-kb-counts.py" 2>&1 | sed 's/^/[pre-commit] /'
+
+        CHANGED_DOCS=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
+        if [[ -n "$CHANGED_DOCS" ]]; then
+            echo "[pre-commit] Staging updated KB docs:"
+            echo "$CHANGED_DOCS" | sed 's/^/[pre-commit]   /'
+            echo "$CHANGED_DOCS" | xargs -r git add
+        fi
+    else
+        echo "[pre-commit] Skipping count refresh — python3 not found"
+    fi
+fi
+
+# ─── 3. KB ↔ CLAUDE.md sync verification (blocking) ─────────────
+if [[ -x "$REPO_ROOT/scripts/verify-kb-sync.sh" ]]; then
+    echo "[pre-commit] Verifying KB sync..."
+    if ! bash "$REPO_ROOT/scripts/verify-kb-sync.sh"; then
+        echo "[pre-commit] KB sync check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Fix the broken pointers in CLAUDE.md or update KNOWLEDGE-BASE/INDEX.md." >&2
+        exit 1
+    fi
+fi
+
+echo "[pre-commit] OK"
+exit 0

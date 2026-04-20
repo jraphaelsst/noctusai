@@ -65,6 +65,51 @@ Install: `pip install -e seed/backend/lib`. Import: `from noctusai_lib.<module> 
 
 `configure_logging(debug)` — JSON (prod) or human-readable (dev).
 
+### `credentials.py` — 3-Tier Credential Resolution
+
+`resolve_credential(key_name, org_id=None)` — `org_settings` → `platform_settings` → env var. Lifted from ERP's local resolver in the LLM consolidation. `configure_credentials(url, anon_key, service_role_key)` is auto-called by `create_product_app()` from `settings.supabase_*` — products get tier 1+2 for free from the single root `.env`.
+
+### `llm/` — Multi-Provider LLM Client
+
+Every product accesses LLMs exclusively through this package. No product code imports `openai` / `anthropic` / `google-generativeai` directly.
+
+**Configuration** (inherited from seed-injector):
+- `LLMConfig(key_provider, default_provider, default_chat_model, default_embedding_model, default_audio_model, default_vision_model, cache_enabled, cache_backend, default_cache_ttl_chat, default_cache_ttl_embedding)` — module singleton after `configure_llm()`.
+- `default_llm_config(**overrides)` (in `noctusai_seed`) — build using platform defaults + selective overrides (e.g. `default_chat_model="gpt-4o"` for Therapy).
+- `configure_llm()` / `get_llm_config()` / `shutdown_llm()` — framework lifecycle hooks.
+- `get_provider(name=None)` — per-name cached provider instance. Providers are stateless wrt API keys.
+- `resolve_api_key(provider, org_id)` — routes through `key_provider`; raises `LLMNotConfigured` on empty.
+
+**Providers** (auto-register on `import noctusai_lib.llm`):
+- `OpenAIProvider` — real, `AsyncOpenAI` SDK, per-key client cache.
+- `AnthropicProvider` — STUB, guarded by `NOCTUSAI_ALLOW_STUB_PROVIDERS=1`.
+- `GeminiProvider` — STUB, same guard pattern.
+- `FakeProvider` — test-only, NOT registered; tests inject via `LLMConfig`.
+- `LLMProvider` Protocol — the contract all providers implement.
+
+**Model catalog**: `MODELS` tuple (~12 entries), `models_for(provider, kind=None)`, `all_providers()`, `is_stub_model(provider, id)`. Each entry tagged `kind: chat|embedding|audio|vision` + `stub: bool`.
+
+**Registry**: `register(name, cls)` / `get_provider_class(name)` / `list_providers()`.
+
+**High-level entry points** (what services call):
+| Function | Purpose |
+|---|---|
+| `chat_completion(messages, model=None, provider=None, org_id=None, cache=True, temperature=..., ...)` | Chat; response cache gated on `cache=True × enabled × backend × temperature==0` |
+| `build_cached_messages(static_system, dynamic_user, *, provider)` | Stable-prefix-first + Anthropic `cache_control` markers |
+| `generate_embedding(text, model=None, provider=None, org_id=None)` | Dense vector; 1536-dim default |
+| `transcribe_audio(audio, model="whisper-1", ...)` | OpenAI-only real body today |
+| `analyze_image(image, prompt, model="gpt-4o", ...)` | URL or raw bytes |
+
+**Exceptions** (all subclass `AppException`): `LLMNotConfigured` (400 + Portuguese message), `LLMAPIError` (502), `ProviderNotImplemented` (501).
+
+**Response cache** (Phase 8):
+- `CacheBackend` Protocol (Redis-like), `InMemoryCacheBackend` for dev/test.
+- `build_cache_key(product, provider, model, prompt_version, payload)`.
+- `try_get` / `try_set` / `flush_for_model` — backend errors swallowed with WARN log.
+- **LGPD**: gate blocks before hashing when `cache=False`. Therapy clinical calls always pass False.
+
+**Credential contract** (`key_provider` callable): `(provider: str, org_id: Optional[str] = None) -> Optional[str]`. Default implementation routes through `resolve_credential(f"{provider}_api_key", org_id)`.
+
 ### `testing/` — Mock Supabase Infrastructure
 
 | Class | Purpose |
@@ -171,7 +216,7 @@ Import: `import { ... } from '@noctusai/lib/design-system'`
 2. **Frontend**: `seed/frontend/lib/src/<module>.ts`, export from `index.ts`
 3. **Design system**: `seed/frontend/lib/src/design-system/components/`, export from `design-system/index.ts`
 4. **Document**: Update this file
-5. **Update seed product**: `products/seed/` — the live reference implementation. Template auto-syncs via post-commit hook.
+5. **Update seed product**: `products/seed/` — the live reference implementation. Template auto-syncs via the pre-commit hook when seed files are staged.
 
 ## Scripts & Automation
 
@@ -182,4 +227,4 @@ Import: `import { ... } from '@noctusai/lib/design-system'`
 | `scripts/install-hooks.sh` | Git hooks only (subset of setup.sh) | If hooks need reinstalling |
 | `start.sh` | Start all backend + frontend servers | When developing |
 
-The post-commit hook auto-syncs `products/seed/` → `templates/product-seed/` on every commit that touches the seed. See `scripts/README.md` for details.
+The pre-commit hook auto-syncs `products/seed/` → `templates/product-seed/` whenever seed files are staged — the template lands in the same commit, no amend. See `scripts/README.md` for details.
