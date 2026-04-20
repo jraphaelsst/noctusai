@@ -23,6 +23,9 @@ from app.routers import (
     whatsapp_webhook, meta_api,
     storage, pdf, jobs, recorrencia,
     certidoes, matriculas, configuracoes,
+    equipes, meta_periodos, metas_empresa,
+    regras_pontuacao, metas_configuracao,
+    metas_equipe, meta_fechamentos, meta_rankings, metas_digest, meta_eventos,
 )
 
 
@@ -87,6 +90,16 @@ app = create_product_app(
         certidoes.router,
         matriculas.router,
         configuracoes.router,
+        equipes.router,
+        meta_periodos.router,
+        metas_empresa.router,
+        regras_pontuacao.router,
+        metas_configuracao.router,
+        metas_equipe.router,
+        meta_fechamentos.router,
+        meta_rankings.router,
+        metas_digest.router,
+        meta_eventos.router,
     ],
     version="0.2.0",
     limiter=limiter,

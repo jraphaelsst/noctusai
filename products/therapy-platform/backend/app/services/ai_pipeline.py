@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 AUDIO_RETENTION_HOURS = 24
 
 
+def _resolve_clinic_id(db: Any, therapist_id: str) -> Optional[str]:
+    """Fetch the `clinic_id` for a therapist profile.
+
+    Independent therapists have `clinic_id IS NULL` — returns None, which
+    the lib treats as "no Tier 1 key, fall through to platform/env".
+    """
+    try:
+        result = (
+            db.table("therapist_profiles")
+            .select("clinic_id")
+            .eq("user_id", therapist_id)
+            .execute()
+        )
+        row = first_or_none(result)
+        return row.get("clinic_id") if row else None
+    except Exception as exc:
+        logger.warning("Could not resolve clinic_id for therapist %s: %s", therapist_id, exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Main Pipeline: Process Session End
 # ---------------------------------------------------------------------------
@@ -68,10 +88,19 @@ async def process_session_end(
     patient_id = appointment["patient_id"]
     therapist_id = appointment["therapist_id"]
 
+    # Resolve the clinic_id for this session. Therapist profiles store
+    # `clinic_id` (NULL for independent therapists). The clinic_id flows
+    # into every lib call as `org_id` so the 3-tier credential chain picks
+    # up the clinic's own provider key before falling back to the platform
+    # default or env.
+    clinic_id = _resolve_clinic_id(db, therapist_id)
+
     # Step 1: Assemble transcript
     logger.info("Step 1: Assembling transcript for %s", appointment_id)
     try:
-        transcript = await transcription_service.assemble_transcript(appointment_id, db)
+        transcript = await transcription_service.assemble_transcript(
+            appointment_id, db, clinic_id=clinic_id,
+        )
     except Exception as e:
         logger.error("Transcription failed for %s: %s", appointment_id, e)
         transcript = f"[Erro na transcrição: {e}]"
@@ -119,6 +148,7 @@ async def process_session_end(
             source=source,
             org_ai_config=None,
             db=db,
+            clinic_id=clinic_id,
         )
     except Exception as e:
         logger.error("Summary generation failed for %s: %s", session_record_id, e)
@@ -132,6 +162,7 @@ async def process_session_end(
             patient_id=patient_id,
             therapist_id=therapist_id,
             db=db,
+            clinic_id=clinic_id,
         )
     except Exception as e:
         logger.error("Clinical longitudinal failed: %s", e)
@@ -144,6 +175,7 @@ async def process_session_end(
             patient_id=patient_id,
             therapist_id=therapist_id,
             db=db,
+            clinic_id=clinic_id,
         )
     except Exception as e:
         logger.error("Patient longitudinal failed: %s", e)
@@ -180,16 +212,8 @@ async def on_observation_change(session_record_id: str, db: Any) -> Dict:
     """
     logger.info("Observation change for session_record %s", session_record_id)
 
-    # Regenerate clinical summary
-    try:
-        clinical_summary = await summary_service.regenerate_clinical_summary(
-            session_record_id, db,
-        )
-    except Exception as e:
-        logger.error("Clinical summary regeneration failed: %s", e)
-        clinical_summary = {"error": str(e)}
-
-    # Fetch session record for patient/therapist IDs
+    # Fetch session record for patient/therapist IDs first — we need the
+    # therapist_id to resolve clinic_id before any LLM call.
     sr_result = (
         db.table("session_records")
         .select("patient_id, therapist_id")
@@ -197,6 +221,16 @@ async def on_observation_change(session_record_id: str, db: Any) -> Dict:
         .execute()
     )
     sr = first_or_none(sr_result)
+    clinic_id = _resolve_clinic_id(db, sr["therapist_id"]) if sr else None
+
+    # Regenerate clinical summary
+    try:
+        clinical_summary = await summary_service.regenerate_clinical_summary(
+            session_record_id, db, clinic_id=clinic_id,
+        )
+    except Exception as e:
+        logger.error("Clinical summary regeneration failed: %s", e)
+        clinical_summary = {"error": str(e)}
 
     clinical_longitudinal = None
     if sr:
@@ -205,6 +239,7 @@ async def on_observation_change(session_record_id: str, db: Any) -> Dict:
                 patient_id=sr["patient_id"],
                 therapist_id=sr["therapist_id"],
                 db=db,
+                clinic_id=clinic_id,
             )
         except Exception as e:
             logger.error("Clinical longitudinal regeneration failed: %s", e)
@@ -236,11 +271,13 @@ async def on_patient_note_change(
         patient_id,
     )
 
+    clinic_id = _resolve_clinic_id(db, therapist_id)
     try:
         patient_longitudinal = await longitudinal_service.generate_patient_longitudinal(
             patient_id=patient_id,
             therapist_id=therapist_id,
             db=db,
+            clinic_id=clinic_id,
         )
     except Exception as e:
         logger.error("Patient longitudinal regeneration failed: %s", e)

@@ -38,3 +38,15 @@ export { AcceptInvitePage } from "./components/AcceptInvitePage";
 export type { AcceptInvitePageProps } from "./components/AcceptInvitePage";
 
 export { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
+
+export { LLMProviderSelector } from "./components/LLMProviderSelector";
+export type { LLMProviderSelectorProps } from "./components/LLMProviderSelector";
+
+// Gamification primitives — see `KNOWLEDGE-BASE/CONTEXT/07-GAMIFICATION.md`.
+// Subtle, always tied to real business activity.
+export { RankBadge } from "./gamification/RankBadge";
+export type { RankBadgeProps } from "./gamification/RankBadge";
+export { ScorePill } from "./gamification/ScorePill";
+export type { ScorePillProps } from "./gamification/ScorePill";
+export { ProgressRing } from "./gamification/ProgressRing";
+export type { ProgressRingProps } from "./gamification/ProgressRing";

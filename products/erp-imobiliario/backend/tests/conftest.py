@@ -17,6 +17,16 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
 
 
+# Dev benchmarks that are misnamed with the `test_` prefix but contain no
+# pytest test functions. They invoke the real OpenAI API and are meant to be
+# run manually, not discovered during unit-test runs.
+collect_ignore = [
+    "test_embedding_vs_rules.py",
+    "test_mock_matching_local.py",
+    "test_mock_matching_large.py",
+]
+
+
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 

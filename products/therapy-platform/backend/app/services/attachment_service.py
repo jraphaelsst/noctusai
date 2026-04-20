@@ -82,73 +82,59 @@ async def process_attachment_with_ai(
     file_url: str,
     file_type: str,
     db: Any,
+    clinic_id: Optional[str] = None,
 ) -> Optional[str]:
-    """Process an attachment with OpenAI.
+    """Process a patient-uploaded attachment via the shared LLM client.
 
-    For images: uses Vision API for description.
+    For images: uses Vision (GPT-4o) to describe / extract text.
     For audio: uses Whisper for transcription.
-    Returns AI-processed content or None on failure/missing key.
+    Returns AI-processed content or None on failure / missing key.
+
+    `clinic_id` is threaded through as `org_id` so the clinic's Tier 1
+    provider key is used when configured.
+
+    **LGPD**: Patient-uploaded files may contain clinical documents or raw
+    voice — Art. 11 sensitive data. Responses are not cached (audio / vision
+    don't pass through the response cache layer). See `LGPD-WARNINGS.md`
+    entry `patient-attachment-to-llm`.
     """
-    if not settings.openai_api_key:
-        logger.info("OpenAI API key not configured — skipping AI attachment processing")
-        return None
+    from noctusai_lib.llm import LLMNotConfigured, analyze_image, transcribe_audio
 
     try:
-        import openai
-        client = openai.OpenAI(api_key=settings.openai_api_key)
-
         if file_type == "image":
-            response = client.chat.completions.create(
+            return await analyze_image(
+                image=file_url,
+                prompt=(
+                    "Descreva esta imagem de forma concisa em português. "
+                    "Se parecer ser um documento clínico ou anotação, "
+                    "extraia o conteúdo textual principal."
+                ),
                 model="gpt-4o",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Descreva esta imagem de forma concisa em português. "
-                                    "Se parecer ser um documento clínico ou anotação, "
-                                    "extraia o conteúdo textual principal."
-                                ),
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": file_url},
-                            },
-                        ],
-                    }
-                ],
                 max_tokens=500,
+                org_id=clinic_id,
             )
-            return response.choices[0].message.content
 
         elif file_type == "audio":
-            # Download the file for Whisper
+            # Download the audio payload — generic HTTP (not an LLM call).
             import httpx
+
             async with httpx.AsyncClient() as http:
                 audio_resp = await http.get(file_url)
                 if audio_resp.status_code != 200:
                     logger.warning("Failed to download audio for transcription: %s", file_url)
                     return None
 
-            import tempfile
-            import os
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                tmp.write(audio_resp.content)
-                tmp_path = tmp.name
+            return await transcribe_audio(
+                audio_resp.content,
+                model="whisper-1",
+                filename="attachment.mp3",
+                language="pt",
+                org_id=clinic_id,
+            )
 
-            try:
-                with open(tmp_path, "rb") as audio_file:
-                    transcript = client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio_file,
-                        language="pt",
-                    )
-                return transcript.text
-            finally:
-                os.unlink(tmp_path)
-
+    except LLMNotConfigured:
+        logger.info("LLM not configured — skipping AI attachment processing")
+        return None
     except Exception as e:
         logger.error("AI attachment processing failed: %s", e)
         return None

@@ -15,6 +15,7 @@ import { DetailPageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatCurrency } from '@/lib/utils';
 import { MapPin, FileX } from 'lucide-react';
+import { MetaEventoIndicator } from '@/components/MetaEventoIndicator';
 
 export default function ImovelDetalhes() {
   const { id } = useParams();
@@ -77,6 +78,8 @@ export default function ImovelDetalhes() {
           </div>
         </div>
       </Card>
+
+      <MetaEventoIndicator refType="ativo" refId={imovel.id} />
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>

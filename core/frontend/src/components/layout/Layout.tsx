@@ -15,6 +15,7 @@ import {
   Users,
   LogOut,
   PackageOpen,
+  Brain,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
@@ -34,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: 'Organizacoes', href: '/admin/orgs', icon: Building2 },
       { name: 'Assinaturas', href: '/admin/subs', icon: CreditCard },
       { name: 'Chaves API', href: '/admin/api-keys', icon: KeyRound },
+      { name: 'Chaves LLM', href: '/api-keys', icon: Brain },
       { name: 'Planos', href: '/admin/plans', icon: ClipboardList },
       { name: 'Produtos', href: '/admin/products', icon: Package },
       { name: 'Faturamento', href: '/admin/billing', icon: Wallet },

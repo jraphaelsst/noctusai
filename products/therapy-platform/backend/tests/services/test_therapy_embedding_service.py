@@ -102,20 +102,11 @@ class TestBuildPatientText:
 class TestGenerateEmbedding:
     @pytest.mark.asyncio
     async def test_generate_embedding_success(self):
-        """Mock OpenAI API to return embedding."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "data": [{"embedding": MOCK_EMBEDDING}],
-        }
-
-        with patch("app.services.therapy_embedding_service.httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
-
+        """Service delegates to the shared lib's generate_embedding."""
+        with patch(
+            "app.services.therapy_embedding_service._lib_generate_embedding",
+            new=AsyncMock(return_value=MOCK_EMBEDDING),
+        ):
             result = await therapy_embedding_service.generate_embedding(
                 text="Test text",
                 api_key="test-key",
@@ -123,20 +114,15 @@ class TestGenerateEmbedding:
             assert len(result) == 1536
 
     @pytest.mark.asyncio
-    async def test_generate_embedding_api_error(self):
-        """API error raises ValueError."""
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.text = "Internal Server Error"
+    async def test_generate_embedding_propagates_lib_errors(self):
+        """Lib-level errors propagate — service does not catch or transform them."""
+        from noctusai_lib.llm import LLMAPIError
 
-        with patch("app.services.therapy_embedding_service.httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
-
-            with pytest.raises(ValueError, match="Erro na API OpenAI"):
+        with patch(
+            "app.services.therapy_embedding_service._lib_generate_embedding",
+            new=AsyncMock(side_effect=LLMAPIError("openai", "upstream failure")),
+        ):
+            with pytest.raises(LLMAPIError):
                 await therapy_embedding_service.generate_embedding(
                     text="Test",
                     api_key="test-key",

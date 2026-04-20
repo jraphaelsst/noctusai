@@ -28,6 +28,7 @@ import { TeamManagement } from './pages/TeamManagement';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { AccountSettings } from './pages/AccountSettings';
 import { OrgSettings } from './pages/OrgSettings';
+import { APIKeys } from './pages/APIKeys';
 import { InactivityWarning } from '@noctusai/lib/design-system/InactivityWarning';
 import { api, clearToken, getRefreshToken, setToken, setRefreshToken } from './lib/api';
 import './index.css';
@@ -85,6 +86,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/team" element={<ProtectedRoute><TeamManagement /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><AccountSettings /></ProtectedRoute>} />
           <Route path="/org-settings" element={<ProtectedRoute><OrgSettings /></ProtectedRoute>} />
+          <Route path="/api-keys" element={<ProtectedRoute><APIKeys /></ProtectedRoute>} />
+          <Route path="/settings/api-keys" element={<ProtectedRoute><APIKeys /></ProtectedRoute>} />
           <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
 
           {/* Public route — accept invitation (no ProtectedRoute wrapper) */}

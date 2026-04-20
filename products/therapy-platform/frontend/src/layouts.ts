@@ -104,6 +104,7 @@ const CLINIC_NAV: NavGroupWithRoute[] = [
 ];
 
 const CLINIC_STANDALONE: NavItemWithRoute[] = [
+  { name: "Preferencias de IA", href: "/clinic/configuracoes/llm", icon: Brain, route: "clinic-configuracoes-llm" },
   { name: "Configuracoes", href: "/clinic/configuracoes", icon: Settings, route: "clinic-configuracoes" },
 ];
 

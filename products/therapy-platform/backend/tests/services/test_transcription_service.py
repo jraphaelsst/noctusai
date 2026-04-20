@@ -68,9 +68,8 @@ class TestTranscribeSegment:
 
     @pytest.mark.asyncio
     async def test_transcription_success(self):
-        """Happy path: downloads audio and gets transcript from Whisper."""
+        """Happy path: downloads audio and delegates to shared-lib transcribe_audio."""
         import httpx as _httpx
-        import openai as _openai
 
         mock_http_response = MagicMock()
         mock_http_response.content = b"fake-audio-data"
@@ -81,15 +80,13 @@ class TestTranscribeSegment:
         mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
         mock_http_client.__aexit__ = AsyncMock(return_value=False)
 
-        mock_openai_instance = MagicMock()
-        mock_openai_instance.audio.transcriptions.create = AsyncMock(
-            return_value="Paciente relatou melhora significativa."
-        )
-
         with (
             patch.object(transcription_service, "_openai_configured", return_value=True),
             patch.object(_httpx, "AsyncClient", return_value=mock_http_client),
-            patch.object(_openai, "AsyncOpenAI", return_value=mock_openai_instance),
+            patch(
+                "noctusai_lib.llm.transcribe_audio",
+                new=AsyncMock(return_value="Paciente relatou melhora significativa."),
+            ),
         ):
             result = await transcription_service.transcribe_segment(
                 audio_url="https://storage.example.com/audio/seg1.ogg",
@@ -122,9 +119,8 @@ class TestTranscribeSegment:
 
     @pytest.mark.asyncio
     async def test_transcription_whisper_failure(self):
-        """Returns error message when Whisper API call fails."""
+        """Returns error message when shared-lib transcribe_audio raises."""
         import httpx as _httpx
-        import openai as _openai
 
         mock_http_response = MagicMock()
         mock_http_response.content = b"fake-audio-data"
@@ -135,15 +131,13 @@ class TestTranscribeSegment:
         mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
         mock_http_client.__aexit__ = AsyncMock(return_value=False)
 
-        mock_openai_instance = MagicMock()
-        mock_openai_instance.audio.transcriptions.create = AsyncMock(
-            side_effect=Exception("Rate limit exceeded")
-        )
-
         with (
             patch.object(transcription_service, "_openai_configured", return_value=True),
             patch.object(_httpx, "AsyncClient", return_value=mock_http_client),
-            patch.object(_openai, "AsyncOpenAI", return_value=mock_openai_instance),
+            patch(
+                "noctusai_lib.llm.transcribe_audio",
+                new=AsyncMock(side_effect=Exception("Rate limit exceeded")),
+            ),
         ):
             result = await transcription_service.transcribe_segment(
                 audio_url="https://storage.example.com/audio/seg1.ogg",
@@ -220,7 +214,7 @@ class TestAssembleTranscript:
         db = MockSupabaseClient()
         db.set_table_data("session_audio_segments", [SEGMENT_INITIAL, SEGMENT_RESUMED])
 
-        async def mock_transcribe(url, num):
+        async def mock_transcribe(url, num, **kwargs):
             return f"Texto segmento {num}."
 
         with patch.object(
@@ -241,7 +235,7 @@ class TestAssembleTranscript:
         db = MockSupabaseClient()
         db.set_table_data("session_audio_segments", [SEGMENT_INITIAL, SEGMENT_REOPENED])
 
-        async def mock_transcribe(url, num):
+        async def mock_transcribe(url, num, **kwargs):
             return f"Texto segmento {num}."
 
         with patch.object(

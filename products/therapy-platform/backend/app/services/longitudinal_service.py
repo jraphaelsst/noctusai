@@ -63,26 +63,41 @@ def _get_setting(db: Any, key: str, default: str) -> str:
     return row["value"] if row else default
 
 
-async def _call_openai(system_prompt: str, user_content: str) -> Dict:
-    """Call OpenAI GPT and parse the JSON response."""
-    try:
-        from openai import AsyncOpenAI
+async def _call_openai(
+    system_prompt: str,
+    user_content: str,
+    clinic_id: Optional[str] = None,
+) -> Dict:
+    """Call the configured LLM and parse its JSON response.
 
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.create(
-            model="gpt-4o",
+    **LGPD**: `user_content` aggregates multiple session summaries — Art. 11
+    sensitive data. We pass `cache=False` so no response cache retains it.
+    See `LGPD-WARNINGS.md` entry `longitudinal-clinical-aggregation`.
+
+    `clinic_id` is threaded through as `org_id` so the lib picks up the
+    clinic's own provider key (Tier 1) before falling back to platform / env.
+    """
+    from noctusai_lib.llm import LLMNotConfigured, chat_completion
+
+    try:
+        content = await chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
+            model="gpt-4o",
             temperature=0.4,
             max_tokens=3000,
             response_format={"type": "json_object"},
+            cache=False,  # LGPD: longitudinal clinical aggregation
+            org_id=clinic_id,
         )
-        content = response.choices[0].message.content or "{}"
-        return json.loads(content)
+        return json.loads(content or "{}")
+    except LLMNotConfigured as e:
+        logger.warning("LLM not configured for longitudinal call: %s", e)
+        return {"error": str(e)}
     except Exception as e:
-        logger.error("OpenAI longitudinal call failed: %s", e)
+        logger.error("LLM longitudinal call failed: %s", e)
         return {"error": str(e)}
 
 
@@ -108,6 +123,7 @@ async def generate_clinical_longitudinal(
     patient_id: str,
     therapist_id: str,
     db: Any,
+    clinic_id: Optional[str] = None,
 ) -> Dict:
     """Generate a clinical longitudinal analysis.
 
@@ -221,7 +237,7 @@ async def generate_clinical_longitudinal(
     if obs_text_parts:
         user_content += "\n\nOBSERVAÇÕES DO TERAPEUTA:\n" + "\n".join(obs_text_parts)
 
-    result = await _call_openai(prompt, user_content)
+    result = await _call_openai(prompt, user_content, clinic_id=clinic_id)
 
     if "error" in result and len(result) == 1:
         return {"status": "error", "message": result["error"]}
@@ -250,6 +266,7 @@ async def generate_patient_longitudinal(
     patient_id: str,
     therapist_id: str,
     db: Any,
+    clinic_id: Optional[str] = None,
 ) -> Dict:
     """Generate a patient-facing longitudinal analysis.
 
@@ -357,7 +374,7 @@ async def generate_patient_longitudinal(
     if notes_text_parts:
         user_content += "\n\nSUAS ANOTAÇÕES PESSOAIS:\n" + "\n".join(notes_text_parts)
 
-    result = await _call_openai(prompt, user_content)
+    result = await _call_openai(prompt, user_content, clinic_id=clinic_id)
 
     if "error" in result and len(result) == 1:
         return {"status": "error", "message": result["error"]}

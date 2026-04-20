@@ -28,6 +28,17 @@ export type { AuthState, BaseFiltrosState } from './stores';
 export { createCrudHooks } from './hooks';
 export type { CrudHookOptions } from './hooks';
 
+// LLM hooks
+export { createLLMHooks, createLLMCredentialsHooks } from './llm';
+export type {
+  LLMProviderInfo,
+  LLMModelInfo,
+  LLMPreferences,
+  CredentialStatus,
+  CredentialsState,
+  SetCredentialsBody,
+} from './llm';
+
 // Query client
 export { createQueryClient } from './query-client';
 

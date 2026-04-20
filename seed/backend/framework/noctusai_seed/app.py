@@ -30,9 +30,13 @@ from fastapi import FastAPI
 
 from noctusai_lib.logging_config import configure_logging
 from noctusai_lib.app_factory import configure_app
+from noctusai_lib.credentials import configure_credentials
+from noctusai_lib.llm import LLMConfig
+from noctusai_lib.llm.client import configure_llm, shutdown_llm
 
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
+from noctusai_seed.llm_defaults import default_llm_config
 from noctusai_seed.routers import create_standard_routers
 
 logger = logging.getLogger(__name__)
@@ -47,6 +51,7 @@ def create_product_app(
     lifespan_startup: Optional[Callable] = None,
     lifespan_shutdown: Optional[Callable] = None,
     limiter=None,
+    llm_config: Optional[LLMConfig] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -56,6 +61,10 @@ def create_product_app(
       - Auth dependencies (get_current_user, get_org_id, etc.)
       - Standard routers (health, notifications, team)
       - CORS, Sentry, exception handlers, middleware, rate limiting
+      - **Credential resolution** via `noctusai_lib.credentials` (auto-configured
+        from settings.supabase_*)
+      - **Multi-provider LLM access** via `noctusai_lib.llm` (inherits
+        `default_llm_config()` unless overridden via `llm_config=`)
       - Optional lifespan events (scheduler start/stop, recovery tasks)
 
     Args:
@@ -67,6 +76,9 @@ def create_product_app(
         lifespan_startup: Async callable to run on startup (e.g. start scheduler)
         lifespan_shutdown: Async callable to run on shutdown (e.g. stop scheduler)
         limiter: Rate limiter instance (from create_limiter)
+        llm_config: Override the default LLMConfig. Use `default_llm_config(
+            **overrides)` from `noctusai_seed` when you want to tweak one or
+            two fields; pass None to inherit the platform defaults verbatim.
 
     Returns:
         Configured FastAPI application instance.
@@ -79,20 +91,43 @@ def create_product_app(
     app_name = schema.replace("_", "-").replace(" ", "-").lower()
     configure_logging(debug=settings.debug, json_logs=not settings.debug, app_name=app_name)
 
-    # 2. Create database module and dependencies
+    # 2. Auto-wire credential resolution (Tier 1+2 need a public-schema client).
+    #    Every product's settings carries the same Supabase URL + keys from the
+    #    root .env — per the single-source-.env rule — so this one call at the
+    #    framework level sets up credential resolution for every product.
+    configure_credentials(
+        supabase_url=settings.supabase_url,
+        supabase_anon_key=settings.supabase_anon_key,
+        supabase_service_role_key=settings.supabase_service_role_key,
+    )
+
+    # 3. Auto-wire LLM access. Products inherit platform defaults unless they
+    #    override via the llm_config parameter. `REDIS_URL` in settings flips
+    #    the response cache on automatically with a Redis backend.
+    effective_llm_config = llm_config or default_llm_config(
+        redis_url=getattr(settings, "redis_url", None),
+    )
+    configure_llm(effective_llm_config)
+
+    # 4. Create database module and dependencies
     db = create_database_module(settings, schema)
     deps = create_dependencies(db)
 
-    # 3. Create lifespan if startup/shutdown hooks provided
+    # 5. Create lifespan — always active so we can run shutdown_llm(). Product-
+    #    specified startup/shutdown hooks are composed with the framework's.
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if lifespan_startup:
             await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()
-        yield
-        if lifespan_shutdown:
-            await lifespan_shutdown() if _is_coroutine(lifespan_shutdown) else lifespan_shutdown()
+        try:
+            yield
+        finally:
+            if lifespan_shutdown:
+                await lifespan_shutdown() if _is_coroutine(lifespan_shutdown) else lifespan_shutdown()
+            # Framework-level cleanup — release LLM provider pools.
+            await shutdown_llm()
 
-    has_lifespan = lifespan_startup or lifespan_shutdown
+    has_lifespan = True  # now always true — we own shutdown_llm
 
     # 4. Create the FastAPI app
     app = FastAPI(

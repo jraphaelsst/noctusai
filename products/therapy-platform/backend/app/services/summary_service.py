@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 from app.config import settings
 from app.dependencies import first_or_none
 
+from noctusai_lib.llm import LLMNotConfigured, chat_completion
+
 logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_SUMMARY = (
@@ -68,29 +70,48 @@ def _get_prompt(db: Any, key: str, default: str) -> str:
     return row["value"] if row else default
 
 
-async def _call_openai(system_prompt: str, user_content: str) -> Dict:
-    """Call OpenAI GPT and parse the JSON response.
+async def _call_llm(
+    system_prompt: str,
+    user_content: str,
+    clinic_id: Optional[str] = None,
+) -> Dict:
+    """Call the configured LLM and parse its JSON response.
 
-    Returns parsed dict or a fallback structure on failure.
+    **LGPD note**: `user_content` contains clinical free text (session
+    transcripts, therapist observations). We pass `cache=False` so the
+    response never lands in a shared cache — see `LGPD-WARNINGS.md` entry
+    `summary-transcript-in-llm-prompt` and `KNOWLEDGE-BASE/CONTEXT/PATTERNS/lgpd.md`.
+
+    `clinic_id` is threaded through as `org_id` so the lib resolves keys
+    from the clinic's Tier 1 `org_settings` first, falling back to platform
+    default and env. Therapy stores clinic_id under the `org_id` column in
+    `llm_preferences` / `org_settings` — the mapping is direct.
+
+    Returns parsed dict, or a fallback structure on failure / not-configured.
     """
     try:
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.create(
-            model="gpt-4o",
+        content = await chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
+            model="gpt-4o",
             temperature=0.4,
             max_tokens=2000,
             response_format={"type": "json_object"},
+            cache=False,  # LGPD: patient clinical text — never cache
+            org_id=clinic_id,
         )
-        content = response.choices[0].message.content or "{}"
-        return json.loads(content)
+        return json.loads(content or "{}")
+    except LLMNotConfigured:
+        # Graceful degrade preserving the previous placeholder UX.
+        return {
+            "summary": _PLACEHOLDER_SUMMARY,
+            "key_points": [],
+            "tags": [],
+        }
     except Exception as e:
-        logger.error("OpenAI call failed: %s", e)
+        logger.error("LLM call failed: %s", e)
         return {
             "summary": f"[Erro ao gerar resumo: {e}]",
             "key_points": [],
@@ -123,6 +144,7 @@ async def generate_session_summaries(
     source: str,
     org_ai_config: Optional[Dict],
     db: Any,
+    clinic_id: Optional[str] = None,
 ) -> Dict:
     """Generate Track 1 (base) and Track 2 (clinical) summaries.
 
@@ -151,7 +173,7 @@ async def generate_session_summaries(
 
     # --- Track 1: Base summary (transcript only) ---
     base_prompt = _get_prompt(db, "ai_prompt_base_summary", _DEFAULT_BASE_PROMPT)
-    base_result = await _call_openai(base_prompt, f"TRANSCRIÇÃO:\n{transcript}")
+    base_result = await _call_llm(base_prompt, f"TRANSCRIÇÃO:\n{transcript}", clinic_id=clinic_id)
 
     base_version = _next_version_number(db, session_record_id, "base")
     db.table("session_summary_versions").insert({
@@ -174,7 +196,7 @@ async def generate_session_summaries(
         obs_text = "\n\nOBSERVAÇÕES DO TERAPEUTA:\n" + "\n".join(obs_lines)
 
     clinical_input = f"TRANSCRIÇÃO:\n{transcript}{obs_text}"
-    clinical_result = await _call_openai(clinical_prompt, clinical_input)
+    clinical_result = await _call_llm(clinical_prompt, clinical_input, clinic_id=clinic_id)
 
     clinical_version = _next_version_number(db, session_record_id, "clinical")
     db.table("session_summary_versions").insert({
@@ -197,7 +219,11 @@ async def generate_session_summaries(
 # Regenerate Clinical Summary (Track 2 only)
 # ---------------------------------------------------------------------------
 
-async def regenerate_clinical_summary(session_record_id: str, db: Any) -> Dict:
+async def regenerate_clinical_summary(
+    session_record_id: str,
+    db: Any,
+    clinic_id: Optional[str] = None,
+) -> Dict:
     """Regenerate the clinical summary after observation changes.
 
     Fetches the latest transcript and all non-deleted observations,
@@ -242,7 +268,7 @@ async def regenerate_clinical_summary(session_record_id: str, db: Any) -> Dict:
         obs_text = "\n\nOBSERVAÇÕES DO TERAPEUTA:\n" + "\n".join(obs_lines)
 
     clinical_input = f"TRANSCRIÇÃO:\n{transcript}{obs_text}"
-    clinical_result = await _call_openai(clinical_prompt, clinical_input)
+    clinical_result = await _call_llm(clinical_prompt, clinical_input, clinic_id=clinic_id)
 
     version_number = _next_version_number(db, session_record_id, "clinical")
     db.table("session_summary_versions").insert({

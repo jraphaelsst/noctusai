@@ -7,7 +7,7 @@ degradation when the OpenAI API key is not configured.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from app.config import settings
 from app.dependencies import first_or_none
@@ -28,7 +28,11 @@ def _openai_configured() -> bool:
 # Single Segment Transcription
 # ---------------------------------------------------------------------------
 
-async def transcribe_segment(audio_url: str, segment_number: int) -> str:
+async def transcribe_segment(
+    audio_url: str,
+    segment_number: int,
+    clinic_id: Optional[str] = None,
+) -> str:
     """Transcribe a single audio segment via OpenAI Whisper.
 
     Downloads the audio file and sends it to the Whisper API.
@@ -44,31 +48,35 @@ async def transcribe_segment(audio_url: str, segment_number: int) -> str:
 
     try:
         import httpx
-        from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        from noctusai_lib.llm import LLMNotConfigured, transcribe_audio
 
-        # Download audio file
-        audio_data: bytes
         if audio_url.startswith("mock://"):
             logger.info("Mock audio URL — retornando placeholder para segmento %d", segment_number)
             return f"[Segmento {segment_number} — áudio mock, sem transcrição real]"
 
+        # Download audio file. (httpx here is generic HTTP, not an OpenAI call —
+        # shared-lib LLM handles the Whisper side.)
         async with httpx.AsyncClient(timeout=120) as http:
             resp = await http.get(audio_url)
             resp.raise_for_status()
             audio_data = resp.content
 
-        # Send to Whisper
-        transcript = await client.audio.transcriptions.create(
+        # LGPD: raw patient audio. Whisper is a 3rd-party egress; the outbound
+        # is unavoidable for the feature but the response is never cached
+        # (transcribe_audio doesn't go through the cache layer).
+        transcript = await transcribe_audio(
+            audio_data,
             model="whisper-1",
-            file=("segment.ogg", audio_data, "audio/ogg"),
+            filename="segment.ogg",
             language="pt",
             response_format="text",
+            org_id=clinic_id,
         )
-
         return str(transcript).strip()
 
+    except LLMNotConfigured:
+        return _PLACEHOLDER_TEXT
     except Exception as e:
         logger.error(
             "Erro ao transcrever segmento %d: %s",
@@ -82,7 +90,11 @@ async def transcribe_segment(audio_url: str, segment_number: int) -> str:
 # Full Transcript Assembly
 # ---------------------------------------------------------------------------
 
-async def assemble_transcript(appointment_id: str, db: Any) -> str:
+async def assemble_transcript(
+    appointment_id: str,
+    db: Any,
+    clinic_id: Optional[str] = None,
+) -> str:
     """Assemble the full transcript from all audio segments.
 
     Transcribes each segment individually and concatenates them with
@@ -134,7 +146,7 @@ async def assemble_transcript(appointment_id: str, db: Any) -> str:
 
         # Transcribe
         if audio_url:
-            text = await transcribe_segment(audio_url, seg_number)
+            text = await transcribe_segment(audio_url, seg_number, clinic_id=clinic_id)
         else:
             text = f"[Segmento {seg_number} — áudio não disponível]"
 

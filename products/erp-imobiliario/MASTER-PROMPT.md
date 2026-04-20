@@ -23,9 +23,9 @@ Full-featured real estate CRM for Brazilian property management companies. Handl
 - **condominios** -- condo management (common areas, fees)
 
 ### AI and Matching
-- **ai** -- OpenAI-powered property descriptions, lead scoring, price suggestions
+- **ai** -- property descriptions, lead scoring, price suggestions. Delegates to `noctusai_lib.llm.chat_completion`. Model pinned `gpt-4o-mini`. No direct SDK use — never `from openai import ...` in product code.
 - **matching** -- property-to-client and property-to-permuta matching algorithm
-- **embedding_service** -- vector embeddings for semantic property search
+- **embedding_service** -- vector embeddings for semantic property search. Delegates to `noctusai_lib.llm.generate_embedding`; the old local `generate_embedding` was absorbed into the shared lib during the multi-provider migration.
 
 ### Real Estate Operations
 - **locacoes** -- rental contracts and management
@@ -78,10 +78,11 @@ Full-featured real estate CRM for Brazilian property management companies. Handl
 ## Services (41)
 
 Each router has a corresponding service. Key specialized services:
-- `credential_resolver` -- resolves per-org API credentials for integrations
 - `signature_provider` -- abstracts ClickSign vs D4Sign digital signature providers
 - `xml_feeds` -- generates XML feeds for property portals
-- `embedding_service` -- manages vector embeddings for AI features
+- `embedding_service` -- manages vector embeddings for AI features; calls `noctusai_lib.llm.generate_embedding`
+
+Credential resolution (per-org → platform → env) now lives in `noctusai_lib.credentials.resolve_credential`. The old `app/services/credential_resolver.py` was deleted during the LLM consolidation; import from the shared lib instead.
 
 ## ERP-Specific Patterns
 
@@ -116,9 +117,9 @@ cd products/erp-imobiliario/backend && pytest
 
 ## Dependencies
 
-- Shared backend: `noctusai_lib`
+- Shared backend: `noctusai_lib` (including `noctusai_lib.llm` for all AI access + `noctusai_lib.credentials` for 3-tier key resolution)
 - Shared frontend: `@noctusai/lib` + `@noctusai/lib/design-system`
-- OpenAI: property descriptions, lead scoring, price suggestions, embeddings
+- LLM access: via `noctusai_lib.llm` only (OpenAI real; Anthropic + Gemini stubs). Per-org key resolution is automatic — services don't handle credentials.
 - WAHA: WhatsApp Business API messaging
 - ClickSign / D4Sign: digital signature providers
 - Meta API: Facebook/Instagram Ads integration

@@ -217,7 +217,11 @@ Phases are **suggestive, not strict.** Reorder, split, merge, or discover new ph
 - [x] Team cards (click → drill-down route, colored border from `equipes.cor`)
 - [x] ⓘ info icons on every metric with formula/explanation
 - [x] Hooks file `hooks/useMetasDomain.ts` with all 14 TanStack queries/mutations covering the 49 endpoints
-- [ ] Charts (line period-progression / bar agent-comparison / progress rings) — *polish pending*
+- [ ] Charts polish (closing pass 2026-04-19):
+  - [ ] 7.a Line chart — period-progression (realizado cumulativo vs meta por quinzena) on MetasDashboard owner view
+  - [ ] 7.b Bar chart — agent-comparison (top 10 agents by pontos / VGV / unificado, switchable)
+  - [ ] 7.c Progress rings — per-team meta VGV achievement (uses `@noctusai/lib/design-system/ProgressRing`)
+  - [ ] 7.d Wire charts behind `recharts` (check if already in ERP deps; add if missing — already used elsewhere per frontend patterns)
 
 ### Phase 8 — Closings & history ✅ (backend complete)
 - [x] 8.1 Service `meta_fechamentos_service.py` — idempotent `close_periodo()` aggregates events per agent, computes score unificado via org config, snapshots + flips period status to 'fechado'
@@ -246,7 +250,10 @@ Phases are **suggestive, not strict.** Reorder, split, merge, or discover new ph
 - [x] **Extract reusable gamification components** → shipped in `seed/frontend/lib/src/design-system/gamification/`: `RankBadge` (gold/silver/bronze tiers + neutral), `ScorePill` (good/warn/bad threshold color), `ProgressRing` (animated SVG with threshold coloring). Exported from `@noctusai/lib/design-system`. Already consumed by ERP `MetasAgentWidget` + `MetasDashboard` unified-ranking tab. Other products can now use them directly.
 - [x] **Milestone notifications (50 / 80 / 100 % of VGV)** — **shipped**. Migration `019_metas_milestones.sql` (applied via Supabase MCP) creates `erp.meta_milestones` (dedup by `(org,corretor,periodo,categoria,milestone)` with 3 CHECK values) + `erp.fn_meta_progresso(corretor,periodo,categoria)` helper that reads personal VGV meta first, falls back to team-allocation ÷ active-members, returns `(realizado, meta, pct)` + `trg_meta_milestone` on `erp.meta_eventos` INSERT that looks up the currently-open quinzenal `periodo`, checks which milestone(s) just crossed, inserts a dedup row, and dispatches to `public.notificacoes` with Portuguese copy ("Você atingiu 80% da sua meta VGV…"). Trigger fires only the highest newly-crossed milestone to avoid 3-notif-at-once spam when an agent leaps 40→100. RLS: agent reads own milestones + admin reads org milestones.
 - [x] **Email summary on biweekly closing** — **shipped**. `app/services/metas_digest_service.py` aggregates period stats (top-3 unified ranking + per-team meta/realizado/%/color dot + milestone counts) and renders standalone HTML + plain-text. Delivered via Resend using the existing `_get_resend_config(org_id)` chain — dry-runs cleanly when no Resend key resolves (logs HTML for inspection). Router `POST /api/metas/digest/{periodo_id}?recipient=email@...` (admin/owner-gated) — designed to be hit by an n8n cron on Friday of each quinzena closing. No periodic scheduler in the product itself; orchestration belongs in n8n which already lives at `n8n.noctusai.com`.
-- [ ] Micro-animation on meta achievement — confetti/pulse/toast on milestone cross. Backend trigger already inserts the `meta_atingida` notification; the UI layer can light up when that notification arrives. Small piece of frontend polish, not doing now.
+- [ ] Micro-animation on meta achievement (closing pass 2026-04-19):
+  - [ ] 11.a `useMetaMilestoneToast` hook that subscribes to notification stream and filters for `tipo='meta_atingida'` (or the trigger's dispatched kind) — dedup by notification id in-memory
+  - [ ] 11.b Confetti + pulse on `RankBadge` when a milestone notification arrives — use `canvas-confetti` (small dep, ~1kb) + CSS pulse animation on `ScorePill`
+  - [ ] 11.c Wire hook into `MetasDashboard.tsx` + `MetasAgentWidget.tsx` so the animation fires on both the dashboard and the legacy homepage widget
 
 ---
 

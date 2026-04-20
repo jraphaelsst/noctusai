@@ -128,55 +128,42 @@ class TestBuildAtivoText:
 class TestGenerateEmbedding:
     @pytest.mark.asyncio
     async def test_generate_embedding_success(self):
+        """Service delegates to shared-lib generate_embedding with the pinned model."""
         mock_embedding = [0.1] * 1536
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "data": [{"embedding": mock_embedding}]
-        }
-
-        with patch("app.services.embedding_service.resolve_credential", return_value="test-key"), \
-             patch("httpx.AsyncClient") as MockClient:
-
-            mock_client_instance = AsyncMock()
-            mock_client_instance.post.return_value = mock_response
-            mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-            mock_client_instance.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client_instance
-
+        with patch(
+            "app.services.embedding_service._lib_generate_embedding",
+            new=AsyncMock(return_value=mock_embedding),
+        ) as mock_lib:
             result = await generate_embedding("Test text")
-            assert len(result) == 1536
             assert result == mock_embedding
-
-            # Verify the API was called correctly
-            mock_client_instance.post.assert_called_once()
-            call_args = mock_client_instance.post.call_args
-            assert call_args[0][0] == "https://api.openai.com/v1/embeddings"
-            assert call_args[1]["json"]["model"] == "text-embedding-3-small"
-            assert call_args[1]["json"]["input"] == "Test text"
+            assert len(result) == 1536
+            mock_lib.assert_awaited_once()
+            _, kwargs = mock_lib.call_args
+            assert kwargs["model"] == "text-embedding-3-small"
+            assert kwargs.get("org_id") is None
 
     @pytest.mark.asyncio
-    async def test_generate_embedding_no_api_key(self):
-        with patch("app.services.embedding_service.resolve_credential", return_value=None):
-            with pytest.raises(ValueError, match="OpenAI API Key"):
+    async def test_generate_embedding_propagates_not_configured(self):
+        """Missing credentials surface as LLMNotConfigured from the shared lib."""
+        from noctusai_lib.llm import LLMNotConfigured
+
+        with patch(
+            "app.services.embedding_service._lib_generate_embedding",
+            new=AsyncMock(side_effect=LLMNotConfigured("openai")),
+        ):
+            with pytest.raises(LLMNotConfigured):
                 await generate_embedding("Test text")
 
     @pytest.mark.asyncio
-    async def test_generate_embedding_api_error(self):
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.text = "Internal Server Error"
+    async def test_generate_embedding_propagates_api_error(self):
+        """Upstream provider errors surface as LLMAPIError from the shared lib."""
+        from noctusai_lib.llm import LLMAPIError
 
-        with patch("app.services.embedding_service.resolve_credential", return_value="test-key"), \
-             patch("httpx.AsyncClient") as MockClient:
-
-            mock_client_instance = AsyncMock()
-            mock_client_instance.post.return_value = mock_response
-            mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-            mock_client_instance.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client_instance
-
-            with pytest.raises(ValueError, match="Erro na API OpenAI Embeddings: 500"):
+        with patch(
+            "app.services.embedding_service._lib_generate_embedding",
+            new=AsyncMock(side_effect=LLMAPIError("openai", "500 Internal Server Error")),
+        ):
+            with pytest.raises(LLMAPIError):
                 await generate_embedding("Test text")
 
 

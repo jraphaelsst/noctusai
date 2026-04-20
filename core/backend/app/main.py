@@ -27,6 +27,8 @@ from app.routers import team, roles
 from app.routers import onboarding, analytics, oauth
 from app.routers import entitlements, notifications, webhooks, audit_logs
 from app.routers import settings as settings_router
+from app.routers import credentials as credentials_router
+from app.routers import admin_cache as admin_cache_router
 from app.routers import usage
 from app.routers import users
 from app.routers import templates
@@ -51,6 +53,8 @@ app.include_router(notifications.router)
 app.include_router(webhooks.router)
 app.include_router(audit_logs.router)
 app.include_router(settings_router.router)
+app.include_router(credentials_router.router)
+app.include_router(admin_cache_router.router)
 app.include_router(usage.router)
 app.include_router(users.router)
 app.include_router(templates.router)

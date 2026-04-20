@@ -1,23 +1,24 @@
 """
-Therapy Embedding Service — Generate OpenAI embeddings for therapist and patient profiles.
+Therapy Embedding Service — Generate embeddings for therapist and patient
+profiles via the shared `noctusai_lib.llm` client.
 
-Uses text-embedding-3-small (1536 dimensions) via httpx.
-Ported from the ERP embedding service, adapted for therapy domain.
+Credential resolution and provider dispatch are inherited from the seed.
+The `api_key` parameter on `generate_embedding` is kept for backward
+compatibility with existing callers but now unused — the shared lib routes
+through the configured `key_provider`.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Optional
 
-import httpx
-
 from app.dependencies import first_or_none
+
+from noctusai_lib.llm import generate_embedding as _lib_generate_embedding
 
 logger = logging.getLogger(__name__)
 
-OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
 EMBEDDING_MODEL = "text-embedding-3-small"
-TIMEOUT = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -100,35 +101,20 @@ def build_patient_text(profile: dict) -> str:
 # Embedding generation
 # ---------------------------------------------------------------------------
 
-async def generate_embedding(text: str, api_key: str) -> list[float]:
-    """Call OpenAI text-embedding-3-small to generate a 1536-dim embedding.
+async def generate_embedding(
+    text: str,
+    api_key: Optional[str] = None,
+    clinic_id: Optional[str] = None,
+) -> list[float]:
+    """Generate a 1536-dim embedding for therapist/patient profile text.
 
-    Args:
-        text: Input text to embed.
-        api_key: OpenAI API key.
-
-    Raises:
-        ValueError: If the API call fails.
+    The `api_key` param is kept for backward compatibility with existing
+    callers but ignored — the shared lib resolves the key via the configured
+    `key_provider`. `clinic_id` is threaded through as `org_id` so Tier 1
+    (clinic-scoped) keys resolve correctly (see `task.md` §7, resolved in
+    Phase 16).
     """
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        response = await client.post(
-            OPENAI_EMBEDDINGS_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": EMBEDDING_MODEL,
-                "input": text,
-            },
-        )
-
-        if response.status_code != 200:
-            logger.error("OpenAI Embeddings API error: %d — %s", response.status_code, response.text)
-            raise ValueError(f"Erro na API OpenAI Embeddings: {response.status_code}")
-
-        data = response.json()
-        return data["data"][0]["embedding"]
+    return await _lib_generate_embedding(text, model=EMBEDDING_MODEL, org_id=clinic_id)
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +125,7 @@ async def embed_therapist(
     therapist_id: str,
     db: Any,
     api_key: Optional[str] = None,
+    clinic_id: Optional[str] = None,
 ) -> bool:
     """Build text from therapist profile, generate embedding, store in DB.
 
@@ -163,7 +150,7 @@ async def embed_therapist(
         logger.warning("Therapist %s has no text to embed", therapist_id)
         return False
 
-    embedding = await generate_embedding(text, api_key)
+    embedding = await generate_embedding(text, api_key, clinic_id=clinic_id)
     db.table("therapist_profiles").update({
         "embedding": embedding,
     }).eq("user_id", therapist_id).execute()
@@ -176,6 +163,7 @@ async def embed_patient(
     patient_id: str,
     db: Any,
     api_key: Optional[str] = None,
+    clinic_id: Optional[str] = None,
 ) -> bool:
     """Build text from patient profile/preferences, generate embedding, store in DB.
 
@@ -200,7 +188,7 @@ async def embed_patient(
         logger.warning("Patient %s has no text to embed", patient_id)
         return False
 
-    embedding = await generate_embedding(text, api_key)
+    embedding = await generate_embedding(text, api_key, clinic_id=clinic_id)
     db.table("patient_profiles").update({
         "embedding": embedding,
     }).eq("user_id", patient_id).execute()

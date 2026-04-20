@@ -20,6 +20,7 @@ import {
   Hammer, Key, MapPin, ShieldCheck, Megaphone, Mail, MessageSquare,
   Instagram, BellRing, FileBox, FileSignature, Globe, Users, Store,
   BarChart3, Sparkles, Trophy, GitBranch, Settings, Briefcase,
+  Archive, Settings2, Brain, Scale,
 } from "lucide-react";
 
 // ── Pages ────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ const Permutas = lazy(() => import("@/pages/Permutas"));
 const PermutaDetalhes = lazy(() => import("@/pages/PermutaDetalhes"));
 const Negociacoes = lazy(() => import("@/pages/Negociacoes"));
 const Metas = lazy(() => import("@/pages/Metas"));
+const MetasDashboard = lazy(() => import("@/pages/MetasDashboard"));
 const Usuarios = lazy(() => import("@/pages/Usuarios"));
 const Admin = lazy(() => import("@/pages/Admin"));
 const Comissoes = lazy(() => import("@/pages/Comissoes"));
@@ -74,6 +76,12 @@ const Emails = lazy(() => import("@/pages/Emails"));
 const BI = lazy(() => import("@/pages/BI"));
 const Matching = lazy(() => import("@/pages/Matching"));
 const Configuracoes = lazy(() => import("@/pages/Configuracoes"));
+const LLMPreferences = lazy(() => import("@/pages/LLMPreferences"));
+const MetasEmpresa = lazy(() => import("@/pages/MetasEmpresa"));
+const MetasFechamentos = lazy(() => import("@/pages/MetasFechamentos"));
+const MetasEquipesConfig = lazy(() => import("@/pages/MetasEquipesConfig"));
+const MetasRegrasConfig = lazy(() => import("@/pages/MetasRegrasConfig"));
+const MetasEquipeDrilldown = lazy(() => import("@/pages/MetasEquipeDrilldown"));
 const MetaAds = lazy(() => import("@/pages/MetaAds"));
 const WhatsAppInbox = lazy(() => import("@/pages/WhatsAppInbox"));
 const NotificacoesPage = lazy(() => import("@/pages/Notificacoes"));
@@ -92,7 +100,17 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/dashboard", icon: Home, route: "dashboard" },
       { name: "Funil de Vendas", href: "/funil", icon: LayoutDashboard, route: "funil" },
       { name: "Clientes", href: "/clientes", icon: UserCircle, route: "clientes" },
-      { name: "Metas", href: "/metas", icon: Target, route: "metas" },
+    ],
+  },
+  {
+    key: "metas", label: "Metas & Desempenho", icon: Target, defaultOpen: true,
+    items: [
+      { name: "Metas individuais", href: "/metas", icon: Target, route: "metas" },
+      { name: "Painel de Desempenho", href: "/metas/dashboard", icon: Trophy, route: "metas" },
+      { name: "Metas da Empresa", href: "/metas/metas-empresa", icon: Scale, route: "metas" },
+      { name: "Fechamentos", href: "/metas/fechamentos", icon: Archive, route: "metas" },
+      { name: "Equipes", href: "/metas/configuracoes/equipes", icon: Users, route: "metas" },
+      { name: "Regras de Pontuação", href: "/metas/configuracoes/regras", icon: Settings2, route: "metas" },
     ],
   },
   {
@@ -162,6 +180,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "BI", href: "/bi", icon: BarChart3, route: "bi" },
       { name: "Matching IA", href: "/matching", icon: Sparkles, route: "matching" },
+      { name: "Preferências de IA", href: "/configuracoes/llm", icon: Brain, route: "configuracoes" },
       { name: "Gamificacao", href: "/gamificacao", icon: Trophy, route: "gamificacao" },
     ],
   },
@@ -206,6 +225,12 @@ export default createProductApp({
     { path: "/permutas/:id", component: PermutaDetalhes },
     { path: "/negociacoes", component: Negociacoes },
     { path: "/metas", component: Metas },
+    { path: "/metas/dashboard", component: MetasDashboard },
+    { path: "/metas/metas-empresa", component: MetasEmpresa },
+    { path: "/metas/fechamentos", component: MetasFechamentos },
+    { path: "/metas/equipes/:id", component: MetasEquipeDrilldown },
+    { path: "/metas/configuracoes/equipes", component: MetasEquipesConfig },
+    { path: "/metas/configuracoes/regras", component: MetasRegrasConfig },
     { path: "/usuarios", component: Usuarios },
     { path: "/admin", component: Admin },
     { path: "/comissoes", component: Comissoes },
@@ -242,6 +267,7 @@ export default createProductApp({
     { path: "/bi", component: BI },
     { path: "/matching", component: Matching },
     { path: "/configuracoes", component: Configuracoes },
+    { path: "/configuracoes/llm", component: LLMPreferences },
     { path: "/meta-ads", component: MetaAds },
     { path: "/whatsapp", component: WhatsAppInbox },
     { path: "/notificacoes", component: NotificacoesPage },

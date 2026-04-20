@@ -15,6 +15,7 @@ import { format, startOfWeek, endOfWeek } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Badge } from "@/components/ui/badge";
 import { FiltrosDashboard } from "@/components/filtros/FiltrosDashboard";
+import { MetasAgentWidget } from "@/components/MetasAgentWidget";
 import { categoriaLabels as categoriaMetaLabels } from "@/lib/categorias";
 import { useIsAdminOrCoordenador } from "@/hooks/useIsAdminOrCoordenador";
 import { cn } from "@/lib/utils";
@@ -292,6 +293,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      <MetasAgentWidget />
       <FiltrosDashboard />
 
       {/* Métricas Principais - Linha 1 */}

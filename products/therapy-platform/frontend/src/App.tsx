@@ -37,6 +37,7 @@ const ClinicFinancials = lazy(() => import("./pages/clinic/Financials"));
 const ClinicTherapists = lazy(() => import("./pages/clinic/Therapists"));
 const ClinicPatients = lazy(() => import("./pages/clinic/Patients"));
 const ClinicSettings = lazy(() => import("./pages/clinic/Settings"));
+const ClinicLLMPreferences = lazy(() => import("./pages/clinic/LLMPreferences"));
 
 // Therapist
 const TherapistDashboard = lazy(() => import("./pages/therapist/Dashboard"));
@@ -132,6 +133,7 @@ export default createProductApp({
         { path: "/mensagens", component: Messages },
         { path: "/avaliacoes", component: ClinicDashboard },
         { path: "/configuracoes", component: ClinicSettings },
+        { path: "/configuracoes/llm", component: ClinicLLMPreferences },
       ],
     },
     terapeuta: {

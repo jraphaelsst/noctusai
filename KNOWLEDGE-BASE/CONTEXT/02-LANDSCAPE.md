@@ -26,21 +26,21 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 25 | 8 | 25 | 0 | 31 | 391 |
+| Core | 26 | 8 | 25 | 0 | 31 | 391 |
 | ERP | 58 | 49 | 67 | 64 | 109 | 1,611 |
 | PF | 14 | 13 | 24 | 14 | 40 | 435 |
 | Therapy | 38 | 37 | 65 | 25 | 64 | 897 |
 | Seed | 0 | 0 | 8 | 0 | 3 | 31 |
 | Daily Life | 6 | 3 | 12 | 5 | 11 | 201 |
 | Mailing | 9 | 6 | 22 | 7 | 11 | 147 |
-| **Total** | **150** | **116** | **223** | **115** | **269** | **3,713** |
+| **Total** | **151** | **116** | **223** | **115** | **269** | **3,713** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (7):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed`.
-- **Tables: 245** distributed across the schemas.
+- **Tables: 247** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

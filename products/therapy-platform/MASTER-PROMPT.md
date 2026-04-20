@@ -93,12 +93,15 @@ Independent therapists have `clinic_id = NULL`.
 
 ## AI Pipeline
 
-Orchestrated by `ai_pipeline` service:
+Orchestrated by `ai_pipeline` service. **All four steps call `noctusai_lib.llm` — never the OpenAI SDK directly.** Clinical text passes `cache=False` to the lib, which short-circuits the response cache before any hashing (LGPD hard rule: Art. 11 sensitive data never enters a cache key).
 
-1. **Transcription** (OpenAI Whisper) -- session audio to text
-2. **Summary** (GPT) -- session summary generation
-3. **Longitudinal analysis** (GPT) -- cross-session progress tracking (requires min 4 sessions)
-4. **Crisis detection** -- keyword analysis on session content for escalation
+1. **Transcription** — `transcribe_audio(audio_bytes, ...)` (Whisper under the hood)
+2. **Summary** — `chat_completion(messages, cache=False, ...)` for session summary
+3. **Longitudinal analysis** — `chat_completion(messages, cache=False, ...)` for cross-session progress (requires min 4 sessions)
+4. **Crisis detection** — keyword analysis + `chat_completion(cache=False)` for escalation signals
+5. **Attachment analysis** — `analyze_image(...)` for vision, `transcribe_audio(...)` for audio uploads
+
+Four LGPD concerns currently tracked in `LGPD-WARNINGS.md` (patient-clinical-text-in-llm-prompt, longitudinal-clinical-aggregation, patient-audio-to-whisper, patient-attachment-to-llm) — each requires a documented mitigation before the feature is considered production-ready.
 
 Prompt hierarchy: per-therapist > per-clinic > global default.
 
@@ -139,11 +142,10 @@ cd products/therapy-platform/backend && pytest
 
 ## Dependencies
 
-- Shared backend: `noctusai_lib`
+- Shared backend: `noctusai_lib` (including `noctusai_lib.llm` for all AI access — GPT / Whisper / Vision / embeddings — with automatic `cache=False` on clinical flows)
 - Shared frontend: `@noctusai/lib` + `@noctusai/lib/design-system`
 - LiveKit: video therapy sessions (`THERAPY_LIVEKIT_URL`, `_API_KEY`, `_API_SECRET`)
 - Stripe Connect: marketplace payments (`THERAPY_STRIPE_CONNECT_CLIENT_ID`)
-- OpenAI GPT: session summaries, longitudinal analysis, crisis detection
-- OpenAI Whisper: session transcription
+- LLM access: via `noctusai_lib.llm` only — no direct `from openai import ...` in product services. `grep` invariant enforced.
 - Google OAuth: login + calendar sync (`THERAPY_GOOGLE_CLIENT_ID`, `_SECRET`)
 - Supabase: Auth, database, storage, RLS

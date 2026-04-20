@@ -43,6 +43,8 @@ Schema: `seed` — only `status_pagina` (feature flags) and `invitations` (team 
 - `/api/health` — health check
 - `/api/team` — team management (invite, accept, list, cancel, remove)
 - `/api/notificacoes` — notification proxy to core
+- `/api/llm/providers`, `/api/llm/models`, `/api/llm/preferences` — shared LLM router from `noctusai_seed.llm_router`
+- Multi-provider LLM access: `create_product_app()` auto-wires `configure_credentials()` + `configure_llm(default_llm_config())` + `shutdown_llm()` in lifespan. Products inherit `noctusai_lib.llm.chat_completion` / `generate_embedding` / `transcribe_audio` / `analyze_image` with zero plumbing. Override only when the product needs different defaults: `create_product_app(..., llm_config=default_llm_config(default_chat_model="gpt-4o"))`.
 - CORS, Sentry, exception handlers, middleware, rate limiting, logging
 - Sidebar, Header, AppShell, page status filtering, SSO context, trial/license warnings
 - TooltipProvider, QueryClientProvider, AuthProvider, ErrorBoundary, Suspense
