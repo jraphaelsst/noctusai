@@ -2,7 +2,7 @@
 NoctusAI shared LLM client.
 
 All products access LLMs exclusively through this module. No product code
-imports `openai`, `anthropic`, or `google-generativeai` directly — those
+imports `openai`, `anthropic`, or `google-genai` directly — those
 live behind the `LLMProvider` Protocol in `noctusai_lib.llm.providers`.
 
 Usage at product startup (main.py):
@@ -47,11 +47,27 @@ from noctusai_lib.llm.chat import (
     chat_completion,
     chat_completion_stream,
 )
+from noctusai_lib.llm.client import (
+    configure_llm,
+    get_llm_config,
+    get_provider,
+    resolve_api_key,
+    shutdown_llm,
+)
 from noctusai_lib.llm.config import KeyProvider, LLMConfig
 from noctusai_lib.llm.embeddings import generate_embedding
 from noctusai_lib.llm.vision import analyze_image
+from noctusai_lib.llm.budget import (
+    compute_spend_usd,
+    compute_status as compute_budget_status,
+    configure_budget_module,
+    enforce_budget,
+    fetch_budget_brl,
+    is_configured as is_budget_configured,
+)
 from noctusai_lib.llm.exceptions import (
     LLMAPIError,
+    LLMBudgetExceeded,
     LLMNotConfigured,
     ProviderNotImplemented,
 )
@@ -88,10 +104,23 @@ __all__ = [
     # Configuration
     "LLMConfig",
     "KeyProvider",
+    "configure_llm",
+    "get_llm_config",
+    "get_provider",
+    "resolve_api_key",
+    "shutdown_llm",
     # Exceptions
     "LLMAPIError",
+    "LLMBudgetExceeded",
     "LLMNotConfigured",
     "ProviderNotImplemented",
+    # Budget guardrails (Phase 18 X4)
+    "compute_spend_usd",
+    "compute_budget_status",
+    "configure_budget_module",
+    "enforce_budget",
+    "fetch_budget_brl",
+    "is_budget_configured",
     # Model catalog
     "MODELS",
     "ModelEntry",

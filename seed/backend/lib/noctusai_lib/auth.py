@@ -1,14 +1,41 @@
 """
 Shared authentication helpers for all NoctusAI APIs.
 
-Provides the common get_current_user auth dependency and the
-first_or_none Supabase result helper. Each product backend still
-owns its own get_supabase_client, get_user_client, get_admin_client,
-and product-specific helpers (get_org_id, get_current_admin, etc.).
+Provides the common get_current_user auth dependency, SSO-role resolution,
+and (as of `core-seed-wiring-v2` Phase 4 — 2026-04-23) reusable SSO-JWT
+primitives + session cache for any identity-source product. Today's sole
+consumer is `core`; the primitives live in the seed lib so a future
+2nd identity-source product composes them out of the box rather than
+reimplementing.
+
+**What's here:**
+
+- `first_or_none(result)` — Supabase list-response helper.
+- `make_get_current_user(fn)` — factory for product-specific JWT validation.
+- `resolve_sso_role(user)` — reads `org_role` / `noctus_role` from user_metadata.
+- `get_sso_context(user)` — extracts full SSO context from user_metadata.
+- `require_role(fn, *roles)` — role-guard dependency factory.
+- **NEW** `create_sso_token_factory(settings)` — returns a token-mint callable
+  parameterized by product settings (`jwt_secret`, `jwt_algorithm`,
+  `sso_token_expiration_minutes`).
+- **NEW** `verify_sso_token_factory(settings)` — returns a token-verify callable.
+- **NEW** `SSOSessionCache(ttl_seconds=300)` — thread-safe in-memory cache with
+  per-key locks and explicit invalidation API.
+
+**Not here:**
+
+- SSO endpoint routers (`/api/auth/*`, `/api/sso/*`). Those stay local to core
+  as organ routers — per the recurrence rule in `KB § 01-PHILOSOPHY § Triage at
+  decision time`, seam formalization happens when 2+ products share the shape.
 """
 from __future__ import annotations
 
-from typing import Optional
+import datetime
+import threading
+import time
+from typing import Callable, Dict, Optional, Tuple
+
+import jwt
 from fastapi import Header, HTTPException
 
 
@@ -21,19 +48,22 @@ def first_or_none(result) -> Optional[dict]:
     return result.data[0]
 
 
-async def get_current_user(
+async def _get_current_user(
     authorization: Optional[str] = Header(None),
     *,
     _get_supabase_client=None,
 ):
     """
+    Internal JWT validator. Products MUST use make_get_current_user() to
+    obtain a product-specific dependency — never import this directly.
+
     Extract and validate the JWT from the Authorization header.
     Returns (user, token) tuple.
 
     The _get_supabase_client parameter is injected by each product's
-    dependencies.py to supply the product-specific client factory.
-    This avoids a circular dependency between shared auth and product
-    database modules.
+    dependencies.py to supply the product-specific client factory. This
+    avoids a circular dependency between shared auth and product database
+    modules.
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token ausente")
@@ -67,12 +97,12 @@ def make_get_current_user(get_supabase_client_fn):
 
         get_current_user = make_get_current_user(get_supabase_client)
     """
-    async def _get_current_user(authorization: Optional[str] = Header(None)):
-        return await get_current_user(
+    async def _product_get_current_user(authorization: Optional[str] = Header(None)):
+        return await _get_current_user(
             authorization,
             _get_supabase_client=get_supabase_client_fn,
         )
-    return _get_current_user
+    return _product_get_current_user
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +190,7 @@ def require_role(get_user_role_fn, *allowed_roles: str):
             ...
     """
     async def _check_role(authorization: Optional[str] = Header(None)):
-        user, token = await get_current_user(
+        user, token = await _get_current_user(
             authorization,
             _get_supabase_client=None,  # overridden by product wrapper
         )
@@ -172,3 +202,145 @@ def require_role(get_user_role_fn, *allowed_roles: str):
             )
         return user, token, role
     return _check_role
+
+
+# ---------------------------------------------------------------------------
+# SSO JWT primitives — Phase 4 promotion (2026-04-23)
+# ---------------------------------------------------------------------------
+#
+# Promoted verbatim from `products/core/backend/app/dependencies.py` so any
+# future identity-source product (a 2nd "control-plane product") can compose
+# them instead of reimplementing. Today's sole caller is `core`.
+#
+# Settings requirements (product's settings object must expose):
+#   - `jwt_secret: str`
+#   - `jwt_algorithm: str`             (e.g. "HS256")
+#   - `sso_token_expiration_minutes: int`
+#
+# Usage in a product's `app/dependencies.py`::
+#
+#     from noctusai_lib.auth import create_sso_token_factory, verify_sso_token_factory
+#     create_sso_token = create_sso_token_factory(settings)
+#     verify_sso_token = verify_sso_token_factory(settings)
+
+
+def create_sso_token_factory(settings) -> Callable[..., str]:
+    """Return a `create_sso_token` callable bound to `settings`.
+
+    Signature of the returned callable::
+
+        create_sso_token(
+            user_id: str,
+            org_id: str,
+            product_slug: str,
+            email: str,
+            role: str = "user",
+            org_role: str = "member",
+        ) -> str
+
+    `role` is the NoctusAI platform-level role (admin / manager / user).
+    `org_role` is the user's role within their org (owner / admin / member /
+    viewer). Products use `org_role` to decide product-level admin access.
+    """
+    def create_sso_token(
+        user_id: str,
+        org_id: str,
+        product_slug: str,
+        email: str,
+        role: str = "user",
+        org_role: str = "member",
+    ) -> str:
+        payload = {
+            "sub": user_id,
+            "org_id": org_id,
+            "product": product_slug,
+            "email": email,
+            "role": role,
+            "org_role": org_role,
+            "type": "sso",
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(
+                minutes=settings.sso_token_expiration_minutes
+            ),
+            "iat": datetime.datetime.utcnow(),
+        }
+        return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+    return create_sso_token
+
+
+def verify_sso_token_factory(settings) -> Callable[[str], dict]:
+    """Return a `verify_sso_token(token) -> payload` callable bound to `settings`.
+
+    Raises `HTTPException(401)` on expired / invalid / non-SSO tokens.
+    """
+    def verify_sso_token(token: str) -> dict:
+        try:
+            payload = jwt.decode(
+                token,
+                settings.jwt_secret,
+                algorithms=[settings.jwt_algorithm],
+            )
+            if payload.get("type") != "sso":
+                raise HTTPException(status_code=401, detail="Token não é SSO")
+            return payload
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token SSO expirado")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Token SSO inválido")
+
+    return verify_sso_token
+
+
+class SSOSessionCache:
+    """Thread-safe in-memory SSO session cache with TTL + per-key locking.
+
+    Promoted from `products/core/backend/app/routers/sso.py::_SSOSessionCache`
+    so any identity-source product can reuse the same concurrency semantics.
+
+    Shape preserved byte-for-byte: get/set/invalidate/clear + per-key lock
+    acquisition to serialize expensive Supabase session generation per user.
+
+    TTL is parameterizable. Core uses 300s (5 min) — above Supabase's 60s
+    rate limit between magic-link generations but tight enough to let role
+    revocations take effect quickly. Explicit invalidation via `invalidate(email)`
+    or `clear()` flushes on demand (role-change / license-revoke / org-reassign
+    hooks should call invalidate; see core's `invalidate_sso_cache_for_user`).
+    """
+
+    def __init__(self, ttl_seconds: int = 300) -> None:
+        self._ttl = ttl_seconds
+        self._store: Dict[str, Tuple[dict, float]] = {}
+        self._locks: Dict[str, threading.Lock] = {}
+        self._global_lock = threading.Lock()
+
+    def get(self, email: str) -> Optional[dict]:
+        """Return cached session for email or None (expired / absent)."""
+        entry = self._store.get(email)
+        if entry is None:
+            return None
+        data, created_at = entry
+        if time.monotonic() - created_at > self._ttl:
+            self._store.pop(email, None)
+            return None
+        return data
+
+    def set(self, email: str, data: dict) -> None:
+        """Store session data keyed by email with current timestamp."""
+        self._store[email] = (data, time.monotonic())
+
+    def get_lock(self, email: str) -> threading.Lock:
+        """Per-email lock — serializes concurrent SSO session generation."""
+        with self._global_lock:
+            if email not in self._locks:
+                self._locks[email] = threading.Lock()
+            return self._locks[email]
+
+    def invalidate(self, email: str) -> bool:
+        """Remove a single entry. Returns True iff removed."""
+        return self._store.pop(email, None) is not None
+
+    def clear(self) -> None:
+        """Flush every entry and every per-key lock."""
+        self._store.clear()
+        with self._global_lock:
+            self._locks.clear()

@@ -1,0 +1,15 @@
+{# Shared digest base layout — used by every product that calls
+   `noctusai_lib.email.digest.render()`. Per-product templates extend
+   this and override the `subheader` / `body` / `footer` blocks.
+
+   Auto-escape is on by default in the env, so any `{{ var }}` is HTML-
+   safe. Use `{{ var | safe }}` only for trusted pre-rendered HTML
+   fragments (e.g. narrative paragraphs already wrapped in <p>). #}
+<div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:640px">
+  <h2 style="color:#111;margin:0 0 4px 0">{% block header %}{% endblock %}</h2>
+  {% block subheader %}{% endblock %}
+  {% block body %}{% endblock %}
+  <p style="color:#888;font-size:12px;margin:24px 0 0 0">
+    Gerado por NoctusAI{% block footer %}{% endblock %}
+  </p>
+</div>

@@ -35,6 +35,13 @@ from noctusai_lib.testing.clients import (
     MockUserResponse,
     AuthClient,
 )
+from noctusai_lib.testing.schema_errors import MockSchemaError, MockUnknownTableError
+from noctusai_lib.testing._schema_cache import (
+    get_schema_map,
+    reset_cache,
+    set_cache_for_tests,
+)
+from noctusai_lib.testing.consent import bind_consent_module_to_mock
 
 __all__ = [
     "MockSupabaseResponse",
@@ -46,4 +53,10 @@ __all__ = [
     "MockUser",
     "MockUserResponse",
     "AuthClient",
+    "MockSchemaError",
+    "MockUnknownTableError",
+    "get_schema_map",
+    "reset_cache",
+    "set_cache_for_tests",
+    "bind_consent_module_to_mock",
 ]

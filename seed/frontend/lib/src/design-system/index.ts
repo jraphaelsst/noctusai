@@ -50,3 +50,51 @@ export { ScorePill } from "./gamification/ScorePill";
 export type { ScorePillProps } from "./gamification/ScorePill";
 export { ProgressRing } from "./gamification/ProgressRing";
 export type { ProgressRingProps } from "./gamification/ProgressRing";
+
+// AI primitives — Tier 2 Phase 3 (P1 pattern). Backed by `/api/ai/outputs`
+// standard router + `<schema>.ai_outputs` per-product table.
+export { AIIndicator, useAIOutputFor } from "./ai";
+export type { AIIndicatorProps, UseAIOutputForOptions, AIOutput, AIOutputKind } from "./ai";
+
+// AI feedback — ai-expansion Phase 17 (X3 cross-cutting). Backed by
+// `/api/ai/feedback` standard router + `<schema>.ai_feedback` per-product table.
+export { AIFeedbackButtons, useAIFeedback, useSubmitAIFeedback } from "./ai";
+export type { AIFeedbackButtonsProps, AIFeedbackRating } from "./ai";
+
+// AI consent UI — Wave 4 (X6 / LGPD). Backed by `/api/me/consents` (Core).
+// Auto-mounted by the seed framework: `<AIConsentToggles/>` lives at
+// `/settings/ai`; `<PendingConsentBadge/>` default-fills the layout's
+// `aiBadge` slot. Products write zero consent-UI code.
+export { AIConsentToggles, PendingConsentBadge, useConsents, useUpdateConsent, CONSENTS_QUERY_KEY } from "./ai";
+export type {
+  AIConsentTogglesProps,
+  PendingConsentBadgeProps,
+  ConsentItem,
+  ConsentCatalogResponse,
+  UpdateConsentInput,
+} from "./ai";
+
+// LLM spend badge — Wave 5 (X4 / cost guardrails). Backed by
+// `GET /api/admin/llm-spend/{org_id}` (Core, admin-only). Composed with
+// `<PendingConsentBadge/>` via `<AIBadgeStack/>` as the seed framework's
+// default `aiBadge` fill. Admin-only render; non-admins see nothing.
+export {
+  AIBadgeStack,
+  LLMSpendBadge,
+  SpendDetailModal,
+  useLLMSpend,
+  LLM_SPEND_REFETCH_INTERVAL_MS,
+} from "./ai";
+export type {
+  AIBadgeStackProps,
+  LLMSpendBadgeProps,
+  SpendDetailModalProps,
+  LLMSpendResponse,
+  SpendStatus,
+} from "./ai";
+
+// Digest container — uniform card for AI-generated digest narratives.
+// Each product wraps the card with its own hook + placement; the card
+// renders the standard shape (title + prose + feedback buttons).
+export { DigestCard, splitProseIntoParagraphs } from "./ai";
+export type { DigestCardProps } from "./ai";

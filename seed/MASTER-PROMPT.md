@@ -40,7 +40,7 @@ seed/
         config.py                  ProductSettings(BaseAppSettings) + JWT production check
         database.py                create_database_module(settings, schema) → DatabaseModule
         dependencies.py            create_dependencies(db) → ProductDependencies
-        routers.py                 create_standard_routers() → [health, notificacoes, team]
+        routers.py                 build_standard_routers(names=...) → subset of [health, notificacoes, team, llm]; products opt in via create_product_app(standard_routers=[...])
         rate_limit.py              create_product_limiter(settings)
   frontend/
     lib/          @noctusai/lib    Vite alias → seed/frontend/lib/src
@@ -77,6 +77,7 @@ Parameters:
 - `schema` — database schema name
 - `settings` — ProductSettings instance
 - `routers` — list of domain APIRouter instances
+- `standard_routers` — keyword-only `Sequence[str]` of bundled router names the product opts into. Valid keys: `"health"`, `"notificacoes"`, `"team"`, `"llm"` (the `_STANDARD_ROUTERS` registry). Pass `[]` to opt out entirely.
 - `limiter` — rate limiter (optional)
 - `lifespan_startup` / `lifespan_shutdown` — lifecycle hooks (optional, for schedulers)
 

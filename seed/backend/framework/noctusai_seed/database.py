@@ -30,6 +30,11 @@ class DatabaseModule:
         self._schema = schema
         self._admin: Optional[Client] = None
 
+    @property
+    def schema(self) -> str:
+        """Public accessor for the product schema this module targets."""
+        return self._schema
+
     def get_client(self, access_token: Optional[str] = None) -> Client:
         """Create a Supabase client targeting the product schema.
 

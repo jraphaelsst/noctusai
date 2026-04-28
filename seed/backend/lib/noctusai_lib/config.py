@@ -39,6 +39,11 @@ class BaseAppSettings(BaseSettings):
     sentry_dsn: Optional[str] = None
     redis_url: Optional[str] = None
 
+    # LLM usage tracking (Phase 15) — opt-in per product via env var.
+    # When true, create_product_app() constructs a SupabaseUsageSink that
+    # writes every `UsageEvent` to `<schema>.llm_usage`.
+    llm_usage_tracking: bool = False
+
     # Pagination defaults
     default_page_size: int = 50
     max_page_size: int = 200

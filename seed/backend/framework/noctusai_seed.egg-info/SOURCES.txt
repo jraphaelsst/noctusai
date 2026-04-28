@@ -1,9 +1,14 @@
 pyproject.toml
+setup.py
 noctusai_seed/__init__.py
+noctusai_seed/_version.py
+noctusai_seed/_version_static.py
 noctusai_seed/app.py
 noctusai_seed/config.py
 noctusai_seed/database.py
 noctusai_seed/dependencies.py
+noctusai_seed/llm_defaults.py
+noctusai_seed/llm_router.py
 noctusai_seed/rate_limit.py
 noctusai_seed/routers.py
 noctusai_seed.egg-info/PKG-INFO
@@ -11,3 +16,4 @@ noctusai_seed.egg-info/SOURCES.txt
 noctusai_seed.egg-info/dependency_links.txt
 noctusai_seed.egg-info/requires.txt
 noctusai_seed.egg-info/top_level.txt
+tests/test_build_standard_routers.py

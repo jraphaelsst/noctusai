@@ -49,6 +49,36 @@ class LLMAPIError(AppException):
         )
 
 
+class LLMBudgetExceeded(AppException):
+    """The org's monthly LLM budget has been exhausted.
+
+    Raised by `noctusai_lib.llm.budget.enforce_budget` BEFORE provider
+    dispatch when current-month spend ≥ 100% of the configured monthly
+    budget (`org_settings` key `monthly_llm_budget_brl`). Soft-warn
+    threshold (80%) only logs and does not raise.
+
+    Status code 429 (Too Many Requests) — closest match for "rate-limited
+    by your own admin policy". Service code can `except LLMBudgetExceeded`
+    and degrade gracefully (return cached value, fallback string, etc.).
+    """
+
+    def __init__(self, org_id: Optional[str], spent_brl: float, budget_brl: float):
+        super().__init__(
+            code="LLM_BUDGET_EXCEEDED",
+            message=(
+                f"Orçamento mensal de IA atingido (R$ {spent_brl:.2f} / "
+                f"R$ {budget_brl:.2f}). Aumente o orçamento em Configurações "
+                "ou aguarde o próximo ciclo mensal."
+            ),
+            status_code=429,
+            details={
+                "org_id": org_id,
+                "spent_brl": round(spent_brl, 2),
+                "budget_brl": round(budget_brl, 2),
+            },
+        )
+
+
 class ProviderNotImplemented(AppException):
     """A stub provider's method was called outside UI-development mode.
 

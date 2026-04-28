@@ -1,23 +1,28 @@
 """
-Standard routers that every product gets out of the box.
+Standard routers that NoctusAI products can opt into.
 
-Every NoctusAI product includes:
-  - Health check endpoint
-  - Notification proxy (to core public.notifications)
-  - Team management (invitations, members)
+Five bundled routers live here:
+  - "health"       → `/api/health`
+  - "notificacoes" → `/api/notificacoes` (proxy to core `public.notifications`)
+  - "team"         → `/api/team` (invitations, members)
+  - "llm"          → `/api/llm/providers|models|preferences`
+  - "ai_outputs"   → `/api/ai/outputs` (per-entity AI-output lookup; P1 pattern)
 
-Products get these by calling create_standard_routers() and including
-them in their app. No need to write health.py, notificacoes.py, or
-team.py in every product.
+Products declare which ones they want via the `standard_routers=[...]` kwarg
+on `create_product_app()`. `build_standard_routers()` resolves that list
+against the `_STANDARD_ROUTERS` registry. Unknown names raise `ValueError`.
 
 Usage::
 
-    standard = create_standard_routers(deps, settings, product_name="Mailing")
-    for router in standard:
+    # Inside create_product_app — products never call this directly.
+    for router in build_standard_routers(
+        deps, settings, product_name="Mailing", version="0.1.0",
+        names=["health", "notificacoes", "team"],
+    ):
         app.include_router(router)
 """
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
@@ -28,7 +33,7 @@ from noctusai_lib.invitations import (
     cancel_invitation,
     list_pending_invitations,
 )
-from noctusai_lib.email_templates import send_product_invitation_email
+from noctusai_lib.email.templates import send_product_invitation_email
 from noctusai_lib.notifications import map_notification_to_pt
 from noctusai_lib.roles import ORG_ROLE_LABELS
 
@@ -122,7 +127,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         admin = deps.get_admin_client()
         invite = create_invitation(
             db=admin,
-            schema=deps._db._schema,
+            schema=deps._db.schema,
             email=body["email"],
             org_id=org_id,
             role=body.get("role", "member"),
@@ -146,7 +151,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
     @router.get("/accept/validate")
     async def validate_invite(token: str = Query(...)):
         admin = deps.get_admin_client()
-        result = validate_invitation(db=admin, schema=deps._db._schema, token=token)
+        result = validate_invitation(db=admin, schema=deps._db.schema, token=token)
         if not result:
             raise HTTPException(status_code=400, detail="Convite invalido ou expirado")
         return {"data": result}
@@ -156,7 +161,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         admin = deps.get_admin_client()
         result = accept_invitation(
             db=admin,
-            schema=deps._db._schema,
+            schema=deps._db.schema,
             token=body["token"],
             user_id=body.get("user_id"),
             email=body["email"],
@@ -175,7 +180,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
             raise HTTPException(status_code=403, detail="Sem permissao")
         org_id = deps.get_org_id(user)
         admin = deps.get_admin_client()
-        result = list_pending_invitations(db=admin, schema=deps._db._schema, org_id=org_id)
+        result = list_pending_invitations(db=admin, schema=deps._db.schema, org_id=org_id)
         return {"data": result}
 
     @router.delete("/invitations/{invitation_id}")
@@ -185,7 +190,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         if role not in ("platform_admin", "owner", "admin"):
             raise HTTPException(status_code=403, detail="Sem permissao")
         admin = deps.get_admin_client()
-        cancel_invitation(db=admin, schema=deps._db._schema, invitation_id=invitation_id)
+        cancel_invitation(db=admin, schema=deps._db.schema, invitation_id=invitation_id)
         return {"ok": True}
 
     @router.delete("/{user_id}")
@@ -203,13 +208,67 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
     return router
 
 
-def create_standard_routers(deps, settings, product_name: str, version: str = "0.1.0") -> list:
-    """Create the standard routers every product includes.
+def _build_llm_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Deferred import: llm_router imports `noctusai_lib.llm` and a few catalog
+    # modules at collection time; keeping it inside the factory avoids pulling
+    # that cost for products that opt out of "llm".
+    from noctusai_seed.llm_router import create_llm_router
+    return create_llm_router(deps)
 
-    Returns a list of APIRouter instances: [health, notificacoes, team].
+
+def _build_ai_outputs_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Deferred import for the same reason as `_build_llm_router`.
+    from noctusai_seed.ai_router import create_ai_outputs_router
+    return create_ai_outputs_router(deps)
+
+
+def _build_ai_feedback_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Deferred import — keeps Pydantic model collection cost out of the
+    # hot path for products that don't opt in.
+    from noctusai_seed.ai_feedback_router import create_ai_feedback_router
+    return create_ai_feedback_router(deps)
+
+
+# Maintenance contract for _STANDARD_ROUTERS:
+# Adding a new standard router requires all three of:
+#   (a) adding an entry to this registry,
+#   (b) updating `seed/backend/framework/tests/test_build_standard_routers.py
+#       ::test_registry_keys_match_documented_set` (drift guard),
+#   (c) documenting the new capability in `KNOWLEDGE-BASE/CONTEXT/
+#       03-SEED-ARCHITECTURE.md § Standard routers`.
+# Miss any of (a)-(c) and the drift-guard test will fail opaquely.
+_STANDARD_ROUTERS = {
+    "health":       lambda deps, s, n, v: _create_health_router(n, v),
+    "notificacoes": lambda deps, s, n, v: _create_notificacoes_router(deps),
+    "team":         lambda deps, s, n, v: _create_team_router(deps, s, n),
+    "llm":          _build_llm_router,
+    "ai_outputs":   _build_ai_outputs_router,
+    "ai_feedback":  _build_ai_feedback_router,
+}
+
+
+def build_standard_routers(
+    deps,
+    settings,
+    product_name: str,
+    version: str,
+    names: Sequence[str],
+) -> list:
+    """Return the subset of standard routers named by `names`.
+
+    Order is preserved: `build_standard_routers(..., names=["llm", "health"])`
+    returns `[llm_router, health_router]` in that order. FastAPI's
+    `include_router` registration is order-sensitive for overlapping routes —
+    products that care can enforce ordering by ordering their opt-in list.
+
+    Raises:
+        ValueError: if any name is not in the registry. Error message names
+            every unknown key and lists the valid keys for quick fixing.
     """
-    return [
-        _create_health_router(product_name, version),
-        _create_notificacoes_router(deps),
-        _create_team_router(deps, settings, product_name),
-    ]
+    unknown = [n for n in names if n not in _STANDARD_ROUTERS]
+    if unknown:
+        raise ValueError(
+            f"Unknown standard router(s): {unknown}. "
+            f"Valid: {sorted(_STANDARD_ROUTERS)}"
+        )
+    return [_STANDARD_ROUTERS[n](deps, settings, product_name, version) for n in names]

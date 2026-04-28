@@ -38,7 +38,7 @@ def _get_resend():
         return None
 
 
-FROM_EMAIL = "NoctusAI <noreply@noctusai.com>"
+_FROM_EMAIL = "NoctusAI <noreply@noctusai.com>"
 
 
 def _send(to: str, subject: str, html: str) -> bool:
@@ -50,7 +50,7 @@ def _send(to: str, subject: str, html: str) -> bool:
 
     try:
         client.Emails.send({
-            "from": FROM_EMAIL,
+            "from": _FROM_EMAIL,
             "to": [to],
             "subject": subject,
             "html": html,

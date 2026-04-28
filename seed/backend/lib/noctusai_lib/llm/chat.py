@@ -15,6 +15,7 @@ import copy
 import logging
 from typing import Any, AsyncIterator, Optional
 
+from noctusai_lib.llm.budget import enforce_budget
 from noctusai_lib.llm.cache import build_cache_key, try_get, try_set
 from noctusai_lib.llm.client import get_llm_config, get_provider, resolve_api_key
 
@@ -69,6 +70,11 @@ async def chat_completion(
     effective_model = model or config.default_chat_model
     api_key = resolve_api_key(effective_provider, org_id)
 
+    # Phase 18 budget guardrails — raises LLMBudgetExceeded at the org's
+    # hard threshold before we hit the provider. Soft-warn just logs.
+    # No-op when the budget module isn't configured (tests, dev runs).
+    await enforce_budget(org_id)
+
     # Response-cache consult (Phase 8). Gated by:
     #  - cache=True at the call site (services with patient data pass False).
     #  - LLMConfig.cache_enabled at the platform level.
@@ -90,6 +96,7 @@ async def chat_completion(
             model=effective_model,
             prompt_version=prompt_version,
             payload=messages,
+            org_id=org_id,
         )
         hit, value = await try_get(config.cache_backend, cache_key)
         if hit and isinstance(value, str):
@@ -147,6 +154,9 @@ async def chat_completion_stream(
     kwargs.pop("cache", None)
     kwargs.pop("cache_namespace", None)
     kwargs.pop("prompt_version", None)
+
+    # Phase 18 budget guardrails — same posture as the non-streaming entry.
+    await enforce_budget(org_id)
 
     prov = get_provider(effective_provider)
     stream_fn = getattr(prov, "chat_completion_stream", None)

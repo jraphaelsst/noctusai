@@ -1,0 +1,9 @@
+{# Shared text-body base layout. Per-product templates extend this and
+   override `subheader` / `body` / `footer`. The `header` block is
+   rendered as-is (no escaping needed for plain-text). #}
+{% block header %}{% endblock %}
+{% block subheader %}{% endblock %}
+
+{% block body %}{% endblock %}
+
+-- NoctusAI{% block footer %}{% endblock %}

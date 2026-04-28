@@ -27,7 +27,7 @@ Reusable, atomic code that products import as functions and components.
 
 Structural bones that define HOW a product is assembled. Products don't copy this code — they import and extend it.
 
-- **Backend** (`noctusai_seed`): `create_product_app()`, `ProductSettings`, `create_database_module()`, `create_dependencies()`, `create_standard_routers()`
+- **Backend** (`noctusai_seed`): `create_product_app()`, `ProductSettings`, `create_database_module()`, `create_dependencies()`, `build_standard_routers()` (products opt in via `create_product_app(standard_routers=[...])`)
 - **Frontend** (`@noctusai/seed`): `createProductApp()`, `createProductLayout()`
 
 **How products consume it:** A product's `main.py` becomes ~10 lines. Its `App.tsx` becomes ~30 lines. All the structural wiring is inherited.
@@ -71,6 +71,7 @@ app = create_product_app(
     schema="my_schema",
     settings=settings,
     routers=[domain_router_1.router, domain_router_2.router],
+    standard_routers=["health", "notificacoes", "team"],  # opt into the bundled routers you actually consume
 )
 ```
 
@@ -125,7 +126,7 @@ seed/
         config.py               ProductSettings
         database.py             create_database_module()
         dependencies.py         create_dependencies()
-        routers.py              create_standard_routers()
+        routers.py              build_standard_routers(names=...)
         rate_limit.py           create_product_limiter()
   frontend/
     lib/                        @noctusai/lib (via Vite alias)

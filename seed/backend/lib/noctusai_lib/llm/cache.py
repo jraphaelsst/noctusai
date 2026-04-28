@@ -6,7 +6,14 @@ Response cache for the shared LLM client — Redis-backed.
 cache entirely. The cache checks this gate before touching Redis.
 
 Key format:
-    llm:{product}:{provider}:{model}:{prompt_version}:{sha256(messages_json)}
+    llm:{product}:{provider}:{model}:{prompt_version}:org={org_id}:{sha256(messages_json)}
+
+The `org_id` segment isolates per-org cache entries so two organizations
+with identical (product, provider, model, prompt_version, messages) cannot
+share a cache value. When `org_id is None`, the segment becomes
+`org=__platform__` (used for prompts that don't carry per-org context, e.g.
+docs Q&A). Added 2026-04-24 closing the cross-org-leak vector identified by
+the ai-expansion Tier 1.5 G5 audit.
 
 The `prompt_version` parameter lets services bump a single integer when
 their system prompt changes — that invalidates cache entries for the old
@@ -45,16 +52,22 @@ def build_cache_key(
     model: str,
     prompt_version: str,
     payload: Any,
+    org_id: Optional[str] = None,
 ) -> str:
     """Build a deterministic cache key from the request shape.
 
     `payload` is anything JSON-serialisable — typically the messages list
     for chat or the input text for embeddings. Hashed with SHA-256; the key
     is bounded even for very long prompts.
+
+    `org_id` isolates cache entries per organization (LGPD posture — see
+    module docstring). Pass the org running this prompt; pass `None` only
+    for prompts that have no org context (platform-wide docs Q&A, etc.).
     """
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    return f"llm:{product}:{provider}:{model}:{prompt_version}:{digest}"
+    org_segment = org_id if org_id else "__platform__"
+    return f"llm:{product}:{provider}:{model}:{prompt_version}:org={org_segment}:{digest}"
 
 
 async def try_get(

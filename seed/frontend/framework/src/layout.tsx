@@ -8,7 +8,7 @@
  * The enrichment hook (`useLayoutEnrichment`) is the extension point
  * that makes ANY product framework-first — no matter how complex.
  */
-import { useCallback } from "react";
+import { useCallback, type ReactNode } from "react";
 import {
   AppShell,
   Sidebar,
@@ -16,6 +16,9 @@ import {
   useTheme,
   useActivityRefresh,
   InactivityWarning,
+  AIBadgeStack,
+  PendingConsentBadge,
+  LLMSpendBadge,
 } from "@noctusai/lib/design-system";
 import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
@@ -33,6 +36,25 @@ type AnySupabaseClient = SupabaseClient<any, any, any>;
  * Enrichment data returned by the optional useLayoutEnrichment hook.
  * Products use this to inject domain-specific data into the framework layout.
  */
+/**
+ * The seed-default badges that fill `LayoutEnrichment.aiBadge` when no
+ * product override is provided. Exported so products with their own
+ * product-specific badges can compose:
+ *
+ *   import { DEFAULT_AI_BADGES, AIBadgeStack } from "@noctusai/seed";
+ *   useLayoutEnrichment: () => ({
+ *     aiBadge: <AIBadgeStack badges={[<MyBadge/>, ...DEFAULT_AI_BADGES]}/>
+ *   });
+ *
+ * Order matters: the consent badge surfaces "user must decide on N
+ * features" (intrinsic to the user), while the spend badge surfaces
+ * "org is approaching budget" (operational). Consent first; ops second.
+ */
+export const DEFAULT_AI_BADGES: ReactNode[] = [
+  <PendingConsentBadge key="pending-consent" />,
+  <LLMSpendBadge key="llm-spend" />,
+];
+
 export interface LayoutEnrichment {
   /** Override user display name (e.g. from product DB profile) */
   userName?: string;
@@ -60,6 +82,17 @@ export interface LayoutEnrichment {
   initialTheme?: "light" | "dark";
   /** Any extra user props to pass to SharedHeader */
   headerUserProps?: Record<string, any>;
+  /**
+   * Optional AI-derived badge rendered in the framework Header next to the
+   * notification bell. P4 pattern from ai-expansion §5a — Tier 2 Phase 5
+   * (2026-04-25). Use this for ambient AI signals: "today's brief" indicator,
+   * pending-consent count, monthly-spend watermark, "homework due" badge, etc.
+   *
+   * Pass a string for plain text, a React element for richer markup, or
+   * `null`/`undefined` to render nothing. The framework auto-hides empty
+   * values — no need for products to gate render.
+   */
+  aiBadge?: string | React.ReactNode | null;
 }
 
 export interface ProductLayoutConfig {
@@ -244,7 +277,31 @@ export function createProductLayout(config: ProductLayoutConfig) {
             onLogout={handleLogout}
             theme={theme}
             onThemeToggle={toggleTheme}
-            actions={<NotificationBell />}
+            actions={(() => {
+              // Default-fill `aiBadge` with the seed standard stack when the
+              // product didn't provide one. Semantics:
+              //   - `undefined` → use seed default (`<AIBadgeStack/>` of
+              //                   `<PendingConsentBadge/>` + `<LLMSpendBadge/>`)
+              //   - `null`      → explicit opt-out, render no badge
+              //   - other       → product-supplied badge / stack
+              // The `!== undefined` check (vs `??`) preserves `null` as
+              // explicit-empty. Products that want product-specific badges
+              // compose with the defaults: `aiBadge: <AIBadgeStack badges=
+              // {[<DailyBriefBadge/>, ...DEFAULT_AI_BADGES]}/>`. The
+              // `DEFAULT_AI_BADGES` export lives in this file.
+              const aiBadgeContent =
+                enrichment.aiBadge !== undefined
+                  ? enrichment.aiBadge
+                  : <AIBadgeStack badges={DEFAULT_AI_BADGES} />;
+              return aiBadgeContent ? (
+                <span className="inline-flex items-center gap-2">
+                  {aiBadgeContent}
+                  <NotificationBell />
+                </span>
+              ) : (
+                <NotificationBell />
+              );
+            })()}
             canEditEmail={enrichment.canEditEmail}
             onUpdateProfile={handleUpdateProfile}
             onUpdatePassword={handleUpdatePassword}

@@ -26,7 +26,7 @@ _IGNORED_KEYS = {
 }
 
 
-class JSONFormatter(logging.Formatter):
+class _JSONFormatter(logging.Formatter):
     """
     JSON log formatter for structured logging.
 
@@ -67,7 +67,7 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-class HumanReadableFormatter(logging.Formatter):
+class _HumanReadableFormatter(logging.Formatter):
     """
     Human-readable log formatter for development.
 
@@ -121,9 +121,9 @@ def configure_logging(
 
     # Choose formatter
     if json_logs:
-        formatter = JSONFormatter()
+        formatter = _JSONFormatter()
     else:
-        formatter = HumanReadableFormatter()
+        formatter = _HumanReadableFormatter()
 
     # Configure root logger
     root_logger = logging.getLogger()

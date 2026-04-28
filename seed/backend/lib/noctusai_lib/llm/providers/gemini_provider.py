@@ -1,34 +1,31 @@
 """
-GeminiProvider — real implementation backed by `google-generativeai`.
+GeminiProvider — real implementation backed by `google-genai`.
 
 Supports:
-  - Chat: via `GenerativeModel.generate_content_async(...)`
-  - Embeddings: via `genai.embed_content_async(model=..., content=...)`
-  - Vision: multimodal `generate_content_async` with image `Part`
+  - Chat: via `client.aio.models.generate_content(...)`
+  - Embeddings: via `client.aio.models.embed_content(model=..., contents=...)`
+  - Vision: multimodal `generate_content` with image `Part`
   - Audio: multimodal input (Gemini doesn't do Whisper-style transcription;
     we send audio bytes + a transcribe prompt to the model. Works for most
     clean speech-to-text tasks.)
 
 Translation notes (OpenAI-shaped → Gemini):
-  - `system` messages are fed via the `system_instruction` parameter on the
-    `GenerativeModel` (not per-call).
+  - `system` messages are fed via the `system_instruction` config parameter.
   - `user`/`assistant` messages become alternating `role="user"`/`"model"`
     `Content` entries. Gemini uses `"model"` where OpenAI uses `"assistant"`.
 
-SDK idiosyncrasies:
-  - `genai.configure(api_key=...)` is module-global. To support multi-tenant
-    keys concurrently we rely on each call passing its own
-    `GenerativeModel` instance built with the right key. The SDK supports
-    a `client_options={"api_key": ...}` on `GenerativeModel` calls via
-    `genai.configure(api_key=...)` at call time — we serialize this through
-    the per-key client cache pattern.
+SDK notes (google-genai):
+  - Uses a client-centric approach: `genai.Client(api_key=...)`.
+  - Async calls go through `client.aio.models.*`.
+  - Configuration is passed via `types.GenerateContentConfig`.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Optional, Union
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from noctusai_lib.llm.exceptions import LLMAPIError, LLMNotConfigured
 from noctusai_lib.llm.registry import register
@@ -36,13 +33,13 @@ from noctusai_lib.llm.registry import register
 logger = logging.getLogger(__name__)
 
 
-def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
+def _translate_messages(messages: list[dict]) -> tuple[str, list[types.Content]]:
     """Split `system` out, rename `assistant` → `model` for the rest.
 
-    Gemini `Content` structure expects `{role, parts: [{text: ...}]}`.
+    Returns (system_instruction_text, list_of_Content_objects).
     """
     system_parts: list[str] = []
-    rest: list[dict] = []
+    rest: list[types.Content] = []
     for msg in messages:
         role = msg.get("role")
         content = msg.get("content", "")
@@ -52,11 +49,11 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
             continue
         gemini_role = "model" if role == "assistant" else "user"
         if isinstance(content, str):
-            rest.append({"role": gemini_role, "parts": [content]})
+            rest.append(types.Content(role=gemini_role, parts=[types.Part.from_text(text=content)]))
         elif isinstance(content, list):
             # Already in block form — pass through as-is (callers doing vision
             # should build Gemini-shaped content parts themselves).
-            rest.append({"role": gemini_role, "parts": content})
+            rest.append(types.Content(role=gemini_role, parts=content))
     return "\n\n".join(system_parts), rest
 
 
@@ -66,19 +63,16 @@ class GeminiProvider:
     name = "gemini"
 
     def __init__(self) -> None:
-        # Per-key cache of configured SDK state. Gemini's SDK module state
-        # for api_key is global, so we store the last-seen key to detect
-        # changes and reconfigure when needed. Concurrent multi-tenant
-        # traffic with different keys will serialize on `genai.configure`;
-        # worth revisiting if throughput matters.
-        self._last_key: Optional[str] = None
+        # Per-key cache of Client instances. The new SDK is client-centric,
+        # so we create one Client per API key and cache it.
+        self._clients: dict[str, genai.Client] = {}
 
-    def _configure(self, api_key: str) -> None:
+    def _get_client(self, api_key: str) -> genai.Client:
         if not api_key:
             raise LLMNotConfigured("gemini")
-        if api_key != self._last_key:
-            genai.configure(api_key=api_key)
-            self._last_key = api_key
+        if api_key not in self._clients:
+            self._clients[api_key] = genai.Client(api_key=api_key)
+        return self._clients[api_key]
 
     async def chat_completion(
         self,
@@ -94,27 +88,26 @@ class GeminiProvider:
     ) -> str:
         from noctusai_lib.llm.usage import record_usage
 
-        self._configure(api_key)
+        client = self._get_client(api_key)
         system_instr, conversation = _translate_messages(messages)
 
-        generation_config: dict[str, Any] = {"temperature": temperature}
+        config_kwargs: dict[str, Any] = {"temperature": temperature}
         if max_tokens is not None:
-            generation_config["max_output_tokens"] = max_tokens
+            config_kwargs["max_output_tokens"] = max_tokens
+        if system_instr:
+            config_kwargs["system_instruction"] = system_instr
         if (
             response_format
             and isinstance(response_format, dict)
             and response_format.get("type") == "json_object"
         ):
-            generation_config["response_mime_type"] = "application/json"
+            config_kwargs["response_mime_type"] = "application/json"
 
         try:
-            gm = genai.GenerativeModel(
-                model_name=model,
-                system_instruction=system_instr or None,
-            )
-            response = await gm.generate_content_async(
-                conversation,
-                generation_config=generation_config,
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=conversation,
+                config=types.GenerateContentConfig(**config_kwargs),
             )
             text = getattr(response, "text", "") or ""
             usage = getattr(response, "usage_metadata", None)
@@ -143,14 +136,13 @@ class GeminiProvider:
     ) -> list[float]:
         from noctusai_lib.llm.usage import record_usage
 
-        self._configure(api_key)
+        client = self._get_client(api_key)
         try:
-            response = await genai.embed_content_async(
+            response = await client.aio.models.embed_content(
                 model=model,
-                content=text,
-                task_type=kwargs.pop("task_type", "RETRIEVAL_DOCUMENT"),
+                contents=text,
             )
-            embedding = response["embedding"] if isinstance(response, dict) else response.embedding
+            embedding = response.embeddings[0].values
             await record_usage(
                 provider="gemini",
                 model=model,
@@ -181,7 +173,7 @@ class GeminiProvider:
         """
         from noctusai_lib.llm.usage import record_usage
 
-        self._configure(api_key)
+        client = self._get_client(api_key)
         prompt = kwargs.pop(
             "prompt",
             "Transcreva o áudio em português, sem comentários adicionais.",
@@ -189,11 +181,12 @@ class GeminiProvider:
         mime_type = kwargs.pop("mime_type", "audio/ogg")
 
         try:
-            gm = genai.GenerativeModel(model_name=model)
-            response = await gm.generate_content_async([
-                {"mime_type": mime_type, "data": audio},
-                prompt,
-            ])
+            audio_part = types.Part.from_bytes(data=audio, mime_type=mime_type)
+            text_part = types.Part.from_text(text=prompt)
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=[audio_part, text_part],
+            )
             text = getattr(response, "text", "") or ""
             usage = getattr(response, "usage_metadata", None)
             await record_usage(
@@ -222,10 +215,10 @@ class GeminiProvider:
     ) -> str:
         from noctusai_lib.llm.usage import record_usage
 
-        self._configure(api_key)
+        client = self._get_client(api_key)
         if isinstance(image, bytes):
             mime_type = kwargs.pop("mime_type", "image/jpeg")
-            image_part: Any = {"mime_type": mime_type, "data": image}
+            image_part = types.Part.from_bytes(data=image, mime_type=mime_type)
         else:
             # URL image — Gemini SDK doesn't fetch URLs directly; the caller
             # would need to download first. We surface that contract clearly.
@@ -235,8 +228,11 @@ class GeminiProvider:
             )
 
         try:
-            gm = genai.GenerativeModel(model_name=model)
-            response = await gm.generate_content_async([image_part, prompt])
+            text_part = types.Part.from_text(text=prompt)
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=[image_part, text_part],
+            )
             text = getattr(response, "text", "") or ""
             usage = getattr(response, "usage_metadata", None)
             await record_usage(
@@ -265,36 +261,34 @@ class GeminiProvider:
         org_id: Optional[str] = None,
         **kwargs: Any,
     ):
-        """Stream via `generate_content_async(..., stream=True)`.
+        """Stream via `client.aio.models.generate_content_stream(...)`.
 
         Each `chunk.text` is the incremental delta. Usage metadata arrives
         on the final chunk (the SDK aggregates it); we record once at end.
         """
         from noctusai_lib.llm.usage import record_usage
 
-        self._configure(api_key)
+        client = self._get_client(api_key)
         system_instr, conversation = _translate_messages(messages)
 
-        generation_config: dict[str, Any] = {"temperature": temperature}
+        config_kwargs: dict[str, Any] = {"temperature": temperature}
         if max_tokens is not None:
-            generation_config["max_output_tokens"] = max_tokens
+            config_kwargs["max_output_tokens"] = max_tokens
+        if system_instr:
+            config_kwargs["system_instruction"] = system_instr
         if (
             response_format
             and isinstance(response_format, dict)
             and response_format.get("type") == "json_object"
         ):
-            generation_config["response_mime_type"] = "application/json"
+            config_kwargs["response_mime_type"] = "application/json"
 
         prompt_tokens = completion_tokens = total_tokens = None
         try:
-            gm = genai.GenerativeModel(
-                model_name=model,
-                system_instruction=system_instr or None,
-            )
-            response_stream = await gm.generate_content_async(
-                conversation,
-                generation_config=generation_config,
-                stream=True,
+            response_stream = await client.aio.models.generate_content_stream(
+                model=model,
+                contents=conversation,
+                config=types.GenerateContentConfig(**config_kwargs),
             )
             async for chunk in response_stream:
                 text = getattr(chunk, "text", None)
@@ -320,7 +314,7 @@ class GeminiProvider:
         )
 
     async def close(self) -> None:  # pragma: no cover — no resources to release
-        self._last_key = None
+        self._clients.clear()
 
 
 register("gemini", GeminiProvider)

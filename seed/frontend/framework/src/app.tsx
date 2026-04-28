@@ -13,6 +13,7 @@ import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ErrorBoundary, createAuthProvider, SSOCallback } from "@noctusai/lib";
 import { createQueryClient } from "@noctusai/lib/query-client";
 import { PageSkeleton } from "@noctusai/lib/design-system";
+import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface ProductRoute {
@@ -30,15 +31,44 @@ export interface RoleRouteConfig {
   pathPrefix?: string;
 }
 
+/**
+ * Auth-provider interface for products whose auth model is NOT Supabase-based.
+ *
+ * Default path: products pass `supabase` + `useAuthStore` and the framework
+ * wires up `createAuthProvider(supabase, useAuthStore)` internally. This works
+ * for every consumer product (personal-finance, erp, therapy, etc.) whose
+ * auth flows through Supabase.
+ *
+ * Custom path: products that ARE the identity provider (core control-plane)
+ * supply a full `authProvider` so the framework delegates entirely. When
+ * `authProvider` is present, `supabase` and `useAuthStore` become optional.
+ *
+ * The custom provider must expose:
+ *   - `AuthProvider` — wraps children, manages auth state.
+ *   - `useAuth` — hook returning at minimum `{ user, isInitialized }` so
+ *     the framework's route guards + role resolution still work.
+ */
+export interface CustomAuthProvider {
+  AuthProvider: React.ComponentType<{ children: React.ReactNode }>;
+  useAuth: () => { user: unknown; isInitialized: boolean };
+}
+
 export interface ProductAppConfig {
   /** Flat routes — for products with a single role/layout */
   routes?: ProductRoute[];
   /** Layout for flat routing */
   Layout?: React.ComponentType<{ children: React.ReactNode }>;
-  /** Supabase client */
-  supabase: SupabaseClient<any, any, any>;
-  /** Full auth store hook */
-  useAuthStore: () => any;
+  /** Supabase client (required unless `authProvider` is provided) */
+  supabase?: SupabaseClient<any, any, any>;
+  /** Full auth store hook (required unless `authProvider` is provided) */
+  useAuthStore?: () => any;
+  /**
+   * Custom auth provider. Overrides the default Supabase-based auth wiring.
+   * Use this when a product is the identity provider itself (e.g. core) or
+   * otherwise needs a non-Supabase auth flow. When provided, `supabase` and
+   * `useAuthStore` are not read by the framework.
+   */
+  authProvider?: CustomAuthProvider;
   /** Standard public pages */
   Landing?: LazyExoticComponent<any>;
   Login?: LazyExoticComponent<any>;
@@ -66,6 +96,12 @@ export interface ProductAppConfig {
    */
   defaultRedirect?: string;
   /**
+   * Path to redirect to when an unauthenticated user hits a protected route.
+   * Defaults to "/landing". Products without a Landing page (e.g. core) can
+   * set this to "/login" directly.
+   */
+  unauthRedirect?: string;
+  /**
    * Routes that should render WITHOUT the Layout wrapper.
    * Useful for full-screen pages like video sessions.
    */
@@ -78,6 +114,7 @@ export function createProductApp(config: ProductAppConfig) {
     Layout,
     supabase,
     useAuthStore,
+    authProvider,
     Landing,
     Login,
     AcceptInvite,
@@ -87,11 +124,24 @@ export function createProductApp(config: ProductAppConfig) {
     roleRoutes,
     resolveRole,
     defaultRedirect,
+    unauthRedirect = "/landing",
     unwrappedRoutes = [],
   } = config;
 
+  if (!authProvider && (!supabase || !useAuthStore)) {
+    throw new Error(
+      "createProductApp: must provide either `authProvider` (custom auth) " +
+        "or both `supabase` + `useAuthStore` (Supabase auth).",
+    );
+  }
+
   const queryClient = createQueryClient();
-  const AuthProvider = createAuthProvider(supabase, useAuthStore);
+  const AuthProvider = authProvider
+    ? authProvider.AuthProvider
+    : createAuthProvider(supabase!, useAuthStore!);
+  const useAuth: () => { user: unknown; isInitialized: boolean } = authProvider
+    ? authProvider.useAuth
+    : (useAuthStore as () => { user: unknown; isInitialized: boolean });
 
   // Flat routing — single Layout, single set of routes
   function FlatContent() {
@@ -101,6 +151,9 @@ export function createProductApp(config: ProductAppConfig) {
         <ErrorBoundary>
           <Suspense fallback={<PageSkeleton />}>
             <Routes>
+              {/* Seed-mounted routes — auto-injected for every product. */}
+              <Route path="/settings/ai" element={<ConsentSettingsPage />} />
+              {/* Product-specific routes. */}
               {routes.map(({ path, component: Component }) => (
                 <Route key={path} path={path} element={<Component />} />
               ))}
@@ -114,7 +167,7 @@ export function createProductApp(config: ProductAppConfig) {
 
   // Role-based routing — different Layout + routes per role
   function RoleContent() {
-    const { user } = useAuthStore();
+    const { user } = useAuth();
     if (!roleRoutes || !resolveRole || !user) return null;
 
     const role = resolveRole(user);
@@ -128,6 +181,10 @@ export function createProductApp(config: ProductAppConfig) {
         <ErrorBoundary>
           <Suspense fallback={<PageSkeleton />}>
             <Routes>
+              {/* Seed-mounted routes — auto-injected for every role's
+                  layout (every authenticated user can manage their own
+                  consents regardless of role). */}
+              <Route path="/settings/ai" element={<ConsentSettingsPage />} />
               {roleSpecificRoutes.map(({ path, component: Component }) => (
                 <Route key={path} path={path} element={<Component />} />
               ))}
@@ -140,14 +197,14 @@ export function createProductApp(config: ProductAppConfig) {
   }
 
   function AppContent() {
-    const { user, isInitialized } = useAuthStore();
+    const { user, isInitialized } = useAuth();
 
     if (!isInitialized) {
       return <PageSkeleton />;
     }
 
     if (!user) {
-      return <Navigate to="/landing" replace />;
+      return <Navigate to={unauthRedirect} replace />;
     }
 
     // Determine redirect path
@@ -193,7 +250,7 @@ export function createProductApp(config: ProductAppConfig) {
         <Routes>
           {Landing && <Route path="/landing" element={<Landing />} />}
           {Login && <Route path="/login" element={<Login />} />}
-          <Route path="/sso" element={<SSOCallback supabase={supabase} />} />
+          {supabase && <Route path="/sso" element={<SSOCallback supabase={supabase} />} />}
           {AcceptInvite && <Route path="/accept-invite/:token" element={<AcceptInvite />} />}
           {ForgotPassword && <Route path="/forgot-password" element={<ForgotPassword />} />}
           {publicRoutes.map(({ path, component: Component }) => (

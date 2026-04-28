@@ -19,12 +19,26 @@ dependencies = [
     # even if it only uses one. Simpler ops; slightly bigger image.
     "openai>=1.50.0",
     "anthropic>=0.40.0",
-    "google-generativeai>=0.8.0",
+    "google-genai>=1.0.0",
     # Cache backend — optional at runtime (only used when REDIS_URL is set),
     # but installed monolithically so every product can opt in without
     # touching requirements.txt.
     "redis>=5.0.0",
+    # Email digest rendering — Jinja templates platform-wide. Used by
+    # noctusai_lib.email.digest.render() (formalized 2026-04-25 once 5
+    # adopters surfaced; see KB § 04-SHARED-LIBRARY § email/).
+    "jinja2>=3.1.0",
 ]
 
 [tool.setuptools.packages.find]
 include = ["noctusai_lib*"]
+
+# Pytest auto-loaded plugin — every test session that has `noctusai-lib`
+# installed gets `noctusai_lib.testing.pytest_plugin` registered. The
+# plugin probes for `app.main` and imports it (triggering the framework's
+# `create_product_app(consent_features=...)`, which loads the consent
+# catalog). Non-product test sessions (seed-lib own tests, mcp tests)
+# silently no-op when `app.main` doesn't resolve. Eliminates the per-
+# product `from app.main import app as _app` line in `tests/conftest.py`.
+[project.entry-points.pytest11]
+noctusai-product-bootstrap = "noctusai_lib.testing.pytest_plugin"
