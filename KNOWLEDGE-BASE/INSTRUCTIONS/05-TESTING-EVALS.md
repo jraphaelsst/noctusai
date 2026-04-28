@@ -85,7 +85,7 @@ class TestFKViolation:
 **Running**:
 ```bash
 pytest tests/realdb/ -v                  # Single backend
-pytest core/backend/tests/realdb/ \
+pytest products/core/backend/tests/realdb/ \
        products/erp-imobiliario/backend/tests/realdb/ \
        products/personal-finance/backend/tests/realdb/ -v  # All
 ```

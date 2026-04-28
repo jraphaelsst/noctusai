@@ -27,6 +27,7 @@ Products are born from the seed. The backend `main.py` imports `create_product_a
 - [ ] Port added to root `.env CORS_ORIGINS`.
 - [ ] All three test layers pass (routers, services, integration).
 - [ ] E2E golden-path test passes.
+- [ ] `tests/conftest.py` calls `bind_consent_module_to_mock(mock_sb)` inside the `client` fixture (default in `templates/product-seed/` since 2026-04-27 — verify it survived your scaffold). Required even if your product doesn't register consent features today; idempotent if catalog is empty. See `../PATTERNS/testing.md § Consent-guard product conftest pattern` for the full rationale.
 - [ ] Added to `CLAUDE.md` product table AND `02-LANDSCAPE.md`.
 - [ ] Per-product KB doc created (`CONTEXT/backend/0X-<NAME>.md`, `CONTEXT/frontend/0X-<NAME>.md`).
 

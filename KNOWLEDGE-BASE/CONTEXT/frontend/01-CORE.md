@@ -1,6 +1,6 @@
 # 01 — Core Frontend Context
 
-> Path: `core/frontend/src/` · Port: 5173 · 24 pages · API: `VITE_CORE_API_URL`
+> Path: `products/core/frontend/src/` · Port: 5173 · 24 pages · API: `VITE_CORE_API_URL`
 > Standard frontend patterns (toast, hooks, auth init, dates): see `../PATTERNS/frontend.md`.
 
 ## Overview

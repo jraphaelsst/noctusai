@@ -7,7 +7,7 @@
 
 | Product | Path | Description | BE/FE Ports | Schema |
 |---------|------|-------------|-------------|--------|
-| **Core** | `core/` | Auth, orgs, billing, licenses, SSO, admin | 8000/5173 | `public` |
+| **Core** | `products/core/` | Auth, orgs, billing, licenses, SSO, admin | 8000/5173 | `public` |
 | **ERP** | `products/erp-imobiliario/` | Real estate CRM: clients, properties, matching, sales funnel, financial, WhatsApp | 8001/8080 | `erp` |
 | **PF** | `products/personal-finance/` | Finance tracker: accounts, transactions, budgets, portfolios, watchlists | 8002/8090 | `personal-finance` |
 | **Therapy** | `products/therapy-platform/` | Online therapy: video sessions, scheduling, clinical AI, wallets, messaging | 8003/8095 | `therapy` |
@@ -26,21 +26,21 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 26 | 8 | 25 | 0 | 31 | 391 |
-| ERP | 58 | 49 | 67 | 64 | 109 | 1,611 |
-| PF | 14 | 13 | 24 | 14 | 40 | 435 |
-| Therapy | 38 | 37 | 65 | 25 | 64 | 897 |
+| Core | 28 | 12 | 26 | 0 | 38 | 423 |
+| ERP | 58 | 50 | 67 | 65 | 109 | 1,625 |
+| PF | 15 | 16 | 24 | 16 | 43 | 445 |
+| Therapy | 39 | 40 | 65 | 25 | 68 | 924 |
 | Seed | 0 | 0 | 8 | 0 | 3 | 31 |
-| Daily Life | 6 | 3 | 12 | 5 | 11 | 201 |
-| Mailing | 9 | 6 | 22 | 7 | 11 | 147 |
-| **Total** | **151** | **116** | **223** | **115** | **269** | **3,713** |
+| Daily Life | 7 | 7 | 12 | 7 | 15 | 226 |
+| Mailing | 10 | 10 | 22 | 9 | 15 | 187 |
+| **Total** | **157** | **135** | **224** | **122** | **291** | **3,861** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (7):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed`.
-- **Tables: 247** distributed across the schemas.
+- **Tables: 257** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

@@ -58,4 +58,4 @@ The ERP Metas domain is the reference implementation. Patterns validated there g
 
 ## Reference
 
-- Reference implementation: `products/erp-imobiliario/METAS-PLAN.md`
+- Reference implementation: ERP metas service (shipped 2026-04 by the `erp-metas` project — closed + folder deleted per clean-folder rule). Code lives at `products/erp-imobiliario/backend/app/services/metas_*.py` (49 `/api/metas/*` routes; trigger-driven `meta_eventos` pipeline; migrations 016–019) + frontend at `products/erp-imobiliario/frontend/src/pages/MetasDashboard.tsx` + `MetasAgentWidget` + `MetasCharts`. Shared gamification primitives in `seed/frontend/lib/src/design-system/gamification/`.

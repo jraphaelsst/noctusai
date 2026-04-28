@@ -1,6 +1,6 @@
 # 01 — Core Backend Context
 
-> Path: `core/backend/app/` · Port: 8000 · 23 routers · 8 services · 31 test files · 392 test fns
+> Path: `products/core/backend/app/` · Port: 8000 · 23 routers · 8 services · 31 test files · 392 test fns
 > Standard backend patterns (auth, responses, exceptions, N+1): see `../PATTERNS/backend.md`.
 
 ## Core-Specific Auth

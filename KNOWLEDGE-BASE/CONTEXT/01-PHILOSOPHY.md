@@ -7,16 +7,39 @@
 
 ---
 
+## Vocabulary — methodology, not doctrine
+
+Per user directive 2026-04-27: **we use "methodology" — not "doctrine".** The rules in this file (and across CLAUDE.md / KB) are the team's chosen *way of working* — collaborative, iterative, owned by the team. They are not commandments handed down from above.
+
+When writing or revising rules, prefer: **methodology**, **rule**, **principle**, **convention**, **pattern**, **working agreement**, **practice**. Avoid **doctrine**, **doctrinal**, **doctrinally** — the framing is hierarchical and runs counter to how this team actually operates.
+
+This is a small word-choice rule with a real cultural payload: agents reading these files inherit the framing. *Rule, not doctrine.*
+
+---
+
 ## Seed first. Always.
 
 Every product inherits its structural backbone from `seed/`. When creating a new product, import `create_product_app()` (backend) and `createProductApp()` / `createProductLayout()` (frontend) from the seed framework.
 
 - Do NOT copy-paste structural code.
-- Do NOT re-implement auth, routing, layout, database clients, health checks, team management, or notifications — they come from the seed.
+- Do NOT re-implement auth, routing, layout, database clients, health checks, team management, notifications, or page-status — they come from the seed.
+- Do NOT ask whether to use the seed. Do NOT propose alternative approaches to product creation. The seed IS the approach.
 
-This is not optional, not debatable, not a suggestion. The seed is the skeleton. Products are the organs. Read `seed/README.md` before building anything.
+This is the #1 engineering rule. It is not optional, not debatable, not a suggestion. The seed is the skeleton. Products are the organs. Read `seed/README.md` before building anything. The user's original framing: *"All future agents should not ask nor doubt, they should straight away use the seed."*
 
-**Why:** Multiple products had duplicated auth, duplicated layouts, duplicated notification code. Every change meant editing N places. The seed centralizes structure; products carry only domain-specific code.
+**Why:** Multiple products had duplicated auth, duplicated layouts, duplicated notification code. Every change meant editing N places. The seed centralizes structure; products carry only domain-specific code. Fixing a structural bug means editing the seed once and it propagates to every product — duplication defeats the whole architecture.
+
+**Fix structural issues in the seed, never in individual products.** If three products all need the same tweak, the tweak belongs in `seed/backend/lib/` or `seed/backend/framework/` (or their frontend counterparts), not replicated three times. The "No quick fixes" rule and this rule reinforce each other: a symptom that appears in multiple products is a root-level signal.
+
+### Compliance — what if a product isn't wired?
+
+A product that doesn't call `create_product_app()` / `createProductApp()` is a **violation** of this rule, not a grandfathered exception. If an audit (see `CONTEXT/03-SEED-ARCHITECTURE.md § Compliance check`) finds a product that bypasses the framework — instantiates `FastAPI()` directly, reinvents layout, or reimplements any of the seed's capabilities — the remediation is a focused project:
+
+- Slug: `<product>-seed-wiring` (subject=product, intent=`wiring` per `PATTERNS/project-execution.md §8`).
+- Location: `products/<product>/projects/<product>-seed-wiring/`.
+- Scope: rewrite `main.py` / `main.tsx` / `App.tsx` around the seed factories, thread existing routers through, verify the test baseline stays green, ship behind the product's existing deploy.
+
+Do **not** paper over the gap by duplicating what the seed provides. Do **not** defer indefinitely. The directory tree under `products/` already implies "all of these are seed-inheriting products" — a non-compliant entry silently lies to every agent who reads it.
 
 ---
 
@@ -24,13 +47,13 @@ This is not optional, not debatable, not a suggestion. The seed is the skeleton.
 
 After modifying code, run `python mcp/noctusai/cli.py --review` on the affected product. The review pass:
 1. Detects seed-compliance issues deterministically (`check_seed_compliance`, `check_path_references`).
-2. Asks an LLM (OpenAI, via `OPENAI_API_KEY`) to author one proposal per issue in `mcp/noctusai/proposals/` — with a problem analysis, a concrete proposed solution that references seed APIs, and an effort estimate.
+2. Asks an LLM (OpenAI, via `OPENAI_API_KEY`) to author one proposal per issue. Keeper-originated proposals land in `products/<product>/proposals/` (scoped to the product the detector flagged); project-scoped proposals land inside the project's own `proposals/` folder — at either `projects/<slug>/proposals/` or `products/<product>/projects/<slug>/proposals/` depending on where the project lives (see `PATTERNS/project-execution.md §1`). Callers pass `project=<slug>` or `product=<slug>` — the MCP tool resolves the location.
 3. Falls back to a skeleton proposal (just the raw detector output) when the LLM is unavailable — so nothing is silently dropped.
 4. Returns a report: `issues_found`, `proposals_created`, `llm_enriched` vs `llm_fallbacks`, and the `final_score`.
 
 **It NEVER modifies code.** Every fix goes through a human who reads the proposal and applies it deliberately.
 
-**Development loop:** change → `python mcp/noctusai/cli.py --review` → triage proposals in `mcp/noctusai/proposals/` (accept / reject) → apply the accepted fixes manually → commit.
+**Development loop:** change → `python mcp/noctusai/cli.py --review` → triage proposals in `products/<product>/proposals/` (accept / reject) → apply the accepted fixes manually → commit.
 
 ### Why no auto-fix?
 
@@ -64,6 +87,140 @@ Spend 30 minutes on a proper solution over 5 minutes on a hack that creates futu
 ## No workarounds
 
 Always use the real API/SDK/framework. No monkeypatches, shims, or hacks. If the framework lacks a feature, extend the framework — don't bolt a workaround onto a product.
+
+**The rule applies to test code too — caught + tightened 2026-04-27.** During `therapy-consent-guard-wiring` Phase 1, an autouse `monkeypatch.setattr(ai_pipeline, "require", _noop)` fixture was introduced to "make existing happy-path tests pass" alongside the new patient-consent guard. That is not a test of the guard — it's a deletion of the guard. Same pattern: per-test `monkeypatch.setattr(ai_pipeline, "_notify_therapist_ai_skipped", MagicMock())` to "verify the notification fired." User caught both. Both removed.
+
+The correct shape for testing our own guards / write helpers:
+- **Read paths (consent, RLS, role checks).** Seed the real underlying data (rows in `ai_consent`, role columns on `noctus_users`, etc.) so the real guard reads it and reaches its real verdict. Never patch the guard.
+- **Write side-effects (notifications, audit rows, log lines).** Use proper dependency injection: an optional kwarg on the function (e.g. `core_db: Optional[Any] = None`) that defaults to `None` and lazily resolves to the real client at runtime when the function actually needs it. Tests pass the same mock as both `db` and `core_db`. Read what the helper actually inserted via `MockRequestBuilder.inserted_payloads` (seed-lib mock attribute, populated automatically on every `insert(payload)` call).
+- **External boundaries (LLM APIs, transcription services, third-party HTTP).** `unittest.mock.patch.object(<external>, ...)` is the right tool — that's mocking THE BOUNDARY, not neutering our own logic. The litmus test: if removing the patch reveals real product behavior we want to verify, the patch is wrong. If removing the patch causes a network call to a service we don't own, the patch is right.
+
+Reference: `products/therapy-platform/backend/tests/services/test_ai_pipeline_service.py` post-rewrite. Anti-pattern reference: the same file pre-rewrite (deleted) used `monkeypatch.setattr(ai_pipeline, "require", _noop)` — the rewrite seeds `ai_consent` rows via `_db_with_grants(...)` and uses `core_db=db` injection instead.
+
+---
+
+## No silent errors — always explicit fix opportunities
+
+**Every failure mode surfaces loudly and concretely.** Exceptions, degraded states, missing data, failed builds, skipped steps, deferred items, unverifiable assumptions — all must appear in the user-facing output as explicit fix opportunities, not buried in logs or swallowed in `except: pass`.
+
+The rule has three concrete shapes:
+
+### Runtime / code
+
+- **Never write `try/except:` with an empty body**, a bare `pass`, or a silent `return None` / `return default`. If a failure path is genuinely expected and benign, log-at-WARN with a clear reason string AND document why suppressing is correct. If it's not benign, raise, return a typed `Result`, or surface an HTTPException — but do not swallow.
+- **Never catch broadly (`except Exception:`) without re-raising or explicitly surfacing.** `logger.exception(...)` + re-raise is acceptable; `logger.info("oops")` + continue is not.
+- **Never suppress a test failure.** Skip-with-reason (`pytest.skip("reason")`) is fine; skip-without-reason or xfail-without-tracking is not.
+- **When a dependency is unavailable**, fail to start with a clear error, not a background warning that the feature silently doesn't work (the "optional import degrades gracefully" anti-pattern — the product then runs in an undefined state).
+
+### Agent execution / tooling
+
+- **Never close a session or phase with a command that silently errored.** Build output, pytest summary, linter diff — read them; if anything is red, name it in the summary. "Verification: ✓ built" when the tail of the output showed an import error is a lie to the user.
+- **Never finish a deliverable that has unverified claims.** If the agent said "the build is green," it ran the build. If it said "tests pass," it ran the tests. No inference from "it should work."
+- **Never bury deferred items.** If an item was deferred, the end-of-work summary names it and names its new home (project folder, backlog entry, next phase). A deferred item without a live destination is a broken pointer.
+- **When a tool fails** (MCP call, CLI invocation, curl), report the exact error and what the agent plans to do about it. Not "continuing..." without explanation.
+
+### Communication
+
+- **Ambiguity is a silent error.** If the user's instruction has two reasonable interpretations, ask. Picking one silently and proceeding is a deferred bug.
+- **Assumptions are silent errors.** If the agent had to guess (schema, env var, file path), state the guess explicitly and offer the user a redirect path.
+- **An absence of findings is a claim.** "No issues found" must mean the agent actually looked, not that the check wasn't run. Quote the command and the verified output.
+
+**Why:** silent errors accumulate into mystery-failure debt. A year later someone asks "why does X not work?" and nobody can trace it because the original agent swallowed the signal. The rule is cheap at the moment of occurrence (one line in the summary, one `raise`) and expensive when violated (debugging with no audit trail). Prefer loud-and-fixable over quiet-and-working-most-of-the-time.
+
+**Interaction with other rules:**
+
+- `End-of-work summary (DEFAULT)` — silent errors break the summary's "verification" line. If verification actually had regressions, list them; don't pretend green.
+- `Apply-inline-then-delete` — if a proposal item fails to apply (syntax error, lint rejection, behavior regression), the summary says so explicitly and the item is NOT moved to "applied" — it goes to "deferred: application failed, see <reason>".
+- `Finish the session — verify, don't assume` — the verification commands catch many silent errors; read their output.
+- `No workarounds` — a workaround often IS a silent error (the workaround makes the symptom go away but the root cause is still there, now invisible).
+
+---
+
+## Triage at decision time — formalize / refactor / accept-with-rationale
+
+**The workflow evaluates itself as it runs. Decisions about ideals-vs-reality are made at the moment they're encountered, with full context — not as upfront ideological rulings that force unnecessary remediation or rigid uniformity.**
+
+User directive (2026-04-22): *"The workflow should evaluate itself as it goes on and decide for the best moves to take at the time they were made."* This is the decision-making methodology sitting between **no silent errors** (surface what's diverging) and **apply inline then delete** (execute the decision).
+
+### The pattern
+
+When the work surfaces a divergence from an ideal (contract violation, architectural drift, pattern inconsistency, test-contract mismatch, whatever), the agent triages it at that moment into one of three outcomes:
+
+1. **Formalize.** The divergence is worth making first-class. Extend the framework / library / seed to turn the ad-hoc pattern into a named, approved seam. Examples: "core needs custom auth — formalize as `authProvider` slot on `createProductApp`"; "three products had duplicate notification-mapping code — absorb into `noctusai_lib.notifications`."
+
+2. **Refactor.** The divergence is forkable. Bring the product (or the call site) into compliance with the existing contract. Examples: "adconnect had its own NotificationBell import but opted out of `"notificacoes"` — fix the opt-in list"; "PF test mocked `app.dependencies.get_supabase_client` which was renamed — update the mock target."
+
+3. **Accept-with-rationale.** The divergence is legitimate but project/product-unique; formalizing would bloat the framework, refactoring would destroy something the product actually needs. Document WHY in the appropriate living record (PROJECT.md §2 or §11 Change Log, or the product's MASTER-PROMPT.md) and move on.
+
+**"Accept" is a real landing, not a failure mode.** Some divergences genuinely belong to the product. The paperwork ("why accepted") is what keeps drift from being silent — a future agent reading the record knows the divergence was intentional, not forgotten.
+
+### The three outcomes are mutually exclusive + always explicit
+
+Every surfaced divergence gets a single labelled outcome recorded in the project's §11 Change Log (or equivalent living record). Shape:
+
+- `Divergence: core has custom app/dependencies.py not extending ProductDependencies.`
+- `Outcome: accept-with-rationale. Reason: core is the identity-source product (not Supabase-consumer); the framework's ProductDependencies contract doesn't fit its JWT+refresh-token auth shape. Revisit if a second identity-source product surfaces — that's a strong signal to formalize as customDependencies slot.`
+
+### Recurrence is a signal for formalize
+
+A single product diverging = probably accept. The same divergence in 2 or 3 products = re-triage toward formalize. The pattern "we keep accepting the same thing" means the framework is under-serving a legitimate need; close the gap.
+
+### Why this pattern (and not just "strict contract")
+
+Strict contracts force every divergence into refactor, which:
+- Bloats the framework with every product's edge case.
+- Strangles legitimate product experimentation.
+- Creates a remediation backlog that eventually gets ignored.
+- Makes "approved exceptions" a political process instead of an evidence-based one.
+
+Aspirational-only (no triage) makes divergences invisible over time. Drift accumulates silently. Same anti-pattern as "no silent errors" but at the architecture layer.
+
+**Triage-at-decision-time** preserves both: the ideals are stated clearly (so drift is visible), and reality is accommodated explicitly (so divergences don't force bloat or produce remediation debt).
+
+### How to apply
+
+1. Divergence surfaces (keeper, audit, code review, user flag, agent observation).
+2. At the point of encounter, the agent writes the divergence down explicitly + picks an outcome: formalize / refactor / accept.
+3. For `formalize`: the work becomes the next phase / a new project (e.g., adding a seam to the framework).
+4. For `refactor`: the work happens inline (or opens a small remediation project if scope demands).
+5. For `accept`: the rationale goes in the living record. Nothing else blocks.
+6. The §11 Change Log entry names the outcome. Future agents can audit the pattern's health by counting formalize / refactor / accept ratios over time — if accept dominates, the framework is probably under-serving.
+
+### Interaction with other rules
+
+- `No silent errors` — surfaces the divergence. This rule decides what to do with it.
+- `Apply inline + delete` — is how the decision gets executed (formalize-by-seam or refactor ship inline as part of the work's phase).
+- `Estimate off evidence` — reads the actual files before picking formalize vs refactor vs accept. Don't triage off inferred architecture.
+- `Projects are living` — revisions to the outcome are legitimate as new evidence arrives; a prior "accept" can become "formalize" if a second occurrence surfaces.
+
+### Worked examples
+
+- `core-seed-wiring` Phase 4 — discovered core's frontend needs custom auth. Triaged: **formalize** → added `authProvider` slot to `createProductApp`. Divergence became an approved seam.
+- `keeper-standard-routers-audit` Phase 0 — discovered adconnect frontend imports `NotificationBell` but `standard_routers` opted out of `notificacoes`. Triaged: **refactor** → fixed the opt-in list + restored deleted tests.
+- `seed-inheritance-hardening` Phase 2 — discovered core's `app/dependencies.py` + `app/database.py` bypass framework factories. Triaged at Phase 4: user decides **formalize** (`customDependencies` seam) OR **accept-with-rationale** (core is identity-source, contract doesn't fit). Default posture: accept + document, re-triage if a second product surfaces the same divergence.
+
+---
+
+## Estimate off evidence, not structure
+
+Before offering a scope estimate — options (A/B/C), session-size, time-box, "this should be quick" — **open the files the change would actually touch**. If the change would affect a shared library, framework, factory, or cross-cutting layer, read that code first. Don't estimate off inferred architecture.
+
+**Why this matters:** when the user picks an option based on a shallow estimate, they're committing to the scope you described. Discovering the real scope mid-execution forces a course-correction, wastes the tokens already spent, and erodes trust in future estimates. The cost of reading a file before estimating is negligible; the cost of a mid-flight scope revision is not.
+
+**Concrete failure mode (2026-04-20 — this rule was born from it):** an option-list was offered for migrating `products/core` to `create_product_app()` from the seed framework. The estimate assumed "just edit `core/main.py` and `App.tsx`." Only after the user chose Option 3 (do it this session) did the agent open `seed/backend/framework/noctusai_seed/app.py` and discover that `create_product_app()` auto-registers `/api/team`, `/api/notificacoes`, `/health`, `/api/llm/*` — routes that would collide with core's own control-plane routers — and scopes a `DatabaseModule` to a single product schema, incompatible with core's `public`-schema model. The real scope was a seed-framework refactor (a proper project), not a file edit. The option list itself was the defect.
+
+**How to apply:**
+
+- Before listing options, check: does this touch `seed/`, `noctusai_lib`, `noctusai_seed`, `@noctusai/lib`, `@noctusai/seed`, the seed framework factories, or any shared migration path? If yes → read the target file(s) before writing the option list.
+- Before quoting a session-size or "this is quick" → actually trace the caller / the dependents. If the change would cascade into multiple files across products, the work is bigger than a session.
+- If you catch yourself writing "this should be straightforward" or "I think this is small" — stop. Those are feelings, not estimates. Open the file.
+- When a user asks "is this big?" — answer with what you have already confirmed by reading code, not what the file names suggest.
+- If you have already offered a shallow estimate and then discover the real scope — stop, tell the user immediately, recommend re-scoping as a proper project (see `PATTERNS/project-execution.md §1`). Do not silently continue and course-correct inside the same execution.
+
+**Interaction with other rules:**
+
+- `CLAUDE.md "For exploratory questions, respond in 2-3 sentences with a recommendation..."` — that recommendation must be evidence-backed. The 2-3 sentences get shorter when you've read the code; they get *wrong* when you haven't.
+- `Projects are living documents` — a revision mid-flight is always allowed, but the Change Log should record *why* the revision happened. "Shallow estimate; real scope discovered during execution" is a legitimate Change Log entry — but aim not to write it.
 
 ---
 
@@ -135,13 +292,13 @@ Every new `*-PROJECT.md` begins by copying `templates/PROJECT-TEMPLATE.md`. The 
 The flow is **capture-then-synthesize**, not capture-per-step:
 
 1. **During step implementation — capture.** As each sub-task is built, drop short specific bullets into the phase's `**Improvements:**` block — free-form, frictionless, no ceremony. These are step-individual-related observations, captured while the context is fresh.
-2. **End of phase, BEFORE flipping the header to `✅` — synthesize.** The in-session agent reads the entire accumulated block, considers the **whole project context** (not just this phase), and files **ONE proposal per phase** that bundles the improvements as independently-executable items. The proposal is filed via `noctusai_file_proposal(project="<project-slug>", ...)` and lands in `mcp/noctusai/proposals/<project-slug>/`.
+2. **End of phase, BEFORE flipping the header to `✅` — synthesize.** The in-session agent reads the entire accumulated block, considers the **whole project context** (not just this phase), and files **ONE proposal per phase** that bundles the improvements as independently-executable items. The proposal is filed via `noctusai_file_proposal(project="<project-slug>", ...)` and lands inside the project's own `proposals/` folder — at `projects/<slug>/proposals/` for root-level projects, or `products/<product>/projects/<slug>/proposals/` for product-scoped projects. The MCP tool resolves the slug automatically; callers pass only the slug. See `PATTERNS/project-execution.md §1` for the two-location rule.
 
 **Not one proposal per improvement — ONE bundled proposal for the phase.** Each bundled improvement retains individual execution (the reviewer schedules them separately) but the proposal is a single coherent context-transfer vehicle: the agent who *lived the phase* captures situational awareness once, and all the bundled items inherit it.
 
 Each phase proposal carries `Origin: project:<project-slug>:phase-<N>` with filled-in `Context`, `Situation`, `Proposed Solution` (with `§3.2 Application instructions` as the bundled-improvement list — each with its own linkage + steps + risks + independence note), `Effects`, and aggregated acceptance criteria.
 
-`improvements.md` (next to the project file, regenerated by `noctusai_improvements`) remains the narrative retrospective. Proposals in `mcp/noctusai/proposals/<project-slug>/` are the triage queue. The two systems cooperate — see `PATTERNS/proposals-and-improvements.md` for the full protocol, the promote boundary, and the bundling mechanics.
+`improvements.md` (next to the project file, regenerated by `noctusai_improvements`) remains the narrative retrospective. Proposals in the project's `proposals/` folder (at whichever of the two locations the project lives — see `PATTERNS/project-execution.md §1`) are the triage queue. The two systems cooperate — see `PATTERNS/proposals-and-improvements.md` for the full protocol, the promote boundary, and the bundling mechanics.
 
 ---
 
@@ -149,19 +306,36 @@ Each phase proposal carries `Origin: project:<project-slug>:phase-<N>` with fill
 
 NoctusAI products embed gamification (ranks, points, progress) discretely — never confetti-on-every-click. Every metric shows a ⓘ info icon explaining its formula. Every point ties to real business activity, never "logged in today" arbitrariness.
 
-See `07-GAMIFICATION.md` for full patterns and `products/erp-imobiliario/METAS-PLAN.md` for the reference implementation.
+See `07-GAMIFICATION.md` for full patterns + the shipped ERP metas service (code at `products/erp-imobiliario/backend/app/services/metas_*.py` + frontend at `products/erp-imobiliario/frontend/src/pages/MetasDashboard.tsx`) for the reference implementation. The `erp-metas` project that built it shipped 2026-04 + folder deleted per clean-folder rule.
 
 ---
 
-## Docs stay in sync — and land KB-first, CLAUDE.md second
+## Docs stay in sync — three-way sync across KB, CLAUDE.md, and memory
 
 Every commit that changes behavior updates the relevant docs:
-- `CLAUDE.md` (the map + behavioral rules)
-- `KNOWLEDGE-BASE/INDEX.md` (the catalog)
-- Topical KB file (PHILOSOPHY, PATTERNS/*, GUIDES/*, CONTEXT/0x-*)
-- `mcp/noctusai/README.md` when tooling changes
+- **`KB`** — `KNOWLEDGE-BASE/INDEX.md` (the catalog) + topical KB file (PHILOSOPHY, PATTERNS/*, GUIDES/*, CONTEXT/0x-*).
+- **`CLAUDE.md`** — the map + behavioral rules + pointer.
+- **`memory`** — the persistent feedback / project / reference file under `~/.claude/projects/.../memory/` + the `MEMORY.md` index entry.
+- `mcp/noctusai/README.md` when tooling changes.
 
-Proposals live in `mcp/noctusai/proposals/`.
+**Three-way sync is mandatory.** Any rule, methodology, or behavioral change lives in **all three layers simultaneously**: KB depth + CLAUDE.md pointer + memory entry. Updating one without the others creates drift the next agent can't see — KB has the long-form, CLAUDE.md has the rule-as-loaded-every-turn, memory has the persistent across-conversation framing. They are three views of the same rule, and they must agree.
+
+**Triggering events:**
+- A new `feedback_*.md` memory file is added → corresponding KB section + CLAUDE.md pointer must exist (or be created in the same session).
+- A KB rule changes (added, extended, audit-trail updated) → memory entry filed (if user-preference-shaped) + CLAUDE.md pointer updated.
+- A CLAUDE.md rule changes → KB depth + memory entry must back it.
+
+**Ordering rules:**
+- *When introducing a NEW rule:* KB-first (topical file + INDEX.md), then CLAUDE.md pointer, then memory entry citing both. Never the reverse — CLAUDE.md is the pointer layer and stranded pointers (pointing into nonexistent KB content) violate the contract.
+- *When amending an existing rule* (extending, adding caught-instances, adjusting framing): all three layers in the same session. Partial updates lie about the rule's current state and the next agent reads a stale rule.
+
+**Verification:**
+- `bash scripts/verify-kb-sync.sh` — catches dangling KB ↔ CLAUDE.md pointers (pre-commit-hooked).
+- Memory parity check (manual, agent's discipline): every memory entry in `MEMORY.md` should cite a `Doc-backed (CLAUDE.md + KB § ...)` line in its description; every CLAUDE.md rule with strong behavioral implications should have a memory entry. The `verify-kb-sync.sh` script does NOT verify this — it's the agent's discipline.
+
+**Exempt:** tiny typo-only fixes (single layer, no rule change).
+
+Project-scoped proposals live inside the project's own `proposals/` folder — either `projects/<slug>/proposals/` (root, for cross-product/platform work) or `products/<product>/projects/<slug>/proposals/` (product-scoped). See `PATTERNS/project-execution.md §1` for the rule. Keeper / LGPD / evaluation proposals live in `products/<product>/proposals/` (scoped to the product the detector flagged).
 
 ### The KB-first ordering rule
 

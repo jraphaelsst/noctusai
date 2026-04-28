@@ -79,7 +79,7 @@ python mcp/noctusai/cli.py --build      # Build frontends
 python mcp/noctusai/cli.py --proposals  # List proposals
 ```
 
-Proposals go to `mcp/noctusai/proposals/`.
+Keeper/compliance proposals go to `products/<product>/proposals/`. Project-phase proposals go to `projects/<slug>/proposals/` or `products/<product>/projects/<slug>/proposals/`.
 
 ## Rules (read CLAUDE.md for full list)
 

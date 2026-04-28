@@ -31,7 +31,8 @@ KNOWLEDGE-BASE/
 │   │   ├── shared-library-conventions.md
 │   │   ├── project-execution.md
 │   │   ├── proposals-and-improvements.md  ← two-system protocol (improvements per-project, ONE bundled proposal per phase)
-│   │   └── lgpd.md
+│   │   ├── lgpd.md
+│   │   └── llm-usage.md       ← Phase 15 DB-backed usage sink + admin endpoints
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
 │   │   └── new-product.md
@@ -87,8 +88,10 @@ KNOWLEDGE-BASE/
 | Project execution (phase-header ticks, improvements block, improvements.md retrospective tool) | `CONTEXT/PATTERNS/project-execution.md` |
 | Proposals & improvements (two systems — per-project folders, ONE bundled proposal per phase, promote boundary) | `CONTEXT/PATTERNS/proposals-and-improvements.md` |
 | LGPD awareness (keeper principle, the five questions, noctusai_lgpd_flag tool) | `CONTEXT/PATTERNS/lgpd.md` |
+| LLM usage tracking (SupabaseUsageSink, /api/llm/usage, cost estimation, RLS scoping) | `CONTEXT/PATTERNS/llm-usage.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
+| Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
 | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |
 | ERP backend | `CONTEXT/backend/02-ERP.md` |
 | PF backend | `CONTEXT/backend/03-PF.md` |

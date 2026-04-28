@@ -245,7 +245,7 @@ Frontend uses `VITE_`-prefixed vars in per-frontend `.env` files (security bound
 ### Local Development
 - `bash start.sh` — Creates venv, installs deps, starts all 4 services
 - `docker-compose up` — Containerized local dev (4 services)
-- Core Backend: `uvicorn app.main:app --reload --port 8000 --app-dir core/backend`
+- Core Backend: `uvicorn app.main:app --reload --port 8000 --app-dir products/core/backend`
 - ERP Backend: `uvicorn app.main:app --reload --port 8001 --app-dir products/erp-imobiliario/backend`
 - PF Backend: `uvicorn app.main:app --reload --port 8002 --app-dir products/personal-finance/backend`
 

@@ -84,6 +84,77 @@ Trigger `on_license_change` auto-provisions product defaults (tables, seed rows,
 
 These come from the seed framework (`_create_health_router`, `_create_team_router`, `_create_notificacoes_router`). Products get them automatically via `create_product_app()`.
 
+## FastAPI dependency factories with module-level injection (2026-04-27)
+
+Some seed-lib features expose **product-mounted FastAPI dependencies** — callables that products use via `Depends(...)` on their router endpoints. Examples shipped today:
+
+| Helper | Module | Purpose |
+|---|---|---|
+| `noctusai_lib.ai.consent.consent_required(feature_key)` | `ai/consent.py` | Router-level X6 consent guard (HTTP 412 if not granted). |
+| `noctusai_lib.llm.budget.enforce_budget(org_id)` | `llm/budget.py` | Pre-dispatch cost guard inside `chat_completion` (not `Depends`-mounted but uses the same module-level injection wiring). |
+
+These helpers share a structural shape — **module-level injection** — that future similar helpers should follow.
+
+### The boot-order trap
+
+Routers are imported (and their `@router.<verb>(...)` decorators evaluated) **before** `create_product_app(...)` runs. If a factory like `consent_required(feature_key)` does early validation at call time — e.g. `if not is_module_configured(): raise RuntimeError` — it will crash router imports, because `configure_X_module(...)` is called *inside* `create_product_app(...)` *after* the routers have been imported.
+
+**Caught during `consent-guard-rollout` Phase 2 (2026-04-27):** the Phase 1 seed-lib helper `consent_required(feature_key)` did a fail-fast `is_consent_module_configured()` check at factory-call time. Mailing's first attempt to wire it crashed at import — `app/routers/ai.py` couldn't load because the `Depends(consent_required("..."))` line raised before `create_product_app(...)` had a chance to wire the module.
+
+### The pattern (use this for any new FastAPI dep factory)
+
+1. **Module-level state is `None` by default.** Two private module-level slots — one for the FastAPI dep that resolves the user, one for the admin-client factory (or whatever the helper needs).
+
+   ```python
+   _get_current_user_dep: Optional[Callable[..., Any]] = None
+   _admin_client_factory: Optional[Callable[[], Any]] = None
+   ```
+
+2. **`configure_X_module(*, get_current_user, admin_client_factory)`** is the wiring function. It assigns the module-level slots. Called inside `noctusai_seed.app.create_product_app(...)` once per process (when the relevant `settings.X_gating` flag is on, default True for most).
+
+   ```python
+   def configure_consent_module(*, get_current_user, admin_client_factory):
+       global _get_current_user_dep, _admin_client_factory
+       _get_current_user_dep = get_current_user
+       _admin_client_factory = admin_client_factory
+   ```
+
+3. **The factory itself is lenient at call time.** It returns the dep regardless of whether the module is configured. **All checks happen at request time** inside the returned dep.
+
+   ```python
+   def consent_required(feature_key: str):
+       async def _dep(authorization: Optional[str] = Header(None)) -> None:
+           # Late-binding config check — runs at request time.
+           if not is_module_configured():
+               raise RuntimeError("configure_consent_module(...) was not called")
+           user_dep = _get_current_user_dep
+           admin_factory = _admin_client_factory
+           # ... resolve user, do the check, raise the right exception or pass.
+       _dep.__name__ = f"consent_required__{feature_key.replace('.', '_')}"
+       return _dep
+   ```
+
+4. **Don't capture references inside the factory at call time.** Read `_get_current_user_dep` / `_admin_client_factory` at REQUEST time inside the dep. This means reconfiguration mid-process (rare; only happens in tests) takes effect immediately. The cost is one indirection per request, which is negligible.
+
+5. **Dep signature uses primitives, not `Depends(...)` indirection.** The dep takes `authorization: Optional[str] = Header(None)` directly and manually invokes the configured `get_current_user(authorization=...)`. **Do not** use `auth = Depends(_get_current_user_dep)` in the signature — it forces FastAPI to resolve `_get_current_user_dep` at decorator-evaluation time (i.e. at import time, before `configure_X_module(...)` ran), which fails.
+
+6. **Helper for tests: `bind_X_module_to_mock(mock_sb)`** in `noctusai_lib.testing` lets product conftests rewire the module per fixture (TestClient caches the app, so the boot-time configure captures the FIRST fixture's mock_sb permanently — re-bind per fixture). See `KB § PATTERNS/testing.md § Consent-guard product conftest pattern` for the canonical conftest shape.
+
+### Reference adopters (read these before designing a new dep factory)
+
+- `seed/backend/lib/noctusai_lib/ai/consent.py::consent_required` — factory shape + module-level state.
+- `seed/backend/framework/noctusai_seed/app.py` — the wiring point (search for `configure_consent_module(`).
+- `seed/backend/lib/noctusai_lib/testing/consent.py::bind_consent_module_to_mock` — the per-fixture rewire pattern.
+- `seed/backend/lib/noctusai_lib/llm/budget.py::configure_budget_module` — sister adopter (no Depends but same module-level injection shape).
+
+### When to use this pattern
+
+- Any seed-lib feature that needs to read **per-request** state (the calling user, the active org, the request-scoped DB client) AND **per-process** wiring (which factories to call). Mounted via `Depends(...)`.
+- Any seed-lib feature that needs to be **opt-out via a settings flag** rather than always-on.
+- Any feature where the configuration depends on the product's `ProductDependencies` (and therefore can't be hard-coded in the seed lib).
+
+If you're tempted to capture `db.get_admin_client` or `deps.get_current_user` at module-import time, stop — that's the trap. Use this pattern.
+
 ---
 
 See also:
