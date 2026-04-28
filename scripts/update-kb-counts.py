@@ -37,7 +37,7 @@ REPO = Path(__file__).resolve().parents[1]
 # ────────────────────────────────────────────────────────────────
 
 PRODUCTS = [
-    ("Core",       "core"),
+    ("Core",       "products/core"),
     ("ERP",        "products/erp-imobiliario"),
     ("PF",         "products/personal-finance"),
     ("Therapy",    "products/therapy-platform"),
@@ -107,8 +107,7 @@ def count_schema_tables() -> dict[str, int]:
         r'^CREATE TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+(?!"?[a-z_\-]+"?\s*\.)([a-z_]+)\s*\(',
         re.IGNORECASE | re.MULTILINE,
     )
-    for mig_dir in list((REPO / "core" / "backend" / "migrations").glob("*.sql")) + \
-                   list((REPO / "products").glob("*/backend/migrations/*.sql")):
+    for mig_dir in (REPO / "products").glob("*/backend/migrations/*.sql"):
         try:
             text = mig_dir.read_text(encoding="utf-8")
         except OSError:

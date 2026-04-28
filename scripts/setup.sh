@@ -36,32 +36,9 @@ echo ""
 # ── Step 1: Git hooks ────────────────────────────────────────
 step "Step 1/5: Installing git hooks"
 
-HOOKS_DIR="$REPO_ROOT/.git/hooks"
-
-# post-commit: seed auto-sync
-cat > "$HOOKS_DIR/post-commit" << 'HOOK'
-#!/usr/bin/env bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-SEED_DIR="$REPO_ROOT/products/seed"
-[ ! -d "$SEED_DIR" ] && exit 0
-CHANGED_SEED=$(git diff-tree --no-commit-id --name-only -r HEAD -- products/seed/ 2>/dev/null | head -1)
-[ -z "$CHANGED_SEED" ] && exit 0
-[ -f "$REPO_ROOT/.seed-syncing" ] && rm -f "$REPO_ROOT/.seed-syncing" && exit 0
-echo "[hook] Seed product changed — syncing template..."
-touch "$REPO_ROOT/.seed-syncing"
-bash "$REPO_ROOT/scripts/sync-seed-template.sh" 2>&1 | sed 's/^/[hook] /'
-TEMPLATE_CHANGES=$(git status --porcelain -- templates/product-seed/ 2>/dev/null | head -1)
-if [ -n "$TEMPLATE_CHANGES" ]; then
-    git add templates/product-seed/
-    git commit --amend --no-edit --no-verify 2>/dev/null
-    echo "[hook] Template synced and included in commit"
-else
-    echo "[hook] Template already in sync"
-fi
-rm -f "$REPO_ROOT/.seed-syncing"
-HOOK
-chmod +x "$HOOKS_DIR/post-commit"
-log "post-commit hook installed (seed → template auto-sync)"
+# Delegate to scripts/install-hooks.sh (single source of truth).
+# Installs the unified pre-commit: seed→template sync + KB counts + KB sync verification.
+bash "$REPO_ROOT/scripts/install-hooks.sh" | sed 's/^/  /'
 
 # ── Step 2: Python venv ──────────────────────────────────────
 step "Step 2/5: Python virtual environment"
@@ -90,7 +67,7 @@ log "Seed packages installed (shared + framework, dev mode)"
 step "Step 4/5: Frontend dependencies"
 
 FRONTENDS=(
-    "core/frontend"
+    "products/core/frontend"
     "products/erp-imobiliario/frontend"
     "products/personal-finance/frontend"
     "products/therapy-platform/frontend"
@@ -125,7 +102,7 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║     Setup complete!                  ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════╝${NC}"
 echo ""
-echo "  Git hooks:  post-commit (seed auto-sync)"
+echo "  Git hooks:  pre-commit (seed sync + KB counts + KB sync verification)"
 echo "  Python:     venv/ with all deps"
 echo "  Frontend:   node_modules/ in all products"
 echo ""

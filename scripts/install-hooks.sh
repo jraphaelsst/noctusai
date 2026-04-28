@@ -3,6 +3,14 @@
 # install-hooks.sh — Install git hooks only (without full setup)
 #
 # For the full setup (hooks + venv + deps), use: bash scripts/setup.sh
+#
+# The only hook installed is `pre-commit`, which:
+#   1. Syncs seed → template if products/seed/ is staged.
+#   2. Regenerates KB count blocks and stages them.
+#   3. Verifies CLAUDE.md ↔ KB INDEX sync (blocking).
+#
+# The canonical script lives at scripts/pre-commit — the hook is a symlink
+# so edits to scripts/pre-commit take effect without re-installing.
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -11,29 +19,20 @@ HOOKS_DIR="$REPO_ROOT/.git/hooks"
 
 echo "Installing git hooks..."
 
-cat > "$HOOKS_DIR/post-commit" << 'HOOK'
-#!/usr/bin/env bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-SEED_DIR="$REPO_ROOT/products/seed"
-[ ! -d "$SEED_DIR" ] && exit 0
-CHANGED_SEED=$(git diff-tree --no-commit-id --name-only -r HEAD -- products/seed/ 2>/dev/null | head -1)
-[ -z "$CHANGED_SEED" ] && exit 0
-[ -f "$REPO_ROOT/.seed-syncing" ] && rm -f "$REPO_ROOT/.seed-syncing" && exit 0
-echo "[hook] Seed product changed — syncing template..."
-touch "$REPO_ROOT/.seed-syncing"
-bash "$REPO_ROOT/scripts/sync-seed-template.sh" 2>&1 | sed 's/^/[hook] /'
-TEMPLATE_CHANGES=$(git status --porcelain -- templates/product-seed/ 2>/dev/null | head -1)
-if [ -n "$TEMPLATE_CHANGES" ]; then
-    git add templates/product-seed/
-    git commit --amend --no-edit --no-verify 2>/dev/null
-    echo "[hook] Template synced and included in commit"
-else
-    echo "[hook] Template already in sync"
-fi
-rm -f "$REPO_ROOT/.seed-syncing"
-HOOK
+# ─── pre-commit: sync seed+template, refresh KB counts, verify KB sync
+rm -f "$HOOKS_DIR/pre-commit"
+ln -s "$REPO_ROOT/scripts/pre-commit" "$HOOKS_DIR/pre-commit"
+chmod +x "$REPO_ROOT/scripts/pre-commit"
+echo "  pre-commit: seed→template sync + KB counts + KB sync check"
 
-chmod +x "$HOOKS_DIR/post-commit"
-echo "  post-commit: seed → template auto-sync"
+# ─── Remove legacy post-commit hook (seed sync moved to pre-commit)
+if [[ -f "$HOOKS_DIR/post-commit" && ! -L "$HOOKS_DIR/post-commit" ]]; then
+    # Only remove if it looks like our seed-sync hook (grep for marker)
+    if grep -q "sync-seed-template" "$HOOKS_DIR/post-commit" 2>/dev/null; then
+        rm -f "$HOOKS_DIR/post-commit"
+        echo "  post-commit: removed (legacy seed sync → moved to pre-commit)"
+    fi
+fi
+
 echo ""
 echo "Done! For full setup (venv + deps + hooks): bash scripts/setup.sh"

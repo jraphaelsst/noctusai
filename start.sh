@@ -81,8 +81,15 @@ fi
 echo "[venv] Instalando dependencias..."
 "$VENV/bin/pip" install -q -r "$ROOT_DIR/requirements.txt"
 
+# Stamp seed version before any backend imports noctusai_seed / noctusai_lib.
+# Surfaces drift when devs pull new commits but forget to restart services.
+# Idempotent; fast; fails-open (script exits 1 if git is missing).
+if [ -x "$ROOT_DIR/scripts/stamp-seed-version.sh" ]; then
+  bash "$ROOT_DIR/scripts/stamp-seed-version.sh" || true
+fi
+
 # --- Core Backend (porta 8000) ---
-CORE_BACKEND="$ROOT_DIR/core/backend"
+CORE_BACKEND="$ROOT_DIR/products/core/backend"
 echo "[Core Backend] Iniciando na porta 8000..."
 "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir "$CORE_BACKEND" &
 PIDS+=($!)
@@ -94,7 +101,7 @@ echo "[ERP Backend] Iniciando na porta 8001..."
 PIDS+=($!)
 
 # --- Core Frontend (porta 5173) ---
-CORE_FRONTEND="$ROOT_DIR/core/frontend"
+CORE_FRONTEND="$ROOT_DIR/products/core/frontend"
 ensure_frontend_deps "$CORE_FRONTEND" "Core Frontend"
 echo "[Core Frontend] Iniciando na porta 5173..."
 (cd "$CORE_FRONTEND" && exec npx vite --host 0.0.0.0 --port 5173) &

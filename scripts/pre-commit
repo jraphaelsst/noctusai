@@ -56,13 +56,50 @@ if [[ -x "$REPO_ROOT/scripts/update-kb-counts.py" ]]; then
     fi
 fi
 
-# ─── 3. KB ↔ CLAUDE.md sync verification (blocking) ─────────────
+# ─── 3. Seed version stamp (matches _version_static.py to current HEAD) ──
+# Keeps the keeper drift-detector honest. Idempotent; gitignored output.
+if [[ -x "$REPO_ROOT/scripts/stamp-seed-version.sh" ]]; then
+    bash "$REPO_ROOT/scripts/stamp-seed-version.sh" 2>&1 | sed 's/^/[pre-commit] /' || true
+fi
+
+# ─── 4. KB ↔ CLAUDE.md sync verification (blocking) ─────────────
 if [[ -x "$REPO_ROOT/scripts/verify-kb-sync.sh" ]]; then
     echo "[pre-commit] Verifying KB sync..."
     if ! bash "$REPO_ROOT/scripts/verify-kb-sync.sh"; then
         echo "[pre-commit] KB sync check FAILED. Commit aborted." >&2
         echo "[pre-commit] Fix the broken pointers in CLAUDE.md or update KNOWLEDGE-BASE/INDEX.md." >&2
         exit 1
+    fi
+fi
+
+# ─── 5. Phase-state consistency (blocking, only when PROJECT.md staged) ──
+# Per `keeper-phase-state-consistency-detector` (shipped 2026-04-28) +
+# `KB § PATTERNS/project-execution.md § 2 Self-check before claiming a
+# phase is done`. Catches §6 ↔ §11 drift before it commits — closes the
+# slip pattern that documentation alone wasn't sufficient to prevent.
+#
+# Only runs when a file whose BASENAME is exactly `PROJECT.md` is staged
+# (perf — no overhead on commits that don't touch project docs, per
+# project §7.3 default). The basename match avoids false-firing on
+# legacy files like `AI-EXPANSION-PROJECT.md` whose name happens to
+# end in `PROJECT.md`.
+STAGED_PROJECT_MD=$(git diff --cached --name-only 2>/dev/null | grep -E '(^|/)PROJECT\.md$' || true)
+if [[ -n "$STAGED_PROJECT_MD" ]]; then
+    # Prefer the repo's venv Python (codebase uses Python 3.10+ syntax;
+    # system `python3` may be older on some hosts). Fall back to
+    # `${PYTHON:-python3}` only if the venv interpreter is missing.
+    if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
+        PY="$REPO_ROOT/venv/bin/python"
+    else
+        PY="${PYTHON:-python3}"
+    fi
+    if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
+        echo "[pre-commit] Checking §6 ↔ §11 phase-state consistency..."
+        if ! "$PY" "$REPO_ROOT/mcp/noctusai/cli.py" --check-phase-state; then
+            echo "[pre-commit] Phase-state check FAILED. Commit aborted." >&2
+            echo "[pre-commit] Fix the §6 live state (tick checkboxes / flip header / add Improvements block) before committing." >&2
+            exit 1
+        fi
     fi
 fi
 

@@ -51,7 +51,7 @@ jobs:
           pip install pytest pytest-asyncio
 
       - name: Run tests
-        working-directory: core/backend
+        working-directory: products/core/backend
         run: pytest --tb=short -q
 
   pf-backend-tests:
@@ -114,14 +114,14 @@ jobs:
         with:
           node-version: "18"
           cache: npm
-          cache-dependency-path: core/frontend/package-lock.json
+          cache-dependency-path: products/core/frontend/package-lock.json
 
       - name: Install dependencies
-        working-directory: core/frontend
+        working-directory: products/core/frontend
         run: npm ci
 
       - name: Build
-        working-directory: core/frontend
+        working-directory: products/core/frontend
         run: npm run build
 
   pf-frontend-build:
@@ -158,18 +158,18 @@ jobs:
         with:
           node-version: "18"
           cache: npm
-          cache-dependency-path: core/frontend/package-lock.json
+          cache-dependency-path: products/core/frontend/package-lock.json
 
       - name: Install dependencies
-        working-directory: core/frontend
+        working-directory: products/core/frontend
         run: npm ci
 
       - name: Install Playwright browsers
-        working-directory: core/frontend
+        working-directory: products/core/frontend
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
-        working-directory: core/frontend
+        working-directory: products/core/frontend
         run: npx playwright test
 
       - name: Upload report
@@ -177,7 +177,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: core-playwright-report
-          path: core/frontend/playwright-report/
+          path: products/core/frontend/playwright-report/
           retention-days: 14
 
   erp-e2e-tests:
