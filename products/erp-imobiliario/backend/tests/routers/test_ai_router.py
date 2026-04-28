@@ -364,3 +364,343 @@ class TestSuggestPrice:
                 "imovel_id": "a1",
             })
             assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Tier 1.5 G1 — E4 follow-up draft endpoint (ai-expansion Phase 15)
+# ---------------------------------------------------------------------------
+
+class TestFollowUpDraft:
+    def test_happy_path_returns_draft(self, client):
+        client._mock_supabase.set_table_data("clientes", {
+            "id": "lead-1",
+            "nome": "João Silva",
+            "etapa_atual": "negociação",
+            "lead_score_justificativa": "ativo",
+            "observacoes": "Negociava preço.",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-03-01T00:00:00Z",
+        })
+        with patch(
+            "app.services.ai_service.draft_follow_up",
+            new_callable=AsyncMock,
+            return_value={
+                "channel": "whatsapp",
+                "subject": None,
+                "body": "Olá João, tudo bem?",
+            },
+        ):
+            resp = client.post(
+                "/api/ai/leads/lead-1/follow-up-draft",
+                json={"cliente_id": "lead-1"},
+            )
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["channel"] == "whatsapp"
+        assert "João" in body["body"]
+        assert "days_since_activity" in body
+
+    def test_lead_not_found_returns_404(self, client):
+        client._mock_supabase.set_table_data("clientes", [])
+        resp = client.post(
+            "/api/ai/leads/missing/follow-up-draft",
+            json={"cliente_id": "missing"},
+        )
+        assert resp.status_code == 404
+
+    def test_llm_failure_returns_500(self, client):
+        client._mock_supabase.set_table_data("clientes", {
+            "id": "lead-1",
+            "nome": "Ana",
+            "etapa_atual": "qualificação",
+            "updated_at": "2026-04-01T00:00:00Z",
+        })
+        with patch(
+            "app.services.ai_service.draft_follow_up",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("upstream timeout"),
+        ):
+            resp = client.post(
+                "/api/ai/leads/lead-1/follow-up-draft",
+                json={"cliente_id": "lead-1"},
+            )
+        assert resp.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 P1 indicator endpoints (E2/E6/E7/E8/E10)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _stub_persist():
+    """Stub persist_output so the integration test doesn't depend on the
+    erp.ai_outputs table being seeded into the mock."""
+    with patch(
+        "app.routers.ai.persist_output",
+        side_effect=lambda db, schema, output: {
+            **output.to_insert_payload(),
+            "id": "ai-out-1",
+        },
+    ) as p:
+        yield p
+
+
+class TestWhatsAppIntent:
+    def test_persists_classification(self, client, _stub_persist):
+        with patch(
+            "app.services.ai_service.classify_whatsapp_intent",
+            new_callable=AsyncMock,
+            return_value={
+                "kind": "classification",
+                "label": "interessado",
+                "chip": "INTERESSADO",
+                "explanation": "preocupado com prazo",
+                "confidence": 0.9,
+                "score": None,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "erp-whatsapp-intent@v1",
+            },
+        ):
+            resp = client.post(
+                "/api/ai/whatsapp-intent",
+                json={
+                    "cliente_id": "11111111-1111-1111-1111-111111111111",
+                    "message_text": "Quero saber se o apto está disponível",
+                    "cliente_nome": "João",
+                },
+            )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["label"] == "interessado"
+        assert data["ref_id"] == "11111111-1111-1111-1111-111111111111"
+        _stub_persist.assert_called_once()
+
+
+class TestCertidoesScore:
+    def test_happy_path(self, client, _stub_persist):
+        client._mock_supabase.set_table_data("clientes", {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "nome": "Pedro",
+        })
+        client._mock_supabase.set_table_data("certidoes_negativas", [
+            {"tipo": "fed", "status": "ok", "data_emissao": "2026-04-01"},
+        ])
+        with patch(
+            "app.services.ai_service.score_certidoes",
+            new_callable=AsyncMock,
+            return_value={
+                "kind": "score",
+                "label": "saúde 80/100",
+                "score": 80.0,
+                "chip": "80/100",
+                "explanation": "ok",
+                "confidence": None,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "erp-certidoes-score@v1",
+            },
+        ):
+            resp = client.post(
+                "/api/ai/clientes/11111111-1111-1111-1111-111111111111/certidoes-score",
+            )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["score"] == 80.0
+
+    def test_cliente_not_found_returns_404(self, client):
+        client._mock_supabase.set_table_data("clientes", [])
+        resp = client.post("/api/ai/clientes/22222222-2222-2222-2222-222222222222/certidoes-score")
+        assert resp.status_code == 404
+
+
+class TestMetasCoachTip:
+    def test_persists_narrative(self, client, _stub_persist):
+        with patch(
+            "app.services.ai_service.generate_metas_coach_tip",
+            new_callable=AsyncMock,
+            return_value={
+                "kind": "narrative",
+                "label": "Foque em retomar leads parados",
+                "explanation": "Foque em retomar leads parados",
+                "chip": "REATIVAR",
+                "score": 35.0,
+                "confidence": None,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "erp-metas-coach@v1",
+            },
+        ):
+            resp = client.post(
+                "/api/ai/metas/coach-tip",
+                json={
+                    "user_id": "33333333-3333-3333-3333-333333333333",
+                    "user_nome": "Ana",
+                    "progresso_percent": 35.0,
+                    "dias_restantes": 12,
+                    "eventos_recentes": ["visita"],
+                },
+            )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["chip"] == "REATIVAR"
+        assert data["ref_type"] == "user_metas"
+
+
+class TestPhotoCompliance:
+    def test_persists_flag(self, client, _stub_persist):
+        client._mock_supabase.set_table_data("ativos", {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "descricao": "Apto 3 quartos",
+            "fotos": [{"filename": "a.jpg", "alt_text": ""}],
+        })
+        with patch(
+            "app.services.ai_service.assess_photo_compliance",
+            new_callable=AsyncMock,
+            return_value={
+                "kind": "flag",
+                "label": "revisar",
+                "score": 60.0,
+                "chip": "REVISAR",
+                "explanation": "alt-text vazio",
+                "confidence": None,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "erp-photo-compliance@v1",
+            },
+        ):
+            resp = client.post(
+                "/api/ai/imoveis/44444444-4444-4444-4444-444444444444/photo-compliance",
+            )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["chip"] == "REVISAR"
+
+    def test_imovel_not_found_returns_404(self, client):
+        client._mock_supabase.set_table_data("ativos", [])
+        resp = client.post("/api/ai/imoveis/55555555-5555-5555-5555-555555555555/photo-compliance")
+        assert resp.status_code == 404
+
+
+class TestSearchRelevance:
+    def test_persists_score(self, client, _stub_persist):
+        client._mock_supabase.set_table_data("ativos", {
+            "id": "66666666-6666-6666-6666-666666666666",
+            "tipo_imovel": "Apto",
+            "bairro": "Centro",
+            "cidade": "SP",
+            "area_privativa": 80,
+            "area_total": 90,
+            "quartos": 2,
+            "valor": 500000,
+            "descricao": "Apto reformado",
+        })
+        with patch(
+            "app.services.ai_service.score_search_relevance",
+            new_callable=AsyncMock,
+            return_value={
+                "kind": "score",
+                "label": "relevância 75%",
+                "score": 0.75,
+                "chip": "75%",
+                "explanation": "match em bairro",
+                "confidence": 0.75,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "erp-search-relevance@v1",
+            },
+        ):
+            resp = client.post(
+                "/api/ai/search-relevance",
+                json={
+                    "imovel_id": "66666666-6666-6666-6666-666666666666",
+                    "query": "apto 2 quartos centro",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["score"] == 0.75
+
+
+# ---------------------------------------------------------------------------
+# Consent guards — consent-guard-rollout Phase 3 (2026-04-27)
+#
+# Each ERP AI endpoint mounts `Depends(consent_required("erp.<feature>"))`.
+# Tests below confirm: (a) revoked decisions block with HTTP 412 + the
+# underlying service is never called, (b) `erp.embeddings` is registered
+# as `toggleable=False` (locked-on infra), (c) default-granted=True passes
+# the guard transparently.
+# ---------------------------------------------------------------------------
+
+
+class TestConsentGuards:
+    def test_lead_score_returns_412_when_user_revoked_consent(self, client):
+        client._mock_supabase.set_table_data("ai_consent", [{
+            "feature_key": "erp.lead_score",
+            "granted": False,
+            "user_id": "test-user-123",
+            "granted_at": None,
+            "revoked_at": "2026-04-27T00:00:00Z",
+        }])
+        with patch(
+            "app.services.ai_service.score_lead", new_callable=AsyncMock
+        ) as mock_svc:
+            resp = client.post(
+                "/api/ai/lead-score",
+                json={"cliente_id": "cli-1"},
+            )
+        assert resp.status_code == 412
+        body_text = str(resp.json()).lower()
+        assert "consentimento" in body_text or "consent" in body_text
+        mock_svc.assert_not_called()
+
+    def test_follow_up_draft_returns_412_when_user_revoked_consent(self, client):
+        # Different endpoint shape (path param + body) — same guard mechanism.
+        client._mock_supabase.set_table_data("ai_consent", [{
+            "feature_key": "erp.lead_follow_up_draft",
+            "granted": False,
+            "user_id": "test-user-123",
+            "granted_at": None,
+            "revoked_at": "2026-04-27T00:00:00Z",
+        }])
+        with patch(
+            "app.services.ai_service.draft_follow_up", new_callable=AsyncMock
+        ) as mock_svc:
+            resp = client.post(
+                "/api/ai/leads/lead-1/follow-up-draft",
+                json={"cliente_id": "lead-1"},
+            )
+        assert resp.status_code == 412
+        mock_svc.assert_not_called()
+
+    def test_embeddings_feature_is_locked_on_via_toggleable_false(self, client):
+        # `erp.embeddings` is `toggleable=False` per §7.6 — visible in the
+        # catalog for billing transparency but cannot be disabled. The
+        # toggle-attempt 403 path is exercised in core's me_consents tests;
+        # here we just confirm the ERP catalog has the entry with the right
+        # locked-on shape.
+        from noctusai_lib.ai.consent import get_feature
+        feature = get_feature("erp.embeddings")
+        assert feature is not None
+        assert feature.toggleable is False
+        assert feature.default_granted is True
+        assert feature.product == "erp"
+
+    def test_default_granted_path_lets_request_through(self, client):
+        # No stored decision + default_granted=True → guard passes silently.
+        client._mock_supabase.set_table_data("ai_consent", [])
+        with patch(
+            "app.services.ai_service.classify_whatsapp_intent", new_callable=AsyncMock
+        ) as mock_svc:
+            mock_svc.return_value = {
+                "kind": "classification",
+                "label": "interesse_compra",
+                "score": 0.85,
+                "chip": "compra",
+                "explanation": "menciona valor + financiamento",
+                "confidence": 0.85,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "erp-whatsapp-intent@v1",
+            }
+            resp = client.post(
+                "/api/ai/whatsapp-intent",
+                json={
+                    "cliente_id": "11111111-1111-1111-1111-111111111111",
+                    "message_text": "Tenho interesse em financiar este apartamento",
+                },
+            )
+        assert resp.status_code == 200
+        mock_svc.assert_called_once()

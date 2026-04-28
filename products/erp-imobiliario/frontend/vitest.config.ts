@@ -1,14 +1,3 @@
-import { defineConfig } from 'vitest/config';
-import path from 'path';
+import { createProductVitestConfig } from "../../../seed/frontend/framework/vitest.config.factory";
 
-export default defineConfig({
-  test: {
-    globals: true,
-    environment: 'jsdom',
-  },
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
-  },
-});
+export default createProductVitestConfig();

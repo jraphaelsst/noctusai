@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCliente, useToggleArquivarCliente } from '@/hooks/useClientes';
 import { useMoverClienteEtapa } from '@/hooks/useFunil';
 import { LeadScoreBadge } from '@/components/clientes/LeadScoreBadge';
+import { AIIndicator } from '@noctusai/lib/design-system';
 import { ClienteResumo } from '@/components/clientes/ClienteResumo';
 import { ClienteAtividades } from '@/components/clientes/ClienteAtividades';
 import { ClientePropostas } from '@/components/clientes/ClientePropostas';
@@ -71,6 +72,7 @@ export default function ClienteDetalhes() {
               <Badge className={etapaConfig.bgColor}>{etapaConfig.label}</Badge>
               {cliente.arquivado && <Badge variant="secondary">Arquivado</Badge>}
               <LeadScoreBadge cliente={cliente} />
+              <AIIndicator refType="cliente" refId={cliente.id} showAll enableFeedback />
             </div>
             {cliente.usuario && (
               <p className="text-sm text-muted-foreground">

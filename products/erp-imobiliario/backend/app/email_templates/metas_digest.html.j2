@@ -1,0 +1,67 @@
+{# Metas digest — full HTML document. Doesn't extend the lib base because
+   its shape is fundamentally different (full email card vs. content
+   fragment). Auto-escape still applies to all `{{ }}` interpolations. #}
+<!DOCTYPE html>
+<html><body style="font-family:Arial,sans-serif;background:#fafafa;margin:0;padding:24px;">
+<div style="max-width:640px;margin:0 auto;background:white;padding:32px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.05)">
+  <h1 style="color:#111;margin:0 0 4px 0">Fechamento de quinzena</h1>
+  <p style="color:#666;margin:0 0 24px 0">
+    {{ periodo_tipo }} — de {{ periodo_inicio }} a {{ periodo_fim }} · status: <strong>{{ periodo_status }}</strong>
+  </p>
+
+  <h2 style="color:#111;font-size:16px;margin:24px 0 8px">Top 3 do período</h2>
+  <table style="width:100%;border-collapse:collapse;">
+    <thead><tr>
+      <th style="text-align:left;padding:8px;border-bottom:2px solid #111;">Agente</th>
+      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">Score</th>
+      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">VGV</th>
+    </tr></thead>
+    <tbody>
+      {% for r in top_rankings[:3] %}
+      <tr>
+        <td style="padding:8px; border-bottom:1px solid #eee;">{{ r.medal }} {{ r.corretor_short }}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">{{ r.score_label }}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">{{ r.vgv_brl }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" style="padding:8px;text-align:center;color:#888">Sem eventos pontuados no período.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2 style="color:#111;font-size:16px;margin:24px 0 8px">Equipes — meta vs realizado</h2>
+  <table style="width:100%;border-collapse:collapse;">
+    <thead><tr>
+      <th style="text-align:left;padding:8px;border-bottom:2px solid #111;">Equipe</th>
+      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">Meta VGV</th>
+      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">Realizado</th>
+      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">% atingido</th>
+    </tr></thead>
+    <tbody>
+      {% for eq in equipes %}
+      <tr>
+        <td style="padding:8px; border-bottom:1px solid #eee;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ eq.cor }};margin-right:8px"></span>
+          {{ eq.nome }}
+        </td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">{{ eq.meta_brl }}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">{{ eq.real_brl }}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;"><strong>{{ eq.pct }}%</strong></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" style="padding:8px;text-align:center;color:#888">Nenhuma equipe configurada.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2 style="color:#111;font-size:16px;margin:24px 0 8px">Marcos atingidos no período</h2>
+  <p style="color:#333">
+    {{ milestone_50 }}× agentes bateram 50% · {{ milestone_80 }}× bateram 80% · {{ milestone_100 }}× bateram 100%
+  </p>
+
+  <hr style="margin:32px 0;border:none;border-top:1px solid #eee" />
+  <p style="color:#999;font-size:12px;margin:0">
+    Enviado automaticamente pelo NoctusAI ERP. Veja o painel completo em /metas/dashboard.
+  </p>
+</div>
+</body></html>

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from app.dependencies import get_current_user, get_org_id
-from app.services.credential_resolver import resolve_credential
+from noctusai_lib.credentials import resolve_credential
 from app.responses import success_response
 
 logger = logging.getLogger(__name__)

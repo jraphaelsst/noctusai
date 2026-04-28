@@ -1,0 +1,13 @@
+Fechamento de quinzena — {{ periodo_tipo }} de {{ periodo_inicio }} a {{ periodo_fim }} (status: {{ periodo_status }})
+
+Top 3 do período:
+{% for r in top_rankings[:3] %}
+  {{ r.medal_text }} {{ r.corretor_short }} — score {{ r.score_label }} · VGV {{ r.vgv_brl }}
+{% endfor %}
+
+Equipes:
+{% for eq in equipes %}
+  {{ eq.nome }}: {{ eq.meta_brl }} → {{ eq.real_brl }} ({{ eq.pct }}%)
+{% endfor %}
+
+Marcos: {{ milestone_50 }}× 50%, {{ milestone_80 }}× 80%, {{ milestone_100 }}× 100%

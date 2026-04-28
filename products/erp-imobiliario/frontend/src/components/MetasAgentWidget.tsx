@@ -8,6 +8,7 @@
  * Consumes `useAuthStore()` to scope `rankings` to the current agent. If
  * the agent has no events in the period, renders a "sem atividade" state.
  */
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +16,8 @@ import { Target, TrendingUp, Trophy, Sparkles } from 'lucide-react';
 import { RankBadge, ScorePill } from '@noctusai/lib/design-system';
 import { usePeriodos, useRankings } from '@/hooks/useMetasDomain';
 import { useAuthStore } from '@noctusai/seed/infra';
+import { useMetaMilestoneToast } from '@/hooks/useMetaMilestoneToast';
+import { MetaMilestoneBurst, MetaPulseWrap } from '@/components/MetaMilestoneBurst';
 
 function brl(n: number): string {
   return new Intl.NumberFormat('pt-BR', {
@@ -33,13 +36,16 @@ export function MetasAgentWidget({ userId: userIdProp }: { userId?: string } = {
   });
 
   const myRow = rankings?.unificado?.find((r) => r.corretor_id === userId);
+  const [burst, setBurst] = useState(false);
+  useMetaMilestoneToast(() => setBurst(true));
 
   if (!openPeriod) {
     return null;
   }
 
   return (
-    <Card className="border-l-4 border-l-primary">
+    <Card className="relative overflow-hidden border-l-4 border-l-primary">
+      <MetaMilestoneBurst active={burst} onDone={() => setBurst(false)} />
       <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
@@ -53,10 +59,14 @@ export function MetasAgentWidget({ userId: userIdProp }: { userId?: string } = {
           ) : (
             <div className="flex flex-wrap items-baseline gap-4">
               <Stat icon={<Trophy className="h-4 w-4" />} label="Rank">
-                <RankBadge rank={myRow.rank} title="Sua posição atual no ranking unificado" />
+                <MetaPulseWrap active={burst}>
+                  <RankBadge rank={myRow.rank} title="Sua posição atual no ranking unificado" />
+                </MetaPulseWrap>
               </Stat>
               <Stat icon={<Target className="h-4 w-4" />} label="Score">
-                <ScorePill value={myRow.score_unificado ?? null} precision={1} />
+                <MetaPulseWrap active={burst}>
+                  <ScorePill value={myRow.score_unificado ?? null} precision={1} />
+                </MetaPulseWrap>
               </Stat>
               <Stat icon={<TrendingUp className="h-4 w-4" />} label="VGV">
                 <strong>{brl(Number(myRow.vgv))}</strong>

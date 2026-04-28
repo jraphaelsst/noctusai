@@ -7,6 +7,27 @@ re-exports them so existing test files that do
 
 After the seed framework migration, patches target DatabaseModule.get_client
 and DatabaseModule.get_admin_client instead of app.database.get_supabase_client.
+
+-----------------------------------------------------------------------------
+Schema-validation rationale (mock-supabase-schema-validation Phase 3, 2026-04-24)
+-----------------------------------------------------------------------------
+MockSupabaseClient is constructed with validate_schema=False. Flipping to True
+surfaces ~8 known schema-drift points between migration files and runtime code:
+  * erp.ativos: code uses `descricao` (migration has `descricao_seo`); code uses
+    `org_id` (not in migration).
+  * erp.clientes: code uses `org_id` on insert (not in migration).
+  * erp.lancamentos: code uses `contrato_id` (not in migration), `referencia`
+    (not in migration).
+  * erp.metas: code uses `meta_vgv` (migration has `meta_pretendida` /
+    `meta_realizada`).
+  * erp.profiles: code uses `avatar_url` (migration has `avatar`), `org_id`
+    (not in migration).
+  * erp.whatsapp_config: code uses `webhook_secret` (not in migration).
+
+These belong to an `erp-schema-drift-reconciliation` follow-up project, not the
+mock-supabase close. Same shape as therapy's schema drift (tracked by
+`products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`).
+Once reconciled, flip this to `validate_schema=True, schema="erp"`.
 """
 from datetime import date
 
@@ -43,8 +64,8 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported
     MockUser,
     MockUserResponse,
     AuthClient,
+    bind_consent_module_to_mock,
 )
-
 
 # ---------------------------------------------------------------------------
 # ERP-specific defaults
@@ -72,7 +93,7 @@ def mock_user():
 
 @pytest.fixture
 def mock_supabase():
-    return MockSupabaseClient()
+    return MockSupabaseClient(validate_schema=False, schema="erp")  # See rationale below
 
 
 @pytest.fixture
@@ -84,7 +105,7 @@ def client():
         client.mock_supabase   — the MockSupabaseClient instance
         client.mock_log        — the MagicMock patched over log_action
     """
-    mock_sb = MockSupabaseClient()
+    mock_sb = MockSupabaseClient(validate_schema=False, schema="erp")  # See rationale below
     mock_sb.auth.get_user = MagicMock(return_value=_erp_user_response())
     # ERP routers call rpc("get_data_sp") for São Paulo date; provide a default
     mock_sb.set_rpc_data("get_data_sp", [date.today().isoformat()])
@@ -96,6 +117,10 @@ def client():
          patch("app.dependencies.log_action", mock_log):
 
         from app.main import app
+        # Per-fixture re-bind of the seed's consent module to THIS test's
+        # mock_sb. Helper lives in seed-lib so all products share one path.
+        bind_consent_module_to_mock(mock_sb)
+
         tc = TestClient(app)
         ac = AuthClient(tc, mock_sb)
         # Attach ERP-specific mock_log for tests that need it

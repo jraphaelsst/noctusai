@@ -6,6 +6,8 @@
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useMetaMilestoneToast } from '@/hooks/useMetaMilestoneToast';
+import { MetaMilestoneBurst } from '@/components/MetaMilestoneBurst';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -16,6 +18,9 @@ import {
   useMetasEquipe,
 } from '@/hooks/useMetasDomain';
 import { RankBadge, ScorePill, ProgressRing } from '@noctusai/lib/design-system';
+import {
+  MetaVsRealizadoChart, TopAgentsBarChart, EquipeProgressRings,
+} from '@/components/MetasCharts';
 
 function InfoIcon({ title }: { title: string }) {
   return (
@@ -47,8 +52,12 @@ export default function MetasDashboard() {
   const openPeriodos = (periodosQ.data ?? []).filter(p => p.status !== 'fechado');
   if (openPeriodos[0] && !periodoId) setPeriodoId(openPeriodos[0].id);
 
+  const [burst, setBurst] = useState(false);
+  useMetaMilestoneToast(() => setBurst(true));
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="relative p-6 space-y-6">
+      <MetaMilestoneBurst active={burst} onDone={() => setBurst(false)} />
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2">
@@ -128,11 +137,23 @@ export default function MetasDashboard() {
         </Card>
       </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <MetaVsRealizadoChart periodoId={periodoId} />
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Progresso por equipe</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <EquipeProgressRings periodoId={periodoId} />
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Award className="w-5 h-5" />
-            Ranking
+            Ranking — Top 10
             <InfoIcon title="Três visões: Pontos (atividade), VGV (vendas em R$), Score Unificado (combinação)." />
           </CardTitle>
         </CardHeader>
@@ -152,28 +173,31 @@ export default function MetasDashboard() {
               <TabsContent key={view} value={view}>
                 {rankings.isLoading && <p className="text-muted-foreground">Carregando...</p>}
                 {rankings.data && (
-                  <ul className="divide-y">
-                    {rankings.data[view].slice(0, 10).map((r) => (
-                      <li key={r.corretor_id} className="py-2 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <RankBadge rank={r.rank} size="sm" />
-                          <span className="font-medium">{r.corretor_id.slice(0, 8)}…</span>
-                        </div>
-                        {view === 'vgv' ? (
-                          <span className="text-sm tabular-nums">{formatBRL(r.metric)}</span>
-                        ) : view === 'unificado' ? (
-                          <ScorePill value={r.metric} precision={1} />
-                        ) : (
-                          <span className="text-sm tabular-nums">{r.metric.toFixed(1)}</span>
-                        )}
-                      </li>
-                    ))}
-                    {rankings.data[view].length === 0 && (
-                      <li className="py-4 text-center text-muted-foreground text-sm">
-                        Nenhum evento pontuado ainda.
-                      </li>
-                    )}
-                  </ul>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2">
+                    <TopAgentsBarChart view={view} />
+                    <ul className="divide-y">
+                      {rankings.data[view].slice(0, 10).map((r) => (
+                        <li key={r.corretor_id} className="py-2 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <RankBadge rank={r.rank} size="sm" />
+                            <span className="font-medium">{r.corretor_id.slice(0, 8)}…</span>
+                          </div>
+                          {view === 'vgv' ? (
+                            <span className="text-sm tabular-nums">{formatBRL(r.metric)}</span>
+                          ) : view === 'unificado' ? (
+                            <ScorePill value={r.metric} precision={1} />
+                          ) : (
+                            <span className="text-sm tabular-nums">{r.metric.toFixed(1)}</span>
+                          )}
+                        </li>
+                      ))}
+                      {rankings.data[view].length === 0 && (
+                        <li className="py-4 text-center text-muted-foreground text-sm">
+                          Nenhum evento pontuado ainda.
+                        </li>
+                      )}
+                    </ul>
+                  </div>
                 )}
               </TabsContent>
             ))}

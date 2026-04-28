@@ -17,7 +17,7 @@ from typing import Optional
 import httpx
 from xhtml2pdf import pisa
 
-from app.services.credential_resolver import resolve_credential
+from noctusai_lib.credentials import resolve_credential
 
 logger = logging.getLogger(__name__)
 

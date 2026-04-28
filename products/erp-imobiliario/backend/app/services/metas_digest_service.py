@@ -13,19 +13,24 @@ Content:
   - Milestone stats (how many 50/80/100% crossings happened in the period)
 
 Delivery:
-  - Via Resend using the org's `resend_api_key` (3-tier credential chain).
-  - Dry-run when no key resolves — logs the rendered HTML so it can be inspected.
+  - Delegates to `noctusai_lib.email.digest.send_digest` (P3 pattern, shipped
+    by ai-expansion Tier 2 Phase 4 2026-04-25). The shared helper handles the
+    3-tier credential chain (org → platform → env), dry-run on missing key,
+    and Resend POST with structured return shape. This service is now purely
+    domain logic + render; the send-machinery is shared.
 """
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.dependencies import first_or_none
-from app.services.email_service import _get_resend_config, _send_via_resend
-from noctusai_lib.credentials import resolve_credential
+from noctusai_lib.email.digest import Digest, render as render_digest, send_digest
 
 logger = logging.getLogger(__name__)
+
+_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "email_templates"
 
 
 def _fmt_brl(value: float | int | None) -> str:
@@ -100,126 +105,67 @@ async def _fetch_context(db: Any, periodo_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def _render_html(ctx: Dict[str, Any], top_rankings: List[Dict[str, Any]]) -> str:
-    """Render the digest as a standalone HTML email (inline styles only)."""
+def _build_template_context(
+    ctx: Dict[str, Any], top_rankings: List[Dict[str, Any]]
+) -> dict[str, Any]:
+    """Translate the domain context into pre-formatted strings for the
+    Jinja template. Keeps templates declarative + matches the BRL/medal
+    conventions of the original inline render."""
     p = ctx["periodo"]
-    equipes = ctx["equipes"]
+    equipes_raw = ctx["equipes"]
     metas_by_equipe = {
         m["equipe_id"]: m for m in ctx["metas_equipe"] if m.get("categoria") == "vgv"
     }
     realized = ctx["realized_per_equipe"]
     ms = ctx["milestone_counts"]
 
-    # Teams section
-    teams_rows = []
-    for eq in equipes:
+    equipes_view: list[dict[str, Any]] = []
+    for eq in equipes_raw:
         meta = float((metas_by_equipe.get(eq["id"]) or {}).get("valor_meta") or 0)
         real = realized.get(eq["id"], 0.0)
         pct = int((real / meta) * 100) if meta > 0 else 0
-        color = eq.get("cor") or "#888"
-        teams_rows.append(
-            f'<tr>'
-            f'  <td style="padding:8px; border-bottom:1px solid #eee;">'
-            f'    <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{color};margin-right:8px"></span>'
-            f'    {eq["nome"]}'
-            f'  </td>'
-            f'  <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">{_fmt_brl(meta)}</td>'
-            f'  <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">{_fmt_brl(real)}</td>'
-            f'  <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;"><strong>{pct}%</strong></td>'
-            f'</tr>'
-        )
-    teams_html = "".join(teams_rows) or "<tr><td colspan=4 style='padding:8px;text-align:center;color:#888'>Nenhuma equipe configurada.</td></tr>"
+        equipes_view.append({
+            "nome": eq["nome"],
+            "cor": eq.get("cor") or "#888",
+            "meta_brl": _fmt_brl(meta),
+            "real_brl": _fmt_brl(real),
+            "pct": pct,
+        })
 
-    # Rankings section (top 3)
-    rank_rows = []
+    medals_html = ["🥇", "🥈", "🥉"]
+    medals_text = ["1º", "2º", "3º"]
+    rankings_view: list[dict[str, Any]] = []
     for i, r in enumerate(top_rankings[:3]):
-        medal = ["🥇", "🥈", "🥉"][i] if i < 3 else "#"
-        corretor = str(r.get("corretor_id", ""))[:8] + "…"
-        score = r.get("score_unificado") or 0
-        vgv = r.get("vgv") or 0
-        rank_rows.append(
-            f'<tr>'
-            f'  <td style="padding:8px; border-bottom:1px solid #eee;">{medal} {corretor}</td>'
-            f'  <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">{float(score):.1f}</td>'
-            f'  <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">{_fmt_brl(vgv)}</td>'
-            f'</tr>'
-        )
-    rank_html = "".join(rank_rows) or "<tr><td colspan=3 style='padding:8px;text-align:center;color:#888'>Sem eventos pontuados no período.</td></tr>"
+        rankings_view.append({
+            "medal": medals_html[i] if i < 3 else "#",
+            "medal_text": medals_text[i] if i < 3 else f"{i+1}º",
+            "corretor_short": str(r.get("corretor_id", ""))[:8] + "…",
+            "score_label": f"{float(r.get('score_unificado') or 0):.1f}",
+            "vgv_brl": _fmt_brl(r.get("vgv") or 0),
+        })
 
-    return f"""\
-<!DOCTYPE html>
-<html><body style="font-family:Arial,sans-serif;background:#fafafa;margin:0;padding:24px;">
-<div style="max-width:640px;margin:0 auto;background:white;padding:32px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.05)">
-  <h1 style="color:#111;margin:0 0 4px 0">Fechamento de quinzena</h1>
-  <p style="color:#666;margin:0 0 24px 0">
-    {p["tipo"].capitalize()} — de {p["data_inicio"]} a {p["data_fim"]} · status: <strong>{p["status"]}</strong>
-  </p>
-
-  <h2 style="color:#111;font-size:16px;margin:24px 0 8px">Top 3 do período</h2>
-  <table style="width:100%;border-collapse:collapse;">
-    <thead><tr>
-      <th style="text-align:left;padding:8px;border-bottom:2px solid #111;">Agente</th>
-      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">Score</th>
-      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">VGV</th>
-    </tr></thead>
-    <tbody>{rank_html}</tbody>
-  </table>
-
-  <h2 style="color:#111;font-size:16px;margin:24px 0 8px">Equipes — meta vs realizado</h2>
-  <table style="width:100%;border-collapse:collapse;">
-    <thead><tr>
-      <th style="text-align:left;padding:8px;border-bottom:2px solid #111;">Equipe</th>
-      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">Meta VGV</th>
-      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">Realizado</th>
-      <th style="text-align:right;padding:8px;border-bottom:2px solid #111;">% atingido</th>
-    </tr></thead>
-    <tbody>{teams_html}</tbody>
-  </table>
-
-  <h2 style="color:#111;font-size:16px;margin:24px 0 8px">Marcos atingidos no período</h2>
-  <p style="color:#333">
-    {ms.get(50,0)}× agentes bateram 50% · {ms.get(80,0)}× bateram 80% · {ms.get(100,0)}× bateram 100%
-  </p>
-
-  <hr style="margin:32px 0;border:none;border-top:1px solid #eee" />
-  <p style="color:#999;font-size:12px;margin:0">
-    Enviado automaticamente pelo NoctusAI ERP. Veja o painel completo em /metas/dashboard.
-  </p>
-</div>
-</body></html>"""
+    return {
+        "periodo_tipo": str(p["tipo"]).capitalize(),
+        "periodo_inicio": p["data_inicio"],
+        "periodo_fim": p["data_fim"],
+        "periodo_status": p["status"],
+        "top_rankings": rankings_view,
+        "equipes": equipes_view,
+        "milestone_50": ms.get(50, 0),
+        "milestone_80": ms.get(80, 0),
+        "milestone_100": ms.get(100, 0),
+    }
 
 
-def _render_text(ctx: Dict[str, Any], top_rankings: List[Dict[str, Any]]) -> str:
-    p = ctx["periodo"]
-    ms = ctx["milestone_counts"]
-    equipes = ctx["equipes"]
-    realized = ctx["realized_per_equipe"]
-    metas_by_equipe = {m["equipe_id"]: m for m in ctx["metas_equipe"] if m.get("categoria") == "vgv"}
-
-    lines = [
-        f"Fechamento de quinzena — {p['tipo']} de {p['data_inicio']} a {p['data_fim']} (status: {p['status']})",
-        "",
-        "Top 3 do período:",
-    ]
-    for i, r in enumerate(top_rankings[:3]):
-        medal = ["1º", "2º", "3º"][i] if i < 3 else f"{i+1}º"
-        lines.append(
-            f"  {medal} {str(r.get('corretor_id',''))[:8]}… — score {float(r.get('score_unificado') or 0):.1f} · VGV {_fmt_brl(r.get('vgv'))}"
-        )
-
-    lines.append("")
-    lines.append("Equipes:")
-    for eq in equipes:
-        meta = float((metas_by_equipe.get(eq["id"]) or {}).get("valor_meta") or 0)
-        real = realized.get(eq["id"], 0.0)
-        pct = int((real / meta) * 100) if meta > 0 else 0
-        lines.append(f"  {eq['nome']}: {_fmt_brl(meta)} → {_fmt_brl(real)} ({pct}%)")
-
-    lines.append("")
-    lines.append(
-        f"Marcos: {ms.get(50,0)}× 50%, {ms.get(80,0)}× 80%, {ms.get(100,0)}× 100%"
+def _render_bodies(
+    ctx: Dict[str, Any], top_rankings: List[Dict[str, Any]]
+) -> tuple[str, str]:
+    return render_digest(
+        html_template="metas_digest.html.j2",
+        text_template="metas_digest.txt.j2",
+        context=_build_template_context(ctx, top_rankings),
+        search_paths=[_TEMPLATE_DIR],
     )
-    return "\n".join(lines)
 
 
 async def send_biweekly_digest(
@@ -239,20 +185,20 @@ async def send_biweekly_digest(
         return {"sent": False, "reason": "periodo_not_found"}
 
     rankings = top_rankings or []
-    html = _render_html(ctx, rankings)
-    text = _render_text(ctx, rankings)
+    html, text = _render_bodies(ctx, rankings)
     subject = f"Fechamento de quinzena — {ctx['periodo']['data_inicio']} a {ctx['periodo']['data_fim']}"
 
-    config = _get_resend_config(ctx["org_id"])
-    if not config:
-        logger.info("[METAS DIGEST DRY-RUN] To=%s subject=%s", recipient, subject)
-        logger.debug("[METAS DIGEST DRY-RUN] body:\n%s", text)
-        return {"sent": False, "dry_run": True, "subject": subject, "html": html, "text": text}
+    digest = Digest(subject=subject, text=text, html=html)
+    result = await send_digest(
+        digest, recipient=recipient, org_id=ctx["org_id"], log_prefix="METAS DIGEST",
+    )
 
-    try:
-        result = await _send_via_resend(config, recipient, subject, text, html=html)
-        logger.info("[METAS DIGEST] sent via Resend id=%s to=%s", result.get("id"), recipient)
-        return {"sent": True, "external_id": result.get("id"), "subject": subject}
-    except Exception as exc:
-        logger.error("[METAS DIGEST] send failed: %s", exc)
-        return {"sent": False, "error": str(exc)}
+    # Preserve the legacy return-dict shape so router callers don't break.
+    if result.dry_run:
+        return {
+            "sent": False, "dry_run": True, "subject": subject,
+            "html": html, "text": text,
+        }
+    if result.error:
+        return {"sent": False, "error": result.error}
+    return {"sent": True, "external_id": result.external_id, "subject": subject}

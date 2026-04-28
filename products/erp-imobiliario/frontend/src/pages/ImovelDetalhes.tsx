@@ -16,6 +16,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { formatCurrency } from '@/lib/utils';
 import { MapPin, FileX } from 'lucide-react';
 import { MetaEventoIndicator } from '@/components/MetaEventoIndicator';
+import { AIIndicator } from '@noctusai/lib/design-system';
 
 export default function ImovelDetalhes() {
   const { id } = useParams();
@@ -59,6 +60,7 @@ export default function ImovelDetalhes() {
               <Badge variant="secondary" className="capitalize">{imovel.finalidade || 'venda'}</Badge>
               {imovel.aceita_permutas && <Badge variant="outline">Permuta</Badge>}
               <Badge variant="outline" className="capitalize">{imovel.status}</Badge>
+              <AIIndicator refType="ativo" refId={imovel.id} showAll />
             </div>
             {location && (
               <p className="text-sm text-muted-foreground flex items-center gap-1">

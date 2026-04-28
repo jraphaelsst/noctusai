@@ -1,32 +1,18 @@
 """
-Embedding Service — Generate and store OpenAI embeddings for ativos.
+Embedding Service — Generate and store embeddings for ativos via the shared
+`noctusai_lib.llm` client.
 
-Uses text-embedding-3-small (1536 dimensions) via httpx.
-Gracefully degrades when OPENAI_API_KEY is not configured.
+Default model is `text-embedding-3-small` (1536 dims). Credential resolution
+(org → platform → env) is inherited from the seed-injector.
 """
 import logging
 from typing import Any, Optional
 
-import httpx
-
-from app.services.credential_resolver import resolve_credential
+from noctusai_lib.llm import generate_embedding as _lib_generate_embedding
 
 logger = logging.getLogger(__name__)
 
-OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
 EMBEDDING_MODEL = "text-embedding-3-small"
-TIMEOUT = 30.0
-
-
-def _get_api_key(org_id: Optional[str] = None) -> str:
-    """Resolve OpenAI API key via org_settings → platform_settings → env."""
-    key = resolve_credential("openai_api_key", org_id)
-    if not key:
-        raise ValueError(
-            "OpenAI API Key não configurada. "
-            "Acesse Configurações > Chaves de API para configurar."
-        )
-    return key
 
 
 def build_ativo_text(ativo: dict) -> str:
@@ -184,31 +170,12 @@ def _build_location(ativo: dict) -> str:
 
 
 async def generate_embedding(text: str, org_id: Optional[str] = None) -> list[float]:
+    """Generate a 1536-dim embedding via the shared LLM client.
+
+    Credential resolution (org → platform → env) is handled by the seed-
+    injector. `LLMNotConfigured` / `LLMAPIError` propagate from the lib.
     """
-    Call OpenAI text-embedding-3-small to generate a 1536-dim embedding.
-    Raises ValueError if API key is not configured or API call fails.
-    """
-    api_key = _get_api_key(org_id)
-
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        response = await client.post(
-            OPENAI_EMBEDDINGS_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": EMBEDDING_MODEL,
-                "input": text,
-            },
-        )
-
-        if response.status_code != 200:
-            logger.error(f"OpenAI Embeddings API error: {response.status_code} — {response.text}")
-            raise ValueError(f"Erro na API OpenAI Embeddings: {response.status_code}")
-
-        data = response.json()
-        return data["data"][0]["embedding"]
+    return await _lib_generate_embedding(text, model=EMBEDDING_MODEL, org_id=org_id)
 
 
 async def embed_ativo(ativo: dict, db) -> bool:

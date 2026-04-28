@@ -15,7 +15,7 @@ from typing import Optional
 import fitz  # PyMuPDF
 import httpx
 
-from app.services.credential_resolver import resolve_credential
+from noctusai_lib.credentials import resolve_credential
 
 logger = logging.getLogger(__name__)
 

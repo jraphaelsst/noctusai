@@ -10,7 +10,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from app.services.credential_resolver import resolve_credential
+from noctusai_lib.credentials import resolve_credential
 
 logger = logging.getLogger(__name__)
 
