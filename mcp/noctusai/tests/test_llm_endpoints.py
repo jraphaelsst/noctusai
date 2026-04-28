@@ -15,7 +15,7 @@ import pytest
 
 _LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
 _FRAMEWORK = Path(__file__).resolve().parents[3] / "seed" / "backend" / "framework"
-_CORE = Path(__file__).resolve().parents[3] / "core" / "backend"
+_CORE = Path(__file__).resolve().parents[3] / "products" / "core" / "backend"
 for p in (_LIB, _FRAMEWORK, _CORE):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
@@ -129,10 +129,10 @@ class TestPreferencesBody:
 # ── Standard routers include llm_router ───────────────────────────
 
 class TestStandardRoutersInclude:
-    def test_create_standard_routers_includes_llm(self):
+    def test_build_standard_routers_includes_llm_when_opted_in(self):
         from fastapi import APIRouter
 
-        from noctusai_seed.routers import create_standard_routers
+        from noctusai_seed.routers import build_standard_routers
 
         deps = MagicMock()
         deps.get_current_user = MagicMock()
@@ -144,7 +144,13 @@ class TestStandardRoutersInclude:
             debug = True
             product_slug = "test"
 
-        routers = create_standard_routers(deps, _FakeSettings(), product_name="Test")
+        routers = build_standard_routers(
+            deps,
+            _FakeSettings(),
+            product_name="Test",
+            version="0.1.0",
+            names=["health", "notificacoes", "team", "llm"],
+        )
         all_paths: set[str] = set()
         for r in routers:
             assert isinstance(r, APIRouter)

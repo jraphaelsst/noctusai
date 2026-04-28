@@ -51,10 +51,21 @@ async def list_tools():
         _tool("noctusai_validate", "Check seed compliance for all products. Returns score 0-100."),
         _tool("noctusai_validate_product", "Check seed compliance for one product", slug_param, ["slug"]),
 
-        # Heal
-        _tool("noctusai_heal", "Auto-fix loop: detect → fix → verify → repeat until clean", {
+        # Review (observation-only — never modifies code)
+        _tool("noctusai_review", "OBSERVATION-ONLY review. Detects seed-compliance issues deterministically. Three modes via `mode`: `agent` (default — returns issues + review prompt for the in-session agent to author proposals with session context, zero LLM cost), `headless` (OpenAI gpt-4o-mini authors proposals for CI/cron — set OPENAI_API_KEY), `evaluate` (writes OpenAI proposals to a scratch subfolder for side-by-side comparison with agent-authored versions). NEVER modifies code.", {
             "product": {"type": "string", "description": "Optional: scope to one product"},
+            "mode": {"type": "string", "enum": ["agent", "headless", "evaluate"], "description": "Review mode (default: agent)"},
+            "model": {"type": "string", "description": "OpenAI model for headless/evaluate modes (default: gpt-4o-mini)"},
         }),
+        _tool("noctusai_proposal_template", "Return `templates/PROPOSAL-TEMPLATE.md` content so agents get a consistent starting point when authoring a proposal. Agents fill every `{{PLACEHOLDER}}` in the template and submit via `noctusai_file_proposal`."),
+        _tool("noctusai_file_proposal", "Write a fully-rendered proposal markdown. For project-phase proposals pass `project=<slug>` — the file lands in `projects/<slug>/proposals/` (ONE bundled proposal per phase). For keeper/compliance proposals pass `product=<slug>` — the file lands in `products/<product>/proposals/`. Agents typically call `noctusai_proposal_template`, fill it, then submit via this tool. Dedups by title slug + key entity.", {
+            "title": {"type": "string", "description": "Proposal title — used for filename slug + dedup"},
+            "body": {"type": "string", "description": "Fully-rendered markdown (typically a filled PROPOSAL-TEMPLATE.md)"},
+            "agent": {"type": "string", "description": "Authoring agent tag — filename prefix (default: keeper)"},
+            "project": {"type": "string", "description": "Project slug / name / filename. When set, proposal lands in `projects/<slug>/proposals/`. Mutually exclusive with `product`."},
+            "product": {"type": "string", "description": "Product slug. When set, proposal lands in `products/<product>/proposals/`. Used for keeper/compliance proposals. Combine with `subdir` for evaluation sub-folders. Mutually exclusive with `project`."},
+            "subdir": {"type": "string", "description": "Subdirectory under the product proposals dir (e.g. evaluations/<ts>). Only valid when `product` is set."},
+        }, ["title", "body"]),
 
         # Analyzers
         _tool("noctusai_analyze", "Run all analyzers: patterns, deps, tests, metrics"),
@@ -82,13 +93,37 @@ async def list_tools():
         _tool("noctusai_find_orphans", "Find orphaned files not imported anywhere", slug_param, ["slug"]),
         _tool("noctusai_check_api_consistency", "Check API response pattern consistency", slug_param, ["slug"]),
 
-        # Proposals
-        _tool("noctusai_list_proposals", "List pending improvement proposals", {
-            "agent": {"type": "string", "description": "Optional: filter by agent name"},
+        # Catalog (shared-library observation layer)
+        _tool("noctusai_catalog", "Regenerate the shared-library catalog: every lib symbol, its importers, orphans (zero consumers), and duplication candidates (same name in 2+ products, not in lib). Writes mcp/noctusai/catalog.md.", {
+            "write": {"type": "boolean", "description": "Write markdown artifact to disk (default: true)"},
         }),
-        _tool("noctusai_accept_proposal", "Accept a proposal", {"filename": {"type": "string"}}, ["filename"]),
+
+        # Improvements log (per-phase retrospective)
+        _tool("noctusai_improvements", "Regenerate `improvements.md` next to a project file. Run this after ticking a phase header to `✅`. Aggregates the `**Improvements:**` block each completed phase captures — observations, refactor candidates, edge cases, tech debt learned while implementing THAT phase. NOT a preview of upcoming phases (that's already in the project).", {
+            "project_path": {"type": "string", "description": "Absolute or repo-relative path to the project .md file"},
+        }, ["project_path"]),
+
+        # LGPD concern flagger — keeper-principle enforcement
+        _tool("noctusai_lgpd_flag", "Record an unresolved LGPD concern in `LGPD-WARNINGS.md`. Call whenever data-touching code raises an LGPD question (retention unclear, 3rd-party egress, cache of patient text, cross-product leak, …). DOES NOT BLOCK — appends a checklist item and notifies the user. Returns a user-facing notification string the caller should surface.", {
+            "code_path": {"type": "string", "description": "Where the concern lives — file:line or brief locator"},
+            "concern": {"type": "string", "description": "Short label (e.g. 'patient-text-in-llm-cache')"},
+            "reason": {"type": "string", "description": "1-3 sentences on how this breaks/approaches LGPD"},
+            "mitigation": {"type": "string", "description": "Optional suggested fix"},
+        }, ["code_path", "concern", "reason"]),
+        _tool("noctusai_lgpd_list", "List all LGPD concerns from `LGPD-WARNINGS.md` (unresolved + resolved)."),
+
+        # Proposals
+        _tool("noctusai_list_proposals", "List pending improvement proposals across all products (or one product if `product` is set)", {
+            "agent": {"type": "string", "description": "Optional: filter by agent name"},
+            "product": {"type": "string", "description": "Optional: scope to one product slug"},
+        }),
+        _tool("noctusai_accept_proposal", "Accept a proposal", {
+            "filename": {"type": "string"},
+            "product": {"type": "string", "description": "Optional: product slug for scoped lookup"},
+        }, ["filename"]),
         _tool("noctusai_reject_proposal", "Reject a proposal", {
             "filename": {"type": "string"}, "reason": {"type": "string"},
+            "product": {"type": "string", "description": "Optional: product slug for scoped lookup"},
         }, ["filename"]),
     ]
 
@@ -103,7 +138,7 @@ async def call_tool(name: str, arguments: dict):
 
 
 def _dispatch(name, args):
-    from tools import products, context, compliance, analyzers, fixes, proposals, master_prompts, testing, diff, ai_brain, scaffold
+    from tools import products, context, compliance, analyzers, review as review_tool, proposals, master_prompts, testing, diff, ai_brain, scaffold, catalog, improvements, lgpd
 
     dispatch_map = {
         "noctusai_agent_context": lambda: context.get_agent_context(),
@@ -115,7 +150,20 @@ def _dispatch(name, args):
         "noctusai_available_ports": lambda: scaffold.list_available_ports(),
         "noctusai_validate": lambda: dict(zip(["score", "issues"], compliance.check_all_products())),
         "noctusai_validate_product": lambda: _validate_one(args["slug"]),
-        "noctusai_heal": lambda: fixes.heal_product(args.get("product")),
+        "noctusai_review": lambda: review_tool.run_review(
+            product_slug=args.get("product"),
+            mode=args.get("mode", "agent"),
+            model=args.get("model", "gpt-4o-mini"),
+        ),
+        "noctusai_proposal_template": lambda: {"template": proposals.get_proposal_template()},
+        "noctusai_file_proposal": lambda: proposals.file_proposal(
+            title=args["title"],
+            body=args["body"],
+            agent=args.get("agent", "keeper"),
+            project=args.get("project"),
+            product=args.get("product"),
+            subdir=args.get("subdir"),
+        ),
         "noctusai_analyze": lambda: analyzers.run_all_analyzers(),
         "noctusai_analyze_patterns": lambda: {"duplicated": analyzers.find_duplicated_functions(), "inline_hooks": analyzers.find_inline_hooks()},
         "noctusai_analyze_deps": lambda: analyzers.audit_python_deps(),
@@ -132,9 +180,18 @@ def _dispatch(name, args):
         "noctusai_diff_against_seed": lambda: diff.diff_product_against_seed(args["slug"]),
         "noctusai_find_orphans": lambda: diff.find_orphaned_files(args["slug"]),
         "noctusai_check_api_consistency": lambda: diff.check_api_consistency(args["slug"]),
-        "noctusai_list_proposals": lambda: proposals.list_proposals(args.get("agent")),
-        "noctusai_accept_proposal": lambda: proposals.update_proposal_status(args["filename"], "accepted"),
-        "noctusai_reject_proposal": lambda: proposals.update_proposal_status(args["filename"], "rejected", args.get("reason", "")),
+        "noctusai_catalog": lambda: catalog.generate_catalog(write=args.get("write", True)),
+        "noctusai_improvements": lambda: improvements.generate_improvements(args["project_path"], write=True),
+        "noctusai_lgpd_flag": lambda: lgpd.flag(
+            code_path=args["code_path"],
+            concern=args["concern"],
+            reason=args["reason"],
+            mitigation=args.get("mitigation"),
+        ),
+        "noctusai_lgpd_list": lambda: lgpd.list_warnings(),
+        "noctusai_list_proposals": lambda: proposals.list_proposals(args.get("agent"), product=args.get("product")),
+        "noctusai_accept_proposal": lambda: proposals.update_proposal_status(args["filename"], "accepted", product=args.get("product")),
+        "noctusai_reject_proposal": lambda: proposals.update_proposal_status(args["filename"], "rejected", args.get("reason", ""), product=args.get("product")),
     }
 
     handler = dispatch_map.get(name)

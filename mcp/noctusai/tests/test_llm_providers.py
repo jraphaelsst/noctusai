@@ -133,8 +133,8 @@ class TestGeminiReal:
             {"role": "assistant", "content": "hello"},
         ])
         assert system == "sys"
-        assert rest[0]["role"] == "user"
-        assert rest[1]["role"] == "model"
+        assert rest[0].role == "user"
+        assert rest[1].role == "model"
 
     def test_analyze_image_rejects_url_input(self):
         """Gemini SDK doesn't fetch URLs; the provider must surface that
@@ -143,10 +143,6 @@ class TestGeminiReal:
         from noctusai_lib.llm.providers.gemini_provider import GeminiProvider
 
         p = GeminiProvider()
-        # We need to pre-configure so `_configure` doesn't raise first.
-        p._last_key = "k"
-        import google.generativeai as genai
-        genai.configure(api_key="k")
         with pytest.raises(LLMAPIError):
             asyncio.run(p.analyze_image(
                 image="https://example.com/x.jpg",

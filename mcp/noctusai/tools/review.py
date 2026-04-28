@@ -1,0 +1,269 @@
+"""Observation-only review — detect seed-compliance issues, surface them for authoring.
+
+CRITICAL: This module NEVER modifies product code. Every detected issue becomes
+a proposal in `products/<product>/proposals/` for a human to review.
+
+Three execution modes (see `run_review(mode=...)`):
+
+  1. **agent** (default) — return the structured issue list + a review prompt
+     the in-session agent (Claude, etc.) uses to author proposals with full
+     conversation context. Zero LLM cost at this layer. The agent is expected
+     to Read `templates/PROPOSAL-TEMPLATE.md`, fill it per issue, and file via
+     `noctusai_file_proposal` (or `tools.proposals.file_proposal` directly).
+
+  2. **headless** — no agent in the loop (CI, cron, solo CLI without a chat
+     session). OpenAI `gpt-4o-mini` authors proposals, Python fills the
+     template, `file_proposal` writes. Falls back to a skeleton if
+     `OPENAI_API_KEY` is missing so findings are never silently dropped.
+
+  3. **evaluate** — write BOTH paths to a scratch subfolder
+     (`products/<product>/proposals/evaluations/<timestamp>/`) so the agent and the
+     OpenAI model can be compared side by side. No proposal lands in the live
+     proposals dir during an evaluation run.
+
+Replaces the old `heal_product()` flow which auto-fixed deterministic issues
+via text replacement — retired because `str.replace` rewrites could corrupt
+unrelated code and the string-match checks rotted as the seed evolved.
+"""
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Literal, Optional
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PRODUCTS_DIR = REPO_ROOT / "products"
+
+
+def _detect(product_slug: str | None) -> tuple[list[Path], list[dict]]:
+    from tools.compliance import (
+        check_seed_compliance,
+        check_path_references,
+        check_standard_routers_audit,
+        check_frontend_entrypoint,
+        check_config_extends_product_settings,
+        check_frontend_config_paths,
+        check_out_of_contract_trees,
+    )
+
+    if product_slug:
+        p = PRODUCTS_DIR / product_slug
+        products = [p] if p.exists() else []
+    else:
+        products = sorted([d for d in PRODUCTS_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")])
+
+    issues: list[dict] = []
+    for product_path in products:
+        issues.extend(check_seed_compliance(product_path))
+        issues.extend(check_path_references(product_path))
+        issues.extend(check_standard_routers_audit(product_path))
+        issues.extend(check_frontend_entrypoint(product_path))
+        issues.extend(check_config_extends_product_settings(product_path))
+        issues.extend(check_frontend_config_paths(product_path))
+    # Global repo-root sweep — only when not scoped to a single product.
+    if product_slug is None:
+        issues.extend(check_out_of_contract_trees())
+    return products, issues
+
+
+def _agent_review_prompt(issues: list[dict]) -> str:
+    """Return a prompt the in-session agent can follow to file proposals for each issue.
+
+    The agent reads this, opens the template, fills one proposal per issue, and
+    calls `file_proposal` — all in the same session turn, using the rich context
+    (recent changes, conversation, plan) that an external LLM call would miss.
+    """
+    if not issues:
+        return "No compliance issues detected. Nothing for the agent to author."
+
+    lines = [
+        "## Agent review task",
+        "",
+        "The detector flagged the issues below. Author one proposal per issue:",
+        "",
+        "1. Read `templates/PROPOSAL-TEMPLATE.md`.",
+        "2. For each issue, fill every `{{PLACEHOLDER}}` using your session context — recent changes, conversation, related files you've already loaded.",
+        "3. Call `tools.proposals.file_proposal(title=..., body=<filled markdown>, agent='claude-opus-4-7', product='<product_slug>')` to write each proposal to `products/<product>/proposals/`.",
+        "4. Surface a one-line summary of each filed proposal to the user.",
+        "",
+        "Rules:",
+        "- NEVER modify product code in this turn. This is observation-only.",
+        "- NEVER propose changes inside `seed/` unless the issue clearly indicates a framework gap.",
+        "- If the fix could be destructive (file deletion, mass text-replacement), flag it explicitly in the proposal's `Risks` section.",
+        "",
+        "Issues to review:",
+        "",
+    ]
+    for i, issue in enumerate(issues, start=1):
+        lines.append(
+            f"{i}. **[{issue.get('severity', 'unknown')}]** `{issue.get('product', '?')}` "
+            f"— {issue.get('file', '?')}: {issue.get('issue', '?')}"
+        )
+    return "\n".join(lines)
+
+
+def _headless_author(issue: dict, product_path: Path, model: str, agent_tag: str, subdir: str | None = None) -> dict:
+    """Author + file one proposal via OpenAI. Falls back to skeleton on failure."""
+    from tools.ai_brain import review_compliance_issue, is_ai_available
+    from tools.proposals import fill_proposal_template, file_proposal, generate_proposal
+
+    if not is_ai_available():
+        fallback = generate_proposal(
+            title=f"Compliance: {issue.get('issue', '')[:60]}",
+            problem=issue.get("issue", ""),
+            solution=(
+                "LLM review unavailable (OPENAI_API_KEY not set or `openai` not installed). "
+                "Rerun with the key set, or have the in-session agent author this proposal."
+            ),
+            affected_products=[issue.get("product", "unknown")],
+            severity=issue.get("severity", "medium"),
+            agent=f"{agent_tag}-fallback",
+            product=issue.get("product"),
+        )
+        return {"mode": "skeleton", **fallback}
+
+    analysis = review_compliance_issue(issue, product_path, model=model)
+    if not analysis:
+        fallback = generate_proposal(
+            title=f"Compliance: {issue.get('issue', '')[:60]}",
+            problem=issue.get("issue", ""),
+            solution="LLM returned an unparseable response. Rerun or escalate to agent review.",
+            affected_products=[issue.get("product", "unknown")],
+            severity=issue.get("severity", "medium"),
+            agent=f"{agent_tag}-fallback",
+            product=issue.get("product"),
+        )
+        return {"mode": "skeleton", **fallback}
+
+    body = fill_proposal_template(
+        title=analysis.get("title") or f"Compliance: {issue.get('issue', '')[:60]}",
+        agent=agent_tag,
+        origin=f"keeper:noctusai_validate:{issue.get('product', 'unknown')}",
+        severity=issue.get("severity", "medium"),
+        effort=analysis.get("effort", "medium"),
+        affected_products=[issue.get("product", "unknown")],
+        context=analysis.get("context") or (
+            f"Keeper's deterministic compliance detector flagged this in product "
+            f"`{issue.get('product', 'unknown')}` during a `noctusai_review` pass. "
+            f"No plan phase produced it — the finding is standalone."
+        ),
+        situation=analysis.get("situation") or issue.get("issue", ""),
+        linkage=analysis.get("linkage") or (
+            "The proposed approach follows the seed contract the detector verifies against; "
+            "applying it restores alignment without introducing new divergence."
+        ),
+        application_steps=analysis.get("application_steps") or ["Author manually — LLM returned no steps."],
+        seed_apis=analysis.get("seed_apis") or [],
+        risks=analysis.get("risks") or "Low risk — additive change, no overwrite.",
+        alternatives=analysis.get("alternatives") or [],
+        effects=analysis.get("effects") or [],
+        related_files=analysis.get("related_files") or [],
+    )
+    result = file_proposal(
+        title=analysis.get("title") or f"Compliance: {issue.get('issue', '')[:60]}",
+        body=body,
+        agent=agent_tag,
+        product=issue.get("product"),
+        subdir=subdir,
+    )
+    return {"mode": "llm", **result}
+
+
+def run_review(
+    product_slug: str | None = None,
+    mode: Literal["agent", "headless", "evaluate"] = "agent",
+    model: str = "gpt-4o-mini",
+) -> dict:
+    """Run a review pass. Mode selects who authors the proposals.
+
+    Args:
+        product_slug: Optional — scope to one product. Defaults to all.
+        mode:
+            - `agent` (default): return `issues` + `review_prompt` for the
+              in-session agent. No proposals are filed by this call.
+            - `headless`: author proposals via OpenAI, file to the live
+              proposals dir.
+            - `evaluate`: author proposals via OpenAI to a scratch subfolder
+              (`products/<product>/proposals/evaluations/<timestamp>-<slug>/`) so the
+              agent can later drop its own version + `comparison.md` next to it.
+        model: Override the OpenAI model (headless + evaluate modes only).
+
+    Returns a dict keyed by mode — see examples in `mcp/noctusai/README.md`.
+    """
+    from tools.compliance import check_all_products
+
+    products, issues = _detect(product_slug)
+    report: dict = {
+        "mode": mode,
+        "reviewed_products": [p.name for p in products],
+        "issues_found": len(issues),
+    }
+
+    if mode == "agent":
+        report["issues"] = issues
+        report["review_prompt"] = _agent_review_prompt(issues)
+        report["note"] = (
+            "Agent mode: this call does NOT file any proposals. "
+            "The in-session agent uses `review_prompt` + `templates/PROPOSAL-TEMPLATE.md` "
+            "to author one proposal per issue and file via `noctusai_file_proposal`."
+        )
+        return report
+
+    if mode == "evaluate":
+        slug = product_slug or "all-products"
+        eval_subdir = f"evaluations/{datetime.now():%Y%m%d-%H%M%S}-{slug}"
+        # For evaluate mode, if scoped to one product, nest under that product.
+        # For all-products, use the first product that has issues (or skip).
+        openai_results = []
+        # Group issues by product for proper scoping
+        products_with_issues = set(i.get("product", "") for i in issues)
+        for p_slug in products_with_issues:
+            p_proposals_dir = PRODUCTS_DIR / p_slug / "proposals" / eval_subdir
+            p_proposals_dir.mkdir(parents=True, exist_ok=True)
+        # Persist the issue set so both paths reason about the same inputs.
+        if product_slug:
+            issues_dir = PRODUCTS_DIR / product_slug / "proposals" / eval_subdir
+        else:
+            # For all-products eval, put issues.json under the first product
+            first_product = next(iter(products_with_issues), "unknown")
+            issues_dir = PRODUCTS_DIR / first_product / "proposals" / eval_subdir
+        issues_dir.mkdir(parents=True, exist_ok=True)
+        (issues_dir / "issues.json").write_text(
+            json.dumps(issues, indent=2, default=str)
+        )
+        for issue in issues:
+            product_path = PRODUCTS_DIR / issue.get("product", "")
+            agent_tag = f"openai-{model}"
+            openai_results.append(
+                _headless_author(issue, product_path, model=model, agent_tag=agent_tag, subdir=eval_subdir)
+            )
+        report["eval_subdir"] = eval_subdir
+        report["openai_results"] = openai_results
+        report["next_steps"] = (
+            f"OpenAI proposals written to `products/<product>/proposals/{eval_subdir}/`. "
+            "Now the in-session agent should (1) author its own proposal per issue into "
+            "the same folder (agent='claude-...'), (2) write `comparison.md` in the folder "
+            "with an honest side-by-side review, (3) report back to the user."
+        )
+        return report
+
+    if mode == "headless":
+        llm_authored = 0
+        skeletons = 0
+        for issue in issues:
+            product_path = PRODUCTS_DIR / issue.get("product", "")
+            agent_tag = f"keeper-openai-{model}"
+            result = _headless_author(issue, product_path, model=model, agent_tag=agent_tag)
+            if result.get("mode") == "llm":
+                llm_authored += 1
+            else:
+                skeletons += 1
+        final_score, final_issues = check_all_products()
+        report["llm_authored"] = llm_authored
+        report["skeletons"] = skeletons
+        report["final_score"] = final_score
+        report["remaining_issues"] = len(final_issues)
+        return report
+
+    raise ValueError(f"Unknown review mode: {mode!r}")

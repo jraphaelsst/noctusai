@@ -1,5 +1,15 @@
-"""AI reasoning — uses OpenAI to analyze findings and generate proposals."""
+"""AI reasoning — uses OpenAI to analyze findings and author proposals.
+
+`review_compliance_issue()` is the keeper's LLM entry point: it takes a single
+deterministic compliance finding, pulls the relevant file snippet for context,
+and asks the model for every field the proposal template needs. The keeper
+itself never modifies code — its output is always a proposal a human reviews.
+
+Default model is `gpt-4o-mini` (cheap + sufficient for structured JSON). The
+caller can override via the `model=` kwarg for evaluation / A-B runs.
+"""
 import os
+import re
 import json
 import logging
 from pathlib import Path
@@ -38,7 +48,10 @@ def is_ai_available():
     return _get_client() is not None
 
 
-def ask_ai(prompt, system="", model="gpt-4o", max_tokens=4096, temperature=0.3):
+KEEPER_DEFAULT_MODEL = "gpt-4o-mini"
+
+
+def ask_ai(prompt, system="", model=KEEPER_DEFAULT_MODEL, max_tokens=4096, temperature=0.3):
     client = _get_client()
     if not client:
         return None
@@ -100,6 +113,97 @@ def analyze_findings(findings):
         except json.JSONDecodeError:
             continue
     return proposals
+
+
+def review_compliance_issue(issue: dict, product_path: Path, model: str = KEEPER_DEFAULT_MODEL) -> Optional[dict]:
+    """Author a structured proposal for one deterministic compliance finding. LLM-backed.
+
+    Reads the flagged file for context and asks the model for every field
+    `tools.proposals.fill_proposal_template` needs. Returns that dict, or None
+    on any failure (caller must have a skeleton fallback).
+
+    The prompt is explicit that keeper is observation-only: the LLM authors
+    advice for a human reviewer, never code-rewriting instructions that assume
+    auto-application.
+    """
+    if not is_ai_available():
+        return None
+
+    file_rel = issue.get("file", "")
+    file_abs = product_path / file_rel if file_rel else None
+    snippet = ""
+    if file_abs and file_abs.exists() and file_abs.is_file():
+        try:
+            snippet = file_abs.read_text()[:2000]
+        except Exception:
+            snippet = ""
+
+    prompt = f"""You are the NoctusAI **keeper** — an observation-only compliance reviewer for a FastAPI + React + Supabase monorepo built on a central `seed/` framework. You NEVER modify code. You author proposals a human reviews.
+
+Every product inherits backbone from `seed/`: backend uses `create_product_app()` + `noctusai_seed`; frontend uses `createViteConfig()` + `createProductApp()` + `createProductLayout()`. Deviations are violations.
+
+A detector flagged this issue in product `{issue.get('product')}`:
+
+  File: {file_rel}
+  Issue: {issue.get('issue')}
+  Severity: {issue.get('severity')}
+
+Relevant file content (may be empty if the file is missing):
+```
+{snippet or '(no content)'}
+```
+
+Your proposal is a **context-transfer vehicle** — the agent who will apply the fix must inherit your situational awareness through the text. Respond as strict JSON on ONE line, no prose outside it. Match this shape exactly:
+
+{{
+  "title": "short action-oriented string (< 80 chars)",
+  "context": "2-4 sentences on what the detector saw and what triggered the flag — the environment this came out of",
+  "situation": "3-6 sentences of PURE FACTS about current state — what's there, where, with what shape. No advice, no judgment. Name file paths and symbols.",
+  "linkage": "1-2 sentences: why THIS solution fits THIS situation specifically. What about the situation makes this the right move?",
+  "application_steps": ["concrete unambiguous step 1", "step 2", "..."],
+  "seed_apis": [{{"symbol": "noctusai_seed.something", "why": "what it provides and why it replaces the current code"}}],
+  "risks": "specific warnings. If destructive (delete / mass replace), say 'diff against seed first'. If additive, say 'Low risk — additive change, no overwrite.'",
+  "alternatives": [{{"approach": "...", "why_not": "one sentence"}}],
+  "effects": [{{"dimension": "Behavior|Risk profile|Ergonomics|Coverage", "change": "one-line change"}}],
+  "effort": "low|medium|high",
+  "related_files": [{{"path": "products/<slug>/...", "note": "what to inspect"}}]
+}}
+
+Rules:
+- Arrays may be empty (`[]`) when no items apply — DO NOT fabricate filler.
+- `situation` is facts only; `linkage` is where your judgment lives.
+- Point to exact symbols, files, and seed helpers when possible.
+- Do NOT propose changes to `seed/` itself unless the issue clearly indicates a framework gap.
+- Return JSON only. No markdown fences, no commentary."""
+
+    response = ask_ai(
+        prompt=prompt,
+        system="Senior platform engineer. Output one line of valid JSON. No prose outside JSON.",
+        model=model,
+        max_tokens=2048,
+        temperature=0.2,
+    )
+    if not response:
+        return None
+
+    # Strip common wrappers the model sometimes produces despite instructions.
+    cleaned = response.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Try line-by-line as a fallback (some models emit JSONL).
+        for line in cleaned.splitlines():
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+        return None
 
 
 def ai_advisory(product_path=None):

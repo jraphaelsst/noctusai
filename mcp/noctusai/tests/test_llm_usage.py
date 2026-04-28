@@ -237,3 +237,97 @@ class TestRecordUsageDispatch:
             )
 
         asyncio.run(run())
+
+
+# ── SupabaseUsageSink — DB-backed production sink ──────────────
+
+class _FakeSupabaseTable:
+    def __init__(self, store: list, fail: bool = False):
+        self._store = store
+        self._fail = fail
+
+    def insert(self, row):
+        if self._fail:
+            raise RuntimeError("db down")
+        self._store.append(row)
+        return self
+
+    def execute(self):
+        return {"ok": True}
+
+
+class _FakeSupabaseSchema:
+    def __init__(self, store: list, fail: bool = False):
+        self._store = store
+        self._fail = fail
+
+    def table(self, name: str):
+        return _FakeSupabaseTable(self._store, self._fail)
+
+
+class _FakeSupabaseClient:
+    def __init__(self, store: list, fail: bool = False):
+        self._store = store
+        self._fail = fail
+
+    def schema(self, name: str):
+        return _FakeSupabaseSchema(self._store, self._fail)
+
+
+class TestSupabaseUsageSink:
+    def test_record_inserts_row_into_schema_table(self):
+        from noctusai_lib.llm import SupabaseUsageSink, UsageEvent
+
+        store: list = []
+        sink = SupabaseUsageSink(
+            db_client=_FakeSupabaseClient(store), schema="erp",
+        )
+
+        async def run():
+            await sink.record(UsageEvent(
+                provider="openai", model="gpt-4o-mini", operation="chat",
+                org_id="org-xyz", prompt_tokens=10, completion_tokens=5,
+                total_tokens=15, cost_estimate_usd=0.0001,
+            ))
+
+        asyncio.run(run())
+        assert len(store) == 1
+        row = store[0]
+        assert row["org_id"] == "org-xyz"
+        assert row["provider"] == "openai"
+        assert row["model"] == "gpt-4o-mini"
+        assert row["operation"] == "chat"
+        assert row["total_tokens"] == 15
+        assert row["cost_estimate_usd"] == 0.0001
+        assert "at" in row
+
+    def test_record_swallows_db_errors(self):
+        """A broken DB must not break a successful LLM call."""
+        from noctusai_lib.llm import SupabaseUsageSink, UsageEvent
+
+        sink = SupabaseUsageSink(
+            db_client=_FakeSupabaseClient([], fail=True), schema="erp",
+        )
+
+        async def run():
+            await sink.record(UsageEvent(
+                provider="openai", model="gpt-4o-mini", operation="chat",
+                prompt_tokens=1, completion_tokens=1, total_tokens=2,
+            ))
+
+        asyncio.run(run())  # must not raise
+
+    def test_default_table_is_llm_usage(self):
+        from noctusai_lib.llm import SupabaseUsageSink
+
+        sink = SupabaseUsageSink(db_client=object(), schema="erp")
+        assert sink._table == "llm_usage"
+        assert sink._schema == "erp"
+
+    def test_custom_table_name(self):
+        from noctusai_lib.llm import SupabaseUsageSink
+
+        sink = SupabaseUsageSink(
+            db_client=object(), schema="erp", table="llm_usage_custom",
+        )
+        assert sink._table == "llm_usage_custom"
