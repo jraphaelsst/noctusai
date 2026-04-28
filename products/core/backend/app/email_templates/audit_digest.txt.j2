@@ -1,0 +1,28 @@
+{% extends "_digest_base.txt.j2" %}
+
+{% block header %}Digest semanal — {{ org_name }}{% endblock %}
+
+{% block subheader %}
+Últimos {{ period_days }} dias · {{ total_events }} eventos
+{% endblock %}
+
+{% block body %}
+RESUMO
+{{ narrative }}
+
+AÇÕES POR VOLUME
+{% for action, count in actions_by_count[:10] %}
+  {{ action }}: {{ count }}
+{% else %}
+  (sem eventos)
+{% endfor %}
+
+USUÁRIOS MAIS ATIVOS
+{% for user_id, count in top_users[:5] %}
+  usuário {{ user_id[:8] }}…: {{ count }}
+{% else %}
+  (sem atividade)
+{% endfor %}
+{% endblock %}
+
+{% block footer %} · prompt {{ prompt_version }}{% endblock %}

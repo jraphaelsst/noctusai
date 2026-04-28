@@ -1,0 +1,58 @@
+{% extends "_digest_base.html.j2" %}
+
+{% block header %}Digest semanal — {{ org_name }}{% endblock %}
+
+{% block subheader %}
+<p style="color:#555;margin:0 0 16px 0">
+  Últimos {{ period_days }} dias · {{ total_events }} eventos registrados
+</p>
+{% endblock %}
+
+{% block body %}
+<h3 style="margin:20px 0 8px 0;font-size:16px">Resumo</h3>
+{% for para in narrative_paragraphs %}
+<p style="margin:8px 0">{{ para }}</p>
+{% endfor %}
+
+<h3 style="margin:20px 0 8px 0;font-size:16px">Ações por volume</h3>
+<table style="width:100%;border-collapse:collapse;margin:0 0 12px 0;font-size:14px">
+  <thead>
+    <tr style="background:#f7f7f7">
+      <th style="padding:6px 12px;text-align:left">Ação</th>
+      <th style="padding:6px 12px;text-align:right">Eventos</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for action, count in actions_by_count[:10] %}
+    <tr>
+      <td style="padding:6px 12px;border-bottom:1px solid #eee">{{ action }}</td>
+      <td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">{{ count }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2" style="padding:6px 12px;color:#888">(sem eventos)</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3 style="margin:20px 0 8px 0;font-size:16px">Usuários mais ativos</h3>
+<table style="width:100%;border-collapse:collapse;font-size:14px">
+  <thead>
+    <tr style="background:#f7f7f7">
+      <th style="padding:6px 12px;text-align:left">Usuário</th>
+      <th style="padding:6px 12px;text-align:right">Ações</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for user_id, count in top_users[:5] %}
+    <tr>
+      <td style="padding:6px 12px;border-bottom:1px solid #eee">usuário {{ user_id[:8] }}…</td>
+      <td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">{{ count }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2" style="padding:6px 12px;color:#888">(sem atividade)</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block footer %} · prompt {{ prompt_version }}{% endblock %}
