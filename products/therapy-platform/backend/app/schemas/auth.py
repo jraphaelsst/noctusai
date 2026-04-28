@@ -15,7 +15,7 @@ class PatientRegister(BaseModel):
 
     nome: str = Field(..., min_length=2, max_length=200)
     email: EmailStr
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
     phone: Optional[str] = Field(default=None, max_length=20)
 
 
@@ -24,7 +24,7 @@ class TherapistRegister(BaseModel):
 
     nome: str = Field(..., min_length=2, max_length=200)
     email: EmailStr
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
     crp: str = Field(..., min_length=4, max_length=20, description="Registro CRP do terapeuta")
     bio: Optional[str] = Field(default=None, max_length=2000)
     specialties: list[str] = Field(default_factory=list)
@@ -38,7 +38,7 @@ class ClinicRegister(BaseModel):
 
     nome: str = Field(..., min_length=2, max_length=200)
     email: EmailStr
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
     clinic_name: str = Field(..., min_length=2, max_length=300)
     cnpj: str = Field(..., min_length=14, max_length=18)
     responsible_person: str = Field(..., min_length=2, max_length=200)

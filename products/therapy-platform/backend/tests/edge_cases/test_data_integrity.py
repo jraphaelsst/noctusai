@@ -259,10 +259,17 @@ class TestLGPDDeletion:
         assert resp.status_code == 404
 
     def test_lgpd_therapist_delete_own_session(self, client):
-        """Therapist can delete a session they own."""
+        """Therapist can delete a session they own.
+
+        Ownership flows session_records.appointment_id → appointments.therapist_id
+        (no direct therapist_id column on session_records per live schema).
+        """
         sb = client._mock_supabase
         sb.set_table_data("session_records", [
-            {"id": "sr-lgpd-001", "therapist_id": "test-user-123"},
+            {"id": "sr-lgpd-001", "appointment_id": "appt-lgpd-001"},
+        ])
+        sb.set_table_data("appointments", [
+            {"id": "appt-lgpd-001", "therapist_id": "test-user-123"},
         ])
         sb.set_table_data("session_summary_versions", [])
         sb.set_table_data("session_observations", [])

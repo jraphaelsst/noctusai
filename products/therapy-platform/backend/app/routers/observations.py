@@ -117,11 +117,13 @@ async def list_observations(
 ):
     """List all observations for a session (ordered by created_at).
 
-    Therapist and clinic_admin can view. Patient cannot.
+    Therapist-of-session only (clinical content per Q2 of
+    `compliance-audit-reconciliation` 2026-04-22 — platform_admin and
+    clinic_admin dropped at both router + RLS layer).
     """
     user, token = await get_current_user(authorization)
     role = get_user_role(user)
-    if role not in ("therapist", "clinic_admin", "platform_admin"):
+    if role != "therapist":
         raise HTTPException(status_code=403, detail="Sem permissão para visualizar observações")
 
     db = get_user_client(token)

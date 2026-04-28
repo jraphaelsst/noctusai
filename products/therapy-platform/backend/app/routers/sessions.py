@@ -17,7 +17,7 @@ from app.dependencies import (
 )
 from app.responses import success_response
 from app.schemas.session import SessionEndRequest, SessionPauseRequest, SessionStartRequest
-from app.services import ai_pipeline, livekit_service, session_service
+from app.services import ai_pipeline, consent_service, livekit_service, session_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sessions", tags=["Sessions"])
@@ -31,8 +31,11 @@ async def start_session(
 ):
     """Start a therapy session.
 
-    Requires consent_given=True. Only the assigned therapist can start.
-    Creates the LiveKit room and begins audio recording.
+    Requires a persisted `recording` consent for this appointment (per
+    compliance-audit-reconciliation Phase 5 / Q5 — LGPD Art. 8 requires
+    auditable consent, not an ephemeral boolean). Caller must `POST
+    /api/consents/grant` with scope='recording' first. `body.consent_given`
+    is accepted for backwards-compatibility but is NOT the source of truth.
     """
     if not body.consent_given:
         raise HTTPException(
@@ -46,6 +49,21 @@ async def start_session(
         raise HTTPException(status_code=403, detail="Apenas terapeutas podem iniciar sessões")
 
     db = get_user_client(token)
+
+    has_recording_consent = await consent_service.check_active_consent(
+        appointment_id=appointment_id,
+        scope="recording",
+        db=db,
+    )
+    if not has_recording_consent:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Consentimento de gravação não registrado. "
+                "Registre via POST /api/consents/grant com scope='recording' antes de iniciar."
+            ),
+        )
+
     result = await session_service.start_session(appointment_id, user.id, db)
     return success_response(result)
 

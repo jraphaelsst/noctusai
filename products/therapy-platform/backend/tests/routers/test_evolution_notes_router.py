@@ -94,11 +94,13 @@ class TestListEvolutionNotes:
         resp = patient_client.get("/api/evolucao/paciente/patient-001")
         assert resp.status_code == 403
 
-    def test_list_notes_admin_allowed(self, admin_client):
-        """Platform admin can list evolution notes."""
+    def test_list_notes_admin_denied(self, admin_client):
+        """Platform admin cannot list evolution notes — clinical content is
+        therapist-only per Q2 of `compliance-audit-reconciliation` 2026-04-22.
+        """
         admin_client._mock_supabase.set_table_data("evolution_notes", [SAMPLE_NOTE_SOAP])
         resp = admin_client.get("/api/evolucao/paciente/patient-001")
-        assert resp.status_code == 200
+        assert resp.status_code == 403
 
 
 class TestGetEvolutionNote:

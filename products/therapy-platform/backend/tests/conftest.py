@@ -21,7 +21,15 @@ from noctusai_lib.testing import (
     MockUser,
     MockUserResponse,
     AuthClient,
+    bind_consent_module_to_mock,
 )
+
+# Note: `app.main` is auto-imported at session start by
+# `noctusai_lib.testing.pytest_plugin` (registered via the `pytest11`
+# entry point in seed-lib's pyproject.toml). That triggers
+# `create_product_app(consent_features=...)`, which loads the consent
+# catalog for unit tests that import services directly. No per-product
+# bootstrap line needed here.
 
 # Re-export all shared classes so existing test imports
 # (e.g. `from tests.conftest import MockSupabaseClient`) keep working.
@@ -51,7 +59,15 @@ def _make_client_context(role="therapist", clinic_id=None):
     Returns a context manager that keeps patches alive for the duration
     of the test.
     """
-    mock_sb = MockSupabaseClient()
+    # validate_schema intentionally False — therapy has ~20 known schema-drift
+    # points tracked by `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`.
+    # Flipping validation on surfaces all of them (appointment_id on session_audio_segments/
+    # session_interruptions; patient_id/therapist_id on session_records; user_id on
+    # therapist_settings; rating vs star_rating on reviews; therapist_id on whatsapp_messages;
+    # etc.). Those belong in the reconciliation project, not in the mock-supabase close.
+    # Once that project lands, flip this to validate_schema=True (+schema="therapy" when
+    # using product-scoped tables).
+    mock_sb = MockSupabaseClient(validate_schema=False, schema="therapy")
     mock_user = MockUser(role=role, clinic_id=clinic_id)
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(mock_user))
 
@@ -63,6 +79,9 @@ def _make_client_context(role="therapist", clinic_id=None):
     patcher3.start()
 
     from app.main import app
+    # Per-fixture re-bind of the seed's consent module to THIS test's mock_sb.
+    # See KB § PATTERNS/testing.md § Consent-guard product conftest pattern.
+    bind_consent_module_to_mock(mock_sb)
     tc = TestClient(app)
     client = AuthClient(tc, mock_sb)
     return client, (patcher1, patcher2, patcher3)

@@ -232,7 +232,7 @@ async def regenerate_clinical_summary(
     # Fetch session record for transcript
     sr_result = (
         db.table("session_records")
-        .select("combined_transcript")
+        .select("combined_transcript_text")
         .eq("id", session_record_id)
         .execute()
     )
@@ -241,7 +241,7 @@ async def regenerate_clinical_summary(
         logger.error("Session record %s not found for regeneration", session_record_id)
         return {"error": "Registro de sessão não encontrado"}
 
-    transcript = sr.get("combined_transcript") or ""
+    transcript = sr.get("combined_transcript_text") or ""
 
     # Fetch non-deleted observations
     obs_result = (

@@ -46,7 +46,7 @@ def _room(status="pending", accessible_from=_from, accessible_until=_until, **kw
     return base
 
 
-def _setup(mock_sb, appt_kwargs=None, room_kwargs=None, segments=None):
+def _setup(mock_sb, appt_kwargs=None, room_kwargs=None, segments=None, *, with_consent=True):
     appt = _appt(**(appt_kwargs or {}))
     room = _room(**(room_kwargs or {}))
     mock_sb.set_table_data("appointments", [appt])
@@ -55,6 +55,21 @@ def _setup(mock_sb, appt_kwargs=None, room_kwargs=None, segments=None):
     mock_sb.set_table_data("session_interruptions", [])
     mock_sb.set_table_data("platform_settings", [])
     mock_sb.set_table_data("session_records", [])
+    # compliance-audit-reconciliation Phase 5 (Q5): start_session requires
+    # an active `recording` consent. Default True for the happy path.
+    mock_sb.set_table_data("consent_records", [{
+        "id": "consent-lc-001",
+        "appointment_id": "appt-lc-001",
+        "patient_id": "patient-lc-001",
+        "therapist_id": appt["therapist_id"],
+        "clinic_id": None,
+        "scope": "recording",
+        "policy_version": "v1",
+        "purpose_text": "Consentimento para gravação da sessão.",
+        "actor_user_id": "patient-lc-001",
+        "granted_at": "2026-04-22T10:00:00-03:00",
+        "revoked_at": None,
+    }] if with_consent else [])
 
 
 # ===================================================================

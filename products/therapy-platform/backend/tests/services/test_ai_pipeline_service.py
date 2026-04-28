@@ -4,12 +4,45 @@ Tests for the AI Pipeline Service.
 Covers: process_session_end (full pipeline, transcription failure,
 session record creation failure, summary failure, longitudinal failures,
 initial observation), on_observation_change, on_patient_note_change.
+
+Patient-consent guards: tests exercise the REAL `consent.require(...)`
+path — no patching of our own guard. Consent state is controlled by
+seeding `ai_consent` rows into the mock Supabase via `_db_with_grants(...)`.
+Revoked tests pass `revoked=[...]`. The catalog is populated at conftest
+load time via the `from app.main import app` module-level import (which
+triggers `create_product_app(consent_features=...)` in the framework).
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-from tests.conftest import MockSupabaseClient
 from app.services import ai_pipeline
+from tests.conftest import MockSupabaseClient
+
+
+THERAPY_FEATURES = ("therapy.session_summary", "therapy.longitudinal_narrative")
+
+
+def _db_with_grants(*, patient_id: str = "patient-001", revoked=None) -> MockSupabaseClient:
+    """Return a MockSupabaseClient with `ai_consent` rows for the patient.
+
+    Both therapy features default to granted. Pass `revoked=[<feature_key>, ...]`
+    to mark specific features as revoked. The seeded rows exercise the real
+    `noctusai_lib.ai.consent.is_granted(...)` path — no patching.
+    """
+    revoked_set = set(revoked or [])
+    rows = []
+    for feature in THERAPY_FEATURES:
+        is_granted = feature not in revoked_set
+        rows.append({
+            "user_id": patient_id,
+            "feature_key": feature,
+            "granted": is_granted,
+            "granted_at": "2026-04-27T00:00:00Z" if is_granted else None,
+            "revoked_at": None if is_granted else "2026-04-27T00:00:00Z",
+        })
+    db = MockSupabaseClient()
+    db.set_table_data("ai_consent", rows)
+    return db
 
 
 SAMPLE_APPOINTMENT = {
@@ -27,7 +60,7 @@ SAMPLE_SESSION_RECORD = {
     "appointment_id": "appt-001",
     "therapist_id": "therapist-001",
     "patient_id": "patient-001",
-    "combined_transcript": "Transcrição completa.",
+    "combined_transcript_text": "Transcrição completa.",
     "ai_generated_at": "2026-04-01T15:00:00-03:00",
 }
 
@@ -48,7 +81,7 @@ class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_full_pipeline_success(self):
         """Happy path: all steps complete without errors."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_observations", [SAMPLE_OBSERVATION])
@@ -97,7 +130,7 @@ class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_appointment_not_found(self):
         """Returns error when appointment does not exist."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("appointments", [])
 
         result = await ai_pipeline.process_session_end(
@@ -112,7 +145,7 @@ class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_session_record_creation_fails(self):
         """Returns error when session record insert fails."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [])  # insert returns empty
 
@@ -134,7 +167,7 @@ class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_transcription_failure_produces_error_text(self):
         """Transcription failure is caught, pipeline continues with error text."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_observations", [])
@@ -179,7 +212,7 @@ class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_no_initial_observation(self):
         """Pipeline works without an initial observation."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
@@ -222,7 +255,7 @@ class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_whitespace_only_observation_skipped(self):
         """Blank observation is treated as no observation."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
@@ -265,7 +298,7 @@ class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_summary_failure_caught(self):
         """Summary generation failure is caught, pipeline continues."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
@@ -310,7 +343,7 @@ class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_longitudinal_failure_caught(self):
         """Longitudinal failures are caught individually."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
@@ -360,7 +393,7 @@ class TestOnObservationChange:
     @pytest.mark.asyncio
     async def test_regenerates_clinical_summary_and_longitudinal(self):
         """Triggers Track 2 regeneration and clinical longitudinal."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("session_records", [{
             "id": "sr-001",
             "patient_id": "patient-001",
@@ -389,7 +422,7 @@ class TestOnObservationChange:
     @pytest.mark.asyncio
     async def test_clinical_summary_failure_caught(self):
         """Clinical summary regeneration failure is caught."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("session_records", [{
             "id": "sr-001",
             "patient_id": "patient-001",
@@ -417,7 +450,7 @@ class TestOnObservationChange:
     @pytest.mark.asyncio
     async def test_session_record_not_found(self):
         """Skips longitudinal if session record not found."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
         db.set_table_data("session_records", [])
 
         with patch.object(
@@ -439,7 +472,7 @@ class TestOnPatientNoteChange:
     @pytest.mark.asyncio
     async def test_regenerates_patient_longitudinal(self):
         """Triggers patient longitudinal regeneration."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
 
         with patch.object(
             ai_pipeline.longitudinal_service,
@@ -459,7 +492,7 @@ class TestOnPatientNoteChange:
     @pytest.mark.asyncio
     async def test_patient_longitudinal_failure_caught(self):
         """Patient longitudinal failure is caught, returns error dict."""
-        db = MockSupabaseClient()
+        db = _db_with_grants()
 
         with patch.object(
             ai_pipeline.longitudinal_service,
@@ -475,3 +508,217 @@ class TestOnPatientNoteChange:
             )
 
         assert "error" in result["patient_longitudinal"]
+
+
+# ---------------------------------------------------------------------------
+# Patient consent guards (therapy-consent-guard-wiring 2026-04-27)
+# ---------------------------------------------------------------------------
+
+
+class TestPatientConsentGuards:
+    """LGPD Art. 11 — patient consent gates clinical AI in `ai_pipeline`.
+
+    No patching of `ai_pipeline.require` — these tests exercise the REAL
+    consent guard. Revoked state is established by seeding `ai_consent`
+    rows with `granted=False` via `_db_with_grants(revoked=[...])`. The
+    notification side-effect lands in the SAME mock_sb because we pass
+    `core_db=db` (proper DI; production callers default to
+    `get_core_client()`).
+
+    Skip-and-notify contract verified per test: AI service mocks are
+    `assert_not_awaited()`, the result dict carries the `skipped` marker,
+    and a row appears in `core_db._tables["notifications"]`.
+    """
+
+    @staticmethod
+    def _captured_notifications(db) -> list:
+        """Return rows inserted into the mock's `notifications` table.
+
+        Reads `MockRequestBuilder.inserted_payloads` — the public capture
+        attribute on the seed-lib mock. No patching of the production
+        helper required.
+        """
+        builder = db._tables.get("notifications")
+        if builder is None:
+            return []
+        return list(builder.inserted_payloads)
+
+    @pytest.mark.asyncio
+    async def test_session_summary_consent_revoked_skips_summary_and_notifies(self):
+        """Patient revoked `therapy.session_summary` → summary skipped, longitudinal still runs."""
+        db = _db_with_grants(revoked=["therapy.session_summary"])
+        db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
+        db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
+        db.set_table_data("session_audio_segments", [])
+        db.set_table_data("notifications", [])
+
+        summary_call = AsyncMock()
+
+        with (
+            patch.object(
+                ai_pipeline.transcription_service,
+                "assemble_transcript",
+                new_callable=AsyncMock,
+                return_value="Texto.",
+            ),
+            patch.object(
+                ai_pipeline.summary_service,
+                "generate_session_summaries",
+                summary_call,
+            ),
+            patch.object(
+                ai_pipeline.longitudinal_service,
+                "generate_clinical_longitudinal",
+                new_callable=AsyncMock,
+                return_value={"id": "long-clinical"},
+            ),
+            patch.object(
+                ai_pipeline.longitudinal_service,
+                "generate_patient_longitudinal",
+                new_callable=AsyncMock,
+                return_value={"id": "long-patient"},
+            ),
+        ):
+            result = await ai_pipeline.process_session_end(
+                appointment_id="appt-001",
+                initial_observation=None,
+                source="manual",
+                db=db,
+                core_db=db,
+            )
+
+        # Summary AI was never called.
+        summary_call.assert_not_awaited()
+        # Skip marker is present.
+        assert result["summaries"]["base"]["skipped"] == "patient_consent_missing"
+        assert result["summaries"]["clinical"]["skipped"] == "patient_consent_missing"
+        # Longitudinal still ran (only the summary feature was revoked).
+        assert result["clinical_longitudinal"] == {"id": "long-clinical"}
+        assert result["patient_longitudinal"] == {"id": "long-patient"}
+        # Therapist notification filed via the real helper.
+        notifs = TestPatientConsentGuards._captured_notifications(db)
+        assert len(notifs) == 1
+        assert notifs[0]["user_id"] == "therapist-001"
+        assert notifs[0]["type"] == "ai_skipped_consent"
+        assert notifs[0]["metadata"]["feature_key"] == "therapy.session_summary"
+
+    @pytest.mark.asyncio
+    async def test_longitudinal_consent_revoked_skips_both_steps_5_and_6(self):
+        """Patient revoked `therapy.longitudinal_narrative` → both clinical + patient longitudinals skipped."""
+        db = _db_with_grants(revoked=["therapy.longitudinal_narrative"])
+        db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
+        db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
+        db.set_table_data("session_audio_segments", [])
+        db.set_table_data("notifications", [])
+
+        clinical_long_call = AsyncMock()
+        patient_long_call = AsyncMock()
+
+        with (
+            patch.object(
+                ai_pipeline.transcription_service,
+                "assemble_transcript",
+                new_callable=AsyncMock,
+                return_value="Texto.",
+            ),
+            patch.object(
+                ai_pipeline.summary_service,
+                "generate_session_summaries",
+                new_callable=AsyncMock,
+                return_value={"base": {"id": "sum-b"}, "clinical": {"id": "sum-c"}},
+            ),
+            patch.object(
+                ai_pipeline.longitudinal_service,
+                "generate_clinical_longitudinal",
+                clinical_long_call,
+            ),
+            patch.object(
+                ai_pipeline.longitudinal_service,
+                "generate_patient_longitudinal",
+                patient_long_call,
+            ),
+        ):
+            result = await ai_pipeline.process_session_end(
+                appointment_id="appt-001",
+                initial_observation=None,
+                source="manual",
+                db=db,
+                core_db=db,
+            )
+
+        # Summary still ran.
+        assert result["summaries"]["base"] == {"id": "sum-b"}
+        # Both longitudinal calls were skipped.
+        clinical_long_call.assert_not_awaited()
+        patient_long_call.assert_not_awaited()
+        assert result["clinical_longitudinal"] is None
+        assert result["patient_longitudinal"] is None
+        # ONE notification fired (single guard covers both steps).
+        notifs = TestPatientConsentGuards._captured_notifications(db)
+        assert len(notifs) == 1
+        assert notifs[0]["metadata"]["feature_key"] == "therapy.longitudinal_narrative"
+
+    @pytest.mark.asyncio
+    async def test_on_observation_change_consent_revoked_skips_both(self):
+        """Observation-change handler skips when patient revoked both features."""
+        db = _db_with_grants(revoked=list(THERAPY_FEATURES))
+        db.set_table_data("session_records", [{
+            "id": "sr-001",
+            "patient_id": "patient-001",
+            "therapist_id": "therapist-001",
+        }])
+        db.set_table_data("notifications", [])
+
+        summary_call = AsyncMock()
+        clinical_long_call = AsyncMock()
+
+        with (
+            patch.object(
+                ai_pipeline.summary_service,
+                "regenerate_clinical_summary",
+                summary_call,
+            ),
+            patch.object(
+                ai_pipeline.longitudinal_service,
+                "generate_clinical_longitudinal",
+                clinical_long_call,
+            ),
+        ):
+            result = await ai_pipeline.on_observation_change("sr-001", db, core_db=db)
+
+        summary_call.assert_not_awaited()
+        clinical_long_call.assert_not_awaited()
+        assert result["clinical_summary"] == {"skipped": "patient_consent_missing"}
+        assert result["clinical_longitudinal"] is None
+        # One notification per feature (summary + longitudinal).
+        notifs = TestPatientConsentGuards._captured_notifications(db)
+        assert len(notifs) == 2
+        feature_keys = {n["metadata"]["feature_key"] for n in notifs}
+        assert feature_keys == set(THERAPY_FEATURES)
+
+    @pytest.mark.asyncio
+    async def test_on_patient_note_change_consent_revoked_skips(self):
+        """Patient-note-change handler skips when patient revoked longitudinal."""
+        db = _db_with_grants(revoked=["therapy.longitudinal_narrative"])
+        db.set_table_data("notifications", [])
+
+        long_call = AsyncMock()
+
+        with patch.object(
+            ai_pipeline.longitudinal_service,
+            "generate_patient_longitudinal",
+            long_call,
+        ):
+            result = await ai_pipeline.on_patient_note_change(
+                session_record_id="sr-001",
+                patient_id="patient-001",
+                therapist_id="therapist-001",
+                db=db,
+                core_db=db,
+            )
+
+        long_call.assert_not_awaited()
+        assert result["patient_longitudinal"] == {"skipped": "patient_consent_missing"}
+        notifs = TestPatientConsentGuards._captured_notifications(db)
+        assert len(notifs) == 1
+        assert notifs[0]["metadata"]["feature_key"] == "therapy.longitudinal_narrative"

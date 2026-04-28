@@ -134,20 +134,20 @@ async def list_all_therapists(
     authorization: Optional[str] = Header(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None, description="Filtrar por status: pendente | aprovado | rejeitado | suspenso"),
 ):
-    """List all therapists (admin only)."""
+    """List all therapists for the admin console, shaped as the frontend ``Terapeuta`` DTO."""
     user, _ = await get_current_user(authorization)
     _require_admin(user)
     db = get_admin_client()
 
-    query = (
-        db.table("therapist_profiles")
-        .select("*", count="exact")
-        .order("created_at", desc=True)
+    data, total = await admin_service.list_therapists_for_admin(
+        db=db,
+        page=page,
+        page_size=page_size,
+        status=status,
     )
-    offset = (page - 1) * page_size
-    result = query.range(offset, offset + page_size - 1).execute()
-    return paginated_response(result.data or [], result.count or 0, page, page_size)
+    return paginated_response(data, total, page, page_size)
 
 
 @router.get("/clinics")

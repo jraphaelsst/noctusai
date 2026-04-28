@@ -45,14 +45,39 @@ SAMPLE_SESSION_RECORD = {
     "status": "active",
 }
 
+# compliance-audit-reconciliation Phase 5 (Q5, 2026-04-22): start_session
+# now requires a persisted `recording` consent on the appointment.
+SAMPLE_RECORDING_CONSENT = {
+    "id": "consent-001",
+    "appointment_id": "appt-001",
+    "patient_id": "patient-001",
+    "therapist_id": "test-user-123",
+    "clinic_id": None,
+    "scope": "recording",
+    "policy_version": "v1",
+    "purpose_text": "Consentimento para gravação da sessão.",
+    "actor_user_id": "patient-001",
+    "granted_at": "2026-04-22T10:00:00-03:00",
+    "revoked_at": None,
+}
 
-def _setup_session_tables(mock_sb):
-    """Set up common mock data for session tests."""
+
+def _setup_session_tables(mock_sb, *, with_consent: bool = True):
+    """Set up common mock data for session tests.
+
+    `with_consent=True` (default) seeds an active `recording` consent —
+    matches the happy-path expectation for session-start. Pass
+    `with_consent=False` to test the missing-consent branch.
+    """
     mock_sb.set_table_data("appointments", [SAMPLE_APPOINTMENT])
     mock_sb.set_table_data("video_rooms", [SAMPLE_VIDEO_ROOM])
     mock_sb.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
     mock_sb.set_table_data("session_audio_segments", [])
     mock_sb.set_table_data("platform_settings", [])
+    mock_sb.set_table_data(
+        "consent_records",
+        [SAMPLE_RECORDING_CONSENT] if with_consent else [],
+    )
 
 
 class TestStartSession:
@@ -69,10 +94,30 @@ class TestStartSession:
         assert "data" in body
 
     def test_start_session_consent_required(self, client):
-        """Starting without consent returns 400."""
+        """Starting with the legacy `consent_given=False` flag returns 400."""
         _setup_session_tables(client._mock_supabase)
         resp = client.post("/api/sessions/appt-001/start", json={
             "consent_given": False,
+        })
+        assert resp.status_code == 400
+
+    def test_start_session_without_consent_record_blocked(self, client):
+        """Even with `consent_given=True`, session start fails if no persisted
+        `recording` consent exists (Phase 5 / Q5 enforcement)."""
+        _setup_session_tables(client._mock_supabase, with_consent=False)
+        resp = client.post("/api/sessions/appt-001/start", json={
+            "consent_given": True,
+        })
+        assert resp.status_code == 400
+        assert "POST /api/consents/grant" in resp.json()["error"]["message"]
+
+    def test_start_session_with_revoked_consent_blocked(self, client):
+        """A revoked consent is not active — start_session must refuse."""
+        _setup_session_tables(client._mock_supabase, with_consent=False)
+        revoked = {**SAMPLE_RECORDING_CONSENT, "revoked_at": "2026-04-22T11:00:00-03:00"}
+        client._mock_supabase.set_table_data("consent_records", [revoked])
+        resp = client.post("/api/sessions/appt-001/start", json={
+            "consent_given": True,
         })
         assert resp.status_code == 400
 

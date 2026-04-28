@@ -151,14 +151,22 @@ export default function AdminFinancials() {
           <div className="flex flex-wrap gap-3">
             <div className="w-40">
               <Select
-                value={txFilters.status ?? ''}
-                onValueChange={(v) => { setTxFilters((f) => ({ ...f, status: v })); setTxPage(1); }}
+                value={txFilters.status || 'all'}
+                onValueChange={(v) => {
+                  setTxFilters((f) => {
+                    const next = { ...f };
+                    if (v === 'all') delete next.status;
+                    else next.status = v;
+                    return next;
+                  });
+                  setTxPage(1);
+                }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Todos</SelectItem>
+                  <SelectItem value="all">Todos</SelectItem>
                   <SelectItem value="pre_authorized">Pre-autorizado</SelectItem>
                   <SelectItem value="captured">Capturado</SelectItem>
                   <SelectItem value="refunded">Reembolsado</SelectItem>

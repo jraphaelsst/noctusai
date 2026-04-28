@@ -71,10 +71,15 @@ async def get_anamnese_for_patient(
     patient_id: str,
     authorization: Optional[str] = Header(None),
 ):
-    """Get anamnese for a specific patient-therapist pair."""
+    """Get anamnese for a specific patient-therapist pair.
+
+    Anamnese is clinical intake content — therapist only per Q2 of
+    `compliance-audit-reconciliation` 2026-04-22 (clinic_admin/platform_admin
+    dropped from clinical content platform-wide).
+    """
     user, token = await get_current_user(authorization)
     role = get_user_role(user)
-    if role not in ("therapist", "clinic_admin", "platform_admin"):
+    if role != "therapist":
         raise HTTPException(status_code=403, detail="Sem permissão para visualizar anamneses")
 
     db = get_user_client(token)

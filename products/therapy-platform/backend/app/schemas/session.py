@@ -43,7 +43,12 @@ class ObservationUpdate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Patient Notes (patient only, strictly private)
+# Patient Notes
+# Access (compliance-audit-reconciliation 2026-04-22 Q1 decision, encoded
+# in RLS migration 007_clinical_data_privacy.sql):
+#   - Patient: read/write their own notes.
+#   - Therapist-of-session: read (therapist-readable per product decision).
+#   - platform_admin / clinic_admin: NO access (dropped 2026-04-22).
 # ---------------------------------------------------------------------------
 
 class PatientNoteCreate(BaseModel):

@@ -28,8 +28,15 @@ SP_TZ = timezone(timedelta(hours=-3))
 
 
 def _track_for_role(role: str) -> str:
-    """Determine which summary track a role should see."""
-    if role in ("therapist", "clinic_admin", "platform_admin"):
+    """Determine which summary track a role should see.
+
+    Only the therapist-of-session gets the clinical track. Every other role
+    (patient, clinic_admin, platform_admin) gets the base track — narrowed
+    2026-04-22 by `compliance-audit-reconciliation` Q2. clinic_admin and
+    platform_admin are dropped from clinical content platform-wide; if they
+    somehow reach this function they get the patient-facing track.
+    """
+    if role == "therapist":
         return "clinical"
     return "base"
 
@@ -176,8 +183,9 @@ async def get_session_detail(
         "track": track,
     }
 
-    # Therapist/admin: include observations + version history
-    if role in ("therapist", "clinic_admin", "platform_admin"):
+    # Therapist-of-session only: observations + version history are clinical
+    # content; clinic_admin/platform_admin dropped per Q2 (2026-04-22).
+    if role == "therapist":
         obs_result = (
             db.table("session_observations")
             .select("*")
@@ -289,9 +297,10 @@ async def get_session_audio(
     if not record:
         raise HTTPException(status_code=404, detail="Registro de sessão não encontrado")
 
-    if role not in ("platform_admin", "clinic_admin"):
-        if user.id not in (record["patient_id"], record["therapist_id"]):
-            raise HTTPException(status_code=403, detail="Sem permissão para acessar o áudio")
+    # Audio is clinical content — therapist-of-session + patient-of-session
+    # only. clinic_admin/platform_admin dropped per Q2 (2026-04-22).
+    if user.id not in (record["patient_id"], record["therapist_id"]):
+        raise HTTPException(status_code=403, detail="Sem permissão para acessar o áudio")
 
     # Fetch audio segments
     segments = (

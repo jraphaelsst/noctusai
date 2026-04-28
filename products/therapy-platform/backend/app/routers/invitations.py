@@ -34,7 +34,7 @@ from noctusai_lib.invitations import (
     generate_invite_token,
     validate_invitation,
 )
-from noctusai_lib.email_templates import send_product_invitation_email
+from noctusai_lib.email.templates import send_product_invitation_email
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/invitations", tags=["Invitations"])
@@ -98,7 +98,7 @@ class CreateInvitationBody(BaseModel):
 class AcceptInvitationBody(BaseModel):
     token: str
     nome: str = Field(..., min_length=2, max_length=200)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
     extra_fields: Optional[dict] = None
 
 

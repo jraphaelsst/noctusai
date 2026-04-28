@@ -17,6 +17,7 @@ from app.routers import (
     availability,
     clinic_financials,
     clinics,
+    consents,
     crisis,
     dashboard_bi,
     evolution_notes,
@@ -63,6 +64,7 @@ app = create_product_app(
         appointments.router,
         recurring.router,
         sessions.router,
+        consents.router,
         observations.router,
         patient_notes.router,
         session_journal.router,
@@ -94,4 +96,6 @@ app = create_product_app(
     ],
     version="0.1.0",
     limiter=limiter,
+    standard_routers=["health", "notificacoes", "llm"],
+    consent_features="app.services.ai_consent_features",
 )

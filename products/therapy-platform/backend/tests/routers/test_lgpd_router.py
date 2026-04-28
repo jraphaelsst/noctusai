@@ -8,21 +8,20 @@ import pytest
 # Sample data
 # ---------------------------------------------------------------------------
 
-SAMPLE_WALLET = {"id": "wallet-001", "user_id": "test-user-123", "balance": 0}
+# Fixtures shape-correct against the live therapy schema (verified Phase 0 via
+# Supabase MCP, `compliance-audit-reconciliation` project 2026-04-22):
+# - `wallets` is keyed by (owner_id, owner_type)
+# - `session_records` links to appointments via appointment_id (no therapist_id column)
+# - `session_observations` links via session_record_id (no session_id column)
+# Therapist ownership of sessions flows session_records → appointments.therapist_id.
 
-SAMPLE_SESSION = {
-    "id": "session-001",
-    "therapist_id": "test-user-123",
-    "patient_id": "patient-001",
-    "status": "completed",
-}
+SAMPLE_WALLET = {"id": "wallet-001", "owner_id": "test-user-123", "owner_type": "patient", "balance": 0}
 
-SAMPLE_OBSERVATION = {
-    "id": "obs-001",
-    "session_id": "session-001",
-    "therapist_id": "test-user-123",
-    "content": "Paciente apresentou melhora.",
-}
+SAMPLE_APPOINTMENT = {"id": "appt-001", "therapist_id": "test-user-123", "patient_id": "patient-001"}
+
+SAMPLE_SESSION_RECORD = {"id": "session-001", "appointment_id": "appt-001"}
+
+SAMPLE_OBSERVATION = {"id": "obs-001", "session_record_id": "session-001", "observation_text": "Paciente apresentou melhora."}
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +86,9 @@ class TestPatientDeleteMyData:
 
 class TestTherapistDeleteData:
     def test_delete_session(self, client):
-        client._mock_supabase.set_table_data("session_records", [SAMPLE_SESSION])
+        # Therapist ownership flows session_records.appointment_id → appointments.therapist_id.
+        client._mock_supabase.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
+        client._mock_supabase.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         client._mock_supabase.set_table_data("session_observations", [])
         client._mock_supabase.set_table_data("session_summary_versions", [])
 
@@ -97,7 +98,10 @@ class TestTherapistDeleteData:
         assert "session_records" in data["deleted"]
 
     def test_delete_observation(self, client):
+        # Observation ownership chains observation → session_record → appointment → therapist.
         client._mock_supabase.set_table_data("session_observations", [SAMPLE_OBSERVATION])
+        client._mock_supabase.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
+        client._mock_supabase.set_table_data("appointments", [SAMPLE_APPOINTMENT])
 
         resp = client.post("/api/lgpd/delete-data/observation/obs-001")
         assert resp.status_code == 200
@@ -105,16 +109,20 @@ class TestTherapistDeleteData:
         assert "session_observations" in data["deleted"]
 
     def test_delete_all(self, client):
-        client._mock_supabase.set_table_data("session_summary_versions", [])
-        client._mock_supabase.set_table_data("session_observations", [])
-        client._mock_supabase.set_table_data("session_records", [])
-        client._mock_supabase.set_table_data("messages", [])
-        client._mock_supabase.set_table_data("conversation_participants", [])
-        client._mock_supabase.set_table_data("wallets", [])
-        client._mock_supabase.set_table_data("wallet_movements", [])
-        client._mock_supabase.set_table_data("therapist_settings", [])
-        client._mock_supabase.set_table_data("therapist_profiles", [])
-        client._mock_supabase.set_table_data("action_log", [])
+        # Seed the full dependency graph: therapist → appointment → session_record + video_room.
+        client._mock_supabase.set_table_data("appointments", [SAMPLE_APPOINTMENT])
+        client._mock_supabase.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
+        client._mock_supabase.set_table_data("video_rooms", [{"id": "vr-001", "appointment_id": "appt-001"}])
+        for t in (
+            "session_summary_versions", "session_observations",
+            "session_audio_segments", "session_interruptions",
+            "clinical_longitudinal_analyses", "patient_longitudinal_analyses",
+            "messages", "conversation_participants",
+            "wallets", "wallet_movements",
+            "therapist_settings", "therapist_profiles",
+            "action_log",
+        ):
+            client._mock_supabase.set_table_data(t, [])
 
         resp = client.post("/api/lgpd/delete-data/all/ignored")
         assert resp.status_code == 200

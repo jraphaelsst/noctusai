@@ -12,7 +12,7 @@ from fastapi import APIRouter, Header, HTTPException
 from app.dependencies import get_current_user, get_admin_client, get_user_role
 from app.responses import success_response
 from app.schemas.settings import DataDeletionRequest
-from app.services import lgpd_service
+from app.services import audio_retention_service, lgpd_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/lgpd", tags=["LGPD"])
@@ -66,4 +66,24 @@ async def delete_therapist_data(
         entity_id=entity_id if entity_type != "all" else None,
         db=db,
     )
+    return success_response(result)
+
+
+@router.post("/run-audio-retention")
+async def run_audio_retention(authorization: Optional[str] = Header(None)):
+    """Run the audio retention sweep — physically delete session audio past
+    its `download_expires_at`. Admin-only; meant to be superseded by a
+    scheduler when therapy grows one (follow-up
+    `therapy-scheduler-for-retention`). Idempotent — safe to re-run.
+    """
+    user, _ = await get_current_user(authorization)
+    role = get_user_role(user)
+    if role != "platform_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas administradores da plataforma podem executar a purga de áudio",
+        )
+
+    db = get_admin_client()
+    result = audio_retention_service.run_retention_sweep(db)
     return success_response(result)

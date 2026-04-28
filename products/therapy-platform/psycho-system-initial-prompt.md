@@ -643,7 +643,7 @@ Recurring appointments allow a therapist-patient pair to lock in a regular sched
   - Timestamp of last edit (if modified).
   - Whether it was the initial post-session observation or a later addition.
 - The observation history serves as the therapist's evolving clinical record for that session — capturing insights that emerge over time as the therapist reflects, reviews notes, or learns new context from subsequent sessions.
-- **Observation history is strictly private.** Only the therapist, their clinic admin (if affiliated), and the platform admin can see observations. **The patient NEVER sees observations — not the raw text, not any data derived from or enriched by observations.** This is a core privacy boundary.
+- **Observation history is strictly private to the responsible therapist.** Only the therapist-of-session can see observations. **Clinic admins and platform admins do NOT see observations** (narrowed 2026-04-22 per `GRAVACAO_SESSOES_LEGAL.md` + `projects/compliance-audit-reconciliation/` Phase 3 — RLS migration 007 dropped both roles from clinical-content policies). **The patient NEVER sees observations — not the raw text, not any data derived from or enriched by observations.** This is a core privacy boundary.
 
 #### 4.6.3 Dual-track summary system (base vs. clinical)
 
@@ -1014,7 +1014,7 @@ The platform has **four distinct views**, each a self-contained experience tailo
 - A personal workspace that is **identical in structure and features** whether the therapist is independent or clinic-affiliated.
 - Independent therapist: data flows directly between them and the platform.
 - Clinic-affiliated therapist: data is scoped to their clinic context, but the **UI is the same**. They do NOT see the clinic admin panel, other therapists' data, or clinic-level financials. They see their own patients, their own calendar, their own session history, their own earnings.
-- Each patient has a **profile page** within the therapist's workspace containing: session journal (clinical track — Track 2 summaries, observation histories, version history), the **clinical longitudinal analysis** (Track 2), and a **"patient view" toggle** to see what the patient sees (Track 1 base summaries only — but NOT the patient's personal longitudinal or personal notes, which are strictly private).
+- Each patient has a **profile page** within the therapist's workspace containing: session journal (clinical track — Track 2 summaries, observation histories, version history), the **clinical longitudinal analysis** (Track 2), and a **"patient view" toggle** to see what the patient sees (Track 1 base summaries only). The therapist-of-session can also read the **patient's own session notes** — a product decision locked 2026-04-22 (Q1 of `projects/compliance-audit-reconciliation/`); encoded in RLS migration 007. The patient's personal longitudinal analyses remain patient-scoped (therapist access only if therapist_id matches the authoring therapist).
 - **Messaging:** WhatsApp-like interface with all personal conversations (patients, other therapists, clinics, support). Conversation management (archive, mute, block, report). Accessible via persistent nav icon with unread badge.
 - The therapist should never feel like they are "inside" the clinic's admin interface. They are in their own professional workspace that happens to be organizationally connected to a clinic.
 

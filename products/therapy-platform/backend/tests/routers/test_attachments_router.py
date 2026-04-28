@@ -57,3 +57,29 @@ class TestUploadAttachment:
             files={"file": ("test.jpg", fake_file, "image/jpeg")},
         )
         assert resp.status_code == 422
+
+
+class TestGetSignedUrl:
+    """GET /api/attachments/signed-url — server-mediated regeneration endpoint.
+
+    Introduced 2026-04-22 by compliance-audit-reconciliation Phase 4 per Q4.
+    """
+
+    def test_denies_non_member_with_403(self, client):
+        """Caller not in the conversation → 403."""
+        client._mock_supabase.set_table_data("conversation_participants", [])
+        resp = client.get(
+            "/api/attachments/signed-url?storage_path=convo-xyz/some-file.jpg",
+        )
+        assert resp.status_code == 403
+
+    def test_rejects_malformed_storage_path(self, client):
+        """storage_path must be `<conversation_id>/<filename>` shape."""
+        resp = client.get("/api/attachments/signed-url?storage_path=noprefix")
+        assert resp.status_code == 400
+
+    def test_requires_auth(self, client):
+        resp = client._tc.get(
+            "/api/attachments/signed-url?storage_path=convo-001/f.jpg",
+        )
+        assert resp.status_code == 401

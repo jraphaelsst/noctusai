@@ -33,14 +33,16 @@ async def get_clinical_longitudinal(
 ):
     """Get the latest clinical longitudinal analysis for a patient.
 
-    Therapist or clinic_admin only. Optionally includes version history.
+    Therapist only (clinical content — Q2 of `compliance-audit-reconciliation`
+    2026-04-22 dropped clinic_admin/platform_admin from clinical-longitudinal
+    access at both router + RLS layer). Optionally includes version history.
     """
     user, token = await get_current_user(authorization)
     role = get_user_role(user)
-    if role not in ("therapist", "clinic_admin", "platform_admin"):
+    if role != "therapist":
         raise HTTPException(
             status_code=403,
-            detail="Apenas terapeutas e administradores podem acessar análises clínicas longitudinais",
+            detail="Apenas o terapeuta responsável pode acessar análises clínicas longitudinais",
         )
 
     db = get_user_client(token)
@@ -79,14 +81,15 @@ async def list_clinical_longitudinal_versions(
 ):
     """List all clinical longitudinal versions for a patient.
 
-    Therapist or clinic_admin only.
+    Therapist only (clinical content — Q2 of `compliance-audit-reconciliation`
+    2026-04-22 dropped clinic_admin/platform_admin).
     """
     user, token = await get_current_user(authorization)
     role = get_user_role(user)
-    if role not in ("therapist", "clinic_admin", "platform_admin"):
+    if role != "therapist":
         raise HTTPException(
             status_code=403,
-            detail="Apenas terapeutas e administradores podem acessar análises clínicas longitudinais",
+            detail="Apenas o terapeuta responsável pode acessar análises clínicas longitudinais",
         )
 
     db = get_user_client(token)

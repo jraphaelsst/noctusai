@@ -6,7 +6,7 @@ All operations require platform_admin role, enforced at the router level.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from fastapi import HTTPException
 
@@ -230,3 +230,111 @@ async def assign_patient(
         patient_id, therapist_id, clinic_id, admin_id,
     )
     return row
+
+
+# ---------------------------------------------------------------------------
+# Admin therapist listing (DTO-shaped for the admin UI)
+# ---------------------------------------------------------------------------
+
+_VALID_THERAPIST_STATUSES = {"pendente", "aprovado", "rejeitado", "suspenso"}
+
+
+def _derive_therapist_status(row: Dict[str, Any]) -> str:
+    if not row.get("is_active", True):
+        return "suspenso"
+    if row.get("is_approved"):
+        return "aprovado"
+    if row.get("rejection_reason"):
+        return "rejeitado"
+    return "pendente"
+
+
+def _fetch_user_identity(db: Any, user_id: str) -> Dict[str, str]:
+    """Fetch nome + email from auth.users via the admin API.
+
+    Falls back to empty strings if the lookup fails or returns a non-user shape
+    (e.g. the mocked supabase client in tests).
+    """
+    try:
+        resp = db.auth.admin.get_user_by_id(user_id)
+    except Exception:  # noqa: BLE001 — admin API may 404 or fail for stale IDs
+        return {"nome": "", "email": ""}
+
+    user = getattr(resp, "user", None)
+    if user is None:
+        return {"nome": "", "email": ""}
+
+    email = getattr(user, "email", None)
+    email = email if isinstance(email, str) else ""
+
+    metadata = getattr(user, "user_metadata", None) or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    nome = metadata.get("nome") or metadata.get("full_name") or ""
+    if not isinstance(nome, str):
+        nome = ""
+
+    return {"nome": nome, "email": email}
+
+
+def _therapist_row_to_dto(row: Dict[str, Any], identity: Dict[str, str]) -> Dict[str, Any]:
+    return {
+        "id": row.get("user_id"),
+        "user_id": row.get("user_id"),
+        "nome": identity.get("nome", ""),
+        "email": identity.get("email", ""),
+        "crp": row.get("crp") or "",
+        "bio": row.get("bio"),
+        "foto_url": row.get("photo_url"),
+        "especialidades": row.get("specialties") or [],
+        "abordagens": row.get("approaches") or [],
+        "valor_sessao": row.get("default_session_price"),
+        "duracao_sessao": row.get("session_duration_minutes"),
+        "status": _derive_therapist_status(row),
+        "nota_media": row.get("avg_rating"),
+        "total_avaliacoes": row.get("review_count"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+async def list_therapists_for_admin(
+    db: Any,
+    page: int,
+    page_size: int,
+    status: str | None = None,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """List therapists for the admin console, shaped as the frontend ``Terapeuta`` DTO.
+
+    Returns ``(data, total)``. ``status`` filters by derived lifecycle state
+    (``pendente`` | ``aprovado`` | ``rejeitado`` | ``suspenso``).
+    """
+    query = (
+        db.table("therapist_profiles")
+        .select("*", count="exact")
+        .order("created_at", desc=True)
+    )
+
+    if status and status in _VALID_THERAPIST_STATUSES:
+        if status == "aprovado":
+            query = query.eq("is_approved", True).eq("is_active", True)
+        elif status == "pendente":
+            query = query.eq("is_approved", False).eq("is_active", True)
+        elif status == "suspenso":
+            query = query.eq("is_active", False)
+        elif status == "rejeitado":
+            # Rejected state is captured in ``rejection_reason``, but that column is
+            # not yet migrated into ``therapist_profiles``. Return nothing until the
+            # reject flow is wired up end-to-end.
+            return [], 0
+
+    offset = (page - 1) * page_size
+    result = query.range(offset, offset + page_size - 1).execute()
+    rows = result.data or []
+    total = result.count or 0
+
+    dtos: List[Dict[str, Any]] = []
+    for row in rows:
+        identity = _fetch_user_identity(db, row.get("user_id"))
+        dtos.append(_therapist_row_to_dto(row, identity))
+    return dtos, total
