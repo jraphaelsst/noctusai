@@ -48,4 +48,5 @@ app = create_product_app(
     routers=[r for r, _, _ in _domain_routers],
     version="0.1.0",
     limiter=limiter,
+    standard_routers=["health", "notificacoes", "team"],
 )

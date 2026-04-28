@@ -29,7 +29,7 @@ class CreateOrderInput(BaseModel):
     notes: str | None = None
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("/", status_code=status.HTTP_201_CREATED)
 def create_order(
     body: CreateOrderInput,
     user: dict[str, Any] = Depends(require_role("customer")),
@@ -114,7 +114,7 @@ def create_order(
     return order
 
 
-@router.get("")
+@router.get("/")
 def list_orders(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     if user.get("role") == "admin":
         data = sorted(store.orders, key=lambda o: o["createdAt"], reverse=True)

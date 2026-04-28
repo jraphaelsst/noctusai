@@ -88,7 +88,7 @@ class TestTeamFlow:
 
 
 # ==========================================================================
-# 3. Notification flow
+# 3. Notification flow — adconnect renders NotificationBell via createProductLayout
 # ==========================================================================
 
 class TestNotificationFlow:

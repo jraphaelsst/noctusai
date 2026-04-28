@@ -18,6 +18,7 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
     MockUser,
     MockUserResponse,
     AuthClient,
+    bind_consent_module_to_mock,
 )
 
 
@@ -40,5 +41,10 @@ def client():
          patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
 
         from app.main import app
+        # Per-fixture re-bind of the seed's consent module to THIS test's
+        # mock_sb. Idempotent — safe even if no consent features registered.
+        # See KB § PATTERNS/testing.md § Consent-guard product conftest pattern.
+        bind_consent_module_to_mock(mock_sb)
+
         tc = TestClient(app)
         yield AuthClient(tc, mock_sb)

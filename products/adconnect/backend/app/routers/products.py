@@ -9,7 +9,7 @@ from ..data.store import store
 router = APIRouter()
 
 
-@router.get("")
+@router.get("/")
 def list_products(
     category: str | None = None,
     q: str | None = None,

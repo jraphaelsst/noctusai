@@ -94,7 +94,7 @@ def set_report_status(
     return r
 
 
-@router.delete("/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_report(
     report_id: str,
     user: dict[str, Any] = Depends(get_current_user),

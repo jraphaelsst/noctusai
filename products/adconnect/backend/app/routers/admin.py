@@ -59,7 +59,7 @@ def upsert_rule(
     return rule
 
 
-@router.delete("/reward-rules/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/reward-rules/{id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_rule(
     id: str, _: dict[str, Any] = Depends(require_role("admin"))
 ) -> None:
@@ -101,7 +101,7 @@ def upsert_promo(
     return promo
 
 
-@router.delete("/promos/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/promos/{id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_promo(
     id: str, _: dict[str, Any] = Depends(require_role("admin"))
 ) -> None:

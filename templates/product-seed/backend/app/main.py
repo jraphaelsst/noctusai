@@ -32,4 +32,9 @@ app = create_product_app(
     settings=settings,
     version="0.1.0",
     limiter=limiter,
+    standard_routers=["health", "notificacoes", "team"],
+    # Uncomment when this product registers AI features in
+    # `app/services/ai_consent_features.py` (each product owns its
+    # consent catalog — see KB § PATTERNS/lgpd.md § 9):
+    # consent_features="app.services.ai_consent_features",
 )

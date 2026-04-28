@@ -26,7 +26,7 @@ def _check_ownership(user: dict[str, Any], id_: str) -> None:
         raise HTTPException(403)
 
 
-@router.get("")
+@router.get("/")
 def list_all(_: dict[str, Any] = Depends(require_role("admin"))) -> dict[str, Any]:
     return {"data": store.distributors}
 
@@ -82,6 +82,7 @@ def add_cnpj(
 @router.delete(
     "/{id}/cnpjs/{cnpj_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
 )
 def delete_cnpj(
     id: str,
