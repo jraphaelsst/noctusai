@@ -7,6 +7,7 @@ import { TIPO_TRANSACAO_LABELS } from "@/lib/constants";
 import type { Transacao } from "@/types";
 import Modal from "@/components/Modal";
 import { Plus, Search, ArrowLeftRight, ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react";
+import { AIIndicator } from "@noctusai/lib/design-system";
 
 const inputClass = "w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary";
 
@@ -215,8 +216,9 @@ export default function Transacoes() {
                     {t.categoria?.icone || (isReceita ? "+" : isTransferencia ? "~" : "-")}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {t.descricao || t.comerciante || "Transacao"}
+                    <p className="text-sm font-medium truncate flex items-center gap-2">
+                      <span className="truncate">{t.descricao || t.comerciante || "Transacao"}</span>
+                      <AIIndicator refType="transacao" refId={t.id} hideIcon />
                     </p>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>{formatDate(t.data)}</span>

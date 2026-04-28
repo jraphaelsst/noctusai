@@ -1,0 +1,26 @@
+{% extends "_digest_base.txt.j2" %}
+
+{% block header %}Sua semana — {{ user_label }}{% endblock %}
+
+{% block subheader %}
+{{ period_label }}
+
+Tarefas concluídas: {{ tasks_completed }}
+Tarefas pendentes: {{ tasks_pending }}
+Notas escritas: {{ notas_count }}
+Tempo em foco: {{ focus_label }}
+{% endblock %}
+
+{% block body %}
+RESUMO
+{{ narrative }}
+
+HÁBITOS
+{% for nome, count in habit_streaks[:6] %}
+  {{ nome }}: {{ count }}
+{% else %}
+  (sem hábitos)
+{% endfor %}
+{% endblock %}
+
+{% block footer %} · prompt {{ prompt_version }}{% endblock %}

@@ -28,6 +28,8 @@ AI-first design: every feature should be buildable with AI assistance and eventu
 | Focus | `sessoes_foco` | `/api/foco` | Pomodoro / deep work sessions linked to tasks |
 | Metrics | `metricas_produtividade` | `/api/metricas` | Daily productivity snapshots and scoring |
 | Team | `invitations` | `/api/team` | Organization member management |
+| AI weekly review | (read-only over tasks/metas/checkins/notas/sessoes_foco) | `/api/ai/weekly-review` (GET) + `/api/ai/weekly-review/send` (POST) | Phase 11 D6 Friday review. `weekly_review_service.py` aggregates past 7 days, asks LLM for 3-paragraph PT narrative (`cache=False` — LGPD), sends via `noctusai_lib.email.digest.send_digest`. |
+| AI today's brief | (read-only over today's tarefas/eventos/checkins) | `/api/ai/daily-brief` (GET) | Phase 13 D1 today's brief badge. `daily_brief_service.py` builds `{chip ≤32 chars, summary ≤200 chars}` from today's data. Frontend `<DailyBriefBadge>` mounted via `LayoutEnrichment.aiBadge` (P4 pattern). Hook `useDailyBrief()` (15-min staleTime). `cache=False` — LGPD. **2026-04-27**: panel mounts `<AIFeedbackButtons output_ref="digest:dl-daily-brief:<YYYY-MM-DD>" size="sm"/>` at the bottom (`digest-feedback-mount` project). |
 
 ## Development Guidelines
 
@@ -64,6 +66,15 @@ cd products/daily-life/backend && pytest
 - **Shared backend**: `noctusai_lib` (auth, roles, invitations, email_templates, notifications, page_status, responses, exceptions, middleware, app_factory, database, config, testing)
 - **Shared frontend**: `@noctusai/lib` (api, sso, roles, page-status, auth, stores, hooks, notifications, supabase, components)
 - **Design system**: `@noctusai/lib/design-system` (AppShell, Sidebar, Header, LoginForm, etc.)
+- **`noctusai_lib.llm`** — for the D4 note-to-task extraction (see below)
+
+## AI Features (ai-expansion Phase 16, 2026-04-24)
+
+| Code | Service fn | Endpoint | Hook | Notes |
+|---|---|---|---|---|
+| **D4** | `extract_tasks_from_note(note_content, org_id?)` | `POST /api/notes/{note_id}/extract-tasks` | `useExtractTasksFromNote()` | `cache=False` (personal content); caps at 10 tasks; never auto-creates tasks — UI confirms each. |
+
+Future AI features for Daily Life (e.g. D1 daily brief, D2 goal decomposition, D3 schedule optimizer, D6 weekly review) land in subsequent phases per `projects/ai-expansion/PROJECT.md` — they will live alongside `extract_tasks_from_note` in this same `ai_service.py` module.
 
 ## Related System
 

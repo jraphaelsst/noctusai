@@ -12,6 +12,7 @@ from app.scheduler import start_scheduler, stop_scheduler
 from app.routers import (
     contacts, lists, templates, campaigns,
     automations, analytics, webhooks, unsubscribe,
+    ai as ai_router,
 )
 from app.routers import settings as settings_router
 
@@ -29,9 +30,12 @@ app = create_product_app(
         webhooks.router,
         unsubscribe.router,
         settings_router.router,
+        ai_router.router,
     ],
     version="0.1.0",
     limiter=limiter,
     lifespan_startup=start_scheduler,
     lifespan_shutdown=stop_scheduler,
+    standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback"],
+    consent_features="app.services.ai_consent_features",
 )

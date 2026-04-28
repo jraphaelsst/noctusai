@@ -1,0 +1,59 @@
+{% extends "_digest_base.html.j2" %}
+
+{% block header %}Sua semana — {{ user_label }}{% endblock %}
+
+{% block subheader %}
+<p style="color:#555;margin:0 0 16px 0">{{ period_label }}</p>
+{% endblock %}
+
+{% block body %}
+<table style="width:100%;border-collapse:collapse;margin:0 0 16px 0;font-size:14px">
+  <tr style="background:#f7f7f7">
+    <th style="padding:6px 12px;text-align:left">Métrica</th>
+    <th style="padding:6px 12px;text-align:right">Valor</th>
+  </tr>
+  <tr>
+    <td style="padding:6px 12px">Tarefas concluídas</td>
+    <td style="padding:6px 12px;text-align:right">{{ tasks_completed }}</td>
+  </tr>
+  <tr>
+    <td style="padding:6px 12px">Tarefas pendentes</td>
+    <td style="padding:6px 12px;text-align:right">{{ tasks_pending }}</td>
+  </tr>
+  <tr>
+    <td style="padding:6px 12px">Notas escritas</td>
+    <td style="padding:6px 12px;text-align:right">{{ notas_count }}</td>
+  </tr>
+  <tr>
+    <td style="padding:6px 12px">Tempo em foco</td>
+    <td style="padding:6px 12px;text-align:right">{{ focus_label }}</td>
+  </tr>
+</table>
+
+<h3 style="margin:20px 0 8px 0;font-size:16px">Resumo</h3>
+{% for para in narrative_paragraphs %}
+<p style="margin:8px 0">{{ para }}</p>
+{% endfor %}
+
+<h3 style="margin:20px 0 8px 0;font-size:16px">Hábitos</h3>
+<table style="width:100%;border-collapse:collapse;font-size:14px">
+  <thead>
+    <tr style="background:#f7f7f7">
+      <th style="padding:6px 12px;text-align:left">Hábito</th>
+      <th style="padding:6px 12px;text-align:right">Check-ins</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for nome, count in habit_streaks[:6] %}
+    <tr>
+      <td style="padding:6px 12px;border-bottom:1px solid #eee">{{ nome }}</td>
+      <td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">{{ count }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2" style="padding:6px 12px;color:#888">(sem hábitos)</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block footer %} · prompt {{ prompt_version }}{% endblock %}

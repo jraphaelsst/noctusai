@@ -4,7 +4,8 @@
  * Personal productivity hub: tasks, goals, schedule, notes.
  */
 import { lazy } from "react";
-import { createProductApp, createProductLayout } from "@noctusai/seed";
+import { createProductApp, createProductLayout, DEFAULT_AI_BADGES } from "@noctusai/seed";
+import { AIBadgeStack } from "@noctusai/lib/design-system";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
@@ -12,6 +13,19 @@ import {
   LayoutDashboard, Users, Home, CalendarCheck,
   ListTodo, Target, Calendar, StickyNote,
 } from "lucide-react";
+import { DailyBriefBadge } from "@/components/DailyBriefBadge";
+
+// Phase 13 — D1 today's brief badge in the layout header. Composed with the
+// seed defaults (`<PendingConsentBadge/>` + `<LLMSpendBadge/>`) via
+// `<AIBadgeStack/>` so admins still see consent / spend signals next to
+// the daily-brief indicator. Each badge null-renders when empty, so the
+// stack collapses gracefully. The DailyBriefBadge hook short-circuits to
+// `null` when the API is unavailable.
+function useDailyLifeEnrichment() {
+  return {
+    aiBadge: <AIBadgeStack badges={[<DailyBriefBadge key="daily-brief" />, ...DEFAULT_AI_BADGES]} />,
+  };
+}
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -84,6 +98,7 @@ const Layout = createProductLayout({
   navGroupsFallback: NAV_FALLBACK,
   ...infra.appConfig,
   NotificationBell: infra.NotificationBell,
+  useLayoutEnrichment: useDailyLifeEnrichment,
 });
 
 export default createProductApp({

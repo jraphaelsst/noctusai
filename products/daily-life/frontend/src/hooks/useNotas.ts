@@ -111,3 +111,28 @@ export function usePinNota() {
     onError: (err: any) => toast.error("Erro ao fixar nota", { description: err?.message }),
   });
 }
+
+// ---------------------------------------------------------------------------
+// D4 — Extract tasks from note (ai-expansion Phase 16)
+// ---------------------------------------------------------------------------
+
+export interface ExtractedTask {
+  title: string;
+  due_hint: string | null;
+}
+
+/**
+ * Hook for the "Extrair tarefas" button on the Note detail view.
+ * Returns a list of suggested tasks for the user to review + accept;
+ * never creates task records itself.
+ */
+export function useExtractTasksFromNote() {
+  return useMutation<ExtractedTask[], Error, { note_id: string }>({
+    mutationFn: async ({ note_id }) => {
+      const result = await api.post(`/api/notes/${note_id}/extract-tasks`);
+      return (result.data?.tasks ?? []) as ExtractedTask[];
+    },
+    onError: (err: any) =>
+      toast.error("Erro ao extrair tarefas", { description: err?.message }),
+  });
+}

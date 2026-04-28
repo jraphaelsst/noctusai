@@ -37,9 +37,19 @@ Personal finance tracker for individuals. Multi-account transaction management, 
 - **dashboard** -- summary cards, charts, spending trends
 - **relatorios** -- monthly reports, category breakdowns, cash flow analysis
 
-## Services (13)
+## Services (15)
 
-ativos, carteira, categorias, contas, cotacoes, dashboard, metas, orcamentos, patrimonio, recorrentes, relatorios, transacoes, watchlist
+ativos, carteira, categorias, contas, cotacoes, dashboard, metas, orcamentos, patrimonio, recorrentes, relatorios, transacoes, watchlist, **ai** (Phase 7 P1 indicators), **monthly_narrative** (Phase 10 P2-opp digest)
+
+### AI Service (Phase 7 — 2026-04-25)
+- **`categorize_transaction`** (P1-opp) — `POST /api/ai/transacoes/{transacao_id}/categorize`. Suggests a category from the user's existing `categorias` for a transaction; returns `matched_categoria_id` for one-click apply. Hook: `useCategorizeTransaction`. Prompt version `pf-categorize@v1`.
+- **`flag_recurring_expense`** (P3-opp) — `POST /api/ai/transacoes/{transacao_id}/recurring-flag`. Decides if a transaction is part of a recurring pattern using up to 12 same-comerciante history rows. Hook: `useRecurringFlag`. Prompt version `pf-recurring@v1`.
+- Both call `noctusai_lib.llm.chat_completion(cache=True, temperature=0, org_id=...)` (transactional metadata, not personal narrative). Persist to `"personal-finance".ai_outputs` via `noctusai_lib.ai.persist_output`. Read side: `<AIIndicator refType="transacao" refId={t.id}/>` on `Transacoes.tsx`. Standard router `ai_outputs` opted in via `main.py`. Migration: `006_ai_outputs.sql`.
+
+### Monthly Narrative Service (Phase 10 — 2026-04-25, P2-opp)
+- **`build_narrative(db, org_id, period_days=30)`** → `(Digest, summary)` — aggregates `transacoes` over the past month, asks LLM for a 3-paragraph PT narrative, renders html + text. No DB writes, no email send.
+- **`send_monthly_narrative(db, org_id, recipient, period_days)`** — same plus delivery via `noctusai_lib.email.digest.send_digest`.
+- Endpoints: `GET /api/ai/monthly-narrative?period_days=30` (dashboard card; hook `useMonthlyNarrative`) and `POST /api/ai/monthly-narrative/send {recipient, period_days}` (cron-friendly). Prompt version `pf-monthly-narrative@v1`.
 
 ## PF-Specific Patterns
 

@@ -1,0 +1,26 @@
+{% extends "_digest_base.txt.j2" %}
+
+{% block header %}Resumo financeiro mensal — {{ org_name }}{% endblock %}
+
+{% block subheader %}
+{{ period_label }}
+
+Receitas: {{ receita_brl }}
+Despesas: {{ despesa_brl }}
+Fluxo líquido: {{ fluxo_brl }}
+Taxa de poupança: {{ '%.1f' % poupanca_pct }}%
+{% endblock %}
+
+{% block body %}
+RESUMO
+{{ narrative }}
+
+TOP CATEGORIAS DE DESPESA
+{% for cat in top_categorias[:6] %}
+  {{ cat.nome }}: {{ cat.total_brl }}
+{% else %}
+  (sem categorias)
+{% endfor %}
+{% endblock %}
+
+{% block footer %} · prompt {{ prompt_version }}{% endblock %}

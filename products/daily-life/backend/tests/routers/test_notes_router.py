@@ -233,3 +233,50 @@ class TestDeleteNote:
         client.mock_supabase.set_table_data("notas", [])
         resp = client.delete("/api/notes/nonexistent")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# D4 — Extract tasks from note (ai-expansion Phase 16)
+# ---------------------------------------------------------------------------
+
+class TestExtractTasks:
+    """D4 note extraction tests. Daily Life's `note_extract` is registered
+    with `default_granted=False` (high-risk personal data); these happy-path
+    tests pre-seed the consent grant inside each test (no autouse fixture
+    here since this file mainly tests non-AI note CRUD)."""
+
+    @staticmethod
+    def _grant_note_extract(client):
+        client.mock_supabase.set_table_data("ai_consent", [{
+            "feature_key": "daily_life.note_extract",
+            "granted": True, "user_id": "test-user-123",
+            "granted_at": "2026-04-27T00:00:00Z", "revoked_at": None,
+        }])
+
+    def test_extract_tasks_returns_list(self, client):
+        from unittest.mock import patch, AsyncMock
+
+        self._grant_note_extract(client)
+        client.mock_supabase.set_table_data("notas", [SAMPLE_NOTE])
+        with patch(
+            "app.services.ai_service.chat_completion", new_callable=AsyncMock
+        ) as mock_chat:
+            mock_chat.return_value = (
+                '{"tasks": ['
+                ' {"title": "Implementar feature X", "due_hint": null},'
+                ' {"title": "Avaliar abordagem Y", "due_hint": "sexta-feira"}'
+                ']}'
+            )
+            resp = client.post("/api/notes/note-1/extract-tasks")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "tasks" in body["data"]
+        assert len(body["data"]["tasks"]) == 2
+        assert body["data"]["tasks"][0]["title"] == "Implementar feature X"
+
+    def test_extract_tasks_note_not_found(self, client):
+        self._grant_note_extract(client)
+        client.mock_supabase.set_table_data("notas", [])
+        resp = client.post("/api/notes/nonexistent/extract-tasks")
+        assert resp.status_code == 404

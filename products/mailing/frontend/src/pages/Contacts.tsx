@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useContacts, useCreateContact, useDeleteContact, Contact } from "@/hooks/useContacts";
+import { useSegmentContacts } from "@/hooks/useAI";
 import { toast } from "sonner";
 import {
   Plus,
@@ -11,7 +12,9 @@ import {
   ChevronRight,
   Search,
   Users,
+  Sparkles,
 } from "lucide-react";
+import { AIIndicator } from "@noctusai/lib/design-system";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,6 +78,7 @@ export default function Contacts() {
   });
   const createMutation = useCreateContact();
   const deleteMutation = useDeleteContact();
+  const segmentMutation = useSegmentContacts();
 
   const contacts: Contact[] = contactsRes?.data ?? [];
   const total = contactsRes?.total ?? 0;
@@ -129,13 +133,38 @@ export default function Contacts() {
             </p>
           </div>
         </div>
-        <button
-          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          onClick={() => setShowModal(true)}
-        >
-          <Plus className="h-4 w-4" />
-          Novo Contato
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2.5 text-sm font-medium text-foreground hover:bg-muted/50 transition-colors disabled:opacity-50"
+            onClick={() =>
+              segmentMutation.mutate(
+                {},
+                {
+                  onSuccess: (r) =>
+                    toast.success(`Segmentação concluída — ${r.segmented} contatos atualizados.`),
+                  onError: (e) =>
+                    toast.error("Erro ao segmentar contatos", { description: e.message }),
+                },
+              )
+            }
+            disabled={segmentMutation.isPending}
+            title="Segmentar contatos com IA"
+          >
+            {segmentMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            Segmentar
+          </button>
+          <button
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            onClick={() => setShowModal(true)}
+          >
+            <Plus className="h-4 w-4" />
+            Novo Contato
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -197,7 +226,12 @@ export default function Contacts() {
                     onClick={() => navigate(`/contacts/${c.id}`)}
                   >
                     <td className="px-4 py-3 font-medium text-foreground">{c.nome || "--"}</td>
-                    <td className="px-4 py-3 text-foreground">{c.email}</td>
+                    <td className="px-4 py-3 text-foreground">
+                      <div className="flex items-center gap-2">
+                        <span>{c.email}</span>
+                        <AIIndicator refType="contact" refId={c.id} hideIcon />
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{c.empresa || "--"}</td>
                     <td className="px-4 py-3 hidden lg:table-cell">
                       <div className="flex flex-wrap gap-1">

@@ -6,6 +6,7 @@ Resend Batch API calls, and status tracking.
 """
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -102,6 +103,7 @@ class SendService:
         if not api_key:
             logger.info("No RESEND_API_KEY — logging %d emails (dry run)", len(logs))
             self._mark_sent(logs, dry_run=True)
+            await self._finalize_campaign_if_done(campaign_id)
             return len(logs)
 
         # Resolve campaign template
@@ -154,15 +156,18 @@ class SendService:
                 batch_data = resp.json().get("data", [])
                 self._mark_sent(logs, batch_data=batch_data)
                 logger.info("Sent batch of %d emails for campaign %s", len(logs), campaign_id)
+                await self._finalize_campaign_if_done(campaign_id)
                 return len(logs)
             else:
                 logger.error("Resend batch API error: %s %s", resp.status_code, resp.text)
                 self._mark_failed(logs, f"Resend API {resp.status_code}")
+                await self._finalize_campaign_if_done(campaign_id)
                 return 0
 
         except Exception as e:
             logger.error("Resend batch send error: %s", e)
             self._mark_failed(logs, str(e))
+            await self._finalize_campaign_if_done(campaign_id)
             return 0
 
     def _render(self, text: str, variables: dict) -> str:
@@ -205,3 +210,85 @@ class SendService:
                     self.db.table("campaigns").update({
                         "total_failed": current + len(logs)
                     }).eq("id", campaign_id).execute()
+
+    async def _finalize_campaign_if_done(self, campaign_id: str) -> None:
+        """If no rows remain in 'queued' for this campaign, atomically flip status
+        to 'enviada' and fire the campaign-debrief email. Safe to call repeatedly:
+        the .neq('status', 'enviada') guard makes the flip the idempotency boundary
+        — exactly one caller wins the transition; subsequent callers no-op.
+
+        Errors during recipient resolution or debrief send are logged at WARN
+        and swallowed; the campaign is finalized regardless.
+        """
+        if not campaign_id:
+            return
+
+        remaining = (self.db.table("send_logs")
+                     .select("id", count="exact")
+                     .eq("campaign_id", campaign_id)
+                     .eq("status", "queued")
+                     .limit(1)
+                     .execute())
+        if (remaining.count or 0) > 0:
+            return
+
+        flipped = (self.db.table("campaigns")
+                   .update({"status": "enviada",
+                            "completed_at": datetime.now(timezone.utc).isoformat()})
+                   .eq("id", campaign_id)
+                   .neq("status", "enviada")
+                   .execute())
+        if not flipped.data:
+            return
+
+        campaign_row = flipped.data[0]
+        org_id = campaign_row.get("org_id")
+        recipient = self._resolve_debrief_recipient(campaign_row)
+        if not recipient:
+            logger.warning(
+                "auto_debrief_skipped_no_recipient",
+                extra={"campaign_id": campaign_id, "created_by": campaign_row.get("created_by")},
+            )
+            return
+
+        try:
+            from app.services.campaign_debrief_service import send_campaign_debrief
+            await send_campaign_debrief(
+                self.db,
+                campaign_id=campaign_id,
+                recipient=recipient,
+                org_id=org_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "auto_debrief_failed",
+                extra={"campaign_id": campaign_id, "org_id": org_id, "error": str(e)},
+            )
+
+    def _resolve_debrief_recipient(self, campaign: dict) -> Optional[str]:
+        """Resolve the email of the campaign creator. Returns None when missing.
+
+        Order: explicit `debrief_recipient` field on campaign (operator override)
+        → looked-up auth user email by `created_by` → None.
+        """
+        override = campaign.get("debrief_recipient")
+        if override:
+            return override
+
+        created_by = campaign.get("created_by")
+        if not created_by:
+            return None
+
+        try:
+            user_lookup = self.db.auth.admin.get_user_by_id(created_by)
+        except Exception as e:
+            logger.warning(
+                "debrief_recipient_lookup_failed",
+                extra={"created_by": created_by, "error": str(e)},
+            )
+            return None
+
+        user = getattr(user_lookup, "user", None)
+        if user is None and isinstance(user_lookup, dict):
+            user = user_lookup.get("user") or user_lookup
+        return getattr(user, "email", None) if user is not None else None

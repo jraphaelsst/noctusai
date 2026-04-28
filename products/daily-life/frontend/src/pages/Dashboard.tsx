@@ -5,6 +5,7 @@ import {
 } from "@/hooks/useDashboard";
 import { useAuthStore } from '@noctusai/seed/infra';
 import { resolveSSOContext } from "@noctusai/lib";
+import { WeeklyReviewCard } from "@/components/WeeklyReviewCard";
 import {
   CalendarCheck, ListTodo, Target, Calendar, StickyNote,
   Loader2, TrendingUp, Flame, CheckCircle2,
@@ -106,6 +107,9 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* AI weekly-review digest — gated by `daily_life.weekly_review` consent. */}
+      <WeeklyReviewCard />
 
       {/* Org info */}
       {ssoCtx.org.name && (

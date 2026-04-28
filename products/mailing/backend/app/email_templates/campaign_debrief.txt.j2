@@ -1,0 +1,23 @@
+{% extends "_digest_base.txt.j2" %}
+
+{% block header %}Debrief da campanha — {{ campaign_name }}{% endblock %}
+
+{% block subheader %}
+{% for row in metric_rows %}
+{{ row.label }}: {{ row.value }}
+{% endfor %}
+{% endblock %}
+
+{% block body %}
+RESUMO
+{{ narrative }}
+
+LINKS MAIS CLICADOS
+{% for url, count in top_links[:5] %}
+  {{ url }}: {{ count }}
+{% else %}
+  (sem cliques)
+{% endfor %}
+{% endblock %}
+
+{% block footer %} · prompt {{ prompt_version }}{% endblock %}

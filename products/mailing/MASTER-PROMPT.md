@@ -82,6 +82,37 @@ products/mailing/frontend/src/
 - **Resend** — email sending (Batch API + webhooks)
 - **APScheduler** — campaign send loop + automation processing
 - **Seed framework** — all structural infrastructure
+- **`noctusai_lib.llm`** — AI wrappers (see below)
+
+## AI Features (ai-expansion Phases 14 + 8)
+
+Six AI features split across two services. See `KNOWLEDGE-BASE/CONTEXT/backend/05-AI-FEATURES.md § Mailing AI Wrappers` for the authoritative tables.
+
+**Phase 14 (2026-04-24)** — five `chat_completion` wrappers in `app/services/ai_service.py`:
+
+| Code | Service fn | Purpose |
+|---|---|---|
+| M1 | `generate_subjects` | 3–5 subject-line variants with tone |
+| M2 | `draft_template` | Responsive HTML body from prompt |
+| M5 | `reengagement_variants` | 3 re-engagement email tones |
+| M6 | `review_deliverability` | Spam / deliverability findings list |
+| M7 | `translate_template` | PT → EN/ES/FR preserving HTML + `{{placeholders}}` |
+
+**Phase 8 (2026-04-25)** — persisted P1 indicator in `app/services/segmentation_service.py`:
+
+| Code | Service fn | Purpose |
+|---|---|---|
+| M3 | `segment_contacts` | embed → greedy cosine cluster → LLM-name → persist N `<AIIndicator/>` rows to `mailing.ai_outputs` |
+
+**Phase 12 (2026-04-25)** — fourth platform-wide P3 digest adopter in `app/services/campaign_debrief_service.py`:
+
+| Code | Service fn | Purpose |
+|---|---|---|
+| M4 | `build_debrief` / `send_campaign_debrief` | aggregate `send_logs` + `link_clicks` → LLM 3-paragraph PT debrief → render html/text → fan-out via `noctusai_lib.email.digest.send_digest`. **Auto-fired by `send_service._finalize_campaign_if_done` when the last queued `send_log` drains** (atomic `.neq('status','enviada')` flip is the idempotency boundary). Endpoints: `GET /api/ai/campaigns/{id}/debrief` (preview, no send) + `POST /api/ai/campaigns/{id}/debrief/send {recipient}` (manual re-run path). |
+
+Frontend hooks in `src/hooks/useAI.ts`: `useGenerateSubjects`, `useDraftTemplate`, `useReengagementVariants`, `useDeliverabilityReview`, `useTranslateTemplate`, **`useSegmentContacts`**. M3 is wired with `<AIIndicator refType="contact" refId={c.id} hideIcon/>` in the email cell + a "Segmentar" trigger button in the `Contacts.tsx` header. Standard router opt-in: `standard_routers=["health", "notificacoes", "team", "ai_outputs"]`. Migration: `002_ai_outputs.sql`.
+
+Per-page UI integration for M1/M2/M5/M6/M7 (buttons in campaign / template editors) is follow-up polish — hooks are consumable today; pages can mount buttons when convenient.
 
 ## Testing
 

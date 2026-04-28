@@ -6,12 +6,14 @@ Simple text notes with tags and categories for personal knowledge management.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_org_id, get_user_client
+from noctusai_lib.ai import consent_required
 from noctusai_lib.responses import success_response, paginated_response, ok_response
 from noctusai_lib.auth import first_or_none
+
+from app.dependencies import get_current_user, get_org_id, get_user_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notes", tags=["Notes"])
@@ -141,3 +143,34 @@ async def deletar_nota(note_id: str, authorization: Optional[str] = Header(None)
         raise HTTPException(status_code=404, detail="Nota nao encontrada")
 
     return ok_response("Nota removida")
+
+
+@router.post("/{note_id}/extract-tasks")
+async def extract_tasks(
+    note_id: str,
+    authorization: Optional[str] = Header(None),
+    _consent: None = Depends(consent_required("daily_life.note_extract")),
+):
+    """D4 — extract actionable tasks from a note (ai-expansion Phase 16).
+
+    Pulls the note body, asks the LLM for a list of `{title, due_hint}` items,
+    returns the list for the user to review. Does NOT create task records —
+    the UI confirms each item before it becomes a real task.
+    """
+    user, token = await get_current_user(authorization)
+    db = get_user_client(token)
+
+    result = (
+        db.table("notas")
+        .select("conteudo")
+        .eq("id", note_id)
+        .eq("user_id", str(user.id))
+        .execute()
+    )
+    row = first_or_none(result)
+    if not row:
+        raise HTTPException(status_code=404, detail="Nota nao encontrada")
+
+    from app.services.ai_service import extract_tasks_from_note
+    tasks = await extract_tasks_from_note(row.get("conteudo") or "", org_id=get_org_id(user))
+    return success_response({"tasks": tasks})

@@ -1,0 +1,55 @@
+{% extends "_digest_base.html.j2" %}
+
+{% block header %}Resumo financeiro mensal — {{ org_name }}{% endblock %}
+
+{% block subheader %}
+<p style="color:#555;margin:0 0 16px 0">{{ period_label }}</p>
+{% endblock %}
+
+{% block body %}
+<table style="width:100%;border-collapse:collapse;margin:0 0 16px 0;font-size:14px">
+  <tr style="background:#f7f7f7">
+    <th style="padding:6px 12px;text-align:left">Receitas</th>
+    <th style="padding:6px 12px;text-align:right">{{ receita_brl }}</th>
+  </tr>
+  <tr>
+    <td style="padding:6px 12px">Despesas</td>
+    <td style="padding:6px 12px;text-align:right">{{ despesa_brl }}</td>
+  </tr>
+  <tr>
+    <td style="padding:6px 12px;font-weight:bold">Fluxo líquido</td>
+    <td style="padding:6px 12px;text-align:right;font-weight:bold">{{ fluxo_brl }}</td>
+  </tr>
+  <tr>
+    <td style="padding:6px 12px">Taxa de poupança</td>
+    <td style="padding:6px 12px;text-align:right">{{ '%.1f' % poupanca_pct }}%</td>
+  </tr>
+</table>
+
+<h3 style="margin:20px 0 8px 0;font-size:16px">Resumo</h3>
+{% for para in narrative_paragraphs %}
+<p style="margin:8px 0">{{ para }}</p>
+{% endfor %}
+
+<h3 style="margin:20px 0 8px 0;font-size:16px">Top categorias de despesa</h3>
+<table style="width:100%;border-collapse:collapse;font-size:14px">
+  <thead>
+    <tr style="background:#f7f7f7">
+      <th style="padding:6px 12px;text-align:left">Categoria</th>
+      <th style="padding:6px 12px;text-align:right">Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for cat in top_categorias[:6] %}
+    <tr>
+      <td style="padding:6px 12px;border-bottom:1px solid #eee">{{ cat.nome }}</td>
+      <td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">{{ cat.total_brl }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2" style="padding:6px 12px;color:#888">(sem categorias)</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block footer %} · prompt {{ prompt_version }}{% endblock %}

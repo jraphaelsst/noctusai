@@ -1,4 +1,5 @@
 import { useDashboardKPIs, useDashboardResumo } from "@/hooks/useDashboard";
+import { MonthlyNarrativeCard } from "@/components/MonthlyNarrativeCard";
 import { usePatrimonioHistorico } from "@/hooks/usePatrimonio";
 import { useTransacoesPorCategoria } from "@/hooks/useTransacoes";
 import { AreaChartCard } from "@/components/charts/AreaChartCard";
@@ -171,6 +172,9 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
+
+      {/* AI monthly-narrative digest — gated by `pf.monthly_narrative` consent. */}
+      <MonthlyNarrativeCard />
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

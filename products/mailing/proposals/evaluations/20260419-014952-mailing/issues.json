@@ -1,0 +1,8 @@
+[
+  {
+    "product": "mailing",
+    "file": "backend/app/routers/health.py",
+    "issue": "Has own health.py \u2014 framework provides this",
+    "severity": "warning"
+  }
+]

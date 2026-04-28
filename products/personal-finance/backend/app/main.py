@@ -11,7 +11,7 @@ from app.scheduler import start_scheduler, stop_scheduler
 from app.routers import (
     contas, transacoes, categorias, orcamentos, metas,
     carteira, ativos, operacoes, watchlist, recorrentes,
-    patrimonio, relatorios, cotacoes, dashboard,
+    patrimonio, relatorios, cotacoes, dashboard, ai,
 )
 
 app = create_product_app(
@@ -33,9 +33,12 @@ app = create_product_app(
         relatorios.router,
         cotacoes.router,
         dashboard.router,
+        ai.router,
     ],
     version="0.1.0",
     limiter=limiter,
     lifespan_startup=start_scheduler,
     lifespan_shutdown=stop_scheduler,
+    standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback"],
+    consent_features="app.services.ai_consent_features",
 )

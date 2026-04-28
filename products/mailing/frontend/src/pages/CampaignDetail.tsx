@@ -11,6 +11,7 @@ import {
   CampaignStats,
 } from "@/hooks/useCampaigns";
 import { Loader2, AlertCircle, ArrowLeft, Send, Pause, XCircle, Clock, Play } from "lucide-react";
+import { CampaignDebriefSection } from "@/components/CampaignDebriefSection";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -241,6 +242,12 @@ export default function CampaignDetail() {
           {campaign.total_sent.toLocaleString("pt-BR")} de {campaign.total_recipients.toLocaleString("pt-BR")} enviados
         </p>
       </div>
+
+      {/* AI campaign-debrief — gated by `mailing.campaign_debrief` consent.
+          Only shown for sent campaigns; the backend will 412 otherwise. */}
+      {campaign.status === "enviada" && id && (
+        <CampaignDebriefSection campaignId={id} />
+      )}
 
       {/* Campaign Info */}
       <div className="rounded-lg border border-border bg-card p-5 space-y-3">

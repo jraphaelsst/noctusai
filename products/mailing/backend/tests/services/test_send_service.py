@@ -179,3 +179,127 @@ class TestMarkFailed:
             {"id": "sl2", "campaign_id": "c1"},
         ]
         svc._mark_failed(logs, "API rate limit")
+
+
+# ---------------------------------------------------------------------------
+# _finalize_campaign_if_done() — auto-trigger campaign debrief
+# ---------------------------------------------------------------------------
+
+import pytest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+
+def _campaign_row(**overrides):
+    base = {
+        "id": "c1",
+        "org_id": "org-test-001",
+        "status": "enviando",
+        "created_by": "user-uuid-1",
+        "nome": "Black Friday",
+    }
+    base.update(overrides)
+    return base
+
+
+def _user_lookup(email: str):
+    """Shape `auth.admin.get_user_by_id` returns: object with .user.email."""
+    return SimpleNamespace(user=SimpleNamespace(email=email))
+
+
+class TestFinalizeCampaign:
+    @pytest.mark.asyncio
+    async def test_fires_debrief_when_queue_drains(self):
+        db = MockSupabaseClient()
+        db.set_table_data("send_logs", [])  # zero queued → finalize triggers
+        db.set_table_data("campaigns", [_campaign_row()])  # flip returns the row
+        db.auth.admin.get_user_by_id.return_value = _user_lookup("creator@test.com")
+
+        svc = SendService(db, _make_settings())
+
+        with patch(
+            "app.services.campaign_debrief_service.send_campaign_debrief",
+            new_callable=AsyncMock,
+        ) as debrief_mock:
+            await svc._finalize_campaign_if_done("c1")
+
+        debrief_mock.assert_awaited_once()
+        kwargs = debrief_mock.await_args.kwargs
+        assert kwargs["campaign_id"] == "c1"
+        assert kwargs["recipient"] == "creator@test.com"
+        assert kwargs["org_id"] == "org-test-001"
+
+    @pytest.mark.asyncio
+    async def test_skips_when_queued_remains(self):
+        db = MockSupabaseClient()
+        # one queued row → count=1 → early return before any update
+        db.set_table_data("send_logs", [{"id": "sl1", "status": "queued"}])
+        db.set_table_data("campaigns", [_campaign_row()])
+
+        svc = SendService(db, _make_settings())
+
+        with patch(
+            "app.services.campaign_debrief_service.send_campaign_debrief",
+            new_callable=AsyncMock,
+        ) as debrief_mock:
+            await svc._finalize_campaign_if_done("c1")
+
+        debrief_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_idempotent_when_flip_returns_empty(self):
+        """When the campaign is already 'enviada', the .neq filter returns []
+        and we early-return without firing debrief. Simulated by an empty
+        update response on the campaigns table."""
+        db = MockSupabaseClient()
+        db.set_table_data("send_logs", [])
+        # Empty campaigns response → flipped.data is [] → no debrief
+        db.set_table_data("campaigns", [])
+
+        svc = SendService(db, _make_settings())
+
+        with patch(
+            "app.services.campaign_debrief_service.send_campaign_debrief",
+            new_callable=AsyncMock,
+        ) as debrief_mock:
+            await svc._finalize_campaign_if_done("c1")
+
+        debrief_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_swallows_debrief_failure(self):
+        """A failure inside send_campaign_debrief must not propagate — the
+        campaign is still finalized; debrief failure is logged at WARN."""
+        db = MockSupabaseClient()
+        db.set_table_data("send_logs", [])
+        db.set_table_data("campaigns", [_campaign_row()])
+        db.auth.admin.get_user_by_id.return_value = _user_lookup("creator@test.com")
+
+        svc = SendService(db, _make_settings())
+
+        with patch(
+            "app.services.campaign_debrief_service.send_campaign_debrief",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("LLM down"),
+        ):
+            # No exception escapes
+            await svc._finalize_campaign_if_done("c1")
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_recipient_resolvable(self):
+        """No `created_by` and no `debrief_recipient` override → log warning
+        and skip debrief. Campaign is still flipped to 'enviada' (the side
+        effect that matters for downstream stats)."""
+        db = MockSupabaseClient()
+        db.set_table_data("send_logs", [])
+        db.set_table_data("campaigns", [_campaign_row(created_by=None)])
+
+        svc = SendService(db, _make_settings())
+
+        with patch(
+            "app.services.campaign_debrief_service.send_campaign_debrief",
+            new_callable=AsyncMock,
+        ) as debrief_mock:
+            await svc._finalize_campaign_if_done("c1")
+
+        debrief_mock.assert_not_awaited()

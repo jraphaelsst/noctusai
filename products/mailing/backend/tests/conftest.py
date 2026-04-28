@@ -10,8 +10,8 @@ from noctusai_lib.testing import (
     MockUser,
     MockUserResponse,
     AuthClient,
+    bind_consent_module_to_mock,
 )
-
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
@@ -29,5 +29,9 @@ def client():
          patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
 
         from app.main import app
+        # Per-fixture re-bind of the seed's consent module to THIS test's
+        # mock_sb. Helper lives in seed-lib so all products share one path.
+        bind_consent_module_to_mock(mock_sb)
+
         tc = TestClient(app)
         yield AuthClient(tc, mock_sb)
