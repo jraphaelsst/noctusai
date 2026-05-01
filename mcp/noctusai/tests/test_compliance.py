@@ -619,6 +619,51 @@ class TestCheckNoSelfMonkeypatch:
             f"send_message is NOT email boundary, must flag, got: {issues}"
         )
 
+    # ---- Severity ratchet (per `KB § PATTERNS/testing.md § Severity ratchet`)
+
+    def _mk_product_test_file(self, product: str, content: str) -> Path:
+        """Build a tmp repo with a test file under products/<product>/backend/tests/."""
+        tmp = Path(tempfile.mkdtemp(prefix="self_patch_ratchet_"))
+        (tmp / "products" / product / "backend" / "tests").mkdir(parents=True)
+        (tmp / "products" / product / "backend" / "tests" / "test_x.py").write_text(content)
+        return tmp
+
+    def test_severity_warning_for_non_ratcheted_product(self):
+        """ERP is still draining historical debt → severity stays `warning`."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_x():\n"
+            "    with patch('app.services.svc.helper'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_product_test_file("erp-imobiliario", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "warning", (
+            f"erp-imobiliario is NOT in the ratchet set yet — must stay warning, "
+            f"got: {issues[0]['severity']}"
+        )
+
+    def test_severity_high_for_ratcheted_product(self):
+        """therapy-platform reached 0 self-monkeypatches → ratcheted to `high`.
+
+        Any new violation in therapy-platform must block CI (severity=high)
+        so the cleanly-zero state can't drift back into debt.
+        """
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_x():\n"
+            "    with patch('app.services.svc.helper'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_product_test_file("therapy-platform", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "high", (
+            f"therapy-platform is in the ratchet set — must be high, got: "
+            f"{issues[0]['severity']}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # `check_silent_errors` — silent-failure detector

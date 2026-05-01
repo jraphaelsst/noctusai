@@ -166,6 +166,33 @@ The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expa
 | `send_digest(digest, *, recipient, org_id=None, log_prefix="DIGEST")` | Resend POST + dry-run-on-no-key fallback + Resend-failure swallow. |
 | `render(*, html_template, text_template, context, search_paths)` | Jinja-backed `(html, text)` renderer. Auto-escape on by default; `keep_trailing_newline=True`; products extend the lib's `_digest_base.{html,txt}.j2` and override blocks. |
 
+### `domain/sql_templates.py` — Authoring-time helpers for canonical SQL DDL
+
+Pure string-emission helpers for the conventions every product schema reuses. Adopted 2026-05-01 by `projects/sql-templates-absorption/` after the migration scanner flagged 88 `SET search_path` + 21 `updated_at trigger` + 14 `auth.uid()` subquery occurrences as recurrence-rule trips. Existing migration files stay verbatim (replay-log rule); the helpers are for fresh migrations + the scaffold tool.
+
+| Symbol | Purpose |
+|---|---|
+| `set_search_path(*schemas) -> str` | `SET search_path = <schemas>, public` — schema-lock prelude for SECURITY DEFINER functions. |
+| `updated_at_function(schema, function_name="set_updated_at") -> str` | Standard auto-touch helper function for the schema. SECURITY DEFINER + search-path locked. |
+| `updated_at_trigger(schema, table, function_name="set_updated_at", trigger_name=None) -> str` | BEFORE-UPDATE trigger calling the helper. Default trigger name = `set_updated_at_<table>`. |
+| `rls_subquery_policy(schema, table, policy_name, command, using=..., with_check=..., to_role="authenticated") -> str` | CREATE POLICY using the canonical `(SELECT auth.uid())` subquery shape (planner caches once per query vs per row). Validates that INSERT has `with_check`, SELECT/DELETE has `using`. |
+
+```python
+from noctusai_lib.domain.sql_templates import updated_at_function, rls_subquery_policy
+
+# In a fresh migration or scaffold output:
+print(updated_at_function("therapy"))
+# → CREATE OR REPLACE FUNCTION therapy.set_updated_at() ... LANGUAGE plpgsql SECURITY DEFINER SET search_path = therapy, public ...
+
+print(rls_subquery_policy(
+    "erp", "metas", "metas_insert", "INSERT",
+    with_check="usuario_id = (SELECT auth.uid())",
+))
+# → CREATE POLICY "metas_insert" ON erp.metas FOR INSERT TO authenticated WITH CHECK (usuario_id = (SELECT auth.uid()));
+```
+
+Detection contract: `mcp/noctusai/tools/recurrence.py::scan_migration_patterns` flags drift (any new migration that re-rolls these conventions instead of using the helpers). Run via `cli.py --scan-migrations`.
+
 ### `domain/digest/` — Narrative + render-with-narrative + build-and-send
 
 Sits *upstream* of `integrations/email/digest.py` (which owns the Resend transport). Absorbs the recurring N=4 narrative-pipeline shape across 4 product digest services (audit / PF monthly / Daily Life weekly / Mailing campaign). Shipped 2026-04-30 by `digest-pipeline-absorption` (Wave C of `execution-workflow-codequality-rollout`).

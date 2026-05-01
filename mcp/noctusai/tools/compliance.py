@@ -1346,6 +1346,15 @@ _EXTERNAL_LIB_NAMES: set[str] = {
 # fit the boundary-accessor pattern.
 _SELF_PATCH_OK_COMMENT_RE = re.compile(r"#\s*self-patch-ok\b", re.IGNORECASE)
 
+# Severity ratchet: products that have reached 0 self-monkeypatches get the
+# detector at severity `high` so new violations block CI; the rest stay at
+# `warning` while their historical debt drains. Per `KB § PATTERNS/testing.md
+# § Severity ratchet`. When this set covers every product, the per-product
+# carve-out is dropped and the detector goes `high` repo-wide.
+_NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS: frozenset[str] = frozenset({
+    "therapy-platform",  # ratcheted 2026-05-01 (closed `therapy-tests-no-self-patch`)
+})
+
 
 def _is_boundary_accessor_target(full_target: str) -> bool:
     """True if the patched target's last component is a known boundary
@@ -1514,6 +1523,11 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
             )
             if _SELF_PATCH_OK_COMMENT_RE.search(line_text):
                 continue
+            severity = (
+                "high"
+                if product_label in _NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS
+                else "warning"
+            )
             issues.append({
                 "product": product_label,
                 "file": relative,
@@ -1526,10 +1540,11 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
                     f"If genuinely needed, add `# self-patch-ok: <reason>` to "
                     f"the line."
                 ),
-                # `warning` (not `high`) so legitimate-but-historically-flagged
-                # patterns don't tank the per-product score; the user can
-                # tighten over time as violations are addressed.
-                "severity": "warning",
+                # Severity ratchets to `high` once a product reaches 0; until
+                # then, `warning` so historical debt doesn't tank score. See
+                # `_NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS` above + `KB §
+                # PATTERNS/testing.md § Severity ratchet`.
+                "severity": severity,
             })
     return issues
 

@@ -81,27 +81,18 @@ This project is the explicit triage record + per-product cleanup plan.
 - The `_BOUNDARY_ACCESSOR_REGEXES` allowlist is conservative (`_get_*_token`, `_get_*_client`, `_get_*_config`). Future patches may add `transcribe_*`, `embed_*` if they prove to be pure-boundary across more products — but those names also live on service-layer functions today, so blanket-allowlisting risks hiding real test-quality debt.
 - Annotation-as-shortcut is a slip pattern: `# silent-ok` was the easy path during the initial 51-site sweep; the user correctly insisted that "no silent errors" means actual logging, not annotations explaining why we skipped logging. The escape hatch (`# silent-ok`) exists for genuinely-impossible cases (e.g. logger itself unavailable during bootstrap), not as a substitute for the real fix. **Memory entry filed** (`feedback_silent_ok_is_not_a_substitute_for_logging.md`).
 
-### Phase 1 — therapy-platform tests cleanup ⏳ IN PROGRESS (`test_ai_pipeline_service.py` cleared 2026-04-28)
-- 115 → **72** monkeypatch warnings (43 cleared so far; `test_ai_pipeline_service.py` at zero).
-- **Round 1 (orchestrator pilot, 2026-04-28):** `_PipelineHooks` dataclass added at `products/therapy-platform/backend/app/services/ai_pipeline.py`. All 3 pipeline functions (`process_session_end`, `on_observation_change`, `on_patient_note_change`) now accept `hooks: _PipelineHooks | None = None`. All 17 tests across 4 classes (`TestProcessSessionEnd`, `TestOnObservationChange`, `TestOnPatientNoteChange`, `TestPatientConsentGuards`) migrated from `patch.object(<our_module>, ...)` to a `_hooks(...)` factory. **17/17 tests pass; real consent guards execute end-to-end; revoked-feature paths verified via `hooks.<helper>.assert_not_awaited()`.** Production callers in `app/routers/sessions.py` unchanged (kwarg defaults).
-- **Playbook proven** — documented in `KB § PATTERNS/testing.md § No self-monkeypatching — refactor playbook` (Pattern 1 = DI, the canonical example for orchestrator unit tests).
-- **Therapy remaining inventory (72 sites across 8 files):**
+### Phase 1 — therapy-platform tests cleanup ✅ (closed 2026-05-01)
+- 115 → **0** monkeypatch warnings.
+- **Round 1 (orchestrator pilot, 2026-04-28):** `_PipelineHooks` dataclass added at `products/therapy-platform/backend/app/services/ai_pipeline.py`. All 17 tests across `TestProcessSessionEnd` / `TestOnObservationChange` / `TestOnPatientNoteChange` / `TestPatientConsentGuards` migrated from `patch.object(<our_module>, ...)` to a `_hooks(...)` factory. Real consent guards run end-to-end; revoked-feature paths verified via `hooks.<helper>.assert_not_awaited()`.
+- **Round 2 (`test_messaging_router.py` Pattern 3, 2026-04-29):** all 40 `@patch("app.routers.messaging.messaging_service.<helper>", ...)` decorators replaced with seed-real-data via `MockSupabaseClient`. Authorization / block-check / participant-validation logic now exercises end-to-end. 60 → 32 therapy-wide.
+- **Round 3 (Wave C side-effect, 2026-04-30):** the digest-pipeline absorption (`projects/digest-pipeline-absorption/`) re-pointed test patches from `app.services.X.{chat_completion,send_digest}` to the seed-lib boundaries `noctusai_lib.domain.digest.{narrative.chat_completion,orchestrate.send_digest}` — those are external integrations, no longer self-monkeypatch sites. Same migration covered the remaining 32 therapy sites across `test_invitations_router.py`, `test_e2e_flows.py`, `test_no_show_service.py`, `test_transcription_service.py`, `test_reviews_router.py`, `test_therapy_embedding_service.py`, `test_email_service.py`.
+- **Severity ratchet flipped (2026-05-01):** detector severity for `therapy-platform` is now `high` per `KB § PATTERNS/testing.md § Severity ratchet`. Implemented as `_NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS` in `mcp/noctusai/tools/compliance.py` with regression tests in `test_compliance.py`. New therapy violations block CI.
+- **Playbook proven across 3 patterns** — documented in `KB § PATTERNS/testing.md § No self-monkeypatching — refactor playbook` (Pattern 1 = DI orchestrator, Pattern 2 = boundary mock at LLM/email/transport SDKs, Pattern 3 = seed real data via `MockSupabaseClient`).
+- **Follow-up project closed + deleted**: `products/therapy-platform/projects/therapy-tests-no-self-patch/` removed 2026-05-01.
 
-  | File | Sites | Test shape |
-  |---|---:|---|
-  | `tests/routers/test_messaging_router.py` | 40 | Router unit tests — patches `messaging_service.{send_message,list_conversations,find_or_create_conversation,...}`. Router-shape, needs Pattern 1 DI on the router OR Pattern 3 (seed real data + boundary mock for Twilio/WhatsApp). |
-  | `tests/routers/test_invitations_router.py` | 7 | Patches `app.routers.invitations.send_product_invitation_email` (audit/email side-effect). Pattern 2 (boundary mock) likely cleanest. |
-  | `tests/integration/test_e2e_flows.py` | 7 | Integration shape — likely needs Pattern 2 + 3 mix. |
-  | `tests/services/test_no_show_service.py` | 6 | Patches commission_engine helpers — Pattern 1 DI candidate. |
-  | `tests/services/test_transcription_service.py` | 6 | Patches `transcribe_segment` (LLM boundary) — Pattern 2 swap to `noctusai_lib.llm.transcription` allowlisted target. |
-  | `tests/routers/test_reviews_router.py` | 2 | Small. |
-  | `tests/services/test_therapy_embedding_service.py` | 2 | Small. |
-  | `tests/services/test_email_service.py` | 2 | Small. |
-
-- **Next session for this phase:** tackle `test_messaging_router.py` (40 sites) — biggest single file, will exercise the Pattern 1 vs 3 trade-off the playbook describes.
-- **Follow-up project to file when picked up for serious cleanup:** `products/therapy-platform/projects/therapy-tests-no-self-patch/`.
-
-### Phase 2 — erp-imobiliario tests cleanup 🅿️ DEFERRED
+**Improvements:**
+- The cleanup landed across 3 different sessions and 3 different patterns (DI for orchestrators, seed-real-data for DB-bound routers, side-effect-of-absorption for service tails). The third path — Round 3, where Wave C's seed-lib boundary swap moved patches OUT of self-patch territory — is the most leverage-positive: a single architectural absorption simultaneously solves a different concern. Worth amplifying as a methodology note: when an absorption candidate exists alongside a cleanup queue, the absorption can collapse the queue.
+- The severity-ratchet implementation uses a module-level `frozenset[str]` (`_NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS`) rather than a config file or per-product manifest. That keeps the ratchet decision auditable in the detector itself and dead-simple to extend (one line per product hitting zero), but it means the source of truth lives in code, not data. If the platform later wants per-detector severity overrides for many detectors, this should be lifted to a shared mechanism. Acceptable trade-off for one-detector usage today.
 - 102 monkeypatch warnings + 24 silent_errors. Top targets: `_process_single_certidao`, `schedule_tjsp_for_org`, `score_lead`, `suggest_price`, `generate_description`, `embed_ativo`, `calculate_reajuste`.
 - **Follow-up project:** `products/erp-imobiliario/projects/erp-tests-no-self-patch/`.
 

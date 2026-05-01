@@ -28,6 +28,11 @@ business logic" namespace.
   product digest services (audit / metas / monthly-narrative / weekly-review /
   campaign-debrief). Sits *upstream* of `integrations/email/digest.py`
   (which owns the Resend transport).
+- `sql_templates.py` — authoring-time helpers for canonical SQL DDL
+  (set_search_path, updated_at_function, updated_at_trigger,
+  rls_subquery_policy). Pure string emission; no IO. Used in new
+  migration files + the scaffold tool so the SECURITY DEFINER /
+  search_path / RLS subquery conventions can't drift across products.
 
 **Future occupants:**
 - `gamification/` (when ERP Metas patterns extract)

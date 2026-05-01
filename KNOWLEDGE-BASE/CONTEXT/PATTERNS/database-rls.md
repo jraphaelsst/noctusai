@@ -64,6 +64,36 @@ Numbered SQL files in `products/<name>/backend/migrations/001_*.sql`, `002_*.sql
 - Seed data, if any, goes in a separate `00X_seed_*.sql` file.
 - **Next number wins:** pick the next unused number in the product's `migrations/` directory (e.g. `016_metas_domain.sql` after `015_invitations.sql`).
 
+### Authoring helpers — `noctusai_lib.domain.sql_templates`
+
+For new migrations and the product-scaffold tool, use the helpers in `noctusai_lib.domain.sql_templates` to emit the canonical shapes for the conventions that recur across products. The detector `scan_migration_patterns` flags drift; the helpers prevent it.
+
+| Helper | Use for | Convention encoded |
+|---|---|---|
+| `set_search_path(*schemas)` | SECURITY DEFINER function preludes | Always trails `, public`; pinning prevents schema-search-path attacks. |
+| `updated_at_function(schema)` | Once per schema | Standard `BEGIN NEW.updated_at = now(); RETURN NEW; END;` body + SECURITY DEFINER + locked search_path. |
+| `updated_at_trigger(schema, table)` | Per-table | `BEFORE UPDATE FOR EACH ROW EXECUTE FUNCTION <schema>.set_updated_at()`. Default trigger name = `set_updated_at_<table>`. |
+| `rls_subquery_policy(schema, table, policy_name, command, using=..., with_check=..., to_role=...)` | Every CREATE POLICY | Forces caller to use `(SELECT auth.uid())` shape; validates command/clause requirements (INSERT needs `with_check`; SELECT/DELETE need `using`). |
+
+```python
+from noctusai_lib.domain.sql_templates import (
+    set_search_path,
+    updated_at_function,
+    updated_at_trigger,
+    rls_subquery_policy,
+)
+
+# Inside scaffold or migration-author script:
+print(updated_at_function("therapy"))           # → CREATE OR REPLACE FUNCTION therapy.set_updated_at()...
+print(updated_at_trigger("therapy", "clinics")) # → CREATE OR REPLACE TRIGGER set_updated_at_clinics ...
+print(rls_subquery_policy(
+    "erp", "metas", "metas_select", "SELECT",
+    using="(SELECT auth.uid()) = usuario_id",
+))
+```
+
+Existing migration files (the replay log) are NOT rewritten; they stay authoritative per the MCP-migrations-mirror-the-file rule. The helpers exist for migrations being authored fresh + the scaffold tool that bootstraps new product schemas.
+
 ## MCP + file sync (hard rule)
 
 When you apply DDL via the Supabase MCP (`apply_migration` or `execute_sql`), the same SQL **must** live as a numbered migration file. Both get committed together. Drift between what's on the hosted DB and what's in the repo breaks fresh clones.

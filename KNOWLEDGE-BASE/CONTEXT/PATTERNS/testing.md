@@ -301,14 +301,19 @@ await ai_pipeline.process_session_end(db=db, core_db=db, ...)
 
 ### Severity ratchet
 
-Detector severity is currently `warning` because the first run flagged 420 sites and tanking score from 100 → 0 was unhelpful. Per-product ratchet plan:
+Detector severity is `warning` by default because the first run flagged 420 sites and tanking score from 100 → 0 was unhelpful. The ratchet flips a product to `high` once it reaches zero, blocking regression.
 
 | When | Action |
 |---|---|
 | A product reaches 0 self-monkeypatch warnings | Detector severity flips to `high` for that product. New violations block CI. |
 | All products at 0 | Detector severity flips to `high` repo-wide; the `warning` carve-out is removed. |
 
-Pilot proof + per-product cleanup status lives in `projects/keeper-warning-triage/PROJECT.md` §6. Per-product follow-up project slugs: `<product>-tests-no-self-patch` (filed when picked up).
+**Implementation** (2026-05-01): the per-product override lives in `mcp/noctusai/tools/compliance.py` as `_NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS: frozenset[str]`. To ratchet a product, add its folder name to that set + extend the keeper test (`test_severity_high_for_ratcheted_product`). Regression tests in `mcp/noctusai/tests/test_compliance.py::TestCheckNoSelfMonkeypatch` cover both branches.
+
+**Currently ratcheted (`high`):**
+- `therapy-platform` — 115 → 0 (closed 2026-05-01 via `projects/keeper-warning-triage` Phase 1: pilot pattern-1 DI in `test_ai_pipeline_service.py`, pattern-3 seed-real-data sweep in `test_messaging_router.py`, and Wave C digest absorption side-effect on the remaining service tails).
+
+**Still draining (`warning`):** `erp-imobiliario` (96), `core` (44), `mailing` (18), `personal-finance` (16), `daily-life` (11), `<seed-lib>` (8). Per-product follow-up project slugs: `<product>-tests-no-self-patch` (filed when picked up). Pilot proof + cleanup status lives in `projects/keeper-warning-triage/PROJECT.md` §6.
 
 **Pilot result (2026-04-28).** `products/therapy-platform/backend/app/services/ai_pipeline.py` introduced a `_PipelineHooks` dataclass with the 5 helper functions as fields; production callers omit `hooks=` and resolve to `_DEFAULT_HOOKS` (real services). `tests/services/test_ai_pipeline_service.py` migrated `TestProcessSessionEnd` (8 tests) + `TestPatientConsentGuards.{test_session_summary_consent_revoked, test_longitudinal_consent_revoked}` (2 tests) from `patch.object(<our_module>, ...)` to a `_hooks(...)` factory that returns `_PipelineHooks(transcribe=AsyncMock(...), summarize=AsyncMock(...), ...)`. 33 sites cleared (43 → 10 in that file; 315 → 282 platform-wide). All 17 tests in the file pass; real consent guards execute end-to-end; revoked-feature paths verified via `hooks.<helper>.assert_not_awaited()`.
 
