@@ -9,9 +9,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from noctusai_lib.ai import consent_required
-from noctusai_lib.responses import success_response, paginated_response, ok_response
-from noctusai_lib.auth import first_or_none
+from noctusai_lib.domain.ai import consent_required
+from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
+from noctusai_lib.api.auth import first_or_none
 
 from app.dependencies import get_current_user, get_org_id, get_user_client
 

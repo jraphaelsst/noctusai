@@ -9,7 +9,7 @@ the platform-wide consent catalog at boot.
 """
 from __future__ import annotations
 
-from noctusai_lib.ai import register_feature
+from noctusai_lib.domain.ai import register_feature
 
 # C2 — Audit-log digest (admin-tier, low-risk: only event-count aggregates
 # + privileged-action highlights enter the prompt; no per-user PII)

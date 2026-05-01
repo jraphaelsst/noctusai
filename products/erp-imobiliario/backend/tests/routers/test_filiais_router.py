@@ -4,6 +4,8 @@ Covers list, create, get, update, deactivate, and consolidated report endpoints.
 """
 import pytest
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestListarFiliais:
     def test_list_all(self, client):
@@ -39,12 +41,14 @@ class TestListarFiliais:
 
 class TestCriarFilial:
     def test_create_success(self, client):
-        client._mock_supabase.set_table_data("filiais", {
-            "id": "f-new",
-            "nome": "Nova Filial",
-            "codigo": "NF01",
-            "is_active": True,
-        })
+        client._mock_supabase.set_sequential_responses("filiais", [
+            MockSupabaseResponse(data=[{
+                "id": "f-new",
+                "nome": "Nova Filial",
+                "codigo": "NF01",
+                "is_active": True,
+            }]),
+        ])
         resp = client.post("/api/filiais", json={
             "nome": "Nova Filial",
             "codigo": "NF01",

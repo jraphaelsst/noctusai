@@ -5,6 +5,8 @@ Covers campaigns CRUD, campaign send, and alert processing.
 import pytest
 from unittest.mock import patch
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestListarCampanhas:
     def test_list_all(self, client):
@@ -41,10 +43,12 @@ class TestListarCampanhas:
 
 class TestCriarCampanha:
     def test_create_success(self, client):
-        client._mock_supabase.set_table_data("campanhas", {
-            "id": "new-c", "nome": "Nova Campanha", "tipo": "email",
-            "status": "rascunho", "template": "Ola {nome}",
-        })
+        client._mock_supabase.set_sequential_responses("campanhas", [
+            MockSupabaseResponse(data=[{
+                "id": "new-c", "nome": "Nova Campanha", "tipo": "email",
+                "status": "rascunho", "template": "Ola {nome}",
+            }]),
+        ])
         resp = client.post("/api/marketing/campanhas", json={
             "nome": "Nova Campanha",
             "tipo": "email",

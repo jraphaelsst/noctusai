@@ -152,7 +152,7 @@ async def process_attachment_with_ai(
     **LGPD**: Art. 11 sensitive data. Vision + Whisper responses are not
     cached. See `LGPD-WARNINGS.md` entry `patient-attachment-to-llm`.
     """
-    from noctusai_lib.llm import LLMNotConfigured, analyze_image, transcribe_audio
+    from noctusai_lib.integrations.llm import LLMNotConfigured, analyze_image, transcribe_audio
 
     try:
         if file_type == "image":

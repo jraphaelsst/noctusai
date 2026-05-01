@@ -1,6 +1,9 @@
 """Product scaffolding — create new products from the seed framework."""
+import logging
 import shutil
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -41,8 +44,8 @@ def scaffold_product(name: str, slug: str, schema: str, backend_port: int, front
                     content = content.replace(placeholder, value)
                 f.write_text(content)
                 file_count += 1
-            except:
-                pass
+            except Exception as exc:
+                logger.warning("scaffold: cannot write %s (%s), skipping", f, exc)
 
     return {
         "created": True,

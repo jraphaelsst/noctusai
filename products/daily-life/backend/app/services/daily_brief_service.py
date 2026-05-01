@@ -28,7 +28,7 @@ import logging
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
 
-from noctusai_lib.llm import chat_completion
+from noctusai_lib.integrations.llm import chat_completion
 
 logger = logging.getLogger(__name__)
 

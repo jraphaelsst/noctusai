@@ -30,7 +30,7 @@ class TestCreateCampaign:
     def test_returns_created_campaign(self):
         db = MockSupabaseClient()
         campaign = {"id": "camp1", "nome": "Newsletter", "org_id": ORG, "created_by": USER}
-        db.set_table_data("campaigns", [campaign])
+        db.set_sequential_responses("campaigns", [MockSupabaseResponse(data=[campaign])])
 
         svc = CampaignService(db, ORG)
         result = svc.create_campaign({"nome": "Newsletter"}, USER)

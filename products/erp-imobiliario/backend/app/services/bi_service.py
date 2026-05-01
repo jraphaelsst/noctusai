@@ -8,6 +8,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from noctusai_lib.primitives.timeutil import current_day_ref, current_month_ref, now_utc
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +59,12 @@ class BIService:
                     dias = (dt_updated - dt_created).days
                     if dias >= 0:
                         tempos.append(dias)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as exc:
+                    logger.warning(
+                        "bi_service: proposal id=%s has unparseable created=%r/updated=%r (%s); "
+                        "skipping in tempo_medio_fechamento aggregate",
+                        p.get("id"), created, updated, exc,
+                    )
                     continue
         tempo_medio_fechamento = sum(tempos) / len(tempos) if tempos else 0.0
 
@@ -224,7 +231,7 @@ class BIService:
         total_ativos = len(ativos)
 
         # Average days on market (from created_at to now for active properties)
-        now = datetime.utcnow()
+        now = now_utc()
         dias_mercado = []
         for a in ativos:
             if a.get("status") == "ativo":
@@ -235,7 +242,12 @@ class BIService:
                         dias = (now - dt_created.replace(tzinfo=None)).days
                         if dias >= 0:
                             dias_mercado.append(dias)
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as exc:
+                        logger.warning(
+                            "bi_service: ativo id=%s has unparseable created_at=%r (%s); "
+                            "skipping in media_dias_mercado aggregate",
+                            a.get("id"), created, exc,
+                        )
                         continue
         media_dias_mercado = round(sum(dias_mercado) / len(dias_mercado), 1) if dias_mercado else 0.0
 
@@ -374,11 +386,9 @@ class BIService:
         Returns a single payload with: sales KPIs, funnel stats, financial summary,
         property portfolio counts, pending tasks, and recent activity.
         """
-        from datetime import timezone
-
-        now = datetime.now(timezone.utc)
-        hoje = now.strftime("%Y-%m-%d")
-        mes_atual = now.strftime("%Y-%m")
+        now = now_utc()
+        hoje = current_day_ref()
+        mes_atual = current_month_ref()
 
         # -- KPIs --
         total_clientes = len(clientes)

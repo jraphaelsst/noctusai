@@ -25,8 +25,8 @@ from noctusai_lib.testing import (  # noqa: F401
     MockSupabaseResponse,
     MockSelectBuilder,
     MockFilterBuilder,
-    MockQueryBuilder as _SharedMockQueryBuilder,
-    MockRequestBuilder as _SharedMockRequestBuilder,
+    MockQueryBuilder,
+    MockRequestBuilder,
     MockSupabaseClient as _SharedMockSupabaseClient,
     MockUser,
     MockUserResponse,
@@ -36,62 +36,27 @@ from noctusai_lib.testing import (  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
-# Core-specific insert-data tracking (backwards compat)
+# Core-specific MockSupabaseClient — keeps `set_table_responses(...)` shim
+# for backwards-compat (older tests pass raw dicts/lists; the seed-lib
+# `set_sequential_responses` expects MockSupabaseResponse objects).
 #
-# The old Core MockQueryBuilder captured insert payloads and returned them
-# via execute() when the table had no pre-set data.  This lets router code
-# like ``result = db.table("x").insert(data).execute(); result.data[0]``
-# work even when the test sets the table to [].
-# ---------------------------------------------------------------------------
-
-class MockQueryBuilder(_SharedMockQueryBuilder):
-    """Core QueryBuilder with insert-data fallback."""
-
-    def __init__(self, data=None, response_queue=None, response_idx=None,
-                 insert_data=None):
-        super().__init__(data=data, response_queue=response_queue,
-                         response_idx=response_idx)
-        self._insert_data = insert_data
-
-    def execute(self):
-        if self._insert_data is not None:
-            if not self._data or (isinstance(self._data, list) and len(self._data) == 0):
-                self._data = self._insert_data
-        return self._do_execute()
-
-
-class MockRequestBuilder(_SharedMockRequestBuilder):
-    """Core RequestBuilder that captures insert data for fallback."""
-
-    def insert(self, row_data=None, *a, **k):
-        # Validate payload keys before capturing — mirrors shared behavior.
-        if self._validate_schema:
-            from noctusai_lib.testing.mocks import _validate_payload_keys
-            _validate_payload_keys(self._schema, self._table, row_data, operation="insert")
-        insert_data = None
-        if row_data is not None:
-            insert_data = row_data if isinstance(row_data, list) else [row_data]
-        return MockQueryBuilder(
-            self._data,
-            response_queue=self._response_queue,
-            response_idx=self._response_idx,
-            insert_data=insert_data,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Core-specific MockSupabaseClient with insert-data tracking + compat
+# The old "insert-data fallback" behavior previously implemented here as
+# a custom MockRequestBuilder/MockQueryBuilder pair was REMOVED 2026-04-29
+# after the seed-lib `MockRequestBuilder.insert(...)` was upgraded to
+# return inserted rows in `result.data` directly (with auto-id). The
+# parent class now does the right thing platform-wide; the override was
+# a less-correct half-fix (didn't auto-add `id`, returned seeded rows
+# when both seeded data + insert were present — divergent from real
+# Supabase). Removed in `mcp-mock-supabase-insert-returns-row` project.
 # ---------------------------------------------------------------------------
 
 class MockSupabaseClient(_SharedMockSupabaseClient):
-    """Core-compatible MockSupabaseClient.
+    """Core-compatible MockSupabaseClient — adds `set_table_responses(...)`
+    wrapper. Insert-data return shape is now inherited from the parent
+    (seed-lib MockRequestBuilder.insert returns inserted rows with auto-id).
 
-    Uses ``MockRequestBuilder`` (with insert-data fallback) for all tables.
-
-    Adds ``set_table_responses(name, responses)`` which wraps raw data items
-    into ``MockSupabaseResponse`` objects before delegating to the shared
-    ``set_sequential_responses`` method.  This preserves backwards
-    compatibility with existing Core tests that pass plain dicts/lists::
+    `set_table_responses(name, responses)` wraps raw data items into
+    `MockSupabaseResponse` objects before delegating to the shared queue::
 
         mock_sb.set_table_responses("noctus_users", [
             {"org_id": "org-1"},   # first execute()
@@ -99,27 +64,11 @@ class MockSupabaseClient(_SharedMockSupabaseClient):
         ])
     """
 
-    def _core_builder_for(self, name, data=None):
-        if "." in name:
-            schema, table = name.split(".", 1)
-        else:
-            schema, table = self._schema, name
-        payload = data if data is not None else self._data
-        return MockRequestBuilder(
-            payload,
-            validate_schema=self._validate_schema,
-            schema=schema,
-            table=table,
-        )
-
-    def table(self, name):
-        if name not in self._tables:
-            self._tables[name] = self._core_builder_for(name)
-        return self._tables[name]
-
     def set_table_data(self, name, data):
-        """Set mock data for a specific table."""
-        self._tables[name] = self._core_builder_for(name, data=data)
+        """Set mock data for a specific table. Delegates to the parent
+        `_builder_for` so the seed-lib MockRequestBuilder is used (with
+        insert→inserted-row return + auto-id fix from 2026-04-29)."""
+        self._tables[name] = self._builder_for(name, data=data)
 
     def set_table_responses(self, name, responses):
         """Set a queue of mock responses for a specific table.

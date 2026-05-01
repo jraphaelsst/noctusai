@@ -21,8 +21,11 @@ This resolution runs ONCE per Python process (module import time).
 """
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _read_static() -> str | None:
@@ -31,8 +34,12 @@ def _read_static() -> str | None:
         value = getattr(_version_static, "__version__", None)
         if isinstance(value, str) and value and value != "bootstrap":
             return value
-    except ImportError:
-        pass
+    except ImportError as exc:
+        # `_version_static` doesn't exist yet — fresh clone before
+        # `bash scripts/stamp-seed-version.sh` ran. Falling through to
+        # the live-git tier is the documented resolution path. Logged at
+        # DEBUG so normal boots stay quiet; flip `NOCTUSAI_DEBUG=1` to see.
+        logger.debug("noctusai_seed._version: no static stamp (%s); trying live git", exc)
     return None
 
 
@@ -49,8 +56,11 @@ def _read_git() -> str | None:
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        # git not on PATH (minimal Docker image), or rev-parse timed out.
+        # Caller falls through to "unknown" which the keeper detector
+        # surfaces as a hard compliance failure on its own.
+        logger.debug("noctusai_seed._version: live git unavailable (%s); resolution will return 'unknown'", exc)
     return None
 
 

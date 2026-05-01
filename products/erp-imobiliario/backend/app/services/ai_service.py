@@ -9,8 +9,9 @@ SDKs and HTTP plumbing.
 import logging
 from typing import Any, Optional
 
-from noctusai_lib.credentials import resolve_credential
-from noctusai_lib.llm import chat_completion
+from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.llm import chat_completion
+from noctusai_lib.primitives.parsing import safe_float as _safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -149,8 +150,8 @@ RECOMENDAÇÃO: [1 frase com próximo passo sugerido]"""
             try:
                 score = int("".join(c for c in line.replace("SCORE:", "").strip() if c.isdigit())[:3])
                 score = max(0, min(100, score))
-            except ValueError:
-                pass
+            except ValueError as exc:
+                logger.warning("ai_service: cannot parse SCORE from AI lead-score response %r (%s); keeping default", line, exc)
         elif line.startswith("JUSTIFICATIVA:"):
             justificativa = line.replace("JUSTIFICATIVA:", "").strip()
         elif line.startswith("RECOMENDAÇÃO:") or line.startswith("RECOMENDACAO:"):
@@ -256,7 +257,8 @@ def _parse_money(text: str) -> float:
     cleaned = "".join(c for c in cleaned if c.isdigit() or c == ".")
     try:
         return float(cleaned)
-    except ValueError:
+    except ValueError as exc:
+        logger.warning("ai_service: cannot parse money from %r (cleaned=%r, %s); using 0.0", text, cleaned, exc)
         return 0.0
 
 
@@ -373,14 +375,6 @@ def _empty_output(label: str = "indisponível") -> dict:
         "model_version": MODEL,
         "prompt_version": None,
     }
-
-
-def _safe_float(text: str, default: float = 0.0) -> float:
-    cleaned = "".join(c for c in text if c.isdigit() or c in ".-")
-    try:
-        return float(cleaned)
-    except ValueError:
-        return default
 
 
 async def classify_whatsapp_intent(

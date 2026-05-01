@@ -25,13 +25,12 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-from noctusai_lib.email.digest import (
-    Digest,
-    DigestSendResult,
-    render as render_digest,
-    send_digest,
+from noctusai_lib.domain.digest import (
+    build_and_send,
+    narrative as digest_narrative,
+    render_with_narrative,
 )
-from noctusai_lib.llm import chat_completion
+from noctusai_lib.integrations.email.digest import Digest
 
 logger = logging.getLogger(__name__)
 
@@ -74,26 +73,19 @@ async def _generate_narrative(
         f"Tempo em foco: {focus_minutes} minutos ({focus_minutes // 60}h{focus_minutes % 60:02d})\n"
         f"Check-ins por hábito:\n{streak_lines}"
     )
-    try:
-        narrative = await chat_completion(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_prompt},
-            ],
-            model=MODEL,
-            temperature=0.0,
-            max_tokens=600,
-            cache=False,  # Personal-narrative-adjacent (LGPD posture).
-            org_id=org_id,
-        )
-        return narrative.strip()
-    except Exception:
-        logger.warning("daily_life.weekly_review: LLM unavailable — using fallback")
-        return (
-            f"Resumo automático ({period_label}): {tasks_completed} tarefas concluídas, "
-            f"{tasks_pending} pendentes, {focus_minutes} min em foco, {notas_count} notas. "
-            f"Sem narrativa detalhada — LLM indisponível para esta janela."
-        )
+    fallback = (
+        f"Resumo automático ({period_label}): {tasks_completed} tarefas concluídas, "
+        f"{tasks_pending} pendentes, {focus_minutes} min em foco, {notas_count} notas. "
+        f"Sem narrativa detalhada — LLM indisponível para esta janela."
+    )
+    return await digest_narrative(
+        system=system,
+        user_prompt=user_prompt,
+        model=MODEL,
+        cache=False,  # Personal-narrative-adjacent (LGPD posture).
+        org_id=org_id,
+        fallback=fallback,
+    )
 
 
 async def _fetch_window(
@@ -201,9 +193,10 @@ def _render_bodies(
     *, user_label: str, period_label: str, agg: dict[str, Any], narrative: str
 ) -> tuple[str, str]:
     fm = agg["focus_minutes"]
-    return render_digest(
+    return render_with_narrative(
         html_template="weekly_review.html.j2",
         text_template="weekly_review.txt.j2",
+        narrative=narrative,
         context={
             "user_label": user_label,
             "period_label": period_label,
@@ -212,13 +205,9 @@ def _render_bodies(
             "notas_count": agg["notas_count"],
             "habit_streaks": agg["habit_streaks"],
             "focus_label": f"{fm // 60}h{fm % 60:02d}",
-            "narrative": narrative,
-            "narrative_paragraphs": [
-                para for para in narrative.split("\n\n") if para.strip()
-            ],
-            "prompt_version": PROMPT_VERSION,
         },
         search_paths=[_TEMPLATE_DIR],
+        prompt_version=PROMPT_VERSION,
     )
 
 
@@ -279,14 +268,7 @@ async def send_weekly_review(
         org_id=org_id,
         period_days=period_days,
     )
-    outcome: DigestSendResult = await send_digest(
+    result = await build_and_send(
         digest, recipient=recipient, org_id=org_id, log_prefix="WEEKLY REVIEW"
     )
-    return {
-        "sent": outcome.sent,
-        "dry_run": outcome.dry_run,
-        "external_id": outcome.external_id,
-        "error": outcome.error,
-        "subject": digest.subject,
-        "summary": summary,
-    }
+    return {**result, "summary": summary}

@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from noctusai_lib.ai import AIOutput, consent_required, persist_output
+from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 
 from app.dependencies import get_current_user, get_user_client, get_org_id
 from app.responses import success_response
@@ -252,7 +252,8 @@ async def follow_up_draft(
         try:
             last_dt = datetime.fromisoformat(last_str.replace("Z", "+00:00"))
             days = max(0, (datetime.now(timezone.utc) - last_dt).days)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.warning("ai: lead has unparseable timestamp %r (%s); using days=0 for follow-up draft", last_str, exc)
             days = 0
 
     try:

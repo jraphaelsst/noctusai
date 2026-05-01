@@ -249,7 +249,9 @@ class TestCriarConsulta:
         assert resp.status_code == 422
 
     def test_insert_falha_retorna_500(self, client):
-        client._mock_supabase.set_table_data("certidao_consultas", [])
+        client._mock_supabase.set_sequential_responses(
+            "certidao_consultas", [MockSupabaseResponse(data=[])]
+        )
         resp = client.post("/api/certidoes/consultas", json={
             "tipo_documento": "cpf",
             "documento": "12345678901",

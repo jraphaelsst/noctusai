@@ -16,31 +16,16 @@ the response cache keys rotate (per `ai-expansion` §7 Q4).
 """
 from __future__ import annotations
 
-import json
 import logging
 from typing import Optional
 
-from noctusai_lib.llm import chat_completion
-from noctusai_lib.llm.exceptions import LLMNotConfigured
+from noctusai_lib.integrations.llm import chat_completion
+from noctusai_lib.integrations.llm.exceptions import LLMNotConfigured
+from noctusai_lib.primitives.parsing import safe_json_loads as _safe_json_loads
 
 logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "mailing-ai@v1"
-
-
-def _safe_json_loads(raw: str) -> Optional[list | dict]:
-    """Best-effort JSON parse — tolerates the LLM wrapping in markdown fences."""
-    stripped = raw.strip()
-    if stripped.startswith("```"):
-        # ```json ... ```
-        stripped = stripped.split("```", 2)[1]
-        if stripped.startswith("json"):
-            stripped = stripped[4:]
-        stripped = stripped.strip().rstrip("`").strip()
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
 
 
 # ---------------------------------------------------------------------------

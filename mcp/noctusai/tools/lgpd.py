@@ -55,7 +55,8 @@ _FILE_HEADER = """# LGPD Concerns — Rolling Log
 
 
 def _now() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    from noctusai_lib.primitives.timeutil import current_day_ref
+    return current_day_ref()
 
 
 def _format_entry(

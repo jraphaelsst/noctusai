@@ -320,8 +320,12 @@ async def get_session_audio(
             try:
                 exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
                 is_expired = now > exp_dt
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "session_journal: segment id=%s has unparseable download_expires_at=%r (%s); "
+                    "treating as expired (safe default — forces fresh signed URL)",
+                    seg.get("id"), expires_at, exc,
+                )
 
         audio_segments.append({
             "segment_number": seg.get("segment_number"),

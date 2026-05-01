@@ -17,7 +17,7 @@ from typing import Optional
 import httpx
 from xhtml2pdf import pisa
 
-from noctusai_lib.credentials import resolve_credential
+from noctusai_lib.config.credentials import resolve_credential
 
 logger = logging.getLogger(__name__)
 
@@ -947,7 +947,12 @@ def _get_tjsp_last_request_at(org_id: str, db) -> Optional[datetime]:
             continue
         try:
             return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError) as exc:
+            logger.warning(
+                "certidoes_service: certidao id=%s has unparseable api_requested_at=%r (%s); "
+                "skipping when computing TJSP cooldown",
+                row.get("id"), ts_str, exc,
+            )
             continue
     return None
 

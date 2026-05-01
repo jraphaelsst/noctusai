@@ -171,7 +171,11 @@ class TestCreateCliente:
     async def test_creates_and_returns_client(self):
         from app.services.clientes_service import ClientesService
 
-        db = MockSupabaseClient(data=[{"id": "c-new", "nome": "Maria", "usuario_id": "user-1"}])
+        db = MockSupabaseClient()
+        db.set_sequential_responses(
+            "clientes",
+            [MockSupabaseResponse(data=[{"id": "c-new", "nome": "Maria", "usuario_id": "user-1"}])],
+        )
         svc = ClientesService(db, "user-1")
 
         with patch("app.services.clientes_service.log_action"):
@@ -184,7 +188,7 @@ class TestCreateCliente:
     async def test_sets_usuario_id(self):
         from app.services.clientes_service import ClientesService
 
-        db = MockSupabaseClient(data=[{"id": "c-new", "nome": "Test", "usuario_id": "user-1"}])
+        db = MockSupabaseClient()
         svc = ClientesService(db, "user-1")
 
         data = {"nome": "Test"}

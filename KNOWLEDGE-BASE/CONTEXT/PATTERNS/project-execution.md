@@ -9,6 +9,8 @@
 
 This is the canonical workflow every project follows. Each numbered step fires a specific named rule below — the rule is authoritative; this section is the **index** that names the right rule at the right step. Do not skim this; **the discipline at each step is non-negotiable** and the user will re-establish it if the agent slips.
 
+**Code-quality bias (user directive 2026-04-28).** *"Please opt for the optimized version best-related to code-quality for future implementations."* When choosing between a quick path and a thorough path at any step, pick thorough. The 5-30 min Phase 0 audit prevents 2-8 hr of mis-scope; the 30 sec absorption-scan rerun prevents the 4th `_safe_float`; the 60 sec phase-end verification prevents the green-now-red-on-merge surprise. Speed is downstream of correctness.
+
 ```
 SCAFFOLD
   └─ §1   Copy templates/PROJECT-TEMPLATE.md → §1-§11 sections in order.
@@ -16,18 +18,43 @@ SCAFFOLD
           Required for EVERY project, not just cross-product. Single-product projects whose answers point at "product-specific"
           still fill §3a (explicit confirmation). PROJECT.md without §3a = bug.
 
-EXECUTE — one phase at a time
+PRE-PHASE — Phase 0 audit + absorption scan (BEFORE any code lands)
   └─ §2.5 Phase 0 audit FIRST — read actual files / run actual commands. When findings invalidate §6, *expand loudly* — revise §6 to match reality, log in §11, continue. STOP only for hard-to-reverse / shared-system / security-class discoveries.
           Phase 0 takes 5-30 min; mis-scope discoveries it prevents take 2-8 hr.
+  └─ ABSORPTION SCAN — run BEFORE writing new code, scoped to what the phase will touch (KB § 06-AGENTS.md § Absorption-search sextet):
+          • `--scan-helpers`              always (function/class names recurring across products)
+          • `--scan-service-lines`        when touching `app/services/` or `app/routers/`
+          • `--scan-blocks`               when refactoring control-flow (try/except shapes)
+          • `--scan-test-fixtures`        when touching `tests/`
+          • `--scan-migrations`           when touching `migrations/*.sql`
+          • `--scan-within-product`       when refactoring within one product
+          New N≥2 hit on a name/shape this phase plans to introduce → decide formalize/refactor/accept BEFORE proceeding.
+          Absorption work usually changes the §6 plan; expand loudly per Phase-0 expand-loudly rule.
+
+EXECUTE — one phase at a time
   └─ §2.6 Active robustness review WHILE editing — eyes open: silent error swallows, stale TODOs, magic numbers,
           async races, mock-vs-real divergence, `any`/`unknown` leaks. Capture findings LIVE in the phase's
           **Improvements:** block (not deferred). Apply low-risk fixes inline; defer out-of-scope to follow-up
           projects (scaffold the folder immediately — broken pointers forbidden).
   └─ §2   Live tick — `- [ ]` → `- [x]` IMMEDIATELY when a sub-task completes; flip phase header to `⏳`/`✅`
           as state changes. Never batch.
+  └─ MID-PHASE absorption-scan checkpoint — every 5-10 file edits, re-run the scan most relevant to what was
+          touched. Did your edits create a new N=2 pattern? Triage live in the Improvements block; do NOT defer.
   └─ Self-check before claiming a phase done — §6 ↔ §11 consistency rule. Five-point check:
       (1) phase header ✅; (2) all sub-tasks `- [x]`; (3) **Improvements:** filled or `none identified.`;
       (4) §11 entry exists; (5) `improvements.md` regenerated. Missing any → not closed.
+
+PHASE-END VERIFICATION CHECKLIST — runs at every phase boundary (NEW 2026-04-28)
+  └─ 1. Tests green for the touched product:
+          cd products/<X>/backend && pytest tests/<scope> -q                         (backend)
+          cd products/<X>/frontend && npx vite build                                 (frontend, if touched)
+  └─ 2. Keeper validate — score unchanged or improved:
+          python mcp/noctusai/cli.py --validate
+  └─ 3. RE-RUN ABSORPTION SCANS — did this phase introduce a new N=2 pattern?
+          --scan-helpers + the scan(s) relevant to what was edited.
+          New N=2+ → triage NOW (Improvements block + decision: formalize / refactor / accept-with-rationale).
+  └─ 4. KB sync (if any KB doc was edited): bash scripts/verify-kb-sync.sh
+  └─ 5. §6 ↔ §11 self-check passes (the five-point rule above).
 
 CLOSE — at every phase end
   └─ Synthesize captured improvements → ONE bundled proposal per phase via `noctusai_file_proposal(...)`.
@@ -36,10 +63,27 @@ CLOSE — at every phase end
   └─ Run `python mcp/noctusai/cli.py --improvements <PROJECT.md path>` to regenerate `improvements.md`.
 
 PROJECT CLOSE — at the last phase
-  └─ Three-way sync: KB depth + CLAUDE.md pointer + memory entry — all in the same session.
-  └─ Verify: `bash scripts/verify-kb-sync.sh` ✓; keeper 100/100; cross-product builds + tests green.
+
+PROJECT-END VERIFICATION CHECKLIST — runs once before folder deletion (NEW 2026-04-28)
+  └─ 1. Cross-product frontend builds — green for every touched product:
+          python mcp/noctusai/cli.py --build --changed                              (parallel; --changed scopes to git-changed products only)
+  └─ 2. Backend pytest — green for every touched product:
+          cd products/<X>/backend && pytest                                          (per touched product)
+  └─ 3. MCP toolkit tests — green:
+          mcp/noctusai/.venv/bin/python -m pytest mcp/noctusai/tests/ -q
+  └─ 4. Keeper full validate — score 100/100, zero new critical/high:
+          python mcp/noctusai/cli.py --validate
+  └─ 5. KB sync — both verifiers clean:
+          bash scripts/verify-kb-sync.sh
+          python mcp/noctusai/cli.py --check-three-way-sync
+  └─ 6. FINAL ABSORPTION SCAN sweep — capture what was absorbed vs what's deferred. Document in §11 close
+          entry. Any new N=2+ patterns surfaced by THIS project's edits get a triage decision (formalize /
+          refactor / accept-with-rationale) recorded in the close entry — not silently shipped.
+  └─ 7. Three-way sync: KB depth + CLAUDE.md pointer + memory entry — all in the same session.
+  └─ 8. End-of-work summary in the user-facing reply: applied items + deferred destinations + verification line.
+
+CLOSE PROJECT (only after the verification checklist is fully green)
   └─ Folder deletion — clean-folder rule. Empty `proposals/` ok (delete with the project).
-  └─ End-of-work summary in the user-facing reply: applied items + deferred destinations + verification line.
 ```
 
 **Cross-cutting language trigger that fires at every step.** If you see or write any of these phrasings — in your own response, in the project doc, in a user prompt — STOP and challenge the framing: *"per-product X"*, *"mount across N products"*, *"for each product Y"*, *"mount on each ___"*. The right per-product code count for cross-product concerns is **zero**. See the language-trigger rule (§ The replication-to-seed symmetry rule).

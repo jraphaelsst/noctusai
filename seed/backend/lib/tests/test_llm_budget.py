@@ -5,14 +5,14 @@ import os
 import pytest
 from unittest.mock import MagicMock
 
-from noctusai_lib.llm import budget as budget_module
-from noctusai_lib.llm.budget import (
+from noctusai_lib.integrations.llm import budget as budget_module
+from noctusai_lib.integrations.llm.budget import (
     compute_status,
     configure_budget_module,
     enforce_budget,
     fetch_budget_brl,
 )
-from noctusai_lib.llm.exceptions import LLMBudgetExceeded
+from noctusai_lib.integrations.llm.exceptions import LLMBudgetExceeded
 
 
 @pytest.fixture(autouse=True)

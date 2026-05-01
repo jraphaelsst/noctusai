@@ -19,7 +19,7 @@ Usage::
 """
 from typing import Optional
 from supabase import Client
-from noctusai_lib.database import make_supabase_client
+from noctusai_lib.integrations.database import make_supabase_client
 
 
 class DatabaseModule:

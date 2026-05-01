@@ -5,13 +5,17 @@ Covers credit consultation, single read, update, and listing.
 import pytest
 from unittest.mock import patch
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestConsultarCredito:
     def test_consulta_manual_success(self, client):
-        client._mock_supabase.set_table_data("analises_credito", {
-            "id": "ac-new", "cpf": "12345678901", "nome": "Joao Silva",
-            "fonte": "manual", "status": "aprovado", "score": 750,
-        })
+        client._mock_supabase.set_sequential_responses("analises_credito", [
+            MockSupabaseResponse(data=[{
+                "id": "ac-new", "cpf": "12345678901", "nome": "Joao Silva",
+                "fonte": "manual", "status": "aprovado", "score": 750,
+            }]),
+        ])
         resp = client.post("/api/analise-credito/consultar", json={
             "cpf": "12345678901",
             "nome": "Joao Silva",

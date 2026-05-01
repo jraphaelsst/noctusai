@@ -29,13 +29,13 @@ from typing import Callable, Optional, Sequence
 
 from fastapi import FastAPI
 
-from noctusai_lib.ai.consent import configure_consent_module
+from noctusai_lib.domain.ai.consent import configure_consent_module
 from noctusai_lib.logging_config import configure_logging
-from noctusai_lib.app_factory import configure_app
-from noctusai_lib.credentials import configure_credentials
-from noctusai_lib.llm import LLMConfig
-from noctusai_lib.llm.budget import configure_budget_module
-from noctusai_lib.llm.client import configure_llm, shutdown_llm
+from noctusai_lib.api.app_factory import configure_app
+from noctusai_lib.config.credentials import configure_credentials
+from noctusai_lib.integrations.llm import LLMConfig
+from noctusai_lib.integrations.llm.budget import configure_budget_module
+from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
 
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
@@ -67,9 +67,9 @@ def create_product_app(
       - Auth dependencies (get_current_user, get_org_id, etc.)
       - Standard routers (health, notifications, team)
       - CORS, Sentry, exception handlers, middleware, rate limiting
-      - **Credential resolution** via `noctusai_lib.credentials` (auto-configured
+      - **Credential resolution** via `noctusai_lib.config.credentials` (auto-configured
         from settings.supabase_*)
-      - **Multi-provider LLM access** via `noctusai_lib.llm` (inherits
+      - **Multi-provider LLM access** via `noctusai_lib.integrations.llm` (inherits
         `default_llm_config()` unless overridden via `llm_config=`)
       - Optional lifespan events (scheduler start/stop, recovery tasks)
 
@@ -92,7 +92,7 @@ def create_product_app(
             gets none of the bundled capabilities rather than silently
             inheriting all four.
         consent_features: Dotted module path whose import-time side effect
-            populates the `noctusai_lib.ai.consent` catalog (each product
+            populates the `noctusai_lib.domain.ai.consent` catalog (each product
             calls `register_feature(...)` from this module). The framework
             imports it once per process via `importlib.import_module(...)`,
             after `configure_consent_module(...)`. Default `None` — products

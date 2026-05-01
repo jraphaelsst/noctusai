@@ -96,8 +96,11 @@ class TestContactLifecycle:
     """Create -> Get -> Update -> Delete -> 404."""
 
     def test_full_lifecycle(self, client):
-        # CREATE
-        client.mock_supabase.set_table_data("contacts", [MOCK_CONTACT])
+        # CREATE — queue insert response with the canonical contact, then
+        # rebind table seed for the GET/PATCH/DELETE steps below.
+        client.mock_supabase.set_sequential_responses("contacts", [
+            MockSupabaseResponse(data=[MOCK_CONTACT]),
+        ])
         resp = client.post("/api/contacts", json={
             "email": "lead@test.com",
             "nome": "Lead Test",

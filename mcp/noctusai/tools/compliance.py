@@ -4,8 +4,11 @@ Validates that products follow the seed framework pattern.
 All checks are deterministic, fast, zero AI.
 """
 import ast
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -69,7 +72,8 @@ def _parse_self_provided_routers(main_content: str) -> tuple[str, set[str] | Non
     """
     try:
         tree = ast.parse(main_content)
-    except SyntaxError:
+    except SyntaxError as exc:
+        logger.warning("compliance: cannot parse main.py (%s); marking as unparseable", exc)
         return "unparseable", None
 
     call = None
@@ -520,28 +524,56 @@ def check_seed_version_propagation(repo_root: Path | None = None) -> list[dict]:
             # Can't determine current HEAD — skip check rather than error noisily.
             return issues
         current_sha = git_result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("compliance: git unavailable for version-propagation check (%s); skipping", exc)
         return issues
 
     for package_name, attr_name, stamp_hint in (
         ("noctusai_seed", "__seed_version__", "seed/backend/framework"),
         ("noctusai_lib", "__lib_version__", "seed/backend/lib"),
     ):
-        try:
-            module = __import__(package_name)
-            reported = getattr(module, attr_name, None)
-        except ImportError as exc:
-            issues.append({
-                "product": "<platform>",
-                "file": f"{stamp_hint}/",
-                "issue": (
-                    f"Cannot import `{package_name}` to check version "
-                    f"propagation: {exc}. Run `pip install -e {stamp_hint}` "
-                    f"to install the package."
-                ),
-                "severity": "critical",
-            })
-            continue
+        # Prefer reading `_version_static.py` from the filesystem — this
+        # avoids requiring `pip install -e` of the seed packages in the venv
+        # that runs `--validate` (e.g. the MCP toolkit's own venv). The
+        # static stamp IS the propagation source of truth; importing the
+        # package only adds the live-git fallback path which we can apply
+        # ourselves below if the static stamp is missing.
+        static_path = root / stamp_hint / package_name / "_version_static.py"
+        reported: str | None = None
+        if static_path.exists():
+            try:
+                static_content = static_path.read_text(encoding="utf-8")
+                m = re.search(
+                    r'^__version__\s*=\s*[\'"]([^\'"]+)[\'"]',
+                    static_content,
+                    re.MULTILINE,
+                )
+                if m:
+                    reported = m.group(1)
+            except OSError as exc:
+                logger.warning("compliance: cannot read %s (%s); falling through to import", static_path, exc)
+                reported = None
+        if reported is None:
+            # Static stamp missing or unreadable. Try importing as a last
+            # resort — only fires if the package happens to be installed.
+            try:
+                module = __import__(package_name)
+                reported = getattr(module, attr_name, None)
+            except ImportError as exc:
+                logger.warning("compliance: cannot import %s (%s); will surface as critical issue", package_name, exc)
+                issues.append({
+                    "product": "<platform>",
+                    "file": f"{stamp_hint}/{package_name}/_version_static.py",
+                    "issue": (
+                        f"`{package_name}` has no `_version_static.py` stamp "
+                        f"AND is not installed in this venv. Run "
+                        f"`bash scripts/stamp-seed-version.sh` to write the "
+                        f"stamp, or `pip install -e {stamp_hint}` to install "
+                        f"the package."
+                    ),
+                    "severity": "critical",
+                })
+                continue
 
         if not isinstance(reported, str) or not reported:
             issues.append({
@@ -660,6 +692,7 @@ def check_config_extends_product_settings(product_path: Path) -> list[dict]:
     try:
         tree = ast.parse(config_file.read_text())
     except SyntaxError as e:
+        logger.warning("compliance: cannot parse %s (%s); will surface as critical issue", config_file, e)
         issues.append({
             "product": name,
             "file": "backend/app/config.py",
@@ -1027,7 +1060,8 @@ def _split_phase_blocks(content: str) -> list[tuple[int, str, int]]:
     for m in _PHASE_HEADER_RE.finditer(content):
         try:
             phase_num = int(m.group(1))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.warning("compliance: cannot parse phase number from %r (%s), skipping", m.group(0), exc)
             continue
         line_num = content.count("\n", 0, m.start()) + 1
         headers.append((phase_num, m.start(), line_num))
@@ -1077,7 +1111,8 @@ def _shipped_phases_in_changelog(changelog: str) -> set[int]:
     for m in re.finditer(r'Phase\s+(\d+)\s*✅', changelog):
         try:
             shipped.add(int(m.group(1)))
-        except ValueError:
+        except ValueError as exc:
+            logger.warning("compliance: cannot parse phase number from %r (%s)", m.group(0), exc)
             continue
     # Look for "Phase N shipped" / "Phase N closed" with small lookahead
     for m in re.finditer(
@@ -1087,7 +1122,8 @@ def _shipped_phases_in_changelog(changelog: str) -> set[int]:
     ):
         try:
             shipped.add(int(m.group(1)))
-        except ValueError:
+        except ValueError as exc:
+            logger.warning("compliance: cannot parse phase number from %r (%s)", m.group(0), exc)
             continue
     return shipped
 
@@ -1124,6 +1160,7 @@ def check_phase_state_consistency(repo_root: Path | None = None) -> list[dict]:
         try:
             relative = project_md.relative_to(root)
         except ValueError:
+            logger.warning("compliance: PROJECT.md outside repo root, using absolute: %s", project_md)
             relative = project_md
         product_label = "<projects>"
         # Resolve product attribution for nicer issue grouping.
@@ -1214,6 +1251,749 @@ def check_phase_state_consistency(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+# ---------------------------------------------------------------------------
+# `check_no_self_monkeypatch` — enforces the no-self-monkeypatching rule
+# (memory `feedback_no_monkeypatching_in_tests.md`, CLAUDE.md). Caught
+# 2× this session writing `monkeypatch.setattr(ai_pipeline, "require",
+# _noop)`. Documentation alone wasn't sufficient; deterministic
+# enforcement closes the loop.
+# ---------------------------------------------------------------------------
+
+# Module prefixes that are "ours" (production code in this repo). Patching
+# any of these in tests neuters our own logic — UNLESS the target attribute
+# is a known boundary accessor (see _BOUNDARY_ACCESSOR_NAMES).
+_OUR_MODULE_PREFIXES: tuple[str, ...] = (
+    "app.",
+    "noctusai_lib.",
+    "noctusai_seed.",
+)
+# Boundary-accessor attribute names — patching these returns external
+# resources (Supabase client, LLM SDK, network) that legitimately need
+# mocking in tests. Allowed even when the module prefix is "ours".
+_BOUNDARY_ACCESSOR_NAMES: set[str] = {
+    # Supabase / DB client boundary
+    "get_client",
+    "get_admin_client",
+    "get_core_client",
+    "get_db_client",
+    "get_supabase",
+    "get_supabase_client",
+    "get_session",
+    "get_user",
+    "get_current_user",
+    "make_supabase_client",
+    "create_client",
+    # LLM call boundary
+    "chat_completion",
+    "chat_completion_stream",
+    "stream_chat_completion",
+    "transcribe_audio",
+    "generate_embedding",
+    # Audit-log boundary — `log_action` writes to the `audit_log` table.
+    # Patching it in tests is the standard "skip side-effect" pattern
+    # used everywhere; the alternative would require seeding RLS-coupled
+    # audit-log rows for every test. Triaged 2026-04-28 from 27 hits.
+    "log_action",
+    # Credential/secrets boundary — `resolve_credential` /
+    # `check_required_credentials` read from the secrets store; private
+    # `_get_*_token` helpers wrap external auth fetches. Triaged 2026-04-28
+    # from 22+6+5 hits.
+    "resolve_credential",
+    "check_required_credentials",
+    "_get_infosimples_token",
+    # External SDK getters (return Resend/etc clients).
+    "_get_resend",
+    "_get_resend_config",
+    "_resolve_resend_config",
+    # Env-config readers — return cached env state, no business logic.
+    "get_whatsapp_config_from_env",
+    "check_openai_configured",
+    "_openai_configured",
+    "YFINANCE_AVAILABLE",
+    # JWT decoder boundary — wraps cryptographic verification of an
+    # external token; patching skips a real signing key in tests.
+    "__from_token__",
+}
+# Boundary-accessor patterns by suffix (for `_get_<x>_token`,
+# `_get_<x>_client`, `_get_<x>_config`-style getters that wrap external
+# resource access). Caught at run-time by `_is_boundary_accessor_target`.
+_BOUNDARY_ACCESSOR_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^_get_[a-z][a-z0-9_]*_(?:token|client|config|key|secret|sdk)$"),
+    re.compile(r"^get_[a-z][a-z0-9_]*_(?:client|config|sdk)$"),
+    # `_lib_*` — convention for in-product wrappers around `noctusai_lib.*`
+    # external integrations (e.g. `_lib_generate_embedding` proxies
+    # `noctusai_lib.integrations.llm.generate_embedding`). Patching these mocks the
+    # boundary, not our own logic.
+    re.compile(r"^_lib_[a-z][a-z0-9_]*$"),
+    # `send_*_email` — Resend / SMTP email boundary helpers. Mocking the
+    # outbound email is the standard test pattern; the alternative is a
+    # network call to a real provider.
+    re.compile(r"^send_[a-z][a-z0-9_]*_email$"),
+)
+# External library names — when an external symbol is re-imported through
+# our module (e.g. `app.routers.X.httpx.AsyncClient`), the test is
+# legitimately patching the EXTERNAL lib's behavior at the import site.
+# Detected by checking if any segment of the dotted path matches.
+_EXTERNAL_LIB_NAMES: set[str] = {
+    "httpx", "requests", "urllib", "urllib3", "openai", "anthropic",
+    "google", "supabase", "redis", "stripe", "resend", "boto3",
+    "smtplib", "sendgrid", "twilio", "celery", "kombu", "asyncpg",
+    "psycopg2", "psycopg", "sqlalchemy", "pymongo", "elasticsearch",
+    "fakeredis", "moto",
+}
+# Allowlist: bypass via inline comment `# self-patch-ok: <reason>` on the
+# patching line itself. For genuinely-rare legitimate cases that don't
+# fit the boundary-accessor pattern.
+_SELF_PATCH_OK_COMMENT_RE = re.compile(r"#\s*self-patch-ok\b", re.IGNORECASE)
+
+
+def _is_boundary_accessor_target(full_target: str) -> bool:
+    """True if the patched target's last component is a known boundary
+    accessor (e.g. `noctusai_seed.database.DatabaseModule.get_client`).
+    """
+    if not full_target:
+        return False
+    last = full_target.rstrip(".").rsplit(".", 1)[-1]
+    if last in _BOUNDARY_ACCESSOR_NAMES:
+        return True
+    return any(rx.match(last) for rx in _BOUNDARY_ACCESSOR_REGEXES)
+
+
+def _has_external_lib_segment(full_target: str) -> bool:
+    """True if any dotted segment is a known external lib name. Handles
+    the `app.routers.X.httpx.AsyncClient` case (httpx re-imported via
+    our module — the test is patching httpx's behavior at the import site,
+    which is the standard mock pattern for external network/SDK clients).
+    """
+    if not full_target:
+        return False
+    segments = full_target.rstrip(".").split(".")
+    return any(seg in _EXTERNAL_LIB_NAMES for seg in segments)
+
+
+def _classify_patch_target(target: str) -> str:
+    """Return 'ours' / 'boundary' / 'external' / 'external-via-ours' / 'unknown'."""
+    if not any(target.startswith(p) for p in _OUR_MODULE_PREFIXES):
+        return "external"
+    if _is_boundary_accessor_target(target):
+        return "boundary"
+    if _has_external_lib_segment(target):
+        return "external-via-ours"
+    return "ours"
+
+
+def _walk_test_files(root: Path):
+    """Yield all `tests/**/*.py` files across products + seed-lib + mcp.
+
+    Excludes vendored dependencies (`node_modules/`, `.venv/`, `venv/`,
+    `dist/`) — those contain test code that's not ours and would
+    false-positive every check.
+    """
+    excluded_parts: set[str] = {
+        "__pycache__", "node_modules", ".venv", "venv", "dist", "build",
+        ".git", ".pytest_cache", ".mypy_cache",
+    }
+    for base in (
+        root / "products",
+        root / "seed" / "backend" / "lib",
+        root / "seed" / "backend" / "framework",
+        root / "mcp",
+    ):
+        if not base.exists():
+            continue
+        for path in base.rglob("*.py"):
+            # Only test files.
+            parts = path.parts
+            if "tests" not in parts and "test_" not in path.name:
+                continue
+            if any(part in excluded_parts for part in parts):
+                continue
+            yield path
+
+
+def _build_import_map(tree: ast.Module) -> dict[str, str]:
+    """Map local-bound names to their full import paths.
+
+    Examples:
+    - `from app.services import ai_pipeline` → {"ai_pipeline": "app.services.ai_pipeline"}
+    - `from app.services.ai_pipeline import require` → {"require": "app.services.ai_pipeline.require"}
+    - `import noctusai_lib.domain.ai.consent as consent` → {"consent": "noctusai_lib.domain.ai.consent"}
+    - `from app import services` → {"services": "app.services"}
+
+    Used by `check_no_self_monkeypatch` to resolve `monkeypatch.setattr(X, ...)`
+    where X is a local name back to its dotted module path, so we can
+    classify it against `_OUR_MODULE_PREFIXES`.
+    """
+    mapping: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                local_name = alias.asname or alias.name
+                full_path = f"{module}.{alias.name}" if module else alias.name
+                mapping[local_name] = full_path
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                local_name = alias.asname or alias.name.split(".")[0]
+                mapping[local_name] = alias.asname or alias.name
+    return mapping
+
+
+def _resolve_target_via_imports(target: str, import_map: dict[str, str]) -> str:
+    """Resolve a `Name.attr.attr` target against the file's import map.
+
+    `target` is expected to be the dotted path returned by `_extract_patch_target`
+    (already includes the attr name when known). The first segment is the
+    locally-bound name; if it's in `import_map`, prepend the resolved path.
+    """
+    if not target:
+        return target
+    segments = target.split(".")
+    head = segments[0]
+    if head in import_map:
+        # Replace the local name with its resolved full path.
+        resolved_head = import_map[head]
+        return ".".join([resolved_head] + segments[1:]) if len(segments) > 1 else resolved_head
+    return target
+
+
+def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
+    """Detect `monkeypatch.setattr(<our_module>, ...)` and
+    `unittest.mock.patch.object(<our_module>, ...)` in test files —
+    patterns that neuter our own logic instead of testing it.
+
+    Per memory `feedback_no_monkeypatching_in_tests.md` + CLAUDE.md "No
+    workarounds — and no monkey-patching, in production OR tests".
+
+    Resolves local-bound names against the file's import map so that
+    `from app.services import ai_pipeline` + `monkeypatch.setattr(
+    ai_pipeline, "require", ...)` correctly resolves to
+    `app.services.ai_pipeline.require` for classification.
+
+    Allowlist via inline comment `# self-patch-ok: <reason>` on the
+    patching line. For genuinely-rare legitimate cases (rare enough that
+    they should be documented at the call site).
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for path in _walk_test_files(root):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.warning("compliance: cannot read test file %s (%s), skipping", path, exc)
+            continue
+        try:
+            tree = ast.parse(content, filename=str(path))
+        except SyntaxError as exc:
+            logger.warning("compliance: cannot parse test file %s (%s), skipping", path, exc)
+            continue
+        import_map = _build_import_map(tree)
+        try:
+            relative = str(path.relative_to(root))
+        except ValueError:
+            logger.warning("compliance: test file outside repo root, using absolute: %s", path)
+            relative = str(path)
+        product_label = "<seed-lib>" if "/seed/" in relative else (
+            relative.split("/", 2)[1] if relative.startswith("products/") else "<mcp>"
+        )
+
+        for node in ast.walk(tree):
+            raw_target = _extract_patch_target(node)
+            if raw_target is None:
+                continue
+            target_str = _resolve_target_via_imports(raw_target, import_map)
+            classification = _classify_patch_target(target_str)
+            if classification != "ours":
+                continue
+            line_no = getattr(node, "lineno", 0) or 0
+            line_text = (
+                content.splitlines()[line_no - 1] if 0 < line_no <= len(content.splitlines()) else ""
+            )
+            if _SELF_PATCH_OK_COMMENT_RE.search(line_text):
+                continue
+            issues.append({
+                "product": product_label,
+                "file": relative,
+                "issue": (
+                    f"`{relative}:{line_no}` patches our own symbol "
+                    f"`{target_str}`. Per CLAUDE.md \"No workarounds — and no "
+                    f"monkey-patching, in production OR tests\": neutering our "
+                    f"own logic in tests doesn't test it. Seed real data + use "
+                    f"DI; patch only external boundaries (LLM SDKs, network). "
+                    f"If genuinely needed, add `# self-patch-ok: <reason>` to "
+                    f"the line."
+                ),
+                # `warning` (not `high`) so legitimate-but-historically-flagged
+                # patterns don't tank the per-product score; the user can
+                # tighten over time as violations are addressed.
+                "severity": "warning",
+            })
+    return issues
+
+
+def _extract_patch_target(node: ast.AST) -> str | None:
+    """If `node` is a self-patching call, return the FULL dotted-path target
+    (module.path + attribute name). Else None.
+
+    Examples returned:
+    - `monkeypatch.setattr(ai_pipeline, "require", _noop)` → `"ai_pipeline.require"`
+    - `patch.object(DatabaseModule, "get_client", ...)` → `"DatabaseModule.get_client"`
+    - `patch("noctusai_seed.database.DatabaseModule.get_client", ...)` →
+      `"noctusai_seed.database.DatabaseModule.get_client"`
+    """
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    target_arg: ast.expr | None = None
+    attr_name: str | None = None
+
+    # Pattern 1: monkeypatch.setattr(<target>, "attr", ...)
+    if isinstance(func, ast.Attribute) and func.attr == "setattr":
+        if isinstance(func.value, ast.Name) and func.value.id == "monkeypatch":
+            if len(node.args) >= 1:
+                target_arg = node.args[0]
+            if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                v = node.args[1].value
+                if isinstance(v, str):
+                    attr_name = v
+    # Pattern 2: mock.patch.object(<target>, "attr", ...) / patch.object(...)
+    if isinstance(func, ast.Attribute) and func.attr == "object":
+        is_patch_object = False
+        if isinstance(func.value, ast.Name) and func.value.id == "patch":
+            is_patch_object = True
+        elif (
+            isinstance(func.value, ast.Attribute)
+            and func.value.attr == "patch"
+        ):
+            is_patch_object = True
+        if is_patch_object:
+            if len(node.args) >= 1:
+                target_arg = node.args[0]
+            if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                v = node.args[1].value
+                if isinstance(v, str):
+                    attr_name = v
+    # Pattern 3: mock.patch("<dotted.string>", ...) / patch("<dotted.string>", ...)
+    if isinstance(func, ast.Attribute) and func.attr == "patch":
+        if node.args and isinstance(node.args[0], ast.Constant):
+            val = node.args[0].value
+            if isinstance(val, str):
+                return val
+    if isinstance(func, ast.Name) and func.id == "patch":
+        if node.args and isinstance(node.args[0], ast.Constant):
+            val = node.args[0].value
+            if isinstance(val, str):
+                return val
+
+    if target_arg is None:
+        return None
+    base = _flatten_attr(target_arg)
+    if base is None:
+        return None
+    # `_flatten_attr` returns the dotted path with a trailing `.`; append
+    # the attr name when known.
+    if attr_name:
+        return base + attr_name
+    return base.rstrip(".")
+
+
+def _flatten_attr(node: ast.expr) -> str | None:
+    """Convert `a.b.c` AST to `'a.b.c'`. Returns None for non-attribute exprs."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts)) + "."
+    return None
+
+
+# ---------------------------------------------------------------------------
+# `check_silent_errors` — enforces the no-silent-errors rule
+# (memory `feedback_no_silent_errors.md`, CLAUDE.md). Catches `except: pass`,
+# `except Exception: return None`, and similar patterns that swallow
+# errors without surfacing them.
+# ---------------------------------------------------------------------------
+
+# NOTE — there is intentionally NO escape-hatch comment for this detector.
+# The previous `# silent-ok: <reason>` allowlist was retired 2026-04-28
+# per user directive: "i dont want any silent-ok sign accross the
+# platform". Every except handler MUST log via `logger.<level>(...)`,
+# raise, or surface the error through a return value. Even bootstrap-
+# time code (e.g. `noctusai_seed._version`) uses `logger.debug(...)` —
+# the root logger silently drops debug by default but the call is in
+# the code, the detector recognizes it, and operators can flip
+# `NOCTUSAI_DEBUG=1` to see what fired during a fresh boot.
+
+
+def _walk_python_files(root: Path):
+    """Yield all `.py` files in product backends + seed-lib + framework + mcp.
+
+    Excludes tests (test code legitimately uses `try/except` for assertions
+    on the error paths) + vendored deps (`node_modules/`, `.venv/`, `venv/`,
+    `dist/`, `__pycache__/`) + migration files (raw SQL hand-written by
+    domain experts; silent-error semantics differ).
+    """
+    excluded_parts: set[str] = {
+        "__pycache__", "node_modules", ".venv", "venv", "dist", "build",
+        ".git", ".pytest_cache", ".mypy_cache", "tests", "migrations",
+    }
+    bases = [
+        root / "products",
+        root / "seed" / "backend",
+        root / "mcp" / "noctusai",
+    ]
+    for base in bases:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.py"):
+            parts = path.parts
+            if any(part in excluded_parts for part in parts):
+                continue
+            yield path
+
+
+def _is_silent_except(handler: ast.ExceptHandler) -> tuple[bool, str]:
+    """Return (is_silent, reason). A handler is "silent" if its body:
+       - is just `pass`
+       - is just `return None` / `return`
+       - has no `raise`, no `logger.<level>`, no `log.<level>`, no `print` for the error.
+    """
+    body = handler.body
+    if not body:
+        return True, "empty body"
+    # All-pass / all-return cases:
+    if all(isinstance(stmt, ast.Pass) for stmt in body):
+        return True, "body is just `pass`"
+    if all(
+        isinstance(stmt, ast.Return)
+        and (stmt.value is None or (
+            isinstance(stmt.value, ast.Constant) and stmt.value.value is None
+        ))
+        for stmt in body
+    ):
+        return True, "body is just `return` / `return None`"
+    # Look for any signal of error-handling: raise, logger call, print.
+    # Bare-name allowlist is deliberately TIGHT — only `print(...)` qualifies
+    # because anything else (`warn(exc)`, `warning(exc)`) is too easy to
+    # accidentally satisfy with a domain function of the same name. Logger
+    # calls are recognised via the attribute-suffix pattern (`.warning`,
+    # `.warn` legacy, etc.), which requires a method-call shape.
+    has_signal = False
+    for stmt in ast.walk(handler):
+        if isinstance(stmt, ast.Raise):
+            has_signal = True
+            break
+        if isinstance(stmt, ast.Call):
+            func_name = _call_name(stmt.func)
+            if func_name == "print":
+                has_signal = True
+                break
+            if any(
+                func_name.endswith(suffix) for suffix in (
+                    ".warning", ".warn",  # `.warn` is the deprecated stdlib alias; some callers still use it
+                    ".error", ".exception", ".critical",
+                    ".info", ".debug", ".log",
+                )
+            ):
+                has_signal = True
+                break
+    if not has_signal:
+        return True, "no `raise` / `log` / `print` in handler body"
+    return False, ""
+
+
+def _call_name(func_node: ast.expr) -> str:
+    if isinstance(func_node, ast.Name):
+        return func_node.id
+    if isinstance(func_node, ast.Attribute):
+        return f".{func_node.attr}"
+    return ""
+
+
+def check_silent_errors(repo_root: Path | None = None) -> list[dict]:
+    """Detect silent-error patterns in production Python code.
+
+    Flags `try / except:` handlers whose body neither raises, logs, nor
+    surfaces the error in any way. **No escape hatch** — every handler
+    must log via `logger.<level>(...)`, `raise`, or surface through a
+    return value. Even bootstrap-time code uses `logger.debug(...)` so
+    the call is statically present (root logger drops it by default;
+    `NOCTUSAI_DEBUG=1` reveals it).
+
+    Per memory `feedback_no_silent_errors.md` + CLAUDE.md "No silent
+    errors — always explicit fix opportunities".
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for path in _walk_python_files(root):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", path, exc)
+            continue
+        try:
+            tree = ast.parse(content, filename=str(path))
+        except SyntaxError as exc:
+            logger.warning("compliance: cannot parse %s (%s), skipping", path, exc)
+            continue
+        try:
+            relative = str(path.relative_to(root))
+        except ValueError:
+            logger.warning("compliance: file outside repo root, using absolute: %s", path)
+            relative = str(path)
+        product_label = "<seed>" if relative.startswith("seed/") else (
+            relative.split("/", 2)[1] if relative.startswith("products/") else "<mcp>"
+        )
+        lines = content.splitlines()
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            silent, reason = _is_silent_except(node)
+            if not silent:
+                continue
+            line_no = node.lineno
+            issues.append({
+                "product": product_label,
+                "file": relative,
+                "issue": (
+                    f"`{relative}:{line_no}` swallows errors silently ({reason}). "
+                    f"Per CLAUDE.md \"No silent errors\": every failure mode "
+                    f"surfaces loudly. Add `logger.warning(...)` / `logger.debug(...)`, "
+                    f"`raise`, or surface via a return value. Bootstrap-time code "
+                    f"uses `logger.debug(...)` (silent by default; `NOCTUSAI_DEBUG=1` "
+                    f"reveals it). There is no `# silent-ok` escape hatch."
+                ),
+                # `warning` (not `high`) so legitimate-but-historically-flagged
+                # patterns don't tank the per-product score; the user can
+                # tighten over time as violations are addressed.
+                "severity": "warning",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_clean_folder_violations` — enforces the clean-folder rule
+# (CLAUDE.md). ✅-closed projects must have their folders deleted.
+# ---------------------------------------------------------------------------
+
+
+def check_clean_folder_violations(repo_root: Path | None = None) -> list[dict]:
+    """Detect closed projects (✅ status) whose folders still exist.
+
+    Per CLAUDE.md "Clean folder — every artifact has a home" + the
+    apply-inline-then-delete rule (closed projects get deleted at close,
+    audit history lives in git). Surfaced 8 violations during the
+    2026-04-28 closed-folder cleanup; this check makes future drift
+    visible at `--validate` time.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for project_md in _find_all_project_md(root):
+        try:
+            content = project_md.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.warning("compliance: cannot read PROJECT.md %s (%s), skipping", project_md, exc)
+            continue
+        # Look at the first `- **Status:**` line.
+        m = re.search(r"^- \*\*Status:\*\*\s*(.*)$", content, re.MULTILINE)
+        if not m:
+            continue
+        status_line = m.group(1)
+        # The status icon is whatever comes FIRST on the line. A trailing
+        # `Phase 0 ✅` inside narrative ("READY TO RESUME ... Phase 0 ✅
+        # executed") is not the project's own status — that's drift inside
+        # the prose. Only flag when ✅ is the leading icon.
+        leading = re.match(r"\s*([📋⏳❌🅿️📝✅⚠️🚧🔄])", status_line)
+        if not leading or leading.group(1) != "✅":
+            continue
+        # Mixed-status close (✅ leading but ⏳/❌/🅿️ also present) signals
+        # in-flight close — don't flag.
+        if any(icon in status_line for icon in ("⏳", "❌", "🅿️")):
+            continue
+        # Closed + folder still exists → flag.
+        try:
+            relative = str(project_md.relative_to(root))
+        except ValueError:
+            logger.warning("compliance: PROJECT.md outside repo root, using absolute: %s", project_md)
+            relative = str(project_md)
+        product_label = "<projects>"
+        if relative.startswith("products/"):
+            product_label = relative.split("/", 2)[1]
+        elif relative.startswith("core/"):
+            product_label = "core"
+        issues.append({
+            "product": product_label,
+            "file": relative,
+            "issue": (
+                f"`{relative}` is closed (✅) but its folder still exists. "
+                f"Per the clean-folder rule (CLAUDE.md): closed projects "
+                f"get deleted at close — audit history lives in git + the "
+                f"shipped code + KB cross-references. Run `rm -rf "
+                f"{project_md.parent.relative_to(root) if project_md.parent.is_relative_to(root) else project_md.parent}/` "
+                f"after confirming references are updated."
+            ),
+            "severity": "warning",
+        })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_detector_has_regression_test` — every keeper detector ships with a
+# colocated regression test. Enforces the platform-wide testing methodology
+# documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
+# ---------------------------------------------------------------------------
+
+
+# Detector → test entry-point map. The detector is satisfied when EITHER:
+#   - a `Test<CamelCase>` class exists in any `mcp/noctusai/tests/test_*.py`
+#     file with a name derived from the detector (e.g. `check_silent_errors`
+#     → `TestCheckSilentErrors` or `TestSilentErrors`), OR
+#   - the detector is explicitly mapped here to a test file/symbol that
+#     covers it (used when the natural-name heuristic doesn't hold).
+#
+# Adding a new detector? Add the regression test first; the test class name
+# should match the detector. If the test must live somewhere else, add an
+# explicit entry here so the rule stays enforced.
+_DETECTOR_TEST_OVERRIDES: dict[str, str] = {
+    # `check_path_references` is exercised by the underlying `find_refs`
+    # tests (which the detector composes) — explicit override keeps the
+    # detector classified as covered.
+    "check_path_references": "tests/test_refs.py::TestFindRefs",
+    "check_frontend_entrypoint": "tests/test_phase5_detectors.py",
+    "check_out_of_contract_trees": "tests/test_phase5_detectors.py",
+    "check_config_extends_product_settings": "tests/test_config_inheritance.py",
+    "check_frontend_config_paths": "tests/test_frontend_config_paths.py",
+    "check_seed_version_propagation": "tests/test_seed_version_propagation.py",
+}
+
+
+def _detector_function_names() -> list[str]:
+    """Parse this module and return every top-level `check_*` function name.
+
+    `check_all_products` is the dispatcher and is excluded.
+    """
+    here = Path(__file__).resolve()
+    try:
+        tree = ast.parse(here.read_text(encoding="utf-8"), filename=str(here))
+    except (OSError, SyntaxError) as exc:
+        logger.warning(
+            "compliance: cannot self-parse %s (%s); skipping detector audit",
+            here, exc,
+        )
+        return []
+    return [
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name.startswith("check_")
+        and node.name != "check_all_products"
+    ]
+
+
+def _camel_case(snake: str) -> str:
+    return "".join(part.capitalize() for part in snake.split("_"))
+
+
+def _detector_has_regression_test(detector: str, tests_dir: Path) -> bool:
+    """True if a `Test<CamelCase>` class for the detector exists somewhere
+    under `tests_dir`, OR an explicit override maps the detector to a test
+    target.
+
+    Class-name matching is case-insensitive on the snake_case parts so
+    acronyms like `TestAIFeatureCompleteness` (matching detector
+    `check_ai_feature_completeness`) are recognized without an override.
+    Both `TestCheck<...>` and `Test<...>` shapes are accepted.
+    """
+    if detector in _DETECTOR_TEST_OVERRIDES:
+        target = _DETECTOR_TEST_OVERRIDES[detector]
+        # Format: "tests/<file>.py" or "tests/<file>.py::<symbol>"
+        rel_file = target.split("::", 1)[0]
+        return (tests_dir.parent / rel_file).exists()
+
+    if not tests_dir.exists():
+        return False
+
+    # Build a case-insensitive regex matching `class Test<Body>` where
+    # <Body> is the joined snake_case parts (with or without leading
+    # `Check`). E.g. `check_ai_feature_completeness` matches both
+    # `TestCheckAIFeatureCompleteness` and `TestAIFeatureCompleteness`,
+    # case-insensitively.
+    body_full = detector.replace("_", "")
+    body_short = detector.removeprefix("check_").replace("_", "")
+    pattern = re.compile(
+        rf"class\s+Test(?:{body_full}|{body_short})\b",
+        re.IGNORECASE,
+    )
+
+    for test_file in tests_dir.glob("test_*.py"):
+        try:
+            content = test_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", test_file, exc)
+            continue
+        if pattern.search(content):
+            return True
+    return False
+
+
+def check_detector_has_regression_test(repo_root: Path | None = None) -> list[dict]:
+    """Every `check_*` keeper detector must ship with a regression test.
+
+    The test pins the detector's true-positive and false-positive shapes so
+    that a future refactor cannot silently regress it. Per KB §
+    PATTERNS/testing.md § Regression-test-the-detector. Severity `high` —
+    a missing detector test is the kind of gap that lets a real-world miss
+    ship without being noticed.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    tests_dir = root / "mcp" / "noctusai" / "tests"
+
+    for detector in _detector_function_names():
+        if detector == "check_detector_has_regression_test":
+            # Self-coverage is checked at import-time by the test file; if
+            # the test doesn't import the detector, the test fails. No need
+            # to flag here.
+            continue
+        if _detector_has_regression_test(detector, tests_dir):
+            continue
+        # Build hint targets so the message is actionable.
+        expected = "Test" + _camel_case(detector.removeprefix("check_"))
+        issues.append({
+            "product": "<mcp>",
+            "file": "mcp/noctusai/tools/compliance.py",
+            "issue": (
+                f"Keeper detector `{detector}` has no regression test. "
+                f"Per KB § PATTERNS/testing.md § Regression-test-the-detector, "
+                f"every detector must ship colocated with a test that pins "
+                f"its true-positive and false-positive shapes. Add a "
+                f"`class {expected}` (or `Test{_camel_case(detector)}`) to "
+                f"`mcp/noctusai/tests/test_compliance.py` (or a dedicated "
+                f"`mcp/noctusai/tests/test_<detector>.py`). If the test "
+                f"covers the detector under a non-matching name, add an "
+                f"override entry to `_DETECTOR_TEST_OVERRIDES` in "
+                f"`mcp/noctusai/tools/compliance.py`."
+            ),
+            "severity": "high",
+        })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+
+
 def check_all_products() -> tuple[int, list]:
     """Run all compliance checks on all products. Returns (score, issues)."""
     all_issues = []
@@ -1241,6 +2021,10 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_out_of_contract_trees())
     all_issues.extend(check_seed_version_propagation())
     all_issues.extend(check_phase_state_consistency())
+    all_issues.extend(check_no_self_monkeypatch())
+    all_issues.extend(check_silent_errors())
+    all_issues.extend(check_clean_folder_violations())
+    all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues

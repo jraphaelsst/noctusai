@@ -132,8 +132,8 @@ async def criar_subscription(body: SubscriptionCreate, authorization: Optional[s
             action="create", resource_type="subscription",
             resource_id=result.data[0]["id"],
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("subscriptions: create audit log failed for sub_id=%s (%s); creation succeeded", result.data[0]["id"], exc)
     try:
         from app.services import notification_service
         await notification_service.notify_team(
@@ -142,8 +142,8 @@ async def criar_subscription(body: SubscriptionCreate, authorization: Optional[s
             title="Assinatura criada",
             message="Uma nova assinatura foi ativada para sua organização.",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("subscriptions: team notification on create failed for org=%s (%s); creation succeeded", body.org_id, exc)
     try:
         from app.services import webhook_delivery
         await webhook_delivery.dispatch(
@@ -151,8 +151,8 @@ async def criar_subscription(body: SubscriptionCreate, authorization: Optional[s
             event_type="subscription.created",
             payload={"subscription_id": result.data[0]["id"], "plan_id": body.plan_id, "status": body.status},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("subscriptions: webhook dispatch on create failed for org=%s (%s); creation succeeded", body.org_id, exc)
 
     return {"data": result.data[0]}
 
@@ -185,8 +185,8 @@ async def atualizar_subscription(
             action="update", resource_type="subscription",
             resource_id=subscription_id,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("subscriptions: update audit log failed for sub_id=%s (%s); update succeeded", subscription_id, exc)
     try:
         from app.services import webhook_delivery
         org_id_val = updated_record.get("org_id")
@@ -196,8 +196,8 @@ async def atualizar_subscription(
                 event_type="subscription.updated",
                 payload={"subscription_id": subscription_id, "status": updated_record.get("status")},
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("subscriptions: webhook dispatch on update failed for sub_id=%s (%s); update succeeded", subscription_id, exc)
 
     return {"data": updated_record}
 

@@ -10,8 +10,8 @@ from typing import Optional
 
 from fastapi import HTTPException
 from noctusai_seed import create_database_module, create_dependencies
-from noctusai_lib.action_log import log_action as _shared_log_action
-from noctusai_lib.auth import first_or_none, resolve_sso_role  # noqa: F401
+from noctusai_lib.domain.action_log import log_action as _shared_log_action
+from noctusai_lib.api.auth import first_or_none, resolve_sso_role  # noqa: F401
 from app.config import settings
 
 _db = create_database_module(settings, schema="erp")

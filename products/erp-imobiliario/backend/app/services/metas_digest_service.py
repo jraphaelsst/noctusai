@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.dependencies import first_or_none
-from noctusai_lib.email.digest import Digest, render as render_digest, send_digest
+from noctusai_lib.integrations.email.digest import Digest, render as render_digest, send_digest
+from noctusai_lib.primitives.parsing import format_brl
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,13 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "email_templates"
 
 
 def _fmt_brl(value: float | int | None) -> str:
-    if value is None:
-        return "R$ 0"
-    v = float(value)
-    return f"R$ {v:,.0f}".replace(",", ".")
+    """Thin alias of `noctusai_lib.parsing.format_brl(..., decimals=0)`.
+
+    ERP digest renders monetary values without centavos for compactness
+    (e.g. "R$ 1.234"). The lib helper handles the rest (None → "R$ 0",
+    BRL-locale separators).
+    """
+    return format_brl(value, decimals=0)
 
 
 async def _fetch_context(db: Any, periodo_id: str) -> Optional[Dict[str, Any]]:

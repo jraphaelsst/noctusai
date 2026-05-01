@@ -15,6 +15,7 @@ Historical re-exports (`get_supabase_client`, `get_admin_client` from the
 database module) preserved for backward compatibility with `tests/conftest.py`
 patches. Removing them would require a test-patch sweep; out of scope here.
 """
+import logging
 import re
 from datetime import datetime as dt, timezone
 from typing import Optional, Tuple, List
@@ -22,7 +23,9 @@ from typing import Optional, Tuple, List
 from fastapi import Header, HTTPException
 
 from noctusai_seed import create_database_module, create_dependencies
-from noctusai_lib.auth import (
+
+logger = logging.getLogger(__name__)
+from noctusai_lib.api.auth import (
     create_sso_token_factory,
     verify_sso_token_factory,
 )
@@ -152,7 +155,12 @@ def check_org_license(db, org_id: str, product_id: str) -> bool:
         try:
             if _parse_timestamp(fim) > now:
                 return True
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "dependencies: license id=%s has unparseable fim=%r (%s); "
+                "skipping in license-validity check",
+                lic.get("id"), fim, exc,
+            )
             continue
 
     return False
@@ -180,7 +188,12 @@ def get_licensed_product_ids(db, org_id: str) -> list:
             try:
                 if _parse_timestamp(fim) > now:
                     valid_ids.append(lic["product_id"])
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "dependencies: license id=%s has unparseable fim=%r (%s); "
+                    "skipping in licensed-product-ids list",
+                    lic.get("id"), fim, exc,
+                )
                 continue
     return valid_ids
 

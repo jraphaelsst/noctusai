@@ -145,7 +145,7 @@ class TestGenerateEmbedding:
     @pytest.mark.asyncio
     async def test_generate_embedding_propagates_not_configured(self):
         """Missing credentials surface as LLMNotConfigured from the shared lib."""
-        from noctusai_lib.llm import LLMNotConfigured
+        from noctusai_lib.integrations.llm import LLMNotConfigured
 
         with patch(
             "app.services.embedding_service._lib_generate_embedding",
@@ -157,7 +157,7 @@ class TestGenerateEmbedding:
     @pytest.mark.asyncio
     async def test_generate_embedding_propagates_api_error(self):
         """Upstream provider errors surface as LLMAPIError from the shared lib."""
-        from noctusai_lib.llm import LLMAPIError
+        from noctusai_lib.integrations.llm import LLMAPIError
 
         with patch(
             "app.services.embedding_service._lib_generate_embedding",

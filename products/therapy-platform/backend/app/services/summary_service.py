@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from app.config import settings
 from app.dependencies import first_or_none
 
-from noctusai_lib.llm import LLMNotConfigured, chat_completion
+from noctusai_lib.integrations.llm import LLMNotConfigured, chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +103,12 @@ async def _call_llm(
             org_id=clinic_id,
         )
         return json.loads(content or "{}")
-    except LLMNotConfigured:
+    except LLMNotConfigured as exc:
         # Graceful degrade preserving the previous placeholder UX.
+        logger.warning(
+            "summary_service: LLM not configured (%s); returning placeholder summary for clinic_id=%s",
+            exc, clinic_id,
+        )
         return {
             "summary": _PLACEHOLDER_SUMMARY,
             "key_points": [],

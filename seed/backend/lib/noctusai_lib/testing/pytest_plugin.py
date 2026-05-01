@@ -47,6 +47,7 @@ def pytest_configure(config) -> None:  # noqa: D401 — pytest hook
     except ModuleNotFoundError:
         # Not a product test session — nothing to bootstrap. This is the
         # expected path for seed-lib own tests + mcp tests.
+        logger.debug("pytest_plugin: app.main not importable; skipping product bootstrap (expected for seed-lib / mcp tests)")
         return
     except Exception as exc:
         # `app.main` is importable but failed at construction time

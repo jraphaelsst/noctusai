@@ -14,7 +14,7 @@ _LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
-import noctusai_lib.llm  # noqa: F401,E402
+import noctusai_lib.integrations.llm  # noqa: F401,E402
 
 
 def _install_fake(
@@ -29,9 +29,9 @@ def _install_fake(
     """Helper: install a FakeProvider as `provider_name` in the registry,
     configure an LLMConfig that routes to it, and return the fake so tests
     can inspect its call log."""
-    from noctusai_lib.llm import FakeProvider, LLMConfig
-    from noctusai_lib.llm.client import _reset_for_testing, configure_llm
-    from noctusai_lib.llm.registry import register
+    from noctusai_lib.integrations.llm import FakeProvider, LLMConfig
+    from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
+    from noctusai_lib.integrations.llm.registry import register
 
     _reset_for_testing()
     fake = FakeProvider(
@@ -61,13 +61,13 @@ def _restore_real_providers():
     their real register() side-effects."""
     import importlib
 
-    from noctusai_lib.llm.registry import _reset_for_testing as _reset_reg
+    from noctusai_lib.integrations.llm.registry import _reset_for_testing as _reset_reg
 
     _reset_reg()
     for mod in (
-        "noctusai_lib.llm.providers.openai_provider",
-        "noctusai_lib.llm.providers.anthropic_provider",
-        "noctusai_lib.llm.providers.gemini_provider",
+        "noctusai_lib.integrations.llm.providers.openai_provider",
+        "noctusai_lib.integrations.llm.providers.anthropic_provider",
+        "noctusai_lib.integrations.llm.providers.gemini_provider",
     ):
         importlib.import_module(mod)
         importlib.reload(sys.modules[mod])
@@ -80,7 +80,7 @@ class TestChatCompletion:
         _restore_real_providers()
 
     def test_dispatches_to_configured_provider_and_model(self):
-        from noctusai_lib.llm import chat_completion
+        from noctusai_lib.integrations.llm import chat_completion
 
         fake = _install_fake(chat=["hello"])
         result = asyncio.run(chat_completion(
@@ -94,7 +94,7 @@ class TestChatCompletion:
         assert call["api_key"] == "sk-test"
 
     def test_model_override_per_call(self):
-        from noctusai_lib.llm import chat_completion
+        from noctusai_lib.integrations.llm import chat_completion
 
         fake = _install_fake(chat=["x"])
         asyncio.run(chat_completion(
@@ -104,8 +104,8 @@ class TestChatCompletion:
         assert fake.calls[0]["model"] == "gpt-4o"
 
     def test_org_id_passed_to_key_provider(self):
-        from noctusai_lib.llm import LLMConfig, chat_completion
-        from noctusai_lib.llm.client import configure_llm
+        from noctusai_lib.integrations.llm import LLMConfig, chat_completion
+        from noctusai_lib.integrations.llm.client import configure_llm
 
         seen = []
         fake = _install_fake(chat=["x"])
@@ -121,12 +121,12 @@ class TestChatCompletion:
         assert fake.calls[0]["api_key"] == "sk-x"
 
     def test_raises_llm_not_configured_on_empty_key(self):
-        from noctusai_lib.llm import (
+        from noctusai_lib.integrations.llm import (
             LLMConfig,
             LLMNotConfigured,
             chat_completion,
         )
-        from noctusai_lib.llm.client import _reset_for_testing, configure_llm
+        from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
 
         _reset_for_testing()
         configure_llm(LLMConfig(
@@ -146,7 +146,7 @@ class TestEmbeddingDispatch:
         _restore_real_providers()
 
     def test_dispatches_and_uses_default_model(self):
-        from noctusai_lib.llm import generate_embedding
+        from noctusai_lib.integrations.llm import generate_embedding
 
         fake = _install_fake(embeddings=[[0.1, 0.2, 0.3]])
         vec = asyncio.run(generate_embedding("hello"))
@@ -159,7 +159,7 @@ class TestAudioDispatch:
         _restore_real_providers()
 
     def test_dispatches_and_uses_default_model(self):
-        from noctusai_lib.llm import transcribe_audio
+        from noctusai_lib.integrations.llm import transcribe_audio
 
         fake = _install_fake(transcriptions=["hello there"])
         text = asyncio.run(transcribe_audio(audio=b"abc"))
@@ -173,7 +173,7 @@ class TestVisionDispatch:
         _restore_real_providers()
 
     def test_dispatches_and_uses_default_model(self):
-        from noctusai_lib.llm import analyze_image
+        from noctusai_lib.integrations.llm import analyze_image
 
         fake = _install_fake(visions=["a dog"])
         result = asyncio.run(
@@ -188,7 +188,7 @@ class TestVisionDispatch:
 
 class TestBuildCachedMessages:
     def test_stable_first_dynamic_last(self):
-        from noctusai_lib.llm import build_cached_messages
+        from noctusai_lib.integrations.llm import build_cached_messages
 
         msgs = build_cached_messages(
             static_system="stable instructions" * 300,
@@ -200,7 +200,7 @@ class TestBuildCachedMessages:
         assert msgs[-1]["content"] == "per-request content"
 
     def test_anthropic_adds_cache_control_to_system(self):
-        from noctusai_lib.llm import build_cached_messages
+        from noctusai_lib.integrations.llm import build_cached_messages
 
         msgs = build_cached_messages(
             static_system="stable" * 300,
@@ -212,7 +212,7 @@ class TestBuildCachedMessages:
 
     def test_openai_does_not_add_cache_control(self):
         """OpenAI caches automatically — no marker needed / allowed."""
-        from noctusai_lib.llm import build_cached_messages
+        from noctusai_lib.integrations.llm import build_cached_messages
 
         msgs = build_cached_messages(
             static_system="stable" * 300,
@@ -222,7 +222,7 @@ class TestBuildCachedMessages:
         assert "cache_control" not in msgs[0]
 
     def test_extra_static_context_placed_before_user(self):
-        from noctusai_lib.llm import build_cached_messages
+        from noctusai_lib.integrations.llm import build_cached_messages
 
         examples = [
             {"role": "user", "content": "example user"},
@@ -238,7 +238,7 @@ class TestBuildCachedMessages:
         assert msgs[-1]["content"] == "the real question"
 
     def test_extra_dynamic_messages_after_user(self):
-        from noctusai_lib.llm import build_cached_messages
+        from noctusai_lib.integrations.llm import build_cached_messages
 
         msgs = build_cached_messages(
             static_system="instructions",
@@ -251,7 +251,7 @@ class TestBuildCachedMessages:
     def test_does_not_mutate_caller_lists(self):
         """Deep-copy of caller-provided messages — mutations in the result
         must not bleed into the caller's references."""
-        from noctusai_lib.llm import build_cached_messages
+        from noctusai_lib.integrations.llm import build_cached_messages
 
         examples = [{"role": "user", "content": "x"}]
         msgs = build_cached_messages(
@@ -267,9 +267,9 @@ class TestBuildCachedMessages:
         helper only logs a debug message, never raises."""
         import logging
 
-        from noctusai_lib.llm import build_cached_messages
+        from noctusai_lib.integrations.llm import build_cached_messages
 
-        caplog.set_level(logging.DEBUG, logger="noctusai_lib.llm.chat")
+        caplog.set_level(logging.DEBUG, logger="noctusai_lib.integrations.llm.chat")
         msgs = build_cached_messages(
             static_system="too short",
             dynamic_user="x",

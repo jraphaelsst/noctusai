@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from noctusai_lib.email.digest import DigestSendResult
+from noctusai_lib.integrations.email.digest import DigestSendResult
 
 
 class TestAggregatePeriod:
@@ -51,7 +51,7 @@ class TestBuildNarrative:
             "app.services.monthly_narrative_service._fetch_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.monthly_narrative_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="Panorama.\n\nObservações.\n\nDica.",
         ):
@@ -80,7 +80,7 @@ class TestBuildNarrative:
             "app.services.monthly_narrative_service._fetch_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.monthly_narrative_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="Resumo",
         ):
@@ -103,7 +103,7 @@ class TestBuildNarrative:
             "app.services.monthly_narrative_service._fetch_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.monthly_narrative_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             side_effect=RuntimeError("LLM down"),
         ):
@@ -125,11 +125,11 @@ class TestSendMonthlyNarrative:
             "app.services.monthly_narrative_service._fetch_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.monthly_narrative_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="Narrativa.",
         ), patch(
-            "app.services.monthly_narrative_service.send_digest",
+            "noctusai_lib.domain.digest.orchestrate.send_digest",
             new_callable=AsyncMock,
             return_value=DigestSendResult(sent=True, external_id="abc", subject="x"),
         ):

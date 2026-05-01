@@ -436,7 +436,8 @@ async def download_consulta_zip(
                 return None
             filename = item.get("arquivo_nome") or f"{item['nome_display']}.pdf"
             return (filename, resp.content)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            logger.warning("certidoes: download failed for %s (%s); skipping in batch ZIP", url, exc)
             return None
 
     async with httpx.AsyncClient() as client:

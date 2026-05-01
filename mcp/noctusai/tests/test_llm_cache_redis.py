@@ -16,7 +16,7 @@ _LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
-import noctusai_lib.llm  # noqa: E402,F401
+import noctusai_lib.integrations.llm  # noqa: E402,F401
 
 
 # ── Fixtures ────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ def fake_redis():
 
 @pytest.fixture
 def redis_backend(fake_redis):
-    from noctusai_lib.llm.backends import RedisCacheBackend
+    from noctusai_lib.integrations.llm.backends import RedisCacheBackend
     return RedisCacheBackend(client=fake_redis)
 
 
@@ -140,7 +140,7 @@ class TestFlushPrefix:
 
 class TestFlushForModelDispatch:
     def test_dispatches_to_redis_flush_prefix(self, redis_backend):
-        from noctusai_lib.llm.cache import flush_for_model
+        from noctusai_lib.integrations.llm.cache import flush_for_model
 
         async def run():
             await redis_backend.setex("llm:erp:openai:gpt-4o-mini:v1:a", 60, "x")
@@ -160,21 +160,21 @@ class TestFlushForModelDispatch:
 
 class TestConstruction:
     def test_requires_url_or_client(self):
-        from noctusai_lib.llm.backends import RedisCacheBackend
+        from noctusai_lib.integrations.llm.backends import RedisCacheBackend
 
         with pytest.raises(ValueError, match="url"):
             RedisCacheBackend()
 
     def test_from_url_lazily(self, fake_redis):
         """Constructor should NOT open the connection immediately."""
-        from noctusai_lib.llm.backends import RedisCacheBackend
+        from noctusai_lib.integrations.llm.backends import RedisCacheBackend
 
         backend = RedisCacheBackend(url="redis://localhost:6379/0")
         # No connection attempt yet — _client is None
         assert backend._client is None
 
     def test_from_client_skips_lazy_open(self, fake_redis):
-        from noctusai_lib.llm.backends import RedisCacheBackend
+        from noctusai_lib.integrations.llm.backends import RedisCacheBackend
 
         backend = RedisCacheBackend(client=fake_redis)
         assert backend._client is fake_redis

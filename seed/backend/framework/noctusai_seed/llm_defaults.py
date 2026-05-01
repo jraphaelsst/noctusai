@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from noctusai_lib.credentials import resolve_credential
-from noctusai_lib.llm import LLMConfig
+from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.llm import LLMConfig
 
 
 def _default_key_provider(provider: str, org_id: str | None = None) -> str | None:
@@ -60,7 +60,7 @@ def default_llm_config(
     # Auto-wire the Redis cache when a URL is supplied. Products with no
     # REDIS_URL stay on the in-memory default (`cache_enabled=False`).
     if redis_url:
-        from noctusai_lib.llm.backends import RedisCacheBackend
+        from noctusai_lib.integrations.llm.backends import RedisCacheBackend
         defaults["cache_backend"] = RedisCacheBackend(url=redis_url)
         defaults["cache_enabled"] = True
 
@@ -68,7 +68,7 @@ def default_llm_config(
     # (service role — bypasses RLS for writes) and schema are required;
     # missing either means we keep `usage_sink=None` (no tracking).
     if usage_tracking_db is not None and usage_tracking_schema:
-        from noctusai_lib.llm.usage import SupabaseUsageSink
+        from noctusai_lib.integrations.llm.usage import SupabaseUsageSink
         defaults["usage_sink"] = SupabaseUsageSink(
             db_client=usage_tracking_db,
             schema=usage_tracking_schema,

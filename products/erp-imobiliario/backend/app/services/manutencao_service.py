@@ -65,8 +65,12 @@ class ManutencaoService:
                         if dias >= 0:
                             total_dias_resolucao += dias
                             count_concluidos += 1
-                    except (ValueError, TypeError):
-                        pass
+                    except (ValueError, TypeError) as exc:
+                        logger.warning(
+                            "manutencao_service: ordem id=%s has unparseable data_abertura=%r/data_conclusao=%r (%s); "
+                            "skipping in tempo-medio aggregate",
+                            ordem.get("id"), data_abertura, data_conclusao, exc,
+                        )
 
             # Check overdue: active status + past data_previsao
             if status in self.ACTIVE_STATUSES:

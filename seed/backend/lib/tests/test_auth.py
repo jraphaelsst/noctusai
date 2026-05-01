@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from noctusai_lib.auth import (
+from noctusai_lib.api.auth import (
     SSOSessionCache,
     create_sso_token_factory,
     verify_sso_token_factory,
@@ -76,7 +76,7 @@ class TestSSOTokenFactories:
 
         # Mint a token, then jump system clock forward past expiry.
         token = mint(user_id="u", org_id="o", product_slug="p", email="e@x.com")
-        with patch("noctusai_lib.auth.jwt.decode") as decoded:
+        with patch("noctusai_lib.api.auth.jwt.decode") as decoded:
             import jwt as _jwt_pkg
             decoded.side_effect = _jwt_pkg.ExpiredSignatureError("token expired")
             with pytest.raises(HTTPException) as exc:
@@ -140,7 +140,7 @@ class TestSSOSessionCache:
 
         # Capture the pre-set time BEFORE patching, then advance past TTL.
         now = time.monotonic()
-        with patch("noctusai_lib.auth.time.monotonic", return_value=now + 120):
+        with patch("noctusai_lib.api.auth.time.monotonic", return_value=now + 120):
             assert cache.get("alice@example.com") is None
             # Entry is also purged from the store on get.
             assert "alice@example.com" not in cache._store

@@ -49,7 +49,7 @@ async def transcribe_segment(
     try:
         import httpx
 
-        from noctusai_lib.llm import LLMNotConfigured, transcribe_audio
+        from noctusai_lib.integrations.llm import LLMNotConfigured, transcribe_audio
 
         if audio_url.startswith("mock://"):
             logger.info("Mock audio URL — retornando placeholder para segmento %d", segment_number)
@@ -75,7 +75,11 @@ async def transcribe_segment(
         )
         return str(transcript).strip()
 
-    except LLMNotConfigured:
+    except LLMNotConfigured as exc:
+        logger.warning(
+            "transcription: LLM not configured (%s); returning placeholder for segment %d (clinic_id=%s)",
+            exc, segment_number, clinic_id,
+        )
         return _PLACEHOLDER_TEXT
     except Exception as e:
         logger.error(
@@ -94,6 +98,8 @@ async def assemble_transcript(
     appointment_id: str,
     db: Any,
     clinic_id: Optional[str] = None,
+    *,
+    transcribe_segment_fn: Optional[Any] = None,
 ) -> str:
     """Assemble the full transcript from all audio segments.
 
@@ -101,7 +107,16 @@ async def assemble_transcript(
     contextual markers indicating pauses, resumes, and reopens.
 
     Updates each segment's transcription_text and is_transcribed flag.
+
+    Args:
+        appointment_id: appointment whose segments to transcribe.
+        db: Supabase client.
+        clinic_id: optional clinic scope for credential lookup.
+        transcribe_segment_fn: DI seam for tests — defaults to
+            `transcribe_segment`. Production code should never pass it.
     """
+    if transcribe_segment_fn is None:
+        transcribe_segment_fn = transcribe_segment
     segments_result = (
         db.table("session_audio_segments")
         .select("*")
@@ -146,7 +161,7 @@ async def assemble_transcript(
 
         # Transcribe
         if audio_url:
-            text = await transcribe_segment(audio_url, seg_number, clinic_id=clinic_id)
+            text = await transcribe_segment_fn(audio_url, seg_number, clinic_id=clinic_id)
         else:
             text = f"[Segmento {seg_number} — áudio não disponível]"
 
@@ -169,5 +184,6 @@ def _format_time(iso_str: str) -> str:
         from datetime import datetime
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
         return dt.strftime("%H:%M")
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError) as exc:
+        logger.warning("transcription: cannot format time from %r (%s); using placeholder '--:--'", iso_str, exc)
         return "--:--"

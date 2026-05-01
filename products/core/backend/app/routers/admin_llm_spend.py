@@ -16,7 +16,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from noctusai_lib.llm.budget import compute_status
+from noctusai_lib.integrations.llm.budget import compute_status
 
 from app.database import get_admin_client
 from app.dependencies import get_current_admin

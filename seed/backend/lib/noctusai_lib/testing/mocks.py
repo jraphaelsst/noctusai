@@ -496,17 +496,72 @@ class MockRequestBuilder:
         )
 
     def insert(self, data=None, *a, **k):
+        """Track the insert payload AND return the inserted row(s) so that
+        production code reading `result.data` after `insert(...).execute()`
+        sees what was inserted — matching real Supabase behavior.
+
+        Two readers exist for an insert:
+          1. **Production code** that does `result = db.table(t).insert(row).execute()`
+             then `first_or_none(result)` — needs `result.data` to contain the
+             inserted row(s) with `id` set. This pattern is in `messaging_service.
+             send_message`, `audit_service.log`, and dozens of other places.
+          2. **Tests** that read `db.table(t).inserted_payloads` to assert the
+             write happened with the right shape. This pattern is documented
+             in `KB § PATTERNS/testing.md § Side-effect verification via
+             inserted_payloads`.
+
+        Both are preserved. `inserted_payloads` keeps the original payload
+        (without auto-generated id, so tests can assert the exact dict the
+        production code passed); `execute().data` returns the normalized rows
+        (with auto-id) so production code's `first_or_none(result)["id"]`
+        access works.
+
+        **Auto-id generation:** if a row's `id` is absent or None, fill with
+        a stable mock-id of the form `mock-<table>-<n>` where `n` is the
+        running count of inserts on this table. Tests that need a specific
+        id should pass it in the payload.
+
+        **Insert-failure simulation:** queue an empty response via
+        `mock_db.set_sequential_responses(name, [MockSupabaseResponse(data=[])])`.
+        `set_table_data(name, [...])` controls SELECT seeding only — it does
+        NOT influence insert response (use the queue for that).
+        """
         if self._validate_schema:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="insert",
                 strict_unknown_tables=self._strict_unknown_tables,
             )
+
+        # Normalize to list-of-dicts.
+        if isinstance(data, list):
+            payload_rows = list(data)
+        elif data is not None:
+            payload_rows = [data]
+        else:
+            payload_rows = []
+
+        # Track raw payloads (no auto-id) — tests read `inserted_payloads`
+        # and expect the exact dict the caller passed.
         if isinstance(data, list):
             self.inserted_payloads.extend(data)
         elif data is not None:
             self.inserted_payloads.append(data)
+
+        # Build the response rows (with auto-id) so production callers reading
+        # `result.data[0]["id"]` get a value — matches real Supabase.
+        response_rows = []
+        for row in payload_rows:
+            if not isinstance(row, dict):
+                response_rows.append(row)
+                continue
+            response_row = dict(row)
+            if not response_row.get("id"):
+                table_label = self._table or "row"
+                response_row["id"] = f"mock-{table_label}-{len(self.inserted_payloads)}"
+            response_rows.append(response_row)
+
         return MockQueryBuilder(
-            self._data,
+            response_rows,
             response_queue=self._response_queue,
             response_idx=self._response_idx,
             **self._builder_kwargs(),
@@ -620,7 +675,12 @@ class MockSupabaseClient:
         return scoped
 
     def set_table_data(self, name, data):
-        """Set mock data for a specific table."""
+        """Set mock data for a specific table — controls SELECT seeding only.
+
+        Insert/update/upsert/delete responses are NOT influenced by this.
+        Use `set_sequential_responses(name, [MockSupabaseResponse(...)])` to
+        control execute() output for write operations or to simulate failures.
+        """
         self._tables[name] = self._builder_for(name, data=data)
 
     def set_sequential_responses(self, table_name, responses):

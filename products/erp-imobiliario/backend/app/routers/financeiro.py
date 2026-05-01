@@ -26,6 +26,8 @@ and cash flow analysis.
 """
 import logging
 from datetime import datetime, timezone
+
+from noctusai_lib.primitives.timeutil import now_utc
 from dateutil.relativedelta import relativedelta
 from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -178,7 +180,7 @@ async def fluxo_caixa(
     service = FinanceiroService(db, user.id)
 
     # Only fetch data from the relevant time window
-    cutoff = (datetime.now(timezone.utc) - relativedelta(months=meses)).strftime("%Y-%m-%d")
+    cutoff = (now_utc() - relativedelta(months=meses)).strftime("%Y-%m-%d")
 
     # Fetch lancamentos for cash flow within the time window
     result = db.table("lancamentos").select("*").gte("data_vencimento", cutoff).order("data_vencimento", desc=False).execute()

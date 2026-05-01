@@ -15,7 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
-from noctusai_lib.ai.consent import (
+from noctusai_lib.domain.ai.consent import (
     get_feature,
     list_user_consent_view,
     pending_count,
@@ -71,9 +71,9 @@ async def upsert_my_consent(
     org_id: Optional[str] = None
     try:
         org_id = await get_org_id(user)
-    except Exception:
+    except Exception as exc:
         # Personal-context features may have no org — that's OK.
-        pass
+        logger.debug("me_consents: get_org_id returned no org for user=%s (%s); proceeding with org_id=None", user.id, exc)
     try:
         row = await upsert_decision(
             db, str(user.id), feature_key, granted=body.granted, org_id=org_id

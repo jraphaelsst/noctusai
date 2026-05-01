@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from noctusai_lib.llm import chat_completion, generate_embedding
+from noctusai_lib.integrations.llm import chat_completion, generate_embedding
 
 logger = logging.getLogger(__name__)
 

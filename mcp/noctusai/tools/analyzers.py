@@ -2,10 +2,13 @@
 
 Discovers patterns, dependency issues, structure gaps, and test coverage.
 """
-import re
 import json
-from pathlib import Path
+import logging
+import re
 from collections import defaultdict
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -22,7 +25,8 @@ def _list_products():
 def _read(path):
     try:
         return path.read_text(encoding="utf-8")
-    except:
+    except Exception as exc:
+        logger.warning("analyzers: cannot read %s (%s), skipping", path, exc)
         return None
 
 

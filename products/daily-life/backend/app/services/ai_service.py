@@ -10,29 +10,16 @@ entries); `cache=False` so note text doesn't hash into a shared cache key.
 """
 from __future__ import annotations
 
-import json
 import logging
 from typing import Optional
 
-from noctusai_lib.llm import chat_completion
-from noctusai_lib.llm.exceptions import LLMNotConfigured
+from noctusai_lib.integrations.llm import chat_completion
+from noctusai_lib.integrations.llm.exceptions import LLMNotConfigured
+from noctusai_lib.primitives.parsing import safe_json_loads as _safe_json_loads
 
 logger = logging.getLogger(__name__)
 
 PROMPT_VERSION_EXTRACT_TASKS = "daily-life-extract-tasks@v1"
-
-
-def _safe_json_loads(raw: str):
-    stripped = raw.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.split("```", 2)[1]
-        if stripped.startswith("json"):
-            stripped = stripped[4:]
-        stripped = stripped.strip().rstrip("`").strip()
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
 
 
 _EXTRACT_SYSTEM = """Você é um assistente de produtividade em português.

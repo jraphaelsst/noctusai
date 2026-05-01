@@ -10,7 +10,7 @@ LLM access is inherited automatically — `create_product_app()` auto-wires
 credential resolution + the default multi-provider LLMConfig. If this
 product grew AI features, it would call:
 
-    from noctusai_lib.llm import chat_completion
+    from noctusai_lib.integrations.llm import chat_completion
     reply = await chat_completion(messages=[...], org_id=org_id)
 
 …and that's all. To override the default chat model (say, prefer `gpt-4o`

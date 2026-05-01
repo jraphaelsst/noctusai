@@ -4,10 +4,13 @@ Tests for the No-Show Service.
 Covers: no-show detection and charging, recurring schedule absence
 tracking, error handling for individual appointments, and edge cases
 (no waiting appointments, already-past cutoff, with/without recurring).
+
+Pattern 1 (DI): `detect_and_charge_no_shows(..., charge_fn=...)` lets each
+test pass a fake charge function instead of patching `commission_engine`.
 """
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from tests.conftest import MockSupabaseClient
 from app.services import no_show_service
@@ -59,30 +62,21 @@ class TestDetectAndChargeNoShows:
         db = MockSupabaseClient()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT_NO_SHOW])
 
-        with patch.object(
-            no_show_service.commission_engine,
-            "process_no_show_charge",
-            new_callable=AsyncMock,
-            return_value={"id": "tx-001", "amount": "75.00"},
-        ):
-            result = await no_show_service.detect_and_charge_no_shows(db)
+        charge_fn = AsyncMock(return_value={"id": "tx-001", "amount": "75.00"})
+        result = await no_show_service.detect_and_charge_no_shows(db, charge_fn=charge_fn)
 
         assert result["processed"] == 1
         assert result["charged"] == 1
+        charge_fn.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_show_charge_returns_none(self):
-        """Processed but not charged when commission engine returns None."""
+        """Processed but not charged when the charge function returns None."""
         db = MockSupabaseClient()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT_NO_SHOW])
 
-        with patch.object(
-            no_show_service.commission_engine,
-            "process_no_show_charge",
-            new_callable=AsyncMock,
-            return_value=None,
-        ):
-            result = await no_show_service.detect_and_charge_no_shows(db)
+        charge_fn = AsyncMock(return_value=None)
+        result = await no_show_service.detect_and_charge_no_shows(db, charge_fn=charge_fn)
 
         assert result["processed"] == 1
         assert result["charged"] == 0
@@ -94,13 +88,8 @@ class TestDetectAndChargeNoShows:
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT_WITH_RECURRING])
         db.set_table_data("recurring_schedules", [SAMPLE_RECURRING_SCHEDULE])
 
-        with patch.object(
-            no_show_service.commission_engine,
-            "process_no_show_charge",
-            new_callable=AsyncMock,
-            return_value={"id": "tx-002"},
-        ):
-            result = await no_show_service.detect_and_charge_no_shows(db)
+        charge_fn = AsyncMock(return_value={"id": "tx-002"})
+        result = await no_show_service.detect_and_charge_no_shows(db, charge_fn=charge_fn)
 
         assert result["processed"] == 1
 
@@ -115,13 +104,8 @@ class TestDetectAndChargeNoShows:
         db.set_table_data("appointments", [appt_with_missing_schedule])
         db.set_table_data("recurring_schedules", [])
 
-        with patch.object(
-            no_show_service.commission_engine,
-            "process_no_show_charge",
-            new_callable=AsyncMock,
-            return_value={"id": "tx-003"},
-        ):
-            result = await no_show_service.detect_and_charge_no_shows(db)
+        charge_fn = AsyncMock(return_value={"id": "tx-003"})
+        result = await no_show_service.detect_and_charge_no_shows(db, charge_fn=charge_fn)
 
         assert result["processed"] == 1
 
@@ -136,16 +120,12 @@ class TestDetectAndChargeNoShows:
         }
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT_NO_SHOW, appt2])
 
-        with patch.object(
-            no_show_service.commission_engine,
-            "process_no_show_charge",
-            new_callable=AsyncMock,
-            return_value={"id": "tx-004"},
-        ):
-            result = await no_show_service.detect_and_charge_no_shows(db)
+        charge_fn = AsyncMock(return_value={"id": "tx-004"})
+        result = await no_show_service.detect_and_charge_no_shows(db, charge_fn=charge_fn)
 
         assert result["processed"] == 2
         assert result["charged"] == 2
+        assert charge_fn.call_count == 2
 
     @pytest.mark.asyncio
     async def test_error_in_one_appointment_continues_others(self):
@@ -160,19 +140,14 @@ class TestDetectAndChargeNoShows:
 
         call_count = 0
 
-        async def mock_charge(appt_id, db_arg):
+        async def charge_fn(appt_id, db_arg):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise Exception("Payment gateway error")
             return {"id": "tx-005"}
 
-        with patch.object(
-            no_show_service.commission_engine,
-            "process_no_show_charge",
-            side_effect=mock_charge,
-        ):
-            result = await no_show_service.detect_and_charge_no_shows(db)
+        result = await no_show_service.detect_and_charge_no_shows(db, charge_fn=charge_fn)
 
         # First one failed (error caught), second processed successfully
         assert result["processed"] == 1

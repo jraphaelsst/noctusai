@@ -2,3 +2,11 @@ mcp>=1.0.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 openai>=1.0.0  # keeper headless/evaluate review path (tools/ai_brain.py)
+pytest>=8.0.0  # MCP toolkit test suite
+pytest-asyncio>=0.23.0
+fakeredis>=2.35.0  # tests/test_llm_cache_redis.py — in-memory Redis stand-in
+# Editable install of the platform shared lib — gives MCP tools access to
+# `noctusai_lib.logging_config.auto_configure_for_cli(...)` so MCP CLI/server
+# output uses the same formatter as backend products. Path is relative to
+# this requirements.txt; resolves to <repo>/seed/backend/lib.
+-e ../../seed/backend/lib

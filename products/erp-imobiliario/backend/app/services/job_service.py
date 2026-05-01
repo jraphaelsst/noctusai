@@ -10,6 +10,8 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+
+from noctusai_lib.primitives.timeutil import current_day_ref
 from enum import Enum
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
@@ -215,13 +217,18 @@ async def _job_gerar_parcelas(job: Job):
     valor_restante = valor_total - valor_entrada
     valor_parcela = round(valor_restante / max(num_parcelas, 1), 2)
 
-    data_inicio = contrato.get("data_inicio", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    data_inicio = contrato.get("data_inicio", current_day_ref())
 
     parcelas = []
     for i in range(num_parcelas):
         try:
             dt = datetime.fromisoformat(data_inicio) + timedelta(days=30 * (i + 1))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "job_service: contrato id=%s has unparseable data_inicio=%r (%s); "
+                "using now() as anchor for parcela %d",
+                contrato_id, data_inicio, exc, i + 1,
+            )
             dt = datetime.now(timezone.utc) + timedelta(days=30 * (i + 1))
 
         parcelas.append({

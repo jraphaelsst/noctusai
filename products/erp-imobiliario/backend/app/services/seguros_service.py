@@ -91,8 +91,12 @@ class SegurosService:
                         data_venc = date.fromisoformat(str(data_venc_str)[:10])
                         if hoje <= data_venc <= limite_30d:
                             vencendo_30d += 1
-                    except (ValueError, TypeError):
-                        pass
+                    except (ValueError, TypeError) as exc:
+                        logger.warning(
+                            "seguros_service: seguro id=%s has unparseable data_vencimento=%r (%s); "
+                            "skipping in vencendo_30d count",
+                            seguro.get("id"), data_venc_str, exc,
+                        )
 
         return {
             "ativos": ativos,

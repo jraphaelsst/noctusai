@@ -4,6 +4,8 @@ Covers key registration, CRUD, checkout (retirada), return (devolucao), and hist
 """
 import pytest
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestListarChaves:
     def test_list_all(self, client):
@@ -38,10 +40,12 @@ class TestListarChaves:
 
 class TestCriarChave:
     def test_create_success(self, client):
-        client._mock_supabase.set_table_data("chaves", {
-            "id": "ch-new", "codigo": "AP101-A", "imovel_id": "im-1",
-            "status": "disponivel", "descricao": "Chave principal",
-        })
+        client._mock_supabase.set_sequential_responses("chaves", [
+            MockSupabaseResponse(data=[{
+                "id": "ch-new", "codigo": "AP101-A", "imovel_id": "im-1",
+                "status": "disponivel", "descricao": "Chave principal",
+            }]),
+        ])
         resp = client.post("/api/chaves", json={
             "imovel_id": "im-1",
             "codigo": "AP101-A",

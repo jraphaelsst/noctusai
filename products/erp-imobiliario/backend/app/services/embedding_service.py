@@ -8,7 +8,7 @@ Default model is `text-embedding-3-small` (1536 dims). Credential resolution
 import logging
 from typing import Any, Optional
 
-from noctusai_lib.llm import generate_embedding as _lib_generate_embedding
+from noctusai_lib.integrations.llm import generate_embedding as _lib_generate_embedding
 
 logger = logging.getLogger(__name__)
 

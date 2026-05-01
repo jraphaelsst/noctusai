@@ -55,14 +55,17 @@ def _mock_email():
 
 class TestCreateInvitationAdmin:
     def test_create_invitation_admin(self, admin_client):
-        """platform_admin can create any invitation type."""
+        """platform_admin can create any invitation type.
+
+        `generate_invite_token` runs for real (it's a stateless `secrets.token_urlsafe`
+        call) — the assertion is on email, not the token value.
+        """
         admin_client._mock_supabase.set_sequential_responses("invitations", [
             MockSupabaseResponse(data=[]),                       # pending check
             MockSupabaseResponse(data=[SAMPLE_INVITATION]),      # insert
         ])
 
-        with _mock_email(), \
-             patch("app.routers.invitations.generate_invite_token", return_value="tok-abc123"):
+        with _mock_email():
             resp = admin_client.post("/api/invitations", json={
                 "email": "newuser@test.com",
                 "invite_type": "platform_to_therapist",
@@ -81,8 +84,7 @@ class TestCreateInvitationTherapist:
             MockSupabaseResponse(data=[SAMPLE_PATIENT_INVITE]),
         ])
 
-        with _mock_email(), \
-             patch("app.routers.invitations.generate_invite_token", return_value="tok-def456"):
+        with _mock_email():
             resp = client.post("/api/invitations", json={
                 "email": "patient@test.com",
                 "invite_type": "therapist_to_patient",
@@ -124,9 +126,10 @@ class TestCreateInvitationDuplicate:
 
 class TestValidateToken:
     def test_validate_token(self, client):
-        """Public endpoint returns invitation info."""
-        with patch("app.routers.invitations.validate_invitation", return_value=SAMPLE_INVITATION):
-            resp = client.raw().get("/api/invitations/accept/validate?token=tok-abc123")
+        """Pattern 3: seed the invitation row real `validate_invitation`
+        will look up. Public endpoint returns invitation info."""
+        client._mock_supabase.set_table_data("invitations", [SAMPLE_INVITATION])
+        resp = client.raw().get("/api/invitations/accept/validate?token=tok-abc123")
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["email"] == "newuser@test.com"
@@ -139,12 +142,17 @@ class TestValidateToken:
 
 class TestAcceptInvitation:
     def test_accept_invitation(self, client):
-        """Accepting a valid invitation creates a user and profile."""
+        """Pattern 3: seed (a) the invitation row that `validate_invitation`
+        finds, (b) the therapist_profiles row created by the route, (c) mock
+        the auth.admin.create_user boundary (Supabase auth API — external).
+        Real `accept_invitation` runs an UPDATE — no need to patch.
+        """
         invitation_data = {
             **SAMPLE_INVITATION,
             "invite_type": "platform_to_therapist",
             "role": "therapist",
         }
+        client._mock_supabase.set_table_data("invitations", [invitation_data])
 
         mock_auth_user = MagicMock()
         mock_auth_user.user = MagicMock()
@@ -156,33 +164,28 @@ class TestAcceptInvitation:
             {"user_id": "new-user-789", "nome": "Novo Terapeuta"},
         ])
 
-        with patch("app.routers.invitations.validate_invitation", return_value=invitation_data), \
-             patch("app.routers.invitations.accept_invitation") as mock_accept:
-            resp = client.raw().post("/api/invitations/accept", json={
-                "token": "tok-abc123",
-                "nome": "Novo Terapeuta",
-                "password": "senha123456",
-            })
+        resp = client.raw().post("/api/invitations/accept", json={
+            "token": "tok-abc123",
+            "nome": "Novo Terapeuta",
+            "password": "senha123456",
+        })
 
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["user_id"] == "new-user-789"
         assert data["role"] == "therapist"
-        mock_accept.assert_called_once()
+        # Verify the auth boundary was called with the invitation email.
+        client._mock_supabase.auth.admin.create_user.assert_called_once()
 
     def test_accept_invalid_token(self, client):
-        """404 when token is invalid."""
-        from fastapi import HTTPException
-
-        with patch(
-            "app.routers.invitations.validate_invitation",
-            side_effect=HTTPException(status_code=404, detail="Convite nao encontrado"),
-        ):
-            resp = client.raw().post("/api/invitations/accept", json={
-                "token": "bad-token",
-                "nome": "Test",
-                "password": "senha123456",
-            })
+        """Pattern 3: empty `invitations` seed → real `validate_invitation`
+        raises 404 when the token has no match."""
+        client._mock_supabase.set_table_data("invitations", [])
+        resp = client.raw().post("/api/invitations/accept", json={
+            "token": "bad-token",
+            "nome": "Test",
+            "password": "senha123456",
+        })
         assert resp.status_code == 404
 
 

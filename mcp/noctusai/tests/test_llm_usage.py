@@ -15,14 +15,14 @@ _LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
-import noctusai_lib.llm  # noqa: E402,F401
+import noctusai_lib.integrations.llm  # noqa: E402,F401
 
 
 def _install_with_sink(sink, *, chat=None, embeddings=None):
     """Install a FakeProvider as 'openai' with an active usage sink."""
-    from noctusai_lib.llm import FakeProvider, LLMConfig
-    from noctusai_lib.llm.client import _reset_for_testing, configure_llm
-    from noctusai_lib.llm.registry import register
+    from noctusai_lib.integrations.llm import FakeProvider, LLMConfig
+    from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
+    from noctusai_lib.integrations.llm.registry import register
 
     _reset_for_testing()
     fake = FakeProvider(chat_responses=chat, embedding_responses=embeddings)
@@ -43,13 +43,13 @@ def _install_with_sink(sink, *, chat=None, embeddings=None):
 def _restore_real_providers():
     import importlib
 
-    from noctusai_lib.llm.registry import _reset_for_testing as _reset_reg
+    from noctusai_lib.integrations.llm.registry import _reset_for_testing as _reset_reg
 
     _reset_reg()
     for mod in (
-        "noctusai_lib.llm.providers.openai_provider",
-        "noctusai_lib.llm.providers.anthropic_provider",
-        "noctusai_lib.llm.providers.gemini_provider",
+        "noctusai_lib.integrations.llm.providers.openai_provider",
+        "noctusai_lib.integrations.llm.providers.anthropic_provider",
+        "noctusai_lib.integrations.llm.providers.gemini_provider",
     ):
         importlib.import_module(mod)
         importlib.reload(sys.modules[mod])
@@ -59,7 +59,7 @@ def _restore_real_providers():
 
 class TestInMemorySink:
     def test_records_events(self):
-        from noctusai_lib.llm import InMemoryUsageSink, UsageEvent
+        from noctusai_lib.integrations.llm import InMemoryUsageSink, UsageEvent
 
         async def run():
             sink = InMemoryUsageSink()
@@ -75,7 +75,7 @@ class TestInMemorySink:
         asyncio.run(run())
 
     def test_aggregate_groups_by_triple(self):
-        from noctusai_lib.llm import InMemoryUsageSink, UsageEvent
+        from noctusai_lib.integrations.llm import InMemoryUsageSink, UsageEvent
 
         async def run():
             sink = InMemoryUsageSink()
@@ -106,7 +106,7 @@ class TestInMemorySink:
 
 class TestCostEstimation:
     def test_known_model_computes_cost(self):
-        from noctusai_lib.llm import estimate_cost_usd
+        from noctusai_lib.integrations.llm import estimate_cost_usd
 
         # gpt-4o-mini in the catalog: 0.15 in, 0.60 out per 1M
         # 1000 prompt + 500 completion → 0.00015 + 0.00030 = 0.00045
@@ -117,7 +117,7 @@ class TestCostEstimation:
         assert abs(cost - 0.00045) < 1e-9
 
     def test_unknown_model_returns_zero(self):
-        from noctusai_lib.llm import estimate_cost_usd
+        from noctusai_lib.integrations.llm import estimate_cost_usd
 
         cost = estimate_cost_usd(
             provider="openai", model="does-not-exist",
@@ -126,7 +126,7 @@ class TestCostEstimation:
         assert cost == 0.0
 
     def test_missing_tokens_returns_zero(self):
-        from noctusai_lib.llm import estimate_cost_usd
+        from noctusai_lib.integrations.llm import estimate_cost_usd
 
         cost = estimate_cost_usd(
             provider="openai", model="gpt-4o",
@@ -135,7 +135,7 @@ class TestCostEstimation:
         assert cost == 0.0
 
     def test_never_raises_on_bad_input(self):
-        from noctusai_lib.llm import estimate_cost_usd
+        from noctusai_lib.integrations.llm import estimate_cost_usd
 
         # Provider not in catalog at all
         cost = estimate_cost_usd(
@@ -154,7 +154,7 @@ class TestRecordUsageDispatch:
         _restore_real_providers()
 
     def test_record_usage_writes_to_active_sink(self):
-        from noctusai_lib.llm import InMemoryUsageSink, record_usage
+        from noctusai_lib.integrations.llm import InMemoryUsageSink, record_usage
 
         sink = InMemoryUsageSink()
         _install_with_sink(sink)
@@ -176,10 +176,10 @@ class TestRecordUsageDispatch:
         assert abs(event.cost_estimate_usd - expected) < 1e-9
 
     def test_record_usage_noop_when_sink_is_none(self):
-        from noctusai_lib.llm import record_usage
-        from noctusai_lib.llm import FakeProvider, LLMConfig
-        from noctusai_lib.llm.client import _reset_for_testing, configure_llm
-        from noctusai_lib.llm.registry import register
+        from noctusai_lib.integrations.llm import record_usage
+        from noctusai_lib.integrations.llm import FakeProvider, LLMConfig
+        from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
+        from noctusai_lib.integrations.llm.registry import register
 
         _reset_for_testing()
         fake = FakeProvider()
@@ -206,10 +206,10 @@ class TestRecordUsageDispatch:
 
     def test_sink_failure_is_swallowed(self):
         """A broken sink must not break a successful LLM call."""
-        from noctusai_lib.llm import record_usage, LLMConfig
-        from noctusai_lib.llm import FakeProvider
-        from noctusai_lib.llm.client import _reset_for_testing, configure_llm
-        from noctusai_lib.llm.registry import register
+        from noctusai_lib.integrations.llm import record_usage, LLMConfig
+        from noctusai_lib.integrations.llm import FakeProvider
+        from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
+        from noctusai_lib.integrations.llm.registry import register
 
         class ExplodingSink:
             async def record(self, event):
@@ -276,7 +276,7 @@ class _FakeSupabaseClient:
 
 class TestSupabaseUsageSink:
     def test_record_inserts_row_into_schema_table(self):
-        from noctusai_lib.llm import SupabaseUsageSink, UsageEvent
+        from noctusai_lib.integrations.llm import SupabaseUsageSink, UsageEvent
 
         store: list = []
         sink = SupabaseUsageSink(
@@ -303,7 +303,7 @@ class TestSupabaseUsageSink:
 
     def test_record_swallows_db_errors(self):
         """A broken DB must not break a successful LLM call."""
-        from noctusai_lib.llm import SupabaseUsageSink, UsageEvent
+        from noctusai_lib.integrations.llm import SupabaseUsageSink, UsageEvent
 
         sink = SupabaseUsageSink(
             db_client=_FakeSupabaseClient([], fail=True), schema="erp",
@@ -318,14 +318,14 @@ class TestSupabaseUsageSink:
         asyncio.run(run())  # must not raise
 
     def test_default_table_is_llm_usage(self):
-        from noctusai_lib.llm import SupabaseUsageSink
+        from noctusai_lib.integrations.llm import SupabaseUsageSink
 
         sink = SupabaseUsageSink(db_client=object(), schema="erp")
         assert sink._table == "llm_usage"
         assert sink._schema == "erp"
 
     def test_custom_table_name(self):
-        from noctusai_lib.llm import SupabaseUsageSink
+        from noctusai_lib.integrations.llm import SupabaseUsageSink
 
         sink = SupabaseUsageSink(
             db_client=object(), schema="erp", table="llm_usage_custom",

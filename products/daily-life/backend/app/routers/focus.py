@@ -7,12 +7,14 @@ import logging
 from typing import Optional
 from datetime import datetime
 
+from noctusai_lib.primitives.timeutil import now_utc
+
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client
-from noctusai_lib.responses import success_response, paginated_response, ok_response
-from noctusai_lib.auth import first_or_none
+from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
+from noctusai_lib.api.auth import first_or_none
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/foco", tags=["Focus Sessions"])
@@ -102,7 +104,7 @@ async def criar_sessao(body: FocusCreate, authorization: Optional[str] = Header(
         "duracao_minutos": body.duracao_minutos,
         "tarefa_id": body.tarefa_id,
         "nota": body.nota,
-        "inicio": datetime.utcnow().isoformat(),
+        "inicio": now_utc().isoformat(),
     }).execute()
 
     row = first_or_none(result)

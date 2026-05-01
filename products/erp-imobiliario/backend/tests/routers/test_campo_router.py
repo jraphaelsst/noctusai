@@ -5,13 +5,17 @@ Covers check-in, checkin list, quick inspection, nearby properties, sync, and of
 import pytest
 from unittest.mock import patch, AsyncMock
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestRegistrarCheckin:
     def test_checkin_success(self, client):
-        client._mock_supabase.set_table_data("checkins", {
-            "id": "ck-new", "corretor_id": "test-user-123",
-            "latitude": -23.5505, "longitude": -46.6333, "tipo": "visita",
-        })
+        client._mock_supabase.set_sequential_responses("checkins", [
+            MockSupabaseResponse(data=[{
+                "id": "ck-new", "corretor_id": "test-user-123",
+                "latitude": -23.5505, "longitude": -46.6333, "tipo": "visita",
+            }]),
+        ])
         resp = client.post("/api/campo/checkin", json={
             "latitude": -23.5505,
             "longitude": -46.6333,

@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from noctusai_lib.email.digest import DigestSendResult
+from noctusai_lib.integrations.email.digest import DigestSendResult
 
 
 class TestAggregate:
@@ -35,7 +35,7 @@ class TestGenerateNarrative:
     async def test_returns_llm_text_when_available(self):
         from app.services.audit_digest_service import _generate_narrative
         with patch(
-            "app.services.audit_digest_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="Resumo da semana...\n\nAnomalias...\n\nChecklist...",
         ):
@@ -55,7 +55,7 @@ class TestGenerateNarrative:
     async def test_falls_back_when_llm_unavailable(self):
         from app.services.audit_digest_service import _generate_narrative
         with patch(
-            "app.services.audit_digest_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             side_effect=RuntimeError("LLM not configured"),
         ):
@@ -125,7 +125,7 @@ class TestBuildDigest:
             "app.services.audit_digest_service._fetch_audit_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.audit_digest_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="Narrativa.",
         ):
@@ -167,11 +167,11 @@ class TestSendWeeklyAuditDigest:
             "app.services.audit_digest_service._fetch_audit_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.audit_digest_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="x",
         ), patch(
-            "app.services.audit_digest_service.send_digest",
+            "noctusai_lib.domain.digest.orchestrate.send_digest",
             new_callable=AsyncMock,
             side_effect=_fake_send_digest,
         ):
@@ -199,11 +199,11 @@ class TestSendWeeklyAuditDigest:
             "app.services.audit_digest_service._fetch_audit_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.audit_digest_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="x",
         ), patch(
-            "app.services.audit_digest_service.send_digest",
+            "noctusai_lib.domain.digest.orchestrate.send_digest",
             new_callable=AsyncMock,
             side_effect=_fake_send_digest,
         ):
@@ -233,11 +233,11 @@ class TestSendWeeklyAuditDigest:
             "app.services.audit_digest_service._fetch_audit_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.audit_digest_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="x",
         ), patch(
-            "app.services.audit_digest_service.send_digest",
+            "noctusai_lib.domain.digest.orchestrate.send_digest",
             send_mock,
         ):
             result = await audit_digest_service.send_weekly_audit_digest(

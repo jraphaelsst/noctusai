@@ -6,10 +6,13 @@ Pure Python logic, no database queries.
 """
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from datetime import date, datetime, timedelta
 from typing import Optional
 from dateutil.relativedelta import relativedelta
+
+logger = logging.getLogger(__name__)
 
 
 def expandir_recorrencias(
@@ -53,7 +56,12 @@ def expandir_recorrencias(
         if isinstance(data_inicio_raw, str):
             try:
                 dt_inicio = datetime.fromisoformat(data_inicio_raw.replace("Z", "+00:00"))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "schedule: event id=%s has unparseable data_inicio=%r (%s); "
+                    "passing through without recurrence expansion",
+                    event.get("id"), data_inicio_raw, exc,
+                )
                 result.append(event)
                 continue
         elif isinstance(data_inicio_raw, datetime):
@@ -70,8 +78,12 @@ def expandir_recorrencias(
                 try:
                     dt_fim = datetime.fromisoformat(data_fim_raw.replace("Z", "+00:00"))
                     duracao = dt_fim - dt_inicio
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.warning(
+                        "schedule: event id=%s has unparseable data_fim=%r (%s); "
+                        "expansion will use point-in-time start without duration",
+                        event.get("id"), data_fim_raw, exc,
+                    )
             elif isinstance(data_fim_raw, datetime):
                 duracao = data_fim_raw - dt_inicio
 
@@ -81,7 +93,12 @@ def expandir_recorrencias(
             if isinstance(rec_fim_raw, str):
                 try:
                     rec_fim = date.fromisoformat(rec_fim_raw)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as exc:
+                    logger.warning(
+                        "schedule: event id=%s has unparseable recorrencia_fim=%r (%s); "
+                        "defaulting to query window end",
+                        event.get("id"), rec_fim_raw, exc,
+                    )
                     rec_fim = fim
             elif isinstance(rec_fim_raw, date):
                 rec_fim = rec_fim_raw

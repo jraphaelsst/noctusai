@@ -99,7 +99,9 @@ class TestCampaignRequiresTemplateAndList:
 
     def test_campaign_references_template_and_list(self, client):
         # Step 1 — create template
-        client.mock_supabase.set_table_data("templates", [MOCK_TEMPLATE])
+        client.mock_supabase.set_sequential_responses("templates", [
+            MockSupabaseResponse(data=[MOCK_TEMPLATE]),
+        ])
         resp = client.post("/api/templates", json={
             "nome": "Welcome Email",
             "assunto": "Welcome!",
@@ -110,7 +112,9 @@ class TestCampaignRequiresTemplateAndList:
         assert template["id"] == "tpl-1"
 
         # Step 2 — create list
-        client.mock_supabase.set_table_data("contact_lists", [MOCK_LIST])
+        client.mock_supabase.set_sequential_responses("contact_lists", [
+            MockSupabaseResponse(data=[MOCK_LIST]),
+        ])
         resp = client.post("/api/lists", json={
             "nome": "VIP Customers",
         })
@@ -119,7 +123,9 @@ class TestCampaignRequiresTemplateAndList:
         assert created_list["id"] == "list-1"
 
         # Step 3 — create campaign referencing both
-        client.mock_supabase.set_table_data("campaigns", [MOCK_CAMPAIGN])
+        client.mock_supabase.set_sequential_responses("campaigns", [
+            MockSupabaseResponse(data=[MOCK_CAMPAIGN]),
+        ])
         resp = client.post("/api/campaigns", json={
             "nome": "Black Friday",
             "template_id": template["id"],

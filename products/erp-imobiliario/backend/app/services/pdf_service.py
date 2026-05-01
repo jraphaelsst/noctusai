@@ -24,7 +24,8 @@ def _format_date(date_str: Optional[str]) -> str:
     try:
         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         return dt.strftime("%d/%m/%Y")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        logger.warning("pdf_service: cannot format date %r (%s); using best-effort substring", date_str, exc)
         return date_str[:10] if date_str else "N/A"
 
 

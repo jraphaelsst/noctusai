@@ -330,8 +330,10 @@ class TestFocusSessionFlow:
             "created_at": "2026-04-13T09:00:00Z",
         }
 
-        # Step 1: Start session
-        client.mock_supabase.set_table_data("sessoes_foco", [session])
+        # Step 1: Start session — queue insert response, then SELECT seed for any reads.
+        client.mock_supabase.set_sequential_responses("sessoes_foco", [
+            MockSupabaseResponse(data=[session]),
+        ])
         resp = client.post("/api/foco", json={
             "tipo": "deep_work",
             "duracao_minutos": 60,

@@ -15,9 +15,9 @@ def _run(coro):
 
 
 def _install_fake(canned_responses: list[str]):
-    from noctusai_lib.llm import FakeProvider, LLMConfig
-    from noctusai_lib.llm.client import _reset_for_testing, configure_llm
-    from noctusai_lib.llm.registry import register
+    from noctusai_lib.integrations.llm import FakeProvider, LLMConfig
+    from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
+    from noctusai_lib.integrations.llm.registry import register
 
     _reset_for_testing()
     fake = FakeProvider(chat_responses=canned_responses)
@@ -36,12 +36,12 @@ def _install_fake(canned_responses: list[str]):
 
 def _restore_real_providers():
     import importlib
-    from noctusai_lib.llm.registry import _reset_for_testing as _reset_reg
+    from noctusai_lib.integrations.llm.registry import _reset_for_testing as _reset_reg
     _reset_reg()
     for mod in (
-        "noctusai_lib.llm.providers.openai_provider",
-        "noctusai_lib.llm.providers.anthropic_provider",
-        "noctusai_lib.llm.providers.gemini_provider",
+        "noctusai_lib.integrations.llm.providers.openai_provider",
+        "noctusai_lib.integrations.llm.providers.anthropic_provider",
+        "noctusai_lib.integrations.llm.providers.gemini_provider",
     ):
         importlib.import_module(mod)
         importlib.reload(sys.modules[mod])
@@ -101,7 +101,7 @@ class TestDraftTemplate:
 
     def test_returns_empty_on_llm_not_configured(self):
         from app.services.ai_service import draft_template
-        from noctusai_lib.llm.client import _reset_for_testing
+        from noctusai_lib.integrations.llm.client import _reset_for_testing
         _reset_for_testing()
         assert _run(draft_template("x")) == ""
 
@@ -197,7 +197,7 @@ class TestTranslateTemplate:
 
     def test_llm_not_configured_returns_original(self):
         from app.services.ai_service import translate_template
-        from noctusai_lib.llm.client import _reset_for_testing
+        from noctusai_lib.integrations.llm.client import _reset_for_testing
         _reset_for_testing()
         original = "<p>Olá</p>"
         assert _run(translate_template(original, "en")) == original

@@ -1,6 +1,6 @@
 # Testing Standards
 
-Every product must have three test layers. No product ships without all three.
+Every product must have all five test layers. No product ships without them.
 
 | Layer | What it tests | Where | When to write |
 |-------|---------------|-------|---------------|
@@ -8,14 +8,17 @@ Every product must have three test layers. No product ships without all three.
 | **Unit (services)** | Business logic in isolation — calculations, transformations, state machines | `tests/services/test_*.py` | One per service with non-trivial logic |
 | **Integration** | Cross-service flows — campaign references template + list, automation enrolls contacts | `tests/integration/test_*.py` | When entities reference each other |
 | **E2E** | Full user journeys — create contact → template → campaign → send → verify stats | `tests/integration/test_e2e_flows.py` | One per product, covers the golden path |
+| **Regression** | Bug-shaped tests pinning behavior that broke in production / detector false-positives / security incidents / known-edge-cases. Names the incident. | `tests/regression/test_<short_case>.py` (or inline `# Regression: ...` docstring inside the closest unit/integration test) | Every time a bug is fixed, a detector misbehaves on a real case, or an incident discovered behavior the unit tests didn't cover |
 
 ## Rules
 
 - **Unit tests:** mock the database (`MockSupabaseClient`). Test one endpoint at a time.
 - **Integration tests:** mock the database but test multi-step flows where step N depends on step N-1.
 - **E2E tests:** simulate a real user journey through multiple endpoints. Each test is a story.
+- **Regression tests:** name the case. Every regression test must reference the incident in its docstring or filename — date, project that surfaced it, or original ticket. Without that reference, it's just a unit test that may decay into noise. See `§ Regression tests in practice` below.
 - **Deterministic:** no hardcoded dates (use `date.today()` / `date.today() - timedelta(days=N)`), no external API calls, no network.
 - **Auth boundary:** every product must verify that unauthenticated requests return 401 for all protected endpoints.
+- **No self-monkeypatching:** never `monkeypatch.setattr(<our_module>, "<our_fn>", _noop)` or `patch.object(<our_module>, "<our_fn>", ...)`. If you find yourself reaching for it, the test is asking you to wire a seam differently. See `§ No self-monkeypatching — refactor playbook` for the three legitimate patterns.
 
 ## Running
 
@@ -85,6 +88,273 @@ mock = MockSupabaseClient(validate_schema=True, strict_unknown_tables=True, sche
 - `erp-imobiliario` — 8 drifts tracked by `products/erp-imobiliario/projects/erp-schema-drift-reconciliation/`.
 
 Shipped 2026-04-24 across 4 phases (originating project archived after close). Parser source: `seed/backend/lib/noctusai_lib/testing/migration_parser.py`. Schema cache: `seed/backend/lib/noctusai_lib/testing/_schema_cache.py`. Error class: `seed/backend/lib/noctusai_lib/testing/schema_errors.py`. Keeper detector for silent opt-outs: `mcp/noctusai/tools/compliance.py::check_mock_schema_validation`.
+
+---
+
+## Regression tests in practice
+
+Regression tests pin behavior that **broke once and might break again**. Without one, every fix is a one-shot — the next refactor can silently undo it. With one, the test fails the moment the same shape returns.
+
+**When to write one (the trigger list).** ANY of these mandates a regression test:
+
+1. **A production bug got fixed.** The fix landed; before merging, write a test that fails on the pre-fix code and passes on the fix. Reference the date / incident / project that caught it.
+2. **A detector / linter / type-check missed a real case.** The keeper detectors, vitest config checks, schema-validation guards, etc. — when one of them lets a real-world case through (false negative) or fires on a legitimate one (false positive), the case becomes a fixture.
+3. **A security issue was patched.** Even if the fix is one line, lock the behavior in. Reference the LGPD / OWASP / CVE class so future readers know why the assertion is shaped that way.
+4. **A subtle edge case surfaced during code review or incident postmortem.** "We didn't think of this" is the cheapest signal — capture it before it leaves your head.
+5. **A migration / schema change broke a query.** Add the regression test in `tests/regression/test_<table>_schema.py` so future migrations catch the same shape.
+
+**Where to put it (two valid shapes):**
+
+- **Dedicated file in `tests/regression/`** — when the regression spans multiple endpoints/services or doesn't fit naturally in any single existing test file. Filename names the case: `tests/regression/test_postgrest_404_on_single.py`, `tests/regression/test_phase_state_consistency_paused_phase_checkmark.py`. Each file's docstring opens with `"""Regression: <one-line description>. Caught <date> by <project|incident>."""`.
+- **Inline `# Regression: ...` docstring** inside the closest existing test class — when the regression cleanly belongs with the surrounding behavior tests. Example from `products/core/backend/tests/routers/test_settings_router.py:173`:
+  ```python
+  def test_falls_back_to_platform_settings(self, client):
+      """Regression: when org_settings has no match, must fall back to platform_settings."""
+      ...
+  ```
+  The `Regression:` keyword is grep-able and tells the next reader "don't delete this even if it looks redundant — there was a reason."
+
+**How to name it:**
+
+- Test function: `test_<short_case>_<expected_behavior>` (e.g. `test_paused_project_with_phase_checkmark_does_not_flag_clean_folder`).
+- Comment includes the **date caught** + the **project / incident** + the **wrong behavior that USED to ship** (so future readers understand the assertion's intent).
+
+**Worked examples already in the repo:**
+
+| Test | File | Case |
+|---|---|---|
+| `test_does_not_flag_paused_with_phase_checkmark_in_narrative` | `mcp/noctusai/tests/test_compliance.py:670` | Detector false-positive caught against `repo-state-consolidation` PROJECT.md (Phase 0 ✅ in narrative ≠ project closed) |
+| `test_silent_ok_comment_does_NOT_suppress` | `mcp/noctusai/tests/test_compliance.py:601` | Pins removal of `# silent-ok` escape hatch (user directive 2026-04-28). |
+| `test_legacy_logger_warn_alias_recognized` | `mcp/noctusai/tests/test_compliance.py:638` | Detector must recognise `_log.warn(...)` (deprecated stdlib alias) as legitimate logging. Caught in code review. |
+| `test_postgrest_handler.py` (entire file) | `products/core/backend/tests/test_postgrest_handler.py` + ERP mirror | Lock `.single() on 0 rows → 404 not 500` after the framework handler was added. |
+
+**Anti-patterns (what kills regression tests):**
+
+- Test name like `test_bug_fix_1` — useless to a future reader.
+- No reference to the original incident — the test rots; someone deletes it as dead.
+- Asserting the implementation, not the symptom — fragile to refactor; passes by coincidence.
+
+### Regression-test-the-detector — platform-wide methodology
+
+**Every keeper detector ships colocated with a regression test.** A `check_*` function in `mcp/noctusai/tools/compliance.py` that has no matching `Test<CamelCase>` class somewhere under `mcp/noctusai/tests/` is itself a violation, flagged by the detector `check_detector_has_regression_test` (severity `high`).
+
+**Why platform-wide.** Detectors fail silently when they regress — they keep returning the same `score: 100` while missing the case they were supposed to catch. The regression test is the only thing that locks the contract: a future refactor that breaks the detector's true-positive shape (or introduces a false-positive) fails CI immediately. Without it, a real-world miss can ship undetected. This applies to every detector for every product the keeper watches over: existing ones, future ones, and any new product's detectors.
+
+**The contract.** A regression test for a detector must:
+
+1. **Pin at least one true positive** — feed the detector a known-bad shape; assert it flags. The shape should mirror a real-world case the detector exists to catch.
+2. **Pin at least one false positive that's NOT flagged** — feed the detector a known-good shape that *looks* similar; assert it returns `[]`. This protects against the detector becoming over-aggressive after a refinement.
+3. **Pin the severity** — assert `i["severity"]` matches the documented severity from `KB § 06-AGENTS.md § Detectors`. A silently-downgraded severity is the same as a regression.
+
+**Naming.** The test class name is `Test<CamelCase-of-detector>` (e.g. `check_silent_errors` → `TestCheckSilentErrors`). The detector's case-insensitive matcher accepts both the prefixed (`TestCheckSilentErrors`) and unprefixed (`TestSilentErrors`) shapes, plus acronym-preserving forms (`TestAIFeatureCompleteness`). Any other shape requires an entry in `_DETECTOR_TEST_OVERRIDES` mapping the detector to its test target.
+
+**CI integration.** `check_detector_has_regression_test` runs as part of `check_all_products` (i.e. `mcp/noctusai/cli.py --review` / `--validate`), which the test workflow invokes on every PR via `.github/workflows/test.yml`. A new detector merged without its regression test fails the workflow.
+
+**Worked examples** (each detector → its test class):
+
+| Detector | Test class | Test file |
+|---|---|---|
+| `check_seed_compliance` | `TestSeedCompliance` | `mcp/noctusai/tests/test_compliance.py` |
+| `check_silent_errors` | `TestCheckSilentErrors` | `mcp/noctusai/tests/test_compliance.py` |
+| `check_no_self_monkeypatch` | `TestCheckNoSelfMonkeypatch` | `mcp/noctusai/tests/test_compliance.py` |
+| `check_phase_state_consistency` | `TestPhaseStateConsistency` | `mcp/noctusai/tests/test_compliance.py` |
+| `check_clean_folder_violations` | `TestCheckCleanFolderViolations` | `mcp/noctusai/tests/test_compliance.py` |
+| `check_ai_feature_completeness` | `TestAIFeatureCompleteness` | `mcp/noctusai/tests/test_compliance.py` |
+| `check_mock_schema_validation` | `TestMockSchemaValidation` | `mcp/noctusai/tests/test_compliance.py` |
+| `check_path_references` | (override → `TestFindRefs`) | `mcp/noctusai/tests/test_refs.py` |
+| `check_standard_routers_audit` | `TestStandardRoutersAudit` | `mcp/noctusai/tests/test_standard_routers_audit.py` |
+| `check_frontend_entrypoint`, `check_out_of_contract_trees` | (overrides) | `mcp/noctusai/tests/test_phase5_detectors.py` |
+| `check_config_extends_product_settings` | (override) | `mcp/noctusai/tests/test_config_inheritance.py` |
+| `check_frontend_config_paths` | `TestRegexMatching` etc. | `mcp/noctusai/tests/test_frontend_config_paths.py` |
+| `check_seed_version_propagation` | (functions, override) | `mcp/noctusai/tests/test_seed_version_propagation.py` |
+| `check_detector_has_regression_test` | `TestCheckDetectorHasRegressionTest` | `mcp/noctusai/tests/test_compliance.py` |
+
+**Adding a new detector?** The recipe (and the order matters):
+
+1. Write the test class **first**, with a true-positive case and a false-positive case (this is the spec).
+2. Implement the `check_*` function in `mcp/noctusai/tools/compliance.py` (or a sibling module) until the test passes.
+3. Register the detector in `check_all_products()`.
+4. Document it in `KB § 06-AGENTS.md § Detectors` with severity + rationale.
+5. Run `mcp/noctusai/cli.py --validate` and confirm the detector contributes `[]` to a clean tree.
+
+If you need to land the detector before the test (rare — usually because the detector emerged from a real-world incident), still write the test in the same commit. The CI gate fails otherwise.
+
+---
+
+## No self-monkeypatching — refactor playbook
+
+`monkeypatch.setattr(<our_module>, "<our_fn>", _noop)` and `patch.object(<our_module>, "<our_fn>", ...)` neuter the very logic the test claims to verify. The keeper detector `check_no_self_monkeypatch` flags these; severity is `warning` while a per-product cleanup is in flight, ratcheting to `high` when each product's count reaches zero.
+
+**The three legitimate patterns** — pick by test shape, not by ease.
+
+### Pattern 1: Dependency Injection (DI) — the default
+
+**When.** The unit under test calls a helper or service that does I/O (DB write, external API, audit-log dispatch). Production callers default to a real client; tests pass a mock.
+
+**Shape.**
+
+```python
+# Production code — kwarg defaults to None and resolves at call time
+async def process_session_end(
+    appointment_id: str,
+    db: Any,
+    *,
+    core_db: Any | None = None,
+    transcribe: Callable[..., Awaitable[str]] | None = None,
+):
+    core_db = core_db or get_core_client()                           # production path
+    transcribe_fn = transcribe or transcription_service.assemble_transcript
+    transcript = await transcribe_fn(appointment_id, db)
+    ...
+```
+
+```python
+# Test — inject the mock, no patching
+async def test_process_session_end_happy_path():
+    db = _db_with_grants()
+    db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
+
+    async def fake_transcribe(*_a, **_kw):
+        return "Transcrição completa."
+
+    result = await ai_pipeline.process_session_end(
+        appointment_id="appt-001",
+        db=db,
+        core_db=db,
+        transcribe=fake_transcribe,
+    )
+    assert "summaries" in result
+```
+
+**Why it works.** The production call site never holds onto the mock — the kwarg defaults to None, runtime resolves the real client. Tests inject. Zero patching. Reference adopters: `_resolve_core_db(core_db)` in `products/therapy-platform/backend/app/services/ai_pipeline.py`; `consent-guard-rollout` (DI for `bind_consent_module_to_mock`).
+
+**When NOT to use DI.** If the dependency is reached from 8+ call sites scattered across the codebase, threading a kwarg through all of them is more churn than it's worth. Use Pattern 2 instead.
+
+### Pattern 2: Boundary mock at the import site
+
+**When.** The unit under test calls our service helper which calls an external boundary (LLM API, email provider, payment gateway). Patch the **external** symbol at the import site, not our service helper.
+
+**Shape.**
+
+```python
+# Wrong — patches our helper, neuters the test
+with patch.object(longitudinal_service, "generate_clinical_longitudinal", ...):
+    await ai_pipeline.process_session_end(...)
+```
+
+```python
+# Right — patches the LLM call inside our helper at the boundary
+with patch.object(noctusai_lib.llm, "chat_completion", AsyncMock(return_value=FAKE_LLM_RESPONSE)):
+    await ai_pipeline.process_session_end(...)
+# Real `generate_clinical_longitudinal` runs; only the LLM round-trip is faked.
+```
+
+**Why it works.** The boundary belongs to an external library — patching it is the standard mock pattern, allowed by the rule. Our orchestration logic, our error handling, our consent guards — all execute. The test now actually verifies the chain, not just the call order.
+
+**When NOT to use boundary mocks.** When the inner helper does enough work that running it would require seeding more data than the test scope allows. Then Pattern 3.
+
+### Pattern 3: Seed real data via `MockSupabaseClient`
+
+**When.** The function under test reads from the DB and dispatches based on the data. Don't patch the read — seed the table and let the real read run.
+
+**Shape.**
+
+```python
+# Wrong — patches the read function, the test no longer exercises the query logic
+with patch.object(consent, "require", return_value=None):
+    await ai_pipeline.process_session_end(...)
+```
+
+```python
+# Right — seed `ai_consent` rows; real `require()` reads the mock and returns silently
+db = MockSupabaseClient()
+db.set_table_data("ai_consent", [
+    {"user_id": "patient-001", "feature_key": "therapy.session_summary",
+     "granted": True, "granted_at": "2026-04-27T00:00:00Z", "revoked_at": None},
+])
+await ai_pipeline.process_session_end(db=db, core_db=db, ...)
+# Revocation path: same shape, set granted=False or revoked_at=now()
+```
+
+**Why it works.** The mock IS the dependency. Seeding rows is identical in cost to a `patch.object` plus correct setup, and now the test exercises the real consent guard. Reference adopter: `_db_with_grants(...)` helper in `products/therapy-platform/backend/tests/services/test_ai_pipeline_service.py`.
+
+**Side-effect verification:** when the production code writes a notification or audit row, read `mock_sb._tables["notifications"].inserted_payloads` after the call. Public list maintained by every `insert(payload)`. Production code stays untouched. Same product reference.
+
+### Picking the pattern
+
+| Test shape | Pattern |
+|---|---|
+| Orchestrator unit test (verifies "calls A then B then C") | DI — pass each helper as a kwarg with its real default |
+| Service unit test (verifies internal logic of the service) | Boundary mock — patch the external lib at the boundary |
+| Router unit test (verifies HTTP-shape behavior, including auth/consent) | Seed real data — let routes hit the real guards |
+| Integration test (multi-service flow) | Seed real data + boundary mock for the external calls |
+| Edge case / error path | Seed the bad data; let the real validator raise |
+
+### Refactor procedure (per site)
+
+1. Find the `monkeypatch.setattr` or `patch.object` line.
+2. Identify the symbol's package: ours (`app.*`, `noctusai_lib.*`, `noctusai_seed.*`) → must refactor; external (`openai.*`, `httpx.*`, `stripe.*`) → already correct, the detector allowlists these.
+3. Pick the pattern (table above).
+4. Apply: add kwarg / change patch target / seed table.
+5. Run the test — confirm green AND that the test still exercises a meaningful failure path (try seeding bad data; the test should fail).
+6. Re-run keeper: `mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py --validate` — confirm the count dropped.
+
+### Severity ratchet
+
+Detector severity is currently `warning` because the first run flagged 420 sites and tanking score from 100 → 0 was unhelpful. Per-product ratchet plan:
+
+| When | Action |
+|---|---|
+| A product reaches 0 self-monkeypatch warnings | Detector severity flips to `high` for that product. New violations block CI. |
+| All products at 0 | Detector severity flips to `high` repo-wide; the `warning` carve-out is removed. |
+
+Pilot proof + per-product cleanup status lives in `projects/keeper-warning-triage/PROJECT.md` §6. Per-product follow-up project slugs: `<product>-tests-no-self-patch` (filed when picked up).
+
+**Pilot result (2026-04-28).** `products/therapy-platform/backend/app/services/ai_pipeline.py` introduced a `_PipelineHooks` dataclass with the 5 helper functions as fields; production callers omit `hooks=` and resolve to `_DEFAULT_HOOKS` (real services). `tests/services/test_ai_pipeline_service.py` migrated `TestProcessSessionEnd` (8 tests) + `TestPatientConsentGuards.{test_session_summary_consent_revoked, test_longitudinal_consent_revoked}` (2 tests) from `patch.object(<our_module>, ...)` to a `_hooks(...)` factory that returns `_PipelineHooks(transcribe=AsyncMock(...), summarize=AsyncMock(...), ...)`. 33 sites cleared (43 → 10 in that file; 315 → 282 platform-wide). All 17 tests in the file pass; real consent guards execute end-to-end; revoked-feature paths verified via `hooks.<helper>.assert_not_awaited()`.
+
+---
+
+## Coverage gaps + ratchet plan
+
+The "five layers" table at the top is the **target shape** every product should reach. Today, coverage is uneven. This section is the inventory + ratchet plan — open it before adding new tests so you know the highest-leverage gap to fill.
+
+### Backend coverage
+
+| Tier | Status | Gap |
+|---|---|---|
+| Unit (routers + services) | ✅ Universal | Self-monkeypatch debt being cleaned per `§ No self-monkeypatching — refactor playbook` (315 → 282 as of 2026-04-28 pilot). |
+| Integration | ✅ Universal | Healthy — only 7 self-monkeypatch hits across all integration tests platform-wide. |
+| E2E (`tests/integration/test_e2e_flows.py`) | ⚠️ Partial | ERP only. Other products: TBD. |
+| Regression | ⚠️ Partial — see `§ Regression tests in practice` | No `tests/regression/` dir anywhere yet; informal regressions live in `test_postgrest_handler.py` (core + ERP) + inline `# Regression: ...` docstrings (`test_settings_router.py`, `test_dimob_router.py`, `test_dimob_service.py`). Convention: prefer the dedicated dir for new ones. |
+| `tests/realdb/` (real-DB integration) | ⚠️ 3/7 products | Adopters: `core`, `erp-imobiliario`, `personal-finance` — each has a `realdb/` dir with `pytest.mark.realdb` marker, auto-skipped when `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` are unset. Missing: `therapy-platform`, `mailing`, `daily-life`, `adconnect`. RLS regressions in those 4 products are caught only at deploy time. |
+| Mutation / property-based | ❌ 0/7 | No `hypothesis`, no `pytest-property`, no mutation-test harness anywhere. |
+
+### Frontend coverage
+
+| Tier | Status | Gap |
+|---|---|---|
+| Hook tests (`*.test.ts` via vitest) | ⚠️ 4/7 products with **just useAI** | Each adopter has exactly one test file (`useAI.test.ts`) with 4-8 `it()` cases. Adopters: erp-imobiliario, mailing, personal-finance, daily-life. **Zero tests in therapy-platform, core, adconnect** — vitest harness is wired but no specs. `npx vitest run` exits 1 ("No test files found") which is the honest signal. |
+| Component tests | ❌ 0/7 | No component-level vitest specs anywhere — only the AI hook is tested. |
+| Page tests | ❌ 0/7 | Pages are exercised only via Playwright (where it exists) — see next row. |
+| Playwright E2E | ⚠️ 2/7 wired, **0 specs** | `playwright.config.ts` exists in core + erp-imobiliario frontends. **Neither has any actual `*.spec.ts` files** — the dependency is dormant. Other 5 products: not even wired. |
+
+### Ratchet plan (filling each gap)
+
+Each row below names a follow-up project slug + its trigger to start. **No project here is in flight today** (2026-04-28); they're in the queue.
+
+| Gap | Trigger | Follow-up project |
+|---|---|---|
+| Frontend hook tests in therapy / core / adconnect | When a product first ships a hook that does I/O (mutation / query) | `<product>-frontend-hook-coverage` |
+| Frontend component tests | When N=2 products have a duplicated component bug | `frontend-component-test-pattern` (seed-level — define the pattern, then per-product adoption) |
+| Frontend Playwright specs in core + ERP | When a flow goes user-facing (signup, billing, cross-product navigation) | `<product>-playwright-golden-paths` |
+| `tests/realdb/` in the 4 missing products | When a product's first RLS-shaped bug ships to prod | `<product>-realdb-rls` |
+| Mutation / property-based testing | When a product's bug class is "happy-path tests pass but edge values break it" — typically math-heavy services (PF, ERP metas) | `mutation-test-pilot` (one product, one service, prove the pattern) |
+| Self-monkeypatch debt | Per-product cleanup; ratchet detector severity to `high` when count = 0 | `<product>-tests-no-self-patch` |
+| B4 row-seeding (only therapy uses it) | When a product's autouse-fixture pattern misses a consent-revocation path | per-product, no umbrella project — small refactor |
+
+**Anti-pattern to avoid:** filing a "frontend test coverage" umbrella project that tries to fix every gap at once. Each gap above has a different trigger and a different shape; bundling them produces a project no one finishes. Pick by trigger, not by aspiration.
+
+**Where to track real status:** filename `mcp/noctusai/cli.py --status` will list active projects + flags; this section names what *should* exist, not what does. The section gets updated when a follow-up project ships.
 
 ---
 

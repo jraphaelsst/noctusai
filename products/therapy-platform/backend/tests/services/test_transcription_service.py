@@ -84,7 +84,7 @@ class TestTranscribeSegment:
             patch.object(transcription_service, "_openai_configured", return_value=True),
             patch.object(_httpx, "AsyncClient", return_value=mock_http_client),
             patch(
-                "noctusai_lib.llm.transcribe_audio",
+                "noctusai_lib.integrations.llm.transcribe_audio",
                 new=AsyncMock(return_value="Paciente relatou melhora significativa."),
             ),
         ):
@@ -135,7 +135,7 @@ class TestTranscribeSegment:
             patch.object(transcription_service, "_openai_configured", return_value=True),
             patch.object(_httpx, "AsyncClient", return_value=mock_http_client),
             patch(
-                "noctusai_lib.llm.transcribe_audio",
+                "noctusai_lib.integrations.llm.transcribe_audio",
                 new=AsyncMock(side_effect=Exception("Rate limit exceeded")),
             ),
         ):
@@ -194,17 +194,16 @@ class TestAssembleTranscript:
 
     @pytest.mark.asyncio
     async def test_single_segment(self):
-        """Assembles transcript from a single segment."""
+        """Pattern 1 (DI): pass `transcribe_segment_fn` instead of patching
+        the module-level helper. Real `assemble_transcript` runs end-to-end
+        against MockSupabase + the fake transcriber."""
         db = MockSupabaseClient()
         db.set_table_data("session_audio_segments", [SEGMENT_INITIAL])
 
-        with patch.object(
-            transcription_service,
-            "transcribe_segment",
-            new_callable=AsyncMock,
-            return_value="Texto do segmento 1.",
-        ):
-            result = await transcription_service.assemble_transcript("appt-001", db)
+        transcribe_fn = AsyncMock(return_value="Texto do segmento 1.")
+        result = await transcription_service.assemble_transcript(
+            "appt-001", db, transcribe_segment_fn=transcribe_fn,
+        )
 
         assert "Texto do segmento 1." in result
 
@@ -214,15 +213,12 @@ class TestAssembleTranscript:
         db = MockSupabaseClient()
         db.set_table_data("session_audio_segments", [SEGMENT_INITIAL, SEGMENT_RESUMED])
 
-        async def mock_transcribe(url, num, **kwargs):
+        async def transcribe_fn(url, num, **kwargs):
             return f"Texto segmento {num}."
 
-        with patch.object(
-            transcription_service,
-            "transcribe_segment",
-            side_effect=mock_transcribe,
-        ):
-            result = await transcription_service.assemble_transcript("appt-001", db)
+        result = await transcription_service.assemble_transcript(
+            "appt-001", db, transcribe_segment_fn=transcribe_fn,
+        )
 
         assert "pausada" in result
         assert "retomada" in result
@@ -235,15 +231,12 @@ class TestAssembleTranscript:
         db = MockSupabaseClient()
         db.set_table_data("session_audio_segments", [SEGMENT_INITIAL, SEGMENT_REOPENED])
 
-        async def mock_transcribe(url, num, **kwargs):
+        async def transcribe_fn(url, num, **kwargs):
             return f"Texto segmento {num}."
 
-        with patch.object(
-            transcription_service,
-            "transcribe_segment",
-            side_effect=mock_transcribe,
-        ):
-            result = await transcription_service.assemble_transcript("appt-001", db)
+        result = await transcription_service.assemble_transcript(
+            "appt-001", db, transcribe_segment_fn=transcribe_fn,
+        )
 
         assert "reaberta" in result
 
@@ -268,12 +261,9 @@ class TestAssembleTranscript:
         }
         db.set_table_data("session_audio_segments", [fallback_segment])
 
-        with patch.object(
-            transcription_service,
-            "transcribe_segment",
-            new_callable=AsyncMock,
-            return_value="Fallback transcription.",
-        ):
-            result = await transcription_service.assemble_transcript("appt-001", db)
+        transcribe_fn = AsyncMock(return_value="Fallback transcription.")
+        result = await transcription_service.assemble_transcript(
+            "appt-001", db, transcribe_segment_fn=transcribe_fn,
+        )
 
         assert "Fallback transcription." in result

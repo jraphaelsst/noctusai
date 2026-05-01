@@ -31,12 +31,19 @@ class TestSymbolScanner:
             assert s.name and s.module and s.kind and s.location
 
     def test_known_public_symbols_present(self):
-        """Sanity check: several canonical lib symbols must appear."""
+        """Sanity check: several canonical lib symbols must appear.
+
+        Paths reflect the layered layout adopted 2026-04-30 — see
+        `KB § PATTERNS/seed-lib-layout.md`. Old top-level paths like
+        `noctusai_lib.api.auth.*` and `noctusai_lib.primitives.responses.*` are still
+        importable via transitional shims, but the catalog scanner
+        emits the canonical (post-move) module path.
+        """
         names = {s.qualified_name for s in scan_lib_symbols()}
         for expected in (
-            "noctusai_lib.auth.resolve_sso_role",
-            "noctusai_lib.auth.first_or_none",
-            "noctusai_lib.responses.success_response",
+            "noctusai_lib.api.auth.resolve_sso_role",
+            "noctusai_lib.api.auth.first_or_none",
+            "noctusai_lib.primitives.responses.success_response",
             "noctusai_seed.app.create_product_app",
         ):
             assert expected in names, f"Missing expected symbol: {expected}"
@@ -51,7 +58,7 @@ class TestSymbolScanner:
         """`T = TypeVar("T")` must not be emitted as a const."""
         names = {s.qualified_name for s in scan_lib_symbols()}
         # Single-letter uppercase names like `T` are excluded by length filter.
-        assert "noctusai_lib.responses.T" not in names
+        assert "noctusai_lib.primitives.responses.T" not in names
 
 
 class TestReexportMap:

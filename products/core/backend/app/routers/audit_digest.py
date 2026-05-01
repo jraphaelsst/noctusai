@@ -15,7 +15,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
-from noctusai_lib.ai import consent_required
+from noctusai_lib.domain.ai import consent_required
 
 from app.database import get_admin_client
 from app.dependencies import get_current_admin

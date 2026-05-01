@@ -6,7 +6,7 @@ Covers: create entry, date range filtering, analytics calculation
 """
 import pytest
 
-from tests.conftest import MockSupabaseClient
+from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 from app.services import mood_service
 
 
@@ -24,14 +24,17 @@ class TestCreateMoodEntry:
     @pytest.mark.asyncio
     async def test_create_entry(self):
         db = MockSupabaseClient()
-        db.set_table_data("mood_entries", [SAMPLE_ENTRIES[0]])
+        # `set_sequential_responses` controls the insert response — the row
+        # returned by the DB carries `rating: 3` (from SAMPLE_ENTRIES[0]),
+        # exercising the service path that returns whatever the DB row is.
+        db.set_sequential_responses("mood_entries", [MockSupabaseResponse(data=[SAMPLE_ENTRIES[0]])])
         result = await mood_service.create_entry(
             patient_id="patient-001",
             data={"rating": 7, "emocoes": ["calma", "esperança"], "nota": "Bom dia"},
             db=db,
         )
         assert result is not None
-        assert result["rating"] == 3  # Mock returns first entry
+        assert result["rating"] == 3
 
     @pytest.mark.asyncio
     async def test_create_entry_minimal(self):

@@ -210,7 +210,8 @@ async def iniciar_session(
                 "session": response.json() if response.status_code == 200 else None,
                 "waha_status": response.status_code,
             })
-    except ImportError:
+    except ImportError as exc:
+        logger.warning("whatsapp_webhook: httpx unavailable (%s); returning dry_run for WAHA session start", exc)
         return success_response({
             "session": {"session": body.session_name, "status": "dry_run"},
             "waha_status": None,

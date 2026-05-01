@@ -116,7 +116,7 @@ class TestGenerateEmbedding:
     @pytest.mark.asyncio
     async def test_generate_embedding_propagates_lib_errors(self):
         """Lib-level errors propagate — service does not catch or transform them."""
-        from noctusai_lib.llm import LLMAPIError
+        from noctusai_lib.integrations.llm import LLMAPIError
 
         with patch(
             "app.services.therapy_embedding_service._lib_generate_embedding",

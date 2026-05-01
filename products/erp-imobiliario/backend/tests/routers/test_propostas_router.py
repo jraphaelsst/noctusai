@@ -4,6 +4,8 @@ Covers list, create, read, update, delete, stats, and contraproposta.
 """
 import pytest
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestListarPropostas:
     def test_list_all(self, client):
@@ -85,11 +87,13 @@ class TestObterProposta:
 
 class TestCriarProposta:
     def test_create_success(self, client):
-        client._mock_supabase.set_table_data("propostas", {
-            "id": "new-p", "imovel_id": "i1", "cliente_id": "c1",
-            "corretor_id": "test-user-123", "valor_proposta": 450000,
-            "status": "enviada", "historico": [],
-        })
+        client._mock_supabase.set_sequential_responses("propostas", [
+            MockSupabaseResponse(data=[{
+                "id": "new-p", "imovel_id": "i1", "cliente_id": "c1",
+                "corretor_id": "test-user-123", "valor_proposta": 450000,
+                "status": "enviada", "historico": [],
+            }]),
+        ])
         resp = client.post("/api/propostas", json={
             "imovel_id": "i1",
             "cliente_id": "c1",

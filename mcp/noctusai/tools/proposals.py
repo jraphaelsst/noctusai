@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from noctusai_lib.primitives.timeutil import now_utc
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 # Two valid locations for project folders — see
 # `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md §1` for the rule:
@@ -199,7 +201,7 @@ def fill_proposal_template(
 
     Returns the filled markdown string — ready for `file_proposal`.
     """
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = now_utc().strftime("%Y-%m-%d %H:%M")
     products_line = ", ".join(affected_products) if affected_products else "none"
     primary = affected_products[0] if affected_products else "<product>"
 
@@ -464,7 +466,7 @@ def generate_proposal(
     filepath.write_text(f"""# Proposal: {title}
 
 **Agent:** {agent}
-**Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M")}
+**Generated:** {now_utc().strftime("%Y-%m-%d %H:%M")}
 **Severity:** {severity}
 **Effort:** {effort}
 **Affected products:** {', '.join(affected_products)}

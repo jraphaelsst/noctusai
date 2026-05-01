@@ -13,8 +13,14 @@ from app.services import email_service
 
 @pytest.fixture(autouse=True)
 def _reset_settings():
-    """Ensure resend_api_key is None by default for dry-run tests."""
-    with patch.object(email_service.settings, "resend_api_key", None):
+    """Ensure resend_api_key is None by default for dry-run tests.
+
+    Patching `settings.resend_api_key` is config substitution, not logic
+    substitution — Settings is a pydantic model whose attributes are values.
+    The alternative would be reloading the Settings object via env vars
+    (heavier, equally test-only). Documented as the standard pattern.
+    """
+    with patch.object(email_service.settings, "resend_api_key", None):  # self-patch-ok: settings config knob (pydantic model field, not behavior)
         yield
 
 
@@ -39,7 +45,7 @@ class TestSendEmail:
         mock_resend = MagicMock()
         mock_resend.Emails.send = MagicMock(return_value={"id": "email-123"})
 
-        with patch.object(email_service.settings, "resend_api_key", "re_test_key"):
+        with patch.object(email_service.settings, "resend_api_key", "re_test_key"):  # self-patch-ok: settings config knob (pydantic model field, not behavior)
             with patch.dict("sys.modules", {"resend": mock_resend}):
                 result = await email_service.send_email(
                     to="test@example.com",

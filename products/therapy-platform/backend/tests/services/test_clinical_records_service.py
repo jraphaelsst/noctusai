@@ -6,7 +6,7 @@ evolution note creation and pagination.
 """
 import pytest
 
-from tests.conftest import MockRequestBuilder, MockSupabaseClient
+from tests.conftest import MockRequestBuilder, MockSupabaseClient, MockSupabaseResponse
 from app.services import clinical_records_service
 
 
@@ -173,7 +173,10 @@ class TestTreatmentPlanCRUD:
     @pytest.mark.asyncio
     async def test_create_treatment_plan(self):
         db = MockSupabaseClient()
-        db.set_table_data("treatment_plans", [SAMPLE_PLAN])
+        # `set_sequential_responses` controls the insert response; the inserted
+        # row's `titulo` is overridden by the seeded SAMPLE_PLAN to exercise
+        # service post-processing on the row returned from the DB.
+        db.set_sequential_responses("treatment_plans", [MockSupabaseResponse(data=[SAMPLE_PLAN])])
         result = await clinical_records_service.create_treatment_plan(
             patient_id="patient-001",
             therapist_id="therapist-001",

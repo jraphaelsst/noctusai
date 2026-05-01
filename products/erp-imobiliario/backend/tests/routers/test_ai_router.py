@@ -672,7 +672,7 @@ class TestConsentGuards:
         # toggle-attempt 403 path is exercised in core's me_consents tests;
         # here we just confirm the ERP catalog has the entry with the right
         # locked-on shape.
-        from noctusai_lib.ai.consent import get_feature
+        from noctusai_lib.domain.ai.consent import get_feature
         feature = get_feature("erp.embeddings")
         assert feature is not None
         assert feature.toggleable is False

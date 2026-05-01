@@ -32,15 +32,17 @@ def _get_client():
         from dotenv import load_dotenv
         load_dotenv(REPO_ROOT / ".env")
     except ImportError:
-        pass
+        logger.info("ai_brain: python-dotenv not installed; relying on already-set env")
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
+        logger.info("ai_brain: OPENAI_API_KEY not set; AI helpers disabled")
         return None
     try:
         from openai import OpenAI
         _client = OpenAI(api_key=api_key)
         return _client
     except ImportError:
+        logger.warning("ai_brain: `openai` SDK not installed; AI helpers disabled")
         return None
 
 
@@ -75,8 +77,8 @@ def analyze_findings(findings):
     claude_md = ""
     try:
         claude_md = (REPO_ROOT / "CLAUDE.md").read_text()[:3000]
-    except:
-        pass
+    except Exception as exc:
+        logger.warning("ai_brain: cannot read CLAUDE.md (%s); proceeding without rule context", exc)
 
     findings_text = json.dumps(findings, indent=2, default=str)[:8000]
 
@@ -110,7 +112,8 @@ def analyze_findings(findings):
                 agent="keeper-ai",
             )
             proposals.append({"type": "proposal", "title": data["title"], **result})
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            logger.warning("ai_brain: malformed AI proposal line (%s), skipping: %r", exc, line[:120])
             continue
     return proposals
 
@@ -135,7 +138,8 @@ def review_compliance_issue(issue: dict, product_path: Path, model: str = KEEPER
     if file_abs and file_abs.exists() and file_abs.is_file():
         try:
             snippet = file_abs.read_text()[:2000]
-        except Exception:
+        except Exception as exc:
+            logger.warning("ai_brain: cannot read %s for proposal context (%s); proposal will lack code snippet", file_abs, exc)
             snippet = ""
 
     prompt = f"""You are the NoctusAI **keeper** — an observation-only compliance reviewer for a FastAPI + React + Supabase monorepo built on a central `seed/` framework. You NEVER modify code. You author proposals a human reviews.
@@ -194,15 +198,24 @@ Rules:
 
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        logger.warning("ai_brain: AI returned non-JSON, attempting JSONL line-by-line fallback (%s)", exc)
         # Try line-by-line as a fallback (some models emit JSONL).
+        last_err: Exception | None = None
         for line in cleaned.splitlines():
             line = line.strip()
             if line.startswith("{") and line.endswith("}"):
                 try:
                     return json.loads(line)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as line_exc:
+                    logger.debug("ai_brain: JSONL line did not parse (%s): %r", line_exc, line[:120])
+                    last_err = line_exc
                     continue
+        logger.warning(
+            "ai_brain: AI response was not valid JSON or JSONL; returning None. "
+            "Last parse error: %s. First 200 chars of response: %r",
+            last_err, cleaned[:200],
+        )
         return None
 
 
@@ -221,8 +234,8 @@ def ai_advisory(product_path=None):
                 break
             elif rules:
                 rules += line + "\n"
-    except:
-        pass
+    except Exception as exc:
+        logger.warning("ai_brain: cannot read CLAUDE.md for advisory rules (%s); rules will be empty", exc)
 
     from tools.products import list_products, PRODUCTS_DIR
     products = list_products()
@@ -253,7 +266,7 @@ def ai_advisory(product_path=None):
             if line.strip().startswith("{"):
                 try:
                     findings.append(json.loads(line.strip()))
-                except:
-                    pass
+                except Exception as exc:
+                    logger.warning("ai_brain: malformed AI advisory line (%s), skipping: %r", exc, line[:120])
 
     return findings

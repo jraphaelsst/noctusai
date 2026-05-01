@@ -200,7 +200,7 @@ class TestSegmentContactsEndpoint:
 
 class TestCampaignDebriefEndpoints:
     def test_preview_returns_subject_html_summary(self, client):
-        from noctusai_lib.email.digest import Digest
+        from noctusai_lib.integrations.email.digest import Digest
 
         async def _fake_build(db, *, campaign_id, org_id):
             return (

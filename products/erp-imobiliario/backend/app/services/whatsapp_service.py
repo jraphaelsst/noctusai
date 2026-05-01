@@ -366,7 +366,11 @@ async def send_via_waha(db, phone: str, message: str) -> dict:
                     "phone": digits,
                     "error": response.text,
                 }
-    except ImportError:
+    except ImportError as exc:
+        # Don't log the phone number — LGPD personal data, and the failure
+        # mode (httpx not installed) has nothing to do with which phone was
+        # being sent to. Caller still gets `phone` in the return dict.
+        logger.warning("whatsapp_service: httpx unavailable (%s); returning dry_run", exc)
         return {"message_id": f"no_httpx_{phone}", "status": "sent", "phone": phone, "dry_run": True}
     except Exception as e:
         logger.error(f"WAHA send error: {e}")

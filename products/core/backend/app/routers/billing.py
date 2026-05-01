@@ -191,11 +191,14 @@ def _dispatch_webhook(event_type: str, event_data: dict) -> None:
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(webhook_delivery.dispatch(org_id, event_type, payload))
-        except RuntimeError:
+        except RuntimeError as exc:
             # No running loop (shouldn't happen in FastAPI, but be safe)
-            pass
+            logger.warning("billing: no running asyncio loop to dispatch webhook (%s); event %s for org=%s skipped", exc, event_type, org_id)
     except Exception as exc:
-        logger.warning(f"Failed to dispatch billing webhook: {exc}")
+        logger.warning(
+            "billing: webhook dispatch failed (%s); event %s for org=%s skipped",
+            exc, event_type, org_id,
+        )
 
 
 def _notify_billing_event(event_type: str, event_data: dict) -> None:
@@ -234,7 +237,10 @@ def _notify_billing_event(event_type: str, event_data: dict) -> None:
             org_name=org.data["nome"],
         )
     except Exception as exc:
-        logger.warning(f"Failed to send billing notification: {exc}")
+        logger.warning(
+            "billing: notification send failed (%s); event %s for org=%s",
+            exc, event_type, event_data.get("org_id"),
+        )
 
 
 def _log_billing_event(event_id: str, event_type: str, event_data: dict) -> None:
@@ -326,8 +332,8 @@ async def cancel_subscription(body: CancelRequest, authorization: Optional[str] 
             action="cancel", resource_type="subscription",
             resource_id=result.get("id"),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("billing: cancel-subscription audit log failed for sub_id=%s (%s); cancellation succeeded", result.get("id"), exc)
 
     return {"data": result}
 

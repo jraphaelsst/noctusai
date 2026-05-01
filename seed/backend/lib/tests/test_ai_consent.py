@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock
 
-from noctusai_lib.ai import consent as consent_module
-from noctusai_lib.ai.consent import (
+from noctusai_lib.domain.ai import consent as consent_module
+from noctusai_lib.domain.ai.consent import (
     AIConsentRequired,
     MandatoryFeatureCannotBeToggled,
     fetch_user_decisions,
@@ -196,7 +196,7 @@ class TestPendingCount:
 # consent_required FastAPI dep factory (consent-guard-rollout Phase 1)
 # ---------------------------------------------------------------------------
 
-from noctusai_lib.ai.consent import (
+from noctusai_lib.domain.ai.consent import (
     configure_consent_module,
     consent_required,
     is_consent_module_configured,

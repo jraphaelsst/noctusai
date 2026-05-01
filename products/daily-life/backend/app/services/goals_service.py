@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from fastapi import HTTPException
-from noctusai_lib.auth import first_or_none
+from noctusai_lib.api.auth import first_or_none
 
 logger = logging.getLogger(__name__)
 

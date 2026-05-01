@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from app.dependencies import get_current_user, get_org_id, get_admin_client
-from noctusai_lib.responses import success_response
+from noctusai_lib.primitives.responses import success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["Settings"])

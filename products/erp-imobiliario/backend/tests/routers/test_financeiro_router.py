@@ -4,6 +4,8 @@ Covers list, create, read, update, delete, resumo, and fluxo de caixa.
 """
 import pytest
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestListarLancamentos:
     def test_list_all(self, client):
@@ -107,11 +109,13 @@ class TestObterLancamento:
 
 class TestCriarLancamento:
     def test_create_success(self, client):
-        client._mock_supabase.set_table_data("lancamentos", {
-            "id": "new-l", "tipo": "receita", "categoria": "Comissao",
-            "descricao": "Comissao venda casa", "valor": 1000,
-            "data_vencimento": "2026-03-01", "status": "pendente",
-        })
+        client._mock_supabase.set_sequential_responses("lancamentos", [
+            MockSupabaseResponse(data=[{
+                "id": "new-l", "tipo": "receita", "categoria": "Comissao",
+                "descricao": "Comissao venda casa", "valor": 1000,
+                "data_vencimento": "2026-03-01", "status": "pendente",
+            }]),
+        ])
         resp = client.post("/api/financeiro", json={
             "tipo": "receita",
             "categoria": "Comissao",

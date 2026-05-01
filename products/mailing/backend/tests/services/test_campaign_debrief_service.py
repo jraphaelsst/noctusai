@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from noctusai_lib.email.digest import DigestSendResult
+from noctusai_lib.integrations.email.digest import DigestSendResult
 
 
 class TestAggregate:
@@ -87,7 +87,7 @@ class TestBuildDebrief:
             "app.services.campaign_debrief_service._fetch_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.campaign_debrief_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="Panorama.\n\nObservações.\n\nRecomendação.",
         ):
@@ -112,7 +112,7 @@ class TestBuildDebrief:
             "app.services.campaign_debrief_service._fetch_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.campaign_debrief_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             side_effect=RuntimeError("LLM down"),
         ):
@@ -135,11 +135,11 @@ class TestSendCampaignDebrief:
             "app.services.campaign_debrief_service._fetch_window",
             side_effect=_fake_fetch,
         ), patch(
-            "app.services.campaign_debrief_service.chat_completion",
+            "noctusai_lib.domain.digest.narrative.chat_completion",
             new_callable=AsyncMock,
             return_value="x",
         ), patch(
-            "app.services.campaign_debrief_service.send_digest",
+            "noctusai_lib.domain.digest.orchestrate.send_digest",
             new_callable=AsyncMock,
             return_value=DigestSendResult(sent=True, external_id="abc", subject="x"),
         ):

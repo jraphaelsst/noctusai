@@ -20,6 +20,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user
+from noctusai_lib.primitives.parsing import parse_iso_or_400 as _parse_iso
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/llm-usage", tags=["Admin · LLM Usage"])
@@ -38,15 +39,6 @@ async def _require_platform_admin(authorization: Optional[str]) -> None:
     noctus_role = (user.user_metadata or {}).get("noctus_role")
     if noctus_role != "admin":
         raise HTTPException(status_code=403, detail="Platform admin required")
-
-
-def _parse_iso(value: Optional[str]) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        raise HTTPException(status_code=400, detail=f"Invalid ISO date: {value}")
 
 
 @router.get("")

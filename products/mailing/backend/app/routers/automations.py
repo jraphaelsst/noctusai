@@ -8,7 +8,7 @@ from app.schemas.automations import (
     AutomationCreate, AutomationUpdate, StepCreate, StepUpdate, StepReorder, EnrollContacts,
 )
 from app.services.automation_service import AutomationService
-from noctusai_lib.responses import success_response
+from noctusai_lib.primitives.responses import success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/automations", tags=["Automations"])

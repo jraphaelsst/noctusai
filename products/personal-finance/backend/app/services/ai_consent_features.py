@@ -11,7 +11,7 @@ the platform-wide consent catalog at boot.
 """
 from __future__ import annotations
 
-from noctusai_lib.ai import register_feature
+from noctusai_lib.domain.ai import register_feature
 
 # P1-opp — Transaction auto-categorization (medium-risk: transaction
 # description / merchant text in prompt — but org-internal, not personal narrative)

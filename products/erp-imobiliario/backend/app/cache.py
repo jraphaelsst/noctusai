@@ -106,7 +106,10 @@ class CacheService:
 
         try:
             return json.loads(value)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            # Corrupt cache value — treat as miss. Spike of these warnings means
+            # cache writes are storing bad JSON; investigate the writer.
+            logger.warning("cache: corrupt JSON for key=%s (%s); treating as miss", key, exc)
             return None
 
     def set(self, key: str, value: str, ttl: int = DEFAULT_TTL) -> bool:

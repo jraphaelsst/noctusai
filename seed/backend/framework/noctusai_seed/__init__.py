@@ -10,8 +10,8 @@ Two layers:
 
 Products import from both. Domain-specific code lives in the product only.
 """
-from noctusai_lib.llm import LLMConfig
-from noctusai_lib.llm.client import configure_llm, get_llm_config, shutdown_llm
+from noctusai_lib.integrations.llm import LLMConfig
+from noctusai_lib.integrations.llm.client import configure_llm, get_llm_config, shutdown_llm
 
 from noctusai_seed._version import __seed_version__
 from noctusai_seed.app import create_product_app

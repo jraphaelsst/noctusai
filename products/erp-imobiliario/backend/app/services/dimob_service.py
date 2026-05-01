@@ -12,6 +12,8 @@ from typing import Any
 from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom.minidom import parseString
 
+from noctusai_lib.primitives.parsing import format_brl
+
 logger = logging.getLogger(__name__)
 
 
@@ -230,7 +232,8 @@ def generate_dimob_xml(org_id: str, ano: int, supabase) -> str:
     try:
         dom = parseString(xml_str)
         return dom.toprettyxml(indent="  ", encoding=None)
-    except Exception:
+    except Exception as exc:
+        logger.warning("dimob_service: pretty-print parseString failed (%s); returning unformatted XML", exc)
         return xml_str
 
 
@@ -250,13 +253,16 @@ def _format_date(dt_str: str) -> str:
         else:
             dt = datetime.strptime(dt_str, "%Y-%m-%d")
         return dt.strftime("%d/%m/%Y")
-    except Exception:
+    except Exception as exc:
+        logger.warning("dimob_service: cannot format date %r (%s); using best-effort substring", dt_str, exc)
         return dt_str[:10] if len(dt_str) >= 10 else dt_str
 
 
 def _format_money(value) -> str:
-    """Format monetary value as string with 2 decimal places."""
-    try:
-        return f"{float(value):.2f}"
-    except (ValueError, TypeError):
-        return "0.00"
+    """Thin alias of `noctusai_lib.parsing.format_brl(..., with_currency=False)`.
+
+    DIMOB exports a fixed-width XML format where money fields must be
+    raw decimals like ``"123.45"`` (no currency prefix, no locale
+    separators). The lib helper handles None / non-numeric → ``"0.00"``.
+    """
+    return format_brl(value, decimals=2, with_currency=False)

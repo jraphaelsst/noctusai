@@ -25,10 +25,11 @@ narratives (right-to-erasure is a separate workflow per LGPD Art. 18.VI).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
-from noctusai_lib.ai import require, AIConsentRequired
+from noctusai_lib.domain.ai import require, AIConsentRequired
 
 from app.database import get_core_client
 from app.dependencies import first_or_none
@@ -42,6 +43,52 @@ from app.services.session_service import _now_sp
 logger = logging.getLogger(__name__)
 
 AUDIO_RETENTION_HOURS = 24
+
+
+# ---------------------------------------------------------------------------
+# Dependency-injection seam (testing.md § "No self-monkeypatching" Pattern 1)
+# ---------------------------------------------------------------------------
+#
+# The pipeline orchestrates 5 helper services. Tests previously used
+# `patch.object(<service>, "<helper>", ...)` to short-circuit each step —
+# violating the no-self-monkeypatch rule and hiding the orchestrator's
+# real call shape behind mock plumbing. The DI shape below lets tests
+# construct a `_PipelineHooks` with fakes and pass it as a kwarg; the
+# production path (kwarg omitted) keeps using the real services with zero
+# call-site change.
+#
+# Why a dataclass and not 5 kwargs per function: each pipeline function
+# (`process_session_end`, `on_observation_change`, `on_patient_note_change`)
+# touches multiple helpers; a single `hooks=` kwarg keeps the signatures
+# tight and makes it trivial to add a new helper without thrashing every
+# call site.
+
+
+@dataclass
+class _PipelineHooks:
+    """Helper-function injection point — production defaults bind to the real
+    `transcription_service` / `summary_service` / `longitudinal_service`
+    callables; tests pass an instance with `AsyncMock` substitutes.
+    """
+    transcribe: Callable[..., Awaitable[str]] = field(
+        default=transcription_service.assemble_transcript,
+    )
+    summarize: Callable[..., Awaitable[Dict]] = field(
+        default=summary_service.generate_session_summaries,
+    )
+    regenerate_clinical_summary: Callable[..., Awaitable[Optional[Dict]]] = field(
+        default=summary_service.regenerate_clinical_summary,
+    )
+    longitudinal_clinical: Callable[..., Awaitable[Optional[Dict]]] = field(
+        default=longitudinal_service.generate_clinical_longitudinal,
+    )
+    longitudinal_patient: Callable[..., Awaitable[Optional[Dict]]] = field(
+        default=longitudinal_service.generate_patient_longitudinal,
+    )
+
+
+# Singleton — production path resolves to this; tests construct their own.
+_DEFAULT_HOOKS = _PipelineHooks()
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +185,7 @@ async def process_session_end(
     source: str,
     db: Any,
     core_db: Optional[Any] = None,
+    hooks: Optional[_PipelineHooks] = None,
 ) -> Dict:
     """Full AI pipeline triggered after a session ends.
 
@@ -150,7 +198,13 @@ async def process_session_end(
     6. Trigger patient longitudinal regeneration
     7. Set audio download expiry (24h)
     8. Set ai_generated_at on session_record
+
+    Tests inject `hooks=_PipelineHooks(transcribe=..., summarize=..., ...)`
+    to short-circuit specific steps. Production callers omit `hooks`; the
+    real `transcription_service` / `summary_service` / `longitudinal_service`
+    callables are bound on `_DEFAULT_HOOKS` at module load.
     """
+    hooks = hooks if hooks is not None else _DEFAULT_HOOKS
     logger.info("AI pipeline started for appointment %s (source=%s)", appointment_id, source)
     # core_db resolves lazily — see _resolve_core_db(). Only the AIConsentRequired
     # branch needs it; resolving up-front would force every test (and every
@@ -181,7 +235,7 @@ async def process_session_end(
     # Step 1: Assemble transcript
     logger.info("Step 1: Assembling transcript for %s", appointment_id)
     try:
-        transcript = await transcription_service.assemble_transcript(
+        transcript = await hooks.transcribe(
             appointment_id, db, clinic_id=clinic_id,
         )
     except Exception as e:
@@ -235,7 +289,7 @@ async def process_session_end(
             patient_id,
             session_record_id,
         )
-        summaries = await summary_service.generate_session_summaries(
+        summaries = await hooks.summarize(
             session_record_id=session_record_id,
             transcript=transcript,
             observations=observations,
@@ -284,7 +338,7 @@ async def process_session_end(
         # Step 5: Trigger clinical longitudinal regeneration
         logger.info("Step 5: Regenerating clinical longitudinal for patient %s", patient_id)
         try:
-            clinical_longitudinal = await longitudinal_service.generate_clinical_longitudinal(
+            clinical_longitudinal = await hooks.longitudinal_clinical(
                 patient_id=patient_id,
                 therapist_id=therapist_id,
                 db=db,
@@ -296,7 +350,7 @@ async def process_session_end(
         # Step 6: Trigger patient longitudinal regeneration
         logger.info("Step 6: Regenerating patient longitudinal for patient %s", patient_id)
         try:
-            patient_longitudinal = await longitudinal_service.generate_patient_longitudinal(
+            patient_longitudinal = await hooks.longitudinal_patient(
                 patient_id=patient_id,
                 therapist_id=therapist_id,
                 db=db,
@@ -359,6 +413,7 @@ async def on_observation_change(
     session_record_id: str,
     db: Any,
     core_db: Optional[Any] = None,
+    hooks: Optional[_PipelineHooks] = None,
 ) -> Dict:
     """Triggered when an observation is added, edited, or deleted.
 
@@ -367,7 +422,10 @@ async def on_observation_change(
     - Clinical longitudinal
 
     Does NOT affect Track 1 or patient longitudinal.
+
+    See `process_session_end` for `hooks=` semantics — same DI seam.
     """
+    hooks = hooks if hooks is not None else _DEFAULT_HOOKS
     logger.info("Observation change for session_record %s", session_record_id)
 
     # Fetch session record for patient/therapist IDs first — we need the
@@ -395,7 +453,7 @@ async def on_observation_change(
                 patient_id,
                 session_record_id,
             )
-            clinical_summary = await summary_service.regenerate_clinical_summary(
+            clinical_summary = await hooks.regenerate_clinical_summary(
                 session_record_id, db, clinic_id=clinic_id,
             )
         except AIConsentRequired as exc:
@@ -420,7 +478,7 @@ async def on_observation_change(
         # No session record found — preserve legacy behavior (regen attempt
         # against missing record produces an error dict).
         try:
-            clinical_summary = await summary_service.regenerate_clinical_summary(
+            clinical_summary = await hooks.regenerate_clinical_summary(
                 session_record_id, db, clinic_id=None,
             )
         except Exception as e:
@@ -437,7 +495,7 @@ async def on_observation_change(
                 patient_id,
                 session_record_id,
             )
-            clinical_longitudinal = await longitudinal_service.generate_clinical_longitudinal(
+            clinical_longitudinal = await hooks.longitudinal_clinical(
                 patient_id=patient_id,
                 therapist_id=therapist_id,
                 db=db,
@@ -476,12 +534,16 @@ async def on_patient_note_change(
     therapist_id: str,
     db: Any,
     core_db: Optional[Any] = None,
+    hooks: Optional[_PipelineHooks] = None,
 ) -> Dict:
     """Triggered when a patient adds, edits, or deletes a personal note.
 
     Regenerates patient longitudinal only.
     Does NOT affect clinical summary or clinical longitudinal.
+
+    See `process_session_end` for `hooks=` semantics — same DI seam.
     """
+    hooks = hooks if hooks is not None else _DEFAULT_HOOKS
     logger.info(
         "Patient note change for session_record %s, patient %s",
         session_record_id,
@@ -498,7 +560,7 @@ async def on_patient_note_change(
             patient_id,
             session_record_id,
         )
-        patient_longitudinal = await longitudinal_service.generate_patient_longitudinal(
+        patient_longitudinal = await hooks.longitudinal_patient(
             patient_id=patient_id,
             therapist_id=therapist_id,
             db=db,

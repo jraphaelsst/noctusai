@@ -23,33 +23,33 @@ for p in (_LIB, _FRAMEWORK):
 
 
 # Import-time side-effects need the LLM package to register providers.
-import noctusai_lib.llm  # noqa: F401,E402
+import noctusai_lib.integrations.llm  # noqa: F401,E402
 
 
 class TestConfigureAndGet:
     def setup_method(self):
-        from noctusai_lib.llm.client import _reset_for_testing
+        from noctusai_lib.integrations.llm.client import _reset_for_testing
 
         _reset_for_testing()
 
     def test_get_without_configure_raises(self):
-        from noctusai_lib.llm.client import get_llm_config
+        from noctusai_lib.integrations.llm.client import get_llm_config
 
         with pytest.raises(RuntimeError) as exc_info:
             get_llm_config()
         assert "configure_llm" in str(exc_info.value)
 
     def test_configure_and_retrieve(self):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import configure_llm, get_llm_config
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import configure_llm, get_llm_config
 
         cfg = LLMConfig(key_provider=lambda p, org_id=None: "k")
         configure_llm(cfg)
         assert get_llm_config() is cfg
 
     def test_reconfigure_wins(self):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import configure_llm, get_llm_config
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import configure_llm, get_llm_config
 
         cfg1 = LLMConfig(key_provider=lambda p, org_id=None: "k1")
         cfg2 = LLMConfig(key_provider=lambda p, org_id=None: "k2")
@@ -60,13 +60,13 @@ class TestConfigureAndGet:
 
 class TestGetProvider:
     def setup_method(self):
-        from noctusai_lib.llm.client import _reset_for_testing
+        from noctusai_lib.integrations.llm.client import _reset_for_testing
 
         _reset_for_testing()
 
     def test_defaults_to_configured_provider(self):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import configure_llm, get_provider
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import configure_llm, get_provider
 
         configure_llm(LLMConfig(
             key_provider=lambda p, org_id=None: "k",
@@ -76,8 +76,8 @@ class TestGetProvider:
         assert provider.name == "openai"
 
     def test_explicit_name_overrides_default(self, monkeypatch):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import configure_llm, get_provider
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import configure_llm, get_provider
 
         monkeypatch.setenv("NOCTUSAI_ALLOW_STUB_PROVIDERS", "1")
         configure_llm(LLMConfig(key_provider=lambda p, org_id=None: "k"))
@@ -85,8 +85,8 @@ class TestGetProvider:
         assert p.name == "anthropic"
 
     def test_provider_instances_are_cached(self):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import configure_llm, get_provider
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import configure_llm, get_provider
 
         configure_llm(LLMConfig(key_provider=lambda p, org_id=None: "k"))
         a = get_provider("openai")
@@ -94,8 +94,8 @@ class TestGetProvider:
         assert a is b
 
     def test_reconfigure_clears_provider_cache(self):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import configure_llm, get_provider
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import configure_llm, get_provider
 
         configure_llm(LLMConfig(key_provider=lambda p, org_id=None: "k"))
         a = get_provider("openai")
@@ -106,13 +106,13 @@ class TestGetProvider:
 
 class TestResolveApiKey:
     def setup_method(self):
-        from noctusai_lib.llm.client import _reset_for_testing
+        from noctusai_lib.integrations.llm.client import _reset_for_testing
 
         _reset_for_testing()
 
     def test_routes_through_config(self):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import configure_llm, resolve_api_key
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import configure_llm, resolve_api_key
 
         seen = []
 
@@ -126,8 +126,8 @@ class TestResolveApiKey:
         assert seen == [("openai", "org-42")]
 
     def test_raises_when_provider_returns_none(self):
-        from noctusai_lib.llm import LLMConfig, LLMNotConfigured
-        from noctusai_lib.llm.client import configure_llm, resolve_api_key
+        from noctusai_lib.integrations.llm import LLMConfig, LLMNotConfigured
+        from noctusai_lib.integrations.llm.client import configure_llm, resolve_api_key
 
         configure_llm(LLMConfig(key_provider=lambda p, org_id=None: None))
         with pytest.raises(LLMNotConfigured) as exc_info:
@@ -137,13 +137,13 @@ class TestResolveApiKey:
 
 class TestShutdown:
     def setup_method(self):
-        from noctusai_lib.llm.client import _reset_for_testing
+        from noctusai_lib.integrations.llm.client import _reset_for_testing
 
         _reset_for_testing()
 
     def test_shutdown_clears_state(self):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import configure_llm, get_llm_config, get_provider, shutdown_llm
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import configure_llm, get_llm_config, get_provider, shutdown_llm
 
         configure_llm(LLMConfig(key_provider=lambda p, org_id=None: "k"))
         get_provider("openai")  # populate cache
@@ -152,8 +152,8 @@ class TestShutdown:
             get_llm_config()
 
     def test_shutdown_calls_provider_close(self):
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import _provider_cache, configure_llm, shutdown_llm
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import _provider_cache, configure_llm, shutdown_llm
 
         closed = []
 
@@ -170,8 +170,8 @@ class TestShutdown:
 
     def test_shutdown_tolerates_close_error(self):
         """A misbehaving provider must not prevent shutdown."""
-        from noctusai_lib.llm import LLMConfig
-        from noctusai_lib.llm.client import _provider_cache, configure_llm, shutdown_llm
+        from noctusai_lib.integrations.llm import LLMConfig
+        from noctusai_lib.integrations.llm.client import _provider_cache, configure_llm, shutdown_llm
 
         class Broken:
             name = "broken"
@@ -187,7 +187,7 @@ class TestShutdown:
 
 class TestDefaultLLMConfig:
     def test_returns_llm_config_instance(self):
-        from noctusai_lib.llm import LLMConfig
+        from noctusai_lib.integrations.llm import LLMConfig
         from noctusai_seed.llm_defaults import default_llm_config
 
         cfg = default_llm_config()
@@ -210,7 +210,7 @@ class TestDefaultLLMConfig:
 
     def test_key_provider_uses_resolve_credential(self, monkeypatch):
         """default_llm_config's key_provider routes through the 3-tier chain."""
-        from noctusai_lib.credentials import _reset_for_testing
+        from noctusai_lib.config.credentials import _reset_for_testing
         from noctusai_seed.llm_defaults import default_llm_config
 
         _reset_for_testing()

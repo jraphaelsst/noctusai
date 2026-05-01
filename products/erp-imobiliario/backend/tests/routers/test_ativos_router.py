@@ -44,7 +44,9 @@ class TestListarAtivos:
 
 class TestCriarAtivo:
     def test_create_imovel_success(self, client):
-        client._mock_supabase.set_table_data("ativos", {"id": "new-1", "natureza": "imovel", "valor": 500000})
+        client._mock_supabase.set_sequential_responses("ativos", [
+            MockSupabaseResponse(data=[{"id": "new-1", "natureza": "imovel", "valor": 500000}]),
+        ])
         resp = client.post("/api/ativos", json={
             "natureza": "imovel", "valor": 500000, "tipo_imovel": "apartamento",
             "cidade": "São Paulo",
@@ -147,7 +149,9 @@ class TestAutoEmbedding:
 
     def test_embedding_failure_doesnt_break_create(self, client):
         """Embedding failure should not prevent ativo creation from succeeding."""
-        client._mock_supabase.set_table_data("ativos", {"id": "emb-3", "natureza": "imovel", "valor": 500000})
+        client._mock_supabase.set_sequential_responses("ativos", [
+            MockSupabaseResponse(data=[{"id": "emb-3", "natureza": "imovel", "valor": 500000}]),
+        ])
         # Even if embedding raises, create should succeed
         resp = client.post("/api/ativos", json={
             "natureza": "imovel", "valor": 500000,
@@ -207,7 +211,9 @@ class TestAutoMatching:
 
     def test_matching_failure_doesnt_break_create(self, client):
         """Matching failure should not prevent ativo creation."""
-        client._mock_supabase.set_table_data("ativos", {"id": "fail-match", "natureza": "permuta_imovel", "valor": 300000})
+        client._mock_supabase.set_sequential_responses("ativos", [
+            MockSupabaseResponse(data=[{"id": "fail-match", "natureza": "permuta_imovel", "valor": 300000}]),
+        ])
         # Even with matching failure, create should succeed
         resp = client.post("/api/ativos", json={
             "natureza": "permuta_imovel", "valor": 300000,

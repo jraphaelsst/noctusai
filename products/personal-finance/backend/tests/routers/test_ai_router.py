@@ -107,7 +107,7 @@ class TestCategorizeTransaction:
 
 class TestMonthlyNarrative:
     def test_get_returns_digest_and_summary(self, client):
-        from noctusai_lib.email.digest import Digest
+        from noctusai_lib.integrations.email.digest import Digest
 
         async def _fake_build(db, *, org_id, period_days):
             return (

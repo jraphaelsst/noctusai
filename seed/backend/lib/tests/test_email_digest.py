@@ -9,12 +9,12 @@ import asyncio
 
 import pytest
 
-from noctusai_lib.email.digest import (
+from noctusai_lib.integrations.email.digest import (
     Digest,
     DigestSendResult,
     send_digest,
 )
-from noctusai_lib.email import digest as digest_module
+from noctusai_lib.integrations.email import digest as digest_module
 
 
 def _run(coro):
@@ -118,9 +118,9 @@ class TestSendDigestErrors:
 
 class TestResolveResendConfig:
     def test_no_key_returns_none(self, monkeypatch):
-        from noctusai_lib import credentials as creds
+        from noctusai_lib.config import credentials as creds
         monkeypatch.setattr(creds, "resolve_credential", lambda key, org_id=None: None)
-        from noctusai_lib.email.digest import _resolve_resend_config
+        from noctusai_lib.integrations.email.digest import _resolve_resend_config
         assert _resolve_resend_config(org_id="org-1") is None
 
     def test_with_key_uses_defaults_when_from_unset(self, monkeypatch):
@@ -129,12 +129,12 @@ class TestResolveResendConfig:
             if name == "resend_api_key":
                 return "re_xxx"
             return None
-        from noctusai_lib import credentials as creds
+        from noctusai_lib.config import credentials as creds
         monkeypatch.setattr(creds, "resolve_credential", fake_resolve)
         # Need to re-import the digest module's reference too because it
         # imported `resolve_credential` at module load time.
         monkeypatch.setattr(digest_module, "resolve_credential", fake_resolve)
-        from noctusai_lib.email.digest import _resolve_resend_config
+        from noctusai_lib.integrations.email.digest import _resolve_resend_config
         cfg = _resolve_resend_config(org_id="org-1")
         assert cfg is not None
         assert cfg["api_key"] == "re_xxx"
@@ -155,7 +155,7 @@ class TestRender:
         return path
 
     def test_extends_lib_base_layout_html(self, tmp_path):
-        from noctusai_lib.email.digest import render
+        from noctusai_lib.integrations.email.digest import render
         self._write(tmp_path, "demo.html.j2", (
             '{% extends "_digest_base.html.j2" %}'
             '{% block header %}Olá {{ name }}{% endblock %}'
@@ -181,7 +181,7 @@ class TestRender:
         assert "-- NoctusAI · v1" in text
 
     def test_autoescape_blocks_xss_by_default(self, tmp_path):
-        from noctusai_lib.email.digest import render
+        from noctusai_lib.integrations.email.digest import render
         self._write(tmp_path, "x.html.j2", (
             '{% extends "_digest_base.html.j2" %}'
             '{% block body %}{{ payload }}{% endblock %}'
@@ -200,7 +200,7 @@ class TestRender:
         assert "&lt;script&gt;" in html
 
     def test_safe_filter_passes_pre_rendered_html(self, tmp_path):
-        from noctusai_lib.email.digest import render
+        from noctusai_lib.integrations.email.digest import render
         self._write(tmp_path, "y.html.j2", (
             '{% extends "_digest_base.html.j2" %}'
             '{% block body %}{{ trusted | safe }}{% endblock %}'
@@ -218,7 +218,7 @@ class TestRender:
         assert "<p>narrative</p>" in html
 
     def test_product_template_overrides_lib_when_same_name(self, tmp_path):
-        from noctusai_lib.email.digest import render
+        from noctusai_lib.integrations.email.digest import render
         self._write(tmp_path, "_digest_base.html.j2", "<custom>{% block body %}{% endblock %}</custom>")
         self._write(tmp_path, "_digest_base.txt.j2", "[CUSTOM] {% block body %}{% endblock %}")
         self._write(tmp_path, "z.html.j2", (
@@ -240,7 +240,7 @@ class TestRender:
 
     def test_template_not_found_raises(self, tmp_path):
         from jinja2.exceptions import TemplateNotFound
-        from noctusai_lib.email.digest import render
+        from noctusai_lib.integrations.email.digest import render
         with pytest.raises(TemplateNotFound):
             render(
                 html_template="missing.html.j2",

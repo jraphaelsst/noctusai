@@ -3,7 +3,7 @@
 Pure functions; no DB, no network. The mapper is the boundary between
 core's English notification schema and every product's Portuguese API.
 """
-from noctusai_lib.notifications import (
+from noctusai_lib.domain.notifications import (
     map_notification_to_pt,
     map_notification_from_pt,
 )

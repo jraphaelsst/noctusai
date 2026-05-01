@@ -10,7 +10,7 @@ rubric (low/medium-risk org-internal AI). Users still see them in
 """
 from __future__ import annotations
 
-from noctusai_lib.ai import register_feature
+from noctusai_lib.domain.ai import register_feature
 
 # M1 — Subject-line generation (low-risk: org-internal copy)
 register_feature(

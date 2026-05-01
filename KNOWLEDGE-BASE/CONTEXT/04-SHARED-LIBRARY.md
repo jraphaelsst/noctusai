@@ -57,6 +57,29 @@ Install: `pip install -e seed/backend/lib`. Import: `from noctusai_lib.<module> 
 
 `AppException` hierarchy. Auto-registered via `configure_app()`.
 
+### `primitives/timeutil.py` — Wallclock + period reference
+
+Single source of truth for "current time" / "current period reference" so production + tests always agree. Replaces hand-rolled `datetime.now(timezone.utc).strftime("%Y-%m")` etc. across products. Adopted 2026-04-30 by `projects/timeutil-absorption/` after a date-rollover bug where a test mixed `date.today()` (local) with the service's `datetime.now(timezone.utc)` and broke at UTC midnight.
+
+| Symbol | Purpose |
+|---|---|
+| `now_utc() -> datetime` | Aware UTC datetime. Use this instead of `datetime.now(timezone.utc)` so `frozen_time(...)` works. |
+| `today_utc() -> date` | UTC `date` (no time, no tz). Use this instead of `date.today()` whenever the result is compared against UTC-stored timestamps. |
+| `current_month_ref() -> str` | `"YYYY-MM"` — the canonical "what month are we in" string for period bucketing. |
+| `current_day_ref() -> str` | `"YYYY-MM-DD"` — the canonical "today's date as a sortable string". |
+| `frozen_time(value: datetime)` | Context manager that pins the wallclock for the with-block. Rejects naive datetimes (the bug class this module exists to prevent). |
+
+```python
+from noctusai_lib.primitives.timeutil import current_month_ref, frozen_time
+from datetime import datetime, timezone
+
+def test_period_at_utc_midnight():
+    with frozen_time(datetime(2026, 5, 1, 0, 47, tzinfo=timezone.utc)):
+        assert current_month_ref() == "2026-05"
+```
+
+**Migration boundary.** `datetime.utcnow()` is deprecated in Python 3.12+ — every site that used it has been migrated to `now_utc()`. New code uses `now_utc()` directly; legacy `datetime.now(timezone.utc)` calls keep working but are tidier when swapped.
+
 ### `middleware.py`
 
 `CorrelationIdMiddleware` (unique request ID), `RequestLoggingMiddleware` (timing).
@@ -131,17 +154,66 @@ Every product accesses LLMs exclusively through this package. No product code im
 | `AuthClient` | Wraps TestClient with Bearer auth. `.mock_supabase` property, `.raw()` for unauth |
 | `bind_consent_module_to_mock(mock_sb)` | **Per-fixture rewire of the X6 consent module's FastAPI deps to a mock supabase.** Solves the boot-order trap where `TestClient` caches the app + `configure_consent_module(...)` captures the FIRST fixture's `mock_sb` reference permanently. Idempotent. Required in every product's `client` fixture — see `KB § PATTERNS/testing.md § Consent-guard product conftest pattern` for the full rationale + canonical conftest shape. Default in `templates/product-seed/backend/tests/conftest.py` since 2026-04-27. |
 
-### `email/` — Templates + scheduled-digest helper + Jinja renderer
+### `integrations/email/` — Templates + scheduled-digest helper + Jinja renderer
 
 The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expansion Tier 2 Phase 4) so the new `digest.py` could land alongside the existing invitation-email helper. Two callers were updated (`noctusai_seed.routers` + `therapy-platform invitations` router); no compat shim ships. **Jinja-based `render()` was formalized 2026-04-25 (ai-expansion Phase 12 close)** after 5 digest adopters surfaced — the prior inline-f-string pattern was retired in the same change.
 
 | Symbol | Purpose |
 |---|---|
-| `send_product_invitation_email(...)` | Existing invitation email (was `email_templates.py`); now at `noctusai_lib.email.templates`. |
+| `send_product_invitation_email(...)` | Existing invitation email (was `email_templates.py`); now at `noctusai_lib.integrations.email.templates`. |
 | `Digest(subject, text, html=None)` | Pre-rendered digest dataclass. |
 | `DigestSendResult(sent, dry_run, external_id, error, subject)` | Structured outcome — `send_digest` never raises. |
 | `send_digest(digest, *, recipient, org_id=None, log_prefix="DIGEST")` | Resend POST + dry-run-on-no-key fallback + Resend-failure swallow. |
 | `render(*, html_template, text_template, context, search_paths)` | Jinja-backed `(html, text)` renderer. Auto-escape on by default; `keep_trailing_newline=True`; products extend the lib's `_digest_base.{html,txt}.j2` and override blocks. |
+
+### `domain/digest/` — Narrative + render-with-narrative + build-and-send
+
+Sits *upstream* of `integrations/email/digest.py` (which owns the Resend transport). Absorbs the recurring N=4 narrative-pipeline shape across 4 product digest services (audit / PF monthly / Daily Life weekly / Mailing campaign). Shipped 2026-04-30 by `digest-pipeline-absorption` (Wave C of `execution-workflow-codequality-rollout`).
+
+| Symbol | Purpose |
+|---|---|
+| `narrative(*, system, user_prompt, model, cache, org_id, fallback, max_tokens=600, temperature=0.0)` | Wraps `chat_completion(...)` with the standard digest posture (temperature=0, max_tokens=600). Returns `fallback` string + `logger.warning(...)` when the LLM is unavailable. Never raises. |
+| `render_with_narrative(*, html_template, text_template, narrative, context, search_paths, prompt_version)` | Wraps `integrations/email/digest.render(...)` and auto-derives `narrative_paragraphs` (the `\n\n` split) + threads `prompt_version` into the rendering context. Caller's `context` keys win on collision. |
+| `build_and_send(digest, *, recipient, org_id, log_prefix)` | Wraps `integrations/email/digest.send_digest(...)` and normalizes the per-recipient return shape to `{"sent", "dry_run", "external_id", "error", "subject"}`. |
+
+**Adoption pattern (Wave C 2026-04-30):**
+
+```python
+from noctusai_lib.domain.digest import (
+    build_and_send,
+    narrative as digest_narrative,
+    render_with_narrative,
+)
+from noctusai_lib.integrations.email.digest import Digest
+
+# Inside _generate_narrative(...):
+return await digest_narrative(
+    system=PRODUCT_SYSTEM_PROMPT,
+    user_prompt=formatted_aggregates,
+    model="gpt-4o-mini",
+    cache=True,                  # False for personal-narrative-adjacent (LGPD)
+    org_id=org_id,
+    fallback=deterministic_string,
+)
+
+# Inside _render_bodies(...):
+return render_with_narrative(
+    html_template="my_digest.html.j2",
+    text_template="my_digest.txt.j2",
+    narrative=narrative,
+    context={"my_specific_field": ...},
+    search_paths=[_TEMPLATE_DIR],
+    prompt_version=PROMPT_VERSION,
+)
+
+# Inside send_X(...):
+result = await build_and_send(
+    digest, recipient=email, org_id=org_id, log_prefix="MY DIGEST",
+)
+return {**result, "summary": summary}
+```
+
+**Adopters (4):** `products/core/.../audit_digest_service.py`, `products/personal-finance/.../monthly_narrative_service.py`, `products/daily-life/.../weekly_review_service.py`, `products/mailing/.../campaign_debrief_service.py`. ERP metas digest does NOT use `domain/digest` — it has no LLM narrative and preserves a bespoke return shape; documented accept-with-rationale in the closed project.
 
 **Adoption pattern (P3 from ai-expansion §5a).** Products ship per-service Jinja templates in `app/email_templates/` (live next to `app/services/`), inherit from the lib base, and call `render()` to produce both bodies. Send-and-fallback machinery comes from `send_digest`.
 

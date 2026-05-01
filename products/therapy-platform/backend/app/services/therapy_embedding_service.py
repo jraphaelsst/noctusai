@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from app.dependencies import first_or_none
 
-from noctusai_lib.llm import generate_embedding as _lib_generate_embedding
+from noctusai_lib.integrations.llm import generate_embedding as _lib_generate_embedding
 
 logger = logging.getLogger(__name__)
 

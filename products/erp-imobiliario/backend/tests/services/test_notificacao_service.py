@@ -3,7 +3,7 @@ Unit tests for notificacao_service — notification creation and team notificati
 """
 import pytest
 
-from tests.conftest import MockSupabaseClient
+from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +23,8 @@ class TestCriarNotificacao:
             "mensagem": "Cliente Joao interessado",
             "link": "/clientes/c-1",
         }
-        db = MockSupabaseClient(data=[notif])
+        db = MockSupabaseClient()
+        db.set_sequential_responses("notificacoes", [MockSupabaseResponse(data=[notif])])
 
         from app.services.notificacao_service import criar_notificacao
         result = await criar_notificacao(
@@ -41,7 +42,9 @@ class TestCriarNotificacao:
 
     @pytest.mark.asyncio
     async def test_create_notification_without_optional_fields(self):
-        db = MockSupabaseClient(data=[{"id": "n-2", "org_id": "org-1", "user_id": "u-1", "tipo": "meta_atingida", "titulo": "Meta atingida", "mensagem": None, "link": None}])
+        notif = {"id": "n-2", "org_id": "org-1", "user_id": "u-1", "tipo": "meta_atingida", "titulo": "Meta atingida", "mensagem": None, "link": None}
+        db = MockSupabaseClient()
+        db.set_sequential_responses("notificacoes", [MockSupabaseResponse(data=[notif])])
 
         from app.services.notificacao_service import criar_notificacao
         result = await criar_notificacao(
@@ -116,8 +119,15 @@ class TestNotificarEquipe:
 
     @pytest.mark.asyncio
     async def test_notificar_equipe_returns_zero_on_no_data(self):
-        """When insert returns no data, count should be 0."""
+        """When insert returns no data, count should be 0.
+
+        2026-04-29: Migrated to `set_sequential_responses` after seed-lib mock
+        upgrade. Previously relied on `data=[]` quirk to make insert return
+        empty; now insert auto-returns inserted rows by default. Explicit
+        empty-response queue simulates the failure path.
+        """
         db = MockSupabaseClient(data=[])
+        db.set_sequential_responses("notificacoes", [MockSupabaseResponse(data=[])])
 
         from app.services.notificacao_service import notificar_equipe
         count = await notificar_equipe(

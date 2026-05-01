@@ -222,3 +222,170 @@ Each tool is **stateless** and **idempotent**: re-running never corrupts state, 
 - **`noctusai_catalog`** enforces the "shared-library first" rule — run it before writing anything that might already exist in `noctusai_lib`, and after any change to the seed to verify no new orphans/duplicates shipped. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/shared-library-conventions.md`.
 - **`noctusai_improvements`** enforces the "retrospective-per-phase" rule — projects are living documents, and each phase captures learnings inline as an `**Improvements:**` block. The tool aggregates these into `improvements.md` next to the project file, so future reworkers of a phase read the original-build friction before touching anything. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`.
 - **`noctusai_review`** enforces the "no violations ship" rule *without* touching code. Every detected issue becomes a proposal the human triages. Referenced from `CLAUDE.md → Engineering Philosophy → MCP toolkit reviews after every change (observation-only)`.
+
+---
+
+## Rule → Tool trace
+
+A future agent's first question is "which rule is mechanically enforced by which tool?" The table below traces every detector / utility against the rule it operationalises. **Rules in CLAUDE.md / KB without a tool are still agent-discipline-only** — that's the unenforced surface where slips happen most often.
+
+| CLAUDE.md / KB rule | Detector / tool | Severity | Notes |
+|---|---|---|---|
+| Seed-first compliance (every product calls `create_product_app`) | `check_seed_compliance` | critical | Tunes for `CONTROL_PLANE_PRODUCTS = {"core"}` |
+| Stale `shared/*` paths | `check_path_references` | critical | Catches the legacy → seed migration |
+| `standard_routers=[...]` opt-in audit | `check_standard_routers_audit` | critical / warning | AST-parses `routers=[...]` kwarg |
+| Frontend calls `createProductApp(...)` | `check_frontend_entrypoint` | critical | |
+| Out-of-contract product trees outside `products/*/` | `check_out_of_contract_trees` | critical | Repo-root sweep |
+| Seed version stamp drift | `check_seed_version_propagation` | high | Runtime artifact; remediated by `stamp-seed-version.sh` |
+| `app/config.py` extends `ProductSettings` | `check_config_extends_product_settings` | critical | AST-walks config |
+| Frontend config paths resolve to `seed/` | `check_frontend_config_paths` | critical | Vite/Tailwind/PostCSS config refs |
+| `validate_schema=False` without rationale | `check_mock_schema_validation` | critical | Catches silent mock-shape drift |
+| AI features wired (router + MASTER-PROMPT + `cache=True` threads `org_id`) | `check_ai_feature_completeness` | high | Cross-cutting AI feature audit |
+| §6 ↔ §11 phase-state consistency | `check_phase_state_consistency` | high | + pre-commit hook block on PROJECT.md commits |
+| **No monkey-patching our own symbols (production OR tests)** | `check_no_self_monkeypatch` | warning | Allowlists boundary accessors + `# self-patch-ok` comment |
+| **No silent errors** | `check_silent_errors` | warning | **No escape hatch** — every except logs / raises / returns error. Retired `# silent-ok` 2026-04-28. |
+| **Clean folder — closed projects deleted** | `check_clean_folder_violations` | warning | Closed (✅) PROJECT.md with surviving folder |
+| **Every keeper detector has a regression test** | `check_detector_has_regression_test` | high | Self-parses `compliance.py`; matches `Test<CamelCase>` classes case-insensitively; `_DETECTOR_TEST_OVERRIDES` for non-conforming names |
+| **Logging convention — no `# silent-ok`** | `check_silent_errors` (above) + `KB § PATTERNS/logging.md` | warning | Bootstrap code uses `logger.debug(...)`; convention doc is the single source of truth |
+| **Recurrence rule (DRY-into-seed at N=2 / N=3+)** | `noctusai_scan_recurrence` (utility) | warning / high | Scans main.py / conftest.py / vite config for repeated lines |
+| **Three-way doc sync (KB ↔ CLAUDE.md ↔ memory)** | `noctusai_check_three_way_sync` (utility) | high / warning | Closes the gap `verify-kb-sync.sh` cannot cover (memory is outside the repo) |
+| Cross-product reference sweep before deletes / renames | `noctusai_refs <pattern>` (utility) | n/a | Replaces manual `grep -rln` |
+| Cross-product `vite build` sweep | `noctusai_build [--changed]` (utility) | n/a | Parallel; supersedes `noctusai_build_all_frontends` |
+| Project status snapshot | `noctusai_status` (utility) | n/a | Walks every PROJECT.md + emits sorted digest |
+
+**Rules NOT yet mechanically enforced** (agent-discipline-only): "Estimate off evidence", "Triage at decision time", "Phase 0 audit — expand loudly" (judgment about whether to expand or hard-stop), "Active robustness review during execution" (looking for vague improvements doesn't mechanise cleanly), "Apply-inline-then-delete" methodology (decision about which improvements stay in-scope is judgment), "Componentize everything" taste-call (subset is mechanised via `noctusai_scan_recurrence`).
+
+---
+
+## Adding a new compliance detector — contributor guide
+
+Every new detector follows the same shape so the toolkit stays coherent. Reference adopters: `check_phase_state_consistency` (added 2026-04-28 by `keeper-phase-state-consistency-detector`), `check_no_self_monkeypatch` / `check_silent_errors` / `check_clean_folder_violations` (added 2026-04-28 by `mcp-tooling-expansion`).
+
+### 1. Add the detector function to `tools/compliance.py`
+
+```python
+def check_<rule_name>(repo_root: Path | None = None) -> list[dict]:
+    """One-line summary citing the originating CLAUDE.md / KB rule.
+
+    Longer description of detection rules + edge cases. Cite the
+    originating project that shipped the rule.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+    # ... your detection logic ...
+    issues.append({
+        "product": product_label,    # `<projects>` for global, slug for per-product
+        "file": relative_path_str,
+        "issue": "Concrete actionable message with fix path.",
+        "severity": "critical" | "high" | "warning",
+    })
+    return issues
+```
+
+**Severity tiers** (per `check_all_products` penalty math — `critical=25`, `high=10`, `warning=3`):
+
+- `critical` — structural compliance gates (seed inheritance, factory usage). Tanks the score.
+- `high` — strong-rule violations that should fail-closed eventually.
+- `warning` — informational findings, legitimate-historical-violations surfaced for cleanup. Doesn't block the score.
+
+### 2. Wire into `check_all_products()` aggregation
+
+```python
+def check_all_products() -> tuple[int, list]:
+    ...
+    all_issues.extend(check_<rule_name>())
+    ...
+```
+
+The aggregator runs every detector + computes the platform score.
+
+### 3. Tests in `tests/test_compliance.py` — **mandatory, gated by `check_detector_has_regression_test`**
+
+The meta-detector `check_detector_has_regression_test` enforces that every `check_*` function has a colocated test class. A new detector merged without the test fails CI (severity `high`). Class-name matcher is case-insensitive on the snake_case parts and accepts both `TestCheck<RuleName>` and `Test<RuleName>` shapes; an explicit override in `_DETECTOR_TEST_OVERRIDES` covers tests living elsewhere. Convention + worked examples at `KB § PATTERNS/testing.md § Regression-test-the-detector`.
+
+Add a `TestCheck<RuleName>` class. Pattern:
+
+```python
+class TestCheck<RuleName>:
+    def _mk_<setup>(self, ...) -> Path:
+        # Build a temp repo / product / file matching the detector's input shape.
+        tmp = Path(tempfile.mkdtemp(prefix="<rule>_test_"))
+        # ... populate ...
+        return tmp
+
+    def test_flags_<violation>(self):
+        repo = self._mk_<setup>(...)  # create a violating fixture
+        issues = check_<rule_name>(repo)
+        assert len(issues) == 1
+        assert "<expected substring>" in issues[0]["issue"]
+
+    def test_does_not_flag_<allowed>(self):
+        repo = self._mk_<setup>(...)  # allowed pattern
+        issues = check_<rule_name>(repo)
+        assert issues == []
+
+    def test_severity_is_<tier>(self):
+        ...
+```
+
+**Cover at minimum**: 1 happy path (no issues), 1+ violation cases per detection rule, 1 allowlist case (`# *-ok: <reason>` comment if applicable), 1 severity assertion.
+
+### 4. (Optional) Add a CLI flag in `cli.py` for direct invocation
+
+If the detector benefits from being callable outside the `--validate` aggregate (e.g. for pre-commit hooks scoped to specific file types):
+
+```python
+parser.add_argument("--check-<rule>", action="store_true", help="...")
+```
+
+Then in the handler chain:
+
+```python
+elif args.check_<rule>:
+    from tools.compliance import check_<rule_name>
+    issues = check_<rule_name>()
+    # ... format + exit 1 if issues
+```
+
+### 5. Register as MCP tool in `server.py`
+
+Add to `list_tools()` under the right section:
+
+```python
+_tool(
+    "noctusai_check_<rule>",
+    "One-line description for the agent.",
+    {"<param>": {"type": "...", "description": "..."}},  # if any
+    [],  # required params
+),
+```
+
+And to `_dispatch`:
+
+```python
+"noctusai_check_<rule>": lambda: compliance.check_<rule_name>(),
+```
+
+### 6. Update `KB § 06-AGENTS.md` detector catalog
+
+Add a row under "Detectors in `tools/compliance.py`":
+
+```
+- `check_<rule_name>` — what it does, severity, originating project, fix path.
+```
+
+### 7. Update this README's "Rule → Tool trace" table
+
+Add a row mapping the originating rule to your detector. Keeps the table the canonical answer to "which rules are enforced by which tools?"
+
+### 8. Three-way sync the methodology
+
+Per `KB § 01-PHILOSOPHY.md § Docs stay in sync` — if your detector encodes a NEW rule (not just enforcing an existing one):
+
+1. KB: write the long-form rule in the appropriate `KB § PATTERNS/...` or `KB § 0X-...` file + add to `KB § INDEX.md`.
+2. CLAUDE.md: add the short bullet + pointer.
+3. Memory: file a `feedback_<rule>.md` with `name:` / `description:` / `type: feedback` frontmatter; cite the KB anchor; update `MEMORY.md` index.
+
+The detector closes the loop deterministically — but the rule still lives in three layers.

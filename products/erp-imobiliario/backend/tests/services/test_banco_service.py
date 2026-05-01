@@ -85,8 +85,15 @@ class TestImportarExtrato:
         assert result["total_debitos"] == 0.0
 
     def test_no_extrato_record_raises(self):
-        """If the extrato insert returns no data, RuntimeError should be raised."""
+        """If the extrato insert returns no data, RuntimeError should be raised.
+
+        2026-04-29: Migrated to `set_sequential_responses` after seed-lib mock
+        upgrade — `MockRequestBuilder.insert(...)` now returns the inserted row
+        with auto-id by default (matches real Supabase). To simulate insert
+        failure, queue an explicit empty response on the table.
+        """
         db = MockSupabaseClient(data=None)
+        db.set_sequential_responses("extratos_bancarios", [MockSupabaseResponse(data=[])])
 
         from app.services.banco_service import BancoService
         svc = BancoService(db, "user-1")
@@ -304,7 +311,11 @@ class TestGerarRemessa:
         assert result["valor_total"] == 0.0
 
     def test_no_remessa_record_raises(self):
+        """Migrated 2026-04-29: explicit insert-failure simulation via
+        `set_sequential_responses` (was relying on `data=None` quirk before
+        the seed-lib mock upgrade)."""
         db = MockSupabaseClient(data=None)
+        db.set_sequential_responses("remessas", [MockSupabaseResponse(data=[])])
 
         from app.services.banco_service import BancoService
         svc = BancoService(db, "user-1")

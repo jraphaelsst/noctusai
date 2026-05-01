@@ -30,13 +30,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
 
-from noctusai_lib.email.digest import (
-    Digest,
-    DigestSendResult,
-    render as render_digest,
-    send_digest,
+from noctusai_lib.domain.digest import (
+    build_and_send,
+    narrative as digest_narrative,
+    render_with_narrative,
 )
-from noctusai_lib.llm import chat_completion
+from noctusai_lib.integrations.email.digest import Digest
 
 logger = logging.getLogger(__name__)
 
@@ -79,28 +78,21 @@ async def _generate_narrative(
         f"Falhas: {metrics['failed']}\n"
         f"Top links clicados:\n{link_lines}"
     )
-    try:
-        narrative = await chat_completion(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_prompt},
-            ],
-            model=MODEL,
-            temperature=0.0,
-            max_tokens=600,
-            cache=True,
-            org_id=org_id,
-        )
-        return narrative.strip()
-    except Exception:
-        logger.warning("mailing.campaign_debrief: LLM unavailable — using fallback")
-        return (
-            f"Resumo automático da campanha {campaign_name!r}: "
-            f"{metrics['delivered']} entregues / {metrics['opened']} aberturas "
-            f"({metrics['open_rate']}%) / {metrics['clicked']} cliques "
-            f"({metrics['click_rate']}%). Sem narrativa detalhada — LLM "
-            f"indisponível para esta janela."
-        )
+    fallback = (
+        f"Resumo automático da campanha {campaign_name!r}: "
+        f"{metrics['delivered']} entregues / {metrics['opened']} aberturas "
+        f"({metrics['open_rate']}%) / {metrics['clicked']} cliques "
+        f"({metrics['click_rate']}%). Sem narrativa detalhada — LLM "
+        f"indisponível para esta janela."
+    )
+    return await digest_narrative(
+        system=system,
+        user_prompt=user_prompt,
+        model=MODEL,
+        cache=True,
+        org_id=org_id,
+        fallback=fallback,
+    )
 
 
 async def _fetch_window(
@@ -211,20 +203,17 @@ def _build_metric_rows(metrics: dict[str, Any]) -> list[dict[str, Any]]:
 def _render_bodies(
     *, campaign_name: str, metrics: dict[str, Any], top_links: list[tuple[str, int]], narrative: str
 ) -> tuple[str, str]:
-    return render_digest(
+    return render_with_narrative(
         html_template="campaign_debrief.html.j2",
         text_template="campaign_debrief.txt.j2",
+        narrative=narrative,
         context={
             "campaign_name": campaign_name,
             "metric_rows": _build_metric_rows(metrics),
             "top_links": top_links,
-            "narrative": narrative,
-            "narrative_paragraphs": [
-                para for para in narrative.split("\n\n") if para.strip()
-            ],
-            "prompt_version": PROMPT_VERSION,
         },
         search_paths=[_TEMPLATE_DIR],
+        prompt_version=PROMPT_VERSION,
     )
 
 
@@ -280,14 +269,7 @@ async def send_campaign_debrief(
     if built is None:
         return None
     digest, summary = built
-    outcome: DigestSendResult = await send_digest(
+    result = await build_and_send(
         digest, recipient=recipient, org_id=org_id, log_prefix="CAMPAIGN DEBRIEF"
     )
-    return {
-        "sent": outcome.sent,
-        "dry_run": outcome.dry_run,
-        "external_id": outcome.external_id,
-        "error": outcome.error,
-        "subject": digest.subject,
-        "summary": summary,
-    }
+    return {**result, "summary": summary}

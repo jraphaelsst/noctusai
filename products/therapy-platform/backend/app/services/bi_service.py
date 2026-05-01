@@ -107,7 +107,12 @@ async def get_sessoes_por_periodo(
             week_start = dt - timedelta(days=dt.weekday())
             week_key = week_start.strftime("%Y-%m-%d")
             weekly[week_key] += 1
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "bi_service: appointment id=%s has unparseable scheduled_start=%r (%s); "
+                "skipping in weekly aggregate",
+                appt.get("id"), appt.get("scheduled_start"), exc,
+            )
             continue
 
     return [{"period": k, "count": v} for k, v in sorted(weekly.items())]
@@ -146,7 +151,12 @@ async def get_receita_por_periodo(
             month_key = dt.strftime("%Y-%m")
             price = float(appt.get("session_price_applied") or 0)
             monthly[month_key] += price
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "bi_service: appointment id=%s has unparseable scheduled_start=%r or session_price_applied=%r (%s); "
+                "skipping in monthly receita aggregate",
+                appt.get("id"), appt.get("scheduled_start"), appt.get("session_price_applied"), exc,
+            )
             continue
 
     return [{"period": k, "total": round(v, 2)} for k, v in sorted(monthly.items())]

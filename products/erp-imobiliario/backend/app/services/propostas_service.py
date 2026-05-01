@@ -5,6 +5,8 @@ Handles status transitions, history tracking, and statistics.
 """
 import logging
 from datetime import datetime
+
+from noctusai_lib.primitives.timeutil import now_utc
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,7 @@ class PropostasService:
         """
         entry = {
             "action": action,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": now_utc().isoformat(),
         }
         if user_id:
             entry["user_id"] = user_id

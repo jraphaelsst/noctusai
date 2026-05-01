@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from tests.conftest import AuthClient
+from tests.conftest import AuthClient, MockSupabaseResponse
 
 SAMPLE_EXTRACAO = {
     "id": "ext-001",
@@ -64,7 +64,9 @@ class TestExtrairMatricula:
         assert "OpenAI" in resp.json()["error"]["message"]
 
     def test_insert_falha_retorna_500(self, client: AuthClient):
-        client._mock_supabase.set_table_data("matricula_extracoes", [])
+        client._mock_supabase.set_sequential_responses(
+            "matricula_extracoes", [MockSupabaseResponse(data=[])]
+        )
         with patch("app.routers.matriculas.check_required_credentials", return_value=[]):
             resp = client.post(
                 "/api/matriculas/extrair",

@@ -11,12 +11,12 @@ _LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
-import noctusai_lib.llm  # noqa: F401,E402
+import noctusai_lib.integrations.llm  # noqa: F401,E402
 
 
 class TestKeyBuilder:
     def test_deterministic(self):
-        from noctusai_lib.llm.cache import build_cache_key
+        from noctusai_lib.integrations.llm.cache import build_cache_key
 
         k1 = build_cache_key(
             product="erp", provider="openai", model="gpt-4o-mini",
@@ -29,7 +29,7 @@ class TestKeyBuilder:
         assert k1 == k2
 
     def test_different_payload_different_key(self):
-        from noctusai_lib.llm.cache import build_cache_key
+        from noctusai_lib.integrations.llm.cache import build_cache_key
 
         k1 = build_cache_key(
             product="erp", provider="openai", model="gpt-4o-mini",
@@ -42,7 +42,7 @@ class TestKeyBuilder:
         assert k1 != k2
 
     def test_prompt_version_invalidates(self):
-        from noctusai_lib.llm.cache import build_cache_key
+        from noctusai_lib.integrations.llm.cache import build_cache_key
 
         k1 = build_cache_key(product="x", provider="p", model="m",
                              prompt_version="v1", payload="same")
@@ -53,7 +53,7 @@ class TestKeyBuilder:
     def test_org_id_isolates_cache_entries(self):
         """Regression for Tier 1.5 G5 (2026-04-24): two orgs running an
         identical prompt must NOT share a cache entry."""
-        from noctusai_lib.llm.cache import build_cache_key
+        from noctusai_lib.integrations.llm.cache import build_cache_key
 
         common = dict(
             product="erp", provider="openai", model="gpt-4o-mini",
@@ -68,7 +68,7 @@ class TestKeyBuilder:
     def test_org_id_none_uses_platform_segment(self):
         """When no org_id is provided (platform-wide prompt), the segment
         falls back to a sentinel so the cache key shape stays uniform."""
-        from noctusai_lib.llm.cache import build_cache_key
+        from noctusai_lib.integrations.llm.cache import build_cache_key
 
         k = build_cache_key(
             product="x", provider="p", model="m",
@@ -80,7 +80,7 @@ class TestKeyBuilder:
         """An org literally named '__platform__' is the only edge case where
         platform-default and an org could collide; document the choice
         explicitly so a future agent doesn't break the assumption."""
-        from noctusai_lib.llm.cache import build_cache_key
+        from noctusai_lib.integrations.llm.cache import build_cache_key
 
         k_default = build_cache_key(
             product="x", provider="p", model="m",
@@ -97,7 +97,7 @@ class TestKeyBuilder:
 
 class TestInMemoryBackend:
     def test_set_then_get(self):
-        from noctusai_lib.llm.cache import InMemoryCacheBackend, try_get, try_set
+        from noctusai_lib.integrations.llm.cache import InMemoryCacheBackend, try_get, try_set
 
         b = InMemoryCacheBackend()
         asyncio.run(try_set(b, "k", "hello", ttl_seconds=60))
@@ -106,7 +106,7 @@ class TestInMemoryBackend:
         assert val == "hello"
 
     def test_miss_is_not_error(self):
-        from noctusai_lib.llm.cache import InMemoryCacheBackend, try_get
+        from noctusai_lib.integrations.llm.cache import InMemoryCacheBackend, try_get
 
         hit, val = asyncio.run(try_get(InMemoryCacheBackend(), "absent"))
         assert hit is False
@@ -114,7 +114,7 @@ class TestInMemoryBackend:
 
     def test_backend_error_is_swallowed(self):
         """Cache-layer failures never propagate — they're logged + treated as miss."""
-        from noctusai_lib.llm.cache import try_get
+        from noctusai_lib.integrations.llm.cache import try_get
 
         class Broken:
             async def get(self, key):
@@ -135,13 +135,13 @@ class TestChatCompletionCacheGating:
     """
 
     def _install_counting_fake(self, cache_enabled: bool):
-        from noctusai_lib.llm import (
+        from noctusai_lib.integrations.llm import (
             FakeProvider,
             InMemoryCacheBackend,
             LLMConfig,
         )
-        from noctusai_lib.llm.client import _reset_for_testing, configure_llm
-        from noctusai_lib.llm.registry import register
+        from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
+        from noctusai_lib.integrations.llm.registry import register
 
         _reset_for_testing()
         fake = FakeProvider(chat_responses=["r1", "r2", "r3"])
@@ -162,20 +162,20 @@ class TestChatCompletionCacheGating:
     def teardown_method(self):
         import importlib
 
-        from noctusai_lib.llm.client import _reset_for_testing
-        from noctusai_lib.llm.registry import _reset_for_testing as _reset_reg
+        from noctusai_lib.integrations.llm.client import _reset_for_testing
+        from noctusai_lib.integrations.llm.registry import _reset_for_testing as _reset_reg
 
         _reset_for_testing()
         _reset_reg()
         for mod in (
-            "noctusai_lib.llm.providers.openai_provider",
-            "noctusai_lib.llm.providers.anthropic_provider",
-            "noctusai_lib.llm.providers.gemini_provider",
+            "noctusai_lib.integrations.llm.providers.openai_provider",
+            "noctusai_lib.integrations.llm.providers.anthropic_provider",
+            "noctusai_lib.integrations.llm.providers.gemini_provider",
         ):
             importlib.reload(sys.modules[mod])
 
     def test_second_call_is_cached_when_enabled_and_deterministic(self):
-        from noctusai_lib.llm import chat_completion
+        from noctusai_lib.integrations.llm import chat_completion
 
         fake = self._install_counting_fake(cache_enabled=True)
         msgs = [{"role": "user", "content": "hi"}]
@@ -189,7 +189,7 @@ class TestChatCompletionCacheGating:
 
     def test_cache_bypassed_when_cache_false(self):
         """cache=False is the LGPD gate — Therapy clinical calls use this."""
-        from noctusai_lib.llm import chat_completion
+        from noctusai_lib.integrations.llm import chat_completion
 
         fake = self._install_counting_fake(cache_enabled=True)
         msgs = [{"role": "user", "content": "clinical text"}]
@@ -203,7 +203,7 @@ class TestChatCompletionCacheGating:
     def test_cache_bypassed_when_nondeterministic(self):
         """temperature != 0 means the caller intentionally wants variability
         — never cache those."""
-        from noctusai_lib.llm import chat_completion
+        from noctusai_lib.integrations.llm import chat_completion
 
         fake = self._install_counting_fake(cache_enabled=True)
         msgs = [{"role": "user", "content": "same prompt"}]
@@ -214,7 +214,7 @@ class TestChatCompletionCacheGating:
 
     def test_cache_bypassed_when_platform_disabled(self):
         """cache_enabled=False at LLMConfig level overrides everything."""
-        from noctusai_lib.llm import chat_completion
+        from noctusai_lib.integrations.llm import chat_completion
 
         fake = self._install_counting_fake(cache_enabled=False)
         msgs = [{"role": "user", "content": "x"}]
@@ -226,7 +226,7 @@ class TestChatCompletionCacheGating:
 
 class TestFlushForModel:
     def test_in_memory_flush(self):
-        from noctusai_lib.llm.cache import InMemoryCacheBackend, flush_for_model, try_set
+        from noctusai_lib.integrations.llm.cache import InMemoryCacheBackend, flush_for_model, try_set
 
         b = InMemoryCacheBackend()
         # Populate entries for two models.

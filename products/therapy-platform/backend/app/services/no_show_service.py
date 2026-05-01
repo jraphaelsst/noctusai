@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from app.dependencies import first_or_none
 from app.services import commission_engine
@@ -30,7 +30,11 @@ def _get_platform_setting(db: Any, key: str, default: str) -> str:
     return row["value"] if row else default
 
 
-async def detect_and_charge_no_shows(db: Any) -> Dict[str, Any]:
+async def detect_and_charge_no_shows(
+    db: Any,
+    *,
+    charge_fn: Optional[Any] = None,
+) -> Dict[str, Any]:
     """Background job: find and charge no-show appointments.
 
     Criteria:
@@ -41,7 +45,16 @@ async def detect_and_charge_no_shows(db: Any) -> Dict[str, Any]:
     - Update appointment status to 'no_show'
     - Charge patient no_show_charge_pct % of session price
     - Update recurring_schedule.total_absences if applicable
+
+    Args:
+        db: Supabase client.
+        charge_fn: optional charge entry-point (defaults to
+            `commission_engine.process_no_show_charge`). DI seam for tests —
+            production code should never pass it.
     """
+    if charge_fn is None:
+        charge_fn = commission_engine.process_no_show_charge
+
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(minutes=30)).isoformat()
 
@@ -67,7 +80,7 @@ async def detect_and_charge_no_shows(db: Any) -> Dict[str, Any]:
             }).eq("id", appointment_id).execute()
 
             # Charge patient
-            tx = await commission_engine.process_no_show_charge(appointment_id, db)
+            tx = await charge_fn(appointment_id, db)
             if tx:
                 charged += 1
 

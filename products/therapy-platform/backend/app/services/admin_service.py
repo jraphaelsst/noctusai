@@ -257,7 +257,12 @@ def _fetch_user_identity(db: Any, user_id: str) -> Dict[str, str]:
     """
     try:
         resp = db.auth.admin.get_user_by_id(user_id)
-    except Exception:  # noqa: BLE001 — admin API may 404 or fail for stale IDs
+    except Exception as exc:  # noqa: BLE001 — admin API may 404 or fail for stale IDs
+        logger.warning(
+            "admin_service: get_user_by_id failed for user_id=%s (%s); "
+            "returning empty nome/email — caller should treat as missing user",
+            user_id, exc,
+        )
         return {"nome": "", "email": ""}
 
     user = getattr(resp, "user", None)

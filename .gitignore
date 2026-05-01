@@ -27,6 +27,10 @@ build/
 *.swo
 .DS_Store
 
+# Claude / MCP local config (hardcoded user-specific paths)
+.mcp.json
+.claude/settings.local.json
+
 # Artifacts (Gemini)
 .gemini/
 

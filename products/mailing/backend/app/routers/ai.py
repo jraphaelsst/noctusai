@@ -8,8 +8,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
-from noctusai_lib.ai import AIOutput, consent_required, persist_output
-from noctusai_lib.responses import success_response
+from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
+from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import get_current_user, get_org_id, get_user_client
 from app.services import ai_service

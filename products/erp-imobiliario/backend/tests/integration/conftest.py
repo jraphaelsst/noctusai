@@ -12,6 +12,8 @@ import uuid
 from typing import Dict, List, Optional, Any
 from unittest.mock import MagicMock, patch
 from datetime import datetime
+
+from noctusai_lib.primitives.timeutil import now_utc
 from fastapi.testclient import TestClient
 
 
@@ -46,8 +48,8 @@ class _StatefulExecuteMixin:
                 new_item = {**defaults, **item}
                 if "id" not in new_item:
                     new_item["id"] = str(uuid.uuid4())
-                new_item["created_at"] = datetime.utcnow().isoformat()
-                new_item["updated_at"] = datetime.utcnow().isoformat()
+                new_item["created_at"] = now_utc().isoformat()
+                new_item["updated_at"] = now_utc().isoformat()
                 table_data.append(new_item)
                 inserted.append(new_item)
             if self._single_mode and inserted:
@@ -59,7 +61,7 @@ class _StatefulExecuteMixin:
             filtered = self._apply_filters(table_data)
             for item in filtered:
                 item.update(self._pending_update)
-                item["updated_at"] = datetime.utcnow().isoformat()
+                item["updated_at"] = now_utc().isoformat()
             if self._single_mode and filtered:
                 return StatefulMockResponse(data=filtered[0])
             return StatefulMockResponse(data=filtered)
@@ -289,7 +291,7 @@ class StatefulMockClient:
 
     def seed_data(self, table: str, data: List[Dict]):
         self._storage[table] = [
-            {**d, "id": d.get("id", str(uuid.uuid4())), "created_at": datetime.utcnow().isoformat()}
+            {**d, "id": d.get("id", str(uuid.uuid4())), "created_at": now_utc().isoformat()}
             for d in data
         ]
 

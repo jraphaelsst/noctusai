@@ -10,7 +10,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from app.dependencies import first_or_none
-from noctusai_lib.credentials import resolve_credential
+from noctusai_lib.config.credentials import resolve_credential
 
 logger = logging.getLogger(__name__)
 

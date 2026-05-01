@@ -162,9 +162,11 @@ class TestGenerateFromTemplate:
         }
 
         db = MockSupabaseClient()
-        # template lookup returns template, document insert returns doc
         db.set_table_data("document_templates", template_record)
-        db.set_table_data("documentos", [doc_record])
+        # Insert response for `documentos` — `set_sequential_responses` controls
+        # exactly what `.insert(...).execute()` returns; `set_table_data` is
+        # SELECT-seeding only and does not influence inserts.
+        db.set_sequential_responses("documentos", [MockSupabaseResponse(data=[doc_record])])
 
         from app.services.document_service import DocumentService
         svc = DocumentService(db, "u-1")

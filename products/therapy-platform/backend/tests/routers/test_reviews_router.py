@@ -50,13 +50,15 @@ SAMPLE_THERAPIST_IN_CLINIC = {
 # ---------------------------------------------------------------------------
 
 class TestCreateReview:
-    @patch("app.routers.reviews.review_service.create_review", new_callable=AsyncMock)
-    def test_create_review_success(self, mock_create, patient_client):
-        mock_create.return_value = {
-            **SAMPLE_REVIEW,
-            "patient_id": "test-user-123",
-            "therapist_id": "therapist-target",
-        }
+    def test_create_review_success(self, patient_client):
+        """Pattern 3: seed a completed session and an empty existing-review
+        list; real `create_review` validates eligibility, finds no duplicate,
+        inserts via `MockSupabaseClient` (auto-id) and returns the row."""
+        patient_client._mock_supabase.set_table_data("sessions", [
+            {"id": "s-1", "patient_id": "test-user-123",
+             "therapist_id": "therapist-target", "status": "completed"},
+        ])
+        patient_client._mock_supabase.set_table_data("therapist_reviews", [])
         resp = patient_client.post("/api/reviews", json={
             "therapist_id": "therapist-target",
             "star_rating": 5,
@@ -66,7 +68,7 @@ class TestCreateReview:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["star_rating"] == 5
-        mock_create.assert_called_once()
+        assert data["therapist_id"] == "therapist-target"
 
     def test_create_review_duplicate(self, patient_client):
         """Mock returns existing review data, triggering 409 conflict."""
@@ -200,19 +202,27 @@ class TestListTherapistReviews:
 # ---------------------------------------------------------------------------
 
 class TestCreateClinicReview:
-    @patch("app.routers.reviews.review_service.create_clinic_review", new_callable=AsyncMock)
-    def test_create_clinic_review_success(self, mock_create, patient_client):
-        mock_create.return_value = {
-            **SAMPLE_CLINIC_REVIEW,
-            "patient_id": "test-user-123",
-        }
+    def test_create_clinic_review_success(self, patient_client):
+        """Pattern 3: seed (a) the clinic's therapists, (b) a completed
+        session, (c) empty existing-clinic-reviews. Real `create_clinic_review`
+        runs the eligibility chain and inserts."""
+        patient_client._mock_supabase.set_table_data("therapist_profiles", [
+            SAMPLE_THERAPIST_IN_CLINIC,
+        ])
+        patient_client._mock_supabase.set_table_data("sessions", [
+            {"id": "s-1", "patient_id": "test-user-123",
+             "therapist_id": "therapist-in-clinic", "status": "completed"},
+        ])
+        patient_client._mock_supabase.set_table_data("clinic_reviews", [])
         resp = patient_client.post("/api/reviews/clinic", json={
             "clinic_id": "clinic-001",
             "star_rating": 4,
             "review_text": "Boa clínica",
         })
         assert resp.status_code == 200
-        mock_create.assert_called_once()
+        data = resp.json()["data"]
+        assert data["star_rating"] == 4
+        assert data["clinic_id"] == "clinic-001"
 
     def test_create_clinic_review_duplicate(self, patient_client):
         """Mock returns existing review data, triggering 409 conflict."""

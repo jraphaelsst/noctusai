@@ -87,9 +87,13 @@ async def signup(request: Request, body: SignupRequest):
     try:
         db.auth.admin.update_user_by_id(user.id, {"user_metadata": {"org_id": org["id"]}})
     except Exception as e:
-        logger.warning(f"Failed to sync org_id to user_metadata: {e}")
+        logger.warning(
+            "auth: user_metadata sync failed for user_id=%s (%s); request continues",
+            user.id, e,
+        )
 
-    logger.info(f"New signup: {body.email} → org {org['nome']}")
+    # Log signup with user_id (UUID), not email — emails are LGPD personal data.
+    logger.info("auth: new signup user_id=%s org_id=%s", user.id, org["id"])
 
     # Audit log and welcome email (best-effort)
     try:
@@ -99,13 +103,16 @@ async def signup(request: Request, body: SignupRequest):
             action="signup", resource_type="user", resource_id=user.id,
             request=request,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("auth: signup audit log failed for user_id=%s (%s); request continues", user.id, exc)
     try:
         from app.services.email_service import send_welcome_email
         send_welcome_email(to=body.email, user_name=body.nome.strip().title(), org_name=org["nome"])
-    except Exception:
-        pass
+    except Exception as exc:
+        # Log user_id (UUID), NOT body.email — emails are LGPD personal data
+        # and shouldn't persist in operator log streams. Same rule as the
+        # surrounding audit-log warnings (which all use user_id=%s).
+        logger.warning("auth: welcome email send failed for user_id=%s (%s); request continues", user.id, exc)
 
     return {"data": {"user_id": user.id, "org_id": org["id"]}}
 
@@ -131,15 +138,15 @@ async def login(request: Request, body: LoginRequest):
                 action="login", resource_type="user", resource_id=str(response.user.id),
                 request=request,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("auth: login audit log failed for user_id=%s (%s); login proceeds", response.user.id, exc)
 
         # Enforce concurrent session cap (best-effort)
         try:
             admin_db = get_admin_client()
             admin_db.rpc("enforce_session_cap", {"p_user_id": str(response.user.id)}).execute()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("auth: enforce_session_cap RPC failed for user_id=%s (%s); login proceeds", response.user.id, exc)
 
         return {
             "access_token": response.session.access_token,
@@ -222,8 +229,8 @@ async def change_password(
     # Revoke all other sessions for this user (best-effort)
     try:
         db.auth.admin.sign_out(str(user.id), scope="others")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("auth: sign_out other sessions failed for user_id=%s (%s); password change proceeds", user.id, exc)
 
     # Audit log (best-effort)
     try:
@@ -233,8 +240,8 @@ async def change_password(
             action="password_change", resource_type="user", resource_id=str(user.id),
             request=request,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("auth: password-change audit log failed for user_id=%s (%s)", user.id, exc)
 
     return {"ok": True, "message": "Senha atualizada com sucesso"}
 
@@ -260,8 +267,8 @@ async def refresh_token(request: Request, body: RefreshRequest):
                 admin_db.table("noctus_users").update(
                     {"last_active_at": "now()"}
                 ).eq("id", str(response.user.id)).execute()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("auth: last_active_at update failed for user_id=%s (%s); refresh proceeds", response.user.id, exc)
 
             # Audit log (best-effort)
             try:
@@ -272,8 +279,8 @@ async def refresh_token(request: Request, body: RefreshRequest):
                     resource_id=str(response.user.id),
                     request=request,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("auth: token-refresh audit log failed for user_id=%s (%s)", response.user.id, exc)
 
         return {
             "access_token": response.session.access_token,
@@ -312,6 +319,6 @@ async def logout(authorization: Optional[str] = Header(None)):
     client = create_client(settings.supabase_url, settings.supabase_anon_key)
     try:
         client.auth.sign_out()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("auth: client.sign_out() failed for user_id=%s (%s); logout still returns ok", user.id, exc)
     return {"ok": True}

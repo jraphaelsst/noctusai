@@ -10,7 +10,7 @@ the platform-wide consent catalog at boot.
 """
 from __future__ import annotations
 
-from noctusai_lib.ai import register_feature
+from noctusai_lib.domain.ai import register_feature
 
 # D1 — Today's brief (HIGH-RISK: personal task / event / habit data in prompt)
 register_feature(

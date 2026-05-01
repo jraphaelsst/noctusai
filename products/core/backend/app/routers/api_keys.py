@@ -115,8 +115,8 @@ async def criar_api_key(body: ApiKeyCreate, authorization: Optional[str] = Heade
             action="create", resource_type="api_key",
             resource_id=result.data[0]["id"],
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("api_keys: create audit log failed for key_id=%s (%s); creation succeeded", result.data[0]["id"], exc)
 
     # Return the full key once — it cannot be retrieved again
     response_data = result.data[0].copy()
@@ -169,8 +169,8 @@ async def revogar_api_key(key_id: str, authorization: Optional[str] = Header(Non
             user_id=user.id, org_id=org_id,
             action="revoke", resource_type="api_key", resource_id=key_id,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("api_keys: revoke audit log failed for key_id=%s (%s); revocation succeeded", key_id, exc)
 
     return {"data": result.data[0]}
 

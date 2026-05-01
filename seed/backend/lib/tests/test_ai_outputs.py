@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from noctusai_lib.ai import AIOutput, persist_output, fetch_outputs_for
+from noctusai_lib.domain.ai import AIOutput, persist_output, fetch_outputs_for
 
 
 class TestAIOutputDataclass:

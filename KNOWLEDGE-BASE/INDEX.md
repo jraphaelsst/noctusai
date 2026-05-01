@@ -89,6 +89,8 @@ KNOWLEDGE-BASE/
 | Proposals & improvements (two systems — per-project folders, ONE bundled proposal per phase, promote boundary) | `CONTEXT/PATTERNS/proposals-and-improvements.md` |
 | LGPD awareness (keeper principle, the five questions, noctusai_lgpd_flag tool) | `CONTEXT/PATTERNS/lgpd.md` |
 | LLM usage tracking (SupabaseUsageSink, /api/llm/usage, cost estimation, RLS scoping) | `CONTEXT/PATTERNS/llm-usage.md` |
+| Logging convention (when-to-log, level guide, no-`# silent-ok` rule, correlation IDs) | `CONTEXT/PATTERNS/logging.md` |
+| Seed-lib layout (6 layers — primitives/config/testing/integrations/domain/api — where to put new helpers, where to find existing ones) | `CONTEXT/PATTERNS/seed-lib-layout.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
@@ -124,6 +126,10 @@ KNOWLEDGE-BASE/
 | Adding a new product | `CONTEXT/GUIDES/new-product.md` + `CONTEXT/03-SEED-ARCHITECTURE.md` |
 | Adding a shared component | `CONTEXT/04-SHARED-LIBRARY.md` (check existing first) |
 | Working on tests | `CONTEXT/PATTERNS/testing.md` |
+| Adding a `try/except` (production code) | `CONTEXT/PATTERNS/logging.md` (level guide, the no-`# silent-ok` rule) |
+| Adding a new keeper detector | `CONTEXT/PATTERNS/testing.md § Regression-test-the-detector` + `CONTEXT/06-AGENTS.md § Detectors` |
+| Adding a helper to seed lib (deciding which layer it lives in) | `CONTEXT/PATTERNS/seed-lib-layout.md § Where to put a new helper` |
+| Looking for an existing seed-lib helper | `CONTEXT/PATTERNS/seed-lib-layout.md § Where to look` + `CONTEXT/04-SHARED-LIBRARY.md` (catalog) |
 | Working on env / deployment | `CONTEXT/PATTERNS/environment.md` + `CONTEXT/05-INFRASTRUCTURE.md` |
 | Touching UI with performance data / gamification | `CONTEXT/07-GAMIFICATION.md` |
 | Designing a new agent / skill / MCP | `INSTRUCTIONS/00-MASTER.md` |

@@ -5,19 +5,24 @@ import pytest
 from datetime import date, timedelta
 from unittest.mock import MagicMock
 
+from noctusai_lib.primitives.timeutil import current_month_ref, today_utc
+
 from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 
 
 # ---------------------------------------------------------------------------
-# Relative date helpers (avoid hardcoded dates that break over time)
+# Relative date helpers (avoid hardcoded dates that break over time).
+# Use UTC clock to match production — `date.today()` (local) drifts across
+# UTC midnight and breaks tests at the day boundary.
 # ---------------------------------------------------------------------------
-yesterday = (date.today() - timedelta(days=1)).isoformat()
-two_days_ago = (date.today() - timedelta(days=2)).isoformat()
-last_week = (date.today() - timedelta(days=7)).isoformat()
-tomorrow = (date.today() + timedelta(days=1)).isoformat()
-next_week = (date.today() + timedelta(days=7)).isoformat()
-this_month = date.today().strftime("%Y-%m")
-last_month = (date.today().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+_TODAY = today_utc()
+yesterday = (_TODAY - timedelta(days=1)).isoformat()
+two_days_ago = (_TODAY - timedelta(days=2)).isoformat()
+last_week = (_TODAY - timedelta(days=7)).isoformat()
+tomorrow = (_TODAY + timedelta(days=1)).isoformat()
+next_week = (_TODAY + timedelta(days=7)).isoformat()
+this_month = current_month_ref()
+last_month = (_TODAY.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
 
 
 # ---------------------------------------------------------------------------

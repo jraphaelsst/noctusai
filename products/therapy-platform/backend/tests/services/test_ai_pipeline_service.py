@@ -16,10 +16,36 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from app.services import ai_pipeline
-from tests.conftest import MockSupabaseClient
+from app.services.ai_pipeline import _PipelineHooks
+from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 
 
 THERAPY_FEATURES = ("therapy.session_summary", "therapy.longitudinal_narrative")
+
+
+def _hooks(
+    *,
+    transcribe=None,
+    summarize=None,
+    regenerate_clinical_summary=None,
+    longitudinal_clinical=None,
+    longitudinal_patient=None,
+):
+    """Build a `_PipelineHooks` for testing.
+
+    Each kwarg overrides one helper; the rest fall back to silent AsyncMocks
+    that return `None`. This is the DI pattern from `KB § PATTERNS/testing.md
+    § "No self-monkeypatching" Pattern 1` — tests inject fakes via the kwarg,
+    production paths omit `hooks=` and resolve to `_DEFAULT_HOOKS` (real
+    services). Zero `patch.object` of our own code.
+    """
+    return _PipelineHooks(
+        transcribe=transcribe or AsyncMock(return_value=""),
+        summarize=summarize or AsyncMock(return_value={"base": {}, "clinical": {}}),
+        regenerate_clinical_summary=regenerate_clinical_summary or AsyncMock(return_value=None),
+        longitudinal_clinical=longitudinal_clinical or AsyncMock(return_value=None),
+        longitudinal_patient=longitudinal_patient or AsyncMock(return_value=None),
+    )
 
 
 def _db_with_grants(*, patient_id: str = "patient-001", revoked=None) -> MockSupabaseClient:
@@ -80,45 +106,33 @@ SAMPLE_OBSERVATION = {
 class TestProcessSessionEnd:
     @pytest.mark.asyncio
     async def test_full_pipeline_success(self):
-        """Happy path: all steps complete without errors."""
+        """Happy path: all steps complete without errors.
+
+        DI shape: pass a `_PipelineHooks` with AsyncMock fakes for each
+        helper. The orchestrator's real call sequence runs end-to-end (real
+        consent guard, real DB writes) — only the per-step LLM/transcription
+        calls are short-circuited.
+        """
         db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_observations", [SAMPLE_OBSERVATION])
         db.set_table_data("session_audio_segments", [])
 
-        with (
-            patch.object(
-                ai_pipeline.transcription_service,
-                "assemble_transcript",
-                new_callable=AsyncMock,
-                return_value="Transcrição completa.",
-            ),
-            patch.object(
-                ai_pipeline.summary_service,
-                "generate_session_summaries",
-                new_callable=AsyncMock,
-                return_value={"base": {"id": "sum-b"}, "clinical": {"id": "sum-c"}},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                return_value={"id": "long-clinical"},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_patient_longitudinal",
-                new_callable=AsyncMock,
-                return_value={"id": "long-patient"},
-            ),
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation="Observação inicial.",
-                source="manual",
-                db=db,
-            )
+        hooks = _hooks(
+            transcribe=AsyncMock(return_value="Transcrição completa."),
+            summarize=AsyncMock(return_value={"base": {"id": "sum-b"}, "clinical": {"id": "sum-c"}}),
+            longitudinal_clinical=AsyncMock(return_value={"id": "long-clinical"}),
+            longitudinal_patient=AsyncMock(return_value={"id": "long-patient"}),
+        )
+
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation="Observação inicial.",
+            source="manual",
+            db=db,
+            hooks=hooks,
+        )
 
         assert "session_record" in result
         assert "summaries" in result
@@ -147,64 +161,47 @@ class TestProcessSessionEnd:
         """Returns error when session record insert fails."""
         db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
-        db.set_table_data("session_records", [])  # insert returns empty
+        # Simulate insert failure: queue an empty response on the table.
+        db.set_sequential_responses("session_records", [MockSupabaseResponse(data=[])])
 
-        with patch.object(
-            ai_pipeline.transcription_service,
-            "assemble_transcript",
-            new_callable=AsyncMock,
-            return_value="Transcrição.",
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation=None,
-                source="auto",
-                db=db,
-            )
+        hooks = _hooks(transcribe=AsyncMock(return_value="Transcrição."))
+
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation=None,
+            source="auto",
+            db=db,
+            hooks=hooks,
+        )
 
         assert "error" in result
 
     @pytest.mark.asyncio
     async def test_transcription_failure_produces_error_text(self):
-        """Transcription failure is caught, pipeline continues with error text."""
+        """Transcription failure is caught, pipeline continues with error text.
+
+        DI shape: only `transcribe` raises; the other helpers default to
+        silent AsyncMocks. Tests the orchestrator's exception-handling path
+        without patching anything we own.
+        """
         db = _db_with_grants()
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_observations", [])
         db.set_table_data("session_audio_segments", [])
 
-        with (
-            patch.object(
-                ai_pipeline.transcription_service,
-                "assemble_transcript",
-                new_callable=AsyncMock,
-                side_effect=Exception("Transcription service unavailable"),
-            ),
-            patch.object(
-                ai_pipeline.summary_service,
-                "generate_session_summaries",
-                new_callable=AsyncMock,
-                return_value={"base": {}, "clinical": {}},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_patient_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation=None,
-                source="auto",
-                db=db,
-            )
+        hooks = _hooks(
+            transcribe=AsyncMock(side_effect=Exception("Transcription service unavailable")),
+            summarize=AsyncMock(return_value={"base": {}, "clinical": {}}),
+        )
+
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation=None,
+            source="auto",
+            db=db,
+            hooks=hooks,
+        )
 
         # Pipeline should still complete (error handled gracefully)
         assert "session_record" in result
@@ -217,38 +214,15 @@ class TestProcessSessionEnd:
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
 
-        with (
-            patch.object(
-                ai_pipeline.transcription_service,
-                "assemble_transcript",
-                new_callable=AsyncMock,
-                return_value="Texto.",
-            ),
-            patch.object(
-                ai_pipeline.summary_service,
-                "generate_session_summaries",
-                new_callable=AsyncMock,
-                return_value={"base": {}, "clinical": {}},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_patient_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation=None,
-                source="manual",
-                db=db,
-            )
+        hooks = _hooks(transcribe=AsyncMock(return_value="Texto."))
+
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation=None,
+            source="manual",
+            db=db,
+            hooks=hooks,
+        )
 
         assert "session_record" in result
 
@@ -260,38 +234,15 @@ class TestProcessSessionEnd:
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
 
-        with (
-            patch.object(
-                ai_pipeline.transcription_service,
-                "assemble_transcript",
-                new_callable=AsyncMock,
-                return_value="Texto.",
-            ),
-            patch.object(
-                ai_pipeline.summary_service,
-                "generate_session_summaries",
-                new_callable=AsyncMock,
-                return_value={"base": {}, "clinical": {}},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_patient_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation="   ",
-                source="manual",
-                db=db,
-            )
+        hooks = _hooks(transcribe=AsyncMock(return_value="Texto."))
+
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation="   ",
+            source="manual",
+            db=db,
+            hooks=hooks,
+        )
 
         assert "session_record" in result
 
@@ -303,38 +254,18 @@ class TestProcessSessionEnd:
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
 
-        with (
-            patch.object(
-                ai_pipeline.transcription_service,
-                "assemble_transcript",
-                new_callable=AsyncMock,
-                return_value="Texto.",
-            ),
-            patch.object(
-                ai_pipeline.summary_service,
-                "generate_session_summaries",
-                new_callable=AsyncMock,
-                side_effect=Exception("OpenAI rate limit"),
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_patient_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation=None,
-                source="manual",
-                db=db,
-            )
+        hooks = _hooks(
+            transcribe=AsyncMock(return_value="Texto."),
+            summarize=AsyncMock(side_effect=Exception("OpenAI rate limit")),
+        )
+
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation=None,
+            source="manual",
+            db=db,
+            hooks=hooks,
+        )
 
         # Summaries should have error keys
         assert "error" in result["summaries"]["base"]
@@ -348,38 +279,20 @@ class TestProcessSessionEnd:
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
 
-        with (
-            patch.object(
-                ai_pipeline.transcription_service,
-                "assemble_transcript",
-                new_callable=AsyncMock,
-                return_value="Texto.",
-            ),
-            patch.object(
-                ai_pipeline.summary_service,
-                "generate_session_summaries",
-                new_callable=AsyncMock,
-                return_value={"base": {}, "clinical": {}},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                side_effect=Exception("Clinical longitudinal error"),
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_patient_longitudinal",
-                new_callable=AsyncMock,
-                side_effect=Exception("Patient longitudinal error"),
-            ),
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation=None,
-                source="manual",
-                db=db,
-            )
+        hooks = _hooks(
+            transcribe=AsyncMock(return_value="Texto."),
+            summarize=AsyncMock(return_value={"base": {}, "clinical": {}}),
+            longitudinal_clinical=AsyncMock(side_effect=Exception("Clinical longitudinal error")),
+            longitudinal_patient=AsyncMock(side_effect=Exception("Patient longitudinal error")),
+        )
+
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation=None,
+            source="manual",
+            db=db,
+            hooks=hooks,
+        )
 
         assert result["clinical_longitudinal"] is None
         assert result["patient_longitudinal"] is None
@@ -400,21 +313,12 @@ class TestOnObservationChange:
             "therapist_id": "therapist-001",
         }])
 
-        with (
-            patch.object(
-                ai_pipeline.summary_service,
-                "regenerate_clinical_summary",
-                new_callable=AsyncMock,
-                return_value={"id": "sum-regen"},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                return_value={"id": "long-regen"},
-            ),
-        ):
-            result = await ai_pipeline.on_observation_change("sr-001", db)
+        hooks = _hooks(
+            regenerate_clinical_summary=AsyncMock(return_value={"id": "sum-regen"}),
+            longitudinal_clinical=AsyncMock(return_value={"id": "long-regen"}),
+        )
+
+        result = await ai_pipeline.on_observation_change("sr-001", db, hooks=hooks)
 
         assert result["clinical_summary"] == {"id": "sum-regen"}
         assert result["clinical_longitudinal"] == {"id": "long-regen"}
@@ -429,21 +333,11 @@ class TestOnObservationChange:
             "therapist_id": "therapist-001",
         }])
 
-        with (
-            patch.object(
-                ai_pipeline.summary_service,
-                "regenerate_clinical_summary",
-                new_callable=AsyncMock,
-                side_effect=Exception("Summary error"),
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-        ):
-            result = await ai_pipeline.on_observation_change("sr-001", db)
+        hooks = _hooks(
+            regenerate_clinical_summary=AsyncMock(side_effect=Exception("Summary error")),
+        )
+
+        result = await ai_pipeline.on_observation_change("sr-001", db, hooks=hooks)
 
         assert "error" in result["clinical_summary"]
 
@@ -453,13 +347,11 @@ class TestOnObservationChange:
         db = _db_with_grants()
         db.set_table_data("session_records", [])
 
-        with patch.object(
-            ai_pipeline.summary_service,
-            "regenerate_clinical_summary",
-            new_callable=AsyncMock,
-            return_value={"id": "sum-regen"},
-        ):
-            result = await ai_pipeline.on_observation_change("nonexistent", db)
+        hooks = _hooks(
+            regenerate_clinical_summary=AsyncMock(return_value={"id": "sum-regen"}),
+        )
+
+        result = await ai_pipeline.on_observation_change("nonexistent", db, hooks=hooks)
 
         assert result["clinical_longitudinal"] is None
 
@@ -474,18 +366,17 @@ class TestOnPatientNoteChange:
         """Triggers patient longitudinal regeneration."""
         db = _db_with_grants()
 
-        with patch.object(
-            ai_pipeline.longitudinal_service,
-            "generate_patient_longitudinal",
-            new_callable=AsyncMock,
-            return_value={"id": "long-patient-regen"},
-        ):
-            result = await ai_pipeline.on_patient_note_change(
-                session_record_id="sr-001",
-                patient_id="patient-001",
-                therapist_id="therapist-001",
-                db=db,
-            )
+        hooks = _hooks(
+            longitudinal_patient=AsyncMock(return_value={"id": "long-patient-regen"}),
+        )
+
+        result = await ai_pipeline.on_patient_note_change(
+            session_record_id="sr-001",
+            patient_id="patient-001",
+            therapist_id="therapist-001",
+            db=db,
+            hooks=hooks,
+        )
 
         assert result["patient_longitudinal"] == {"id": "long-patient-regen"}
 
@@ -494,18 +385,17 @@ class TestOnPatientNoteChange:
         """Patient longitudinal failure is caught, returns error dict."""
         db = _db_with_grants()
 
-        with patch.object(
-            ai_pipeline.longitudinal_service,
-            "generate_patient_longitudinal",
-            new_callable=AsyncMock,
-            side_effect=Exception("Longitudinal error"),
-        ):
-            result = await ai_pipeline.on_patient_note_change(
-                session_record_id="sr-001",
-                patient_id="patient-001",
-                therapist_id="therapist-001",
-                db=db,
-            )
+        hooks = _hooks(
+            longitudinal_patient=AsyncMock(side_effect=Exception("Longitudinal error")),
+        )
+
+        result = await ai_pipeline.on_patient_note_change(
+            session_record_id="sr-001",
+            patient_id="patient-001",
+            therapist_id="therapist-001",
+            db=db,
+            hooks=hooks,
+        )
 
         assert "error" in result["patient_longitudinal"]
 
@@ -545,50 +435,36 @@ class TestPatientConsentGuards:
 
     @pytest.mark.asyncio
     async def test_session_summary_consent_revoked_skips_summary_and_notifies(self):
-        """Patient revoked `therapy.session_summary` → summary skipped, longitudinal still runs."""
+        """Patient revoked `therapy.session_summary` → summary skipped, longitudinal still runs.
+
+        DI shape: each helper is an AsyncMock on the `_PipelineHooks` instance,
+        so `hooks.summarize.assert_not_awaited()` proves the consent guard
+        short-circuited before the LLM call. Production guard runs for real.
+        """
         db = _db_with_grants(revoked=["therapy.session_summary"])
         db.set_table_data("appointments", [SAMPLE_APPOINTMENT])
         db.set_table_data("session_records", [SAMPLE_SESSION_RECORD])
         db.set_table_data("session_audio_segments", [])
         db.set_table_data("notifications", [])
 
-        summary_call = AsyncMock()
+        hooks = _hooks(
+            transcribe=AsyncMock(return_value="Texto."),
+            summarize=AsyncMock(),  # tracked: assert_not_awaited() below
+            longitudinal_clinical=AsyncMock(return_value={"id": "long-clinical"}),
+            longitudinal_patient=AsyncMock(return_value={"id": "long-patient"}),
+        )
 
-        with (
-            patch.object(
-                ai_pipeline.transcription_service,
-                "assemble_transcript",
-                new_callable=AsyncMock,
-                return_value="Texto.",
-            ),
-            patch.object(
-                ai_pipeline.summary_service,
-                "generate_session_summaries",
-                summary_call,
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                new_callable=AsyncMock,
-                return_value={"id": "long-clinical"},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_patient_longitudinal",
-                new_callable=AsyncMock,
-                return_value={"id": "long-patient"},
-            ),
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation=None,
-                source="manual",
-                db=db,
-                core_db=db,
-            )
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation=None,
+            source="manual",
+            db=db,
+            core_db=db,
+            hooks=hooks,
+        )
 
-        # Summary AI was never called.
-        summary_call.assert_not_awaited()
+        # Summary AI was never called — real consent guard short-circuited.
+        hooks.summarize.assert_not_awaited()
         # Skip marker is present.
         assert result["summaries"]["base"]["skipped"] == "patient_consent_missing"
         assert result["summaries"]["clinical"]["skipped"] == "patient_consent_missing"
@@ -611,46 +487,27 @@ class TestPatientConsentGuards:
         db.set_table_data("session_audio_segments", [])
         db.set_table_data("notifications", [])
 
-        clinical_long_call = AsyncMock()
-        patient_long_call = AsyncMock()
+        hooks = _hooks(
+            transcribe=AsyncMock(return_value="Texto."),
+            summarize=AsyncMock(return_value={"base": {"id": "sum-b"}, "clinical": {"id": "sum-c"}}),
+            longitudinal_clinical=AsyncMock(),  # tracked: assert_not_awaited()
+            longitudinal_patient=AsyncMock(),   # tracked: assert_not_awaited()
+        )
 
-        with (
-            patch.object(
-                ai_pipeline.transcription_service,
-                "assemble_transcript",
-                new_callable=AsyncMock,
-                return_value="Texto.",
-            ),
-            patch.object(
-                ai_pipeline.summary_service,
-                "generate_session_summaries",
-                new_callable=AsyncMock,
-                return_value={"base": {"id": "sum-b"}, "clinical": {"id": "sum-c"}},
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                clinical_long_call,
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_patient_longitudinal",
-                patient_long_call,
-            ),
-        ):
-            result = await ai_pipeline.process_session_end(
-                appointment_id="appt-001",
-                initial_observation=None,
-                source="manual",
-                db=db,
-                core_db=db,
-            )
+        result = await ai_pipeline.process_session_end(
+            appointment_id="appt-001",
+            initial_observation=None,
+            source="manual",
+            db=db,
+            core_db=db,
+            hooks=hooks,
+        )
 
         # Summary still ran.
         assert result["summaries"]["base"] == {"id": "sum-b"}
-        # Both longitudinal calls were skipped.
-        clinical_long_call.assert_not_awaited()
-        patient_long_call.assert_not_awaited()
+        # Both longitudinal calls were skipped — real consent guard short-circuited.
+        hooks.longitudinal_clinical.assert_not_awaited()
+        hooks.longitudinal_patient.assert_not_awaited()
         assert result["clinical_longitudinal"] is None
         assert result["patient_longitudinal"] is None
         # ONE notification fired (single guard covers both steps).
@@ -669,25 +526,15 @@ class TestPatientConsentGuards:
         }])
         db.set_table_data("notifications", [])
 
-        summary_call = AsyncMock()
-        clinical_long_call = AsyncMock()
+        hooks = _hooks(
+            regenerate_clinical_summary=AsyncMock(),  # tracked: assert_not_awaited()
+            longitudinal_clinical=AsyncMock(),         # tracked: assert_not_awaited()
+        )
 
-        with (
-            patch.object(
-                ai_pipeline.summary_service,
-                "regenerate_clinical_summary",
-                summary_call,
-            ),
-            patch.object(
-                ai_pipeline.longitudinal_service,
-                "generate_clinical_longitudinal",
-                clinical_long_call,
-            ),
-        ):
-            result = await ai_pipeline.on_observation_change("sr-001", db, core_db=db)
+        result = await ai_pipeline.on_observation_change("sr-001", db, core_db=db, hooks=hooks)
 
-        summary_call.assert_not_awaited()
-        clinical_long_call.assert_not_awaited()
+        hooks.regenerate_clinical_summary.assert_not_awaited()
+        hooks.longitudinal_clinical.assert_not_awaited()
         assert result["clinical_summary"] == {"skipped": "patient_consent_missing"}
         assert result["clinical_longitudinal"] is None
         # One notification per feature (summary + longitudinal).
@@ -702,22 +549,20 @@ class TestPatientConsentGuards:
         db = _db_with_grants(revoked=["therapy.longitudinal_narrative"])
         db.set_table_data("notifications", [])
 
-        long_call = AsyncMock()
+        hooks = _hooks(
+            longitudinal_patient=AsyncMock(),  # tracked: assert_not_awaited()
+        )
 
-        with patch.object(
-            ai_pipeline.longitudinal_service,
-            "generate_patient_longitudinal",
-            long_call,
-        ):
-            result = await ai_pipeline.on_patient_note_change(
-                session_record_id="sr-001",
-                patient_id="patient-001",
-                therapist_id="therapist-001",
-                db=db,
-                core_db=db,
-            )
+        result = await ai_pipeline.on_patient_note_change(
+            session_record_id="sr-001",
+            patient_id="patient-001",
+            therapist_id="therapist-001",
+            db=db,
+            core_db=db,
+            hooks=hooks,
+        )
 
-        long_call.assert_not_awaited()
+        hooks.longitudinal_patient.assert_not_awaited()
         assert result["patient_longitudinal"] == {"skipped": "patient_consent_missing"}
         notifs = TestPatientConsentGuards._captured_notifications(db)
         assert len(notifs) == 1

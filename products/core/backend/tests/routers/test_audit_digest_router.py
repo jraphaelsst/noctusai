@@ -39,7 +39,7 @@ class TestSendDigestEndpoint:
 
 class TestPreviewDigestEndpoint:
     def test_preview_returns_subject_html_text(self, admin_client):
-        from noctusai_lib.email.digest import Digest
+        from noctusai_lib.integrations.email.digest import Digest
 
         async def _fake_build(db, *, org_id, period_days):
             return (

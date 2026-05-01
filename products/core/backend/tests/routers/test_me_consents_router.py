@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from noctusai_lib.ai.consent import (
+from noctusai_lib.domain.ai.consent import (
     register_feature,
     reset_catalog_for_test,
 )

@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
-from noctusai_lib.ai import AIOutput, consent_required, persist_output
+from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response

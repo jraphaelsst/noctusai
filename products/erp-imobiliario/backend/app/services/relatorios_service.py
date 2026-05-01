@@ -11,6 +11,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
+from noctusai_lib.primitives.timeutil import today_utc
+
 logger = logging.getLogger(__name__)
 
 # Ordered funnel stages
@@ -49,7 +51,7 @@ def ranking_corretores(
         return []
 
     # Date cutoff for the reporting period
-    cutoff = (date.today() - timedelta(days=periodo_dias)).isoformat()
+    cutoff = (today_utc() - timedelta(days=periodo_dias)).isoformat()
 
     # Fetch clients created within the period, selecting only needed columns
     clientes_res = supabase.table("clientes").select(
@@ -154,7 +156,7 @@ def atividade_mensal(
       - new clients
       - closed deals count
     """
-    today = date.today()
+    today = today_utc()
 
     # Date cutoff: go back enough days to cover the requested months
     cutoff = (today - timedelta(days=meses * 31)).isoformat()

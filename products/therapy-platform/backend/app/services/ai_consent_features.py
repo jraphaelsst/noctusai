@@ -20,7 +20,7 @@ project after the design questions are answered.
 """
 from __future__ import annotations
 
-from noctusai_lib.ai import register_feature
+from noctusai_lib.domain.ai import register_feature
 
 # T-longitudinal — Longitudinal narrative regeneration (HIGH-RISK Art. 11)
 register_feature(

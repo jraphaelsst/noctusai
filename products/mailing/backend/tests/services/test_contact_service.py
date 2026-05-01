@@ -84,7 +84,7 @@ class TestCreateContact:
     def test_returns_created_contact(self):
         db = MockSupabaseClient()
         contact = {"id": "c1", "email": "a@test.com", "org_id": ORG, "nome": "A"}
-        db.set_table_data("contacts", [contact])
+        db.set_sequential_responses("contacts", [MockSupabaseResponse(data=[contact])])
 
         svc = ContactService(db, ORG)
         result = svc.create_contact({"email": "a@test.com", "nome": "A"})

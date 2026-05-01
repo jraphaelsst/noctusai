@@ -77,7 +77,7 @@ async def _call_openai(
     `clinic_id` is threaded through as `org_id` so the lib picks up the
     clinic's own provider key (Tier 1) before falling back to platform / env.
     """
-    from noctusai_lib.llm import LLMNotConfigured, chat_completion
+    from noctusai_lib.integrations.llm import LLMNotConfigured, chat_completion
 
     try:
         content = await chat_completion(

@@ -207,7 +207,8 @@ async def resolver_setting(key: str, authorization: Optional[str] = Header(None)
     # Try org-level first
     try:
         org_id = await get_org_id(user)
-    except Exception:
+    except Exception as exc:
+        logger.debug("settings: get_org_id returned no org for user=%s (%s); will fall back to user-level setting", user.id, exc)
         org_id = None
 
     if org_id:

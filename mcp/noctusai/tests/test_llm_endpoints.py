@@ -20,7 +20,7 @@ for p in (_LIB, _FRAMEWORK, _CORE):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-import noctusai_lib.llm  # noqa: F401,E402
+import noctusai_lib.integrations.llm  # noqa: F401,E402
 
 
 # ── Core credentials router ─────────────────────────────────────
@@ -94,7 +94,7 @@ class TestLLMRouterModels:
     def test_catalog_drives_filter(self):
         """The route's filter is just models_for(provider, kind) — verify the
         underlying filter we rely on."""
-        from noctusai_lib.llm import models_for
+        from noctusai_lib.integrations.llm import models_for
 
         chat = models_for("openai", "chat")
         audio = models_for("openai", "audio")
@@ -103,7 +103,7 @@ class TestLLMRouterModels:
         assert all(m.provider == "openai" for m in chat + audio)
 
     def test_unknown_provider_returns_empty(self):
-        from noctusai_lib.llm import models_for
+        from noctusai_lib.integrations.llm import models_for
 
         assert models_for("does-not-exist") == []
 
@@ -171,8 +171,8 @@ class TestProvidersReflectRegistry:
         """Every registered provider must have at least one catalog entry.
         Without this, /api/llm/providers would list a provider but /models
         would return empty — broken UX."""
-        from noctusai_lib.llm import all_providers, models_for
-        from noctusai_lib.llm.registry import list_providers
+        from noctusai_lib.integrations.llm import all_providers, models_for
+        from noctusai_lib.integrations.llm.registry import list_providers
 
         catalog_providers = set(all_providers())
         registered = set(list_providers())

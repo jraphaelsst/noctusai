@@ -32,7 +32,12 @@ def verify_token(token: str) -> dict:
             return None
         org_id, contact_id, email = payload.split(":", 2)
         return {"org_id": org_id, "contact_id": contact_id, "email": email}
-    except Exception:
+    except Exception as exc:
+        # Token verification can fail for many reasons (malformed base64,
+        # bad signature, payload missing fields). Caller treats None as
+        # "invalid token" and returns 400 — but we log so spikes in failures
+        # signal either a token-format change or an attacker probing.
+        logger.warning("unsubscribe: token verification failed (%s); rejecting", exc)
         return None
 
 

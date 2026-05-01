@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.services.permissions import check_permission
-from noctusai_lib.invitations import (
+from noctusai_lib.domain.invitations import (
     create_invitation,
     validate_invitation,
     accept_invitation as mark_accepted,
@@ -171,8 +171,8 @@ async def convidar_membro(
             action="invite", resource_type="invitation",
             resource_id=invite_record["id"],
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("team: invite audit log failed for invitation_id=%s (%s); invite succeeded", invite_record["id"], exc)
     try:
         from app.services import notification_service
         await notification_service.create(
@@ -181,8 +181,8 @@ async def convidar_membro(
             title="Convite enviado",
             message=f"Convite enviado para {body.email} com papel {body.role}",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("team: notification on invite failed for invitation_id=%s (%s); invite succeeded", invite_record["id"], exc)
     try:
         from app.services import webhook_delivery
         await webhook_delivery.dispatch(
@@ -190,8 +190,8 @@ async def convidar_membro(
             event_type="team.invite_sent",
             payload={"email": body.email, "role": body.role, "invitation_id": invite_record["id"]},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("team: webhook dispatch on invite failed for invitation_id=%s (%s); invite succeeded", invite_record["id"], exc)
 
     # Send invitation email (best-effort — won't fail the request)
     try:
@@ -274,8 +274,8 @@ async def remover_membro(
             user_id=user.id, org_id=org_id,
             action="remove", resource_type="team_member", resource_id=user_id,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("team: remove-member audit log failed for user_id=%s (%s); removal succeeded", user_id, exc)
     try:
         from app.services import webhook_delivery
         await webhook_delivery.dispatch(
@@ -283,8 +283,8 @@ async def remover_membro(
             event_type="team.member_removed",
             payload={"removed_user_id": user_id},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("team: webhook dispatch on remove-member failed for user_id=%s (%s); removal succeeded", user_id, exc)
 
     return {"message": "Membro removido com sucesso"}
 
@@ -427,8 +427,9 @@ async def aceitar_convite(
     if authorization and authorization.startswith("Bearer "):
         try:
             authenticated_user, _ = await get_current_user(authorization)
-        except HTTPException:
-            pass  # Not authenticated — will proceed without user context
+        except HTTPException as exc:
+            # Not authenticated — will proceed without user context.
+            logger.debug("team: invitation accept proceeding without auth (%s)", exc.detail if hasattr(exc, 'detail') else exc)
 
     if authenticated_user:
         user_id = authenticated_user.id

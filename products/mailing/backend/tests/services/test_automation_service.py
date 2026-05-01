@@ -15,7 +15,7 @@ class TestCreateAutomation:
     def test_sets_org_id_and_created_by(self):
         db = MockSupabaseClient()
         automation = {"id": "a1", "org_id": ORG, "created_by": USER, "nome": "Welcome"}
-        db.set_table_data("automations", [automation])
+        db.set_sequential_responses("automations", [MockSupabaseResponse(data=[automation])])
 
         svc = AutomationService(db, ORG)
         data = {"nome": "Welcome"}

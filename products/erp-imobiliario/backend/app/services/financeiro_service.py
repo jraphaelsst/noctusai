@@ -7,6 +7,8 @@ import logging
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
+from noctusai_lib.primitives.timeutil import current_day_ref
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,7 +89,7 @@ class FinanceiroService:
 
         Returns list of IDs that should be marked as 'atrasado'.
         """
-        today = date.today().isoformat()
+        today = current_day_ref()
         overdue_ids = []
 
         for l in lancamentos:
@@ -103,7 +105,7 @@ class FinanceiroService:
         Mark all overdue pending transactions in the database.
         Returns count of updated records.
         """
-        today = date.today().isoformat()
+        today = current_day_ref()
 
         # Bulk update all pending transactions past due date in a single query
         result = self.db.table("lancamentos").update(

@@ -40,7 +40,7 @@ router = APIRouter(prefix="/api/sso", tags=["SSO"])
 # class rather than maintaining a local one — any future identity-source
 # product gets the same cache with the same concurrency semantics.
 
-from noctusai_lib.auth import SSOSessionCache
+from noctusai_lib.api.auth import SSOSessionCache
 
 _CACHE_TTL = 300  # 5 min — above 60s Supabase rate limit, tight on staleness
 
@@ -426,6 +426,7 @@ async def sso_session(body: SSOSessionRequest):
     try:
         session = _generate_session(email)
     except _RateLimitError:
+        logger.warning("sso: rate-limit hit for email=%s during session generation; returning 429", email)
         return JSONResponse(
             status_code=429,
             content={"detail": "Rate limit — tente novamente em 60 segundos"},

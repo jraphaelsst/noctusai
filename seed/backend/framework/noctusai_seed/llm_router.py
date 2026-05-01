@@ -29,8 +29,9 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from noctusai_lib.credentials import resolve_credential
-from noctusai_lib.llm import all_providers, models_for
+from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.llm import all_providers, models_for
+from noctusai_lib.primitives.parsing import parse_iso_or_400 as _parse_iso
 
 logger = logging.getLogger(__name__)
 
@@ -204,15 +205,6 @@ def create_llm_router(deps) -> APIRouter:
         }
 
     return router
-
-
-def _parse_iso(value: Optional[str]) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        raise HTTPException(status_code=400, detail=f"Invalid ISO date: {value}")
 
 
 def _aggregate_rows(rows: list[dict], group_by: str) -> list[dict]:

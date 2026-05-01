@@ -9,7 +9,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from app.dependencies import get_current_user, get_org_id
-from noctusai_lib.credentials import resolve_credential
+from noctusai_lib.config.credentials import resolve_credential
 from app.responses import success_response
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ async def _test_openai(api_key: str) -> TestResult:
             return TestResult(key="openai_api_key", success=False, message="API Key inválida ou expirada.")
         return TestResult(key="openai_api_key", success=False, message=f"Erro inesperado (HTTP {resp.status_code}).")
     except Exception as e:
+        logger.warning("configuracoes: OpenAI key test failed (%s); returning failure to caller", e)
         return TestResult(key="openai_api_key", success=False, message=f"Erro de conexão: {e}")
 
 
@@ -58,6 +59,7 @@ async def _test_infosimples(token: str) -> TestResult:
             return TestResult(key="infosimples_token", success=False, message=msg)
         return TestResult(key="infosimples_token", success=True, message="Conexão com InfoSimples bem-sucedida.")
     except Exception as e:
+        logger.warning("configuracoes: InfoSimples token test failed (%s); returning failure to caller", e)
         return TestResult(key="infosimples_token", success=False, message=f"Erro de conexão: {e}")
 
 

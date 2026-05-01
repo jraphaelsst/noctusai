@@ -14,8 +14,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from noctusai_lib.credentials import resolve_credential
-from noctusai_lib.llm import chat_completion
+from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.llm import chat_completion
+from noctusai_lib.primitives.parsing import safe_float as _safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +42,6 @@ def _empty_output(label: str = "indisponível") -> dict:
         "model_version": MODEL,
         "prompt_version": None,
     }
-
-
-def _safe_float(text: str, default: float = 0.0) -> float:
-    cleaned = "".join(c for c in text if c.isdigit() or c in ".-")
-    try:
-        return float(cleaned)
-    except ValueError:
-        return default
 
 
 async def categorize_transaction(

@@ -242,9 +242,9 @@ def get_billing_status(org_id: str) -> Dict[str, Any]:
                     "period_end": format_stripe_timestamp(upcoming.period_end),
                     "next_payment_attempt": format_stripe_timestamp(upcoming.next_payment_attempt),
                 }
-            except _stripe.InvalidRequestError:
-                # No upcoming invoice (e.g. free plan, no active sub)
-                pass
+            except _stripe.InvalidRequestError as exc:
+                # No upcoming invoice (e.g. free plan, no active sub).
+                logger.debug("billing_service: no upcoming Stripe invoice for customer=%s (%s)", stripe_customer_id, exc)
 
             # Default payment method
             customer = _stripe.Customer.retrieve(stripe_customer_id)

@@ -5,6 +5,8 @@ import pytest
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
+from noctusai_lib.primitives.timeutil import current_month_ref, today_utc
+
 from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 
 
@@ -12,10 +14,14 @@ from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 # Helpers
 # ---------------------------------------------------------------------------
 
-yesterday = (date.today() - timedelta(days=1)).isoformat()
-two_days_ago = (date.today() - timedelta(days=2)).isoformat()
-tomorrow = (date.today() + timedelta(days=1)).isoformat()
-current_ref = date.today().strftime("%Y-%m")
+# Use the same UTC clock the production service reads. Mixing
+# `date.today()` (local) with `datetime.now(timezone.utc)` here would
+# drift across UTC midnight — caught 2026-04-30 → 2026-05-01.
+_TODAY = today_utc()
+yesterday = (_TODAY - timedelta(days=1)).isoformat()
+two_days_ago = (_TODAY - timedelta(days=2)).isoformat()
+tomorrow = (_TODAY + timedelta(days=1)).isoformat()
+current_ref = current_month_ref()
 
 
 def _make_db_for_insert(inserted_record):
@@ -130,7 +136,7 @@ class TestGerarAlugueisMes:
 
         result = svc.gerar_alugueis_mes()
 
-        expected_ref = datetime.now(timezone.utc).strftime("%Y-%m")
+        expected_ref = current_month_ref()
         assert result["referencia"] == expected_ref
 
     def test_mixed_existing_and_new(self):

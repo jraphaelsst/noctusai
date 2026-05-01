@@ -23,14 +23,14 @@ if str(_LIB) not in sys.path:
 class TestCredentialsChain:
     def test_tier_3_env_fallback_when_db_unconfigured(self, monkeypatch):
         """Without `configure_credentials()`, Tier 1+2 skip; Tier 3 (env) wins."""
-        from noctusai_lib.credentials import _reset_for_testing, resolve_credential
+        from noctusai_lib.config.credentials import _reset_for_testing, resolve_credential
 
         _reset_for_testing()
         monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
         assert resolve_credential("openai_api_key") == "sk-from-env"
 
     def test_returns_none_when_nothing_configured(self, monkeypatch):
-        from noctusai_lib.credentials import _reset_for_testing, resolve_credential
+        from noctusai_lib.config.credentials import _reset_for_testing, resolve_credential
 
         _reset_for_testing()
         monkeypatch.delenv("MADE_UP_KEY_XYZ", raising=False)
@@ -38,7 +38,7 @@ class TestCredentialsChain:
 
     def test_env_key_is_uppercased(self, monkeypatch):
         """Tier 3 reads key.upper() from the environment."""
-        from noctusai_lib.credentials import _reset_for_testing, resolve_credential
+        from noctusai_lib.config.credentials import _reset_for_testing, resolve_credential
 
         _reset_for_testing()
         monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-xyz")
@@ -46,7 +46,7 @@ class TestCredentialsChain:
 
     def test_org_id_ignored_when_db_unconfigured(self, monkeypatch):
         """Passing org_id without DB config still falls through to Tier 3."""
-        from noctusai_lib.credentials import _reset_for_testing, resolve_credential
+        from noctusai_lib.config.credentials import _reset_for_testing, resolve_credential
 
         _reset_for_testing()
         monkeypatch.setenv("GEMINI_API_KEY", "gem-env-fallback")
@@ -57,7 +57,7 @@ class TestCredentialsChain:
 
 class TestLLMExceptions:
     def test_llm_not_configured_default_pt_message(self):
-        from noctusai_lib.llm import LLMNotConfigured
+        from noctusai_lib.integrations.llm import LLMNotConfigured
 
         exc = LLMNotConfigured("openai")
         assert "API Key não configurada" in exc.message
@@ -66,13 +66,13 @@ class TestLLMExceptions:
         assert exc.code == "LLM_NOT_CONFIGURED"
 
     def test_llm_not_configured_custom_message(self):
-        from noctusai_lib.llm import LLMNotConfigured
+        from noctusai_lib.integrations.llm import LLMNotConfigured
 
         exc = LLMNotConfigured("anthropic", message="custom override")
         assert exc.message == "custom override"
 
     def test_llm_api_error_wraps_provider(self):
-        from noctusai_lib.llm import LLMAPIError
+        from noctusai_lib.integrations.llm import LLMAPIError
 
         exc = LLMAPIError("openai", "rate limit exceeded")
         assert "Openai" in exc.message
@@ -80,7 +80,7 @@ class TestLLMExceptions:
         assert exc.status_code == 502  # default: Bad Gateway
 
     def test_provider_not_implemented_mentions_guard_flag(self):
-        from noctusai_lib.llm import ProviderNotImplemented
+        from noctusai_lib.integrations.llm import ProviderNotImplemented
 
         exc = ProviderNotImplemented("anthropic")
         assert "stub" in exc.message.lower()
@@ -89,8 +89,8 @@ class TestLLMExceptions:
         assert exc.details == {"provider": "anthropic"}
 
     def test_all_inherit_appexception(self):
-        from noctusai_lib.exceptions import AppException
-        from noctusai_lib.llm import (
+        from noctusai_lib.primitives.exceptions import AppException
+        from noctusai_lib.integrations.llm import (
             LLMAPIError,
             LLMNotConfigured,
             ProviderNotImplemented,
@@ -111,26 +111,26 @@ class TestRegistry:
     tests that expect openai/anthropic/gemini to be registered)."""
 
     def setup_method(self):
-        from noctusai_lib.llm import registry as _r
+        from noctusai_lib.integrations.llm import registry as _r
 
         self._saved = dict(_r._PROVIDERS)
         _r._PROVIDERS.clear()
 
     def teardown_method(self):
-        from noctusai_lib.llm import registry as _r
+        from noctusai_lib.integrations.llm import registry as _r
 
         _r._PROVIDERS.clear()
         _r._PROVIDERS.update(self._saved)
 
     def test_unknown_provider_raises(self):
-        from noctusai_lib.llm.registry import get_provider_class
+        from noctusai_lib.integrations.llm.registry import get_provider_class
 
         with pytest.raises(KeyError) as exc_info:
             get_provider_class("nonexistent")
         assert "nonexistent" in str(exc_info.value)
 
     def test_register_and_retrieve(self):
-        from noctusai_lib.llm.registry import (
+        from noctusai_lib.integrations.llm.registry import (
             get_provider_class,
             list_providers,
             register,
@@ -145,7 +145,7 @@ class TestRegistry:
 
     def test_re_registration_wins(self):
         """Later register() call with the same name overwrites the earlier one."""
-        from noctusai_lib.llm.registry import get_provider_class, register
+        from noctusai_lib.integrations.llm.registry import get_provider_class, register
 
         class First:
             name = "x"
@@ -162,7 +162,7 @@ class TestRegistry:
 
 class TestModelCatalog:
     def test_openai_chat_models_present(self):
-        from noctusai_lib.llm import models_for
+        from noctusai_lib.integrations.llm import models_for
 
         chat = models_for("openai", "chat")
         ids = {m.id for m in chat}
@@ -170,14 +170,14 @@ class TestModelCatalog:
         assert "gpt-4o-mini" in ids
 
     def test_openai_has_embedding_and_audio(self):
-        from noctusai_lib.llm import models_for
+        from noctusai_lib.integrations.llm import models_for
 
         assert any(m.kind == "embedding" for m in models_for("openai"))
         assert any(m.kind == "audio" for m in models_for("openai"))
 
     def test_anthropic_catalog_populated_real(self):
         """Phase 13 made Anthropic real — catalog entries now report stub=False."""
-        from noctusai_lib.llm import models_for
+        from noctusai_lib.integrations.llm import models_for
 
         anthropic = models_for("anthropic")
         assert anthropic, "Anthropic catalog must not be empty"
@@ -185,27 +185,27 @@ class TestModelCatalog:
 
     def test_gemini_catalog_populated_real(self):
         """Phase 14 made Gemini real — catalog entries now report stub=False."""
-        from noctusai_lib.llm import models_for
+        from noctusai_lib.integrations.llm import models_for
 
         gemini = models_for("gemini")
         assert gemini
         assert not any(m.stub for m in gemini)
 
     def test_openai_not_stub(self):
-        from noctusai_lib.llm import models_for
+        from noctusai_lib.integrations.llm import models_for
 
         openai_models = models_for("openai")
         assert openai_models
         assert not any(m.stub for m in openai_models)
 
     def test_all_providers(self):
-        from noctusai_lib.llm import all_providers
+        from noctusai_lib.integrations.llm import all_providers
 
         providers = set(all_providers())
         assert providers >= {"openai", "anthropic", "gemini"}
 
     def test_is_stub_model(self):
-        from noctusai_lib.llm import is_stub_model
+        from noctusai_lib.integrations.llm import is_stub_model
 
         # After Phases 13/14, Anthropic + Gemini are real — no stub entries
         # remain in the catalog. is_stub_model reflects that.
@@ -217,7 +217,7 @@ class TestModelCatalog:
         """ModelEntry is a frozen dataclass — mutation must fail."""
         from dataclasses import FrozenInstanceError
 
-        from noctusai_lib.llm import MODELS
+        from noctusai_lib.integrations.llm import MODELS
 
         with pytest.raises(FrozenInstanceError):
             MODELS[0].label = "hacked"  # type: ignore[misc]
@@ -227,7 +227,7 @@ class TestModelCatalog:
 
 class TestLLMConfig:
     def test_minimal_construction(self):
-        from noctusai_lib.llm import LLMConfig
+        from noctusai_lib.integrations.llm import LLMConfig
 
         cfg = LLMConfig(key_provider=lambda p, org_id=None: "test-key")
         assert cfg.default_provider == "openai"
@@ -235,7 +235,7 @@ class TestLLMConfig:
         assert cfg.cache_enabled is False
 
     def test_overrides_applied(self):
-        from noctusai_lib.llm import LLMConfig
+        from noctusai_lib.integrations.llm import LLMConfig
 
         cfg = LLMConfig(
             key_provider=lambda p, org_id=None: None,
@@ -247,7 +247,7 @@ class TestLLMConfig:
 
     def test_key_provider_receives_provider_and_org(self):
         """The callable signature is `(provider, org_id=None)` — verify both reach it."""
-        from noctusai_lib.llm import LLMConfig
+        from noctusai_lib.integrations.llm import LLMConfig
 
         calls = []
 

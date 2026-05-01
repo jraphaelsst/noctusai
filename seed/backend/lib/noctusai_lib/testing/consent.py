@@ -54,7 +54,7 @@ def bind_consent_module_to_mock(mock_sb: Any) -> None:
     # Imported here (not at module level) so importing `noctusai_lib.testing`
     # doesn't pull FastAPI into pure-data test modules. The actual import is
     # cheap given FastAPI is already a hard dep of noctusai_lib.
-    from noctusai_lib.ai import configure_consent_module
+    from noctusai_lib.domain.ai import configure_consent_module
 
     async def _mock_get_current_user(authorization: str = None) -> tuple:  # type: ignore[assignment]
         user_resp = mock_sb.auth.get_user("token")

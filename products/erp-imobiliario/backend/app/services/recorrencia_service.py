@@ -8,6 +8,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from noctusai_lib.primitives.timeutil import current_day_ref, current_month_ref, now_utc
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +31,7 @@ class RecorrenciaService:
             Dict with gerados (count), existentes (skipped), and erros.
         """
         if not referencia:
-            referencia = datetime.now(timezone.utc).strftime("%Y-%m")
+            referencia = current_month_ref()
 
         ano, mes = referencia.split("-")
 
@@ -75,7 +77,12 @@ class RecorrenciaService:
                 # Calculate due date
                 try:
                     vencimento = datetime(int(ano), int(mes), min(dia_vencimento, 28))
-                except ValueError:
+                except ValueError as exc:
+                    logger.warning(
+                        "recorrencia_service: contrato has dia_vencimento=%r incompatible with %s/%s (%s); "
+                        "defaulting to day 28",
+                        dia_vencimento, ano, mes, exc,
+                    )
                     vencimento = datetime(int(ano), int(mes), 28)
 
                 novos.append({
@@ -127,8 +134,8 @@ class RecorrenciaService:
         Looks for lancamentos with recorrente=true that need a new entry
         for the current month.
         """
-        hoje = datetime.now(timezone.utc)
-        referencia_atual = hoje.strftime("%Y-%m")
+        hoje = now_utc()
+        referencia_atual = current_month_ref()
 
         # Fetch recurring lancamentos
         result = self.db.table("lancamentos").select("*").eq(
@@ -162,7 +169,12 @@ class RecorrenciaService:
                     try:
                         dt = datetime.fromisoformat(venc_orig)
                         next_venc = dt.replace(month=hoje.month, year=hoje.year)
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as exc:
+                        logger.warning(
+                            "recorrencia_service: lanc id=%s has unparseable data_vencimento=%r (%s); "
+                            "defaulting to current month/min(day, 28)",
+                            lanc.get("id"), venc_orig, exc,
+                        )
                         next_venc = hoje.replace(day=min(hoje.day, 28))
                 else:
                     next_venc = hoje.replace(day=min(hoje.day, 28))
@@ -202,7 +214,7 @@ class RecorrenciaService:
 
         Returns count of newly marked overdue entries.
         """
-        hoje = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        hoje = current_day_ref()
 
         # Bulk update all pending lancamentos past due date
         lanc_result = self.db.table("lancamentos").update(

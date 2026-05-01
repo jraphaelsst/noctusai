@@ -34,10 +34,13 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterable, Optional
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -59,7 +62,7 @@ CATALOG_OUTPUT = REPO_ROOT / "mcp" / "noctusai" / "catalog.md"
 @dataclass
 class Symbol:
     """A public top-level symbol exported by a lib module."""
-    qualified_name: str        # e.g. "noctusai_lib.auth.resolve_sso_role"
+    qualified_name: str        # e.g. "noctusai_lib.api.auth.resolve_sso_role"
     module: str                # e.g. "noctusai_lib.auth"
     name: str                  # e.g. "resolve_sso_role"
     kind: str                  # "def" | "async def" | "class" | "const"
@@ -111,7 +114,8 @@ class CatalogReport:
 def _parse(path: Path) -> Optional[ast.Module]:
     try:
         return ast.parse(path.read_text(encoding="utf-8"))
-    except (SyntaxError, UnicodeDecodeError, OSError):
+    except (SyntaxError, UnicodeDecodeError, OSError) as exc:
+        logger.warning("catalog: cannot parse %s (%s), skipping", path, exc)
         return None
 
 
@@ -127,14 +131,16 @@ def _signature(node: ast.AST) -> str:
         return f"({ast.unparse(node.args)})" + (
             f" -> {ast.unparse(node.returns)}" if node.returns else ""
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("catalog: ast.unparse failed for %s: %s", getattr(node, 'name', '?'), exc)
         return "(...)"
 
 
 def _docstring(node: ast.AST) -> str:
     try:
         doc = ast.get_docstring(node) or ""
-    except Exception:
+    except Exception as exc:
+        logger.warning("catalog: ast.get_docstring failed for %s: %s", getattr(node, 'name', '?'), exc)
         return ""
     return doc.strip().splitlines()[0] if doc.strip() else ""
 
@@ -256,7 +262,7 @@ def build_reexport_map() -> dict[str, str]:
     `__init__.py` in each lib root.
 
     When a product writes `from noctusai_lib import AppException`, the catalog
-    must credit `noctusai_lib.exceptions.AppException` — not orphan the source.
+    must credit `noctusai_lib.primitives.exceptions.AppException` — not orphan the source.
     """
     rmap: dict[str, str] = {}
     for prefix, root in LIB_ROOTS.items():
@@ -318,7 +324,7 @@ def scan_importers(reexport_map: dict[str, str]) -> dict[str, dict[str, int]]:
     Returns: {qualified_symbol_name: {consumer_label: import_count}}
 
     Re-exports are resolved to their source symbol so `from noctusai_lib import
-    AppException` credits `noctusai_lib.exceptions.AppException`, not an orphan.
+    AppException` credits `noctusai_lib.primitives.exceptions.AppException`, not an orphan.
     Internal lib-to-lib imports show up as `lib:noctusai_seed` (etc.).
     """
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -377,9 +383,9 @@ def scan_importers(reexport_map: dict[str, str]) -> dict[str, dict[str, int]]:
 
 def _attach_importers(symbols: list[Symbol], import_counts: dict[str, dict[str, int]]) -> None:
     for sym in symbols:
-        # Exact match on qualified_name (e.g. noctusai_lib.auth.resolve_sso_role)
+        # Exact match on qualified_name (e.g. noctusai_lib.api.auth.resolve_sso_role)
         direct = import_counts.get(sym.qualified_name, {})
-        # Also credit imports of the parent module (`from noctusai_lib.auth import ...`
+        # Also credit imports of the parent module (`from noctusai_lib.api.auth import ...`
         # may resolve to any symbol in that module — we can't tell which without
         # deeper analysis, so we only credit when the import target name matches).
         total_products = set(direct.keys())

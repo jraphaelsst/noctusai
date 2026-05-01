@@ -8,7 +8,7 @@ from app.schemas.campaigns import CampaignCreate, CampaignUpdate, CampaignSchedu
 from app.services.campaign_service import CampaignService
 from app.services.send_service import SendService
 from app.config import settings
-from noctusai_lib.responses import success_response
+from noctusai_lib.primitives.responses import success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/campaigns", tags=["Campaigns"])

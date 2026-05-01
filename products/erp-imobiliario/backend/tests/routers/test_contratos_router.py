@@ -4,6 +4,8 @@ Covers list, create, read, update, delete, parcelas generation and management.
 """
 import pytest
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestListarContratos:
     def test_list_all(self, client):
@@ -74,11 +76,13 @@ class TestObterContrato:
 
 class TestCriarContrato:
     def test_create_success(self, client):
-        client._mock_supabase.set_table_data("contratos", {
-            "id": "new-ct", "tipo": "venda", "status": "rascunho",
-            "cliente_id": "c1", "imovel_id": "i1", "valor_total": 500000,
-            "data_inicio": "2026-03-01",
-        })
+        client._mock_supabase.set_sequential_responses("contratos", [
+            MockSupabaseResponse(data=[{
+                "id": "new-ct", "tipo": "venda", "status": "rascunho",
+                "cliente_id": "c1", "imovel_id": "i1", "valor_total": 500000,
+                "data_inicio": "2026-03-01",
+            }]),
+        ])
         resp = client.post("/api/contratos", json={
             "tipo": "venda",
             "cliente_id": "c1",

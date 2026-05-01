@@ -292,9 +292,13 @@ async def forgot_password(email: str, admin_db: Any) -> None:
     """Trigger Supabase password reset email."""
     try:
         admin_db.auth.reset_password_email(email)
-    except AuthApiError:
-        # Don't reveal whether email exists
-        pass
+    except AuthApiError as exc:
+        # Security policy: do NOT reveal whether the email exists, in the
+        # response OR in logs. Even DEBUG could leak the existence signal if
+        # `NOCTUSAI_DEBUG=1` is enabled in prod (which is allowed for
+        # troubleshooting). Log only the exception TYPE — operator sees
+        # "AuthApiError fired" without knowing which email triggered it.
+        logger.debug("auth_service: forgot_password got %s; swallowing per security policy", type(exc).__name__)
     logger.info("Password reset requested for email=%s", email)
 
 

@@ -36,7 +36,7 @@ def _grant_all_daily_life_consents(client):
 
 class TestWeeklyReview:
     def test_get_returns_digest_and_summary(self, client):
-        from noctusai_lib.email.digest import Digest
+        from noctusai_lib.integrations.email.digest import Digest
 
         async def _fake_build(db, *, user_id, user_label, org_id, period_days):
             return (

@@ -20,7 +20,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query
 
-from noctusai_lib.ai import fetch_outputs_for
+from noctusai_lib.domain.ai import fetch_outputs_for
 
 logger = logging.getLogger(__name__)
 

@@ -32,7 +32,8 @@ def _scan_template(template_path: Path) -> dict:
             rel = full.relative_to(template_path)
             try:
                 content = full.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, PermissionError):
+            except (UnicodeDecodeError, PermissionError) as exc:
+                logger.warning("templates: cannot read %s (%s); returning content=None to caller", full, exc)
                 content = None
             files.append({
                 "path": str(rel),

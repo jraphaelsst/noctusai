@@ -14,13 +14,13 @@ _LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
-import noctusai_lib.llm  # noqa: E402,F401
+import noctusai_lib.integrations.llm  # noqa: E402,F401
 
 
 def _install_fake_with_streams(streams):
-    from noctusai_lib.llm import FakeProvider, LLMConfig
-    from noctusai_lib.llm.client import _reset_for_testing, configure_llm
-    from noctusai_lib.llm.registry import register
+    from noctusai_lib.integrations.llm import FakeProvider, LLMConfig
+    from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
+    from noctusai_lib.integrations.llm.registry import register
 
     _reset_for_testing()
     fake = FakeProvider(stream_responses=streams)
@@ -40,13 +40,13 @@ def _install_fake_with_streams(streams):
 def _restore_real_providers():
     import importlib
 
-    from noctusai_lib.llm.registry import _reset_for_testing as _reset_reg
+    from noctusai_lib.integrations.llm.registry import _reset_for_testing as _reset_reg
 
     _reset_reg()
     for mod in (
-        "noctusai_lib.llm.providers.openai_provider",
-        "noctusai_lib.llm.providers.anthropic_provider",
-        "noctusai_lib.llm.providers.gemini_provider",
+        "noctusai_lib.integrations.llm.providers.openai_provider",
+        "noctusai_lib.integrations.llm.providers.anthropic_provider",
+        "noctusai_lib.integrations.llm.providers.gemini_provider",
     ):
         importlib.import_module(mod)
         importlib.reload(sys.modules[mod])
@@ -59,7 +59,7 @@ class TestChatCompletionStream:
         _restore_real_providers()
 
     def test_yields_chunks_in_order(self):
-        from noctusai_lib.llm import chat_completion_stream
+        from noctusai_lib.integrations.llm import chat_completion_stream
 
         fake = _install_fake_with_streams([["Hello", " ", "world"]])
 
@@ -77,7 +77,7 @@ class TestChatCompletionStream:
         assert fake.calls[0]["method"] == "chat_completion_stream"
 
     def test_default_chunk_when_no_scripted_stream(self):
-        from noctusai_lib.llm import chat_completion_stream
+        from noctusai_lib.integrations.llm import chat_completion_stream
 
         _install_fake_with_streams([])  # no scripted streams
 
@@ -94,7 +94,7 @@ class TestChatCompletionStream:
         assert "FAKE stream" in chunks[0]
 
     def test_each_call_consumes_one_scripted_stream(self):
-        from noctusai_lib.llm import chat_completion_stream
+        from noctusai_lib.integrations.llm import chat_completion_stream
 
         fake = _install_fake_with_streams([
             ["A", "B"],
@@ -122,7 +122,7 @@ class TestChatCompletionStream:
     def test_cache_kwargs_are_dropped(self):
         """`cache=`, `cache_namespace=`, `prompt_version=` are inert for
         streams. Provider should not see them in its call log."""
-        from noctusai_lib.llm import chat_completion_stream
+        from noctusai_lib.integrations.llm import chat_completion_stream
 
         fake = _install_fake_with_streams([["x"]])
 
@@ -146,9 +146,9 @@ class TestChatCompletionStream:
     def test_provider_without_stream_raises_not_implemented(self):
         """A provider whose `chat_completion_stream` is missing surfaces as
         NotImplementedError at the high-level call site."""
-        from noctusai_lib.llm import LLMConfig, chat_completion_stream
-        from noctusai_lib.llm.client import _reset_for_testing, configure_llm
-        from noctusai_lib.llm.registry import register
+        from noctusai_lib.integrations.llm import LLMConfig, chat_completion_stream
+        from noctusai_lib.integrations.llm.client import _reset_for_testing, configure_llm
+        from noctusai_lib.integrations.llm.registry import register
 
         class _NoStreamProvider:
             name = "nostream"

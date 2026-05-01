@@ -4,6 +4,8 @@ Covers list, create, read, update status, delete, resumo, and splits.
 """
 import pytest
 
+from tests.conftest import MockSupabaseResponse
+
 
 class TestListarComissoes:
     def test_list_all(self, client):
@@ -76,10 +78,12 @@ class TestObterComissao:
 
 class TestCriarComissao:
     def test_create_success(self, client):
-        client._mock_supabase.set_table_data("comissoes", {
-            "id": "new-cm", "valor_venda": 400000, "percentual_comissao": 6.0,
-            "valor_comissao": 24000, "status": "pendente",
-        })
+        client._mock_supabase.set_sequential_responses("comissoes", [
+            MockSupabaseResponse(data=[{
+                "id": "new-cm", "valor_venda": 400000, "percentual_comissao": 6.0,
+                "valor_comissao": 24000, "status": "pendente",
+            }]),
+        ])
         client._mock_supabase.set_table_data("comissoes_splits", [])
         resp = client.post("/api/comissoes", json={
             "valor_venda": 400000,

@@ -6,8 +6,11 @@ duplicated avoids the lib depending on the framework's private helpers.
 """
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _read_static() -> str | None:
@@ -16,8 +19,10 @@ def _read_static() -> str | None:
         value = getattr(_version_static, "__version__", None)
         if isinstance(value, str) and value and value != "bootstrap":
             return value
-    except ImportError:
-        pass
+    except ImportError as exc:
+        # See `noctusai_seed._version._read_static` for the rationale;
+        # this is the lib-package mirror.
+        logger.debug("noctusai_lib._version: no static stamp (%s); trying live git", exc)
     return None
 
 
@@ -34,8 +39,8 @@ def _read_git() -> str | None:
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("noctusai_lib._version: live git unavailable (%s); resolution will return 'unknown'", exc)
     return None
 
 

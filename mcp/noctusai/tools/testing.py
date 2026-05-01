@@ -1,7 +1,10 @@
 """Test runner and coverage tools."""
-import subprocess
+import logging
 import re
+import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -38,8 +41,10 @@ def run_product_tests(slug: str, timeout: int = 120) -> dict:
             "output": output[-2000:] if len(output) > 2000 else output,
         }
     except subprocess.TimeoutExpired:
+        logger.warning("testing: pytest for %s timed out after %ds", slug, timeout)
         return {"product": slug, "error": "timeout"}
     except Exception as e:
+        logger.warning("testing: pytest for %s failed unexpectedly: %s", slug, e)
         return {"product": slug, "error": str(e)}
 
 
@@ -85,8 +90,10 @@ def build_product_frontend(slug: str, timeout: int = 60) -> dict:
             "output": (result.stdout + result.stderr)[-1000:],
         }
     except subprocess.TimeoutExpired:
+        logger.warning("testing: vite build for %s timed out after %ds", slug, timeout)
         return {"product": slug, "error": "timeout"}
     except Exception as e:
+        logger.warning("testing: vite build for %s failed unexpectedly: %s", slug, e)
         return {"product": slug, "error": str(e)}
 
 

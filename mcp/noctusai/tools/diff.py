@@ -1,6 +1,9 @@
 """Diff and comparison tools — compare products against seed patterns."""
+import logging
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -43,8 +46,9 @@ def diff_product_against_seed(slug: str) -> dict:
                 diffs[f] = "identical"
             else:
                 diffs[f] = result.stdout[:500] if result.stdout else "different"
-        except:
-            diffs[f] = "error comparing"
+        except Exception as exc:
+            logger.warning("diff: comparing %s failed (%s)", f, exc)
+            diffs[f] = f"error comparing: {exc}"
 
     return {"product": slug, "diffs": diffs}
 
@@ -78,8 +82,8 @@ def find_orphaned_files(slug: str) -> dict:
         if src.exists():
             try:
                 all_content += src.read_text()
-            except:
-                pass
+            except Exception as exc:
+                logger.warning("diff: cannot read %s for orphan scan (%s), skipping", src, exc)
 
     orphans = []
     for candidate in candidates:
@@ -106,7 +110,8 @@ def check_api_consistency(slug: str) -> dict:
             continue
         try:
             content = router_file.read_text()
-        except:
+        except Exception as exc:
+            logger.warning("diff: cannot read router %s (%s), skipping", router_file, exc)
             continue
 
         name = router_file.stem

@@ -52,7 +52,12 @@ def _should_regenerate(session_record_id: str, db) -> bool:
         )
         now = datetime.now(SP_TZ)
         return (now - last_created).total_seconds() >= _DEBOUNCE_SECONDS
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "observations: latest observation has unparseable created_at=%r (%s); "
+            "allowing the new observation through (debounce check skipped)",
+            latest.get("created_at"), exc,
+        )
         return True
 
 

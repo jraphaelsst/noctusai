@@ -4,14 +4,16 @@ Unit tests for relatorios_service — agent ranking, funnel conversion, monthly 
 import pytest
 from datetime import date, timedelta
 
+from noctusai_lib.primitives.timeutil import current_month_ref, today_utc
+
 from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 
 
 # ---------------------------------------------------------------------------
-# Relative date helpers
+# Relative date helpers (UTC — matches production; avoids local-vs-UTC drift)
 # ---------------------------------------------------------------------------
-today = date.today()
-this_month_prefix = today.strftime("%Y-%m")
+today = today_utc()
+this_month_prefix = current_month_ref()
 last_month_date = today.replace(day=1) - timedelta(days=1)
 last_month_prefix = last_month_date.strftime("%Y-%m")
 

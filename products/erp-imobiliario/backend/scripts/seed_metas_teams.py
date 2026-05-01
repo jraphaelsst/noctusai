@@ -31,8 +31,11 @@ def _get_admin_client():
     try:
         from supabase import create_client
         from supabase.lib.client_options import ClientOptions
-    except ImportError:
-        sys.exit("Install supabase-py: pip install supabase")
+    except ImportError as exc:
+        # Surfaces via stderr + non-zero exit. `print` keeps the operator-facing
+        # message visible even before logging is configured (script entry-point).
+        print(f"ERROR: Install supabase-py: pip install supabase (ImportError: {exc})", file=sys.stderr)
+        sys.exit(1)
 
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")

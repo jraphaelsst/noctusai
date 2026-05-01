@@ -98,8 +98,8 @@ async def grant_license(body: LicenseGrant, authorization: Optional[str] = Heade
             action="grant", resource_type="license",
             resource_id=result.data[0]["id"],
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("licenses: grant audit log failed for license_id=%s (%s); grant succeeded", result.data[0]["id"], exc)
     try:
         from app.services import notification_service
         await notification_service.notify_team(
@@ -108,8 +108,8 @@ async def grant_license(body: LicenseGrant, authorization: Optional[str] = Heade
             title="Licença concedida",
             message=f"Uma nova licença de produto foi ativada para sua organização.",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("licenses: team notification on grant failed for org=%s (%s); grant succeeded", body.org_id, exc)
     try:
         from app.services import webhook_delivery
         await webhook_delivery.dispatch(
@@ -117,8 +117,8 @@ async def grant_license(body: LicenseGrant, authorization: Optional[str] = Heade
             event_type="license.granted",
             payload={"license_id": result.data[0]["id"], "product_id": body.product_id},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("licenses: webhook dispatch on grant failed for org=%s (%s); grant succeeded", body.org_id, exc)
 
     return {"data": result.data[0]}
 
@@ -158,8 +158,8 @@ async def revoke_license(license_id: str, authorization: Optional[str] = Header(
             user_id=user.id, org_id=revoked_record.get("org_id"),
             action="revoke", resource_type="license", resource_id=license_id,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("licenses: revoke audit log failed for license_id=%s (%s); revocation succeeded", license_id, exc)
     try:
         from app.services import webhook_delivery
         org_id_val = revoked_record.get("org_id")
@@ -169,8 +169,8 @@ async def revoke_license(license_id: str, authorization: Optional[str] = Header(
                 event_type="license.revoked",
                 payload={"license_id": license_id},
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("licenses: webhook dispatch on revoke failed for license_id=%s (%s); revocation succeeded", license_id, exc)
 
     return {"data": revoked_record}
 

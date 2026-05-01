@@ -28,13 +28,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from noctusai_lib.email.digest import (
-    Digest,
-    DigestSendResult,
-    render as render_digest,
-    send_digest,
+from noctusai_lib.domain.digest import (
+    build_and_send,
+    narrative as digest_narrative,
+    render_with_narrative,
 )
-from noctusai_lib.llm import chat_completion
+from noctusai_lib.integrations.email.digest import Digest
 
 logger = logging.getLogger(__name__)
 
@@ -98,31 +97,21 @@ async def _generate_narrative(
         f"Usuários mais ativos:\n{bullets_users}\n\n"
         f"Ações privilegiadas detectadas:\n{bullets_high}"
     )
-
-    try:
-        narrative = await chat_completion(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_prompt},
-            ],
-            model=MODEL,
-            temperature=0.0,
-            max_tokens=600,
-            cache=True,
-            org_id=org_id,
-        )
-        return narrative.strip()
-    except Exception:
-        logger.warning(
-            "audit_digest.generate_narrative: LLM unavailable — using template fallback"
-        )
-        return (
-            f"Resumo automático para {org_name} ({period_days} dias, "
-            f"{total_events} eventos no total). "
-            f"Ações de maior volume: "
-            + ", ".join(f"{a} ({n})" for a, n in actions_by_count[:3])
-            + ". Sem narrativa detalhada — LLM indisponível para esta janela."
-        )
+    fallback = (
+        f"Resumo automático para {org_name} ({period_days} dias, "
+        f"{total_events} eventos no total). "
+        f"Ações de maior volume: "
+        + ", ".join(f"{a} ({n})" for a, n in actions_by_count[:3])
+        + ". Sem narrativa detalhada — LLM indisponível para esta janela."
+    )
+    return await digest_narrative(
+        system=system,
+        user_prompt=user_prompt,
+        model=MODEL,
+        cache=True,
+        org_id=org_id,
+        fallback=fallback,
+    )
 
 
 def _render_bodies(
@@ -134,24 +123,20 @@ def _render_bodies(
     period_days: int,
     total_events: int,
 ) -> tuple[str, str]:
-    """Render `(html, text)` digest bodies via the shared Jinja helper."""
-    return render_digest(
+    """Render `(html, text)` digest bodies via the shared seed helper."""
+    return render_with_narrative(
         html_template="audit_digest.html.j2",
         text_template="audit_digest.txt.j2",
+        narrative=narrative,
         context={
             "org_name": org_name,
-            "narrative": narrative,
-            # Pre-split paragraphs for the html template so it can iterate.
-            "narrative_paragraphs": [
-                para for para in narrative.split("\n\n") if para.strip()
-            ],
             "actions_by_count": actions_by_count,
             "top_users": top_users,
             "period_days": period_days,
             "total_events": total_events,
-            "prompt_version": PROMPT_VERSION,
         },
         search_paths=[_TEMPLATE_DIR],
+        prompt_version=PROMPT_VERSION,
     )
 
 
@@ -289,20 +274,17 @@ async def send_weekly_audit_digest(
         email = admin.get("email")
         if not email:
             continue
-        outcome: DigestSendResult = await send_digest(
-            digest,
-            recipient=email,
-            org_id=org_id,
-            log_prefix="AUDIT DIGEST",
+        outcome = await build_and_send(
+            digest, recipient=email, org_id=org_id, log_prefix="AUDIT DIGEST",
         )
         results.append({
             "recipient": email,
-            "sent": outcome.sent,
-            "dry_run": outcome.dry_run,
-            "external_id": outcome.external_id,
-            "error": outcome.error,
+            "sent": outcome["sent"],
+            "dry_run": outcome["dry_run"],
+            "external_id": outcome["external_id"],
+            "error": outcome["error"],
         })
-        if outcome.sent:
+        if outcome["sent"]:
             sent_count += 1
 
     return {

@@ -6,15 +6,36 @@ instead of running shell commands.
 
 Run: python mcp/noctusai/server.py
 """
+import json
+import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Configure platform-standard logging BEFORE importing any tools/* module.
+# MCP server uses stdio: stdout is the JSON-RPC channel and any non-JSON
+# byte corrupts it, so we route logs to stderr via `use_stderr=True`.
+try:
+    from noctusai_lib.logging_config import auto_configure_for_cli
+    auto_configure_for_cli("noctusai-mcp-server", use_stderr=True)
+except ImportError as exc:
+    logging.basicConfig(
+        level=logging.WARNING,
+        stream=sys.stderr,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    )
+    logging.getLogger(__name__).warning(
+        "server: noctusai_lib not installed (%s); using basicConfig fallback. "
+        "Run `pip install -e seed/backend/lib` from the repo root to fix.",
+        exc,
+    )
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
-import json
+
+logger = logging.getLogger(__name__)
 
 server = Server("noctusai")
 
@@ -50,6 +71,97 @@ async def list_tools():
         # Compliance
         _tool("noctusai_validate", "Check seed compliance for all products. Returns score 0-100."),
         _tool("noctusai_validate_product", "Check seed compliance for one product", slug_param, ["slug"]),
+
+        # Cross-cutting utilities (mcp-tooling-expansion 2026-04-28)
+        _tool(
+            "noctusai_refs",
+            "Find every reference to a literal pattern across CLAUDE.md / KB / projects / mcp / seed / products. Replaces the manual `grep -rln` ritual run before deletes / renames / closures.",
+            {"pattern": {"type": "string", "description": "Literal string to search for (case-sensitive)."}},
+            ["pattern"],
+        ),
+        _tool(
+            "noctusai_build_parallel",
+            "Run `npx vite build` across product frontends in parallel. Parallel + scoped supersedes the legacy sequential `noctusai_build_all_frontends`. `slugs=[...]` builds specific products; `changed_only=True` uses `git diff --name-only HEAD` to scope to affected products only (perf).",
+            {
+                "slugs": {"type": "array", "items": {"type": "string"}, "description": "Optional explicit product slugs to build."},
+                "changed_only": {"type": "boolean", "description": "If true and slugs is omitted, scope to products with changes since HEAD."},
+                "parallel": {"type": "integer", "description": "Max concurrent workers (default 4)."},
+            },
+        ),
+        _tool(
+            "noctusai_status",
+            "Cross-project state digest. Walks every PROJECT.md across `projects/`, `products/*/projects/`, `core/projects/` and returns status icon, sub-task progress, last-updated date, §3a presence, and any phase-state-detector flags. Sorted by bucket (executing → ready → parked → blocked → shipped).",
+        ),
+        _tool(
+            "noctusai_check_three_way_sync",
+            "Verify KB ↔ CLAUDE.md ↔ memory parity. Closes the gap that `verify-kb-sync.sh` cannot cover (memory directory lives outside the repo). Reports missing index entries, dangling links, missing KB anchors, and CLAUDE.md keyword mismatches per the three-way-sync rule.",
+        ),
+        _tool(
+            "noctusai_scan_recurrence",
+            "Scan product main.py / conftest.py / vitest.config.ts for repeated lines that should be absorbed into seed. N=2 → triage warning; N=3+ → high (MUST formalize). Emits classified findings with suggested seed-side absorption targets per `KB § PATTERNS/project-execution.md § 2.7`.",
+            {
+                "min_count": {"type": "integer", "description": "Minimum N occurrences to report (default 2)."},
+                "must_formalize_threshold": {"type": "integer", "description": "Severity escalation threshold (default 3)."},
+            },
+        ),
+        _tool(
+            "noctusai_scan_cross_product_helpers",
+            "Scan service/router/dependency/hook/component files for function/class NAMES that recur across N≥2 products. Catches the absorption shape `noctusai_scan_recurrence` misses — same NAME implemented slightly differently per product (`_safe_float`, `_format_money`, `useMetas`, `_PipelineHooks`). Suggests seed-side absorption targets (`noctusai_lib.parsing`, `@noctusai/lib/hooks`, etc.). Use BEFORE writing a new helper.",
+            {
+                "min_count": {"type": "integer", "description": "Minimum product count to report (default 2)."},
+                "must_formalize_threshold": {"type": "integer", "description": "Severity escalation threshold (default 3)."},
+            },
+        ),
+        _tool(
+            "noctusai_scan_service_line_recurrence",
+            "Scan service/router/dependency lines for verbatim repetition across N≥2 products. Strict filter (≥60 chars, must contain `(`). Catches ad-hoc patterns the helper-name scan misses: `datetime.fromisoformat(s.replace(\"Z\", \"+00:00\"))`, `raise HTTPException(...)` shapes, pagination expressions like `query.range(offset, offset + page_size - 1).execute()`. Complements `noctusai_scan_cross_product_helpers`.",
+            {
+                "min_count": {"type": "integer", "description": "Minimum product count to report (default 2)."},
+                "must_formalize_threshold": {"type": "integer", "description": "Severity escalation threshold (default 3)."},
+                "min_line_length": {"type": "integer", "description": "Minimum line length to scan (default 60)."},
+            },
+        ),
+        _tool(
+            "noctusai_scan_block_patterns",
+            "AST-walk service/router/seed-lib files; group `try/except` blocks by structural fingerprint (call targets normalized, identifiers stripped). Catches multi-line block recurrence the line/name scans miss — e.g. best-effort `audit_service.log` try/except shape recurring 7× in core. Each finding includes the body call targets, exception types, and a suggested seed-lib helper name (`safely_log_action`, `safely_dispatch`, etc.).",
+            {
+                "min_count": {"type": "integer", "description": "Minimum occurrence count to report (default 2)."},
+                "must_formalize_threshold": {"type": "integer", "description": "Severity escalation threshold (default 3)."},
+                "cross_product_only": {"type": "boolean", "description": "If true, only report blocks recurring across ≥2 distinct products (filters within-product duplication noise). Default false — within-product recurrence is also worth flagging."},
+            },
+        ),
+        _tool(
+            "noctusai_scan_within_product_helpers",
+            "Find helper names duplicated N+ times INSIDE one product (across files). Closes the gap that the cross-product helper scan requires N≥2 distinct products — a helper duplicated 5× inside one product is also a DRY-into-utils candidate. Suggests either `app/utils.py` (product-scope) or `noctusai_lib.<area>` (cross-cutting).",
+            {
+                "min_count": {"type": "integer", "description": "Minimum file count within one product to report (default 3)."},
+            },
+        ),
+        _tool(
+            "noctusai_scan_pydantic_model_shapes",
+            "Find Pydantic `BaseModel` field-set shapes that recur across N≥`min_count` products. Catches the absorption signal the class-name scan misses — same field set under different class names (e.g. `LoginRequest` in core, `LoginInput` in adconnect). Suggests `noctusai_lib.schemas.<canonical>` absorption.",
+            {
+                "min_count": {"type": "integer", "description": "Minimum product count to report (default 2)."},
+                "must_formalize_threshold": {"type": "integer", "description": "Severity escalation threshold (default 3)."},
+                "min_field_count": {"type": "integer", "description": "Ignore models with fewer than this many fields (default 2 — single-field models are too generic)."},
+            },
+        ),
+        _tool(
+            "noctusai_scan_test_fixture_recurrence",
+            "Scan products' test trees (conftest.py, tests/services, tests/routers, tests/integration) for pytest fixtures + helper names recurring across N≥2 products. Stricter than the production helper scan — excludes test_* methods + ALL_CAPS sample-data names. Catches cross-product test scaffolding worth absorbing into `noctusai_lib.testing.<helper>`.",
+            {
+                "min_count": {"type": "integer", "description": "Minimum product count to report (default 2)."},
+                "must_formalize_threshold": {"type": "integer", "description": "Severity escalation threshold (default 3)."},
+            },
+        ),
+        _tool(
+            "noctusai_scan_migration_patterns",
+            "Scan SQL migration files for known structural patterns (RLS policy with subquery `auth.uid()`, FK-with-index, `SET search_path`, audit-log trigger, `updated_at` trigger) that recur across N≥2 products. Reports per-product occurrence counts + suggested `noctusai_lib.sql.<helper>` absorption. 5 probes total.",
+            {
+                "min_count": {"type": "integer", "description": "Minimum product count to report (default 2)."},
+                "must_formalize_threshold": {"type": "integer", "description": "Severity escalation threshold (default 3)."},
+            },
+        ),
 
         # Review (observation-only — never modifies code)
         _tool("noctusai_review", "OBSERVATION-ONLY review. Detects seed-compliance issues deterministically. Three modes via `mode`: `agent` (default — returns issues + review prompt for the in-session agent to author proposals with session context, zero LLM cost), `headless` (OpenAI gpt-4o-mini authors proposals for CI/cron — set OPENAI_API_KEY), `evaluate` (writes OpenAI proposals to a scratch subfolder for side-by-side comparison with agent-authored versions). NEVER modifies code.", {
@@ -134,11 +246,16 @@ async def call_tool(name: str, arguments: dict):
         result = _dispatch(name, arguments)
         return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
     except Exception as e:
+        logger.exception("MCP tool %s raised: %s", name, e)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, default=str))]
 
 
 def _dispatch(name, args):
-    from tools import products, context, compliance, analyzers, review as review_tool, proposals, master_prompts, testing, diff, ai_brain, scaffold, catalog, improvements, lgpd
+    from tools import (
+        products, context, compliance, analyzers, review as review_tool,
+        proposals, master_prompts, testing, diff, ai_brain, scaffold, catalog,
+        improvements, lgpd, refs, build, status, three_way_sync, recurrence,
+    )
 
     dispatch_map = {
         "noctusai_agent_context": lambda: context.get_agent_context(),
@@ -150,6 +267,50 @@ def _dispatch(name, args):
         "noctusai_available_ports": lambda: scaffold.list_available_ports(),
         "noctusai_validate": lambda: dict(zip(["score", "issues"], compliance.check_all_products())),
         "noctusai_validate_product": lambda: _validate_one(args["slug"]),
+
+        # Cross-cutting utilities (mcp-tooling-expansion 2026-04-28)
+        "noctusai_refs": lambda: refs.find_refs(args["pattern"]).to_dict(),
+        "noctusai_build_parallel": lambda: build.build_products(
+            slugs=args.get("slugs"),
+            changed_only=args.get("changed_only", False),
+            parallel=args.get("parallel", 4),
+        ),
+        "noctusai_status": lambda: status.project_status_digest(),
+        "noctusai_check_three_way_sync": lambda: three_way_sync.check_three_way_sync(),
+        "noctusai_scan_recurrence": lambda: recurrence.scan_recurrence(
+            min_count=args.get("min_count", 2),
+            must_formalize_threshold=args.get("must_formalize_threshold", 3),
+        ),
+        "noctusai_scan_cross_product_helpers": lambda: recurrence.scan_cross_product_helpers(
+            min_count=args.get("min_count", 2),
+            must_formalize_threshold=args.get("must_formalize_threshold", 3),
+        ),
+        "noctusai_scan_service_line_recurrence": lambda: recurrence.scan_service_line_recurrence(
+            min_count=args.get("min_count", 2),
+            must_formalize_threshold=args.get("must_formalize_threshold", 3),
+            min_line_length=args.get("min_line_length", 60),
+        ),
+        "noctusai_scan_block_patterns": lambda: recurrence.scan_block_patterns(
+            min_count=args.get("min_count", 2),
+            must_formalize_threshold=args.get("must_formalize_threshold", 3),
+            cross_product_only=args.get("cross_product_only", False),
+        ),
+        "noctusai_scan_within_product_helpers": lambda: recurrence.scan_within_product_helpers(
+            min_count=args.get("min_count", 3),
+        ),
+        "noctusai_scan_pydantic_model_shapes": lambda: recurrence.scan_pydantic_model_shapes(
+            min_count=args.get("min_count", 2),
+            must_formalize_threshold=args.get("must_formalize_threshold", 3),
+            min_field_count=args.get("min_field_count", 2),
+        ),
+        "noctusai_scan_test_fixture_recurrence": lambda: recurrence.scan_test_fixture_recurrence(
+            min_count=args.get("min_count", 2),
+            must_formalize_threshold=args.get("must_formalize_threshold", 3),
+        ),
+        "noctusai_scan_migration_patterns": lambda: recurrence.scan_migration_patterns(
+            min_count=args.get("min_count", 2),
+            must_formalize_threshold=args.get("must_formalize_threshold", 3),
+        ),
         "noctusai_review": lambda: review_tool.run_review(
             product_slug=args.get("product"),
             mode=args.get("mode", "agent"),

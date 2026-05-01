@@ -317,5 +317,6 @@ def _prettify(elem: Element) -> str:
     try:
         parsed = parseString(rough_string)
         return xml_declaration + parsed.toprettyxml(indent="  ").split("\n", 1)[1]
-    except Exception:
+    except Exception as exc:
+        logger.warning("xml_feeds: pretty-print parseString failed (%s); returning unformatted XML", exc)
         return xml_declaration + rough_string

@@ -84,7 +84,12 @@ async def create_refund_request(
             # Parse ISO datetime
             try:
                 captured_dt = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
-            except ValueError:
+            except ValueError as exc:
+                logger.warning(
+                    "refund_service: tx id=%s has unparseable captured_at=%r (%s); "
+                    "defaulting to now() — refund window check is conservative",
+                    tx.get("id"), captured_at, exc,
+                )
                 captured_dt = datetime.now(SP_TZ)
         else:
             captured_dt = captured_at
