@@ -32,10 +32,14 @@ KNOWLEDGE-BASE/
 │   │   ├── project-execution.md
 │   │   ├── proposals-and-improvements.md  ← two-system protocol (improvements per-project, ONE bundled proposal per phase)
 │   │   ├── lgpd.md
-│   │   └── llm-usage.md       ← Phase 15 DB-backed usage sink + admin endpoints
+│   │   ├── llm-usage.md       ← Phase 15 DB-backed usage sink + admin endpoints
+│   │   ├── logging.md         ← level guide, no-`# silent-ok` rule, correlation IDs
+│   │   ├── seed-lib-layout.md ← 6-layer model + decision tree
+│   │   └── agent-reading-discipline.md ← narrow-read first; Explore delegation (forthcoming)
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
-│   │   └── new-product.md
+│   │   ├── new-product.md
+│   │   └── seed-first-design.md
 │   ├── backend/            ← per-product backend details
 │   │   ├── 01-CORE.md
 │   │   ├── 02-ERP.md
@@ -91,6 +95,7 @@ KNOWLEDGE-BASE/
 | LLM usage tracking (SupabaseUsageSink, /api/llm/usage, cost estimation, RLS scoping) | `CONTEXT/PATTERNS/llm-usage.md` |
 | Logging convention (when-to-log, level guide, no-`# silent-ok` rule, correlation IDs) | `CONTEXT/PATTERNS/logging.md` |
 | Seed-lib layout (6 layers — primitives/config/testing/integrations/domain/api — where to put new helpers, where to find existing ones) | `CONTEXT/PATTERNS/seed-lib-layout.md` |
+| Agent reading & research discipline (narrow-read first; Explore delegation rule forthcoming) | `CONTEXT/PATTERNS/agent-reading-discipline.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
@@ -132,6 +137,7 @@ KNOWLEDGE-BASE/
 | Looking for an existing seed-lib helper | `CONTEXT/PATTERNS/seed-lib-layout.md § Where to look` + `CONTEXT/04-SHARED-LIBRARY.md` (catalog) |
 | Working on env / deployment | `CONTEXT/PATTERNS/environment.md` + `CONTEXT/05-INFRASTRUCTURE.md` |
 | Touching UI with performance data / gamification | `CONTEXT/07-GAMIFICATION.md` |
+| Reading a large/unfamiliar file (default — narrow-read first) | `CONTEXT/PATTERNS/agent-reading-discipline.md § Narrow-read first` |
 | Designing a new agent / skill / MCP | `INSTRUCTIONS/00-MASTER.md` |
 
 ---

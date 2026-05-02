@@ -1,0 +1,414 @@
+# Project History Ledger — Global Changelog + Token-Tracking Mechanism
+
+> **This is a living document, not a rigid checklist.**
+> Filed 2026-05-02 mid-session when the user proposed the idea. The
+> user explicitly said *"this change log project has to be filed as a
+> project. We're gonna come back here to refine and work on it."*
+> The project's job today is to **preserve the idea + the open
+> questions** so when re-activated, the next agent inherits the full
+> reasoning instead of a blank slate.
+>
+> **Status: Concept — interrogation pending. Do NOT start work
+> without explicit user reactivation.** §6 is intentionally empty.
+> The §7 questions are the unblock list; do not pretend they're
+> resolved.
+
+- **Created:** 2026-05-02
+- **Last updated:** 2026-05-02
+- **Status:** Concept — interrogation pending. §1, §2, §5 (sketch), §7 populated; §6 intentionally empty.
+- **Owner / stakeholders:** Raphael · future zero-context execution agent
+- **Related docs:** `CLAUDE.md`; `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`; `templates/PROJECT-TEMPLATE.md`; **interlocks with** `projects/methodology-extraction/PROJECT.md` Phase 5 (which currently uses rough token estimates — this project's token-tracking tool would let Phase 5 measure precisely); **interlocks with** `projects/methodology-mirror-and-workspaces/PROJECT.md` (which would feed measured per-workspace token cost into the ledger if and when it ships).
+- **Project slug:** `project-history-ledger` — cross-product / platform-infra scope, lives at root `projects/`.
+
+---
+
+## 1. Context & Purpose
+
+The user wants a **global, persistent, machine-readable record of
+every project this repo has shipped** — beyond what `git log` or the
+per-project `§11 Change log` already captures. Two motivations:
+
+1. **Documented timeline of project evolution.** Today, a project's
+   life ends with the folder being deleted (`apply-inline-then-delete`
+   + `clean-folder principle`); the only surviving evidence is the
+   commit history. The user explicitly wants a first-class artifact —
+   *part of the project itself, not derived from git* — that
+   summarizes each closed/deleted project: short summary, steps in a
+   short review, token cost.
+2. **Future AI training data.** The user is planning AI training
+   that consumes this ledger to predict **cost-efficiency** and
+   surface **proven-solutions × cost** patterns. That gives the data
+   shape constraints — entries need to be structured enough for an
+   ML pipeline to ingest, not just narrative prose.
+
+For the cost dimension to be meaningful, the methodology needs a
+**token-tracking mechanism**: a tool/process that measures tokens
+spent at project granularity (and ideally per-step / per-phase).
+That's the second deliverable inside this project's scope. With it
+in place, every closed project lands its token cost in the ledger
+automatically (or near-automatically); without it, the cost column
+stays empty and the AI-training motivation collapses.
+
+This is filed today as **Concept — interrogation pending** because
+the user signalled *"we're gonna come back here to refine and work on
+it"*. The §7 questions catalog the architectural decisions still
+ahead; the next agent's first move on reactivation is to interrogate
+those, not draft phases.
+
+---
+
+## 2. Confirmed constraints (what the user *has* said)
+
+> **Source note:** the bullets below paraphrase user statements from
+> the 2026-05-02 conversation that produced this file. Future agents:
+> if a constraint feels ambiguous, ask the user to confirm.
+
+- **One global ledger, not per-project.** The artifact is a single
+  document/file that records every project. *(Rules out a
+  decentralized model where each project leaves its own breadcrumb
+  somewhere.)*
+- **Records closed AND deleted projects.** Both terminal states
+  count. *(Implication: an entry must be written BEFORE folder
+  deletion, since deletion erases the source of truth otherwise.)*
+- **Each entry carries: short summary, steps reviewed shortly, token
+  count.** Three fields are non-negotiable. Other fields (slug,
+  dates, owner, etc.) are TBD in §7.
+- **Token tracking is part of the methodology.** The user said *"we're
+  gonna have to add a token tracking mechanism to our methodology, so
+  projects and steps get their counts."* This isn't an optional
+  bolt-on — it's a methodology change that future projects must
+  honor. Implication: the protocol for closing a project must
+  include "stamp the token count" as a standard step.
+- **Two consumers, two formats.** The ledger serves (a) humans
+  reviewing project history and (b) future AI training. *(Probable
+  implication: a structured machine-readable file + a human-readable
+  Markdown rendering; the human form is generated from the
+  structured form so they can't drift.)*
+- **AI training is for predicting cost-efficiency and proven-
+  solutions-vs-cost.** That shapes the data model: each entry needs
+  enough features for the model to learn from — likely beyond the
+  three minimum fields. §7 Q4 explores what.
+- **Acknowledged that git already records this.** The user said
+  *"I know we can do that by checking commit history, but i want
+  this as part of the project itself."* — explicitly rejecting "just
+  use git log" as a substitute. The ledger is intentionally a first-
+  class methodology artifact.
+- **Defer execution.** The user said *"this change log project has
+  to be filed as a project. We're gonna come back here to refine and
+  work on it."* Do not start drafting §6 phases without explicit
+  reactivation.
+
+---
+
+## 3. Design principles (provisional — confirm with §7 answers)
+
+1. **Write-before-delete.** A project's ledger entry is a hard
+   prerequisite for closing/deleting the folder. The
+   `apply-inline-then-delete` rule already requires careful close-
+   out; this adds one more step.
+2. **Machine-readable first, human-rendered second.** The canonical
+   storage is structured (YAML/JSON/SQLite — TBD §7 Q2). The Markdown
+   ledger is a generated view, not the source of truth, so the two
+   never drift.
+3. **Token count is multi-grain.** At minimum: per-project total. If
+   feasible: per-phase, per-step. The richer the granularity, the
+   more useful for future training — but the harder to capture
+   automatically. Default to per-project; pursue per-phase only if
+   measurement cost is low.
+4. **Keep entries terse.** "Short summary" + "short review" — not
+   essays. The full detail already lives in commits + the project
+   doc up to deletion. The ledger is the *index*, not the corpus.
+5. **No per-product code.** This is a methodology / tooling artifact,
+   like `KNOWLEDGE-BASE/` and `mcp/noctusai/`. Per-product code-count
+   litmus: **0**.
+6. **Cost-efficiency is the editorial through-line.** Every field
+   that doesn't contribute to "cost vs outcome" reasoning has to
+   justify its presence. The whole point of this ledger is to make
+   that comparison cheap to do later.
+
+---
+
+## 3a. Seed-first analysis
+
+Mandatory per CLAUDE.md. This project is **explicitly about** the
+methodology layer (project-execution protocol + MCP toolkit) — there
+is no "should this live in product or seed?" question. Both
+deliverables land at the platform layer:
+
+- **Token-tracking mechanism** → `mcp/noctusai/tools/` (a new tool;
+  potentially backed by Anthropic API usage records or a tokenizer
+  library).
+- **Global historical changelog** → either repo root
+  (`PROJECT-HISTORY.md` or similar) or `KNOWLEDGE-BASE/HISTORY/`
+  (TBD §7 Q1).
+
+Per-product code-count litmus: **0**.
+
+---
+
+## 4. Scope
+
+**In scope** (once §7 is resolved):
+
+- A token-tracking MCP tool that can:
+  - count tokens in a file (Anthropic-tokenizer-compatible)
+  - sum tokens for a project folder (PROJECT.md + improvements.md +
+    proposals/* + delta of files this project's commits actually
+    touched, where measurable)
+  - emit a structured record on demand
+- A canonical structured ledger file (format TBD §7 Q2) with one
+  record per closed/deleted project.
+- A human-readable Markdown rendering of the ledger (auto-generated;
+  not hand-edited).
+- Methodology updates: closing protocol gets one new step ("stamp the
+  ledger entry") that fires before folder deletion. CLAUDE.md +
+  KB + memory three-way sync per the standing rule.
+- Backfill of currently closed/deleted projects (TBD §7 Q5 — best-
+  effort from git history, no heroic archeology).
+- Documentation in KB describing the workflow end-to-end.
+
+**Out of scope:**
+
+- Live session-level token telemetry (i.e. capturing every Anthropic
+  API call's token usage in real time). That requires harness-level
+  hooks; out of scope unless §7 Q3 resolves toward it.
+- Replacing per-project `§11 Change log`. Those stay; the ledger is
+  the *index across projects*, not a substitute for any project's
+  own log.
+- Cost in dollars (vs tokens). Token count is the canonical unit;
+  $/token mapping is a downstream concern.
+- The future AI training pipeline itself. That consumes the ledger;
+  this project produces it.
+
+---
+
+## 5. Architecture / data model — sketch
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Closing a project (existing protocol + 1 new step)              │
+│                                                                  │
+│  Phase N ✅ → Bundled proposal → Apply inline → Delete proposal  │
+│           → [NEW] Stamp ledger entry ──────────────────┐         │
+│           → Apply-inline-then-delete sweep              │         │
+│           → Folder deletion (if project fully closed)   │         │
+└─────────────────────────────────────────────────────────┼────────┘
+                                                          │
+                                                          ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ STRUCTURED LEDGER (canonical source of truth)                    │
+│   format: TBD §7 Q2 (YAML / JSON / SQLite / NDJSON)              │
+│   location: TBD §7 Q1 (repo root / KB / dedicated dir)           │
+│                                                                  │
+│   one record per project, fields (provisional):                  │
+│     slug                                                         │
+│     scope (cross-product / single-product / core-control)        │
+│     status_at_close (✅ shipped / ❌ abandoned / 🔀 split / ⏸ deferred) │
+│     dates: created, closed (or deleted)                          │
+│     phases: [ {name, status, tokens?, notes_short} ]             │
+│     short_summary (1-3 sentences)                                │
+│     short_review (steps in 5-10 bullets max)                     │
+│     token_count: {                                               │
+│       project_doc_tokens: int                                    │
+│       improvements_tokens: int                                   │
+│       proposals_tokens: int                                      │
+│       code_delta_tokens: int? (estimated from commits)           │
+│       total: int                                                 │
+│     }                                                            │
+│     outcome_signals: [user-facing wins / measured deltas]        │
+└─────────────────────────────────────────────────────────────────┘
+                                                          │
+                                                          ▼ (rendered)
+┌─────────────────────────────────────────────────────────────────┐
+│ PROJECT-HISTORY.md  (human view, auto-generated)                 │
+│  | date | slug | status | tokens | summary |                     │
+│  ...                                                              │
+│  Plus per-project narrative blocks below the table.              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+The token-tracking tool feeds the `token_count` field. Today, the
+methodology-extraction Phase 0 used rough estimators (~4 chars/tok
+and ~0.75 words/tok) — this project's tool should use a real
+tokenizer (Anthropic-aligned) for precision. Once shipped, Phase 5
+of methodology-extraction can re-measure with this tool for honest
+numbers.
+
+---
+
+## 6. Implementation phases
+
+**Intentionally empty.** §7 must resolve first. The next agent's
+first move on reactivation is to interrogate per §7, then draft §6.
+
+---
+
+## 7. Open questions (the unblock list)
+
+Each question paired with a recommendation. The user explicitly
+deferred answering — do NOT pretend they're resolved.
+
+1. **Where does the canonical ledger live on disk?**
+   - **(A)** repo root: `PROJECT-HISTORY.md` (human view) + `.project-history.json` (data)
+   - **(B)** dedicated dir: `project-history/` with `ledger.json` +
+     `PROJECT-HISTORY.md`
+   - **(C)** KB: `KNOWLEDGE-BASE/HISTORY/` with both files
+   *Recommendation: **(B) dedicated dir** — keeps repo root clean
+   (per the clean-folder rule), avoids putting derived data inside
+   `KNOWLEDGE-BASE/` (which is a knowledge anchor, not a data store),
+   and makes the boundary obvious.*
+
+2. **Structured ledger format.**
+   - **(a)** YAML — readable, easy to hand-edit if needed
+   - **(b)** JSON — machine-friendly, no ambiguity
+   - **(c)** NDJSON — one project per line, append-only, ML-friendly
+   - **(d)** SQLite — queryable, harder to read, requires tool to inspect
+   *Recommendation: **(c) NDJSON** — append-only matches "write-
+   before-delete" naturally; ML pipelines parse it trivially; humans
+   can still read it line-by-line. The Markdown rendering is the
+   human-readable view; the structured form doesn't need to be
+   pretty.*
+
+3. **Token-counting mechanism.**
+   - **(I)** Static — count tokens of files (PROJECT.md, improvements,
+     proposals, plus a delta over committed code) using a tokenizer
+     library. No live telemetry.
+   - **(II)** Dynamic — capture per-session token usage from
+     Anthropic API responses (usage records) via a harness hook,
+     accumulate into the project's running total.
+   - **(III)** Hybrid — static for the artifact tokens; dynamic for
+     conversation tokens. Maximally informative.
+   *Recommendation: **(I) static, ship first**, with a clear
+   extension point for (II) later. Static is achievable with no
+   harness changes — just a tokenizer (Anthropic ships one for
+   Claude); dynamic requires user-environment integration we may not
+   control.*
+
+4. **Minimum viable record fields.**
+   The user's three required fields: short summary, short review,
+   token count. What other fields earn their place?
+   - slug, scope (cross-product / single-product / core), status_at_close
+   - dates: created, closed
+   - phase list (each with status + optional tokens)
+   - outcome signals (e.g. "ERP backend pytest 1816/1816 green",
+     "CLAUDE.md trim 38%")
+   - linked artifacts (PR URLs, KB anchors created)
+   - tags (e.g. `methodology`, `seed`, `migration`, `lgpd`,
+     `infrastructure`) — useful for ML grouping
+   *Recommendation: ship the user's three required + slug + dates +
+   scope + status_at_close + tags. Defer outcome_signals and linked
+   artifacts to v2 unless backfill data has them readily.*
+
+5. **Backfill scope for existing projects.**
+   The repo currently has multiple projects in
+   `projects/{adconnect-migration, execution-workflow-codequality-rollout,
+   keeper-warning-triage, mcp-scaffold-sql-templates-integration,
+   methodology-extraction, repo-commit-followup,
+   repo-state-consolidation, strict-mode-migration, ...}` plus per-
+   product `projects/`. Some are active, some closed-but-not-deleted.
+   - **(α)** backfill all closed-or-deleted projects (best-effort)
+   - **(β)** backfill only fully-deleted projects (the ones with no
+     surviving folder — recoverable from git)
+   - **(γ)** no backfill — start the ledger from this project's close
+   *Recommendation: **(α) best-effort backfill of all closed-or-
+   deleted** — token counts will be approximate for older entries, but
+   having the timeline matters more than precision. Mark backfilled
+   entries with `backfilled: true` so future ML training can choose
+   to weight them down.*
+
+6. **Trigger event(s) for ledger entries.**
+   - **(p)** project close (status flips to ✅ Done) — entry added
+   - **(q)** project deletion (folder removed) — entry added
+   - **(r)** project split into siblings (e.g. today's
+     methodology-extraction → mirror split) — entry added per side
+   *Recommendation: **(p) AND (q) AND (r)** — every terminal
+   transition writes an entry; the `status_at_close` field
+   distinguishes them. This means a single project may have multiple
+   entries (e.g. status `🔀 split` + later one of `✅ shipped`).*
+
+7. **Human-readable rendering — auto-generated only?**
+   - **(x)** auto-generated entirely; never hand-edited
+   - **(y)** auto-generated but with a hand-edited prose section per
+     entry for "narrative review"
+   *Recommendation: **(x) auto-generated only** — drift between the
+   structured store and the human view is the first failure mode we'd
+   hit. If a project deserves prose narrative, that lives in its own
+   `§11 Change log` while the project still exists.*
+
+8. **AI-training data shape — what gets exposed?**
+   The user mentioned predicting cost-efficiency and proven-solutions
+   × cost. That implies, at minimum:
+   - tokens spent
+   - some categorical "outcome" label (shipped / abandoned / split /
+     superseded)
+   - tags/scope features (so the model learns conditional patterns)
+   - dependencies on prior projects (which projects this one cited
+     as related, so the model sees evolution chains)
+   *Recommendation: include a `prior_projects: [slug]` field per
+   entry (cite related-project links from PROJECT.md `Related docs`).
+   This unlocks dependency-graph features for the ML model.*
+
+9. **Tokenizer choice (interlock with §7 Q3).**
+   Anthropic ships an official tokenizer (`@anthropic-ai/tokenizer`
+   for JS, `anthropic.tokenizer` in Python SDK). Alternatives include
+   `tiktoken` (OpenAI-compatible, close-but-not-identical) or
+   character/word approximations.
+   *Recommendation: **Anthropic's official tokenizer**, since the
+   intended consumer (future AI training) is Anthropic-aligned.
+   Falls back to char/word approximation only if the tokenizer is
+   unavailable in the environment.*
+
+---
+
+## 8. Dependencies & blockers
+
+- **methodology-extraction Phase 5 wants this project's tool.** Phase
+  5 will re-measure the auto-load surface; today's rough estimates
+  (chars/4 and words/0.75) are good enough as a baseline but a real
+  tokenizer would let Phase 5 produce honest numbers. If this
+  project's token tool ships before Phase 5, Phase 5 uses it; if not,
+  Phase 5 ships with rough numbers and this project re-stamps the
+  ledger when it lands.
+- **Backfill (§7 Q5) depends on the structured-format decision (§7
+  Q2).** Don't start backfilling until Q1 + Q2 + Q4 lock.
+- **The `apply-inline-then-delete` + `clean-folder` rules already
+  enforce close discipline.** Adding "stamp ledger entry" as a step
+  in close protocol is a small CLAUDE.md / KB amendment — but it's a
+  three-way-sync change, so it follows that rule.
+
+---
+
+## 9. Success criteria
+
+When this project ships, the user can:
+
+- See a single file (Markdown) listing every project this repo has
+  shipped, in reverse-chronological order, with a one-line summary
+  and token count per project.
+- Query the structured ledger (NDJSON / chosen format) to filter by
+  scope, status, tag, or token-count range.
+- Trust that every project closing from now on stamps an entry as
+  part of its close protocol — no missing rows.
+- Feed the structured ledger into a future AI training pipeline that
+  predicts cost-efficiency and proven-solutions × cost.
+
+---
+
+## 10. How to use this project
+
+- **Don't draft §6 phases until §7 resolves.** The user deferred this
+  *"to come back here and refine and work on it"*. The next session's
+  first move is to ask the §7 questions in order.
+- **Read §1 + §2 + §7 in one pass.** Those carry the load-bearing
+  reasoning.
+- **When reactivating, START with Q1, Q2, Q3.** Those three lock the
+  storage model and the tokenizer choice — everything else (fields,
+  backfill, trigger events) hangs off them.
+
+---
+
+## 11. Change log
+
+| Date | Change | By |
+|---|---|---|
+| 2026-05-02 | **Project filed.** User directive: *"also lets add a historical change log globally. This must contain a short-phrased summary of closed and deleted projects, the steps in a short review, and its token count. So for that, we're gonna have to add a token tracking mechanism to our methodology, so projects and steps get their counts. The idea of this is to have documented a historical timeline of the project's evolution."* + *"this change log project has to be filed as a project. We're gonna come back here to refine and work on it."* + *"for future ai training that im thinking of, so we can predict cost-efficiency and already proven solutions x cost"*. Filed at root `projects/project-history-ledger/` (cross-product / platform-infra scope). §1-§5 + §7 + §10 populated; §6 intentionally empty pending §7 resolution + user reactivation. **Interlock noted with `methodology-extraction` Phase 5** — that phase needs precise per-turn token counts and currently uses rough estimators; this project's token tool would replace them. | Claude Opus 4.7 |

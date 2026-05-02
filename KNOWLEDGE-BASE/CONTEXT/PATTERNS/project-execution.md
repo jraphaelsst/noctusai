@@ -462,6 +462,32 @@ The three triggers + this rule form a complete fence around the DRY-into-seed co
 
 ---
 
+## 2.8 Multi-phase rule shipments — forward-stub + bullet-weight discipline (2026-05-02)
+
+When a project ships a *new behavioral rule* (or a small family of related rules) across multiple phases — Phase 1 lands rule A, Phase 2 lands rule B in the same KB anchor — two practices keep the work clean and the auto-load surface lean.
+
+### The forward-stub pattern
+
+When Phase 1 authors a KB anchor that Phase 2 will extend, **leave a labeled placeholder section in the anchor for the future content**. Phase 2's three-way sync becomes a single edit (extend the stub) instead of authoring a separate file.
+
+Worked example: `methodology-extraction` Phase 1 created `KNOWLEDGE-BASE/CONTEXT/PATTERNS/agent-reading-discipline.md` with a populated `## Narrow-read first` section and a stub `## Explore-agent delegation` section pointing forward to Phase 2. Phase 2 replaced the stub body with the full rule — INDEX.md was already pointing at the file, no new entry required, three-way sync cost halved.
+
+### CLAUDE.md §1 bullet-weight discipline
+
+CLAUDE.md is loaded every turn — every bullet costs per-turn tokens. When adding a new rule bullet, the soft target is **≤80 words**; **>100 words → consider trimming** (move long-form content to the KB anchor and shorten the bullet to rule + key why + pointer). When a project legitimately needs to add 3+ bullets of similar length, that's the **recurrence rule firing on §1 itself** — triage time:
+
+- **Formalize**: extract the bullets into a single dedicated KB pattern with one §1 pointer.
+- **Refactor**: condense / merge / cite shared pointers across the bullets.
+- **Accept-with-rationale**: rule needs the load-bearing nuance to be in CLAUDE.md per-turn (rare).
+
+Default reading: 3+ heavy bullets = formalize unless rationale says otherwise.
+
+### Measurement discipline
+
+Use `noctusai_count_tokens` (the offline MCP tool) to measure CLAUDE.md / KB / project-doc sizes during phase work. Eyeballing word counts with `wc` produces approximate numbers that miss tokenizer-aware drift; the dedicated tool reports the same number Phase 5's measurement will use, so phase-block metrics across a project's history stay comparable.
+
+---
+
 ## 3. Phase-by-phase cadence
 
 Default cadence: **execute exactly one phase, then stop.** Wait for the user to say "continue" / "next phase" / "do phase N" before advancing.

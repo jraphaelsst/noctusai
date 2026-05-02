@@ -150,6 +150,39 @@ Mechanics (mandatory):
 
 ---
 
+## 4d. Auto-improvement (DEFAULT — skip the proposal artifact for routine in-scope work)
+
+**Per user directive 2026-05-02:** *"please implement improvements found then go on with the next phase. Also update our methodology with this new 'auto-improvement' method. just tell me they were implemented, no need to ask so we gain time."*
+
+This **amends** §2 / §4b. The previous protocol required filing a `noctusai_file_proposal` artifact at every phase close, then applying inline, then deleting the file. The new default is tighter: **for routine in-scope improvements the agent applies them immediately at phase close — no proposal file is created at all, no user prompt is issued.**
+
+When the auto-improvement path applies (default for most phase closes):
+
+1. At end of phase, read the `**Improvements:**` block.
+2. For each item, decide: in-scope + low-risk + self-contained?
+   - **Yes** → apply in this same session, inline, before the next phase starts.
+   - **No** → defer with a live pointer (next-phase sub-task, follow-up project scaffolded from `templates/PROJECT-TEMPLATE.md`, backlog note). Same deferral rules as §4b.
+3. Update the phase's `**Improvements:**` block in-place to mark each item as **applied** or **deferred → <destination>**. The block becomes the audit trail; no separate proposal file is created.
+4. Add the §11 Change-Log entry capturing what was applied / what was deferred.
+5. Continue to the next phase **without prompting the user**.
+
+When to **still** file a formal `noctusai_file_proposal` artifact:
+
+- Items that are out-of-scope for the current phase AND need scheduling (not just a follow-up project).
+- Items that need explicit reviewer / human approval before applying (e.g. cross-team, security-sensitive, public-API-breaking).
+- Items large enough that the bundle itself needs a discussion / triage cycle.
+- Items that span multiple deliverables and should be queued for batch review.
+
+When the formal-proposal path applies, the §4b apply-inline-then-delete mechanics still hold.
+
+**Why this is the default**: filing a proposal file just to delete it the same session was ceremony. The `**Improvements:**` block + §11 entry IS the durable audit trail. Removing the proposal-file step recovers turn-time without losing the trail.
+
+**What does NOT change**: the §4c end-of-work summary still runs. The §6 ↔ §11 self-check still runs. Three-way sync still runs. Phase-by-phase cadence still holds (one phase, then pause for "continue") — auto-improvement applies to **the closing of the current phase**, not the user's permission to start the next one.
+
+**Anti-pattern**: auto-applying an item that wasn't actually in-scope ("the agent decided"). The in-scope filter is load-bearing — if you're unsure whether an item is in-scope, defer it.
+
+---
+
 ## 4c. End-of-work summary (DEFAULT — every agent, every deliverable)
 
 **Every reply that concludes non-trivial work MUST include a short, explicit, list-shaped summary of what was applied and what was deferred.** Non-trivial means: a phase closure, a proposal application, a migration, a multi-step fix, a framework extension. Short conversational answers to questions are exempt.

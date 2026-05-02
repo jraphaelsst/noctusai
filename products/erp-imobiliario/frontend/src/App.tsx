@@ -20,7 +20,7 @@ import {
   Hammer, Key, MapPin, ShieldCheck, Megaphone, Mail, MessageSquare,
   Instagram, BellRing, FileBox, FileSignature, Globe, Users, Store,
   BarChart3, Sparkles, Trophy, GitBranch, Settings, Briefcase,
-  Archive, Settings2, Brain, Scale,
+  Archive, Settings2, Brain, Scale, PlugZap,
 } from "lucide-react";
 
 // ── Pages ────────────────────────────────────────────────────
@@ -89,6 +89,7 @@ const Certidoes = lazy(() => import("@/pages/Certidoes"));
 const Matriculas = lazy(() => import("@/pages/Matriculas"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const LogAcoes = lazy(() => import("@/pages/LogAcoes"));
+const VistaShowcase = lazy(() => import("@/pages/VistaShowcase"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
 // ── Nav ──────────────────────────────────────────────────────
@@ -184,6 +185,12 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Gamificacao", href: "/gamificacao", icon: Trophy, route: "gamificacao" },
     ],
   },
+  {
+    key: "integracoes", label: "Integrações", icon: PlugZap,
+    items: [
+      { name: "Vista CRM", href: "/integracoes/vista", icon: PlugZap, route: "configuracoes" },
+    ],
+  },
 ];
 
 const STANDALONE: NavItemWithRoute[] = [
@@ -275,6 +282,7 @@ export default createProductApp({
     { path: "/matriculas", component: Matriculas },
     { path: "/equipe", component: Equipe },
     { path: "/log-acoes", component: LogAcoes },
+    { path: "/integracoes/vista", component: VistaShowcase },
   ],
   Layout,
   ...infra.appConfig,

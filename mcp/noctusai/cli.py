@@ -93,6 +93,11 @@ def main():
     parser.add_argument("--lgpd-reason", help="One-to-three sentences on how this breaks or approaches LGPD")
     parser.add_argument("--lgpd-mitigation", help="Optional suggested fix")
     parser.add_argument("--lgpd-list", action="store_true", help="List all LGPD concerns and their resolved state")
+    parser.add_argument("--count-tokens", metavar="PATH", help="Count tokens for a file, directory, or glob. Tokenizer cascade: tiktoken (if installed) → chars/4 approximation. Reports `tokenizer_used` so callers know the precision. Used by methodology-extraction Phase 5 measurement and project-history-ledger.")
+    parser.add_argument("--count-tokens-text", metavar="TEXT", help="Count tokens for an inline string (skip filesystem). Use with --count-tokens for both at once.")
+    parser.add_argument("--count-tokens-ext", metavar="EXTS", help="Comma-separated file extensions to include when --count-tokens points at a directory. Default: '.md'. Use '*' to include everything.")
+    parser.add_argument("--outline-python", metavar="PATH", help="Return a Python file's symbol tree (classes / functions / methods / constants / imports) without bodies. Makes the narrow-read rule ergonomic — read structure first, fetch bodies on demand. Stdlib `ast` (no extra deps).")
+    parser.add_argument("--outline-typescript", metavar="PATH", help="Return a TS / TSX file's symbol tree (classes, interfaces, types, functions, arrow-fn consts, methods, constants, imports). Same shape as --outline-python. Regex-based (no Node spawn, no npm install) — see `mcp/noctusai/tools/outline_typescript.py` for the design tradeoff.")
     parser.add_argument("--product", help="Scope to one product")
     parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
@@ -503,6 +508,82 @@ def main():
               f"{miss_color}{missing} completed without a block{RESET}")
         if args.json:
             print(json.dumps(result, indent=2, default=str))
+
+    elif args.outline_python or args.outline_typescript:
+        if args.outline_python:
+            from tools.outline_python import outline_python
+            result = outline_python(args.outline_python)
+        else:
+            from tools.outline_typescript import outline_typescript
+            result = outline_typescript(args.outline_typescript)
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2))
+        elif result.parse_error:
+            print(f"  {RED}Parse error:{RESET} {result.parse_error}")
+            sys.exit(1)
+        else:
+            print(f"  {BOLD}File:{RESET} {result.path}  ({result.total_lines} lines, {result.symbol_count} symbols)")
+            if result.imports:
+                print(f"\n  {BOLD}Imports:{RESET}")
+                for s in result.imports:
+                    print(f"    L{s.line:>4}  {s.name[:80]}")
+            if result.constants:
+                print(f"\n  {BOLD}Constants:{RESET}")
+                for s in result.constants:
+                    print(f"    L{s.line:>4}  {s.name}")
+            if result.classes:
+                print(f"\n  {BOLD}Classes / interfaces / types:{RESET}")
+                for s in result.classes:
+                    deco = (" @" + " @".join(s.decorators)) if s.decorators else ""
+                    doc = f"  — {s.docstring_first_line[:60]}" if s.docstring_first_line else ""
+                    # Use the actual kind as the keyword prefix (class / interface / type)
+                    prefix = s.kind if s.kind in {"class", "interface", "type"} else "class"
+                    print(f"    L{s.line:>4}-{s.end_line:<4}  {prefix} {s.name}{deco}{doc}")
+                    cls_methods = [m for m in result.methods if m.parent == s.name]
+                    for m in cls_methods:
+                        async_marker = " (async)" if m.kind.startswith("async") else ""
+                        m_doc = f"  — {m.docstring_first_line[:60]}" if m.docstring_first_line else ""
+                        print(f"      L{m.line:>4}-{m.end_line:<4}  {m.name}{async_marker}{m_doc}")
+            if result.functions:
+                print(f"\n  {BOLD}Functions:{RESET}")
+                for s in result.functions:
+                    async_marker = " (async)" if s.kind.startswith("async") else ""
+                    deco = (" @" + " @".join(s.decorators)) if s.decorators else ""
+                    doc = f"  — {s.docstring_first_line[:60]}" if s.docstring_first_line else ""
+                    print(f"    L{s.line:>4}-{s.end_line:<4}  {s.name}{async_marker}{deco}{doc}")
+
+    elif args.count_tokens or args.count_tokens_text:
+        from tools.cost_evaluation import count_tokens
+        exts = DEFAULT_EXTENSIONS = (".md",)
+        if args.count_tokens_ext:
+            raw = [e.strip() for e in args.count_tokens_ext.split(",") if e.strip()]
+            exts = tuple("*" if e == "*" else (e if e.startswith(".") else f".{e}") for e in raw)
+        result = count_tokens(
+            path=args.count_tokens,
+            text=args.count_tokens_text,
+            extensions=exts,
+        )
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2))
+        else:
+            tok_label = result.tokenizer_used
+            tok_color = GREEN if tok_label.startswith("tiktoken") else YELLOW
+            print(f"  {BOLD}Tokenizer:{RESET} {tok_color}{tok_label}{RESET}")
+            if tok_label.startswith("approximate"):
+                print(f"  {YELLOW}(install `tiktoken` in the venv for ~5-10% precision vs ~25% on the approximation){RESET}")
+            print(f"  {BOLD}Total tokens:{RESET} {result.total_tokens:,}")
+            print(f"  {BOLD}Total chars:{RESET}  {result.total_chars:,}")
+            print(f"  {BOLD}Total words:{RESET}  {result.total_words:,}")
+            print(f"  {BOLD}Total lines:{RESET}  {result.total_lines:,}")
+            print(f"  {BOLD}Files:{RESET}        {result.file_count}")
+            if result.inline_text_tokens:
+                print(f"  {BOLD}Inline text tokens:{RESET} {result.inline_text_tokens:,}")
+            if result.per_file and len(result.per_file) <= 30:
+                print()
+                for fc in result.per_file:
+                    print(f"    {fc.tokens:>8,} tok  {fc.lines:>6,} lines  {fc.path}")
+            elif result.per_file:
+                print(f"\n  ({len(result.per_file)} files — pass --json for full breakdown)")
 
     else:
         # Default: validate + analyze

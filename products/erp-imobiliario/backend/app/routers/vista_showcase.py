@@ -1,0 +1,205 @@
+"""Vista CRM showcase router — admin-only proxy onto external CRM.
+
+This router never touches Vista directly; it goes through
+`app.services.vista_showcase_service`, which funnels every outbound call
+through one audit-log path.
+
+LGPD posture: see `products/erp-imobiliario/projects/vista-crm-wiring/PROJECT.md` § 5.
+Admin-only is the v1 mitigation, not an exemption — every call writes an
+audit-log row to `erp.user_actions_log`.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+
+from app.config import settings
+from app.dependencies import get_current_user
+from app.integrations.vista.client import (
+    VistaClient,
+    VistaConfigError,
+    VistaFieldNotAvailable,
+    VistaNotFound,
+    VistaPermissionDenied,
+    VistaTimeout,
+    VistaUpstreamError,
+)
+from app.services import vista_showcase_service as svc
+from noctusai_lib.api.auth import resolve_sso_role
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/vista-showcase", tags=["Vista Showcase (admin)"])
+
+ALLOWED_ADMIN_ROLES = {"platform_admin", "admin", "owner"}
+
+
+# ---------------------------------------------------------------------------
+# Admin-only dependency
+# ---------------------------------------------------------------------------
+
+
+async def require_admin(authorization: Optional[str] = Header(None)):
+    """Resolve user, allow only platform/erp admins.
+
+    Resolution order matches the rest of ERP:
+      1. SSO role from `noctusai_lib.api.auth.resolve_sso_role`
+         (platform admin or org owner/admin)
+      2. ERP-native role from user_metadata.erp_role / noctus_role
+    """
+    user, _token = await get_current_user(authorization)
+    sso_role = resolve_sso_role(user)
+    if sso_role == "platform_admin":
+        return user
+    role = (user.user_metadata or {}).get("erp_role") or (user.user_metadata or {}).get("noctus_role")
+    if role in ALLOWED_ADMIN_ROLES:
+        return user
+    raise HTTPException(status_code=403, detail="Admin privileges required for the Vista showcase")
+
+
+def _client() -> VistaClient:
+    return VistaClient(settings.vista_base_url, settings.vista_api_key)
+
+
+# ---------------------------------------------------------------------------
+# Tabs catalog — drives frontend sub-tab nav
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tabs")
+async def list_tabs(user=Depends(require_admin)):
+    tabs = svc.list_tabs(_client())
+    return {"tabs": [t.model_dump() for t in tabs]}
+
+
+# ---------------------------------------------------------------------------
+# Imóveis tab
+# ---------------------------------------------------------------------------
+
+
+@router.get("/imoveis")
+async def imoveis(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=50),
+    status: Optional[str] = None,
+    categoria: Optional[str] = None,
+    cidade: Optional[str] = None,
+    bairro: Optional[str] = None,
+    finalidade: Optional[str] = None,
+    user=Depends(require_admin),
+):
+    try:
+        env = await svc.fetch_imoveis(
+            _client(),
+            user_id=str(user.id),
+            page=page,
+            page_size=page_size,
+            status=status,
+            categoria=categoria,
+            cidade=cidade,
+            bairro=bairro,
+            finalidade=finalidade,
+        )
+        return env.model_dump()
+    except VistaConfigError:
+        raise HTTPException(503, "Vista não configurada (VISTA_BASE_URL / VISTA_API_KEY ausentes).")
+    except VistaPermissionDenied:
+        raise HTTPException(403, "Permissão pendente — solicite expansão de chave junto à Vista.")
+    except VistaNotFound:
+        raise HTTPException(404, "Endpoint Vista não disponível neste tenant.")
+    except VistaFieldNotAvailable as e:
+        # Match VistaUpstreamError ordering: subclass must come BEFORE the
+        # parent so the field-error path wins.
+        raise HTTPException(422, f"Campo Vista '{e.field}' indisponível para este tenant — atualize IMOVEL_LIST_FIELDS.")
+    except VistaTimeout:
+        raise HTTPException(504, "Vista demorou mais que 15s para responder.")
+    except VistaUpstreamError as e:
+        raise HTTPException(502, f"Vista respondeu erro {e.status}.")
+
+
+@router.get("/imoveis/{codigo}")
+async def imovel_detalhes(codigo: str, user=Depends(require_admin)):
+    try:
+        env = await svc.fetch_imovel_detalhes(_client(), user_id=str(user.id), codigo=codigo)
+        return env.model_dump()
+    except VistaConfigError:
+        raise HTTPException(503, "Vista não configurada.")
+    except VistaPermissionDenied:
+        raise HTTPException(403, "Permissão pendente para acessar detalhes deste imóvel.")
+    except VistaNotFound:
+        raise HTTPException(404, "Imóvel não encontrado em Vista.")
+    except VistaFieldNotAvailable as e:
+        raise HTTPException(422, f"Campo '{e.field}' não disponível para este tenant.")
+    except VistaTimeout:
+        raise HTTPException(504, "Vista demorou mais que 15s para responder.")
+    except VistaUpstreamError as e:
+        raise HTTPException(502, f"Vista respondeu erro {e.status}.")
+
+
+@router.get("/imoveis-conteudo")
+async def imoveis_conteudo(user=Depends(require_admin)):
+    """Filter dropdown content (Status, Categoria, Cidade, Bairro enums)."""
+    try:
+        env = await svc.fetch_imoveis_conteudo(_client(), user_id=str(user.id))
+        return env.model_dump()
+    except VistaConfigError:
+        raise HTTPException(503, "Vista não configurada.")
+    except VistaPermissionDenied:
+        raise HTTPException(403, "Permissão pendente.")
+    except VistaNotFound:
+        raise HTTPException(404, "Endpoint não disponível.")
+    except VistaTimeout:
+        raise HTTPException(504, "Vista timeout.")
+    except VistaUpstreamError as e:
+        raise HTTPException(502, f"Vista erro {e.status}.")
+
+
+# ---------------------------------------------------------------------------
+# Usuários + Agência tabs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/usuarios")
+async def usuarios(user=Depends(require_admin)):
+    try:
+        env = await svc.fetch_usuarios(_client(), user_id=str(user.id))
+        return env.model_dump()
+    except VistaConfigError:
+        raise HTTPException(503, "Vista não configurada.")
+    except VistaPermissionDenied:
+        raise HTTPException(403, "Permissão pendente.")
+    except VistaNotFound:
+        raise HTTPException(404, "Endpoint /usuarios/listar não disponível.")
+    except VistaTimeout:
+        raise HTTPException(504, "Vista timeout.")
+    except VistaUpstreamError as e:
+        raise HTTPException(502, f"Vista erro {e.status}.")
+
+
+@router.get("/agencias")
+async def agencias(user=Depends(require_admin)):
+    try:
+        env = await svc.fetch_agencias(_client(), user_id=str(user.id))
+        return env.model_dump()
+    except VistaConfigError:
+        raise HTTPException(503, "Vista não configurada.")
+    except VistaPermissionDenied:
+        raise HTTPException(403, "Permissão pendente.")
+    except VistaNotFound:
+        raise HTTPException(404, "Endpoint /agencias/listar não disponível.")
+    except VistaTimeout:
+        raise HTTPException(504, "Vista timeout.")
+    except VistaUpstreamError as e:
+        raise HTTPException(502, f"Vista erro {e.status}.")
+
+
+# ---------------------------------------------------------------------------
+# Diagnóstico tab — admin-only health probe
+# ---------------------------------------------------------------------------
+
+
+@router.get("/diagnostico")
+async def diagnostico(user=Depends(require_admin)):
+    diag = await svc.diagnose(_client(), user_id=str(user.id))
+    return diag.model_dump()

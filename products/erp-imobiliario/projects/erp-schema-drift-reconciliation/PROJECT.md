@@ -32,6 +32,7 @@ The `mock-supabase-schema-validation` project (2026-04-24) added a validator tha
 | `erp.profiles` | wrong-name | `avatar_url` | `avatar` |
 | `erp.profiles` | missing-col | `org_id` | (not present) |
 | `erp.whatsapp_config` | missing-col | `webhook_secret` | (not present) |
+| `erp.user_actions_log` | (audit) | new `vista-crm-wiring` writes use `tipo_acao='consulta_externa'` + `tipo_entidade='integracao_vista'` (added by migration 023) | once `validate_schema=True` flips on for ERP, confirm the Vista audit insert payload (`tipo_acao`, `tipo_entidade`, `entidade_id`, `descricao`, `detalhes`, `usuario_id`) matches the live `user_actions_log` columns. Vista path lives in `app/services/vista_showcase_service.py::_audit`. |
 
 Each of these is **either a real runtime bug** (code filters on a nonexistent column, getting silent-fail PostgREST errors) **or a migration-file drift from the live DB** (column exists live but missing from the numbered migration files — violates "MCP migrations mirror the file" rule).
 

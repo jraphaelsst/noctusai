@@ -224,6 +224,35 @@ async def list_tools():
         }, ["code_path", "concern", "reason"]),
         _tool("noctusai_lgpd_list", "List all LGPD concerns from `LGPD-WARNINGS.md` (unresolved + resolved)."),
 
+        # AST outline tools (methodology-extraction Phase 3+4 — narrow-read companion tooling)
+        _tool(
+            "noctusai_outline_python",
+            "Return a Python file's symbol tree (classes / functions / methods / constants / imports) without bodies. Makes the narrow-read rule ergonomic: structure first, fetch bodies on demand. Stdlib `ast`, no extra deps. Output includes line ranges for each symbol so a follow-up `Read offset=<line> limit=N` is one call away.",
+            {
+                "path": {"type": "string", "description": "Python source file. Relative paths are resolved against repo root."},
+            },
+            ["path"],
+        ),
+        _tool(
+            "noctusai_outline_typescript",
+            "Return a TS / TSX file's symbol tree (classes, interfaces, types, functions, arrow-fn consts, methods, constants, imports). Same shape as `noctusai_outline_python`. Regex-based — no Node spawn, no npm install; see `mcp/noctusai/tools/outline_typescript.py` for the design tradeoff against the Compiler API path.",
+            {
+                "path": {"type": "string", "description": "TS / TSX source file. Relative paths are resolved against repo root."},
+            },
+            ["path"],
+        ),
+
+        # Cost / token evaluation (methodology-extraction Phase 5 + project-history-ledger)
+        _tool(
+            "noctusai_count_tokens",
+            "Count tokens for a file, directory, or glob (offline). Tokenizer cascade: tiktoken (if installed in the venv — ~5-10% off Claude) → chars/4 approximation. Returns total + per-file breakdown + the tokenizer that ran. Used to measure per-turn auto-load cost (CLAUDE.md, MEMORY.md) precisely and to stamp token counts onto closed-project ledger entries. Either `path` or `text` (or both) must be set.",
+            {
+                "path": {"type": "string", "description": "File, directory, or glob pattern to count. Directory walks default to `*.md`; override via `extensions`. Glob: any pattern containing `*` `?` `[`."},
+                "text": {"type": "string", "description": "Inline text to count (skip filesystem). Combine with `path` to count both at once."},
+                "extensions": {"type": "array", "items": {"type": "string"}, "description": "When `path` is a directory, only files with these suffixes are counted. Default `['.md']`. Use `['*']` for everything."},
+            },
+        ),
+
         # Proposals
         _tool("noctusai_list_proposals", "List pending improvement proposals across all products (or one product if `product` is set)", {
             "agent": {"type": "string", "description": "Optional: filter by agent name"},
@@ -255,6 +284,8 @@ def _dispatch(name, args):
         products, context, compliance, analyzers, review as review_tool,
         proposals, master_prompts, testing, diff, ai_brain, scaffold, catalog,
         improvements, lgpd, refs, build, status, three_way_sync, recurrence,
+        cost_evaluation, outline_python as outline_python_tool,
+        outline_typescript as outline_typescript_tool,
     )
 
     dispatch_map = {
@@ -350,6 +381,13 @@ def _dispatch(name, args):
             mitigation=args.get("mitigation"),
         ),
         "noctusai_lgpd_list": lambda: lgpd.list_warnings(),
+        "noctusai_outline_python": lambda: outline_python_tool.outline_python(args["path"]).to_dict(),
+        "noctusai_outline_typescript": lambda: outline_typescript_tool.outline_typescript(args["path"]).to_dict(),
+        "noctusai_count_tokens": lambda: cost_evaluation.count_tokens(
+            path=args.get("path"),
+            text=args.get("text"),
+            extensions=tuple(args.get("extensions") or (".md",)),
+        ).to_dict(),
         "noctusai_list_proposals": lambda: proposals.list_proposals(args.get("agent"), product=args.get("product")),
         "noctusai_accept_proposal": lambda: proposals.update_proposal_status(args["filename"], "accepted", product=args.get("product")),
         "noctusai_reject_proposal": lambda: proposals.update_proposal_status(args["filename"], "rejected", args.get("reason", ""), product=args.get("product")),

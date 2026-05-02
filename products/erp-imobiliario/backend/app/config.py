@@ -31,5 +31,10 @@ class ERPSettings(ProductSettings):
     d4sign_api_token: Optional[str] = None
     d4sign_crypt_key: Optional[str] = None
 
+    # Vista CRM showcase (admin-only, backend-only — never VITE_-prefixed).
+    # See products/erp-imobiliario/projects/vista-crm-wiring/PROJECT.md.
+    vista_base_url: Optional[str] = None
+    vista_api_key: Optional[str] = None
+
 
 settings = ERPSettings()
