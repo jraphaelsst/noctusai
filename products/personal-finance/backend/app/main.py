@@ -7,7 +7,9 @@ Run with: uvicorn app.main:app --reload --port 8002
 from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
-from app.scheduler import start_scheduler, stop_scheduler
+from app.scheduler import configure as _configure_scheduler, start_scheduler, stop_scheduler
+
+_configure_scheduler()
 from app.routers import (
     contas, transacoes, categorias, orcamentos, metas,
     carteira, ativos, operacoes, watchlist, recorrentes,

@@ -1,30 +1,26 @@
-"""
-Background scheduler for recurring transaction execution.
+"""Personal Finance backend scheduler — migrated to `noctusai_lib.api.scheduler`.
 
-Runs via APScheduler's AsyncIOScheduler inside the FastAPI lifespan.
-Two triggers:
-  - Daily at 06:00 Sao Paulo time (main run)
-  - Every 4 hours for intraday catchup
+Two triggers (intentionally — daily run + intraday catch-up):
+  - Daily at 06:00 São Paulo time (main run)
+  - Every 4 hours for intraday catch-up
+
+The job body is identical for both triggers (`executar_recorrentes_job`);
+only the cadence differs.
 """
+from __future__ import annotations
+
 import logging
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 
-# Silence APScheduler's verbose DEBUG logging
-logging.getLogger("apscheduler").setLevel(logging.WARNING)
+from noctusai_lib.api import scheduler as seed_scheduler
 
 from app.dependencies import get_admin_client
 from app.services.recorrentes_service import RecorrentesService
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler(timezone="America/Sao_Paulo")
-
 
 async def executar_recorrentes_job():
     """Iterate all orgs with active automatic recurrences and execute pending."""
-
     logger.info("Scheduler: starting recurring transaction execution")
 
     try:
@@ -65,26 +61,24 @@ async def executar_recorrentes_job():
         logger.error(f"Scheduler: unexpected error in recurring job: {exc}")
 
 
-def start_scheduler():
-    """Register jobs and start the scheduler."""
-    scheduler.add_job(
+def configure() -> None:
+    """Register PF's recurring jobs on the seed-side scheduler."""
+    seed_scheduler.register(
+        "recorrentes_daily",
         executar_recorrentes_job,
-        trigger=CronTrigger(hour=6, timezone="America/Sao_Paulo"),
-        id="recorrentes_daily",
-        replace_existing=True,
+        cron="0 6 * * *",
     )
-    scheduler.add_job(
+    seed_scheduler.register(
+        "recorrentes_catchup",
         executar_recorrentes_job,
-        trigger=IntervalTrigger(hours=4),
-        id="recorrentes_catchup",
-        replace_existing=True,
+        hours=4,
     )
-    scheduler.start()
-    logger.info("Scheduler started with daily (06:00) and 4h interval triggers")
+    logger.info(
+        "PF scheduler configured: recorrentes daily (06:00 SP cron) + "
+        "4h interval catch-up"
+    )
 
 
-def stop_scheduler():
-    """Shut down the scheduler gracefully."""
-    if scheduler.running:
-        scheduler.shutdown(wait=False)
-        logger.info("Scheduler stopped")
+# Re-export so `main.py`'s lifespan wiring is unchanged.
+start_scheduler = seed_scheduler.start_scheduler
+stop_scheduler = seed_scheduler.stop_scheduler

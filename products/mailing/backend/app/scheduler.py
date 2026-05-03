@@ -1,30 +1,25 @@
-"""
-Background scheduler for the Mailing product.
+"""Mailing backend scheduler — migrated to `noctusai_lib.api.scheduler`.
 
 Three jobs:
   1. Send loop (every 30s) — process queued send_logs via Resend Batch API
   2. Scheduled campaigns (every 60s) — check for campaigns with scheduled_at <= now
   3. Automation processor (every 5min) — process automation enrollments
 
-Uses APScheduler's AsyncIOScheduler, same pattern as Personal Finance.
+Each job's body is mailing-specific; the registration + lifecycle is the
+seed-side primitive (`noctusai_lib.api.scheduler`).
 """
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timezone
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
-
-# Silence APScheduler's verbose DEBUG logging (job execution, next wakeup, etc.)
-# Only our job functions log meaningful info when there's actual work.
-logging.getLogger("apscheduler").setLevel(logging.WARNING)
+from noctusai_lib.api import scheduler as seed_scheduler
 
 from app.config import settings
 from app.database import get_admin_client
 from app.services.send_service import SendService
 
 logger = logging.getLogger(__name__)
-
-scheduler = AsyncIOScheduler(timezone="America/Sao_Paulo")
 
 
 async def send_loop_job():
@@ -92,37 +87,36 @@ async def automation_processor_job():
         logger.error("Automation processor error: %s", e)
 
 
-def start_scheduler():
-    """Register jobs and start the scheduler."""
-    scheduler.add_job(
+def configure() -> None:
+    """Register mailing's jobs on the seed-side scheduler.
+
+    Called from `main.py` at import time so the registrations land before
+    `start_scheduler()` fires in the FastAPI lifespan.
+    """
+    seed_scheduler.register(
+        "mailing_send_loop",
         send_loop_job,
-        trigger=IntervalTrigger(seconds=settings.send_loop_seconds),
-        id="mailing_send_loop",
-        replace_existing=True,
+        seconds=settings.send_loop_seconds,
     )
-    scheduler.add_job(
+    seed_scheduler.register(
+        "mailing_scheduled_campaigns",
         scheduled_campaigns_job,
-        trigger=IntervalTrigger(seconds=settings.scheduled_campaign_check_seconds),
-        id="mailing_scheduled_campaigns",
-        replace_existing=True,
+        seconds=settings.scheduled_campaign_check_seconds,
     )
-    scheduler.add_job(
+    seed_scheduler.register(
+        "mailing_automation_processor",
         automation_processor_job,
-        trigger=IntervalTrigger(minutes=settings.automation_check_minutes),
-        id="mailing_automation_processor",
-        replace_existing=True,
+        minutes=settings.automation_check_minutes,
     )
-    scheduler.start()
     logger.info(
-        "Mailing scheduler started: send_loop=%ds, scheduled_campaigns=%ds, automations=%dmin",
+        "Mailing scheduler configured: send_loop=%ds, scheduled_campaigns=%ds, automations=%dmin",
         settings.send_loop_seconds,
         settings.scheduled_campaign_check_seconds,
         settings.automation_check_minutes,
     )
 
 
-def stop_scheduler():
-    """Shut down the scheduler gracefully."""
-    if scheduler.running:
-        scheduler.shutdown(wait=False)
-        logger.info("Mailing scheduler stopped")
+# Re-export so `main.py`'s lifespan_startup / lifespan_shutdown wiring is
+# unchanged across the migration.
+start_scheduler = seed_scheduler.start_scheduler
+stop_scheduler = seed_scheduler.stop_scheduler

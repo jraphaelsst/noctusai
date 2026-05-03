@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** ⏳ EXECUTING — §7 round closed 2026-05-03 (per-product table; defaults accepted on Q2-Q6); waits on MCP work to close before starting Phase 0.
+- **Status:** ✅ **CLOSED** 2026-05-03 — Phases 0-3 + 5 + 6 ✅; Phase 4 (wire-into-chatbot-framework) deferred until `projects/whatsapp-seed-absorption/` Phase 5 lands the LLM dispatcher that consumes the writer. Lib code + migration template + 2 KB docs shipped; first product consumer = imobi-scheduling-bot via the chatbot framework.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Related docs:** `KB § 04-SHARED-LIBRARY.md § llm/`, `projects/whatsapp-seed-absorption/PROJECT.md` (depends on this for end-to-end completeness; preserves audit-row schema verbatim from sibling), sibling reference at `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/app/services/openai/tools/registry.py`.
 - **Project slug:** `llm-tool-call-audit` — cross-cutting seed-lib concern. Lives at `projects/<slug>/`.
@@ -127,47 +127,80 @@ The chatbot framework's `llm_dispatcher.py` accepts `audit_writer: AuditWriter |
 
 ## 6. Implementation phases
 
-### Phase 0 — Audit before any code lands
+### Phase 0 — Audit before any code lands ✅ (executed 2026-05-03)
 
-- [ ] Read sibling's `app/services/openai/tools/registry.py` end-to-end. Confirm schema fields + write path.
-- [ ] Identify whether sibling has dedicated tests for audit persistence; if so, plan port.
-- [ ] Verify `noctusai_lib/domain/ai/` exists; confirm what's there so we don't collide.
-- [ ] Check whether any product already has an ad-hoc tool-call log we should reconcile against.
+- [x] Read sibling's `app/services/openai/tools/registry.py` end-to-end. Confirm schema fields + write path. → **Done.** Pattern locked: `ToolRegistry.dispatch()` writes one row per call (success / failure / unknown_tool); audit failure logged + swallowed; sibling stores arguments/result as TEXT (JSON-stringified), uses `correlation_id + gpt_call_id + conversation_id + user_id` joinability. We use Postgres JSONB instead (native, indexable).
+- [x] Identify whether sibling has dedicated tests for audit persistence. → **Yes.** `whatsapp-google-scheduling/tests/test_tool_call_audit.py` covers success, failure, unknown_tool, and audit-DB-failure paths. Ported the test shape into our lib tests.
+- [x] Verify `noctusai_lib/domain/ai/` exists; confirm what's there. → **Exists** with `consent.py` + `outputs.py`. No collision; lib doesn't ship SQLAlchemy ORM models (per the cross-product LGPD block — products own their DB schemas). Adjusted Phase 1 scope: the lib ships `AuditRecord` dataclass + writer factory, products own the ORM model.
+- [x] Check whether any product already has an ad-hoc tool-call log. → **No.** No product currently has `tool_call_audit*` / `ToolCallAudit` references (excluding `node_modules` matches in core/frontend).
 
-### Phase 1 — Model + writer
+**Improvements:**
+- Sibling stores arguments/result as TEXT (JSON-stringified) for cross-DB portability (their stack supported SQLite for tests). We're Postgres-only via Supabase, so JSONB is the native fit. **Triage: refactor (applied)** — schema deviates from sibling's TEXT in favor of JSONB; documented in KB doc + migration template.
+- The project doc Phase 1 sketch had the lib ship a SQLAlchemy ORM model directly. After Phase 0 audit of sibling `noctusai_lib/domain/ai/` we found existing modules (`consent.py`, `outputs.py`) keep ORM bindings out of the lib by design — products own DB. **Triage: refactor (applied)** — scope shifted to dataclass + writer factory + migration template; products define their own ORM class. Adoption boilerplate captured in KB doc §3.
 
-- [ ] Create `seed/backend/lib/noctusai_lib/domain/ai/tool_audit.py` with `ToolCallAudit` model + `default_audit_writer(db)`.
-- [ ] Provide `AuditRecord` dataclass (the in-memory record passed to the writer).
-- [ ] Tests: success path + DB-failure path (must not raise) + unknown-tool path.
+### Phase 1 — Model + writer ✅ (executed 2026-05-03)
 
-### Phase 2 — Migration template
+- [x] Create `seed/backend/lib/noctusai_lib/domain/ai/tool_audit.py` with `ToolCallAudit` model + `default_audit_writer(db)`. → **Adapted per Phase 0 audit:** ships `AuditRecord` dataclass + `AuditWriter` Callable type + `make_audit_writer(db, table_class)` factory + `_safe_jsonable` helper + `now_utc()` convenience. SQLAlchemy `Session` import is `TYPE_CHECKING`-guarded — lib doesn't require sqlalchemy at runtime/test time.
+- [x] Provide `AuditRecord` dataclass (the in-memory record passed to the writer). → **Done.** Slots-true dataclass with `tool_name`, `status`, `duration_ms`, `started_at` required; everything else (correlation_id, gpt_call_id, tool_call_id, conversation_id, user_id, arguments, result, error) optional. `to_row_kwargs()` method handles the safe-jsonable round-trip.
+- [x] Tests: success path + DB-failure path (must not raise) + unknown-tool path. → **Done.** 9 tests at `seed/backend/lib/tests/domain/ai/test_tool_audit.py`: round-trip, safe_jsonable variants (dict, None, Pydantic-like, repr fallback), success persists row, DB-failure logs WARNING + does NOT raise, unknown_tool path, now_utc returns aware datetime. All green: `pytest seed/backend/lib/tests/domain/ai/` = 9 passed.
 
-- [ ] Provide `noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template` for products adopting it (Alembic-shape; product copies, renames, applies via Supabase MCP per `KB § PATTERNS/database-rls.md`).
-- [ ] Document the migration mirroring rule (`KB § PATTERNS/database-rls.md`).
+**Improvements:**
+- `_safe_jsonable` falls through `json.dumps(default=str)` so Pydantic models / dataclasses / Decimals round-trip through JSON cleanly. Non-serializable values (circular refs, etc.) wrap as `{"_repr": repr(value)}` with a debug log — audit row still lands. Caught a subtle case during testing: a default-str fallback returns a string (Pydantic-like → `"Sentinel(value=42)"`), which the test now asserts is acceptable. **Triage: accept-with-rationale** — best-effort means we trade structural fidelity for "row always lands"; documented.
+- The lib ships ZERO SQLAlchemy imports at runtime (TYPE_CHECKING-guarded). Tests run without sqlalchemy in the venv (which our MCP venv lacks today). **Triage: refactor (applied)** — keeps lib portable across deployment environments + matches the existing `noctusai_lib.domain.*` style.
 
-### Phase 3 — KB pattern doc
+### Phase 2 — Migration template ✅ (executed 2026-05-03)
 
-- [ ] Write `KB § PATTERNS/llm-tool-audit.md` covering: schema, opt-in wiring, best-effort guarantee, retention TBD, query patterns, correlation-id linkage.
-- [ ] Add to `KB § INDEX.md`.
-- [ ] Add `CLAUDE.md §3 Map` pointer.
+- [x] Provide `noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template`. → **Done.** Postgres / Supabase-native: `JSONB` for arguments/result, `TIMESTAMPTZ` for started_at, `BIGSERIAL` PK, indexes on correlation_id / (user_id, started_at) / tool_name / status / (conversation_id, started_at). `{{SCHEMA_NAME}}` placeholder per `KB § PATTERNS/database-rls.md`. RLS scaffold commented for products to enable + tune. `archived_at` column commented out (retention TTL = `projects/llm-audit-retention/` future hook).
+- [x] Document the migration mirroring rule (`KB § PATTERNS/database-rls.md`). → Adoption flow documented in `KB § PATTERNS/llm-tool-audit.md § 3a` (apply via Supabase MCP) — the database-rls.md rule reference is in the template header.
 
-### Phase 4 — Wire into chatbot framework
+**Improvements:**
+- Added a `status` column (`success`/`failure`/`unknown_tool`) with its own index. Sibling didn't have this — they parsed the `error` field for status. Indexed status is much faster for error-rate dashboards (`SELECT status, count(*) GROUP BY status`). **Triage: refactor (applied)** — schema improvement over sibling.
+- Added `(conversation_id, started_at)` composite index for per-conversation reconstruction queries. Sibling has only `correlation_id` indexed; conversation reconstruction would be a sequential scan. **Triage: refactor (applied)**.
 
-- [ ] Coordinate with `projects/whatsapp-seed-absorption/` Phase 5: the chatbot framework's `llm_dispatcher.py` accepts `audit_writer` callable; the default for consumers is `default_audit_writer(db)`.
-- [ ] Verify end-to-end: chatbot framework Phase 5 tests use the audit writer and audit rows appear.
+### Phase 3 — KB pattern doc ✅ (executed 2026-05-03)
 
-### Phase 5 — LLM-bot-security KB pattern doc (folded from sibling `security-hardening`)
+- [x] Write `KB § PATTERNS/llm-tool-audit.md`. → **Done.** 8 sections: why-audit (§1), schema (§2), wiring at consumer side incl. ORM model + dispatcher example (§3), status semantics (§4), LGPD redaction at consumer (§5), common queries (§6), what-this-is-NOT (§7), adoption checklist (§8). Cross-references `llm-bot-security.md` for the defense layer.
+- [x] Add to `KB § INDEX.md`. → **Done.** Layout tree + Patterns table both updated.
+- [x] Add `CLAUDE.md §2 Map` pointer. → **Done.** Patterns list gains a depth pointer line.
 
-- [ ] Write `KB § PATTERNS/llm-bot-security.md` covering: prompt-injection defenses (instruction sandboxing, output sanitization, tool-arg validation), rate-limiting per caller, anomaly detection on tool-call patterns, the trio (output sanitization + tool-arg validation + rate-limit) as a baseline checklist for any LLM-tool-using product.
-- [ ] Add to `KB § INDEX.md`. Add `CLAUDE.md §3 Map` pointer.
-- [ ] Cross-reference from `KB § PATTERNS/llm-tool-audit.md` (audit is the observation layer; security is the defense layer).
-- [ ] First consumers: `projects/imobi-scheduling-bot-creation/` Phase 9 + future bot products use this checklist.
+**Improvements:**
+- The KB doc includes 4 worked SQL queries (per-user 24h trail, failure-rate-per-tool weekly, conversation reconstruction, log-join via correlation_id). Worked queries are quoted-runnable in the BI surface that surfaces in Phase 4 wiring. **Triage: refactor (applied)** — saves consumer projects from re-deriving them.
+- Adoption checklist (§8) is a tickable for any product wiring the audit. **Triage: accept-with-rationale** — checklists are where adoption errors get caught early.
 
-### Phase 6 — Final verification
+### Phase 4 — Wire into chatbot framework ⏳ **DEFERRED**
 
-- [ ] `pytest seed/backend/lib/tests/domain/ai/` — green.
-- [ ] `bash scripts/verify-kb-sync.sh` — green.
-- [ ] Three-way sync confirmed.
+GATED ON: `projects/whatsapp-seed-absorption/` Phase 5 (the chatbot framework's `llm_dispatcher.py` lands there; that's the call site of `make_audit_writer`).
+
+This project ships the lib code + migration template + KB doc + adoption checklist. The wire-up itself happens INSIDE the chatbot framework lift, where the dispatcher is built. Pulling it forward into this project would either (a) prematurely create the dispatcher (out of this project's scope) or (b) wire against a stub that vanishes when the real one lands — both are wrong shapes.
+
+**When to resume:** when `projects/whatsapp-seed-absorption/` Phase 5 starts, that project's §6 adopts:
+1. `from noctusai_lib.domain.ai.tool_audit import AuditRecord, make_audit_writer, now_utc`
+2. Wires `audit_writer` parameter into the dispatcher signature.
+3. Calls `audit_writer(AuditRecord(...))` after each dispatch — see `KB § PATTERNS/llm-tool-audit.md § 3c` for the exact shape.
+
+- [ ] *(carried to `projects/whatsapp-seed-absorption/` Phase 5)* Coordinate the chatbot framework's `llm_dispatcher.py` to accept `audit_writer: AuditWriter | None = None` and call it after each dispatch.
+- [ ] *(carried)* Verify end-to-end: framework Phase 5 tests use the audit writer and audit rows appear.
+
+### Phase 5 — LLM-bot-security KB pattern doc ✅ (executed 2026-05-03)
+
+- [x] Write `KB § PATTERNS/llm-bot-security.md`. → **Done.** Sections: threat model (§1), defense trio — output sanitization + Pydantic-arg validation + rate-limit (§2), confidence thresholds + confirm-then-execute (§3), prompt-injection mitigation — instruction sandboxing + allowlists + output review (§4), baseline checklist (§5), cross-references (§6). Folds the entire sibling `security-hardening` planning artifact into one durable doc.
+- [x] Add to `KB § INDEX.md`. Add `CLAUDE.md §2 Map` pointer. → **Done.**
+- [x] Cross-reference from `KB § PATTERNS/llm-tool-audit.md`. → **Done.** llm-tool-audit.md § Cross-references points at llm-bot-security.md; llm-bot-security.md §6 points back at llm-tool-audit.md (audit = observation; security = defense).
+- [x] First consumers: `projects/imobi-scheduling-bot-creation/` Phase 9 + future bot products use this checklist. → **Captured.** Section §5 names `imobi-scheduling-bot-creation` Phase 9 as the first consumer.
+
+**Improvements:**
+- Folded sibling's "security-hardening" planning artifact ENTIRELY into one doc. The sibling's plan was scattered across multiple `.md` files; this consolidates it into a single durable reference that survives sibling deletion. **Triage: accept-with-rationale** — single-doc fold is right shape for a checklist-style rule; KB structure favors one substantive doc over five thin ones.
+- The §3 confirm-then-execute pattern surfaces as a strong default for ANY destructive LLM tool, not just scheduling. Captured as the platform default; products override only if they have a clear UX reason. **Triage: accept-with-rationale** — recurrence rule applies if 3+ products override (revisit then).
+
+### Phase 6 — Final verification ✅ (executed 2026-05-03)
+
+- [x] `pytest seed/backend/lib/tests/domain/ai/` — **9 passed, 0 failed**.
+- [x] `bash scripts/verify-kb-sync.sh` — **green** (3 new KB docs landed: `llm-tool-audit.md`, `llm-bot-security.md`, INDEX.md updated).
+- [x] Three-way sync confirmed. KB ↔ CLAUDE.md ↔ memory: KB has 2 new pattern docs; CLAUDE.md §2 Map has 2 new depth pointers; **memory** does NOT need new entries (per memory rule "Code patterns, conventions, architecture — these can be derived by reading the current project state, not stored in memory"). Existing memory `feedback_lgpd_first.md` already covers the LGPD redaction angle.
+
+**Improvements:**
+- Total project surface: 1 lib module (`tool_audit.py`, 175 lines), 1 migration template (~70 lines), 2 KB pattern docs (~250 + ~190 lines), 9 tests. Ratio of doc to code is ~3:1 — reflects the "this is a foundational primitive every future bot uses" framing. **Triage: accept-with-rationale** — the doc cost is upfront; downstream consumers (imobi-scheduling-bot-creation, future bots) avoid re-deriving the schema + wiring + LGPD posture.
+- Phase 4 carved out cleanly into `whatsapp-seed-absorption` Phase 5 with the exact import line + wiring shape pre-documented in `KB § PATTERNS/llm-tool-audit.md § 3c`. When that project picks it up, integration is mechanical. **Triage: accept-with-rationale** — clean handoff is what good cross-project carve-outs look like.
 
 ---
 
@@ -223,6 +256,7 @@ bash scripts/verify-kb-sync.sh
 | 2026-05-03 | Initial project drafted; user confirmed priority #1 (highest observability ROI). | claude-opus-4-7 |
 | 2026-05-03 | Added §7 Q4 noting sibling's `provider-payload-audit` and `data-retention` ideas as future-work hooks (raw integration payloads + retention TTL). Captured here as open questions rather than separate projects so the lessons aren't lost when sibling folder is deleted. | claude-opus-4-7 |
 | 2026-05-03 | **§7 round closed** (batch Phase 1.a). Decision: per-product `tool_call_audits` table (Q1, user-confirmed). Q2-Q6 accepted at recommended defaults (no v1 TTL, Art. 11 redaction at dispatcher, confidence out-of-scope, provider-payload separate concern). Project status flipped to ⏳ EXECUTING — Phase 0 begins after MCP-server-expansion closes (per user-reordered tier sequence: MCP → LLM-audit → finish). | claude-opus-4-7 |
+| 2026-05-03 | **Project CLOSED.** Phases 0-3 + 5 + 6 ✅ shipped; Phase 4 (wire-into-chatbot-framework) deferred to `projects/whatsapp-seed-absorption/` Phase 5 with exact import + wiring shape pre-documented in `KB § PATTERNS/llm-tool-audit.md § 3c`. **Concrete deliverables**: (1) `seed/backend/lib/noctusai_lib/domain/ai/tool_audit.py` (175 lines) — `AuditRecord` dataclass + `AuditWriter` Callable type + `make_audit_writer(db, table_class)` factory + `_safe_jsonable` helper + `now_utc()`. SQLAlchemy `Session` is `TYPE_CHECKING`-guarded — lib has zero runtime sqlalchemy imports. (2) Migration template at `noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template` — Postgres-native JSONB, 5 indexes (correlation_id / (user_id, started_at) / tool_name / status / (conversation_id, started_at)), `archived_at` retention column commented for v2. (3) 9 tests at `seed/backend/lib/tests/domain/ai/test_tool_audit.py` covering success / DB-failure / unknown-tool / Pydantic-like / circular-ref / empty paths. (4) `KB § PATTERNS/llm-tool-audit.md` (NEW, 8 sections + 4 worked SQL queries + adoption checklist). (5) `KB § PATTERNS/llm-bot-security.md` (NEW, 6 sections — defense trio, confidence thresholds, prompt-injection mitigation, baseline checklist, folded entire sibling `security-hardening` planning artifact). (6) `KB § INDEX.md` + `CLAUDE.md §2 Map` updated. **Schema improvements over sibling**: indexed `status` column (sibling parsed `error` for status); `(conversation_id, started_at)` composite index for fast per-conversation reconstruction; Postgres JSONB instead of TEXT (sibling stored JSON-stringified for SQLite portability). | claude-opus-4-7 |
 
 ---
 
