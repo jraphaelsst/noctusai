@@ -50,6 +50,7 @@ def _pct(num: int, denom: int) -> float:
     return round((num / denom * 100.0), 2) if denom > 0 else 0.0
 
 
+# accept-with-rationale: Per-product `_render_bodies` + `_generate_narrative` digest wrappers retained at N=4 in KB § PATTERNS/accept-with-rationale.md
 async def _generate_narrative(
     *,
     campaign_name: str,

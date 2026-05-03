@@ -41,6 +41,7 @@ MODEL = "gpt-4o-mini"
 PROMPT_VERSION = "daily-life-weekly-review@v1"
 
 
+# accept-with-rationale: Per-product `_render_bodies` + `_generate_narrative` digest wrappers retained at N=4 in KB § PATTERNS/accept-with-rationale.md
 async def _generate_narrative(
     *,
     user_label: str,

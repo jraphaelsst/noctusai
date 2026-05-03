@@ -53,6 +53,7 @@ def _fmt_brl(value: float | int | None) -> str:
     return format_brl(value, decimals=2)
 
 
+# accept-with-rationale: Per-product `_render_bodies` + `_generate_narrative` digest wrappers retained at N=4 in KB § PATTERNS/accept-with-rationale.md
 async def _generate_narrative(
     *,
     period_label: str,
