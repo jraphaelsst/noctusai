@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools import outline_typescript as ot
+from tools.noctus.dev import outline_typescript as ot
 
 
 def write(tmp_path: Path, name: str, body: str) -> Path:

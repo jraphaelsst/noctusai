@@ -34,7 +34,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 PRODUCTS_DIR = REPO_ROOT / "products"
 
 
@@ -68,7 +68,7 @@ class ReviewOutput(BaseModel):
 
 
 def _detect(product_slug: str | None) -> tuple[list[Path], list[dict]]:
-    from tools.compliance import (
+    from tools.noctus.dev.compliance import (
         check_seed_compliance,
         check_path_references,
         check_standard_routers_audit,
@@ -136,8 +136,8 @@ def _agent_review_prompt(issues: list[dict]) -> str:
 
 def _headless_author(issue: dict, product_path: Path, model: str, agent_tag: str, subdir: str | None = None) -> dict:
     """Author + file one proposal via OpenAI. Falls back to skeleton on failure."""
-    from tools.ai_brain import review_compliance_issue, is_ai_available
-    from tools.proposals import fill_proposal_template, file_proposal, generate_proposal
+    from tools.noctus.dev.ai_brain import review_compliance_issue, is_ai_available
+    from tools.noctus.dev.proposals import fill_proposal_template, file_proposal, generate_proposal
 
     if not is_ai_available():
         fallback = generate_proposal(
@@ -222,7 +222,7 @@ def run_review(
 
     Returns a dict keyed by mode — see examples in `mcp/noctusai/README.md`.
     """
-    from tools.compliance import check_all_products
+    from tools.noctus.dev.compliance import check_all_products
 
     products, issues = _detect(product_slug)
     report: dict = {

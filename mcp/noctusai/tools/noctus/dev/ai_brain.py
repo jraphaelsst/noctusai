@@ -17,7 +17,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 
 _client = None
 _initialized = False
@@ -91,7 +91,7 @@ def analyze_findings(findings):
     if not response:
         return [{"type": "error", "message": "AI failed to respond"}]
 
-    from tools.proposals import generate_proposal
+    from tools.noctus.dev.proposals import generate_proposal
     proposals = []
     for line in response.strip().splitlines():
         line = line.strip()
@@ -237,7 +237,7 @@ def ai_advisory(product_path=None):
     except Exception as exc:
         logger.warning("ai_brain: cannot read CLAUDE.md for advisory rules (%s); rules will be empty", exc)
 
-    from tools.products import list_products, PRODUCTS_DIR
+    from tools.noctus.dev.products import list_products, PRODUCTS_DIR
     products = list_products()
     findings = []
 
@@ -278,7 +278,7 @@ def register(server) -> None:
         description="AI-powered improvement discovery (requires OPENAI_API_KEY)",
     )
     def _ai_discover() -> dict:
-        from tools.analyzers import run_all_analyzers
+        from tools.noctus.dev.analyzers import run_all_analyzers
         return analyze_findings(run_all_analyzers())
 
     @server.tool(

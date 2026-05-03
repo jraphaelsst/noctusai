@@ -50,7 +50,7 @@ from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 DEFAULT_EXTENSIONS: tuple[str, ...] = (".md",)
 DEFAULT_TIKTOKEN_ENCODING = "cl100k_base"
 

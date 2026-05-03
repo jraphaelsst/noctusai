@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.proposals import generate_proposal, list_proposals, _proposal_exists, _slug, _extract_key_entity
+from tools.noctus.dev.proposals import generate_proposal, list_proposals, _proposal_exists, _slug, _extract_key_entity
 
 
 class TestSlug:

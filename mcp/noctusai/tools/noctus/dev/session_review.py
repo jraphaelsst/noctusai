@@ -40,7 +40,7 @@ from session_loader import (
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 
 Severity = Literal["INFO", "WARNING", "ERROR"]
 

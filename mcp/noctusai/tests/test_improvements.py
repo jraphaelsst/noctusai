@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.improvements import (
+from tools.noctus.dev.improvements import (
     generate_improvements,
     parse_project,
     render_improvements,

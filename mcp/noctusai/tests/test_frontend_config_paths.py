@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.compliance import (
+from tools.noctus.dev.compliance import (
     _SEED_RELATIVE_PATH_PATTERN,
     _glob_prefix_resolves,
     _resolves_via_module_resolution,

@@ -34,7 +34,7 @@ from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 
 
 # Directories to skip during the walk. Matches `.gitignore` spirit + vendored

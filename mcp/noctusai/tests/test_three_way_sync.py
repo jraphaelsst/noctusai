@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.three_way_sync import check_three_way_sync
+from tools.noctus.dev.three_way_sync import check_three_way_sync
 
 
 class TestCheckThreeWaySync:
@@ -28,7 +28,7 @@ class TestCheckThreeWaySync:
     def test_memory_dir_unresolvable_returns_warning_no_op(self):
         # No env var, no standard path → returns warning + skips check.
         with patch.dict(os.environ, {"NOCTUSAI_MEMORY_DIR": "/nonexistent-path-nope"}, clear=False):
-            with patch("tools.three_way_sync._resolve_memory_dir", return_value=None):
+            with patch("tools.noctus.dev.three_way_sync._resolve_memory_dir", return_value=None):
                 result = check_three_way_sync(repo_root=Path(tempfile.mkdtemp()))
         assert result["memory_dir"] is None
         assert any(i["severity"] == "warning" for i in result["issues"])

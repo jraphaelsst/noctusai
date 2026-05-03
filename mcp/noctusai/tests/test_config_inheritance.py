@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.compliance import check_config_extends_product_settings
+from tools.noctus.dev.compliance import check_config_extends_product_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"

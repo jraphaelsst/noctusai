@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.recurrence import (
+from tools.noctus.dev.recurrence import (
     scan_recurrence,
     scan_cross_product_helpers,
     scan_service_line_recurrence,

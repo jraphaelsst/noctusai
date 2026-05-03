@@ -19,7 +19,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from session_loader import ToolResult, ToolUse, load_session
-from tools.session_review import (
+from tools.noctus.dev.session_review import (
     SessionIssue,
     detect_ast_first,
     detect_narrow_read,

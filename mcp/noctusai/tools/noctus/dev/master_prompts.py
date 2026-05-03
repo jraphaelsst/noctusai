@@ -1,7 +1,7 @@
 """Master prompt sync tools — regenerate structural sections from filesystem."""
 import re
 from pathlib import Path
-from tools.products import get_product_summary, REPO_ROOT, PRODUCTS_DIR
+from tools.noctus.dev.products import get_product_summary, REPO_ROOT, PRODUCTS_DIR
 
 
 def sync_master_prompt(slug: str) -> dict:

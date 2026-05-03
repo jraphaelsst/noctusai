@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.analyzers import (
+from tools.noctus.dev.analyzers import (
     find_duplicated_functions, find_inline_hooks,
     audit_python_deps, analyze_test_coverage, get_code_metrics,
     run_all_analyzers,

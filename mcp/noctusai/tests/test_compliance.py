@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.compliance import (
+from tools.noctus.dev.compliance import (
     check_seed_compliance,
     check_path_references,
     check_all_products,
@@ -989,14 +989,15 @@ class TestCheckDetectorHasRegressionTest:
         # empty. Every detector becomes a violation; severity must be `high`.
         with tempfile.TemporaryDirectory() as tmp:
             fake_root = Path(tmp)
-            (fake_root / "mcp" / "noctusai" / "tools").mkdir(parents=True)
+            (fake_root / "mcp" / "noctusai" / "tools" / "noctus" / "dev").mkdir(parents=True)
             (fake_root / "mcp" / "noctusai" / "tests").mkdir(parents=True)
             # Copy the real compliance.py so `_detector_function_names()`
             # finds the same set of detectors.
             real_compliance = (
-                Path(__file__).resolve().parents[1] / "tools" / "compliance.py"
+                Path(__file__).resolve().parents[1]
+                / "tools" / "noctus" / "dev" / "compliance.py"
             )
-            (fake_root / "mcp" / "noctusai" / "tools" / "compliance.py").write_text(
+            (fake_root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py").write_text(
                 real_compliance.read_text(encoding="utf-8"), encoding="utf-8"
             )
             # No test files at all — every detector should flag.
@@ -1014,12 +1015,13 @@ class TestCheckDetectorHasRegressionTest:
         expected test-class name, so the fix is a copy-paste."""
         with tempfile.TemporaryDirectory() as tmp:
             fake_root = Path(tmp)
-            (fake_root / "mcp" / "noctusai" / "tools").mkdir(parents=True)
+            (fake_root / "mcp" / "noctusai" / "tools" / "noctus" / "dev").mkdir(parents=True)
             (fake_root / "mcp" / "noctusai" / "tests").mkdir(parents=True)
             real_compliance = (
-                Path(__file__).resolve().parents[1] / "tools" / "compliance.py"
+                Path(__file__).resolve().parents[1]
+                / "tools" / "noctus" / "dev" / "compliance.py"
             )
-            (fake_root / "mcp" / "noctusai" / "tools" / "compliance.py").write_text(
+            (fake_root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py").write_text(
                 real_compliance.read_text(encoding="utf-8"), encoding="utf-8"
             )
             issues = check_detector_has_regression_test(fake_root)

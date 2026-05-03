@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.compliance import check_seed_version_propagation  # noqa: E402
+from tools.noctus.dev.compliance import check_seed_version_propagation  # noqa: E402
 
 
 # --- Helpers ---------------------------------------------------------------

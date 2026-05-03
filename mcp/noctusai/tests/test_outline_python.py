@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools import outline_python as op
+from tools.noctus.dev import outline_python as op
 
 
 def write(tmp_path: Path, name: str, body: str) -> Path:
@@ -211,7 +211,7 @@ class TestRealWorldFile:
         """Smoke test: outline a real file from the repo. Sanity-check on a
         non-toy example."""
         repo_root = Path(__file__).resolve().parents[3]
-        target = repo_root / "mcp" / "noctusai" / "tools" / "cost_evaluation.py"
+        target = repo_root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "cost_evaluation.py"
         result = op.outline_python(str(target))
         assert result.parse_error is None
         # Should have FileTokenCount and TokenCountResult dataclasses + count_tokens function

@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.products import list_products, get_product_summary, get_product_structure
+from tools.noctus.dev.products import list_products, get_product_summary, get_product_structure
 
 
 class TestListProducts:

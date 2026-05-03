@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 
 
 class AgentContextInput(BaseModel):
@@ -42,7 +42,7 @@ def get_agent_context() -> dict:
     This is the programmatic equivalent of KNOWLEDGE-BASE/AGENT-CONTEXT.md.
     Agents call this to understand the platform without reading files.
     """
-    from tools.products import list_products
+    from tools.noctus.dev.products import list_products
 
     products = list_products()
 
@@ -96,7 +96,7 @@ def get_agent_context() -> dict:
 
 def get_product_context(slug: str) -> dict:
     """Return context for a specific product — everything an agent needs to work on it."""
-    from tools.products import get_product_structure
+    from tools.noctus.dev.products import get_product_structure
 
     structure = get_product_structure(slug)
     path = REPO_ROOT / "products" / slug

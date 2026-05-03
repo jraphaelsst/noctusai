@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.compliance import (  # noqa: E402
+from tools.noctus.dev.compliance import (  # noqa: E402
     CONTROL_PLANE_PRODUCTS,
     check_frontend_entrypoint,
     check_out_of_contract_trees,

@@ -74,7 +74,7 @@ class CatalogOutput(BaseModel):
     orphans: list[dict[str, Any]] = PydField(default_factory=list)
     duplicate_candidates: list[dict[str, Any]] = PydField(default_factory=list)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 
 # Map of import-path prefix → filesystem root. Update when the namespace
 # is renamed (e.g. "noctusai_lib" → "noctusai.lib"). Currently these are

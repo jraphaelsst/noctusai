@@ -113,7 +113,7 @@ def main():
     print(f"{BOLD}╚══════════════════════════════════════════════════════════╝{RESET}\n")
 
     if args.validate:
-        from tools.compliance import check_all_products
+        from tools.noctus.dev.compliance import check_all_products
         score, issues = check_all_products()
         color = GREEN if score == 100 else RED
         print(f"  {BOLD}Score: {color}{score}/100{RESET}  |  Issues: {len(issues)}")
@@ -121,7 +121,7 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i['product']}: {i['issue']}")
 
     elif args.check_phase_state:
-        from tools.compliance import check_phase_state_consistency
+        from tools.noctus.dev.compliance import check_phase_state_consistency
         issues = check_phase_state_consistency()
         if not issues:
             print(f"  {GREEN}✓ §6 ↔ §11 phase-state consistency clean.{RESET}")
@@ -136,7 +136,7 @@ def main():
         sys.exit(1)
 
     elif args.refs:
-        from tools.refs import find_refs
+        from tools.noctus.dev.refs import find_refs
         result = find_refs(args.refs)
         print(f"  {BOLD}Pattern:{RESET} {result.pattern}")
         print(f"  {BOLD}Files scanned:{RESET} {result.total_files}")
@@ -155,7 +155,7 @@ def main():
                     print(f"    … {len(grouped[file]) - 8} more matches")
 
     elif args.build:
-        from tools.build import build_products
+        from tools.noctus.dev.build import build_products
         slugs = [args.product] if args.product else None
         result = build_products(slugs=slugs, changed_only=args.changed)
         if args.json:
@@ -168,7 +168,7 @@ def main():
                 print(f"    {color}{'✓' if r['success'] else '✗'}{RESET} {r['product']:<20} {r['duration_seconds']:>6.2f}s  {r['summary'][:80]}")
 
     elif args.status:
-        from tools.status import project_status_digest
+        from tools.noctus.dev.status import project_status_digest
         result = project_status_digest()
         if args.json:
             print(json.dumps(result, indent=2))
@@ -185,7 +185,7 @@ def main():
                 print(f"  {icon} {p['slug']:<40} {p['location']:<25} {progress:>10}{flags}")
 
     elif args.check_three_way_sync:
-        from tools.three_way_sync import check_three_way_sync
+        from tools.noctus.dev.three_way_sync import check_three_way_sync
         result = check_three_way_sync()
         if args.json:
             print(json.dumps(result, indent=2))
@@ -208,7 +208,7 @@ def main():
                     print(f"    … {len(issues) - 30} more")
 
     elif args.scan_recurrence:
-        from tools.recurrence import scan_recurrence
+        from tools.noctus.dev.recurrence import scan_recurrence
         result = scan_recurrence()
         if args.json:
             print(json.dumps(result, indent=2))
@@ -224,7 +224,7 @@ def main():
                     print(f"      … {len(f['occurrences']) - 5} more")
 
     elif args.scan_helpers:
-        from tools.recurrence import scan_cross_product_helpers
+        from tools.noctus.dev.recurrence import scan_cross_product_helpers
         result = scan_cross_product_helpers()
         if args.json:
             print(json.dumps(result, indent=2))
@@ -242,7 +242,7 @@ def main():
                     sugg = sugg[96:]
 
     elif args.scan_blocks:
-        from tools.recurrence import scan_block_patterns
+        from tools.noctus.dev.recurrence import scan_block_patterns
         kw = {"min_count": args.min_count} if args.min_count else {}
         result = scan_block_patterns(**kw)
         if args.json:
@@ -266,7 +266,7 @@ def main():
                     sugg = sugg[96:]
 
     elif args.scan_within_product:
-        from tools.recurrence import scan_within_product_helpers
+        from tools.noctus.dev.recurrence import scan_within_product_helpers
         kw = {"min_count": args.min_count} if args.min_count else {}
         result = scan_within_product_helpers(**kw)
         if args.json:
@@ -284,7 +284,7 @@ def main():
                     print(f"      … {len(f['files']) - 4} more")
 
     elif args.scan_test_fixtures:
-        from tools.recurrence import scan_test_fixture_recurrence
+        from tools.noctus.dev.recurrence import scan_test_fixture_recurrence
         kw = {"min_count": args.min_count} if args.min_count else {}
         result = scan_test_fixture_recurrence(**kw)
         if args.json:
@@ -298,7 +298,7 @@ def main():
                 print(f"  {color}[{f['severity']}]{RESET} {BOLD}{f['helper_name']}{RESET}  in {f['product_count']} products: {', '.join(f['products'])}")
 
     elif args.scan_migrations:
-        from tools.recurrence import scan_migration_patterns
+        from tools.noctus.dev.recurrence import scan_migration_patterns
         kw = {"min_count": args.min_count} if args.min_count else {}
         result = scan_migration_patterns(**kw)
         if args.json:
@@ -318,7 +318,7 @@ def main():
                     sugg = sugg[96:]
 
     elif args.scan_pydantic:
-        from tools.recurrence import scan_pydantic_model_shapes
+        from tools.noctus.dev.recurrence import scan_pydantic_model_shapes
         kw = {"min_count": args.min_count} if args.min_count else {}
         result = scan_pydantic_model_shapes(**kw)
         if args.json:
@@ -336,7 +336,7 @@ def main():
                     print(f"      • {o['class_name']} @ {o['file']}")
 
     elif args.scan_service_lines:
-        from tools.recurrence import scan_service_line_recurrence
+        from tools.noctus.dev.recurrence import scan_service_line_recurrence
         result = scan_service_line_recurrence()
         if args.json:
             print(json.dumps(result, indent=2))
@@ -355,7 +355,7 @@ def main():
                         sugg = sugg[96:]
 
     elif args.review:
-        from tools.review import run_review
+        from tools.noctus.dev.review import run_review
         mode = "evaluate" if args.evaluate else ("headless" if args.headless else "agent")
         result = run_review(product_slug=args.product, mode=mode, model=args.model)
         print(f"  {BOLD}Mode:{RESET} {mode}  |  Issues found: {result['issues_found']}")
@@ -377,7 +377,7 @@ def main():
             print(json.dumps(result, indent=2, default=str))
 
     elif args.analyze:
-        from tools.analyzers import run_all_analyzers
+        from tools.noctus.dev.analyzers import run_all_analyzers
         results = run_all_analyzers()
         print(f"  Duplicated functions: {len(results['duplicated_functions'])}")
         print(f"  Inline hooks: {len(results['inline_hooks'])}")
@@ -388,8 +388,8 @@ def main():
             print(json.dumps(results, indent=2, default=str))
 
     elif args.discover:
-        from tools.analyzers import run_all_analyzers
-        from tools.ai_brain import analyze_findings, is_ai_available
+        from tools.noctus.dev.analyzers import run_all_analyzers
+        from tools.noctus.dev.ai_brain import analyze_findings, is_ai_available
         if not is_ai_available():
             print(f"  {YELLOW}AI disabled — set OPENAI_API_KEY{RESET}")
         else:
@@ -402,7 +402,7 @@ def main():
                     print(f"  {GREEN}Platform healthy{RESET}")
 
     elif args.metrics:
-        from tools.analyzers import get_code_metrics
+        from tools.noctus.dev.analyzers import get_code_metrics
         metrics = get_code_metrics()
         print(f"  {'Product':<20} {'BE':<8} {'FE':<8} {'R':<4} {'S':<4} {'P':<4} {'H':<4}")
         print(f"  {'─'*20} {'─'*8} {'─'*8} {'─'*4} {'─'*4} {'─'*4} {'─'*4}")
@@ -410,14 +410,14 @@ def main():
             print(f"  {m['product']:<20} {m['backend_lines']:<8} {m['frontend_lines']:<8} {m['routers']:<4} {m['services']:<4} {m['pages']:<4} {m['hooks']:<4}")
 
     elif args.sync_prompts:
-        from tools.master_prompts import sync_all_master_prompts
+        from tools.noctus.dev.master_prompts import sync_all_master_prompts
         results = sync_all_master_prompts()
         for r in results:
             status = f"{GREEN}synced{RESET}" if r.get("updated") else "up to date"
             print(f"  {r.get('product', '?')}: {status}")
 
     elif args.test:
-        from tools.testing import run_all_tests
+        from tools.noctus.dev.testing import run_all_tests
         results = run_all_tests()
         for r in results["products"]:
             color = GREEN if r.get("success") else RED
@@ -430,7 +430,7 @@ def main():
     # longer routed through the CLI.
 
     elif args.proposals:
-        from tools.proposals import list_proposals
+        from tools.noctus.dev.proposals import list_proposals
         for p in list_proposals():
             color = GREEN if p["status"] == "accepted" else YELLOW if p["status"] == "pending" else RED
             print(f"  {color}[{p['status']}]{RESET} {p['title']} ({p['agent']})")
@@ -445,7 +445,7 @@ def main():
         sys.exit(result["exit_code"])
 
     elif args.catalog:
-        from tools.catalog import generate_catalog
+        from tools.noctus.dev.catalog import generate_catalog
         result = generate_catalog(write=True)
         summary = result["summary"]
         print(f"  {BOLD}Catalog written:{RESET} {result['output_path']}")
@@ -459,7 +459,7 @@ def main():
             print(json.dumps(result, indent=2, default=str))
 
     elif args.lgpd_list:
-        from tools.lgpd import list_warnings
+        from tools.noctus.dev.lgpd import list_warnings
         result = list_warnings()
         unresolved = result.get("unresolved_count", 0)
         resolved = result.get("resolved_count", 0)
@@ -473,7 +473,7 @@ def main():
             print(json.dumps(result, indent=2, default=str))
 
     elif args.lgpd_flag:
-        from tools.lgpd import flag
+        from tools.noctus.dev.lgpd import flag
         missing = [n for n, v in [
             ("--lgpd-concern", args.lgpd_concern),
             ("--lgpd-path", args.lgpd_path),
@@ -497,7 +497,7 @@ def main():
             print(json.dumps(result, indent=2, default=str))
 
     elif args.improvements:
-        from tools.improvements import generate_improvements
+        from tools.noctus.dev.improvements import generate_improvements
         result = generate_improvements(args.improvements, write=True)
         if result.get("error"):
             print(f"  {RED}Error:{RESET} {result['error']}")
@@ -517,10 +517,10 @@ def main():
 
     elif args.outline_python or args.outline_typescript:
         if args.outline_python:
-            from tools.outline_python import outline_python
+            from tools.noctus.dev.outline_python import outline_python
             result = outline_python(args.outline_python)
         else:
-            from tools.outline_typescript import outline_typescript
+            from tools.noctus.dev.outline_typescript import outline_typescript
             result = outline_typescript(args.outline_typescript)
         if args.json:
             print(json.dumps(result.to_dict(), indent=2))
@@ -559,7 +559,7 @@ def main():
                     print(f"    L{s.line:>4}-{s.end_line:<4}  {s.name}{async_marker}{deco}{doc}")
 
     elif args.count_tokens or args.count_tokens_text:
-        from tools.cost_evaluation import count_tokens
+        from tools.noctus.dev.cost_evaluation import count_tokens
         exts = DEFAULT_EXTENSIONS = (".md",)
         if args.count_tokens_ext:
             raw = [e.strip() for e in args.count_tokens_ext.split(",") if e.strip()]
@@ -593,8 +593,8 @@ def main():
 
     else:
         # Default: validate + analyze
-        from tools.compliance import check_all_products
-        from tools.analyzers import run_all_analyzers
+        from tools.noctus.dev.compliance import check_all_products
+        from tools.noctus.dev.analyzers import run_all_analyzers
         score, issues = check_all_products()
         color = GREEN if score == 100 else RED
         print(f"  {BOLD}Compliance: {color}{score}/100{RESET}")

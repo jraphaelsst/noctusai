@@ -26,7 +26,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools import outline_python as op
+from tools.noctus.dev import outline_python as op
 
 
 def _build_synthetic_source(num_classes: int, methods_per_class: int) -> str:

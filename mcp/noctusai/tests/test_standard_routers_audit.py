@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.compliance import (  # noqa: E402
+from tools.noctus.dev.compliance import (  # noqa: E402
     check_standard_routers_audit,
     _parse_standard_routers,
 )

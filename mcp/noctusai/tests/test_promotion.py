@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.promotion import (
+from tools.noctus.dev.promotion import (
     PROMOTIONS_DIRNAME,
     list_promotions,
     parse_manifest,

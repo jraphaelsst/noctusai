@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.diff import diff_product_against_seed, find_orphaned_files, check_api_consistency
+from tools.noctus.dev.diff import diff_product_against_seed, find_orphaned_files, check_api_consistency
 
 
 class TestDiffAgainstSeed:

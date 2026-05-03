@@ -32,7 +32,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools import outline_typescript as ot
+from tools.noctus.dev import outline_typescript as ot
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
