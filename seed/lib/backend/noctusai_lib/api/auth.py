@@ -14,7 +14,10 @@ reimplementing.
 - `make_get_current_user(fn)` — factory for product-specific JWT validation.
 - `resolve_sso_role(user)` — reads `org_role` / `noctus_role` from user_metadata.
 - `get_sso_context(user)` — extracts full SSO context from user_metadata.
-- `require_role(fn, *roles)` — role-guard dependency factory.
+- `make_require_role(get_current_user_fn, get_user_role_fn)` — factory for
+  product-specific role-guard dependency factories. Mirrors the
+  `make_get_current_user(fn)` pattern: products bind it once at module load
+  and use the resulting `require_role(*roles)` at every router site.
 - **NEW** `create_sso_token_factory(settings)` — returns a token-mint callable
   parameterized by product settings (`jwt_secret`, `jwt_algorithm`,
   `sso_token_expiration_minutes`).
@@ -166,44 +169,63 @@ def get_sso_context(user) -> dict:
     return {k: metadata.get(k) for k in keys}
 
 
-def require_role(get_user_role_fn, *allowed_roles: str):
-    """FastAPI dependency factory that enforces role-based access.
+def make_require_role(get_current_user_fn, get_user_role_fn):
+    """Factory that creates a product-specific ``require_role`` dependency factory.
+
+    Mirrors the :func:`make_get_current_user` pattern: products bind it once
+    at module load with their already-wrapped ``get_current_user`` (which
+    knows the product's Supabase client) and their ``get_user_role``
+    callable, then use the resulting ``require_role(*roles)`` at every
+    router site.
 
     Parameters:
+        get_current_user_fn: The product's already-wrapped
+            ``get_current_user`` dependency (typically the return value
+            of :func:`make_get_current_user`). Must be an async callable
+            that takes ``authorization: Optional[str]`` and returns
+            ``(user, token)``.
         get_user_role_fn: A callable ``(user) -> str`` that returns
-            the resolved role for the user. Each product provides its own.
-        *allowed_roles: Role strings that are permitted (e.g.
-            ``"platform_admin"``, ``"clinic_admin"``).
+            the resolved role for the user. Each product provides its own
+            (typically falls through ``resolve_sso_role`` to product-native
+            roles).
 
-    Returns a FastAPI dependency that can be used with ``Depends()``.
+    Returns:
+        A ``require_role(*allowed_roles: str)`` factory; calling it
+        produces a FastAPI dependency that:
+          - extracts + validates the JWT via the product's get_current_user
+          - resolves the user's role via ``get_user_role_fn``
+          - raises ``HTTPException(403)`` if the role is not in
+            ``allowed_roles``
+          - returns ``(user, token, role)`` to dependent endpoints.
 
-    Usage::
+    Usage in a product's ``app/dependencies.py``::
 
-        from noctusai_lib.api.auth import require_role
+        from noctusai_lib.api.auth import make_require_role
         from app.dependencies import get_current_user, get_user_role
 
-        admin_only = require_role(get_user_role, "platform_admin")
+        require_role = make_require_role(get_current_user, get_user_role)
+
+    And then in routers::
 
         @router.get("/admin/dashboard")
         async def dashboard(
-            auth=Depends(get_current_user),
-            _=Depends(admin_only),
+            auth_role=Depends(require_role("platform_admin")),
         ):
+            user, token, role = auth_role
             ...
     """
-    async def _check_role(authorization: Optional[str] = Header(None)):
-        user, token = await _get_current_user(
-            authorization,
-            _get_supabase_client=None,  # overridden by product wrapper
-        )
-        role = get_user_role_fn(user)
-        if role not in allowed_roles:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Acesso negado. Restrito a: {', '.join(allowed_roles)}",
-            )
-        return user, token, role
-    return _check_role
+    def require_role(*allowed_roles: str):
+        async def _check_role(authorization: Optional[str] = Header(None)):
+            user, token = await get_current_user_fn(authorization)
+            role = get_user_role_fn(user)
+            if role not in allowed_roles:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Acesso negado. Restrito a: {', '.join(allowed_roles)}",
+                )
+            return user, token, role
+        return _check_role
+    return require_role
 
 
 # ---------------------------------------------------------------------------

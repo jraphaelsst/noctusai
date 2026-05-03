@@ -13,7 +13,7 @@ Install: `pip install -e seed/lib/backend`. Import: `from noctusai_lib.<module> 
 | `first_or_none(result)` | Extract first record from Supabase response |
 | `resolve_sso_role(user)` | Check SSO metadata → `"platform_admin"` or `None` |
 | `get_sso_context(user)` | Extract all SSO context (role, org, plan, license) |
-| `require_role(get_user_role_fn, *roles)` | FastAPI dependency factory for role enforcement |
+| `make_require_role(get_current_user_fn, get_user_role_fn)` | Factory for product-specific `require_role(*roles)` dependency factory. Mirrors `make_get_current_user`: products bind once at module load, then use `Depends(require_role("platform_admin"))` at every router site. Retired the prior broken `require_role(get_user_role_fn, *roles)` (passed `_get_supabase_client=None` blindly → RuntimeError on first use; zero callers anywhere in the monorepo per `therapy-platform-wiring` Phase 1 absorption sweep 2026-05-03). |
 | `get_current_user(authorization, ...)` | JWT validation (base — products define own wrapper) |
 | `make_get_current_user(get_supabase_client_fn)` | Factory for product-specific `get_current_user` |
 
@@ -167,6 +167,40 @@ Every product accesses LLMs exclusively through this package. No product code im
 | `MockUser` | Parameterized: `MockUser(role="therapist", org_id="x", clinic_id="y")` |
 | `AuthClient` | Wraps TestClient with Bearer auth. `.mock_supabase` property, `.raw()` for unauth |
 | `bind_consent_module_to_mock(mock_sb)` | **Per-fixture rewire of the X6 consent module's FastAPI deps to a mock supabase.** Solves the boot-order trap where `TestClient` caches the app + `configure_consent_module(...)` captures the FIRST fixture's `mock_sb` reference permanently. Idempotent. Required in every product's `client` fixture — see `KB § PATTERNS/testing.md § Consent-guard product conftest pattern` for the full rationale + canonical conftest shape. Default in `templates/product-seed/backend/tests/conftest.py` since 2026-04-27. |
+
+### `integrations/supabase_identity.py` — Bulk auth.users → display-name + email resolver
+
+Shipped 2026-05-03 by `therapy-platform-wiring` Phase 1 to absorb the per-product N+1 `db.auth.admin.get_user_by_id(...)` pattern that admin / list endpoints hit when DTO-mapping rows that need `nome` + `email` from `auth.users` (which lives outside every product schema). Replaces inline `_fetch_user_identity` helpers — first concrete absorber was therapy-platform's `app/services/admin_service.py::_fetch_user_identity` (now retired).
+
+| Symbol | Purpose |
+|---|---|
+| `UserIdentity` | `@dataclass(frozen=True)` carrying `user_id`, `nome`, `email`, `foto_url` plus a `display_name` property (fallback chain: nome → email-local-part → "Usuário") |
+| `fetch_user_identities(db, user_ids) -> Dict[str, UserIdentity]` | Bulk resolve. Dedupes input, skips falsy IDs, returns deterministic shape for every requested ID (missing users → empty `UserIdentity`). Per-user lookup errors are caught + logged at WARNING; the function never raises. |
+| `fetch_user_identity(db, user_id) -> UserIdentity` | Single-user convenience wrapper. Same error → empty-shape contract. |
+
+**Sync vs async.** Function is `def` (sync), not `async def`. The `supabase-py` admin SDK is sync; `async def` would block the event loop without yielding. Callers needing non-blocking concurrency wrap with `asyncio.to_thread(fetch_user_identities, db, ids)`. For typical admin pages (10-100 IDs), a sequential loop completes in well under a second.
+
+```python
+from noctusai_lib.integrations.supabase_identity import (
+    UserIdentity,
+    fetch_user_identities,
+)
+
+# Inside a list endpoint mapping product rows to admin DTOs
+user_ids = [row.get("user_id") for row in rows if row.get("user_id")]
+identities = fetch_user_identities(admin_db, user_ids)
+
+dtos = []
+for row in rows:
+    uid = row.get("user_id") or ""
+    identity = identities.get(uid, UserIdentity(user_id=uid))
+    dtos.append({
+        "id": uid,
+        "nome": identity.display_name,
+        "email": identity.email,
+        # ... product-specific fields ...
+    })
+```
 
 ### `integrations/email/` — Templates + scheduled-digest helper + Jinja renderer
 

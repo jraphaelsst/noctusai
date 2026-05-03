@@ -11,6 +11,10 @@ from typing import Any, Dict, List, Tuple
 from fastapi import HTTPException
 
 from app.dependencies import first_or_none
+from noctusai_lib.integrations.supabase_identity import (
+    UserIdentity,
+    fetch_user_identities,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -249,48 +253,22 @@ def _derive_therapist_status(row: Dict[str, Any]) -> str:
     return "pendente"
 
 
-def _fetch_user_identity(db: Any, user_id: str) -> Dict[str, str]:
-    """Fetch nome + email from auth.users via the admin API.
+def _therapist_row_to_dto(row: Dict[str, Any], identity: UserIdentity) -> Dict[str, Any]:
+    """Map a `therapist_profiles` row + resolved auth identity → admin DTO.
 
-    Falls back to empty strings if the lookup fails or returns a non-user shape
-    (e.g. the mocked supabase client in tests).
+    The frontend `Terapeuta` type (in `frontend/src/types/`) expects
+    Portuguese-named fields. Avatar `foto_url` falls back to the
+    profile's `photo_url` column when the auth-side `user_metadata.foto_url`
+    is missing — keeps existing avatars rendering.
     """
-    try:
-        resp = db.auth.admin.get_user_by_id(user_id)
-    except Exception as exc:  # noqa: BLE001 — admin API may 404 or fail for stale IDs
-        logger.warning(
-            "admin_service: get_user_by_id failed for user_id=%s (%s); "
-            "returning empty nome/email — caller should treat as missing user",
-            user_id, exc,
-        )
-        return {"nome": "", "email": ""}
-
-    user = getattr(resp, "user", None)
-    if user is None:
-        return {"nome": "", "email": ""}
-
-    email = getattr(user, "email", None)
-    email = email if isinstance(email, str) else ""
-
-    metadata = getattr(user, "user_metadata", None) or {}
-    if not isinstance(metadata, dict):
-        metadata = {}
-    nome = metadata.get("nome") or metadata.get("full_name") or ""
-    if not isinstance(nome, str):
-        nome = ""
-
-    return {"nome": nome, "email": email}
-
-
-def _therapist_row_to_dto(row: Dict[str, Any], identity: Dict[str, str]) -> Dict[str, Any]:
     return {
         "id": row.get("user_id"),
         "user_id": row.get("user_id"),
-        "nome": identity.get("nome", ""),
-        "email": identity.get("email", ""),
+        "nome": identity.nome,
+        "email": identity.email,
         "crp": row.get("crp") or "",
         "bio": row.get("bio"),
-        "foto_url": row.get("photo_url"),
+        "foto_url": identity.foto_url or row.get("photo_url"),
         "especialidades": row.get("specialties") or [],
         "abordagens": row.get("approaches") or [],
         "valor_sessao": row.get("default_session_price"),
@@ -338,8 +316,12 @@ async def list_therapists_for_admin(
     rows = result.data or []
     total = result.count or 0
 
+    user_ids = [row.get("user_id") for row in rows if row.get("user_id")]
+    identities = fetch_user_identities(db, user_ids)
+
     dtos: List[Dict[str, Any]] = []
     for row in rows:
-        identity = _fetch_user_identity(db, row.get("user_id"))
+        uid = row.get("user_id") or ""
+        identity = identities.get(uid, UserIdentity(user_id=uid))
         dtos.append(_therapist_row_to_dto(row, identity))
     return dtos, total

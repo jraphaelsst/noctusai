@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from noctusai_lib.api.auth import (
     SSOSessionCache,
     create_sso_token_factory,
+    make_require_role,
     verify_sso_token_factory,
 )
 
@@ -204,3 +205,92 @@ class TestSSOSessionCache:
         cache.set("a@x.com", {"token": "a"})
         # TTL not reached — still present.
         assert cache.get("a@x.com") is not None
+
+
+# ---------------------------------------------------------------------------
+# make_require_role — factory pattern matching make_get_current_user
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FakeUser:
+    """Minimal user shape — what product's get_user_role receives."""
+    id: str
+    role: str
+
+
+class TestMakeRequireRole:
+    """Cover the make_require_role factory + the bound require_role dep."""
+
+    def _build(self, *, user_role: str = "platform_admin"):
+        """Helper: returns (require_role_factory, fake_user) bound to the
+        given role. The fake get_current_user always succeeds with the
+        same user; tests vary `user_role` to control the role check."""
+        fake_user = _FakeUser(id="u1", role=user_role)
+
+        async def fake_get_current_user(authorization=None):
+            if not authorization:
+                raise HTTPException(status_code=401, detail="Token ausente")
+            return fake_user, "token-abc"
+
+        def fake_get_user_role(user):
+            return user.role
+
+        require_role = make_require_role(fake_get_current_user, fake_get_user_role)
+        return require_role, fake_user
+
+    @pytest.mark.asyncio
+    async def test_allows_when_role_in_allowed_list(self):
+        require_role, fake_user = self._build(user_role="platform_admin")
+        dep = require_role("platform_admin")
+        user, token, role = await dep(authorization="Bearer xxx")
+        assert user is fake_user
+        assert token == "token-abc"
+        assert role == "platform_admin"
+
+    @pytest.mark.asyncio
+    async def test_allows_when_role_in_multi_role_list(self):
+        require_role, _ = self._build(user_role="clinic_admin")
+        dep = require_role("platform_admin", "clinic_admin")
+        _user, _token, role = await dep(authorization="Bearer xxx")
+        assert role == "clinic_admin"
+
+    @pytest.mark.asyncio
+    async def test_rejects_when_role_not_allowed(self):
+        require_role, _ = self._build(user_role="patient")
+        dep = require_role("platform_admin")
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 403
+        assert "platform_admin" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_propagates_401_from_get_current_user(self):
+        # If product's get_current_user raises 401 (missing/invalid token),
+        # the role check never runs — the 401 surfaces unchanged.
+        require_role, _ = self._build()
+        dep = require_role("platform_admin")
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization=None)
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_factory_produces_distinct_deps_per_role_set(self):
+        require_role, _ = self._build(user_role="patient")
+        admin_only = require_role("platform_admin")
+        patient_or_admin = require_role("platform_admin", "patient")
+        # Same factory; different bindings — patient_or_admin permits, admin_only doesn't.
+        with pytest.raises(HTTPException):
+            await admin_only(authorization="Bearer xxx")
+        _u, _t, role = await patient_or_admin(authorization="Bearer xxx")
+        assert role == "patient"
+
+    @pytest.mark.asyncio
+    async def test_error_detail_lists_all_allowed_roles(self):
+        require_role, _ = self._build(user_role="patient")
+        dep = require_role("platform_admin", "clinic_admin", "therapist")
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert "platform_admin" in exc.value.detail
+        assert "clinic_admin" in exc.value.detail
+        assert "therapist" in exc.value.detail

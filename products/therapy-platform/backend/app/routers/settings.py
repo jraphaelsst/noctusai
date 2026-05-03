@@ -4,18 +4,21 @@ Settings Router — Platform settings, AI prompts, clinic branding, therapist/pa
 Platform-level endpoints require platform_admin role.
 Clinic branding requires clinic_admin role.
 Therapist/patient endpoints require the corresponding role.
+
+Role enforcement uses ``Depends(require_role(...))`` from
+``noctusai_lib.api.auth.make_require_role`` (bound in ``app/dependencies.py``).
+Replaces the prior inline ``_require_admin(user)`` / ``_require_role(user, *roles)``
+helpers — same 403 behavior, fewer round-trips through manual auth code.
 """
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import (
-    get_current_user,
+    first_or_none,
     get_admin_client,
-    get_user_client,
-    get_user_role,
     get_clinic_id_for_user,
+    require_role,
 )
 from app.responses import success_response
 from app.schemas.settings import (
@@ -31,32 +34,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
 
-def _require_admin(user) -> str:
-    """Enforce platform_admin role. Returns user.id."""
-    role = get_user_role(user)
-    if role != "platform_admin":
-        raise HTTPException(status_code=403, detail="Acesso restrito a administradores da plataforma")
-    return user.id
-
-
-def _require_role(user, *allowed_roles: str) -> str:
-    """Enforce one of the allowed roles. Returns user.id."""
-    role = get_user_role(user)
-    if role not in allowed_roles:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Acesso restrito a: {', '.join(allowed_roles)}",
-        )
-    return user.id
-
-
 # ── Platform Settings (Admin) ────────────────────────────────────────
 
 @router.get("/platform")
-async def get_platform_settings(authorization: Optional[str] = Header(None)):
+async def get_platform_settings(auth=Depends(require_role("platform_admin"))):
     """Get all platform settings (admin only)."""
-    user, _ = await get_current_user(authorization)
-    _require_admin(user)
     db = get_admin_client()
     result = db.table("platform_settings").select("*").execute()
     return success_response(result.data or [])
@@ -65,11 +47,11 @@ async def get_platform_settings(authorization: Optional[str] = Header(None)):
 @router.patch("/platform")
 async def update_platform_setting(
     body: PlatformSettingUpdate,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(require_role("platform_admin")),
 ):
     """Update a single platform setting (admin only)."""
-    user, _ = await get_current_user(authorization)
-    admin_id = _require_admin(user)
+    user, _token, _role = auth
+    admin_id = user.id
     db = get_admin_client()
 
     result = (
@@ -86,7 +68,6 @@ async def update_platform_setting(
         "changed_by": admin_id,
     }).execute()
 
-    from app.dependencies import first_or_none
     row = first_or_none(result)
     return success_response(row or {"key": body.key, "value": body.value})
 
@@ -94,10 +75,8 @@ async def update_platform_setting(
 # ── AI Prompts (Admin) ──────────────────────────────────────────────
 
 @router.get("/platform/ai-prompts")
-async def get_ai_prompts(authorization: Optional[str] = Header(None)):
+async def get_ai_prompts(auth=Depends(require_role("platform_admin"))):
     """Get all AI prompt settings (admin only)."""
-    user, _ = await get_current_user(authorization)
-    _require_admin(user)
     db = get_admin_client()
     result = (
         db.table("ai_prompt_settings")
@@ -111,11 +90,11 @@ async def get_ai_prompts(authorization: Optional[str] = Header(None)):
 @router.patch("/platform/ai-prompts")
 async def update_ai_prompt(
     body: AIPromptUpdate,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(require_role("platform_admin")),
 ):
     """Update an AI prompt template (admin only, versioned)."""
-    user, _ = await get_current_user(authorization)
-    admin_id = _require_admin(user)
+    user, _token, _role = auth
+    admin_id = user.id
     db = get_admin_client()
 
     result = (
@@ -131,7 +110,6 @@ async def update_ai_prompt(
         "changed_by": admin_id,
     }).execute()
 
-    from app.dependencies import first_or_none
     row = first_or_none(result)
     return success_response(row or {"prompt_key": body.prompt_key, "prompt_text": body.prompt_text})
 
@@ -139,11 +117,9 @@ async def update_ai_prompt(
 @router.get("/platform/ai-prompts/history")
 async def get_ai_prompt_history(
     prompt_key: str = Query(...),
-    authorization: Optional[str] = Header(None),
+    auth=Depends(require_role("platform_admin")),
 ):
     """Get version history for a specific AI prompt (admin only)."""
-    user, _ = await get_current_user(authorization)
-    _require_admin(user)
     db = get_admin_client()
     result = (
         db.table("ai_prompt_history")
@@ -158,10 +134,9 @@ async def get_ai_prompt_history(
 # ── Therapist Settings ──────────────────────────────────────────────
 
 @router.get("/therapist")
-async def get_therapist_settings(authorization: Optional[str] = Header(None)):
+async def get_therapist_settings(auth=Depends(require_role("therapist"))):
     """Get own therapist settings."""
-    user, token = await get_current_user(authorization)
-    _require_role(user, "therapist")
+    user, _token, _role = auth
     db = get_admin_client()
     result = (
         db.table("therapist_settings")
@@ -169,7 +144,6 @@ async def get_therapist_settings(authorization: Optional[str] = Header(None)):
         .eq("user_id", user.id)
         .execute()
     )
-    from app.dependencies import first_or_none
     row = first_or_none(result)
     return success_response(row or {"user_id": user.id})
 
@@ -177,11 +151,10 @@ async def get_therapist_settings(authorization: Optional[str] = Header(None)):
 @router.patch("/therapist")
 async def update_therapist_settings(
     body: TherapistSettingsUpdate,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(require_role("therapist")),
 ):
     """Update own therapist settings."""
-    user, token = await get_current_user(authorization)
-    _require_role(user, "therapist")
+    user, _token, _role = auth
     db = get_admin_client()
 
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -192,7 +165,6 @@ async def update_therapist_settings(
         .upsert(update_data, on_conflict="user_id")
         .execute()
     )
-    from app.dependencies import first_or_none
     row = first_or_none(result)
     return success_response(row or update_data)
 
@@ -200,10 +172,9 @@ async def update_therapist_settings(
 # ── Clinic Branding ─────────────────────────────────────────────────
 
 @router.get("/clinic/branding")
-async def get_clinic_branding(authorization: Optional[str] = Header(None)):
+async def get_clinic_branding(auth=Depends(require_role("clinic_admin"))):
     """Get clinic branding (clinic admin only)."""
-    user, _ = await get_current_user(authorization)
-    _require_role(user, "clinic_admin")
+    user, _token, _role = auth
     clinic_id = get_clinic_id_for_user(user)
     if not clinic_id:
         raise HTTPException(status_code=400, detail="Usuário não associado a uma clínica")
@@ -215,11 +186,10 @@ async def get_clinic_branding(authorization: Optional[str] = Header(None)):
 @router.patch("/clinic/branding")
 async def update_clinic_branding(
     body: ClinicBrandingUpdate,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(require_role("clinic_admin")),
 ):
     """Update clinic branding (clinic admin only)."""
-    user, _ = await get_current_user(authorization)
-    _require_role(user, "clinic_admin")
+    user, _token, _role = auth
     clinic_id = get_clinic_id_for_user(user)
     if not clinic_id:
         raise HTTPException(status_code=400, detail="Usuário não associado a uma clínica")
@@ -233,10 +203,9 @@ async def update_clinic_branding(
 # ── Patient Settings ────────────────────────────────────────────────
 
 @router.get("/patient")
-async def get_patient_settings(authorization: Optional[str] = Header(None)):
+async def get_patient_settings(auth=Depends(require_role("patient"))):
     """Get own patient settings."""
-    user, token = await get_current_user(authorization)
-    _require_role(user, "patient")
+    user, _token, _role = auth
     db = get_admin_client()
     result = (
         db.table("patient_profiles")
@@ -244,7 +213,6 @@ async def get_patient_settings(authorization: Optional[str] = Header(None)):
         .eq("user_id", user.id)
         .execute()
     )
-    from app.dependencies import first_or_none
     row = first_or_none(result)
     return success_response(row or {"user_id": user.id})
 
@@ -252,11 +220,10 @@ async def get_patient_settings(authorization: Optional[str] = Header(None)):
 @router.patch("/patient")
 async def update_patient_settings(
     body: PatientSettingsUpdate,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(require_role("patient")),
 ):
     """Update own patient settings."""
-    user, token = await get_current_user(authorization)
-    _require_role(user, "patient")
+    user, _token, _role = auth
     db = get_admin_client()
 
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -267,6 +234,5 @@ async def update_patient_settings(
         .eq("user_id", user.id)
         .execute()
     )
-    from app.dependencies import first_or_none
     row = first_or_none(result)
     return success_response(row or update_data)

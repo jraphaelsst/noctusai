@@ -11,11 +11,13 @@ Roles: platform_admin, clinic_admin, therapist, patient
 import logging
 from typing import Optional
 
-from fastapi import Header, HTTPException
-
 from noctusai_seed import create_database_module, create_dependencies
 from noctusai_lib.domain.action_log import log_action as _shared_log_action
-from noctusai_lib.api.auth import first_or_none, resolve_sso_role  # noqa: F401
+from noctusai_lib.api.auth import (  # noqa: F401
+    first_or_none,
+    make_require_role,
+    resolve_sso_role,
+)
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -52,26 +54,20 @@ def get_user_role(user) -> str:
     return "patient"
 
 
-def require_role(*allowed_roles: str):
-    """Dependency factory that checks the user's role against allowed roles.
+require_role = make_require_role(get_current_user, get_user_role)
+"""Product-bound role-guard dependency factory.
 
-    Usage in routers:
-        @router.get("/admin/dashboard")
-        async def admin_dashboard(
-            user_and_token=Depends(get_current_user),
-            _=Depends(require_role("platform_admin")),
-        ):
-    """
-    async def _check_role(authorization: Optional[str] = Header(None)):
-        user, token = await get_current_user(authorization)
-        role = get_user_role(user)
-        if role not in allowed_roles:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Acesso negado. Funcionalidade restrita a: {', '.join(allowed_roles)}",
-            )
-        return user, token, role
-    return _check_role
+Usage in routers::
+
+    @router.get("/admin/dashboard")
+    async def admin_dashboard(
+        auth=Depends(require_role("platform_admin")),
+    ):
+        user, token, role = auth
+        ...
+
+Per :func:`noctusai_lib.api.auth.make_require_role`.
+"""
 
 
 def get_clinic_id_for_user(user) -> Optional[str]:
