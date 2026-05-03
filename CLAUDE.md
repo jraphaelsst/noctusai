@@ -92,6 +92,9 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - Creating a new product → `KB § GUIDES/new-product.md`
 - Seed-first design checklist → `KB § GUIDES/seed-first-design.md`
 
+### Integrations (KB depth — vendor references)
+- Vista CRM REST API (auth, endpoints, error model, adapter contract, per-tenant calibration gap) → `KB § INTEGRATIONS/vista.md`
+
 ### Per-product details — open only the product you're working on
 - Backend specs → `KB § backend/{01-CORE, 02-ERP, 03-PF, 04-DATABASE, 05-AI-FEATURES, 06-THERAPY, 07-AUTH-SECURITY, 08-DAILY-LIFE}.md`
 - Frontend specs → `KB § frontend/{01-CORE, 02-ERP, 03-PF, 04-THERAPY}.md`
@@ -124,6 +127,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 | Adding a helper to `noctusai_lib` | `KB § PATTERNS/seed-lib-layout.md` |
 | Touching gamified UI | `CLAUDE/frontend.md` + `KB § 07-GAMIFICATION.md` |
 | Designing an agent / MCP / skill | `KB § INSTRUCTIONS/00-MASTER.md` |
+| Touching Vista CRM (showcase adapter, future MCP server, endpoint surface, field-set calibration) | `KB § INTEGRATIONS/vista.md` |
 | Anything not listed | `KB § INDEX.md` |
 
 ---

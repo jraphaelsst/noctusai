@@ -47,6 +47,8 @@ KNOWLEDGE-BASE/
 │   │   ├── setup.md
 │   │   ├── new-product.md
 │   │   └── seed-first-design.md
+│   ├── INTEGRATIONS/       ← per-vendor integration references (auth, endpoints, error model, adapter contract)
+│   │   └── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
 │   ├── backend/            ← per-product backend details
 │   │   ├── 01-CORE.md
 │   │   ├── 02-ERP.md
@@ -113,6 +115,7 @@ KNOWLEDGE-BASE/
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
+| Vista CRM REST API (auth, query convention, response envelope, error hierarchy, endpoint inventory, adapter contract, per-tenant calibration gap) | `CONTEXT/INTEGRATIONS/vista.md` |
 | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |
 | ERP backend | `CONTEXT/backend/02-ERP.md` |
 | PF backend | `CONTEXT/backend/03-PF.md` |
@@ -155,6 +158,7 @@ KNOWLEDGE-BASE/
 | About to edit `.py` / `.ts` / `.tsx` source — rename, codemod, find-callers, anything beyond a 1-line targeted edit | `CONTEXT/PATTERNS/ast.md` (AST-first; never sed/regex on source) |
 | Adding any helper or function an agent might want to call (Claude Code / future bot / future product agent) | `CONTEXT/01-PHILOSOPHY.md § MCP-first` (default surface is `mcp/noctusai/`) |
 | Designing a new agent / skill / MCP | `INSTRUCTIONS/00-MASTER.md` |
+| Touching Vista CRM (adapter, MCP server, endpoint surface, field-set calibration) | `CONTEXT/INTEGRATIONS/vista.md` |
 
 ---
 
