@@ -122,6 +122,24 @@ When extracting cross-product business logic to `domain/`:
 3. The feature's `__init__.py` exports the public surface; product code imports `from noctusai_lib.domain.<feature> import <thing>`.
 4. Tests live in `seed/lib/backend/tests/test_<feature>.py`.
 
+## Consumer-injection seams — Protocol over Callable
+
+When a seed module needs a dependency injected by the consuming product (a credential resolver, a distance lookup, a conflict-rule, a scorer, a credentials repo), use a **`typing.Protocol`** — not a bare `Callable`.
+
+**Rule:** if the dependency has any of the following properties, ship a Protocol:
+
+- More than one method on the seam (Protocol is the only option).
+- A single method but the **return type is a discriminated union** that the seed-side code dispatches on (e.g. `ServiceAccountCredentials | OAuthCredentials | None`). A bare Callable forces consumers to pre-pick the dispatch branch OR forces seed to runtime-type-sniff a duck-typed return.
+- A single method whose typed signature is part of the seed's public contract (i.e. you'd want a future agent to read the signature without running mypy on the consumer).
+
+A `Callable[[X], Y]` is fine only when the seam is genuinely a one-arg, one-return-type pure function with no dispatch (e.g. an opaque hash function, a logging callback). Even then, prefer Protocol if you'd describe the seam as "a thing that does X" in prose.
+
+**Why:** typed-union returns let the seed-side factory dispatch on KIND inside the seed (factories pick the right adapter / strategy / etc.) instead of pushing that selection logic into every consumer. Same DI shape — consumer constructs and passes once at app-start. Strictly stronger types. Matches the existing seed convention: `noctusai_lib.domain.scheduling.{TravelLookup, Conflict, Scorer}`, `noctusai_lib.integrations.google_calendar.CalendarCredentialResolver`, `noctusai_lib.integrations.google_maps.MapsAdapter`. Wrapping a closure into a Protocol is one trivial line if a consumer needs it (`class _C: def get(self, x): return f(x)`).
+
+**Anti-shape:** if you find yourself writing `loader: Callable[[str], Union[A, B, None]]` in a seed-side type signature, refactor to a Protocol BEFORE the second consumer arrives — the Callable forces every consumer to either (a) implement closure-with-type-aware-return (ugly) or (b) push dispatch into seed at every call site (DRY violation).
+
+**Formalized 2026-05-03** by `projects/google-calendar-real-adapters/` close-gate, after the original spec said `Callable[[user_or_clinic_id], OAuthCredentials]` and the implementing agent shipped `CalendarCredentialResolver` Protocol returning the typed union. The Protocol shape was strictly better; rather than refactor or accept, the seed-wide convention was made explicit here. See `KB § PATTERNS/accept-with-rationale.md § Calendar credential seam` for the originating triage.
+
 ## Migration history
 
 The layered model was adopted **2026-04-30** (during Phase 4 of `execution-workflow-codequality-rollout`). The seed-lib root had grown to 26 sibling entries (10 folders + 16 modules) — a flat namespace where a fresh agent couldn't tell a "platform primitive" from a "feature module" by sight.
