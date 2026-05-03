@@ -1,4 +1,15 @@
-"""Product scaffolding — create new products from the seed framework."""
+"""Product scaffolding — create new products from the seed framework.
+
+Migrations emitted by the scaffolded product MUST keep the canonical SQL
+DDL conventions used elsewhere in the platform. Helpers live at
+`noctusai_lib.domain.sql_templates` (`set_search_path`, `updated_at_function`,
+`updated_at_trigger`, `rls_subquery_policy`). The bundled `001_seed.sql`
+template uses placeholders that resolve to schema-correct SQL on scaffold;
+the regression tests at `tests/test_scaffold.py` (TestSqlTemplatesIntegration)
+assert the scaffolded migration's `SET search_path` line + RLS policy line
+match the helpers' output, so future drift is caught at CI rather than
+discovered via a broken migration.
+"""
 import logging
 import shutil
 from pathlib import Path
