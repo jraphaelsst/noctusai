@@ -114,14 +114,24 @@ async def excluir_profile(profile_id: str, authorization: Optional[str] = Header
     if profile_id == user.id:
         raise HTTPException(status_code=400, detail="Não é possível excluir a si mesmo")
 
-    # Verify target user belongs to same org
+    # Verify target user belongs to same org. The check fails CLOSED:
+    # before migration 024 (2026-05-03) `profiles.org_id` did not exist,
+    # so `target_profile.data.get("org_id")` always returned None and the
+    # cross-org guard was silently bypassed. The column now exists and
+    # is backfilled, but a profile with NULL org_id (legacy / un-migrated
+    # row) still raises 403 — the safer side of the boundary.
     caller_org = get_org_id(user)
     target_profile = admin.table("profiles").select("nome, org_id").eq("id", profile_id).single().execute()
     if not target_profile.data:
         raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
     target_org = target_profile.data.get("org_id")
-    if target_org and caller_org != target_org:
+    if not target_org:
+        raise HTTPException(
+            status_code=403,
+            detail="Perfil sem organização escopada — exclusão bloqueada",
+        )
+    if caller_org != target_org:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
     nome = target_profile.data.get("nome", "Unknown")

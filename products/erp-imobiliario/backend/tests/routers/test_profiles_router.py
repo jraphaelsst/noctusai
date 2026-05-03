@@ -54,9 +54,64 @@ class TestUpdateProfile:
 
 
 class TestDeleteProfile:
-    def test_delete_profile_secure(self, client):
-        client._mock_supabase.set_table_data("profiles", {"nome": "ToDelete"})
+    """The cross-org guard at routers/profiles.py:115 fails CLOSED.
+
+    Pre-migration-024 (2026-05-03) the column `profiles.org_id` did not
+    exist in live DB; `target_profile.data.get("org_id")` always returned
+    None and the guard `if target_org and caller_org != target_org` was
+    silently bypassed (cross-tenant DELETE was possible). These regression
+    tests exercise the four boundary conditions:
+
+    - same-org delete → 200
+    - cross-org delete → 403 "Acesso negado"
+    - target with NULL org_id (legacy / un-backfilled row) → 403 "...sem
+      organização escopada..."
+    - self-delete → 400 (existing behavior)
+    """
+
+    def _setup(self, client, target_org_id):
+        """Seed a profile + arm the auth admin for delete success."""
+        client._mock_supabase.set_table_data("profiles", [
+            {"id": "p1", "nome": "ToDelete", "org_id": target_org_id},
+        ])
         client._mock_supabase.auth.admin = MagicMock()
         client._mock_supabase.auth.admin.delete_user = MagicMock(return_value=None)
+
+    def test_delete_same_org_succeeds(self, client):
+        # Default fixture user is `org_id="test-org-123"`.
+        self._setup(client, target_org_id="test-org-123")
         resp = client.delete("/api/profiles/p1")
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
+
+    def test_delete_cross_org_blocked(self, client):
+        """Admin of org A cannot delete a profile owned by org B."""
+        self._setup(client, target_org_id="other-org-456")
+        resp = client.delete("/api/profiles/p1")
+        assert resp.status_code == 403
+        body = resp.json()
+        assert "Acesso negado" in str(body)
+
+    def test_delete_null_org_blocked(self, client):
+        """Pre-migration-024 silent-bypass regression guard. Profile with
+        NULL org_id (legacy row that didn't backfill) raises 403, never
+        falls through to the deletion."""
+        self._setup(client, target_org_id=None)
+        resp = client.delete("/api/profiles/p1")
+        assert resp.status_code == 403
+        body = resp.json()
+        assert "organização escopada" in str(body) or "organizacao escopada" in str(body)
+
+    def test_delete_self_blocked(self, client):
+        """Self-deletion is rejected before the cross-org check runs."""
+        # Default fixture user id: see MockUser default. We only need to
+        # call DELETE /<same-id>; the early `if profile_id == user.id`
+        # check fires regardless of org_id state.
+        from noctusai_lib.testing import MockUser
+        user = MockUser()  # default test-user
+        client._mock_supabase.auth.get_user = MagicMock(
+            return_value=type("R", (), {"user": user})()
+        )
+        resp = client.delete(f"/api/profiles/{user.id}")
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "si mesmo" in str(body)

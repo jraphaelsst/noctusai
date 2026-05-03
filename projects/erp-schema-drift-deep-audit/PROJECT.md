@@ -18,7 +18,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** 📋 **FILED** — Phase 0 interrogation pending. Security concern flagged.
+- **Status:** ⏳ **EXECUTING** — Phase 1 (security-fix slice) ✅ shipped 2026-05-03 (migrations 024 + 025; `profiles.py:115` fail-closed; 3 cross-org regression tests). Phase 2+ (wider 11-table org_id audit) pending user §7 sign-off on the org-scoping model.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
 - **Project slug:** `erp-schema-drift-deep-audit`
 - **Project location:** `projects/erp-schema-drift-deep-audit/` (cross-cutting — touches ERP backend code + possibly migrations + LGPD)
@@ -108,16 +108,37 @@ _(filled at Phase 0 interrogation; provisional)_
 
 ## 6. Implementation phases
 
-### Phase 0 — Live-DB audit + interrogation
+### Phase 0 — Live-DB audit + interrogation ✅ (executed 2026-05-03)
 
-- [ ] Enumerate every column in every ERP table; build a checked-in inventory.
-- [ ] Run `grep -rn '.eq("org_id"' app/` against ERP backend; cross-reference each call site against the inventory; classify each as "valid (table has org_id)" or "drift (table lacks org_id)".
-- [ ] Confirm or revise the §2 candidate answers with the user.
-- [ ] Decide whether `profiles.py:115` security fix ships in Phase 1 (separate atomic migration) or as part of the broader migration.
+- [x] Live-DB audit via Supabase MCP confirmed 11 ERP tables lack `org_id`: `ativos, clientes, profiles, metas, agenda, imoveis, site_imoveis_config, whatsapp_settings, whatsapp_etiquetas, certidoes_consultas, financeiro`.
+- [x] Sampled `auth.users.raw_user_meta_data->>'org_id'` — populated for every existing ERP profile (5/5 random sample).
+- [x] Decided `profiles.py:115` ships as separate atomic Phase 1 migration (security urgency outweighs the wider audit's design-question waiting window).
+- [x] Wider §2 candidate answers (org-scoping model, per-table backfill sources) deferred to user §7 sign-off — Phase 2+ remains gated.
 
-### Phase 1+ — Migrate (designed at Phase 0)
+**Improvements:**
+- The `auth.users.raw_user_meta_data->>'org_id'` JWT claim shape was assumed to be the canonical source for backfill. If a future product writes its `org_id` somewhere else (e.g. a service-role-only `user_orgs` join table), the backfill query in 024 would miss those rows. Captured here in case the wider Phase 2+ audit surfaces a non-JWT org_id source — the per-table backfill phase will need to handle it.
+- The 6/69 profiles that backfilled null are likely test/legacy users; could be cleaned up in a future hygiene pass if the platform-admin UI grows a "list profiles missing org_id" view.
 
-_(per-table phases land here once design is locked)_
+### Phase 1 — `profiles.org_id` security-fix slice ✅ (shipped 2026-05-03)
+
+- [x] Migration `024_profiles_org_id.sql`: `ALTER TABLE erp.profiles ADD COLUMN org_id UUID` + backfill from `auth.users.raw_user_meta_data->>'org_id'` + `idx_erp_profiles_org_id`. Applied via Supabase MCP `apply_migration` ({"success": true}). Backfill result: **63 of 69 profiles got org_id; 6 remain null** (legacy/test users without org metadata — they fail-closed at the guard, which is the safer behavior).
+- [x] Migration `025_handle_new_user_org_id.sql`: extends `public.handle_new_user()` trigger so new auth.users INSERT also writes `org_id` into `erp.profiles`. Closes the post-024 gap where new signups would land null again.
+- [x] Hardened `routers/profiles.py:115` cross-org guard: now fails CLOSED when `target_org` is null (raises 403 "Perfil sem organização escopada — exclusão bloqueada"), in addition to the existing `caller_org != target_org` 403. Pre-fix: `if target_org and caller_org != target_org` was silently bypassed because `target_org` was always None.
+- [x] Added `TestDeleteProfile` regression class with 4 boundary tests: same-org delete (200), cross-org delete (403 "Acesso negado"), null org_id (403 "organização escopada"), self-delete (400). All 4 pass.
+- [x] **ERP backend: 1819/1819 passed** (was 1816, +3 new boundary tests).
+- [x] **No keeper regressions**: `cli.py --review` 0 issues.
+
+**Improvements:**
+- The cross-org guard pattern (read scoped column → fail-closed if null → reject if mismatch) is shared across products that have admin-mediated cross-tenant ops. Today only ERP profiles uses it; if therapy admin / mailing admin grow similar admin-deletes, formalize a `noctusai_lib.api.cross_org_guard(target_org, caller_org, *, raise_on_null=True)` helper so the fail-closed shape is enforced platform-wide. N=1 today; revisit at N=2.
+- Legacy 6/69 profiles with null `org_id` are quietly excluded from admin operations now. A `platform_admin` UI surface (or a one-off SQL update) could backfill them by inspecting cross-references (e.g., `metas.usuario_id → ...` joins). Out of scope for this slice; captured for a future hygiene pass.
+
+### Phase 2+ — Wider 11-table org_id audit (DEFERRED — pending user §7 sign-off)
+
+_The security-critical slice landed in Phase 1; the wider drift surface (10 remaining tables, 20+ code call sites) is design-heavy and gated on the org-scoping model decision._
+
+- [ ] §7 Q1 answer: column-on-each-table (default recommendation) vs. JWT-only.
+- [ ] §7 Q3 answer: per-table backfill sources (e.g. `ativos.filial_id` → join → org_id; `clientes.usuario_id` → auth → org_id; etc.).
+- [ ] Per-table phases follow once design is locked. Each phase: migration → backfill → code-rename of any `eq("org_id", …)` sites that change shape → tests → re-enable `MockSupabaseClient(validate_schema=True)` for that table cluster.
 
 ---
 
@@ -151,3 +172,4 @@ _(per-table phases land here once design is locked)_
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | **Project filed** as the deep-audit follow-up surfaced by `projects/side-projects-batch/` Phase 2.b (`erp-schema-drift-reconciliation` Phase 0 found the drift wider than its narrow scope + a cross-org security bug at `profiles.py:115` silently bypassed by the missing column). Phase 0 interrogation pending. | Claude Opus 4.7 |
+| 2026-05-03 | **Phase 1 ✅ — security-fix slice shipped.** Migrations 024 (`profiles.org_id` ADD COLUMN + backfill from `auth.users.raw_user_meta_data->>'org_id'`; 63/69 backfilled) and 025 (extend `handle_new_user()` trigger to populate `org_id` for new signups) applied via Supabase MCP. `routers/profiles.py:115` cross-org guard hardened to fail-closed on null `target_org`. 4 new boundary regression tests at `TestDeleteProfile` (same-org/cross-org/null-org/self-delete). ERP backend 1819/1819 passed. Phase 2+ (wider 11-table audit) remains DEFERRED pending user §7 sign-off on org-scoping model + per-table backfill sources. | Claude Opus 4.7 |
