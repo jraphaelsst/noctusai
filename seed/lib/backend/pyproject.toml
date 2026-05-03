@@ -28,6 +28,11 @@ dependencies = [
     # noctusai_lib.email.digest.render() (formalized 2026-04-25 once 5
     # adopters surfaced; see KB § 04-SHARED-LIBRARY § email/).
     "jinja2>=3.1.0",
+    # Google Calendar real adapters (service-account + OAuth). Used by
+    # noctusai_lib.integrations.google_calendar.{service_account_adapter,
+    # oauth_adapter}.
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.30.0",
 ]
 
 [tool.setuptools.packages.find]

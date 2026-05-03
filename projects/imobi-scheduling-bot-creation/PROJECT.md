@@ -22,7 +22,7 @@ The user has a tested, working WhatsApp scheduling bot at sibling repo `~/Docume
 The user wants this **rebuilt as a NoctusAI product on our own patterns**, freshly implemented — not lifted as a code-port, but reimplemented consuming the seed features the absorption batch is producing. *"We're gonna create this as a noc product, got it? That's what i meant by there->here plan, so we implement the product on own code pattern as it should be, right from fresh start."*
 
 This product is the **first consumer** of three seed efforts landing in parallel:
-1. `projects/whatsapp-seed-absorption/` → `noctusai_lib.integrations.whatsapp` + `noctusai_lib.domain.conversation`.
+1. `projects/whatsapp-seed-absorption/` → `noctusai_lib.integrations.whatsapp` + `noctusai_lib.domain.chatbot`.
 2. `projects/llm-tool-call-audit/` → `noctusai_lib.domain.ai.tool_audit`.
 3. `projects/scheduling-engine-seed/` → `noctusai_lib.domain.scheduling`.
 
@@ -78,7 +78,7 @@ How we're approaching this specific product creation (beyond `CLAUDE.md` rules).
 **In scope:**
 
 - Phase 0 audit (slug confirmation, port allocation, RLS shape, frontend yes/no).
-- Scaffold via `noctusai_scaffold_product(slug, ...)` MCP tool (Phase 1).
+- Scaffold via `noctus.dev.scaffold_product(slug, ...)` MCP tool (Phase 1).
 - Backend factory wiring with seed routers + chatbot framework + tool-audit + scheduling engine.
 - Domain models: Condominium, Property, Service, MediaCrew, Appointment, AppointmentRequest, Conversation, ConversationMessage, ConversationSummary, ToolCallAudit (the last by lib import; products' migration adds the table).
 - Alembic migrations matching the product's domain.
@@ -119,9 +119,9 @@ The sibling code is **not lifted**. Its semantics are. This map records what the
 | Sibling capability (semantic) | Where it lives HERE | Notes |
 |---|---|---|
 | WAHA inbound webhook + signature verification + idempotency | `noctusai_lib.integrations.whatsapp.create_whatsapp_webhook_router(...)` mounted via `standard_routers=[..., "whatsapp_webhook"]` | Seed feature; product just wires it. |
-| Conversation buffer + debounce in Redis | `noctusai_lib.domain.conversation.buffer` configured via `configure_conversation_module(...)` | Seed; product wires. |
-| Worker that processes due conversations | `noctusai_lib.domain.conversation.worker.ConversationWorker.run_forever()` started in lifespan | Seed; product wires. |
-| OpenAI tool-loop chat | `noctusai_lib.domain.conversation.llm_dispatcher` configured with this product's system prompt + tool registry | Seed; product configures. |
+| Conversation buffer + debounce in Redis | `noctusai_lib.domain.chatbot.buffer` configured via `configure_conversation_module(...)` | Seed; product wires. |
+| Worker that processes due conversations | `noctusai_lib.domain.chatbot.worker.ConversationWorker.run_forever()` started in lifespan | Seed; product wires. |
+| OpenAI tool-loop chat | `noctusai_lib.domain.chatbot.llm_dispatcher` configured with this product's system prompt + tool registry | Seed; product configures. |
 | Tool-call audit | `noctusai_lib.domain.ai.tool_audit.default_audit_writer(db)` wired into dispatcher | Seed; product wires. |
 | Scheduling rules engine (working windows, lunch, travel-buffer, same-condo duration, candidate generation) | `noctusai_lib.domain.scheduling.SchedulingEngine` configured with this product's `SchedulingRules` (real-estate vocabulary) | Seed; product configures. |
 | Google Calendar adapter (OAuth + service-account + Fake) | `noctusai_lib.integrations.google_calendar` configured via `configure_calendar_module(...)` | Seed; product wires. |
@@ -131,7 +131,7 @@ The sibling code is **not lifted**. Its semantics are. This map records what the
 | Intent extraction (schedule / cancel / reschedule + reference data lookup) | `products/<slug>/backend/app/services/intent_extraction.py` | Product. |
 | Reference-data tools (lookup_property, propose_appointment, confirm_appointment, cancel_appointment, reschedule_appointment) | MCP tools under `platform.business.<service>.<action>` per `projects/mcp-server-expansion/` Phase 5 | Tools land in MCP; product imports + dispatches in-process. |
 | System prompt (Portuguese pt-BR, in-character as scheduling bot) | `products/<slug>/backend/app/prompts/scheduling_bot.md` | Product owns the prose. |
-| Conversation summary on idle | `noctusai_lib.domain.conversation.summary` (opt-in flag) — product enables | Seed; product opts in. |
+| Conversation summary on idle | `noctusai_lib.domain.chatbot.summary` (opt-in flag) — product enables | Seed; product opts in. |
 | WhatsApp pushName auto-update on inbound | Implemented in product's webhook handler hook (passed to seed router via DI) | Bot-specific behavior; seed provides hook. |
 | Rejection-reply persistence on unauthorized inbound | Same as above — product hook | Bot-specific behavior; seed provides hook. |
 
@@ -205,7 +205,7 @@ OPENAI_MODEL=gpt-4o-mini
 
 ### Phase 1 — Scaffold the product
 
-- [ ] Run `python mcp/noctusai/cli.py noctusai_scaffold_product --slug=<slug>` (or equivalent).
+- [ ] Run `python mcp/noctusai/cli.py noctus.dev.scaffold_product --slug=<slug>` (or equivalent).
 - [ ] Verify `products/<slug>/{backend, frontend?, README.md, MASTER-PROMPT.md}` exists and is shape-compliant per `KB § GUIDES/new-product.md`.
 - [ ] Initial commit boundary.
 
@@ -316,7 +316,7 @@ OPENAI_MODEL=gpt-4o-mini
 4. **Single-agency or multi-tenant?** Recommendation: **single-agency v1** (mirrors sibling); multi-tenant is a refactor when a second agency arrives. Decided before Phase 3 (RLS shape).
 5. **Standalone or paired with `erp-imobiliario`?** Recommendation: **standalone product** but shares conventions with erp-imobiliario; cross-product data (e.g., property catalog) is a future integration concern. Decided before Phase 0 closes.
 6. **Localization in v1 (pt-BR + en)?** Recommendation: **pt-BR only**; localization framework is a future seed concern. Decided in Phase 6.
-7. **LGPD posture?** Run the five questions (`KB § PATTERNS/lgpd.md`) over conversation message storage + tool audit rows. Recommendation: conversation messages are PII (phone, name, possibly location); tool audit rows hold the same; document basis + retention in Phase 12 KB doc. Apply `noctusai_lgpd_flag(...)` if uncertain.
+7. **LGPD posture?** Run the five questions (`KB § PATTERNS/lgpd.md`) over conversation message storage + tool audit rows. Recommendation: conversation messages are PII (phone, name, possibly location); tool audit rows hold the same; document basis + retention in Phase 12 KB doc. Apply `noctus.dev.lgpd_flag(...)` if uncertain.
 8. **Bot's WhatsApp number?** Operational decision; needs WAHA session provisioning. Decided before Phase 5.
 
 ---
@@ -353,7 +353,7 @@ ls ~/Documents/repository/NoctusAI/whatsapp-google-scheduling/
 # After this project closes, the user will delete the above. No remaining references.
 
 # Product scaffold (Phase 1)
-python mcp/noctusai/cli.py noctusai_scaffold_product --slug=<confirmed-slug>
+python mcp/noctusai/cli.py noctus.dev.scaffold_product --slug=<confirmed-slug>
 
 # Per-phase verification
 pytest products/<slug>/backend/

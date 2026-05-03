@@ -100,6 +100,10 @@ from .usage import (
     estimate_cost_usd,
     record_usage,
 )
+from .inputs import (
+    audio_bytes_to_named_buffer,
+    image_bytes_to_data_url,
+)
 
 __all__ = [
     # Configuration
@@ -153,4 +157,7 @@ __all__ = [
     "SupabaseUsageSink",
     "estimate_cost_usd",
     "record_usage",
+    # Input-shape helpers (vision data URLs, audio buffers)
+    "image_bytes_to_data_url",
+    "audio_bytes_to_named_buffer",
 ]

@@ -3,6 +3,8 @@ smoke (with mocked httpx client)."""
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from noctusai_lib.integrations.google_maps import (
     Coordinates,
     GoogleMapsRoutingAdapter,
@@ -135,3 +137,70 @@ def test_factory_returns_google_when_api_key_provided() -> None:
 def test_factory_returns_static_when_no_api_key() -> None:
     adapter = get_routing_adapter(api_key=None)
     assert isinstance(adapter, StaticRoutingAdapter)
+
+
+# ---- Failure modes ---------------------------------------------------------
+
+
+def test_google_adapter_propagates_5xx_via_raise_for_status() -> None:
+    import httpx as _httpx
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status.side_effect = _httpx.HTTPStatusError(
+        "503 backend overloaded",
+        request=MagicMock(),
+        response=MagicMock(status_code=503),
+    )
+    fake_client = MagicMock()
+    fake_client.post.return_value = fake_response
+
+    adapter = GoogleMapsRoutingAdapter(api_key="k", http_client=fake_client)
+    with pytest.raises(_httpx.HTTPStatusError):
+        adapter.travel_estimate(_origin(), _destination())
+
+
+def test_google_adapter_propagates_timeout() -> None:
+    import httpx as _httpx
+
+    fake_client = MagicMock()
+    fake_client.post.side_effect = _httpx.TimeoutException("read timeout")
+
+    adapter = GoogleMapsRoutingAdapter(api_key="k", http_client=fake_client)
+    with pytest.raises(_httpx.TimeoutException):
+        adapter.travel_estimate(_origin(), _destination())
+
+
+def test_google_adapter_propagates_401_unauthorized() -> None:
+    import httpx as _httpx
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status.side_effect = _httpx.HTTPStatusError(
+        "401 unauthorized",
+        request=MagicMock(),
+        response=MagicMock(status_code=401),
+    )
+    fake_client = MagicMock()
+    fake_client.post.return_value = fake_response
+
+    adapter = GoogleMapsRoutingAdapter(api_key="bad-key", http_client=fake_client)
+    with pytest.raises(_httpx.HTTPStatusError):
+        adapter.travel_estimate(_origin(), _destination())
+
+
+def test_google_adapter_closes_http_client_on_exception() -> None:
+    """When adapter constructs its own httpx.Client, it must close it
+    even if the request raises (the existing finally block)."""
+    import httpx as _httpx
+
+    fake_internal_client = MagicMock()
+    fake_internal_client.post.side_effect = _httpx.ConnectError("dns failed")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_httpx, "Client", lambda **_: fake_internal_client)
+
+        # http_client=None → adapter constructs internally → must close on raise
+        adapter = GoogleMapsRoutingAdapter(api_key="k", http_client=None)
+        with pytest.raises(_httpx.ConnectError):
+            adapter.travel_estimate(_origin(), _destination())
+
+    fake_internal_client.close.assert_called_once()

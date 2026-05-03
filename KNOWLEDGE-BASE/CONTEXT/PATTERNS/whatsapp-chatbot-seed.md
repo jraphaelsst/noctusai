@@ -6,7 +6,7 @@
 >
 > - **`noctusai_lib.integrations.whatsapp`** — WAHA-backed inbound parser
 >   + outbound sender + signed-webhook FastAPI router factory.
-> - **`noctusai_lib.domain.conversation`** — Redis-backed conversation
+> - **`noctusai_lib.domain.chatbot`** — Redis-backed conversation
 >   buffer + debounce + worker shell + OpenAI tool-loop dispatcher +
 >   optional structured-output summary helper.
 >
@@ -54,7 +54,7 @@ swapping the connector.
 | `WhatsAppSettings` | Pydantic config (`base_url`, `api_key`, `session`, `webhook_hmac_secret`). |
 | `create_whatsapp_webhook_router(settings, on_message)` | FastAPI APIRouter factory. Verifies HMAC-SHA256 hex signatures (when `webhook_hmac_secret` is set), dedupes by `provider_message_id`, dispatches to `on_message(inbound)`. |
 
-### Framework — `noctusai_lib.domain.conversation`
+### Framework — `noctusai_lib.domain.chatbot`
 
 | Symbol | Role |
 |---|---|
@@ -66,8 +66,11 @@ swapping the connector.
 | `ToolCall`, `ToolResult` | Normalized dispatcher I/O. |
 | `ToolHandler`, `AuditWriter` | Consumer-supplied callables (audit_writer optional; default no-op). |
 | `memory_to_chat_messages`, `format_conversation_for_transcript` | Pure-function translators. |
-| `image_bytes_to_data_url`, `audio_bytes_to_named_buffer` | OpenAI vision + audio helpers. |
 | `summarize_conversation(client, model, memory, output_schema, system_prompt, ...)` | Structured-output summary runner (opt-in). |
+
+LLM input-shape helpers (`image_bytes_to_data_url`, `audio_bytes_to_named_buffer`)
+moved to `noctusai_lib.integrations.llm` — they're vendor-shape adapters
+(OpenAI vision + audio file payloads), not chatbot-domain.
 
 ### Settings (consumer-side)
 
@@ -103,7 +106,7 @@ from noctusai_lib.integrations.whatsapp import (
     WhatsAppSettings, create_whatsapp_webhook_router, WhatsAppInboundMessage,
 )
 from noctusai_lib.integrations.redis import make_redis_client
-from noctusai_lib.domain.conversation import (
+from noctusai_lib.domain.chatbot import (
     ConversationBufferService, QueuedConversationMessage,
 )
 
@@ -146,7 +149,7 @@ adopts named routers.
 ### Step 2: build the worker
 
 ```python
-from noctusai_lib.domain.conversation import (
+from noctusai_lib.domain.chatbot import (
     ConversationWorker, LLMDispatcher, memory_to_chat_messages,
     ToolCall, ToolResult,
 )
@@ -208,7 +211,7 @@ worker.run_forever()
 
 ```python
 from pydantic import BaseModel
-from noctusai_lib.domain.conversation import summarize_conversation
+from noctusai_lib.domain.chatbot import summarize_conversation
 
 
 class MySummary(BaseModel):
@@ -229,6 +232,37 @@ def idle_processor(conversation_id: str, memory: list[dict]) -> None:
 
 worker.idle_processor = idle_processor  # opt-in; default off
 ```
+
+### Step 4 (optional): voice + image inputs
+
+When WAHA delivers a voice note or image, fetch the bytes from the WAHA
+media URL, then shape them for OpenAI:
+
+```python
+from noctusai_lib.integrations.llm import (
+    audio_bytes_to_named_buffer,
+    image_bytes_to_data_url,
+)
+
+# Inbound voice → OpenAI Whisper
+audio_bytes = await fetch_waha_media(inbound.media_url)
+buffer_for_whisper = audio_bytes_to_named_buffer(audio_bytes, "voice.ogg")
+transcription = openai_client.audio.transcriptions.create(
+    model="whisper-1", file=buffer_for_whisper,
+)
+
+# Inbound image → vision-input data URL (chat completion content block)
+image_bytes = await fetch_waha_media(inbound.media_url)
+data_url = image_bytes_to_data_url(image_bytes, mimetype="image/jpeg")
+content = [
+    {"type": "text", "text": "What's in this photo?"},
+    {"type": "image_url", "image_url": {"url": data_url}},
+]
+```
+
+Both helpers are pure functions — no I/O, no SDK coupling. The worker
+can call them inside the processor (or a tool handler) before invoking
+the LLM.
 
 ---
 
@@ -254,14 +288,25 @@ worker.idle_processor = idle_processor  # opt-in; default off
 
 ## 5. Documented behavior to know about
 
-### Debounce race (preserved from sibling)
+### Debounce race — mitigated 2026-05-03
 
-`due_conversations(now)` returns IDs whose due timestamp ≤ now. The
-worker reads the conversation memory + claims (`zrem`), but a NEW
-inbound between the read and the claim could push the due timestamp
-forward — the worker may then dispatch on slightly stale memory.
-Sibling accepted this. We preserve the behavior; project §7 Q5 leaves
-a follow-up slot open (`projects/conversation-buffer-race-fix/`).
+The legacy two-step (`due_conversations` + `mark_conversation_claimed`)
+had a race: a new inbound between the candidate-read and the `zrem`
+could bump the score past `now`, but the worker would `zrem` blindly
+and dispatch on a still-debouncing conversation.
+
+**Fix:** `claim_due_conversations(now, limit)` re-checks `zscore`
+immediately before `zrem` and skips entries whose score has moved
+past `now` — they're left in the due set for the next worker tick
+once their (new) debounce fires. The worker now uses this method
+exclusively. Residual TOCTOU window between `zscore` and `zrem` is
+microseconds vs the seconds-long pre-fix window (worker's full
+memory-read + dispatch cycle); acceptable for chat scheduling. Swap
+to a Lua script if strict atomicity is ever required.
+
+Legacy `due_conversations` + `mark_conversation_claimed` retained for
+backwards compatibility — direct callers should migrate to
+`claim_due_conversations`.
 
 ### Idle-processor exception swallowing
 
@@ -303,21 +348,21 @@ that pattern stays consumer-side.
 ## 7. Tests + verification
 
 - `seed/lib/backend/tests/integrations/whatsapp/` — 21 cases (mappers + router).
-- `seed/lib/backend/tests/domain/conversation/` — 28 cases (buffer +
+- `seed/lib/backend/tests/domain/chatbot/` — 28 cases (buffer +
   worker + dispatcher + mappers + summary).
 - `seed/lib/backend/tests/integrations/google_calendar/` — 9 cases
   (Fake adapter + mappers).
 - `seed/lib/backend/tests/integrations/google_maps/` — 11 cases (Static
   + mocked Google Maps + mappers).
 
-Run: `cd seed/lib/backend && pytest tests/{integrations,domain/conversation}/`.
+Run: `cd seed/lib/backend && pytest tests/{integrations,domain/chatbot}/`.
 
 ---
 
 ## 8. Related
 
 - `KB § PATTERNS/seed-lib-layout.md` — placement rationale (`integrations/`
-  for transports + adapters; `domain/conversation/` for the framework).
+  for transports + adapters; `domain/chatbot/` for the framework).
 - `KB § PATTERNS/webhook-signatures.md` — `verify_hmac_sha256_hex` is the
   helper the WhatsApp router uses.
 - `KB § PATTERNS/llm-tool-audit.md` — audit_writer wiring for the

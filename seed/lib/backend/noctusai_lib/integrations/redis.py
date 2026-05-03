@@ -5,7 +5,7 @@ Consumers call `make_redis_client(redis_url)` with their settings'
 `redis_url` and cache the result at module scope (typically inside a
 `configure_*_module(...)` call).
 
-Used by `noctusai_lib.domain.conversation` for the buffer + debounce
+Used by `noctusai_lib.domain.chatbot` for the buffer + debounce
 ZSET; consumers may also use it directly for non-conversation Redis
 needs.
 """

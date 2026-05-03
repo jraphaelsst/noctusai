@@ -143,7 +143,7 @@ shape just changes when the decision moves.
 
 ### MCP detectors keep raw `import ast` (NOT migrated to `outline_python`)
 - **Subject:** `mcp/noctusai/tools/{catalog,compliance,recurrence}.py` parser usage.
-- **Decision:** all three detector modules retain `import ast` and node-level walks; do NOT migrate to `noctusai_outline_python`.
+- **Decision:** all three detector modules retain `import ast` and node-level walks; do NOT migrate to `noctus.dev.outline_python`.
 - **Reason:** detectors examine AST below the symbol-tree level outline_python exposes — they need `Call.keywords`, `Try.handlers`, `AnnAssign.annotation`, `ast.unparse(...)`, and similar node-level surfaces that `outline_python` deliberately omits ("the whole point is to leave them out" — `outline_python.py:32`). The recurrence rule fires at the `import ast` line (N=3 modules), but the actual usage shapes diverge — outline_python is for narrow-read planning, detectors are for node-level introspection. Different concerns; consolidating just the imports doesn't pay off.
 - **Scope:** `mcp/noctusai/tools/catalog.py:35`, `compliance.py:6`, `recurrence.py:771`. Each carries an inline comment pointing here.
 - **Revisit trigger:** if `outline_python`'s contract grows to expose node-level surfaces (e.g. via a new `OutlineResult.calls` or `.tries` field) — at that point evaluate per-detector migration. As of 2026-05-02 the contract is intentionally narrow.
@@ -237,8 +237,8 @@ shape just changes when the decision moves.
 - **Revisit trigger:** the user pulls the `whatsapp-google-scheduling` Alphabet/Google webhook findings into this repo, OR a NoctusAI product gains an inbound Google API webhook integration — whichever comes first. Open `webhook-alphabet-scheme-port` then.
 - **Recorded by:** `webhook-hmac-consolidation/PROJECT.md` §7 Q1 (2026-05-03).
 
-### `noctusai_count_tokens` MCP tool ~~does not yet exist~~ — **FORMALIZED 2026-05-03**
-- **Subject:** `KB § PATTERNS/project-execution.md § 2.8 Multi-phase rule shipments — forward-stub + bullet-weight discipline § Measurement discipline` references `noctusai_count_tokens` as the offline MCP tool for measuring CLAUDE.md / KB / project-doc sizes.
+### `noctus.dev.count_tokens` MCP tool ~~does not yet exist~~ — **FORMALIZED 2026-05-03**
+- **Subject:** `KB § PATTERNS/project-execution.md § 2.8 Multi-phase rule shipments — forward-stub + bullet-weight discipline § Measurement discipline` references `noctus.dev.count_tokens` as the offline MCP tool for measuring CLAUDE.md / KB / project-doc sizes.
 - **Decision (retired 2026-05-03):** **FORMALIZED.** The tool ships at `mcp/noctusai/tools/cost_evaluation.py::count_tokens` (with `count_tokens_in_text` underlying primitive); registered in `mcp/noctusai/server.py:265` (descriptor) and `:414` (dispatch). Tokenizer is `tiktoken` (per `requirements.txt`), with `chars/4` fallback. Accepts `path` (file/dir/glob), `text` (inline), or both.
 - **Reason for the original accept:** building the MCP tool inside `context-budget-overhaul` would have been scope creep; deferred to `mcp-server-expansion` where MCP tooling was the explicit deliverable. `wc -w` covered the project's directional 50%+ signal.
 - **Scope:** retired. Tool ships at `mcp/noctusai/tools/cost_evaluation.py`; KB § 2.8 stub note removed from `KB § PATTERNS/project-execution.md` in same flip.
@@ -342,16 +342,13 @@ state change, not a removal.
 - One-shot collision between the `seed-workspace` project and the parallel `mcp-server-expansion` agent (parallel agent reverted my edits twice during the session). Originally landed here as a deferral; resolved same-day when the user signalled the parallel agent was done. **Now subsumed by the parallel-agent collision protocol** at `KB § PATTERNS/project-execution.md § 2.9` — future collisions get a `projects/parallel-collision-<topic>-<YYYY-MM-DD>/` project per the protocol, not a catalog entry. This entry is the worked example referenced from § 2.9; preserved as the originating incident, not as an active divergence.
 - **Recorded by:** `projects/seed-workspace/` PROJECT CLOSE (2026-05-03).
 
-### Real Google Calendar adapters (service-account + OAuth) deferred from `whatsapp-seed-absorption` Phase 7
-- **Subject:** `noctusai_lib/integrations/google_calendar/` ships `FakeCalendarAdapter` + types + mappers + factory placeholder, but NOT `GoogleCalendarAdapter` (service-account auth) or `GoogleCalendarOAuthAdapter` (consenting-user auth + refresh-token persistence). Sibling shipped both at `whatsapp-google-scheduling/app/services/calendar/{google_adapter.py,oauth_adapter.py,_google_api.py,oauth_credential_repo.py}`.
-- **Decision:** ship the testable shape (Fake + types + factory) in Phase 7 of `whatsapp-seed-absorption`; defer real adapters to a follow-up project (`google-calendar-real-adapters` recommended slug) when a consumer needs live Google calls.
-- **Reason:** real adapters require (a) `googleapiclient` + `google-auth` runtime deps in seed-lib (currently absent — adding deps to noctusai_lib has spillover on every product's install); (b) a credential-repo abstraction story (sibling's repo was DB-coupled; the seed-lib version needs to abstract credential storage so consumer wires its own DB-backed repo); (c) tests that cleanly mock the google libraries. The Fake adapter unblocks the chatbot framework + scheduling engine integration immediately; the real adapters can land bounded + reviewed in a focused follow-up once a consumer (likely `imobi-scheduling-bot-creation` Phase 6) actually needs live Google calls.
-- **Scope:** `seed/lib/backend/noctusai_lib/integrations/google_calendar/` — `__init__.py` docstring documents the deferral; `get_calendar_adapter()` factory placeholder returns `FakeCalendarAdapter` until real adapters land.
-- **Revisit trigger:** **`projects/imobi-scheduling-bot-creation/` Phase 6** (first-consumer wiring) is the natural trigger — when imobi's scheduling bot needs to create real Google Calendar events, file `projects/google-calendar-real-adapters/` and lift `GoogleCalendarAdapter` + `GoogleCalendarOAuthAdapter` + `_google_api` from sibling. Earlier escalation: any second product wiring Calendar before imobi flips this from accept → formalize.
-- **Recorded by:** `projects/whatsapp-seed-absorption/` Phase 7 (closed 2026-05-03).
+### Real Google Calendar adapters (service-account + OAuth) — **RESOLVED 2026-05-03**
+- **Originally deferred** from `whatsapp-seed-absorption` Phase 7 (Fake adapter + types + factory shipped; service-account + OAuth adapters left for a follow-up). The deferral premise was: real adapters require (a) `googleapiclient` + `google-auth` runtime deps in seed-lib; (b) a credential-repo abstraction story; (c) mock-based tests for the Google SDK. The Fake unblocked chatbot framework integration immediately while the real adapters waited for a first-consumer trigger.
+- **Resolved same day** alongside the chatbot-framework rename: `googleapiclient` + `google-auth` added to `seed/lib/backend/pyproject.toml`; `GoogleCalendarServiceAccountAdapter` + `GoogleCalendarOAuthAdapter` shipped at `noctusai_lib/integrations/google_calendar/{service_account_adapter,oauth_adapter}.py`; `CalendarCredentialResolver` Protocol + `ServiceAccountCalendarCredentials` + `OAuthCalendarCredentials` dataclasses ship the credential-repo abstraction at `credentials.py`; `get_calendar_adapter(resolver, tenant_id)` factory picks adapter kind from the credentials returned by the resolver, falling back to Fake when no resolver / no credentials. 18 mock-based tests in `tests/integrations/google_calendar/test_real_adapters.py` cover create / get (404 → None) / list (ISO bounds) / wrong-credentials-kind raise / OAuth refresh-on-invalid / factory selection.
+- **Preserved as worked example** of the "Verify the seed ships it" methodology surfaced 2026-05-03 (`KB § 03-SEED-ARCHITECTURE.md § Verify-the-seed-ships-it test`) — the deferral was caught at decision-time during `therapy-scheduling-pilot` Phase 0 *before* it silently expanded pilot scope. Future deferrals follow the same shape: catalog here, name the consumer trigger, resolve when the consumer arrives.
 
 ### `KB § 04-SHARED-LIBRARY.md` catalog row deferred for new `whatsapp-seed-absorption` namespaces
-- **Subject:** `noctusai_lib.integrations.{whatsapp,redis,google_calendar,google_maps}` + `noctusai_lib.domain.conversation` namespaces shipped 2026-05-03 by `whatsapp-seed-absorption` Phase 9, but `KB § 04-SHARED-LIBRARY.md` was NOT updated to add catalog rows for them.
+- **Subject:** `noctusai_lib.integrations.{whatsapp,redis,google_calendar,google_maps}` + `noctusai_lib.domain.chatbot` namespaces shipped 2026-05-03 by `whatsapp-seed-absorption` Phase 9, but `KB § 04-SHARED-LIBRARY.md` was NOT updated to add catalog rows for them.
 - **Decision:** ship the new KB pattern doc (`KB § PATTERNS/whatsapp-chatbot-seed.md`) + INDEX entries + CLAUDE.md §2 Map pointer; defer the catalog-row paperwork to a follow-up.
 - **Reason:** the namespaces are discoverable via the KB pattern doc + INDEX By-topic entries (the agent reading discipline says go to KB first). The shared-library catalog is a secondary index; updating it for every absorption batch is paperwork churn that lags reality. Lower-priority than landing the actual capability.
 - **Scope:** `KB § 04-SHARED-LIBRARY.md` only — INDEX + pattern doc + CLAUDE.md are current.
@@ -378,10 +375,10 @@ state change, not a removal.
   that hard-codes module paths in `mock.patch(<str>)` or
   `Path(...) / "<dirname>" / "<filename>.py"` constructions.
 - **Known features that could help when this fires again:**
-  - `noctusai_scan_recurrence` — detects recurring code shapes
+  - `noctus.dev.scan_recurrence` — detects recurring code shapes
     across files; could be extended to recognize the
     `mock.patch("<str>")` literal-path pattern.
-  - `noctusai_scan_within_product_helpers` — already inspects
+  - `noctus.dev.scan_within_product_helpers` — already inspects
     string literals for product-specific paths; extending its
     detection set to module-path strings is incremental.
   - libcst's `cst.SimpleString` visitor — a future

@@ -46,7 +46,7 @@ For when this project promotes:
 
 ## 3a. Seed-first analysis
 
-Deferred until the project promotes. When promoted: most tools likely land as `platform.dev.*` MCP tools (cross-product) and the bot itself is a thin consumer of `noctusai_lib.integrations.whatsapp` + `noctusai_lib.domain.conversation`. Per-product code count target: ~0–small for the bot wiring; tools live in seed/MCP.
+Deferred until the project promotes. When promoted: most tools likely land as `platform.dev.*` MCP tools (cross-product) and the bot itself is a thin consumer of `noctusai_lib.integrations.whatsapp` + `noctusai_lib.domain.chatbot`. Per-product code count target: ~0–small for the bot wiring; tools live in seed/MCP.
 
 ---
 
@@ -80,7 +80,7 @@ Reference sibling design at (sibling-folder-relative) `projects/dev-team-support
 
 The bot composes:
 - `noctusai_lib.integrations.whatsapp` (connector)
-- `noctusai_lib.domain.conversation` (chatbot framework)
+- `noctusai_lib.domain.chatbot` (chatbot framework)
 - `noctusai_lib.domain.ai.tool_audit` (audit writer)
 - MCP tools under `platform.dev.*`
 

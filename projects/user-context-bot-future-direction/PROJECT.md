@@ -35,7 +35,7 @@ The differentiator versus `dev-observability-bot-future-direction`: that one is 
 For when this project promotes:
 
 1. **Composes the seed chatbot framework**, same as `dev-observability-bot-future-direction`.
-2. **Self-only enforcement is a framework concern, not a tool concern.** The MCP tool decorator (or `noctusai_lib.domain.conversation` dispatcher) enforces; tools just declare "this is personal-data" and rely on the framework.
+2. **Self-only enforcement is a framework concern, not a tool concern.** The MCP tool decorator (or `noctusai_lib.domain.chatbot` dispatcher) enforces; tools just declare "this is personal-data" and rely on the framework.
 3. **LGPD redaction at the audit-write boundary.** `arguments` / `result` fields in `tool_call_audits` get redaction passes for personal data; the project's first phase decides the redaction policy.
 4. **Per-consumer system prompt.** No shared "personal assistant" prose; each consumer (therapy / daily-life / ERP) writes its own.
 5. **Read-mostly with explicit write surfaces.** Sibling's plan: write tools (e.g., "reschedule my appointment") get explicit confirmation steps in the conversation flow.
@@ -45,7 +45,7 @@ For when this project promotes:
 ## 3a. Seed-first analysis
 
 Deferred until the project promotes. When promoted:
-- Self-only enforcement → framework-level (in `noctusai_lib.domain.conversation` or new `noctusai_lib.domain.ai.self_only`).
+- Self-only enforcement → framework-level (in `noctusai_lib.domain.chatbot` or new `noctusai_lib.domain.ai.self_only`).
 - Per-consumer system prompts + tools → product-level.
 - Per-product code count target: a small section per consumer (system prompt + tool registry + WAHA session config).
 
@@ -75,7 +75,7 @@ Reference sibling design at (sibling-folder-relative) `projects/personal-assista
 
 The bot composes:
 - `noctusai_lib.integrations.whatsapp`
-- `noctusai_lib.domain.conversation`
+- `noctusai_lib.domain.chatbot`
 - `noctusai_lib.domain.ai.tool_audit` (with LGPD redaction)
 - Self-only enforcement primitive
 - Per-consumer MCP tools under `platform.user.*` (or `<product>.user.*`)
