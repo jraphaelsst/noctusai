@@ -27,13 +27,13 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
 | Core | 28 | 12 | 26 | 0 | 38 | 423 |
-| ERP | 59 | 51 | 68 | 66 | 110 | 1,643 |
+| ERP | 59 | 51 | 68 | 66 | 110 | 1,646 |
 | PF | 15 | 16 | 24 | 16 | 43 | 445 |
 | Therapy | 39 | 40 | 65 | 26 | 70 | 935 |
 | Seed | 0 | 0 | 8 | 0 | 3 | 31 |
 | Daily Life | 7 | 7 | 12 | 7 | 15 | 226 |
 | Mailing | 10 | 10 | 22 | 9 | 16 | 191 |
-| **Total** | **158** | **136** | **225** | **124** | **295** | **3,894** |
+| **Total** | **158** | **136** | **225** | **124** | **295** | **3,897** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
