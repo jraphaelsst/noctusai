@@ -1104,18 +1104,48 @@ _CHANGELOG_PHASE_SHIPPED_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Inline code spans — single-line backtick-delimited content. Markdown
+# convention: backticks mark "this is a code/identifier/reference, not
+# prose." We strip them before phase-shipped detection so a §11 entry
+# describing ANOTHER file's state (e.g. `Phase 0 ✅` of erp-imobiliario-
+# wiring while authoring repo-state-consolidation-wave-2's §11) does NOT
+# false-positive as a self-claim. Single-source convention: backtick a
+# phrase = "reference, not self-claim." No new syntax; markdown already
+# has it.
+_INLINE_CODE_SPAN_RE = re.compile(r'`[^`\n]*`')
+
+
+def _strip_code_spans(text: str) -> str:
+    """Strip inline code spans (backtick-delimited, single-line) from markdown.
+
+    Used to normalize §11 changelog text before phase-shipped detection so
+    cross-file references (like ``Phase 0 ✅`` describing another project's
+    state) don't trigger self-claim heuristics. Preserves all other text;
+    code spans become single spaces (preserves word boundaries for downstream
+    regexes).
+    """
+    return _INLINE_CODE_SPAN_RE.sub(" ", text)
+
 
 def _shipped_phases_in_changelog(changelog: str) -> set[int]:
-    """Find phase numbers the §11 changelog claims as shipped/closed.
+    """Find phase numbers THIS file's §11 changelog claims as shipped/closed.
 
     Heuristic: look for "Phase N ✅", "Phase N shipped", "Phase N closed",
     "Phase N complete". Only counts phases that appear with explicit
     shipped/closed markers — bare "Phase N" mentions in passing don't
     qualify (e.g. "Phase 0 audit found...").
+
+    Cross-file references should be wrapped in backticks per the markdown
+    convention; backticked spans are stripped before matching so that a §11
+    entry describing another project's `Phase 0 ✅` does not false-positive
+    as a self-claim. See `_strip_code_spans`.
     """
     shipped: set[int] = set()
+    # Strip inline code spans first — backticked references describe other
+    # files' state, not this file's claims.
+    sanitized = _strip_code_spans(changelog)
     # Look for "Phase N ✅" anywhere in changelog
-    for m in re.finditer(r'Phase\s+(\d+)\s*✅', changelog):
+    for m in re.finditer(r'Phase\s+(\d+)\s*✅', sanitized):
         try:
             shipped.add(int(m.group(1)))
         except ValueError as exc:
@@ -1124,7 +1154,7 @@ def _shipped_phases_in_changelog(changelog: str) -> set[int]:
     # Look for "Phase N shipped" / "Phase N closed" with small lookahead
     for m in re.finditer(
         r'Phase\s+(\d+)\b[^.]{0,80}?(?:shipped|closed|complete)',
-        changelog,
+        sanitized,
         re.IGNORECASE,
     ):
         try:

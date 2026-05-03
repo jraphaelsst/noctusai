@@ -431,6 +431,91 @@ class TestPhaseStateConsistency:
         # No "Phase 0 ✅" / "Phase 0 shipped" / "Phase 0 closed" — should not flag.
         assert issues == [], f"Bare mention should not count, got: {issues}"
 
+    def test_backticked_cross_file_phase_reference_does_not_self_claim(self):
+        """Backticked references describe ANOTHER file's state — not a self-claim.
+
+        Slip pattern this guards: while authoring a §11 entry that describes
+        another project's state (e.g. "flagged `Phase 0 ✅` in erp-imobiliario-
+        wiring"), the bare regex used to false-positive the reference as a
+        self-claim. Wrapping in backticks per markdown convention now suppresses
+        the match. See `_strip_code_spans` in compliance.py.
+        """
+        content = (
+            "# Test\n\n"
+            "## 6. Implementation phases\n\n"
+            "### Phase 0 — Audit\n"
+            "- [ ] Pre-flight\n\n"
+            "## 11. Change log\n\n"
+            "| 2026-05-03 | Investigation flagged `Phase 0 ✅` of "
+            "`products/erp-imobiliario/projects/erp-imobiliario-wiring/PROJECT.md` "
+            "as missing the Improvements block. Cross-file reference, not self-claim. | agent |\n"
+        )
+        repo = self._mk_repo(content)
+        issues = check_phase_state_consistency(repo)
+        # The backticked `Phase 0 ✅` describes another file — should not trigger
+        # rule 1 (header-missing-✅-but-§11-says-shipped) on THIS file's Phase 0.
+        assert issues == [], f"Backticked cross-file ref should not self-claim, got: {issues}"
+
+    def test_backticked_phase_n_closed_does_not_self_claim(self):
+        """Same guard as above, but for 'Phase N closed' / 'Phase N shipped'."""
+        content = (
+            "# Test\n\n"
+            "## 6. Implementation phases\n\n"
+            "### Phase 1 — Foo\n"
+            "- [ ] Pending\n\n"
+            "## 11. Change log\n\n"
+            "| 2026-05-03 | Comparing approach against `Phase 1 closed` of sister-project; "
+            "lessons folded in. | agent |\n"
+        )
+        repo = self._mk_repo(content)
+        issues = check_phase_state_consistency(repo)
+        assert issues == [], f"Backticked 'Phase 1 closed' ref should not self-claim, got: {issues}"
+
+    def test_mixed_self_claim_and_backticked_reference(self):
+        """A §11 entry can BOTH self-claim Phase N AND reference another file's Phase M.
+
+        The self-claim must still trigger; the backticked ref must not.
+        """
+        content = (
+            "# Test\n\n"
+            "## 6. Implementation phases\n\n"
+            "### Phase 2 — Bar\n"
+            "- [x] Done\n\n"
+            "**Improvements:** ok.\n\n"
+            "## 11. Change log\n\n"
+            "| 2026-05-03 | Phase 2 ✅ shipped here. Approach borrowed from "
+            "`Phase 0 ✅` of sister-project. | agent |\n"
+        )
+        repo = self._mk_repo(content)
+        issues = check_phase_state_consistency(repo)
+        # Phase 2 is in §11 (self-claim, unbacked) but §6 lacks ✅ — rule 1 fires.
+        # Phase 0 is in §11 backticked (reference) — must NOT trigger rule 1.
+        rule1_issues = [i for i in issues if "lacks the `✅` icon" in i["issue"]]
+        assert any("Phase 2" in i["issue"] for i in rule1_issues), \
+            f"Phase 2 self-claim should fire rule 1, got: {issues}"
+        assert not any("Phase 0" in i["issue"] for i in rule1_issues), \
+            f"Phase 0 backticked reference must not self-claim, got: {issues}"
+
+    def test_strip_code_spans_helper_isolated(self):
+        """_strip_code_spans replaces inline code spans with a single space.
+
+        Direct unit test of the helper to lock its behavior independent of the
+        composite phase-state detector.
+        """
+        from tools.noctus.dev.compliance import _strip_code_spans
+        # Self-claim survives.
+        assert "Phase 0 ✅" in _strip_code_spans("Phase 0 ✅ shipped")
+        # Backticked reference is stripped (replaced with space).
+        assert "Phase 0 ✅" not in _strip_code_spans("ref `Phase 0 ✅` here")
+        # Multi-line backtick (markdown forbids spanning lines) — survives.
+        # The regex only matches single-line spans; a backtick at end-of-line
+        # without a closing backtick on the same line is left untouched.
+        assert "Phase 1" in _strip_code_spans("Phase 1 ✅\n`only-on-next-line`")
+        # Empty input.
+        assert _strip_code_spans("") == ""
+        # Code span at boundaries.
+        assert _strip_code_spans("`x` y `z`").strip() == "y"
+
 
 # ---------------------------------------------------------------------------
 # `check_no_self_monkeypatch` — neutering-our-own-symbols detector
