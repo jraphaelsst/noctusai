@@ -462,7 +462,7 @@
   "products/therapy-platform/frontend/src/components/messaging/MessageBubble.tsx": 3,
   "products/therapy-platform/frontend/src/components/messaging/MessageInput.tsx": 3,
   "products/therapy-platform/frontend/src/components/messaging/NewConversation.tsx": 4,
-  "products/therapy-platform/frontend/src/components/session/ConsentPopup.tsx": 4,
+  "products/therapy-platform/frontend/src/components/session/ConsentPopup.tsx": 5,
   "products/therapy-platform/frontend/src/components/session/OvertimeAlerts.tsx": 3,
   "products/therapy-platform/frontend/src/components/session/PostSessionPopup.tsx": 2,
   "products/therapy-platform/frontend/src/components/session/SessionControls.tsx": 3,
