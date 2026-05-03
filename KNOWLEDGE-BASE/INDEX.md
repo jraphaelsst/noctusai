@@ -42,7 +42,9 @@ KNOWLEDGE-BASE/
 │   │   ├── mcp-tool-conventions.md ← 3-segment dotted naming + Pydantic In/Out + hierarchical registration + lazy context + MCP-first principle
 │   │   ├── seed-workspace.md   ← sibling consume-only workspace; "templates cannot modify noc" rule + 3-layer defense + promotion manifest
 │   │   ├── llm-tool-audit.md       ← per-product tool_call_audits table + AuditRecord/AuditWriter + LGPD redaction + adoption checklist
-│   │   └── llm-bot-security.md     ← defense trio (sanitization / arg-validation / rate-limit) + confidence thresholds + prompt-injection mitigation + baseline checklist
+│   │   ├── llm-bot-security.md     ← defense trio (sanitization / arg-validation / rate-limit) + confidence thresholds + prompt-injection mitigation + baseline checklist
+│   │   ├── scheduling-seed.md      ← noctusai_lib.domain.scheduling — engine + Conflict/Scorer/TravelLookup Protocols + wiring recipe
+│   │   └── whatsapp-chatbot-seed.md ← noctusai_lib.{integrations.whatsapp,domain.conversation,integrations.{google_calendar,google_maps}} — connector + framework + adapters wiring recipe
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
 │   │   ├── new-product.md
@@ -112,6 +114,8 @@ KNOWLEDGE-BASE/
 | Seed workspace (sibling-of-noc consume-only workspace; symlinks all 8 noc surfaces; pre-commit hook + chmod + KB rule = three-layer "templates can't modify noc" defense; promotion manifest for additions; bootstrap script + workspace.py resolver + `noctusai_promote_from_seed_workspace` MCP tool) | `CONTEXT/PATTERNS/seed-workspace.md` |
 | LLM tool-call audit (`tool_call_audits` per-product table; `noctusai_lib.domain.ai.tool_audit::AuditRecord` + `make_audit_writer`; best-effort write; LGPD redaction at consumer; common BI queries) | `CONTEXT/PATTERNS/llm-tool-audit.md` |
 | LLM bot security (defense trio: output sanitization + Pydantic-arg validation + rate-limit; confirm-then-execute for destructive tools; prompt-injection mitigation via instruction sandboxing + allowlists; baseline checklist) | `CONTEXT/PATTERNS/llm-bot-security.md` |
+| Scheduling primitive (`noctusai_lib.domain.scheduling`: engine + `TravelLookup`/`Conflict`/`Scorer` Protocols + `ZeroTravelLookup`/`DefaultConflict`/`DefaultScorer` defaults; wiring recipe; what stays consumer-side) | `CONTEXT/PATTERNS/scheduling-seed.md` |
+| WhatsApp connector + chatbot framework (`noctusai_lib.integrations.whatsapp` WAHA parser/sender/router + `noctusai_lib.domain.conversation` buffer/worker/dispatcher/summary + `noctusai_lib.integrations.{google_calendar,google_maps}` adapters; wiring recipe; debounce-race documented; what stays consumer-side) | `CONTEXT/PATTERNS/whatsapp-chatbot-seed.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |

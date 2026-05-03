@@ -6,7 +6,7 @@
 ## Tools
 
 <!-- kb-counts:start:mcp_tools -->
-**58 tools total** (auto-counted from `mcp/noctusai/server.py`).
+**0 tools total** (auto-counted from `mcp/noctusai/server.py`).
 <!-- kb-counts:end:mcp_tools -->
 
 ### Context
@@ -124,6 +124,31 @@ python mcp/noctusai/cli.py --count-tokens-ext .py KNOWLEDGE-BASE/   # recursive,
 
 **Note on detector status.** These are not keeper detectors — they are read-utility tools — so `check_detector_has_regression_test` does not fire on them. Their unit + smoke + (forthcoming) regression tests are colocated in `mcp/noctusai/tests/` per the test taxonomy in `KB § PATTERNS/testing.md`.
 
+### Session-axis review (added 2026-05-03 by `session-review-baseline`)
+
+The static-axis review surface (`noctusai_review`) walks repo files. The **session-axis review** sibling walks one Claude Code JSONL transcript and emits keeper-shaped issues for **agent-discipline** rules — the rules in `CLAUDE.md § 1` that `noctusai_review` cannot enforce because they only manifest as patterns of tool calls, not as static code.
+
+| Tool | What it returns | Backed by | Source | Tests |
+|---|---|---|---|---|
+| **`noctusai_review_session path=… latest=…`** | Body-free issue list. Each issue: `{rule, severity, message, suggestion, jsonl_line, tool_name, target_path}`. Pure-function detector logic over an event stream extracted from one JSONL. Privacy: no user/assistant message bodies ever leave the adapter. | stdlib `json` parser; pure Python detectors | `mcp/noctusai/tools/session_review.py` + adapter at `mcp/noctusai/session_loader.py` | `mcp/noctusai/tests/test_session_review.py` (26 cases) + `tests/test_session_loader.py` (14 cases) |
+
+**Detectors live (Phase 2 + 3):**
+- `ast-first` (WARNING) — `Bash` mutating `sed/awk/perl -i` / `s/.../` body / `> *.py|*.ts|*.tsx` redirect, immediately followed by `Edit/Write` on the same source file. Mutation-marker predicate scopes around the read-only `sed -n '…p'` pattern (Phase 0 calibration found this is the dominant `sed` shape — false-positive rate is 0/5 sessions when the predicate is enforced).
+- `narrow-read` (INFO) — whole-file `Read` (no `offset` / `limit`) on a >200-line repo file with no preceding `outline_python` / `outline_typescript`. Severity is **INFO**, not WARNING — Phase 3 calibration found the rule fires on legitimate "user reading a file once on purpose" cases too. Bumping to WARNING is gated on a future calibration run with manual ground-truth labels.
+
+**Default JSONL discovery is macOS-only.** The default dir is `~/.claude/projects/-Users-rapha-Documents-repository-NoctusAI-noctusai/`. On non-macOS hosts, always pass `path=<jsonl>` explicitly. The adapter (`session_loader.py`) is the **only** code that touches raw JSONL keys — when Anthropic renames a field, fix it there.
+
+**Detector privacy posture.** Detectors only see `tool_use.name`, `tool_use.input`, `tool_result.content_size`, and `tool_result.is_error`. They never read user/assistant message text. Adding a future "language-slip" detector (e.g. catching `per-product X` phrasing) would require revisiting this posture — out of scope for the baseline.
+
+**CLI invocation:**
+
+```bash
+python mcp/noctusai/cli.py --review-session ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl
+python mcp/noctusai/cli.py --review-session-latest          # newest *.jsonl in default dir (macOS)
+```
+
+**Out of scope (Phase 5+ follow-on):** Stop-hook auto-run, project-close gate, scrubbed transcript reports, additional detectors (estimate-off-evidence, replication-to-seed slip, absorption-search compliance, auto-commit gate). The harness is designed so each new detector is a one-file addition + one-line registry entry in `_DETECTORS`.
+
 ---
 
 ## CLI (for humans)
@@ -152,6 +177,10 @@ python mcp/noctusai/cli.py --outline-typescript <path>  # TS / TSX symbol tree (
 python mcp/noctusai/cli.py --count-tokens <path>        # token budget for a file
 python mcp/noctusai/cli.py --count-tokens-text "<text>" # token budget for inline text
 python mcp/noctusai/cli.py --count-tokens-ext .py <dir> # recursive walk, by extension
+
+# Session-axis review (added 2026-05-03 by session-review-baseline)
+python mcp/noctusai/cli.py --review-session <jsonl>          # walk one transcript; emit ast-first / narrow-read issues
+python mcp/noctusai/cli.py --review-session-latest           # newest *.jsonl in macOS default dir
 ```
 
 ## Architecture

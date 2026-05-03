@@ -17,9 +17,7 @@ pick these up unless the user explicitly reactivates them.
 
 ## Current contents
 
-| Folder | Origin | Why archived | Reactivation trigger |
-|---|---|---|---|
-| `narrow-read-compliance-detector/` | `projects/` (cross-product) | Concept stub marked INFEASIBLE — the detection problem requires AST-level cross-symbol reasoning we don't have a tool for today. | One of the §7 unblock triggers in the file fires (e.g., `noctusai_outline_python` ships symbol-graph traversal). |
+_(empty — `narrow-read-compliance-detector/` was un-archived and absorbed into `projects/session-review-baseline/` on 2026-05-03. The §7 reactivation trigger fired when the local Claude Code JSONL session-log surface was discovered, providing the agent-runtime telemetry the stub was waiting for. Detector #2 of the new harness IS the narrow-read enforcement the stub designed.)_
 
 ## Reactivation protocol
 

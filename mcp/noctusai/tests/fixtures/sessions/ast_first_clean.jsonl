@@ -1,0 +1,5 @@
+{"type": "system", "message": "session-start"}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_01", "name": "Bash", "input": {"command": "sed -n '1,40p' /repo/products/sample/backend/main.py", "description": "read-only sed page"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_01", "content": "from fastapi import FastAPI\napp = FastAPI()\n", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_02", "name": "Edit", "input": {"file_path": "/repo/products/sample/backend/main.py", "old_string": "FastAPI()", "new_string": "FastAPI(title=\"sample\")", "replace_all": false}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_02", "content": "ok", "is_error": false}]}}

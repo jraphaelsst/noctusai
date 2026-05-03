@@ -207,11 +207,11 @@ shape just changes when the decision moves.
 
 ### `send_message` exists in ERP and therapy with different transports (N=2 accept-with-rationale)
 - **Subject:** name `send_message` collides across products but the implementations target different transports.
-- **Decision:** ERP's `send_message` is WAHA (WhatsApp HTTP API); therapy's `send_message` is in-app messaging. Don't consolidate.
-- **Reason:** different domains, different transports, different consent / LGPD rules. The name match is coincidental; the implementations have nothing in common worth absorbing. The N=2 → triage discipline forces this to be an explicit decision rather than silent.
-- **Scope:** `products/erp-imobiliario/backend/app/services/whatsapp_service.py`; `products/therapy-platform/backend/app/services/messaging_service.py`.
-- **Revisit trigger:** a third product adds a `send_message` of either shape — the recurrence rule (N=3 → MUST formalize) flips this to formalize.
-- **Recorded by:** `execution-workflow-codequality-rollout` Phase 0 (closed).
+- **Decision:** ERP's `send_message` is Meta WhatsApp Cloud API; therapy has TWO `send_message` functions — one is a stub for WhatsApp transport (no real send), the other is in-app messaging. Don't consolidate the in-app messaging variant; **DO consolidate the WhatsApp transport variant once `noctusai_lib.integrations.whatsapp.send_text` exists** (gated on `whatsapp-seed-absorption` Phase 1).
+- **Reason:** the WhatsApp transport variants ARE recurrence (ERP real send + therapy stub awaiting same lib); the in-app `messaging_service` is genuinely different. The N=2 → triage discipline pre-emptively filed `send-message-consolidation` 2026-05-03 to avoid an N=3 hasty choice.
+- **Scope:** WhatsApp transport: `products/erp-imobiliario/backend/app/services/whatsapp_service.py:164` + `products/therapy-platform/backend/app/services/whatsapp_therapy_service.py:161`. In-app (out of scope): `products/therapy-platform/backend/app/services/messaging_service.py:179`.
+- **Revisit trigger:** **`whatsapp-seed-absorption` Phase 1 close** — at that point `send-message-consolidation` Phase 0 gate opens and this entry flips to FORMALIZED. Earlier escalation: a third product adds a WhatsApp `send_message` before the predecessor lands → flip `send-message-consolidation` Status from PARKED to URGENT.
+- **Recorded by:** `execution-workflow-codequality-rollout` Phase 0 (closed); escalated and pre-emptively filed at `projects/send-message-consolidation/` 2026-05-03 (commit at session close).
 
 ### Vista audit path uses ERP's `validate_schema=False` mock (deferred to schema-drift project)
 - **Subject:** Vista showcase router writes audit rows to `user_actions_log` (Phase 2 deliverable of the now-closed `vista-crm-wiring` project).
@@ -341,6 +341,22 @@ state change, not a removal.
 ### MCP workspace-aware tool integration — **SUPERSEDED by parallel-agent collision protocol 2026-05-03**
 - One-shot collision between the `seed-workspace` project and the parallel `mcp-server-expansion` agent (parallel agent reverted my edits twice during the session). Originally landed here as a deferral; resolved same-day when the user signalled the parallel agent was done. **Now subsumed by the parallel-agent collision protocol** at `KB § PATTERNS/project-execution.md § 2.9` — future collisions get a `projects/parallel-collision-<topic>-<YYYY-MM-DD>/` project per the protocol, not a catalog entry. This entry is the worked example referenced from § 2.9; preserved as the originating incident, not as an active divergence.
 - **Recorded by:** `projects/seed-workspace/` PROJECT CLOSE (2026-05-03).
+
+### Real Google Calendar adapters (service-account + OAuth) deferred from `whatsapp-seed-absorption` Phase 7
+- **Subject:** `noctusai_lib/integrations/google_calendar/` ships `FakeCalendarAdapter` + types + mappers + factory placeholder, but NOT `GoogleCalendarAdapter` (service-account auth) or `GoogleCalendarOAuthAdapter` (consenting-user auth + refresh-token persistence). Sibling shipped both at `whatsapp-google-scheduling/app/services/calendar/{google_adapter.py,oauth_adapter.py,_google_api.py,oauth_credential_repo.py}`.
+- **Decision:** ship the testable shape (Fake + types + factory) in Phase 7 of `whatsapp-seed-absorption`; defer real adapters to a follow-up project (`google-calendar-real-adapters` recommended slug) when a consumer needs live Google calls.
+- **Reason:** real adapters require (a) `googleapiclient` + `google-auth` runtime deps in seed-lib (currently absent — adding deps to noctusai_lib has spillover on every product's install); (b) a credential-repo abstraction story (sibling's repo was DB-coupled; the seed-lib version needs to abstract credential storage so consumer wires its own DB-backed repo); (c) tests that cleanly mock the google libraries. The Fake adapter unblocks the chatbot framework + scheduling engine integration immediately; the real adapters can land bounded + reviewed in a focused follow-up once a consumer (likely `imobi-scheduling-bot-creation` Phase 6) actually needs live Google calls.
+- **Scope:** `seed/backend/lib/noctusai_lib/integrations/google_calendar/` — `__init__.py` docstring documents the deferral; `get_calendar_adapter()` factory placeholder returns `FakeCalendarAdapter` until real adapters land.
+- **Revisit trigger:** **`projects/imobi-scheduling-bot-creation/` Phase 6** (first-consumer wiring) is the natural trigger — when imobi's scheduling bot needs to create real Google Calendar events, file `projects/google-calendar-real-adapters/` and lift `GoogleCalendarAdapter` + `GoogleCalendarOAuthAdapter` + `_google_api` from sibling. Earlier escalation: any second product wiring Calendar before imobi flips this from accept → formalize.
+- **Recorded by:** `projects/whatsapp-seed-absorption/` Phase 7 (closed 2026-05-03).
+
+### `KB § 04-SHARED-LIBRARY.md` catalog row deferred for new `whatsapp-seed-absorption` namespaces
+- **Subject:** `noctusai_lib.integrations.{whatsapp,redis,google_calendar,google_maps}` + `noctusai_lib.domain.conversation` namespaces shipped 2026-05-03 by `whatsapp-seed-absorption` Phase 9, but `KB § 04-SHARED-LIBRARY.md` was NOT updated to add catalog rows for them.
+- **Decision:** ship the new KB pattern doc (`KB § PATTERNS/whatsapp-chatbot-seed.md`) + INDEX entries + CLAUDE.md §2 Map pointer; defer the catalog-row paperwork to a follow-up.
+- **Reason:** the namespaces are discoverable via the KB pattern doc + INDEX By-topic entries (the agent reading discipline says go to KB first). The shared-library catalog is a secondary index; updating it for every absorption batch is paperwork churn that lags reality. Lower-priority than landing the actual capability.
+- **Scope:** `KB § 04-SHARED-LIBRARY.md` only — INDEX + pattern doc + CLAUDE.md are current.
+- **Revisit trigger:** any of (a) a future agent gets confused looking up a `noctusai_lib.integrations.whatsapp` symbol via the catalog and surfaces it, (b) a paperwork follow-up commit sweeps the catalog (cheap inline update once multiple deferred catalog rows accumulate), (c) the shared-library doc is rewritten end-to-end. None today.
+- **Recorded by:** `projects/whatsapp-seed-absorption/` Phase 9 (closed 2026-05-03).
 
 ---
 

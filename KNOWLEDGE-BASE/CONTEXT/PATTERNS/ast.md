@@ -173,6 +173,7 @@ The MCP toolkit at `mcp/noctusai/` already ships AST-based tools and is the home
 - **`mcp/noctusai/tools/outline_python.py`** — libcst-based structural outline (top-level symbols, signatures) for narrow-read-first discipline (`KB § PATTERNS/agent-reading-discipline.md`).
 - **`mcp/noctusai/tools/outline_typescript.py`** — ts-morph-based structural outline.
 - **`noctusai_*` recurrence scans** (`refs`, `recurrence`, `service_line_recurrence`, `cross_product_helpers`) — these are intentionally string-line-based per `KB § 06-AGENTS.md`; the AST counterparts for code edits land in the broaden project.
+- **`noctusai_review_session`** *(detector ship 2026-05-03 — `session-review-baseline`)* — session-axis enforcement of this rule. Walks one Claude Code JSONL transcript and flags any `Bash` command that mutates a `.py` / `.ts` / `.tsx` file via `sed -i*` / `perl -*i*` / `s/.../` body / `> *.{py,ts,tsx}` redirect when the next touch on that path is an `Edit` or `Write`. The mutation predicate scopes around read-only `sed -n '…p'` inspection (which IS allowed). See `KB § 06-AGENTS.md § Session-axis review`.
 
 When you need to do a rename / find-callers / codemod across the repo, prefer:
 

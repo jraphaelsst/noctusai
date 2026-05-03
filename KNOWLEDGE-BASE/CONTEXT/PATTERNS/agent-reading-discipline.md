@@ -117,6 +117,19 @@ like, but the cost compounds across a multi-file investigation.
   downstream use case (e.g. AI-training feature extraction in
   `projects/project-history-ledger/`) needs higher precision.
 
+### Detector (Phase 3 ship 2026-05-03 — `session-review-baseline`)
+
+- ✅ **`noctusai_review_session`** — walks one Claude Code JSONL
+  transcript and emits a body-free issue when a whole-file `Read`
+  (no `offset` / `limit`) on a >200-line repo file was not preceded
+  by an `outline_python` / `outline_typescript`. Severity is INFO
+  (calibration on 5 real local sessions confirmed legitimate
+  whole-file reads exist; the WARNING bump is gated on a future
+  manual-ground-truth calibration). The detector lives at
+  `mcp/noctusai/tools/session_review.py` and is wired into the
+  static-axis `noctusai_review` family as a session-axis sibling.
+  See `KB § 06-AGENTS.md § Session-axis review`.
+
 ---
 
 ## Explore-agent delegation

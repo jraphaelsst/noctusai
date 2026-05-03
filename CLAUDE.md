@@ -87,6 +87,8 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - LLM tool-call audit (`tool_call_audits` per-product table, `AuditRecord` + `make_audit_writer`, LGPD redaction) → `KB § PATTERNS/llm-tool-audit.md`
 - LLM bot security (sanitize / validate / rate-limit trio, confirm-then-execute, prompt-injection mitigation) → `KB § PATTERNS/llm-bot-security.md`
 - Template workspace (sibling consume-only workspace; "templates can't modify noc" rule + 3-layer defense + promotion manifest) → `KB § PATTERNS/template-workspace.md`
+- Scheduling primitive (`noctusai_lib.domain.scheduling` — engine + Conflict/Scorer/TravelLookup Protocols + defaults + wiring recipe) → `KB § PATTERNS/scheduling-seed.md`
+- WhatsApp connector + chatbot framework (`noctusai_lib.integrations.whatsapp` + `noctusai_lib.domain.conversation` + `noctusai_lib.integrations.{google_calendar,google_maps}` — WAHA parser/sender/router + Redis-backed buffer/worker/LLM-dispatcher + Calendar/Maps adapters; wiring recipe) → `KB § PATTERNS/whatsapp-chatbot-seed.md`
 
 ### Guides
 - First-time setup → `KB § GUIDES/setup.md`

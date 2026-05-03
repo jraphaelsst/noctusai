@@ -1,0 +1,10 @@
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_01", "name": "Bash", "input": {"command": "sed -i 's/x/y/' /repo/a.py", "description": "violation #1"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_01", "content": "", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_02", "name": "Edit", "input": {"file_path": "/repo/a.py", "old_string": "y", "new_string": "z", "replace_all": false}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_02", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_03", "name": "Bash", "input": {"command": "perl -pi -e 's/foo/bar/' /repo/b.ts", "description": "violation #2"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_03", "content": "", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_04", "name": "Write", "input": {"file_path": "/repo/b.ts", "content": "export const x = 1;\n"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_04", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_05", "name": "Bash", "input": {"command": "echo done > /repo/log.txt", "description": "redirect to non-source"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_05", "content": "", "is_error": false}]}}

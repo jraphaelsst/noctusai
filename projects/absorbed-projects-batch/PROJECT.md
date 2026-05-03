@@ -163,27 +163,26 @@ Drives 3 absorption children to ✅, each landing in `noctusai_lib`. No inter-ch
 - [ ] Phase 6 — final verification.
 - [ ] Close-phase commit; child folder deleted; outcomes folded into this batch §11.
 
-**1.c `scheduling-engine-seed` — drive to ✅.** *(Lands `SchedulingService` in `noctusai_lib.domain.scheduling`.)*
-- [ ] Phase 0 audit (vocabulary generalization decisions: location/assignee/transition_buffer per commit message).
-- [ ] Phase 1 — engine + rules + conflicts.
-- [ ] Phase 2 — scoring strategy.
-- [ ] Phase 3 — tests ported from sibling.
-- [ ] Phase 4 — KB pattern doc.
-- [ ] Phase 5 — final verification + handoff.
-- [ ] Phase 6 — cancellation + reschedule support (folded from sibling `cancellation-rescheduling` PROJECT).
-- [ ] Close-phase commit; child folder deleted; outcomes folded into this batch §11.
+**1.c `scheduling-engine-seed` — ✅ shipped 2026-05-03.** *(Lib landed at `noctusai_lib.domain.scheduling`.)*
+- [x] Phase 0 audit — design-shape adjustments locked in (TravelLookup Protocol, SchedulingContext value-object, WorkingWindow named struct).
+- [x] Phase 1+2 (merged) — engine + rules + Conflicts + Scorer + TravelLookup Protocols + defaults.
+- [x] Phase 3 — 9 tests (5 ported sibling + 4 seed-lib-only Scorer).
+- [x] Phase 4 — KB pattern doc (`scheduling-seed.md`); INDEX + CLAUDE.md §2 Map.
+- [x] Phase 5 — final verification (350/350 → 352/352 after Phase 6); therapy-scheduling-pilot scaffolded.
+- [x] Phase 6 — `SchedulingEngine.reschedule()` + cancel-vs-reschedule doc + 2 reschedule tests.
+- [x] Close-phase commit + child folder deletion at batch-close commit.
 
-**1.d `whatsapp-seed-absorption` — drive to ✅.** *(Largest substrate; lands WhatsApp connector + chatbot framework + Calendar/Maps adapters.)*
-- [ ] Phase 0 audit before any code lands.
-- [ ] Phase 1 — foundation: namespace skeletons + settings.
-- [ ] Phase 2 — WhatsApp connector lift.
-- [ ] Phase 3 — chatbot framework: buffer + debounce.
-- [ ] Phase 4 — chatbot framework: worker shell.
-- [ ] Phase 5 — chatbot framework: LLM dispatcher.
-- [ ] Phase 6 — conversation summary (optional capability).
-- [ ] Phase 7 — Calendar adapter dual-path lift.
-- [ ] Phase 8 — Maps routing adapter dual-path lift.
-- [ ] Close-phase commit; child folder deleted; outcomes folded into this batch §11.
+**1.d `whatsapp-seed-absorption` — ✅ shipped 2026-05-03.** *(Largest substrate; lands WhatsApp connector + chatbot framework + Calendar/Maps adapters.)*
+- [x] Phase 0 audit (gate sub-tasks verified; §5.1 map correction landed for sibling waha-as-directory).
+- [x] Phase 1 — foundation: redis backfill + 4 namespace skeletons.
+- [x] Phase 2 — WhatsApp connector lift (5 files + 21 tests).
+- [x] Phase 3 — buffer + debounce (Redis key names preserved verbatim; 7 tests).
+- [x] Phase 4 — worker shell (5 tests).
+- [x] Phase 5 — LLM dispatcher + mappers (13 tests).
+- [x] Phase 6 — summarize_conversation helper (3 tests).
+- [x] Phase 7 — Calendar Fake + types + factory (9 tests). **Real Google service-account + OAuth adapters deferred** to `google-calendar-real-adapters` follow-up (accept-with-rationale).
+- [x] Phase 8 — Maps Static + GoogleMapsRoutingAdapter + factory (11 tests).
+- [x] Close-phase commit + child folder deletion at batch-close commit.
 
 ### Phase 2 — Tier 2: toolkit growth (1 child)
 

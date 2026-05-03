@@ -65,7 +65,7 @@ Single root `.env` for everything. Backend vars: `SUPABASE_URL`, `SUPABASE_ANON_
 ## MCP Dev Toolkit
 
 <!-- kb-counts:start:agent_context_tools -->
-58 tools
+0 tools
 <!-- kb-counts:end:agent_context_tools --> exposed as an MCP server at `mcp/noctusai/`. CLI wrapper for humans:
 
 ```bash

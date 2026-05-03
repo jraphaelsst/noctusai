@@ -39,7 +39,7 @@ If the project is scoped to a single product, move it under that product. If it 
 
 ## Current root-level projects (snapshot 2026-05-03)
 
-> Recently closed + deleted (2026-05-03): `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1 close; Phases 2-5 deferred per §7 Q6 reactivation triggers — see git history for the original PROJECT.md). Carry-forward projects: `mcp-server-fastmcp-switch` (mcp-server-expansion Phase 4+5); `whatsapp-seed-absorption` Phase 5 (llm-tool-call-audit Phase 4).
+> Recently closed + deleted (2026-05-03): `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1 close; Phases 2-5 deferred per §7 Q6 reactivation triggers — see git history for the original PROJECT.md), `scheduling-engine-seed` (lib landed at `noctusai_lib.domain.scheduling`; KB doc at `KB § PATTERNS/scheduling-seed.md`; therapy-scheduling-pilot scaffolded as second-consumer follow-up). Carry-forward projects: `mcp-server-fastmcp-switch` (mcp-server-expansion Phase 4+5); `whatsapp-seed-absorption` Phase 5 (llm-tool-call-audit Phase 4).
 
 ### ⏳ Active in-flight (work underway; next step well-defined)
 
@@ -54,12 +54,12 @@ If the project is scoped to a single product, move it under that product. If it 
 
 | Slug | Title | Blocker |
 |---|---|---|
-| `scheduling-engine-seed` | Scheduler primitive absorption (folded cancellation/rescheduling sibling) | none — Phase 0 ready |
 | `whatsapp-seed-absorption` | WhatsApp framework absorption + idempotency-keys | none — Phase 0 ready |
 | `imobi-scheduling-bot-creation` | Imobi scheduling bot creation | downstream of `scheduling-engine-seed` + `whatsapp-seed-absorption` |
 | `session-review-baseline` | Session-axis review (JSONL transcript detector) | filed-only per user directive; awaits explicit reactivation |
 | `mcp-server-fastmcp-switch` | FastMCP runtime swap-out (carry-forward from mcp-server-expansion Phase 4) | Phase 0 ready |
 | `mcp-tool-name-deprecation` | Alias retirement after dotted-naming bedded | blocked on `mcp-server-fastmcp-switch` Phase 5 close |
+| `send-message-consolidation` | N=2 `send_message` collision (ERP + therapy WhatsApp) → seed-lib `send_text` consolidation | blocked on `whatsapp-seed-absorption` Phase 1 (lib must exist) |
 
 ### 🔵 Concept-stage / interrogation pending
 
@@ -84,6 +84,7 @@ If the project is scoped to a single product, move it under that product. If it 
 | `erp-metas` | `products/erp-imobiliario/projects/erp-metas/` | ✅ All 11 phases shipped |
 | `vista-crm-wiring` | `products/erp-imobiliario/projects/vista-crm-wiring/` | ✅ All 4 phases shipped 2026-05-02 |
 | `therapy-platform-wiring` | `products/therapy-platform/projects/therapy-platform-wiring/` | Design drafted — Phase 0 (api-call inventory) pending |
+| `therapy-scheduling-pilot` | `products/therapy-platform/projects/therapy-scheduling-pilot/` | PARKED — second-consumer placeholder for `noctusai_lib.domain.scheduling`; scaffolded 2026-05-03 |
 
 ## Starting a new project
 

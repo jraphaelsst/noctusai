@@ -27,7 +27,7 @@
 
 ### P2 — Top deferrals to escalate (from accept-with-rationale catalog — 15 active entries)
 
-1. **`send_message` collision at N=2** → file `send_message-consolidation` follow-up project NOW. Recurrence rule: third product hitting it forces a hasty choice.
+1. ✅ **`send_message` collision at N=2** — filed as `send-message-consolidation` 2026-05-03 (PARKED, gated on `whatsapp-seed-absorption` Phase 1).
 2. **`MockSupabaseClient(validate_schema=False)` opt-outs** → flip per-product as each schema-reconciliation project closes (ERP first, therapy second).
 3. **Outbound webhook signer in `core/services`** at N=2 → re-evaluate when second outbound subscription product lands.
 4. **MCP settings shim local `get_settings()`** → formalize when N=2 non-product process needs the singleton (likely soon — vista MCP just shipped its own).
@@ -35,12 +35,13 @@
 
 ### P3 — Phase-0-ready (scaffolded, awaits focused-session pickup)
 
-- `scheduling-engine-seed` — Phase 0 ready (scheduler primitive absorption)
+- ✅ `scheduling-engine-seed` — shipped 2026-05-03 (lib at `noctusai_lib.domain.scheduling`; KB doc; therapy-scheduling-pilot scaffolded)
 - `whatsapp-seed-absorption` — Phase 0 ready (WhatsApp framework absorption + idempotency-keys)
 - `imobi-scheduling-bot-creation` — downstream of the two above
 - `session-review-baseline` — filed-only per user directive; awaits explicit reactivation
 - `mcp-server-fastmcp-switch` — Phase 0 ready (FastMCP runtime swap-out)
 - `mcp-tool-name-deprecation` — blocked on `mcp-server-fastmcp-switch` Phase 5
+- `send-message-consolidation` — Phase 0 ready (gated on `whatsapp-seed-absorption` Phase 1)
 - `therapy-platform-wiring` — Phase 0 (api-call inventory) is the gate for Phases 1-9
 
 ### P4 — Concept-stage / interrogation pending

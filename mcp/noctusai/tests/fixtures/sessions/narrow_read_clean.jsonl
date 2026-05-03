@@ -1,0 +1,5 @@
+{"type": "system", "message": "session-start"}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_01", "name": "noctusai_outline_python", "input": {"path": "__BIG_FILE__"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_01", "content": "...", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_02", "name": "Read", "input": {"file_path": "__BIG_FILE__", "offset": 100, "limit": 50}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_02", "content": "...", "is_error": false}]}}

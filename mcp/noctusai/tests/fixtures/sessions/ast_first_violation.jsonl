@@ -1,0 +1,7 @@
+{"type": "system", "message": "session-start"}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_01", "name": "Read", "input": {"file_path": "/repo/products/sample/backend/main.py"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_01", "content": "from fastapi import FastAPI\napp = FastAPI()\n", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_02", "name": "Bash", "input": {"command": "sed -i 's/FastAPI()/FastAPI(title=\"x\")/' /repo/products/sample/backend/main.py", "description": "rename app constructor"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_02", "content": "", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_03", "name": "Edit", "input": {"file_path": "/repo/products/sample/backend/main.py", "old_string": "FastAPI(title=\"x\")", "new_string": "FastAPI(title=\"sample\")", "replace_all": false}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_03", "content": "ok", "is_error": false}]}}
