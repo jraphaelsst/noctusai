@@ -1,6 +1,6 @@
 """``noctus.dev.*`` tool umbrella — developer-experience MCP tools.
 
-All 24 modules in this package expose a top-level ``register(server)``
+All 25 modules in this package expose a top-level ``register(server)``
 function. ``register_all`` calls them in alphabetical order with lazy
 imports so the server's import-time stays light (``ai_brain`` pulls in
 OpenAI, ``testing`` shells out to pytest, etc. — only when the registrar
@@ -25,6 +25,7 @@ def register_all(server) -> None:
     from . import master_prompts
     from . import outline_python
     from . import outline_typescript
+    from . import phase_learnings
     from . import products
     from . import promotion
     from . import proposals
@@ -50,6 +51,7 @@ def register_all(server) -> None:
     master_prompts.register(server)
     outline_python.register(server)
     outline_typescript.register(server)
+    phase_learnings.register(server)
     products.register(server)
     promotion.register(server)
     proposals.register(server)

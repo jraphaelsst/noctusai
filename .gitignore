@@ -56,3 +56,9 @@ Benchmark Systems/
 seed/framework/backend/noctusai_seed/_version_static.py
 seed/lib/backend/noctusai_lib/_version_static.py
 
+# Local-only persisted data (SQLite phase-learnings tracker, future per-machine state).
+# Schema lives in code; the .db file is rebuilt locally from logged calls. See
+# `mcp/noctusai/tools/noctus/dev/phase_learnings.py` and
+# `KB § PATTERNS/project-execution.md § 2.11 Phase enrichment loop`.
+mcp/noctusai/data/
+
