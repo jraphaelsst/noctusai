@@ -33,9 +33,15 @@ Onboarding is stored as fields on `organizations` (`onboarding_completed`, `onbo
 
 **Other groups**: goals/tracking (metas, metas_config, funil_movimentos, atividades), real estate ops (condominios, vistorias, chaves, contratos, propostas, parcelas), financial (lancamentos, impostos, extratos, comissoes), rentals (contratos_locacao), documents/signatures (documentos, assinaturas, templates), marketing/email (campanhas, emails, templates), WhatsApp (messages, config), portals (portal_acessos, chamados, tokens, site_config), Meta API (meta_config, meta_leads, meta_campanhas_sync), gamification (pontuacoes, conquistas), system (status_pagina, user_actions_log, password_request_codes).
 
-## PF Tables (`personal-finance` — 18)
+## PF Tables (`personal-finance` — 20)
 
-`contas` (multi-type accounts), `categorias` (custom per org), `transacoes`, `orcamentos` + `orcamento_categorias`, `metas` (savings goals), `recorrentes`, `carteiras` (portfolios), `ativos` (positions with ticker), `watchlist`.
+**Op tables (12)**: `contas`, `categorias` (per-org seeded copies; 19 starter rows from `app/services/onboarding_service.PF_DEFAULT_CATEGORIAS` at first signup, then user-customizable), `transacoes`, `orcamentos`, `metas`, `recorrentes`, `carteiras` (portfolios), `ativos` (positions with ticker), `operacoes`, `patrimonio_snapshots`, `watchlists`, `resumos_mensais` (UNIQUE `(org_id, mes)`).
+
+**Child tables (4)**: `orcamento_itens` (parent=`orcamentos`), `meta_contribuicoes` (`metas`), `watchlist_itens` (`watchlists`), `alocacao_alvo` (`carteiras`). RLS traverses to parent's `org_id`.
+
+**AI / shared (4)**: `ai_outputs` + `ai_feedback` (per-product AI indicator widget), `invitations`, `status_pagina`.
+
+**Org scoping (post 2026-05-03)**: every op table is `org_id NOT NULL REFERENCES public.organizations(id) + created_by UUID NULL` (audit field). RLS uniform via `public.current_org_id()` JWT-claim helper. Solo users land in a `is_personal=true` org auto-created by `noctusai_lib.domain.org.ensure_personal_org` at first-PF-login. See `KB § backend/03-PF.md § Org scoping`.
 
 ## Therapy Tables (`therapy` — 54)
 

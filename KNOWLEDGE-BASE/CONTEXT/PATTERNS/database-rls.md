@@ -8,7 +8,7 @@
 |---|---|---|
 | `public` | Core | Auth, orgs, billing, licenses, notifications, products registry |
 | `erp` | ERP | Real estate CRM (imóveis, clientes, contratos, comissões, visitas, metas) |
-| `personal-finance` | PF | Accounts, transactions, budgets, portfolios |
+| `personal-finance` | PF | Accounts, transactions, budgets, portfolios — org-scoped via `public.current_org_id()` (post 2026-05-03 `pf-org-scoping-migration`); 12 op tables + 4 child tables, each parent has `org_id NOT NULL + created_by UUID NULL`. |
 | `therapy` | Therapy | Therapists, patients, sessions, wallets, messaging |
 | `daily_life` | Daily Life | Tasks, goals, habits, schedule, notes |
 | `mailing` | Mailing | Contacts, lists, templates, campaigns, automations |

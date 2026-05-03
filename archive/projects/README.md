@@ -19,7 +19,6 @@ pick these up unless the user explicitly reactivates them.
 
 | Folder | Origin | Why archived | Reactivation trigger |
 |---|---|---|---|
-| `pf-org-scoping-migration/` | `products/personal-finance/projects/` | PARKED 2026-04-27 by user directive ("leave for later"). | User explicitly resumes; then move back to `products/personal-finance/projects/`. |
 | `narrow-read-compliance-detector/` | `projects/` (cross-product) | Concept stub marked INFEASIBLE — the detection problem requires AST-level cross-symbol reasoning we don't have a tool for today. | One of the §7 unblock triggers in the file fires (e.g., `noctusai_outline_python` ships symbol-graph traversal). |
 
 ## Reactivation protocol

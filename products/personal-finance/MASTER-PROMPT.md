@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Personal finance tracker for individuals. Multi-account transaction management, budgets with category limits, recurring transaction automation, investment portfolio tracking, stock watchlists with real-time quotes, financial goal tracking, and reporting/analytics dashboards.
+Personal finance tracker for **organizations** -- companies use it as a financial management tool with multiple operators per org; individuals use it via single-member "personal" orgs (same data model, same RLS). Multi-account transaction management, budgets with category limits, recurring transaction automation, investment portfolio tracking, stock watchlists with real-time quotes, financial goal tracking, and reporting/analytics dashboards.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ Personal finance tracker for individuals. Multi-account transaction management, 
 ### Core
 - **contas** -- multi-type bank/investment accounts (checking, savings, credit card, investment, etc.)
 - **transacoes** -- income/expense transactions linked to accounts and categories
-- **categorias** -- hierarchical transaction categories (system defaults + user custom)
+- **categorias** -- per-org seeded copies (19 starter rows from `PF_DEFAULT_CATEGORIAS` at first signup; each org owns + customizes its set freely)
 - **operacoes** -- batch import and auto-categorization of transactions
 
 ### Planning
@@ -37,9 +37,9 @@ Personal finance tracker for individuals. Multi-account transaction management, 
 - **dashboard** -- summary cards, charts, spending trends
 - **relatorios** -- monthly reports, category breakdowns, cash flow analysis
 
-## Services (15)
+## Services (16)
 
-ativos, carteira, categorias, contas, cotacoes, dashboard, metas, orcamentos, patrimonio, recorrentes, relatorios, transacoes, watchlist, **ai** (Phase 7 P1 indicators), **monthly_narrative** (Phase 10 P2-opp digest)
+ativos, carteira, categorias, contas, cotacoes, dashboard, metas, orcamentos, patrimonio, recorrentes, relatorios, transacoes, watchlist, **ai** (Phase 7 P1 indicators), **monthly_narrative** (Phase 10 P2-opp digest), **onboarding** (`ensure_pf_personal_org` + `seed_default_categories`; wraps seed-side `noctusai_lib.domain.org.ensure_personal_org` with PF defaults — 2026-05-03 `pf-org-scoping-migration`)
 
 ### AI Service (Phase 7 — 2026-04-25)
 - **`categorize_transaction`** (P1-opp) — `POST /api/ai/transacoes/{transacao_id}/categorize`. Suggests a category from the user's existing `categorias` for a transaction; returns `matched_categoria_id` for one-click apply. Hook: `useCategorizeTransaction`. Prompt version `pf-categorize@v1`.
@@ -54,7 +54,7 @@ ativos, carteira, categorias, contas, cotacoes, dashboard, metas, orcamentos, pa
 ## PF-Specific Patterns
 
 - **Scheduler**: `app/scheduler.py` uses APScheduler to auto-process due recurring transactions, creating corresponding transacoes entries automatically.
-- **Org ID extraction**: Same as ERP -- `get_org_id(user)` from `dependencies.py`. Never inline metadata access.
+- **Org scoping**: 12 op tables + 4 child tables, all `org_id NOT NULL + created_by UUID NULL`. RLS uniform via `public.current_org_id()` (JWT claim). Routers call `get_current_user_org(authorization)` → `Service(db, org_id)`; every service is `__init__(self, db_client, org_id: str)`. Solo users land in `is_personal=true` orgs auto-created via `ensure_pf_personal_org`.
 - **Real-DB tests**: Auto-skip when `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` not set. Use `ClientOptions(schema="personal-finance")`.
 
 ## Frontend Pages
@@ -78,7 +78,7 @@ Dashboard, Contas, ContaDetalhes, Categorias, Operacoes, Orcamentos, OrcamentoDe
 cd products/personal-finance/backend && pytest
 ```
 
-502 tests across router and service test files.
+584 passed + 10 skipped (locked baseline post-org-scoping migration 2026-05-03).
 
 ## Dependencies
 

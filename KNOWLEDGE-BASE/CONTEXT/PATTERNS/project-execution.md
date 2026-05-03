@@ -533,6 +533,38 @@ This repo is regularly worked by multiple agents in parallel (a Claude Code sess
 
 ---
 
+## 2.10 Commit + push authorship discipline — only your own work (2026-05-03)
+
+**Rule.** Each agent commits and pushes ONLY the files they authored or modified in the current session. Parallel-agent work in the working tree (modified or untracked files you didn't touch) belongs to whoever is authoring it — **not yours to commit, not yours to push.** Co-author tags lie when this rule is broken; the originating agent loses the ability to test their own work before shipping; history loses authorship signal.
+
+**Why the explicit rule.** Even with explicit-path `git add` (no `git add .` / `-A`), it is easy to sweep up parallel-agent work — the tool stages whatever the path resolves to, with no authorship check. The **2026-05-03 Vista formalize commit `9b94f60`** swept up an entire parallel-agent file (`products/personal-finance/projects/pf-org-scoping-migration/PROJECT.md`, hundreds of lines) and a parallel `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md` modification because the agent reasoned about file paths instead of authorship and skipped the cached-staged verification step. Push went through; reverting would have rewritten origin history. This rule is the response.
+
+**Concrete protocol** — runs on every commit + every push:
+
+1. **Before staging — enumerate YOUR files.** Write down (mentally or in scratch text) every path you edited or created this session. If you can't name it from memory, you didn't author it. `git status` shows the working tree; it does **not** tell you which entries are yours.
+
+2. **Stage only YOUR files by explicit path.** Never `git add .` / `-A` / `-u`. Never `git add <directory>/` if a parallel agent may have added files there — name files individually inside that directory.
+
+3. **Verify the staged set matches your authored set.**
+   ```
+   git diff --cached --name-only
+   ```
+   Every name in the output should match an entry on your mental list. Any surprise → unstage it (`git restore --staged <path>`) and investigate before committing.
+
+4. **Before push — verify every unpushed commit is yours.**
+   ```
+   git log origin/<branch>..HEAD --format='%h %an %s'
+   ```
+   Any commit you didn't author → STOP and ask the user before pushing. You may be pushing a parallel agent's unfinished, untested work to the remote.
+
+5. **Drive-by exception (bounded).** When a pre-commit hook blocks your commit on another agent's incomplete state and the fix is small + non-destructive (e.g. flipping a phase header to ✅ to match an already-shipped change), apply it inline per § 2.9 resolution-path-2. Document the drive-by in your commit message body. Never extend this carve-out to "while you're in there" cleanup of arbitrary parallel-agent files.
+
+**The protocol does NOT cover the rare legitimate sweep.** If the user explicitly says "commit everything in the working tree right now" or "ship a snapshot of current state", that is an explicit override. Surface what's about to be staged before doing it.
+
+**Failure-mode anti-pattern (do not do this).** "I'll just stage the directory because my files are in there" — wrong; the directory may also contain parallel-agent files. "I'll trust `git status` to tell me what's mine" — wrong; git tracks changes, not authorship. "I'll skip the cached-staged verification because I used explicit paths" — wrong; explicit paths can still resolve to parallel-agent work, especially when staging directories or untracked files.
+
+---
+
 ## 3. Phase-by-phase cadence
 
 Default cadence: **execute exactly one phase, then stop.** Wait for the user to say "continue" / "next phase" / "do phase N" before advancing.
