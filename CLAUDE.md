@@ -83,6 +83,8 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - Webhook signature verification → `KB § PATTERNS/webhook-signatures.md`
 - Accept-with-rationale catalog → `KB § PATTERNS/accept-with-rationale.md`
 - MCP tool conventions (dotted naming, Pydantic schemas, hierarchical registration, lazy context) → `KB § PATTERNS/mcp-tool-conventions.md`
+- LLM tool-call audit (`tool_call_audits` per-product table, `AuditRecord` + `make_audit_writer`, LGPD redaction) → `KB § PATTERNS/llm-tool-audit.md`
+- LLM bot security (sanitize / validate / rate-limit trio, confirm-then-execute, prompt-injection mitigation) → `KB § PATTERNS/llm-bot-security.md`
 - Template workspace (sibling consume-only workspace; "templates can't modify noc" rule + 3-layer defense + promotion manifest) → `KB § PATTERNS/template-workspace.md`
 
 ### Guides

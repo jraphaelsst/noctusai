@@ -288,6 +288,22 @@ When the revisit trigger fires:
 Don't delete entries. The catalog is append-only-ish; retirement is a
 state change, not a removal.
 
+### Template-workspace chmod is symbolic, not enforcing
+- **Subject:** `scripts/bootstrap-template-workspace.sh` applies `chmod -h a-w` to every symlinked surface in the template workspace.
+- **Decision:** chmod runs at bootstrap time and is documented as a Layer 3 SYMBOLIC defense — not an actual write barrier.
+- **Reason:** The user's stated mechanism *"chmod the symlinked surfaces"* cannot work as imagined cross-platform: macOS symlinks ignore mode bits at the kernel level (no-op), Linux mostly-ignores them too, and chmoding the symlink TARGETS would lock noc itself out of editing its own files (same OS user owns both directories). The realistic enforcement boundary is at commit-time via the template-side pre-commit hook (Layer 1 — PRIMARY); chmod stays as a marker that the surface is read-only by intent.
+- **Scope:** `scripts/bootstrap-template-workspace.sh` + `templates/template-workspace-README.md` + `KB § PATTERNS/template-workspace.md`.
+- **Revisit trigger:** macOS gains symlink mode-bit enforcement (unlikely), OR a new POSIX-portable per-symlink immutability mechanism appears (chflags+immutable that doesn't affect the target), OR a wrapper layer (FUSE / OverlayFS) becomes available on macOS that lets template see noc as read-only without affecting noc's own writes.
+- **Recorded by:** `projects/template-workspace/` Phase 0 audit (2026-05-03).
+
+### MCP workspace-aware tool integration deferred to parallel project
+- **Subject:** the workspace-aware integration of `mcp/noctusai/tools/{status,proposals,scaffold}.py` + `mcp/noctusai/server.py` registration of `noctusai_promote_from_template` + `noctusai_list_promotions` MCP tools.
+- **Decision:** ship the `workspace.py` utility module + `promotion.py` standalone tool today; defer integration of those into `server.py` + per-tool `REPO_ROOT` swaps to the parallel `projects/mcp-server-expansion/` project's Phase 4 (which restructures every tool under `tools/noctus/dev/<service>/<action>.py` and replaces the flat dispatch map).
+- **Reason:** the `template-workspace` project ran in parallel with `mcp-server-expansion` Phases 2-4 actively restructuring those exact files. Coordinating the workspace-aware swap mid-restructure risks collision and rollback. Cleaner to land the building blocks (`workspace.py`, `promotion.py`, marker file, bootstrap, pre-commit, KB doc) standalone and have the parallel project's Phase 4 do the integration as part of its file-relocation pass — single coherent diff, single test cycle.
+- **Scope:** `mcp/noctusai/tools/{status,proposals,scaffold}.py` REPO_ROOT swaps + `mcp/noctusai/server.py` dispatch entries + `_tool()` declarations for the 2 promotion tools.
+- **Revisit trigger:** `projects/mcp-server-expansion/` Phase 4 closes (file restructure under `tools/noctus/dev/`); workspace-aware swap lands as a sub-task of that phase. Until then, MCP from a template cwd reports noc's projects/products (back-compat fallback acceptable for sandbox + parallel-agent use cases at the filesystem level; only the new-product-staging use case is partially blocked at the MCP-tool level).
+- **Recorded by:** `projects/template-workspace/` PROJECT CLOSE (2026-05-03) — folder deleted apply-inline-then-delete; durable record here.
+
 ---
 
 ## Cross-references
