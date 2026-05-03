@@ -290,6 +290,11 @@ class TestSymbolCountAndSerialization:
         assert d["path"]
         assert d["parse_error"] is None
         assert d["functions"][0]["name"] == "f"
+        # schema_version is shared with outline_python (same dataclass);
+        # outline_typescript reuses OutlineResult so the contract version
+        # must come through unchanged.
+        assert result.schema_version == 1
+        assert d["schema_version"] == 1
 
 
 class TestRealWorldFile:

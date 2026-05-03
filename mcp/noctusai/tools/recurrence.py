@@ -768,6 +768,12 @@ def scan_service_line_recurrence(
 # `logger.warning`) and the exception types (`Exception`), then hashes.
 # All 13 blocks → same hash → flagged as recurrence.
 
+# accept-with-rationale: "MCP detectors keep raw `import ast`" in
+# KB § PATTERNS/accept-with-rationale.md — recurrence walks Try/except
+# block shapes, ExceptHandler.type Tuples, AnnAssign.annotation via
+# _ast.unparse; all below outline_python's symbol-tree contract.
+# Migration evaluated 2026-05-02 by ast-callers-consolidation Phase 0
+# → accept.
 import ast as _ast  # alias to avoid clash inside helper bodies (defensive)
 
 

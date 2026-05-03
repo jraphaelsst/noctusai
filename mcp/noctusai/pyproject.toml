@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "noctusai-mcp"
+version = "0.1.0"
+description = "NoctusAI platform dev toolkit — MCP server + CLI (keeper detectors, AST tools, recurrence scans)."
+readme = "README.md"
+# Phase 0 finding (2026-05-02, mcp-ast-tools-hardening): the test suite uses
+# X | Y typing syntax (PEP 604) which requires 3.10+. The system python on
+# some dev machines (anaconda 3.9) fails to collect; declaring the floor
+# here makes the constraint visible to install tooling.
+requires-python = ">=3.10"
+
+dependencies = [
+    "mcp>=1.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "openai>=1.0.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "fakeredis>=2.35.0",
+    # Tiktoken is a runtime concern of the cost-evaluation tool. Listed here
+    # (not just under [testing]) because it ships precision the chars/4
+    # fallback can't match; production agents benefit from the precise path.
+    "tiktoken>=0.7.0",
+]
+
+[project.optional-dependencies]
+testing = [
+    # Same set as the runtime tiktoken — but pinned here too so a
+    # `pip install -e ".[testing]"` install loop is explicit about
+    # what the test suite needs.
+    "tiktoken>=0.7.0",
+]
+
+[tool.setuptools]
+# Tools live alongside the package without a top-level package dir
+# (the package layout uses the implicit-namespace approach this project
+# already follows via `from tools import ...`).
+packages = ["tools"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow — corpus / benchmark / large-file. Run with `-m slow` (skipped from the default suite).",
+]
+
+# requirements.txt is kept in lockstep for back-compat with the existing
+# `-e ../../seed/backend/lib` editable install of `noctusai_lib`. The
+# editable install of seed-lib lives there, NOT here, because pyproject
+# editable installs from a sibling path are clunky and the existing
+# requirements.txt entry already handles it cleanly.

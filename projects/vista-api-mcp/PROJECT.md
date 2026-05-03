@@ -20,7 +20,7 @@
 - **Last updated:** 2026-05-02
 - **Status:** Concept — interrogation pending. The repo-root guide (`VISTA-API-MCP-GUIDE.md`) is shipped and ready to transport. In-repo MCP server build is deferred pending §7 resolution.
 - **Owner / stakeholders:** Raphael · external-environment agent (consumer of `VISTA-API-MCP-GUIDE.md`) · future zero-context execution agent in this repo
-- **Related docs:** `VISTA-API-MCP-GUIDE.md` (repo root — the portable Vista reference for an external agent building a Vista MCP); `products/erp-imobiliario/projects/vista-crm-wiring/PROJECT.md` (the showcase implementation that produced the live-probe data); `products/erp-imobiliario/projects/vista-crm-wiring/VISTA-API.md` (project-internal reference); `products/erp-imobiliario/backend/app/integrations/vista/` (typed adapter — the working reference implementation); `KNOWLEDGE-BASE/INSTRUCTIONS/02-MCP.md` (MCP server design patterns).
+- **Related docs:** `VISTA-API-MCP-GUIDE.md` (repo root — the portable Vista reference for an external agent building a Vista MCP); `projects/vista-api-mcp/VISTA-API.md` (project-internal reference — moved here 2026-05-02 from the now-deleted `vista-crm-wiring` showcase project; produced from the live-probe data in commit `146abe3`); `products/erp-imobiliario/backend/app/integrations/vista/` (typed adapter — the working reference implementation; survives folder deletion as production code); `KNOWLEDGE-BASE/INSTRUCTIONS/02-MCP.md` (MCP server design patterns).
 - **Project slug:** `vista-api-mcp` — cross-product / platform-infra scope, lives at root `projects/`.
 
 ---
@@ -78,7 +78,7 @@ proven.
   pulling from the project-internal `VISTA-API.md` + adapter
   contract — it's a derived artifact, not the source of truth.
 - **Source of truth lives inside the showcase project.**
-  `products/erp-imobiliario/projects/vista-crm-wiring/VISTA-API.md`
+  `projects/vista-api-mcp/VISTA-API.md`
   is the authoritative project-internal reference. The repo-root
   guide is a transport-shaped derivative.
 - **The MCP server (when built) targets the live-probed endpoint
@@ -161,7 +161,7 @@ product code.
   permissions, response shapes, or error patterns.
 - Re-author the repo-root guide on demand (after the user's
   copy-and-delete cycle) by pulling from
-  `products/erp-imobiliario/projects/vista-crm-wiring/VISTA-API.md`
+  `projects/vista-api-mcp/VISTA-API.md`
   + the live adapter.
 - Build a first-party Vista MCP server (location TBD — §7 Q1):
   - One MCP tool per live-probed endpoint family (imoveis, usuarios,
@@ -191,7 +191,7 @@ product code.
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │ SOURCE OF TRUTH                                                    │
-│ products/erp-imobiliario/projects/vista-crm-wiring/VISTA-API.md    │
+│ projects/vista-api-mcp/VISTA-API.md    │
 │ + products/erp-imobiliario/backend/app/integrations/vista/         │
 │   ├── client.py        — typed HTTP client + error hierarchy       │
 │   ├── types.py         — Vista DTO + Showcase DTO shapes           │
@@ -337,7 +337,7 @@ deferred answering these — do NOT pretend they're resolved.
 - **Repo-root `VISTA-API-MCP-GUIDE.md` is the active deliverable**
   — keep it accurate as long as it lives at root. Once the user
   copies it out and deletes it, the next refresh re-authors from
-  `products/erp-imobiliario/projects/vista-crm-wiring/VISTA-API.md`.
+  `projects/vista-api-mcp/VISTA-API.md`.
 - **No external blockers for the documentation track.** The
   guide can be refreshed at any time.
 - **MCP server build blocker (§7 Q1, Q2, Q3) — needs user input
@@ -381,7 +381,8 @@ When this project ships:
   project. Add a §11 entry per refresh.
 - **Cross-link with the showcase project.** The
   `products/erp-imobiliario/projects/vista-crm-wiring/` project
-  is closed (✅ Done), but its VISTA-API.md is the authoritative
+  was closed and its folder deleted 2026-05-02; the VISTA-API.md spec
+  was relocated here as the authoritative
   source for any guide refresh.
 
 Suggested commands:
@@ -389,7 +390,7 @@ Suggested commands:
 ```bash
 # Read this project + the source-of-truth Vista doc
 sed -n '1,200p' projects/vista-api-mcp/PROJECT.md
-sed -n '1,300p' products/erp-imobiliario/projects/vista-crm-wiring/VISTA-API.md
+sed -n '1,300p' projects/vista-api-mcp/VISTA-API.md
 
 # Re-author the repo-root guide (when the user asks for a refresh)
 # (manual — pull from VISTA-API.md, fold public docs, ship)

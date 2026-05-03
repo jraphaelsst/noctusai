@@ -32,6 +32,13 @@ Run:
 """
 from __future__ import annotations
 
+# accept-with-rationale: "MCP detectors keep raw `import ast`" in
+# KB § PATTERNS/accept-with-rationale.md — catalog needs node-level
+# introspection (Call.keywords, Field defaults, ast.unparse for full
+# signatures, ast.get_docstring) below outline_python's symbol-tree
+# contract. Migration evaluated 2026-05-02 by ast-callers-consolidation
+# Phase 0 → accept; outline_python is for narrow-read planning, not
+# detector parsing.
 import ast
 import json
 import logging

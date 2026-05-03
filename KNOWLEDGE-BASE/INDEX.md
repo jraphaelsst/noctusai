@@ -35,8 +35,9 @@ KNOWLEDGE-BASE/
 │   │   ├── llm-usage.md       ← Phase 15 DB-backed usage sink + admin endpoints
 │   │   ├── logging.md         ← level guide, no-`# silent-ok` rule, correlation IDs
 │   │   ├── seed-lib-layout.md ← 6-layer model + decision tree
-│   │   ├── webhook-signatures.md ← HMAC / Svix / Stripe-SDK patterns; canonical adopters list
-│   │   └── agent-reading-discipline.md ← narrow-read first; Explore delegation (forthcoming)
+│   │   ├── agent-reading-discipline.md ← narrow-read first; Explore delegation (forthcoming)
+│   │   ├── webhook-signatures.md ← four shapes (Hub-Signature / hex HMAC / Svix / Stripe SDK); helpers in noctusai_lib.security.webhook_signatures
+│   │   └── accept-with-rationale.md ← pattern definition + durable catalog of every active accept-with-rationale on the platform
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
 │   │   ├── new-product.md
@@ -95,9 +96,10 @@ KNOWLEDGE-BASE/
 | LGPD awareness (keeper principle, the five questions, noctusai_lgpd_flag tool) | `CONTEXT/PATTERNS/lgpd.md` |
 | LLM usage tracking (SupabaseUsageSink, /api/llm/usage, cost estimation, RLS scoping) | `CONTEXT/PATTERNS/llm-usage.md` |
 | Logging convention (when-to-log, level guide, no-`# silent-ok` rule, correlation IDs) | `CONTEXT/PATTERNS/logging.md` |
-| Webhook signatures (HMAC-prefix / bare-hex / Svix / Stripe-SDK; canonical adopters list) | `CONTEXT/PATTERNS/webhook-signatures.md` |
 | Seed-lib layout (6 layers — primitives/config/testing/integrations/domain/api — where to put new helpers, where to find existing ones) | `CONTEXT/PATTERNS/seed-lib-layout.md` |
 | Agent reading & research discipline (narrow-read first; Explore delegation rule forthcoming) | `CONTEXT/PATTERNS/agent-reading-discipline.md` |
+| Webhook signature verification (the four shapes: Hub-Signature / hex HMAC / Svix / Stripe SDK; constant-time compare; helper module in `noctusai_lib.security.webhook_signatures`) | `CONTEXT/PATTERNS/webhook-signatures.md` |
+| Accept-with-rationale catalog (durable home for every legitimate divergence on the platform — survives project folder deletion; how to add / retire entries) | `CONTEXT/PATTERNS/accept-with-rationale.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |

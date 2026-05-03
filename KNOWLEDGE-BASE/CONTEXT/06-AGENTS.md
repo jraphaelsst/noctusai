@@ -98,6 +98,34 @@
 
   **Tool maturity verdict (2026-04-28):** Solid — 8 scans cover layered absorption surface. Apply across the cleanup queue and re-evaluate calibration in 1-2 weeks based on absorption-vs-accept ratio.
 
+### Reading & cost utilities (added 2026-05-02 by `methodology-extraction`)
+
+Companion tooling for the **narrow-read** rule (`CLAUDE.md §1` → `KB § PATTERNS/agent-reading-discipline.md`). The rule says: for any file >200 lines or unfamiliar shape, read structure before bodies. These three tools make that ergonomic.
+
+| Tool | What it returns | Backed by | Source | Tests |
+|---|---|---|---|---|
+| **`noctusai_outline_python <path>`** | `OutlineResult` — every top-level `class` / `def` / `async def`, first-level methods (with `parent`), `UPPER_SNAKE_CASE` module constants, import lines. Each carries `line` / `end_line` / `decorators` / `docstring_first_line`. **No bodies.** Returns `parse_error` instead of raising on missing file / `SyntaxError` / encoding error. | stdlib `ast` (no new dep) | `mcp/noctusai/tools/outline_python.py` | `mcp/noctusai/tests/test_outline_python.py` (14 cases incl. real-world smoke against `cost_evaluation.py`) |
+| **`noctusai_outline_typescript <path>`** | Same `OutlineResult` shape — classes (incl. `abstract`), interfaces (kind=`interface`), type aliases (kind=`type`), top-level functions (regular + async + default-export), arrow-fn consts (React components & hooks), first-level methods, constants, imports (multi-line collapsed). Block + line comments stripped before regex passes so `/* function fakeFn */` doesn't false-match. | regex (audit-driven deviation from the §7 default Compiler API — Phase 4 of `methodology-extraction` chose regex for ~5ms/call vs ~200ms+50MB; ~95% precision on prettier/eslint-formatted TS; upgrade path open) | `mcp/noctusai/tools/outline_typescript.py` | `mcp/noctusai/tests/test_outline_typescript.py` (23 cases incl. smoke against `VistaShowcase.tsx` + `useVistaShowcase.ts`) |
+| **`noctusai_count_tokens path=… text=… extensions=…`** | `TokenCountResult` — total + per-file `tokens` / `chars` / `words` / `lines`; reports `tokenizer_used` so callers know the precision. Accepts a path, inline text, or recursive walk over a tree (with `extensions=` filter). | tiktoken cascade → `chars/4` fallback | `mcp/noctusai/tools/cost_evaluation.py` | `mcp/noctusai/tests/test_cost_evaluation.py` (15 cases) |
+
+**When to call which.** Outline first when a file is large or unknown; then targeted `Read offset=<line> limit=N` only the symbols you need. Use `count_tokens` to budget reads / measure CLAUDE.md or MEMORY.md drift / size up generated content. The `OutlineResult` shape is **identical** across both outliners — caller code stays parser-agnostic.
+
+**Anti-pattern guard.** Don't use the outline tools to dump whole files. The point is the structure summary; if you need bodies, follow up with a targeted `Read`. Don't mistake `count_tokens` for the precise tokenizer agents use — even with tiktoken installed, there's a ~5-10% gap to the actual model tokenizer; treat results as planning estimates.
+
+**CLI invocation:**
+
+```bash
+python mcp/noctusai/cli.py --outline-python <path>
+python mcp/noctusai/cli.py --outline-typescript <path>
+python mcp/noctusai/cli.py --count-tokens <path>
+python mcp/noctusai/cli.py --count-tokens-text "<inline string>"
+python mcp/noctusai/cli.py --count-tokens-ext .py KNOWLEDGE-BASE/   # recursive, by extension
+```
+
+**Note on detector status.** These are not keeper detectors — they are read-utility tools — so `check_detector_has_regression_test` does not fire on them. Their unit + smoke + (forthcoming) regression tests are colocated in `mcp/noctusai/tests/` per the test taxonomy in `KB § PATTERNS/testing.md`.
+
+---
+
 ## CLI (for humans)
 
 ```bash
@@ -117,6 +145,13 @@ python mcp/noctusai/cli.py --status                     # project state digest
 python mcp/noctusai/cli.py --check-three-way-sync       # KB ↔ CLAUDE.md ↔ memory parity
 python mcp/noctusai/cli.py --scan-recurrence            # DRY-into-seed candidates
 python mcp/noctusai/cli.py --check-phase-state          # §6 ↔ §11 drift (also runs in pre-commit)
+
+# Reading & cost utilities (added 2026-05-02 by methodology-extraction)
+python mcp/noctusai/cli.py --outline-python <path>      # Python symbol tree (no bodies)
+python mcp/noctusai/cli.py --outline-typescript <path>  # TS / TSX symbol tree (no bodies)
+python mcp/noctusai/cli.py --count-tokens <path>        # token budget for a file
+python mcp/noctusai/cli.py --count-tokens-text "<text>" # token budget for inline text
+python mcp/noctusai/cli.py --count-tokens-ext .py <dir> # recursive walk, by extension
 ```
 
 ## Architecture

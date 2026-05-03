@@ -33,7 +33,8 @@ async def resend_webhook(request: Request):
 
     Bypass: when `resend_webhook_secret` is unset (early-dev), accept
     unsigned payloads with a WARNING. Same convention as every other
-    webhook on the platform — see KNOWLEDGE-BASE/CONTEXT/PATTERNS/webhooks.md.
+    webhook on the platform — see
+    KNOWLEDGE-BASE/CONTEXT/PATTERNS/webhook-signatures.md.
     """
     body = await request.body()
 

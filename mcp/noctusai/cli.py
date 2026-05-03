@@ -36,12 +36,18 @@ except ImportError as exc:
         level=logging.INFO,
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
-    # Include the actual ImportError — fallback can fire for any missing
-    # transitive dep (anthropic, supabase, redis, etc.), not just because
-    # `noctusai_lib` itself isn't installed. Operator needs the real cause.
-    logging.getLogger(__name__).warning(
+    # Selective severity: when `noctusai_lib` itself is missing (the
+    # expected case for a fresh clone or a one-shot CLI invocation
+    # outside the venv), emit DEBUG — it's noise. When some OTHER dep
+    # is missing (anthropic, supabase, redis, …), keep WARNING so the
+    # operator sees a real broken state instead of a misleading "all
+    # good" run.
+    _missing = str(exc)
+    _level = logging.DEBUG if "'noctusai_lib'" in _missing else logging.WARNING
+    logging.getLogger(__name__).log(
+        _level,
         "cli: noctusai_lib import failed (%s); using basicConfig fallback. "
-        "If the message names a missing dep, run "
+        "If the message names a missing dep OTHER than noctusai_lib, run "
         "`pip install -r mcp/noctusai/requirements.txt` from %s.",
         exc, Path(__file__).parents[2],
     )

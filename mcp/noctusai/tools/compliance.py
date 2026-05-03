@@ -3,6 +3,12 @@
 Validates that products follow the seed framework pattern.
 All checks are deterministic, fast, zero AI.
 """
+# accept-with-rationale: "MCP detectors keep raw `import ast`" in
+# KB § PATTERNS/accept-with-rationale.md — compliance walks
+# create_product_app(...) Call.keywords + List literals + monkeypatch
+# Call.args[0/1] Constants + ImportFrom mapping; all node-level
+# surfaces outline_python deliberately omits. Migration evaluated
+# 2026-05-02 by ast-callers-consolidation Phase 0 → accept.
 import ast
 import logging
 import re

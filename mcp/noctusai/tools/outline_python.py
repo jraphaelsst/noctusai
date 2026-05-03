@@ -84,9 +84,29 @@ class Symbol:
 
 @dataclass
 class OutlineResult:
-    """Outline of one Python file."""
+    """Outline of one Python file (or TS / TSX file via `outline_typescript`,
+    which reuses this dataclass).
+
+    Versioning
+    ----------
+    `schema_version` is the contract version of this dataclass + its
+    `to_dict()` payload. Bumped ONLY on backward-INCOMPATIBLE shape
+    changes:
+
+    - **Major bump (1 → 2):** removing a field, renaming a field,
+      changing a field's type, or changing the semantics of a field.
+      Downstream MCP host consumers built against the old shape will
+      break.
+    - **No bump (1.x = 1):** adding a new field with a sensible
+      default, adding a new `Symbol.kind` value, adding a new method.
+      Downstream consumers that ignore unknown fields keep working.
+
+    MCP host consumers should accept any `schema_version == 1`.
+    A `schema_version == 2` payload requires explicit migration.
+    """
     path: str
     total_lines: int
+    schema_version: int = 1
     parse_error: Optional[str] = None
     classes: list[Symbol] = field(default_factory=list)
     functions: list[Symbol] = field(default_factory=list)
@@ -105,6 +125,7 @@ class OutlineResult:
 
     def to_dict(self) -> dict:
         return {
+            "schema_version": self.schema_version,
             "path": self.path,
             "total_lines": self.total_lines,
             "parse_error": self.parse_error,

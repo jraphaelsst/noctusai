@@ -199,6 +199,11 @@ class TestSerialization:
         assert "kind" in d["functions"][0]
         # symbol_count derived field present
         assert d["symbol_count"] == 1
+        # schema_version field locks the contract for MCP host consumers.
+        # Bumping past 1 is a backward-incompatible change — see the
+        # OutlineResult docstring's Versioning paragraph.
+        assert result.schema_version == 1
+        assert d["schema_version"] == 1
 
 
 class TestRealWorldFile:
