@@ -55,7 +55,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+from settings import REPO_ROOT  # noqa: E402  (path constant)
 
 
 # Files where we look for repeated lines. Each entry is a (relative

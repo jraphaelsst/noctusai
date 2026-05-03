@@ -17,7 +17,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+from settings import REPO_ROOT  # noqa: E402  (path constant)
 
 _client = None
 _initialized = False

@@ -6,8 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
-PRODUCTS_DIR = REPO_ROOT / "products"
+from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 
 
 def run_product_tests(slug: str, timeout: int = 120) -> dict:

@@ -34,8 +34,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
-PRODUCTS_DIR = REPO_ROOT / "products"
+from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 
 
 ReviewMode = Literal["agent", "headless", "evaluate"]

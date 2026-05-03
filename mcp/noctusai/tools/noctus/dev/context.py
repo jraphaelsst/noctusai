@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+from settings import REPO_ROOT  # noqa: E402  (path constant)
 
 
 class AgentContextInput(BaseModel):

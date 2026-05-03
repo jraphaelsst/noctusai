@@ -74,7 +74,7 @@ class CatalogOutput(BaseModel):
     orphans: list[dict[str, Any]] = PydField(default_factory=list)
     duplicate_candidates: list[dict[str, Any]] = PydField(default_factory=list)
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 
 # Map of import-path prefix → filesystem root. Update when the namespace
 # is renamed (e.g. "noctusai_lib" → "noctusai.lib"). Currently these are
@@ -85,7 +85,6 @@ LIB_ROOTS: dict[str, Path] = {
     "noctusai_seed": REPO_ROOT / "seed" / "backend" / "framework" / "noctusai_seed",
 }
 
-PRODUCTS_DIR = REPO_ROOT / "products"
 CATALOG_OUTPUT = REPO_ROOT / "mcp" / "noctusai" / "catalog.md"
 
 

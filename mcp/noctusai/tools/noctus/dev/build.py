@@ -26,8 +26,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
-PRODUCTS_DIR = REPO_ROOT / "products"
+from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 
 # Products that don't have a frontend (backend-only). Skip in build sweeps
 # to avoid noisy "no package.json" errors. Empty today; populate if a

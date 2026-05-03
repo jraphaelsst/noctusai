@@ -29,7 +29,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+from settings import REPO_ROOT  # noqa: E402  (path constant)
 WARNINGS_FILE = REPO_ROOT / "LGPD-WARNINGS.md"
 
 _ENTRY_RE = re.compile(
