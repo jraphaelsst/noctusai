@@ -58,9 +58,11 @@ SAMPLE_SUMMARY_BASE = {
     "created_at": "2026-04-01T16:00:00Z",
 }
 
+SAMPLE_VIDEO_ROOM = {"id": "vr-001", "appointment_id": "appt-001"}
+
 SAMPLE_AUDIO_SEGMENT = {
     "id": "seg-001",
-    "appointment_id": "appt-001",
+    "video_room_id": "vr-001",
     "segment_number": 1,
     "segment_type": "main",
     "started_at": "2026-04-01T15:00:00Z",
@@ -71,7 +73,7 @@ SAMPLE_AUDIO_SEGMENT = {
 
 SAMPLE_AUDIO_SEGMENT_EXPIRED = {
     "id": "seg-002",
-    "appointment_id": "appt-001",
+    "video_room_id": "vr-001",
     "segment_number": 2,
     "segment_type": "main",
     "started_at": "2026-04-01T15:50:00Z",
@@ -106,6 +108,7 @@ def _setup_tables(mock_sb, **overrides):
         "session_records": [SAMPLE_SESSION_RECORD],
         "session_summary_versions": [SAMPLE_SUMMARY_CLINICAL],
         "session_observations": [],
+        "video_rooms": [SAMPLE_VIDEO_ROOM],
         "session_audio_segments": [SAMPLE_AUDIO_SEGMENT],
         "patient_session_notes": [],
     }

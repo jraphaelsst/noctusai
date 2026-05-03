@@ -150,7 +150,7 @@ async def start_session(appointment_id: str, user_id: str, db: Any) -> Dict:
 
     # Create first audio segment
     segment_data = {
-        "appointment_id": appointment_id,
+        "video_room_id": room["id"],
         "segment_number": 1,
         "segment_type": "initial",
         "started_at": now,
@@ -233,7 +233,7 @@ async def pause_session(
     current_seg = (
         db.table("session_audio_segments")
         .select("*")
-        .eq("appointment_id", appointment_id)
+        .eq("video_room_id", room["id"])
         .is_("ended_at", "null")
         .order("segment_number", desc=True)
         .execute()
@@ -297,7 +297,7 @@ async def resume_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     existing_segs = (
         db.table("session_audio_segments")
         .select("segment_number")
-        .eq("appointment_id", appointment_id)
+        .eq("video_room_id", room["id"])
         .order("segment_number", desc=True)
         .execute()
     )
@@ -306,7 +306,7 @@ async def resume_session(appointment_id: str, user_id: str, db: Any) -> Dict:
 
     # Create new audio segment
     segment_data = {
-        "appointment_id": appointment_id,
+        "video_room_id": room["id"],
         "segment_number": next_number,
         "segment_type": "resumed",
         "started_at": now,
@@ -376,7 +376,7 @@ async def end_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     current_seg = (
         db.table("session_audio_segments")
         .select("*")
-        .eq("appointment_id", appointment_id)
+        .eq("video_room_id", room["id"])
         .is_("ended_at", "null")
         .order("segment_number", desc=True)
         .execute()
@@ -442,7 +442,7 @@ async def auto_finalize_session(appointment_id: str, db: Any) -> Dict:
     current_seg = (
         db.table("session_audio_segments")
         .select("*")
-        .eq("appointment_id", appointment_id)
+        .eq("video_room_id", room["id"])
         .is_("ended_at", "null")
         .order("segment_number", desc=True)
         .execute()
@@ -538,7 +538,7 @@ async def reopen_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     existing_segs = (
         db.table("session_audio_segments")
         .select("segment_number")
-        .eq("appointment_id", appointment_id)
+        .eq("video_room_id", room["id"])
         .order("segment_number", desc=True)
         .execute()
     )
@@ -547,7 +547,7 @@ async def reopen_session(appointment_id: str, user_id: str, db: Any) -> Dict:
 
     # Create new audio segment
     segment_data = {
-        "appointment_id": appointment_id,
+        "video_room_id": room["id"],
         "segment_number": next_number,
         "segment_type": "reopened",
         "started_at": now_iso,

@@ -117,14 +117,26 @@ async def assemble_transcript(
     """
     if transcribe_segment_fn is None:
         transcribe_segment_fn = transcribe_segment
-    segments_result = (
-        db.table("session_audio_segments")
-        .select("*")
+    # `session_audio_segments` is keyed by `video_room_id`, NOT `appointment_id`.
+    # Resolve video_rooms first; mirrors `ai_pipeline.py` retention pattern.
+    room_rows = (
+        db.table("video_rooms")
+        .select("id")
         .eq("appointment_id", appointment_id)
-        .order("segment_number")
         .execute()
-    )
-    segments = segments_result.data or []
+    ).data or []
+    room_ids = [r["id"] for r in room_rows]
+    if not room_ids:
+        segments = []
+    else:
+        segments_result = (
+            db.table("session_audio_segments")
+            .select("*")
+            .in_("video_room_id", room_ids)
+            .order("segment_number")
+            .execute()
+        )
+        segments = segments_result.data or []
 
     if not segments:
         logger.warning(

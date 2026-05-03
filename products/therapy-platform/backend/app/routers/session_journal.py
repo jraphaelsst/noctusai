@@ -303,17 +303,30 @@ async def get_session_audio(
         raise HTTPException(status_code=403, detail="Sem permissão para acessar o áudio")
 
     # Fetch audio segments
-    segments = (
-        db.table("session_audio_segments")
-        .select("*")
+    # `session_audio_segments` is keyed by `video_room_id`, NOT `appointment_id`.
+    # Resolve video_rooms first; mirrors `ai_pipeline.py` retention pattern.
+    room_rows = (
+        db.table("video_rooms")
+        .select("id")
         .eq("appointment_id", record["appointment_id"])
-        .order("segment_number")
         .execute()
-    )
+    ).data or []
+    room_ids = [r["id"] for r in room_rows]
+    if not room_ids:
+        segment_rows = []
+    else:
+        segments = (
+            db.table("session_audio_segments")
+            .select("*")
+            .in_("video_room_id", room_ids)
+            .order("segment_number")
+            .execute()
+        )
+        segment_rows = segments.data or []
 
     now = datetime.now(SP_TZ)
     audio_segments = []
-    for seg in (segments.data or []):
+    for seg in segment_rows:
         expires_at = seg.get("download_expires_at")
         is_expired = True
         if expires_at:

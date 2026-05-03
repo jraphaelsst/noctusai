@@ -152,9 +152,11 @@ class TestTranscribeSegment:
 # assemble_transcript
 # ---------------------------------------------------------------------------
 
+VIDEO_ROOM = {"id": "vr-001", "appointment_id": "appt-001"}
+
 SEGMENT_INITIAL = {
     "id": "seg-001",
-    "appointment_id": "appt-001",
+    "video_room_id": "vr-001",
     "segment_number": 1,
     "segment_type": "initial",
     "audio_url": "mock://audio-1.ogg",
@@ -164,7 +166,7 @@ SEGMENT_INITIAL = {
 
 SEGMENT_RESUMED = {
     "id": "seg-002",
-    "appointment_id": "appt-001",
+    "video_room_id": "vr-001",
     "segment_number": 2,
     "segment_type": "resumed",
     "audio_url": "mock://audio-2.ogg",
@@ -174,13 +176,25 @@ SEGMENT_RESUMED = {
 
 SEGMENT_REOPENED = {
     "id": "seg-003",
-    "appointment_id": "appt-001",
+    "video_room_id": "vr-001",
     "segment_number": 3,
     "segment_type": "reopened",
     "audio_url": "mock://audio-3.ogg",
     "started_at": "2026-04-01T15:10:00Z",
     "ended_at": "2026-04-01T15:30:00Z",
 }
+
+
+def _seed_room_and_segments(db, segments):
+    """Seed `video_rooms` (single room appt-001 ↔ vr-001) + segments.
+
+    Mirrors the live schema chain: appointments → video_rooms → session_audio_segments.
+    Tests that only care about transcription assembly use this helper to avoid
+    repeating both seeds. Co-located here (not in the seed-lib) until N≥3 across
+    the platform — recurrence-rule trigger.
+    """
+    db.set_table_data("video_rooms", [VIDEO_ROOM])
+    db.set_table_data("session_audio_segments", segments)
 
 
 class TestAssembleTranscript:
@@ -198,7 +212,7 @@ class TestAssembleTranscript:
         the module-level helper. Real `assemble_transcript` runs end-to-end
         against MockSupabase + the fake transcriber."""
         db = MockSupabaseClient()
-        db.set_table_data("session_audio_segments", [SEGMENT_INITIAL])
+        _seed_room_and_segments(db, [SEGMENT_INITIAL])
 
         transcribe_fn = AsyncMock(return_value="Texto do segmento 1.")
         result = await transcription_service.assemble_transcript(
@@ -211,7 +225,7 @@ class TestAssembleTranscript:
     async def test_multiple_segments_with_pause_marker(self):
         """Inserts pause/resume markers between regular segments."""
         db = MockSupabaseClient()
-        db.set_table_data("session_audio_segments", [SEGMENT_INITIAL, SEGMENT_RESUMED])
+        _seed_room_and_segments(db, [SEGMENT_INITIAL, SEGMENT_RESUMED])
 
         async def transcribe_fn(url, num, **kwargs):
             return f"Texto segmento {num}."
@@ -229,7 +243,7 @@ class TestAssembleTranscript:
     async def test_reopened_segment_marker(self):
         """Inserts reopen marker for reopened segments."""
         db = MockSupabaseClient()
-        db.set_table_data("session_audio_segments", [SEGMENT_INITIAL, SEGMENT_REOPENED])
+        _seed_room_and_segments(db, [SEGMENT_INITIAL, SEGMENT_REOPENED])
 
         async def transcribe_fn(url, num, **kwargs):
             return f"Texto segmento {num}."
@@ -245,7 +259,7 @@ class TestAssembleTranscript:
         """Handles segment with no audio URL gracefully."""
         db = MockSupabaseClient()
         no_audio_segment = {**SEGMENT_INITIAL, "audio_url": None, "recording_url": None}
-        db.set_table_data("session_audio_segments", [no_audio_segment])
+        _seed_room_and_segments(db, [no_audio_segment])
 
         result = await transcription_service.assemble_transcript("appt-001", db)
         assert "não disponível" in result
@@ -259,7 +273,7 @@ class TestAssembleTranscript:
             "audio_url": None,
             "recording_url": "mock://fallback.ogg",
         }
-        db.set_table_data("session_audio_segments", [fallback_segment])
+        _seed_room_and_segments(db, [fallback_segment])
 
         transcribe_fn = AsyncMock(return_value="Fallback transcription.")
         result = await transcription_service.assemble_transcript(
