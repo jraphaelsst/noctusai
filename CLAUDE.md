@@ -42,6 +42,7 @@ Each bullet is rule + one-clause why + pointer. Bodies / examples / slip-history
 - **Finish the session — verify, don't assume.** End-of-session checklist: `cd products/<touched>/frontend && npx vite build`; `cd products/<touched>/backend && pytest`; `cd mcp/noctusai && pytest tests/` if MCP-toolkit changed; report any regression. Don't mark "done" while a build or test is red. *Every in-session change must land on green.*
 - **Never auto-commit or push, except project gates.** Default: never. Two carve-outs: (a) end-of-phase local commit during project work (no push); (b) final commit + `git push` at project close (literal last step, after folder deletion). Always `git status` first; never `git add .` / `-A`. → `CLAUDE/projects.md § Commit per phase, push at project close`
 - **Context budget discipline.** `CLAUDE.md` (this file) = router. `CLAUDE/<topic>.md` = topical rules, read on-demand by agent discipline (see §3). `KNOWLEDGE-BASE/` = depth. **MCP keep-list**: `noctusai` + `supabase` only — anything else needs explicit user approval. **Skills keep-list**: `update-config` / `loop` / `schedule` / `security-review` only. New rule → KB-first → CLAUDE.md (or topical) pointer → memory. New §1 bullet >80 words → trim and push depth to KB. → `KB § 01-PHILOSOPHY.md § Context budget discipline`
+- **Templates cannot modify noc.** A template workspace is a sibling of noc that consumes 8 noc surfaces (CLAUDE.md, CLAUDE/, KNOWLEDGE-BASE/, .claude/, mcp/, seed/, noctusai_lib/, templates/) via read-only symlinks. Three-layer defense: (1) PRIMARY — template's pre-commit hook refuses commits touching symlinked paths AND non-sandbox additions without a `.promotions/<slug>.md` entry, (2) AGENT — this rule + KB depth + memory entry, (3) SYMBOLIC — chmod -h a-w on symlinks (no-op on macOS; symbolic only). Edits to symlinked surfaces belong in noc; additions destined for noc go through the promotion manifest + `noctusai_promote_from_template`. → `KB § PATTERNS/template-workspace.md`
 
 ---
 
@@ -82,6 +83,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - Webhook signature verification → `KB § PATTERNS/webhook-signatures.md`
 - Accept-with-rationale catalog → `KB § PATTERNS/accept-with-rationale.md`
 - MCP tool conventions (dotted naming, Pydantic schemas, hierarchical registration, lazy context) → `KB § PATTERNS/mcp-tool-conventions.md`
+- Template workspace (sibling consume-only workspace; "templates can't modify noc" rule + 3-layer defense + promotion manifest) → `KB § PATTERNS/template-workspace.md`
 
 ### Guides
 - First-time setup → `KB § GUIDES/setup.md`
