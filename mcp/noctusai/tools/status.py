@@ -222,3 +222,18 @@ def _date_sort_key(date_str: str | None) -> int:
     except ValueError:
         logger.warning("status: malformed date string %r, sorting last", date_str)
         return -10**9
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_status",
+        description=(
+            "Cross-project state digest. Walks every PROJECT.md across `projects/`, "
+            "`products/*/projects/`, `core/projects/` and returns status icon, "
+            "sub-task progress, last-updated date, §3a presence, and any "
+            "phase-state-detector flags. Sorted by bucket "
+            "(executing → ready → parked → blocked → shipped)."
+        ),
+    )
+    def _status() -> dict:
+        return project_status_digest()

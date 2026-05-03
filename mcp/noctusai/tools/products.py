@@ -125,3 +125,19 @@ def _extract_endpoints(router_file: Path) -> list[str]:
             # Extract method and path: @router.get("/api/contacts")
             endpoints.append(line)
     return endpoints
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_list_products",
+        description="List all products with routers, services, pages, hooks counts",
+    )
+    def _list_products() -> list:
+        return list_products()
+
+    @server.tool(
+        name="noctusai_get_product",
+        description="Detailed product structure: endpoints, config, tests, migrations",
+    )
+    def _get_product(slug: str) -> dict:
+        return get_product_structure(slug)

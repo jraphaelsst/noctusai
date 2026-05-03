@@ -220,3 +220,35 @@ def list_warnings() -> dict:
         "unresolved_count": sum(1 for e in entries if not e["resolved"]),
         "resolved_count": sum(1 for e in entries if e["resolved"]),
     }
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_lgpd_flag",
+        description=(
+            "Record an unresolved LGPD concern in `LGPD-WARNINGS.md`. Call whenever "
+            "data-touching code raises an LGPD question (retention unclear, 3rd-party "
+            "egress, cache of patient text, cross-product leak, …). DOES NOT BLOCK — "
+            "appends a checklist item and notifies the user. Returns a user-facing "
+            "notification string the caller should surface."
+        ),
+    )
+    def _lgpd_flag(
+        code_path: str,
+        concern: str,
+        reason: str,
+        mitigation: str | None = None,
+    ) -> dict:
+        return flag(
+            code_path=code_path,
+            concern=concern,
+            reason=reason,
+            mitigation=mitigation,
+        )
+
+    @server.tool(
+        name="noctusai_lgpd_list",
+        description="List all LGPD concerns from `LGPD-WARNINGS.md` (unresolved + resolved).",
+    )
+    def _lgpd_list() -> dict:
+        return list_warnings()

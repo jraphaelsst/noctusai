@@ -270,3 +270,20 @@ def ai_advisory(product_path=None):
                     logger.warning("ai_brain: malformed AI advisory line (%s), skipping: %r", exc, line[:120])
 
     return findings
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_ai_discover",
+        description="AI-powered improvement discovery (requires OPENAI_API_KEY)",
+    )
+    def _ai_discover() -> dict:
+        from tools.analyzers import run_all_analyzers
+        return analyze_findings(run_all_analyzers())
+
+    @server.tool(
+        name="noctusai_ai_advisory",
+        description="AI reads CLAUDE.md rules and validates code (requires OPENAI_API_KEY)",
+    )
+    def _ai_advisory() -> dict:
+        return ai_advisory()

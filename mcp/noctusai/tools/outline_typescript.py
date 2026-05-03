@@ -429,3 +429,18 @@ def outline_typescript(path: str | Path) -> OutlineResult:
         constants=constants,
         imports=imports,
     )
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_outline_typescript",
+        description=(
+            "Return a TS / TSX file's symbol tree (classes, interfaces, types, functions, "
+            "arrow-fn consts, methods, constants, imports). Same shape as "
+            "`noctusai_outline_python`. Regex-based — no Node spawn, no npm install; "
+            "see `mcp/noctusai/tools/outline_typescript.py` for the design tradeoff "
+            "against the Compiler API path."
+        ),
+    )
+    def _outline_typescript(path: str) -> dict:
+        return outline_typescript(path).to_dict()

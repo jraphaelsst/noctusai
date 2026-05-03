@@ -265,3 +265,24 @@ def count_tokens(
         per_file=per_file,
         inline_text_tokens=inline_tokens,
     )
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_count_tokens",
+        description=(
+            "Count tokens for a file, directory, or glob (offline). Tokenizer cascade: "
+            "tiktoken (if installed in the venv — ~5-10% off Claude) → chars/4 "
+            "approximation. Returns total + per-file breakdown + the tokenizer that ran. "
+            "Used to measure per-turn auto-load cost (CLAUDE.md, MEMORY.md) precisely "
+            "and to stamp token counts onto closed-project ledger entries. Either "
+            "`path` or `text` (or both) must be set."
+        ),
+    )
+    def _count_tokens(
+        path: str | None = None,
+        text: str | None = None,
+        extensions: list[str] | None = None,
+    ) -> dict:
+        ext_tuple = tuple(extensions) if extensions is not None else (".md",)
+        return count_tokens(path=path, text=text, extensions=ext_tuple).to_dict()

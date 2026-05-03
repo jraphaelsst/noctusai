@@ -111,3 +111,33 @@ def build_all_frontends(timeout: int = 120) -> dict:
         "products": results,
         "all_success": all(r.get("success", False) for r in results),
     }
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_run_tests",
+        description="Run pytest for a product",
+    )
+    def _run_tests(slug: str) -> dict:
+        return run_product_tests(slug)
+
+    @server.tool(
+        name="noctusai_run_all_tests",
+        description="Run tests for all products",
+    )
+    def _run_all_tests() -> dict:
+        return run_all_tests()
+
+    @server.tool(
+        name="noctusai_build_frontend",
+        description="Build a product's frontend (vite build)",
+    )
+    def _build_fe(slug: str) -> dict:
+        return build_product_frontend(slug)
+
+    @server.tool(
+        name="noctusai_build_all_frontends",
+        description="Build all product frontends",
+    )
+    def _build_all_fe() -> dict:
+        return build_all_frontends()

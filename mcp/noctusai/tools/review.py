@@ -298,3 +298,27 @@ def run_review(
         return report
 
     raise ValueError(f"Unknown review mode: {mode!r}")
+
+
+def register(server) -> None:
+    desc = (
+        "OBSERVATION-ONLY review. Detects seed-compliance issues deterministically. "
+        "Three modes via `mode`: `agent` (default — returns issues + review prompt "
+        "for the in-session agent to author proposals with session context, zero LLM "
+        "cost), `headless` (OpenAI gpt-4o-mini authors proposals for CI/cron — set "
+        "OPENAI_API_KEY), `evaluate` (writes OpenAI proposals to a scratch subfolder "
+        "for side-by-side comparison with agent-authored versions). NEVER modifies code."
+    )
+
+    def _review(
+        product: str | None = None,
+        mode: str = "agent",
+        model: str = "gpt-4o-mini",
+    ) -> dict:
+        return run_review(product_slug=product, mode=mode, model=model)
+
+    server.tool(name="noctusai_review", description=desc)(_review)
+    server.tool(
+        name="noctus.dev.review",
+        description="Dotted alias for noctusai_review.",
+    )(_review)

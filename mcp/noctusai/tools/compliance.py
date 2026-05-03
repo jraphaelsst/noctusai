@@ -2157,3 +2157,38 @@ def check_all_products() -> tuple[int, list]:
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues
+
+
+def validate_one_product(slug: str) -> dict:
+    """Score one product against seed-compliance + path-reference rules.
+
+    Migrated from `mcp/noctusai/server.py::_validate_one` during the FastMCP
+    switch (mcp-server-fastmcp-switch Commit A) — was homeless dispatch-side
+    logic; now lives next to the underlying detectors.
+    """
+    path = PRODUCTS_DIR / slug
+    issues = check_seed_compliance(path) + check_path_references(path)
+    penalties = {"critical": 25, "high": 10, "warning": 3}
+    score = max(0, 100 - sum(penalties.get(i["severity"], 5) for i in issues))
+    return {"product": slug, "score": score, "issues": issues}
+
+
+def register(server) -> None:
+    desc_validate = "Check seed compliance for all products. Returns score 0-100."
+
+    def _validate() -> dict:
+        score, issues = check_all_products()
+        return {"score": score, "issues": issues}
+
+    server.tool(name="noctusai_validate", description=desc_validate)(_validate)
+    server.tool(
+        name="noctus.dev.validate",
+        description="Dotted alias for noctusai_validate.",
+    )(_validate)
+
+    @server.tool(
+        name="noctusai_validate_product",
+        description="Check seed compliance for one product",
+    )
+    def _validate_product(slug: str) -> dict:
+        return validate_one_product(slug)

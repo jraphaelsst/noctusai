@@ -631,6 +631,23 @@ def generate_catalog(write: bool = True) -> dict:
     }
 
 
+def register(server) -> None:
+    desc = (
+        "Regenerate the shared-library catalog: every lib symbol, its importers, "
+        "orphans (zero consumers), and duplication candidates (same name in 2+ "
+        "products, not in lib). Writes mcp/noctusai/catalog.md."
+    )
+
+    def _catalog(write: bool = True) -> dict:
+        return generate_catalog(write=write)
+
+    server.tool(name="noctusai_catalog", description=desc)(_catalog)
+    server.tool(
+        name="noctus.dev.catalog",
+        description="Dotted alias for noctusai_catalog.",
+    )(_catalog)
+
+
 if __name__ == "__main__":
     import sys
     result = generate_catalog(write=True)

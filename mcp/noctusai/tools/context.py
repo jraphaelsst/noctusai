@@ -113,3 +113,25 @@ def get_product_context(slug: str) -> dict:
     structure["readme"] = readme
 
     return structure
+
+
+def register(server) -> None:
+    desc_agent = "Full platform context for an agent starting fresh. Call FIRST."
+    desc_product = "Everything needed to work on a product: structure + MASTER-PROMPT + README"
+
+    def _agent_context() -> dict:
+        return get_agent_context()
+
+    def _product_context(slug: str) -> dict:
+        return get_product_context(slug)
+
+    server.tool(name="noctusai_agent_context", description=desc_agent)(_agent_context)
+    server.tool(
+        name="noctus.dev.agent_context",
+        description="Dotted alias for noctusai_agent_context. Prefer the dotted form going forward (Phase 3+).",
+    )(_agent_context)
+    server.tool(name="noctusai_product_context", description=desc_product)(_product_context)
+    server.tool(
+        name="noctus.dev.product_context",
+        description="Dotted alias for noctusai_product_context.",
+    )(_product_context)

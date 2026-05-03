@@ -199,3 +199,47 @@ def run_all_analyzers():
         "test_coverage": analyze_test_coverage(),
         "code_metrics": get_code_metrics(),
     }
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_platform_metrics",
+        description="Code metrics for all products: lines, routers, services, pages",
+    )
+    def _platform_metrics() -> dict:
+        return get_code_metrics()
+
+    @server.tool(
+        name="noctusai_analyze",
+        description="Run all analyzers: patterns, deps, tests, metrics",
+    )
+    def _analyze() -> dict:
+        return run_all_analyzers()
+
+    desc_patterns = "Find duplicated functions and inline hooks"
+
+    def _analyze_patterns() -> dict:
+        return {
+            "duplicated": find_duplicated_functions(),
+            "inline_hooks": find_inline_hooks(),
+        }
+
+    server.tool(name="noctusai_analyze_patterns", description=desc_patterns)(_analyze_patterns)
+    server.tool(
+        name="noctus.dev.analyze_patterns",
+        description="Dotted alias for noctusai_analyze_patterns.",
+    )(_analyze_patterns)
+
+    @server.tool(
+        name="noctusai_analyze_deps",
+        description="Check dependency version consistency",
+    )
+    def _analyze_deps() -> dict:
+        return audit_python_deps()
+
+    @server.tool(
+        name="noctusai_analyze_tests",
+        description="Check test coverage per product",
+    )
+    def _analyze_tests() -> dict:
+        return analyze_test_coverage()

@@ -21,7 +21,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** 🅿️ **PARKED** — fresh focused-session pickup. Predecessor `projects/mcp-server-expansion/` closes with Phases 4+5 deferred here (Phase 5 also gated on Tier 1 substrate per absorbed-projects-batch §7 round).
+- **Status:** ⏳ **EXECUTING** — Phase 0 ✅, Phases 1+2 ✅ (FastMCP switch + per-file register() + tools/__init__.py::register_all + _validate_one absorbed into compliance.py + server.py 475→63 lines + 550 tests pass + 60 tools registered with structurally-equivalent schemas); **Commit A held up** by pre-commit hook — `check_phase_state_consistency` flags 9 issues in OTHER projects (`projects/session-review-baseline/PROJECT.md` 5 missing `**Improvements:**` blocks + 1 unticked sub-task; `projects/whatsapp-seed-absorption/PROJECT.md` 3 issues — parallel agent's active work). Per "commit only your own work" + parallel-agent collision protocol, blocked from unblocking myself by editing those files. Phase 3 (Commit B — file relocation) deferred until Commit A lands. Phase 4 stays parked (gated on Tier 1.c + 1.d via parallel agent); Phase 5 awaits Phase 4. Predecessor `projects/mcp-server-expansion/` closes with Phases 4+5 deferred here.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `mcp-server-fastmcp-switch` (cross-cutting platform-infra)
 - **Project location:** `projects/<slug>/` (cross-product / platform)
@@ -160,28 +160,45 @@ mcp/noctusai/
 
 ## 6. Implementation phases
 
-### Phase 0 — Audit before any code lands
+### Phase 0 — Audit before any code lands ✅
 
-- [ ] Re-confirm 50-tool inventory matches `server.py` dispatch map at this project's start (parallel agent may have added more).
-- [ ] Re-read sibling `mcp_server/` end-to-end. Confirm `_impl` split + `noctus_context()` cm pattern is still the absorbed shape.
-- [ ] Re-confirm CLI's tool-module imports (greppable: `^from tools\.`).
-- [ ] Re-confirm test files' tool-module imports.
-- [ ] If §6 needs revising, revise in-place + log in §11.
+- [x] Re-confirm 50-tool inventory matches `server.py` dispatch map at this project's start (parallel agent may have added more). **Found 60 tools (50 dispatch + 7 dotted aliases + 3 unique to list_tools)** — actual canonical count is 60, not 56 as PROJECT.md said.
+- [x] Re-read sibling `mcp_server/` end-to-end. Confirmed FastMCP outer + per-leaf `register(server)` pattern.
+- [x] Re-confirm CLI's tool-module imports — 31 lazy `from tools.<x>` lines inside command functions.
+- [x] Re-confirm test files' tool-module imports — 23 test files.
+- [x] If §6 needs revising — revised. Plan agent recommended collapsing Phase 1+2 into Commit A (single coherent change, since Phase 1 alone is dead code) and keeping Phase 3 as Commit B (preserves bisect granularity + `git mv` rename detection). Logged in §11.
 
-### Phase 1 — register(server) in place (no file moves)
+**Improvements:**
+- Tool-count discrepancy in PROJECT.md §11 ("50 → 56 tools" written by predecessor) was off by 4 — actual canonical count is 60 (50 dispatch entries + 7 dotted aliases + 3 unique-to-list_tools tools). Predecessor's `mcp-server-expansion` PROJECT close-message used the dispatch-map count (50) as the floor. Lesson: single source of truth for tool counts should be `len(await server.list_tools())`, captured into PROJECT.md at close time. *(N=1 today; flag if 2nd MCP-side project drifts.)*
+- The `[2 flags]` shown in `noctusai_status` for this project at Phase 0-only state were `check_phase_state_consistency` complaints about §11 claiming Phase 0 ✅ without ticking §6 sub-tasks AND missing `**Improvements:**` block. Detector caught the slip correctly — three-way sync between §6, §11, and improvement blocks is enforced. Lesson: tick sub-tasks AND add `**Improvements:**` BEFORE closing a phase in §11.
 
-- [ ] Each tool file gains a `register(server)` function that calls `server.tool(name=..., description=...)(wrapper_fn)`. For tools without a Phase-2 Pydantic Input, write a minimal one inline. For tools with one, use it.
-- [ ] Wrapper functions inside `register()` adapt the existing tool function signature to FastMCP's introspection requirement.
-- [ ] Tests stay green.
-- [ ] server.py STILL uses old dispatch — register() is just declared, not yet invoked.
+### Phase 1 — register(server) in place (no file moves) ✅ *(landed alongside Phase 2 as Commit A — collapsed per Plan agent recommendation)*
 
-### Phase 2 — server.py switch to FastMCP outer + register_all
+- [x] Each tool file gains a `register(server)` function that calls `server.tool(name=..., description=...)(wrapper_fn)`. Inner handler closures absorb post-processing (`.to_dict()`, `dict(zip(...))`, tuple coercion, `{"template": ...}` wrap).
+- [x] Wrapper functions inside `register()` adapt the existing tool function signature to FastMCP's introspection requirement.
+- [x] Tests stay green — 550 pass, 1 skip, 0 fail.
+- [x] *(Plan revision)* Phase 1's "register declared but not invoked" condition skipped — Plan agent recommended collapsing into Phase 2 since Phase-1-only ships dead code with no test exercise. Logged in §11.
 
-- [ ] `server.py` rewritten: imports `FastMCP`, creates server, calls `register_all(server)`, runs over stdio.
-- [ ] `tools/__init__.py::register_all(server)` calls each tool file's `register(server)`.
-- [ ] Old dispatch map removed.
-- [ ] `_tool()` helper retired.
-- [ ] Smoke test: `python -m mcp.noctusai.server` starts; `tools/list` returns all 56 tools with same names + schemas.
+**Improvements:**
+- FastMCP signature introspection adds a `title: "<fnname>Arguments"` field to each tool's `inputSchema`. Hand-coded JSON schemas in the old `_tool()` helper didn't have this field. Net effect on consumers: zero (the title is metadata; required + properties + types match exactly). Cosmetic drift accepted.
+- Some tool functions (e.g. `find_refs(pattern, repo_root=None)`, `count_tokens(path=None, *, text=None, extensions=...)`) carry hidden test-only args. Inner `register()` handler closures hide those args from FastMCP introspection. Pattern works; documenting here so future tool authors know to wrap rather than expose.
+- Initial pass added `from mcp.server.fastmcp import FastMCP` inside register() with `# noqa: F401` for type-annotation use; later removed when I decided to skip FastMCP type annotation on `register(server)` itself (annotation isn't required, FastMCP only introspects the tool function signatures, not the registrar). Net cleaner — 24 fewer FastMCP imports at module-load time.
+
+### Phase 2 — server.py switch to FastMCP outer + register_all ✅ *(landed alongside Phase 1 as Commit A)*
+
+- [x] `server.py` rewritten — imports `FastMCP`, creates server, calls `register_all(server)`, runs over stdio. **63 lines** (down from 475).
+- [x] `tools/__init__.py::register_all(server)` calls each tool file's `register(server)` in alphabetical order with lazy imports.
+- [x] Old dispatch map removed.
+- [x] `_tool()` helper retired.
+- [x] `_validate_one` / `_run_review_session` / `list_tools` / `call_tool` / `main` / asyncio block all removed.
+- [x] `_validate_one` body absorbed into `tools/compliance.py::validate_one_product(slug)` (was homeless dispatch-side logic).
+- [x] Smoke test: build_server() succeeds; `await s.list_tools()` returns 60 tools with same names + structurally-equivalent schemas (FastMCP-generated schemas have a `title` field that hand-coded ones lacked — cosmetic; property keys + types + required match baseline byte-for-byte after stripping titles).
+- [x] End-to-end FastMCP `call_tool` exercised on the 6 post-processing wrappers (`status`, `validate`, `proposal_template`, `refs`, `count_tokens`, `analyze_patterns`) + alias parity for `analyze_patterns` (flat + dotted return identical bytes).
+
+**Improvements:**
+- Migrating `_validate_one` from server.py into `tools/compliance.py::validate_one_product` was overdue — the helper was dispatch-side glue logic next to the orchestrator instead of next to the underlying detectors it composed. Future server.py rewrites should look for similar homeless helpers BEFORE the rewrite, not during.
+- The lazy-imports-inside-`register_all` pattern (each tool module imported at the moment we register it, not at module top of `tools/__init__.py`) preserves the import-time discipline of the old dispatch path. Without this, the MCP server pulls in OpenAI / pytest / subprocess / etc. on every cold start.
+- `_validate_one`'s path-resolution used `Path(__file__).resolve().parents[2]` (server.py was 2 levels up from repo root). When migrated to `tools/compliance.py` it would have needed `parents[3]`, but `compliance.py` already had `PRODUCTS_DIR` at module level — so `validate_one_product` just uses `PRODUCTS_DIR / slug`. Cleaner.
 
 ### Phase 3 — File relocation (cli + tests cascade)
 
@@ -267,6 +284,8 @@ bash scripts/verify-kb-sync.sh
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | **Project scaffolded** as carry-forward from `projects/mcp-server-expansion/` (which closed with Phases 0-3 + 6 + 7 ✅). Architecture target inherited from predecessor §5.2; phase plan re-decomposed into six numbered phases — see §6. None executed yet; status PARKED awaiting focused-session pickup. | claude-opus-4-7 |
+| 2026-05-03 | **Phase 0 ✅.** Audit confirmed inventory: 50 dispatch entries + 7 dotted aliases (PROJECT.md §11 said 6 — `noctus.dev.review_session` was added at server.py:192/444 alongside the original 6, total 57 tools). 24 tool files; 6 already-Pydantic-shaped (`context.py` exposes 2 inputs, `analyzers.py` / `compliance.py` / `catalog.py` / `review.py` / `session_review.py` 1 each). All 50 functions are `def` (not async). 6 tools require post-processing wrappers (`noctusai_validate` dict-zip; `noctusai_analyze_patterns` composite; `noctusai_refs` / `noctusai_outline_python` / `noctusai_outline_typescript` `.to_dict()`; `noctusai_count_tokens` `.to_dict()` + tuple-coercion of `extensions`; `noctusai_proposal_template` `{"template": ...}` wrap). 5 intra-tool imports (`ai_brain → proposals + products`; `outline_typescript → outline_python`; `review → compliance + ai_brain + proposals`; `context → products`; `master_prompts → products`). cli.py has 31 lazy `from tools.<x>` imports inside command functions. 23 test files at `mcp/noctusai/tests/test_*.py` use `from tools.<x>` patterns. **No external consumers** under `scripts/`, `.github/`, `session_loader.py`, or `__init__.py`. FastMCP introspection verified — typed primitive args + defaults yield clean `inputSchema`. **Strategic call**: Plan agent recommended collapsing Phases 1+2 into Commit A (Phase-1-only ships dead code) and keeping Phase 3 in Commit B (preserves bisect granularity + `git mv` rename detection); status flipped EXECUTING. **Late finding during execution**: actual canonical tool count is **60** (50 dispatch entries + 7 dotted aliases + 3 unique-to-list_tools tools the dispatch handles via lambda but list_tools enumerates separately) — PROJECT.md §11 originally said 56. | claude-opus-4-7 |
+| 2026-05-03 | **Phases 1+2 work complete (Commit A held up by pre-commit hook).** Single coherent transformation per Plan-agent recommendation. **Concrete deliverables**: 24 tool files gained bottom-of-file `register(server: FastMCP) -> None` (`mcp/noctusai/tools/{ai_brain,analyzers,build,catalog,compliance,context,cost_evaluation,diff,improvements,lgpd,master_prompts,outline_python,outline_typescript,products,promotion,proposals,recurrence,refs,review,scaffold,session_review,status,testing,three_way_sync}.py`); inner-handler closures absorb post-processing for the 6 special-case tools; aliases dual-register the same handler under flat + dotted names (no central alias map). `mcp/noctusai/tools/__init__.py` (NEW, 75 lines) exposes `register_all(server)` calling each leaf in alphabetical order with lazy imports. `mcp/noctusai/server.py` rewritten 475 → 63 lines: stderr-logging shim retained (lines 14-32 of old file), `from mcp.server.fastmcp import FastMCP`, `build_server() / run()` mirroring sibling pattern. `mcp/noctusai/tools/compliance.py` absorbed `_validate_one` body from old server.py:459-465 as `validate_one_product(slug)` — homeless dispatch-side logic now next to underlying detectors. **Verification**: 60 tools registered (matches baseline byte-for-byte on names + property keys after stripping FastMCP's auto-added `title` field); 550/551 pytest pass (1 skipped, 0 failed); end-to-end FastMCP `call_tool` exercised on 6 post-processing wrappers (status, validate, proposal_template, refs, count_tokens, analyze_patterns) + alias parity confirmed for analyze_patterns (flat + dotted return byte-identical). `bash scripts/verify-kb-sync.sh` green. CLI smoke (`mcp/noctusai/cli.py --status`) green. **Commit B (Phase 3 — relocate to `tools/noctus/dev/`) deferred** until Commit A lands. **Commit attempt blocked**: `git commit --only <my-paths>` rejected by pre-commit hook because `check_phase_state_consistency` flagged 9 issues in OTHER projects (5 in `projects/session-review-baseline/PROJECT.md` — likely prior-session user work needing `**Improvements:**` blocks added to ✅ phases; 3 in `projects/whatsapp-seed-absorption/PROJECT.md` — parallel agent's active work; 1 in `projects/session-review-baseline/PROJECT.md` Phase 4 has unticked sub-task). The pre-commit hook checks the WHOLE project base, not just staged files — so any cross-cutting inconsistency anywhere in the repo blocks all commits. Per "commit only your own work" + parallel-agent collision protocol, refused to edit those files to unblock myself. **Working tree state at handoff**: 26 unstaged changes (mcp/noctusai/server.py rewritten; mcp/noctusai/tools/__init__.py created; 24 tool files gained register(); compliance.py absorbed validate_one_product; this PROJECT.md updated). Awaiting either (a) parallel agent's whatsapp-seed-absorption to settle, or (b) user decision on session-review-baseline cleanup, before retrying commit. | claude-opus-4-7 |
 
 ---
 

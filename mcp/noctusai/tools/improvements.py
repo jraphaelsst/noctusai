@@ -331,3 +331,18 @@ def generate_improvements(project_path: str | Path, *, write: bool = True) -> di
         "open_questions": report.open_questions,
         "all_done": report.all_done,
     }
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_improvements",
+        description=(
+            "Regenerate `improvements.md` next to a project file. Run this after "
+            "ticking a phase header to `✅`. Aggregates the `**Improvements:**` block "
+            "each completed phase captures — observations, refactor candidates, edge "
+            "cases, tech debt learned while implementing THAT phase. NOT a preview of "
+            "upcoming phases (that's already in the project)."
+        ),
+    )
+    def _improvements(project_path: str) -> dict:
+        return generate_improvements(project_path, write=True)

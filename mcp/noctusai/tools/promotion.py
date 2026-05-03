@@ -370,3 +370,30 @@ __all__ = [
     "promote_from_seed_workspace",
     "list_promotions",
 ]
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_promote_from_seed_workspace",
+        description=(
+            "Promote a seed-workspace addition into noc per its `.promotions/<slug>.md` "
+            "manifest. Reads origin path(s) + intended_noc_destination + seed-first "
+            "analysis from the manifest, validates origin exists + destination is safe, "
+            "copies file or directory into noc, rewrites manifest's `promoted_on` to "
+            "today. Refuses from primary workspaces. Use `dry_run=True` first to "
+            "preview the plan."
+        ),
+    )
+    def _promote(slug: str, dry_run: bool = False, force: bool = False) -> dict:
+        return promote_from_seed_workspace(slug=slug, dry_run=dry_run, force=force)
+
+    @server.tool(
+        name="noctusai_list_promotions",
+        description=(
+            "List promotion manifests in the current workspace, split into pending "
+            "(`promoted_on=not-yet`) vs promoted (with date). Reads `.promotions/*.md`. "
+            "See KB § PATTERNS/seed-workspace.md."
+        ),
+    )
+    def _list_promotions() -> dict:
+        return list_promotions()

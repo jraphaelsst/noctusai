@@ -271,3 +271,17 @@ def check_three_way_sync(repo_root: Path | None = None) -> dict:
             "memory_files_with_claude_md_keyword": with_claude_keyword,
         },
     }
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_check_three_way_sync",
+        description=(
+            "Verify KB ↔ CLAUDE.md ↔ memory parity. Closes the gap that "
+            "`verify-kb-sync.sh` cannot cover (memory directory lives outside the repo). "
+            "Reports missing index entries, dangling links, missing KB anchors, and "
+            "CLAUDE.md keyword mismatches per the three-way-sync rule."
+        ),
+    )
+    def _check_three_way_sync() -> dict:
+        return check_three_way_sync()

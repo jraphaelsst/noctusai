@@ -569,3 +569,75 @@ def update_proposal_status(filename, status, reason="", product=None):
         content = content.replace("**Reject** — with reason: ___", f"**Reject** — with reason: {reason}")
     filepath.write_text(content)
     return {"updated": True, "status": status}
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_proposal_template",
+        description=(
+            "Return `templates/PROPOSAL-TEMPLATE.md` content so agents get a consistent "
+            "starting point when authoring a proposal. Agents fill every "
+            "`{{PLACEHOLDER}}` in the template and submit via `noctusai_file_proposal`."
+        ),
+    )
+    def _template() -> dict:
+        return {"template": get_proposal_template()}
+
+    @server.tool(
+        name="noctusai_file_proposal",
+        description=(
+            "Write a fully-rendered proposal markdown. For project-phase proposals "
+            "pass `project=<slug>` — the file lands in `projects/<slug>/proposals/` "
+            "(ONE bundled proposal per phase). For keeper/compliance proposals pass "
+            "`product=<slug>` — the file lands in `products/<product>/proposals/`. "
+            "Agents typically call `noctusai_proposal_template`, fill it, then submit "
+            "via this tool. Dedups by title slug + key entity."
+        ),
+    )
+    def _file_proposal(
+        title: str,
+        body: str,
+        agent: str = "keeper",
+        project: str | None = None,
+        product: str | None = None,
+        subdir: str | None = None,
+    ) -> dict:
+        return file_proposal(
+            title=title,
+            body=body,
+            agent=agent,
+            project=project,
+            product=product,
+            subdir=subdir,
+        )
+
+    @server.tool(
+        name="noctusai_list_proposals",
+        description=(
+            "List pending improvement proposals across all products (or one product "
+            "if `product` is set)"
+        ),
+    )
+    def _list_proposals(
+        agent: str | None = None,
+        product: str | None = None,
+    ) -> list:
+        return list_proposals(agent, product=product)
+
+    @server.tool(
+        name="noctusai_accept_proposal",
+        description="Accept a proposal",
+    )
+    def _accept(filename: str, product: str | None = None) -> dict:
+        return update_proposal_status(filename, "accepted", product=product)
+
+    @server.tool(
+        name="noctusai_reject_proposal",
+        description="Reject a proposal",
+    )
+    def _reject(
+        filename: str,
+        reason: str = "",
+        product: str | None = None,
+    ) -> dict:
+        return update_proposal_status(filename, "rejected", reason, product=product)

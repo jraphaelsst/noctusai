@@ -309,3 +309,18 @@ def outline_python(path: str | Path) -> OutlineResult:
         constants=constants,
         imports=imports,
     )
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_outline_python",
+        description=(
+            "Return a Python file's symbol tree (classes / functions / methods / "
+            "constants / imports) without bodies. Makes the narrow-read rule ergonomic: "
+            "structure first, fetch bodies on demand. Stdlib `ast`, no extra deps. "
+            "Output includes line ranges for each symbol so a follow-up "
+            "`Read offset=<line> limit=N` is one call away."
+        ),
+    )
+    def _outline_python(path: str) -> dict:
+        return outline_python(path).to_dict()

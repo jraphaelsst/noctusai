@@ -240,3 +240,22 @@ def build_products(
         "total_duration_seconds": round(overall_duration, 2),
         "all_green": all(r.success for r in results),
     }
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_build_parallel",
+        description=(
+            "Run `npx vite build` across product frontends in parallel. "
+            "Parallel + scoped supersedes the legacy sequential "
+            "`noctusai_build_all_frontends`. `slugs=[...]` builds specific products; "
+            "`changed_only=True` uses `git diff --name-only HEAD` to scope to affected "
+            "products only (perf)."
+        ),
+    )
+    def _build_parallel(
+        slugs: list[str] | None = None,
+        changed_only: bool = False,
+        parallel: int = 4,
+    ) -> dict:
+        return build_products(slugs=slugs, changed_only=changed_only, parallel=parallel)

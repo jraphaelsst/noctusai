@@ -1652,3 +1652,162 @@ def scan_migration_patterns(
 #
 # Whether to fix the remaining gaps depends on first-run ROI of the new
 # detectors. Update this block after running on the real repo.
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_scan_recurrence",
+        description=(
+            "Scan product main.py / conftest.py / vitest.config.ts for repeated lines "
+            "that should be absorbed into seed. N=2 → triage warning; N=3+ → high "
+            "(MUST formalize). Emits classified findings with suggested seed-side "
+            "absorption targets per `KB § PATTERNS/project-execution.md § 2.7`."
+        ),
+    )
+    def _scan_recurrence(
+        min_count: int = 2,
+        must_formalize_threshold: int = 3,
+    ) -> list:
+        return scan_recurrence(
+            min_count=min_count,
+            must_formalize_threshold=must_formalize_threshold,
+        )
+
+    @server.tool(
+        name="noctusai_scan_cross_product_helpers",
+        description=(
+            "Scan service/router/dependency/hook/component files for function/class "
+            "NAMES that recur across N≥2 products. Catches the absorption shape "
+            "`noctusai_scan_recurrence` misses — same NAME implemented slightly "
+            "differently per product (`_safe_float`, `_format_money`, `useMetas`, "
+            "`_PipelineHooks`). Suggests seed-side absorption targets "
+            "(`noctusai_lib.parsing`, `@noctusai/lib/hooks`, etc.). Use BEFORE writing "
+            "a new helper."
+        ),
+    )
+    def _scan_cross(
+        min_count: int = 2,
+        must_formalize_threshold: int = 3,
+    ) -> list:
+        return scan_cross_product_helpers(
+            min_count=min_count,
+            must_formalize_threshold=must_formalize_threshold,
+        )
+
+    @server.tool(
+        name="noctusai_scan_service_line_recurrence",
+        description=(
+            "Scan service/router/dependency lines for verbatim repetition across N≥2 "
+            "products. Strict filter (≥60 chars, must contain `(`). Catches ad-hoc "
+            "patterns the helper-name scan misses: "
+            "`datetime.fromisoformat(s.replace(\"Z\", \"+00:00\"))`, `raise "
+            "HTTPException(...)` shapes, pagination expressions like "
+            "`query.range(offset, offset + page_size - 1).execute()`. Complements "
+            "`noctusai_scan_cross_product_helpers`."
+        ),
+    )
+    def _scan_service_line(
+        min_count: int = 2,
+        must_formalize_threshold: int = 3,
+        min_line_length: int = 60,
+    ) -> list:
+        return scan_service_line_recurrence(
+            min_count=min_count,
+            must_formalize_threshold=must_formalize_threshold,
+            min_line_length=min_line_length,
+        )
+
+    @server.tool(
+        name="noctusai_scan_block_patterns",
+        description=(
+            "AST-walk service/router/seed-lib files; group `try/except` blocks by "
+            "structural fingerprint (call targets normalized, identifiers stripped). "
+            "Catches multi-line block recurrence the line/name scans miss — e.g. "
+            "best-effort `audit_service.log` try/except shape recurring 7× in core. "
+            "Each finding includes the body call targets, exception types, and a "
+            "suggested seed-lib helper name (`safely_log_action`, `safely_dispatch`, "
+            "etc.)."
+        ),
+    )
+    def _scan_blocks(
+        min_count: int = 2,
+        must_formalize_threshold: int = 3,
+        cross_product_only: bool = False,
+    ) -> list:
+        return scan_block_patterns(
+            min_count=min_count,
+            must_formalize_threshold=must_formalize_threshold,
+            cross_product_only=cross_product_only,
+        )
+
+    @server.tool(
+        name="noctusai_scan_within_product_helpers",
+        description=(
+            "Find helper names duplicated N+ times INSIDE one product (across files). "
+            "Closes the gap that the cross-product helper scan requires N≥2 distinct "
+            "products — a helper duplicated 5× inside one product is also a "
+            "DRY-into-utils candidate. Suggests either `app/utils.py` (product-scope) "
+            "or `noctusai_lib.<area>` (cross-cutting)."
+        ),
+    )
+    def _scan_within(min_count: int = 3) -> list:
+        return scan_within_product_helpers(min_count=min_count)
+
+    @server.tool(
+        name="noctusai_scan_pydantic_model_shapes",
+        description=(
+            "Find Pydantic `BaseModel` field-set shapes that recur across N≥`min_count` "
+            "products. Catches the absorption signal the class-name scan misses — same "
+            "field set under different class names (e.g. `LoginRequest` in core, "
+            "`LoginInput` in adconnect). Suggests `noctusai_lib.schemas.<canonical>` "
+            "absorption."
+        ),
+    )
+    def _scan_pyd(
+        min_count: int = 2,
+        must_formalize_threshold: int = 3,
+        min_field_count: int = 2,
+    ) -> list:
+        return scan_pydantic_model_shapes(
+            min_count=min_count,
+            must_formalize_threshold=must_formalize_threshold,
+            min_field_count=min_field_count,
+        )
+
+    @server.tool(
+        name="noctusai_scan_test_fixture_recurrence",
+        description=(
+            "Scan products' test trees (conftest.py, tests/services, tests/routers, "
+            "tests/integration) for pytest fixtures + helper names recurring across "
+            "N≥2 products. Stricter than the production helper scan — excludes test_* "
+            "methods + ALL_CAPS sample-data names. Catches cross-product test "
+            "scaffolding worth absorbing into `noctusai_lib.testing.<helper>`."
+        ),
+    )
+    def _scan_fixtures(
+        min_count: int = 2,
+        must_formalize_threshold: int = 3,
+    ) -> list:
+        return scan_test_fixture_recurrence(
+            min_count=min_count,
+            must_formalize_threshold=must_formalize_threshold,
+        )
+
+    @server.tool(
+        name="noctusai_scan_migration_patterns",
+        description=(
+            "Scan SQL migration files for known structural patterns (RLS policy with "
+            "subquery `auth.uid()`, FK-with-index, `SET search_path`, audit-log "
+            "trigger, `updated_at` trigger) that recur across N≥2 products. Reports "
+            "per-product occurrence counts + suggested `noctusai_lib.sql.<helper>` "
+            "absorption. 5 probes total."
+        ),
+    )
+    def _scan_migrations(
+        min_count: int = 2,
+        must_formalize_threshold: int = 3,
+    ) -> list:
+        return scan_migration_patterns(
+            min_count=min_count,
+            must_formalize_threshold=must_formalize_threshold,
+        )

@@ -165,3 +165,16 @@ def find_refs(pattern: str, repo_root: Path | None = None) -> RefsResult:
         total_matches=len(matches),
         matches=matches,
     )
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_refs",
+        description=(
+            "Find every reference to a literal pattern across CLAUDE.md / KB / "
+            "projects / mcp / seed / products. Replaces the manual `grep -rln` ritual "
+            "run before deletes / renames / closures."
+        ),
+    )
+    def _refs(pattern: str) -> dict:
+        return find_refs(pattern).to_dict()

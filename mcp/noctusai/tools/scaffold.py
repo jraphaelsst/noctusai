@@ -104,3 +104,26 @@ def list_available_ports() -> dict:
         "used_backend": sorted(used_backend),
         "used_frontend": sorted(used_frontend),
     }
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctusai_scaffold_product",
+        description="Create a new product from the seed template",
+    )
+    def _scaffold(
+        name: str,
+        slug: str,
+        schema: str,
+        backend_port: int,
+        frontend_port: int,
+        icon: str = "Box",
+    ) -> dict:
+        return scaffold_product(name, slug, schema, backend_port, frontend_port, icon)
+
+    @server.tool(
+        name="noctusai_available_ports",
+        description="Find next available backend and frontend ports",
+    )
+    def _available_ports() -> dict:
+        return list_available_ports()
