@@ -11,7 +11,7 @@ bash scripts/setup.sh
 `setup.sh`:
 - Creates a single root venv at `venv/`.
 - Installs root `requirements.txt`.
-- Installs `seed/backend/lib` + `seed/backend/framework` in editable mode.
+- Installs `seed/lib/backend` + `seed/framework/backend` in editable mode.
 - Installs git hooks.
 - Runs any one-time initialization.
 

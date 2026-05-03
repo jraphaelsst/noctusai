@@ -34,7 +34,7 @@ NoctusAI products embed gamification **subtly** across the user experience. The 
 
 ## Shared components
 
-As the ERP Metas domain matures, reusable gamification components should be extracted to `seed/frontend/lib/src/design-system/gamification/` and consumed across products.
+As the ERP Metas domain matures, reusable gamification components should be extracted to `seed/lib/frontend/src/design-system/gamification/` and consumed across products.
 
 Candidates for extraction (once stable):
 - `<RankBadge />`
@@ -58,4 +58,4 @@ The ERP Metas domain is the reference implementation. Patterns validated there g
 
 ## Reference
 
-- Reference implementation: ERP metas service (shipped 2026-04 by the `erp-metas` project — closed + folder deleted per clean-folder rule). Code lives at `products/erp-imobiliario/backend/app/services/metas_*.py` (49 `/api/metas/*` routes; trigger-driven `meta_eventos` pipeline; migrations 016–019) + frontend at `products/erp-imobiliario/frontend/src/pages/MetasDashboard.tsx` + `MetasAgentWidget` + `MetasCharts`. Shared gamification primitives in `seed/frontend/lib/src/design-system/gamification/`.
+- Reference implementation: ERP metas service (shipped 2026-04 by the `erp-metas` project — closed + folder deleted per clean-folder rule). Code lives at `products/erp-imobiliario/backend/app/services/metas_*.py` (49 `/api/metas/*` routes; trigger-driven `meta_eventos` pipeline; migrations 016–019) + frontend at `products/erp-imobiliario/frontend/src/pages/MetasDashboard.tsx` + `MetasAgentWidget` + `MetasCharts`. Shared gamification primitives in `seed/lib/frontend/src/design-system/gamification/`.

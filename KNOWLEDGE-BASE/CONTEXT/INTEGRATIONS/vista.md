@@ -11,7 +11,7 @@
 >    `oneconsu-rest.vistahost.com.br` — most recent re-probe 2026-05-03
 >    captured in the §8 change log.
 > 3. **Adapter behavior** as implemented in
->    `seed/backend/lib/noctusai_lib/integrations/vista/` (canonical platform
+>    `seed/lib/backend/noctusai_lib/integrations/vista/` (canonical platform
 >    home, FORMALIZED 2026-05-03 — both the ERP showcase and the in-repo MCP
 >    server consume from there).
 >
@@ -534,14 +534,14 @@ re-probe and add a row above with verified shape.
 ## 5. Adapter contract — what the NoctusAI ERP code does with this
 
 > **Formalized 2026-05-03.** The Vista client + error hierarchy + normalizers
-> + showcase DTOs live in **`seed/backend/lib/noctusai_lib/integrations/vista/`**
+> + showcase DTOs live in **`seed/lib/backend/noctusai_lib/integrations/vista/`**
 > — the canonical platform home consumed by both the ERP showcase AND the
 > in-repo MCP server (`mcp/vista/`). See `KB § PATTERNS/accept-with-rationale.md
 > § Vista CRM client + normalizers + showcase DTOs duplicated at N=2 — FORMALIZED 2026-05-03`
 > for the historical entry.
 
 ```
-seed/backend/lib/noctusai_lib/integrations/vista/   # canonical platform home
+seed/lib/backend/noctusai_lib/integrations/vista/   # canonical platform home
 ├── __init__.py              # public surface: VistaClient + error hierarchy
 │                            #   + extract_items + 4 normalizers + 4 ShowcaseDTOs
 ├── client.py                # VistaClient + 7-class error hierarchy + extract_items

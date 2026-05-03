@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.scaffold import list_available_ports, scaffold_product
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "seed" / "backend" / "lib"))
+sys.path.insert(0, str(REPO_ROOT / "seed" / "lib" / "backend"))
 
 from noctusai_lib.domain.sql_templates import (
     rls_subquery_policy,

@@ -65,7 +65,7 @@ This section is where the authoring agent's judgment lives. The receiving agent 
 
 ### 3.2 Application instructions
 
-{{Concrete steps the receiving agent follows. Each step unambiguous — a step like "make it consistent" is useless. Steps like "move `create_meta()` from `products/erp/.../metas_service.py:14` to `seed/backend/lib/noctusai_lib/services/metas.py`, parameterize the `schema` arg, update both product call sites" are actionable.}}
+{{Concrete steps the receiving agent follows. Each step unambiguous — a step like "make it consistent" is useless. Steps like "move `create_meta()` from `products/erp/.../metas_service.py:14` to `seed/lib/backend/noctusai_lib/services/metas.py`, parameterize the `schema` arg, update both product call sites" are actionable.}}
 
 1. {{step}}
 2. {{step}}

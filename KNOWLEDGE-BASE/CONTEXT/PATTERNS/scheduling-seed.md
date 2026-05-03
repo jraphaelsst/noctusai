@@ -212,12 +212,12 @@ Reschedule preserves transition buffers + same-location duration shortcut + scor
 
 ## 7. Tests
 
-`seed/backend/lib/tests/domain/scheduling/test_engine.py` (9 cases):
+`seed/lib/backend/tests/domain/scheduling/test_engine.py` (9 cases):
 
 - 5 ported verbatim from sibling (`test_scheduling_service.py`) with vocabulary translated.
 - 4 seed-lib-only tests for the explicit Scorer Protocol surface (zero-neighbors, sum-travel, sort-invariant, ZeroTravelLookup).
 
-Run: `cd seed/backend/lib && pytest tests/domain/scheduling/`.
+Run: `cd seed/lib/backend && pytest tests/domain/scheduling/`.
 
 ---
 

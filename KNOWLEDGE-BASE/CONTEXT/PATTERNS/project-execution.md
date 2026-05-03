@@ -296,10 +296,10 @@ The slip is mechanical, not conceptual — the agent KNOWS the rule. The fix is 
 **These phrasings ARE the slip.** They describe a design that's wrong, even when the design is enshrined in an existing `PROJECT.md`. The right move on encountering replication framing in a doc you're reading: **challenge it in Phase 0**, do not parrot it back, do not propose phases that walk through products. The rule that matters: *if every product needs the identical thing, it lives ONCE in seed, products consume it via a kwarg or auto-on convention.*
 
 **Where "once in seed" lives:**
-- Backend cross-cutting infra → `seed/backend/framework/noctusai_seed/` (factories, app construction)
-- Backend reusable code → `seed/backend/lib/noctusai_lib/` (helpers, factories, dependencies)
-- Frontend components/pages/layouts → `seed/frontend/lib/src/design-system/` + `seed/frontend/framework/createProductApp(...)`
-- Test scaffolding → `seed/backend/lib/noctusai_lib/testing/` (including `pytest11` entry-point plugins)
+- Backend cross-cutting infra → `seed/framework/backend/noctusai_seed/` (factories, app construction)
+- Backend reusable code → `seed/lib/backend/noctusai_lib/` (helpers, factories, dependencies)
+- Frontend components/pages/layouts → `seed/lib/frontend/src/design-system/` + `seed/framework/frontend/createProductApp(...)`
+- Test scaffolding → `seed/lib/backend/noctusai_lib/testing/` (including `pytest11` entry-point plugins)
 - Scaffold templates → `templates/product-seed/`
 
 **The right per-product code count for a cross-product concern is ZERO.** Products opt in via:
@@ -326,7 +326,7 @@ When you are about to make the same change to a SECOND product in a single sessi
 
 Caught instances 2026-04-27 → 2026-04-28 (4× in two days):
 
-- **Vitest config replication (2026-04-27).** Almost stamped `vitest.config.ts` into 7 products; user: *"shouldn't this be seed-scoped? Is it being replicated or propagated?"* → absorbed into `seed/frontend/framework/vitest.config.factory.ts`.
+- **Vitest config replication (2026-04-27).** Almost stamped `vitest.config.ts` into 7 products; user: *"shouldn't this be seed-scoped? Is it being replicated or propagated?"* → absorbed into `seed/framework/frontend/vitest.config.factory.ts`.
 - **Monkeypatch as a documented pattern (2026-04-27).** Almost wrote a "Service-layer variant" subsection in KB testing.md showing `monkeypatch.setattr(ai_pipeline, "require", _noop)` as how-to; user: *"NO MONKEYPATCHING. Fix all monkey-patch bullshit you've done"* → row-seeding pattern + `inserted_payloads` capture absorbed into seed-lib mock.
 - **Conftest test-bootstrap line replication (2026-04-28).** Almost added `from app.main import app as _app` to 6 product conftests; user: *"this sounded like a seed-level issue, aint it?"* → absorbed into `noctusai_lib/testing/pytest_plugin.py` registered via `pytest11` entry point in seed-lib's `pyproject.toml`.
 - **`consent-ui-rollout` mount-per-product framing (2026-04-28, INSIDE the reply that documented the first 3).** Described the next step as `<AIConsentToggles/>` + `<PendingConsentBadge/>` + `LayoutEnrichment.aiBadge` "mount across 6 products," parroting the existing `consent-ui-rollout/PROJECT.md` Phase 2/3 framing. User: *"This also looks like a seedable feature. Are we joking here?"* The whole UI is seedable — components, settings page hosting them, route, layout mount — products write zero consent-UI code. Lesson: the rule scoped to "before edit #2" fires too late; by then the per-product framing is already accepted. **The rule has to fire at LANGUAGE time** — the moment any "per-product"/"mount across N"/"for each product" phrasing appears. → `consent-ui-rollout/PROJECT.md` to be reframed Phase 0.
@@ -444,7 +444,7 @@ The thresholds are not negotiable:
 
 1. STOP the foreground task. Don't keep typing.
 2. **Name the pattern** explicitly. Pull together what's the same vs. what differs across instances. Phrase it as a concrete extraction (e.g. "every product reads `org_id` from `user_metadata` then resolves admin via `resolveSSORoles` — extract `useCurrentOrgContext` hook").
-3. **Decide the destination.** Where in seed does it live? `seed/backend/lib/noctusai_lib/`, `seed/frontend/lib/src/`, `seed/backend/framework/noctusai_seed/`, `seed/frontend/framework/src/`, `templates/PROJECT-TEMPLATE.md` (for repeated project structure), `pytest11` entry-point plugin (for test bootstrap), etc.
+3. **Decide the destination.** Where in seed does it live? `seed/lib/backend/noctusai_lib/`, `seed/lib/frontend/src/`, `seed/framework/backend/noctusai_seed/`, `seed/framework/frontend/src/`, `templates/PROJECT-TEMPLATE.md` (for repeated project structure), `pytest11` entry-point plugin (for test bootstrap), etc.
 4. **File the project** (or apply inline if low-risk and in-scope): scaffold from `templates/PROJECT-TEMPLATE.md` with §3a confirming it's truly seed-bound. Folder must exist; broken pointers (prose references to nonexistent projects) are forbidden.
 5. **Resume the foreground task** — but the slip is now captured as a real follow-up, not an offhand "Not yet" note.
 
@@ -456,12 +456,12 @@ The thresholds are not negotiable:
 
 **Audit trail of formalizations driven by this rule (this session, 2026-04-27 → 2026-04-28):**
 
-- **Vitest config** caught at 7 instances → `createProductVitestConfig` factory in `seed/frontend/framework/`.
-- **Conftest bind-consent-mock helper** caught at 3 instances (mailing, ERP, daily-life) → `bind_consent_module_to_mock` in `seed/backend/lib/noctusai_lib/testing/consent.py`.
+- **Vitest config** caught at 7 instances → `createProductVitestConfig` factory in `seed/framework/frontend/`.
+- **Conftest bind-consent-mock helper** caught at 3 instances (mailing, ERP, daily-life) → `bind_consent_module_to_mock` in `seed/lib/backend/noctusai_lib/testing/consent.py`.
 - **`from app.services import ai_consent_features  # noqa: F401`** in main.py — caught at 6 product instances → `consent_features=` kwarg in `create_product_app(...)` (backend framework).
 - **`from app.main import app as _app`** in conftest.py — almost stamped into 6 conftests → `pytest11` entry-point plugin auto-registered via seed-lib's `pyproject.toml`.
 - **Per-product Settings page mounts for consent UI** — would have been 6 mounts → seed-mounted `/settings/ai` route + framework default `aiBadge` fill.
-- **Per-product Spend Badge mounts** — would have been 6+1 mounts → `DEFAULT_AI_BADGES = [<PendingConsentBadge/>, <LLMSpendBadge/>]` exported from `seed/frontend/framework/src/layout.tsx`; products that need product-specific badges spread `DEFAULT_AI_BADGES` (legitimate per-product touch — Daily Life is the sole adopter).
+- **Per-product Spend Badge mounts** — would have been 6+1 mounts → `DEFAULT_AI_BADGES = [<PendingConsentBadge/>, <LLMSpendBadge/>]` exported from `seed/framework/frontend/src/layout.tsx`; products that need product-specific badges spread `DEFAULT_AI_BADGES` (legitimate per-product touch — Daily Life is the sole adopter).
 
 **Companion rules (sister triggers in the same family):**
 

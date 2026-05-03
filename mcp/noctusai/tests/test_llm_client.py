@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-_LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
-_FRAMEWORK = Path(__file__).resolve().parents[3] / "seed" / "backend" / "framework"
+_LIB = Path(__file__).resolve().parents[3] / "seed" / "lib" / "backend"
+_FRAMEWORK = Path(__file__).resolve().parents[3] / "seed" / "framework" / "backend"
 for p in (_LIB, _FRAMEWORK):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))

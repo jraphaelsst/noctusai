@@ -232,7 +232,7 @@ def _build_ai_feedback_router(deps, settings, product_name: str, version: str) -
 # Maintenance contract for _STANDARD_ROUTERS:
 # Adding a new standard router requires all three of:
 #   (a) adding an entry to this registry,
-#   (b) updating `seed/backend/framework/tests/test_build_standard_routers.py
+#   (b) updating `seed/framework/backend/tests/test_build_standard_routers.py
 #       ::test_registry_keys_match_documented_set` (drift guard),
 #   (c) documenting the new capability in `KNOWLEDGE-BASE/CONTEXT/
 #       03-SEED-ARCHITECTURE.md § Standard routers`.

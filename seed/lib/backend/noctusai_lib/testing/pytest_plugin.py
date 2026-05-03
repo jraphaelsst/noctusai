@@ -1,5 +1,5 @@
 """Pytest plugin — auto-loaded for every test session via the `pytest11`
-entry point declared in `seed/backend/lib/pyproject.toml`.
+entry point declared in `seed/lib/backend/pyproject.toml`.
 
 **Why this exists.** Each product's `app/main.py` calls
 `create_product_app(consent_features="app.services.ai_consent_features")`

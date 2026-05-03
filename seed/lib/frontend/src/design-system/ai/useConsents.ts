@@ -14,7 +14,7 @@
  * `pending` powers the `<PendingConsentBadge/>` in the layout's `aiBadge`
  * slot. The seed framework auto-mounts `/settings/ai` (consuming this
  * hook) so products write zero consent-UI code — see
- * `seed/frontend/framework/src/app.tsx`.
+ * `seed/framework/frontend/src/app.tsx`.
  *
  * `staleTime: 60_000` matches the cadence of user-driven toggles — a
  * minute is short enough that toggle state reflects across other tabs

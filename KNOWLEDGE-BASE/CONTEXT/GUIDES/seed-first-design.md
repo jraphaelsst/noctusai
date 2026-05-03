@@ -85,11 +85,11 @@ Before building a new seam, check what's already there. Common seams:
 
 | Seam | Lives at | Use for |
 |---|---|---|
-| `createProductApp(...)` kwargs | `seed/backend/framework/noctusai_seed/app.py` + `seed/frontend/framework/src/app.tsx` | Backend / frontend app factories. New behavior added via a kwarg with safe defaults. |
-| `createProductLayout` + `LayoutEnrichment` | `seed/frontend/framework/src/layout.tsx` | Layout-side product config (nav, branding) + layout-bound enrichment hooks (badge slots, theme persistence). |
+| `createProductApp(...)` kwargs | `seed/framework/backend/noctusai_seed/app.py` + `seed/framework/frontend/src/app.tsx` | Backend / frontend app factories. New behavior added via a kwarg with safe defaults. |
+| `createProductLayout` + `LayoutEnrichment` | `seed/framework/frontend/src/layout.tsx` | Layout-side product config (nav, branding) + layout-bound enrichment hooks (badge slots, theme persistence). |
 | `LayoutEnrichment.aiBadge` | header slot | Ambient AI signals (consent pending, spend warning, daily-brief indicator). |
 | `noctusai_lib.testing.bind_consent_module_to_mock` etc. | seed-lib testing helpers | Test-side wiring helpers consumable by every conftest. |
-| `pytest11` entry-point plugin | `seed/backend/lib/noctusai_lib/testing/pytest_plugin.py` | Auto-loaded test bootstrap (catalog load, environment setup). |
+| `pytest11` entry-point plugin | `seed/lib/backend/noctusai_lib/testing/pytest_plugin.py` | Auto-loaded test bootstrap (catalog load, environment setup). |
 | `noctusai_lib.ai.consent.register_feature` + `consent_required` | seed-lib | Per-feature consent catalog + FastAPI guard. |
 | `standard_routers=[...]` | `noctusai_seed.app` | Bundled API routers products opt into. |
 | Backend lifespan hooks | `lifespan_startup=`, `lifespan_shutdown=` | Schedulers, recovery tasks, framework cleanup. |

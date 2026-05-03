@@ -21,7 +21,7 @@ This installs everything: git hooks, Python venv, backend deps, frontend deps.
 **What it does:**
 1. Installs git hooks (pre-commit: seed→template sync + KB counts + KB sync verification)
 2. Creates Python 3.11 venv + installs all backend requirements
-3. Installs `noctusai_lib` in dev mode (`pip install -e seed/backend/lib`)
+3. Installs `noctusai_lib` in dev mode (`pip install -e seed/lib/backend`)
 4. Runs `npm install` in every product frontend
 5. Verifies `.env` exists
 

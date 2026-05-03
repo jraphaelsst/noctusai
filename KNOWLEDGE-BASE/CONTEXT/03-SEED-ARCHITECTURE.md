@@ -70,9 +70,9 @@ This is the real skeleton model for existing products.
 Examples:
 
 - backend imports from `noctusai_seed`
-- backend depends on `seed/backend/framework` and `seed/backend/lib`
+- backend depends on `seed/framework/backend` and `seed/lib/backend`
 - frontend imports from `@noctusai/seed` and `@noctusai/lib`
-- frontend TS/Vite path aliases point directly to `seed/frontend/...`
+- frontend TS/Vite path aliases point directly to `seed/{lib,framework}/frontend/...`
 - products assemble themselves through seed-owned factories
 
 This is what should make existing products change automatically when `seed` changes.
@@ -253,13 +253,13 @@ export default createProductApp({
 
 ### Frontend (`vite.config.ts` — 3 lines)
 ```ts
-import { createViteConfig } from "../../../seed/frontend/framework/vite.config.factory";
+import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
 export default createViteConfig({ port: 8120 });
 ```
 
 ### Frontend (`vitest.config.ts` — 3 lines)
 ```ts
-import { createProductVitestConfig } from "../../../seed/frontend/framework/vitest.config.factory";
+import { createProductVitestConfig } from "../../../seed/framework/frontend/vitest.config.factory";
 export default createProductVitestConfig();
 ```
 
@@ -358,8 +358,8 @@ get_admin_client = deps.get_admin_client
 
 ### Backend (`requirements.txt`)
 ```
--e seed/backend/lib
--e seed/backend/framework
+-e seed/lib/backend
+-e seed/framework/backend
 fastapi==0.115.0
 # ... domain deps
 ```
@@ -410,7 +410,7 @@ The contract has four parts: what lives in seed, what products own, named extens
 
 The seed is the structural skeleton. Every item below is authored once in `seed/` and imported by products — never copy-pasted.
 
-**Structural factories** (`seed/backend/framework/noctusai_seed/` + `seed/frontend/framework/@noctusai/seed/`):
+**Structural factories** (`seed/framework/backend/noctusai_seed/` + `seed/framework/frontend/@noctusai/seed/`):
 - `create_product_app()` — FastAPI app assembly (logging, credentials, LLM, database, deps, middleware, CORS, Sentry, rate limiting, standard routers, product routers, lifespan).
 - `create_database_module(settings, schema)` — Supabase client factories (user / admin / core-schema).
 - `create_dependencies(db)` — `ProductDependencies` (auth, role resolution, org resolution, user/admin clients).
@@ -435,7 +435,7 @@ The seed is the structural skeleton. Every item below is authored once in `seed/
 - `tailwind.config.base` — shared Tailwind preset.
 - Migration conventions (`products/<product>/backend/migrations/NNN_<name>.sql`, mirror-the-file rule).
 
-**Test harnesses** (`seed/backend/framework/tests/`, `seed/backend/lib/tests/`, `seed/frontend/framework/tests/`).
+**Test harnesses** (`seed/framework/backend/tests/`, `seed/lib/backend/tests/`, `seed/framework/frontend/tests/`).
 
 ### 2. What products are ALLOWED to own
 
@@ -557,7 +557,7 @@ Rows marked 🔧 are **mechanical-inheritance** items — the physics that makes
 | 🔧 `vite.config.ts` not using `createViteConfig()` | Vite alias + envDir + PRODUCT_MAP bindings bypass — mechanical inheritance broken. | **Refactor.** |
 | 🔧 `vitest.config.ts` not using `createProductVitestConfig()` | jsdom + globals + e2e exclude + seed alias resolution bypass — every product would re-derive the same shape and drift on canonical changes. Mechanical inheritance broken. | **Refactor.** |
 | 🔧 `tailwind.config.ts` not importing the shared `tailwind.config.base` preset | Design-system drift at build time. | **Refactor.** |
-| 🔧 `requirements.txt` missing `-e seed/backend/{lib,framework}` | No editable install → no live seed propagation. | **Refactor.** |
+| 🔧 `requirements.txt` missing `-e seed/{lib,framework}/backend` | No editable install → no live seed propagation. | **Refactor.** |
 | Product-level `AuthProvider` / `BrowserRouter` / `QueryClientProvider` wiring | Should flow through `createProductApp`; if custom auth is legitimately needed → use `authProvider` seam. | **Formalize** (new seam) or **refactor** (use existing seam) or **accept** if genuinely unique. Core's `authProvider` case was formalized 2026-04-22. |
 | Reimplementing `create_database_module` (custom `make_supabase_client` factory in product code) | Framework DB factory changes don't propagate; stale when seed evolves. | **Refactor.** Core was the last standing case; resolved 2026-04-23 by `core-seed-wiring-v2` Phase 1 (`app/database.py` 35→14 LOC, delegates to `create_database_module(settings, schema="public")`). Zero products today reimplement the factory. |
 | Custom `get_current_user` / `get_user_role` / `get_org_id` in `app/dependencies.py` instead of consuming `create_dependencies()` | Shallow inheritance — framework deps can't evolve into products. | **Refactor via composition.** Core's case resolved 2026-04-23 by `core-seed-wiring-v2` Phase 2 (re-exposes `deps.get_current_user`/`get_user_client`; adds product-specific helpers on top). Pattern formalized as **§ 3 Dependencies extension pattern** above on 2026-04-24. Future products with the same need: follow the canonical shape there; do NOT fork `dependencies.py`. |

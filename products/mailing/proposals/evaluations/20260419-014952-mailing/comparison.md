@@ -24,7 +24,7 @@
 
 **OpenAI:** 3 sentences. File path ✓, handler name ✓, notes "exists solely for compliance evaluation." Doesn't name the framework counterpart's path or explain mount-order ambiguity.
 
-**Claude:** 6 sentences. Named file + line count + exact framework counterpart path (`seed/backend/framework/noctusai_seed/routers.py::health_router`), called out FastAPI mount-order ambiguity, added history (pre-seed-v3 habit).
+**Claude:** 6 sentences. Named file + line count + exact framework counterpart path (`seed/framework/backend/noctusai_seed/routers.py::health_router`), called out FastAPI mount-order ambiguity, added history (pre-seed-v3 habit).
 
 **Winner:** Claude. The receiving agent can jump directly to both sides of the comparison from my text; from OpenAI's they'd have to discover the framework file themselves.
 

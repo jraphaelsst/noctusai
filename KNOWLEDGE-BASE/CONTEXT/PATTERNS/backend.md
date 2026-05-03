@@ -142,10 +142,10 @@ Routers are imported (and their `@router.<verb>(...)` decorators evaluated) **be
 
 ### Reference adopters (read these before designing a new dep factory)
 
-- `seed/backend/lib/noctusai_lib/ai/consent.py::consent_required` — factory shape + module-level state.
-- `seed/backend/framework/noctusai_seed/app.py` — the wiring point (search for `configure_consent_module(`).
-- `seed/backend/lib/noctusai_lib/testing/consent.py::bind_consent_module_to_mock` — the per-fixture rewire pattern.
-- `seed/backend/lib/noctusai_lib/llm/budget.py::configure_budget_module` — sister adopter (no Depends but same module-level injection shape).
+- `seed/lib/backend/noctusai_lib/ai/consent.py::consent_required` — factory shape + module-level state.
+- `seed/framework/backend/noctusai_seed/app.py` — the wiring point (search for `configure_consent_module(`).
+- `seed/lib/backend/noctusai_lib/testing/consent.py::bind_consent_module_to_mock` — the per-fixture rewire pattern.
+- `seed/lib/backend/noctusai_lib/llm/budget.py::configure_budget_module` — sister adopter (no Depends but same module-level injection shape).
 
 ### When to use this pattern
 

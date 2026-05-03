@@ -1,6 +1,6 @@
 # Seed-lib layout
 
-Single source of truth for the structural layout of `seed/backend/lib/noctusai_lib/`. Tells a fresh agent *where to put a new helper* and *where to find an existing one* without grepping. Replaces the implicit "everything goes at the top level until it grows" convention that had `noctusai_lib/` accumulating 26 sibling entries by 2026-04-30.
+Single source of truth for the structural layout of `seed/lib/backend/noctusai_lib/`. Tells a fresh agent *where to put a new helper* and *where to find an existing one* without grepping. Replaces the implicit "everything goes at the top level until it grows" convention that had `noctusai_lib/` accumulating 26 sibling entries by 2026-04-30.
 
 ## The 6 layers
 
@@ -95,7 +95,7 @@ Each layer holds either flat `.py` files or sub-folders. Use **a folder** when:
 
 - The feature has more than one file's worth of code (~150+ lines).
 - Multiple shapes emerge (e.g. `llm/chat.py`, `llm/embeddings.py`, `llm/audio.py`, `llm/budget.py`, `llm/cache.py`).
-- Tests for the feature warrant their own block in `seed/backend/lib/tests/`.
+- Tests for the feature warrant their own block in `seed/lib/backend/tests/`.
 
 Use **a flat file** when:
 
@@ -120,7 +120,7 @@ When extracting cross-product business logic to `domain/`:
 1. The feature must already recur at N≥2 across products (recurrence rule). One-product features stay in the product.
 2. Single-file shape: `domain/<feature>.py`. Multi-file: `domain/<feature>/`.
 3. The feature's `__init__.py` exports the public surface; product code imports `from noctusai_lib.domain.<feature> import <thing>`.
-4. Tests live in `seed/backend/lib/tests/test_<feature>.py`.
+4. Tests live in `seed/lib/backend/tests/test_<feature>.py`.
 
 ## Migration history
 
@@ -149,7 +149,7 @@ The shims acted as the safety net during the transition — products opted into 
 - **Test infra leaking into production** — mock builders next to real clients invited accidental imports. `testing/` segregates them.
 
 ## Doc-backed
-- `seed/backend/lib/noctusai_lib/<layer>/__init__.py` for each layer's contract + planned/active inventory.
+- `seed/lib/backend/noctusai_lib/<layer>/__init__.py` for each layer's contract + planned/active inventory.
 - `KNOWLEDGE-BASE/INDEX.md` for the entry pointer.
 - `CLAUDE.md § The Map` for the high-level pointer.
 - `KNOWLEDGE-BASE/CONTEXT/04-SHARED-LIBRARY.md` for the catalog of what's actually in each layer (auto-derived count block).

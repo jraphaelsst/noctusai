@@ -29,7 +29,7 @@ This is the #1 engineering rule. It is not optional, not debatable, not a sugges
 
 **Why:** Multiple products had duplicated auth, duplicated layouts, duplicated notification code. Every change meant editing N places. The seed centralizes structure; products carry only domain-specific code. Fixing a structural bug means editing the seed once and it propagates to every product — duplication defeats the whole architecture.
 
-**Fix structural issues in the seed, never in individual products.** If three products all need the same tweak, the tweak belongs in `seed/backend/lib/` or `seed/backend/framework/` (or their frontend counterparts), not replicated three times. The "No quick fixes" rule and this rule reinforce each other: a symptom that appears in multiple products is a root-level signal.
+**Fix structural issues in the seed, never in individual products.** If three products all need the same tweak, the tweak belongs in `seed/lib/backend/` or `seed/framework/backend/` (or their frontend counterparts), not replicated three times. The "No quick fixes" rule and this rule reinforce each other: a symptom that appears in multiple products is a root-level signal.
 
 ### Compliance — what if a product isn't wired?
 
@@ -207,7 +207,7 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 
 **Why this matters:** when the user picks an option based on a shallow estimate, they're committing to the scope you described. Discovering the real scope mid-execution forces a course-correction, wastes the tokens already spent, and erodes trust in future estimates. The cost of reading a file before estimating is negligible; the cost of a mid-flight scope revision is not.
 
-**Concrete failure mode (2026-04-20 — this rule was born from it):** an option-list was offered for migrating `products/core` to `create_product_app()` from the seed framework. The estimate assumed "just edit `core/main.py` and `App.tsx`." Only after the user chose Option 3 (do it this session) did the agent open `seed/backend/framework/noctusai_seed/app.py` and discover that `create_product_app()` auto-registers `/api/team`, `/api/notificacoes`, `/health`, `/api/llm/*` — routes that would collide with core's own control-plane routers — and scopes a `DatabaseModule` to a single product schema, incompatible with core's `public`-schema model. The real scope was a seed-framework refactor (a proper project), not a file edit. The option list itself was the defect.
+**Concrete failure mode (2026-04-20 — this rule was born from it):** an option-list was offered for migrating `products/core` to `create_product_app()` from the seed framework. The estimate assumed "just edit `core/main.py` and `App.tsx`." Only after the user chose Option 3 (do it this session) did the agent open `seed/framework/backend/noctusai_seed/app.py` and discover that `create_product_app()` auto-registers `/api/team`, `/api/notificacoes`, `/health`, `/api/llm/*` — routes that would collide with core's own control-plane routers — and scopes a `DatabaseModule` to a single product schema, incompatible with core's `public`-schema model. The real scope was a seed-framework refactor (a proper project), not a file edit. The option list itself was the defect.
 
 **How to apply:**
 

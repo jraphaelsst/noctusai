@@ -11,7 +11,7 @@
 - **Project slug:** `therapy-scheduling-pilot` — single-product (therapy) scope; lives at `products/therapy-platform/projects/<slug>/`.
 - **Related docs:**
   - `KB § PATTERNS/scheduling-seed.md` — the engine + Protocols + wiring recipe.
-  - `seed/backend/lib/noctusai_lib/domain/scheduling/engine.py` — the lib.
+  - `seed/lib/backend/noctusai_lib/domain/scheduling/engine.py` — the lib.
   - `projects/imobi-scheduling-bot-creation/` — first consumer (real-estate); reference for how to wire.
   - Predecessor: `projects/scheduling-engine-seed/` (closed; lib shipped 2026-05-03).
 

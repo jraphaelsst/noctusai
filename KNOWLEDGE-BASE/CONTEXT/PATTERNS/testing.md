@@ -87,7 +87,7 @@ mock = MockSupabaseClient(validate_schema=True, strict_unknown_tables=True, sche
 - `therapy-platform` — ~20 drifts tracked by `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`.
 - `erp-imobiliario` — 8 drifts tracked by `products/erp-imobiliario/projects/erp-schema-drift-reconciliation/`.
 
-Shipped 2026-04-24 across 4 phases (originating project archived after close). Parser source: `seed/backend/lib/noctusai_lib/testing/migration_parser.py`. Schema cache: `seed/backend/lib/noctusai_lib/testing/_schema_cache.py`. Error class: `seed/backend/lib/noctusai_lib/testing/schema_errors.py`. Keeper detector for silent opt-outs: `mcp/noctusai/tools/compliance.py::check_mock_schema_validation`.
+Shipped 2026-04-24 across 4 phases (originating project archived after close). Parser source: `seed/lib/backend/noctusai_lib/testing/migration_parser.py`. Schema cache: `seed/lib/backend/noctusai_lib/testing/_schema_cache.py`. Error class: `seed/lib/backend/noctusai_lib/testing/schema_errors.py`. Keeper detector for silent opt-outs: `mcp/noctusai/tools/compliance.py::check_mock_schema_validation`.
 
 ---
 
@@ -369,16 +369,16 @@ Two infrastructure-level test suites verify the framework itself, independent of
 
 | Layer | Where | Runner | What it covers |
 |---|---|---|---|
-| Backend framework (`noctusai_seed`) | `seed/backend/framework/tests/` | `pytest` | `build_standard_routers` registry, opt-in resolution, factory shape. Pure-Python, no DB. |
-| Frontend framework (`@noctusai/seed`) | `seed/frontend/framework/tests/` | `vitest` (jsdom) | `createProductApp` auth-branch selection (supabase vs custom `authProvider`), route topology (`unauthRedirect`, conditional `/sso` mount), error guard when neither auth path is provided. |
-| Shared library (`noctusai_lib`) | `seed/backend/lib/tests/` | `pytest` | Pure-function helpers: notifications mapper, etc. |
+| Backend framework (`noctusai_seed`) | `seed/framework/backend/tests/` | `pytest` | `build_standard_routers` registry, opt-in resolution, factory shape. Pure-Python, no DB. |
+| Frontend framework (`@noctusai/seed`) | `seed/framework/frontend/tests/` | `vitest` (jsdom) | `createProductApp` auth-branch selection (supabase vs custom `authProvider`), route topology (`unauthRedirect`, conditional `/sso` mount), error guard when neither auth path is provided. |
+| Shared library (`noctusai_lib`) | `seed/lib/backend/tests/` | `pytest` | Pure-function helpers: notifications mapper, etc. |
 
 ### Running
 
 ```bash
-cd seed/backend/framework && pytest tests/ -q
-cd seed/backend/lib       && pytest tests/ -q
-cd seed/frontend/framework && npm test
+cd seed/framework/backend && pytest tests/ -q
+cd seed/lib/backend       && pytest tests/ -q
+cd seed/framework/frontend && npm test
 ```
 
 ### Frontend harness notes
@@ -482,13 +482,13 @@ assert notifs[0]["metadata"]["feature_key"] == "therapy.session_summary"
 
 ### Per-product frontend hook tests (seed-scoped factory, 2026-04-27)
 
-Every product frontend at `products/<X>/frontend/` ships with a 3-line `vitest.config.ts` that delegates to **`createProductVitestConfig`** at `seed/frontend/framework/vitest.config.factory.ts` — the seed-scoped factory absorbing the canonical config. This is the same skeleton/organ pattern as `createViteConfig` (sibling factory at `vite.config.factory.ts`); changes to the canonical shape land once in seed and propagate to every product at install time. Adopters: erp, mailing, daily-life, personal-finance, therapy-platform, core, adconnect. Seed reference product (`products/seed/`) is intentionally NOT in this list — it's a scaffolding template, not a consumer.
+Every product frontend at `products/<X>/frontend/` ships with a 3-line `vitest.config.ts` that delegates to **`createProductVitestConfig`** at `seed/framework/frontend/vitest.config.factory.ts` — the seed-scoped factory absorbing the canonical config. This is the same skeleton/organ pattern as `createViteConfig` (sibling factory at `vite.config.factory.ts`); changes to the canonical shape land once in seed and propagate to every product at install time. Adopters: erp, mailing, daily-life, personal-finance, therapy-platform, core, adconnect. Seed reference product (`products/seed/`) is intentionally NOT in this list — it's a scaffolding template, not a consumer.
 
 **Canonical config shape** (3 lines, copy verbatim — no per-product mutation):
 
 ```ts
 // products/<X>/frontend/vitest.config.ts
-import { createProductVitestConfig } from "../../../seed/frontend/framework/vitest.config.factory";
+import { createProductVitestConfig } from "../../../seed/framework/frontend/vitest.config.factory";
 export default createProductVitestConfig();
 ```
 
@@ -503,7 +503,7 @@ export default createProductVitestConfig({
 });
 ```
 
-The factory itself is tested at `seed/frontend/framework/tests/createProductVitestConfig.test.ts` (6 tests covering defaults + each override knob).
+The factory itself is tested at `seed/framework/frontend/tests/createProductVitestConfig.test.ts` (6 tests covering defaults + each override knob).
 
 **Required devDependencies** in each product's `package.json`: `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `jsdom`.
 

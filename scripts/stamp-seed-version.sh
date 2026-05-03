@@ -12,7 +12,7 @@
 #   - Automatically invoked by `scripts/pre-commit` (once per commit).
 #   - Automatically invoked by `start.sh` (once per dev-server boot).
 #   - Manually: run this script after a `git pull` if you did not re-run
-#     `pip install -e seed/backend/...`. The keeper will tell you if you
+#     `pip install -e seed/{lib,framework}/backend`. The keeper will tell you if you
 #     forgot.
 #
 # Exit codes:
@@ -43,9 +43,9 @@ EOF
 }
 
 _write_stamp \
-    "$REPO_ROOT/seed/backend/framework/noctusai_seed/_version_static.py" \
+    "$REPO_ROOT/seed/framework/backend/noctusai_seed/_version_static.py" \
     "noctusai_seed"
 
 _write_stamp \
-    "$REPO_ROOT/seed/backend/lib/noctusai_lib/_version_static.py" \
+    "$REPO_ROOT/seed/lib/backend/noctusai_lib/_version_static.py" \
     "noctusai_lib"

@@ -20,5 +20,5 @@ export type { ProductLayoutConfig, LayoutEnrichment } from './layout';
 // with their own wrapper.
 export { ConsentSettingsPage } from './pages/ConsentSettingsPage';
 
-// createViteConfig lives at seed/frontend/framework/vite.config.factory.ts
-// Config-time code, imported by path: import { createViteConfig } from "../../../seed/frontend/framework/vite.config.factory";
+// createViteConfig lives at seed/framework/frontend/vite.config.factory.ts
+// Config-time code, imported by path: import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";

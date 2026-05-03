@@ -51,10 +51,10 @@ def get_agent_context() -> dict:
         "stack": "FastAPI + Supabase backend, React + TypeScript + Vite frontend",
         "seed_path": "seed/",
         "seed_layers": {
-            "backend_lib": "seed/backend/lib/ (noctusai_lib)",
-            "backend_framework": "seed/backend/framework/ (noctusai_seed)",
-            "frontend_lib": "seed/frontend/lib/ (@noctusai/lib)",
-            "frontend_framework": "seed/frontend/framework/ (@noctusai/seed)",
+            "backend_lib": "seed/lib/backend/ (noctusai_lib)",
+            "backend_framework": "seed/framework/backend/ (noctusai_seed)",
+            "frontend_lib": "seed/lib/frontend/ (@noctusai/lib)",
+            "frontend_framework": "seed/framework/frontend/ (@noctusai/seed)",
         },
         "products": [
             {

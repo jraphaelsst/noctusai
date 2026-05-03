@@ -102,7 +102,7 @@ Agents should default to invoking an MCP tool rather than shelling out to the CL
 - `noctusai_check_api_consistency(slug)` — Response-pattern consistency (`success_response`/`paginated_response`).
 
 ### Catalog (shared-library observation)
-- `noctusai_catalog` — Scans `seed/backend/lib` + `seed/backend/framework` for every public symbol; scans every product's backend for imports; produces `mcp/noctusai/catalog.md` with:
+- `noctusai_catalog` — Scans `seed/lib/backend` + `seed/framework/backend` for every public symbol; scans every product's backend for imports; produces `mcp/noctusai/catalog.md` with:
   - Every symbol + its importers + import count.
   - **Orphans** (lib symbols with zero importers).
   - **Single-consumer** (informational — one product uses this symbol).

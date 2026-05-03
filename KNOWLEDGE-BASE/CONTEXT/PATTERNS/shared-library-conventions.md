@@ -2,8 +2,8 @@
 
 > Naming, absorption, and privatization rules enforced by the catalog tool.
 > Run `python mcp/noctusai/cli.py --catalog` to see current state.
-> These conventions apply to `seed/backend/lib/` (`noctusai_lib`) and
-> `seed/backend/framework/` (`noctusai_seed`). Frontend equivalents
+> These conventions apply to `seed/lib/backend/` (`noctusai_lib`) and
+> `seed/framework/backend/` (`noctusai_seed`). Frontend equivalents
 > (`@noctusai/lib`, `@noctusai/seed`) follow the same rules.
 
 ---
@@ -145,8 +145,8 @@ them that drift has a name and a fix.
   namespace rename to `noctusai.lib` / `noctusai.seed` happens.
 
 **When to run**:
-- Before opening a PR that touches `seed/backend/lib/` or
-  `seed/backend/framework/`.
+- Before opening a PR that touches `seed/lib/backend/` or
+  `seed/framework/backend/`.
 - After any rename, to verify the rename didn't silently break import paths.
 - During `--review` (future wiring) as a drift check.
 

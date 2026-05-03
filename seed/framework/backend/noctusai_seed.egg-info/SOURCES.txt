@@ -1,8 +1,9 @@
 pyproject.toml
-setup.py
 noctusai_seed/__init__.py
 noctusai_seed/_version.py
 noctusai_seed/_version_static.py
+noctusai_seed/ai_feedback_router.py
+noctusai_seed/ai_router.py
 noctusai_seed/app.py
 noctusai_seed/config.py
 noctusai_seed/database.py
@@ -16,4 +17,5 @@ noctusai_seed.egg-info/SOURCES.txt
 noctusai_seed.egg-info/dependency_links.txt
 noctusai_seed.egg-info/requires.txt
 noctusai_seed.egg-info/top_level.txt
+tests/test_ai_feedback_router.py
 tests/test_build_standard_routers.py

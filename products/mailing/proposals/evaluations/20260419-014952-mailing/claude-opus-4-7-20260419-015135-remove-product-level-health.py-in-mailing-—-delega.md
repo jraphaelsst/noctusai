@@ -18,7 +18,7 @@ Keeper's deterministic compliance detector (`check_seed_compliance` in `mcp/noct
 
 ## 2. Situation
 
-The file `products/mailing/backend/app/routers/health.py` contains a 10-line FastAPI `APIRouter` with prefix `/api/health` and a single `GET ''` handler returning `{"status": "ok", "service": "mailing"}`. The seed framework mounts its own health router via `create_product_app()` in `seed/backend/framework/noctusai_seed/app.py`, which in turn pulls from `seed/backend/framework/noctusai_seed/routers.py::health_router` and exposes `GET /api/health` to every product by default. Whether the product-level router is actually reachable depends on FastAPI's router-mount order in `main.py` — typically the framework route wins silently, masking the duplicate until the seed evolves its health semantics. The pattern exists because early products (pre-seed-v3) carried their own health endpoints and the habit propagated.
+The file `products/mailing/backend/app/routers/health.py` contains a 10-line FastAPI `APIRouter` with prefix `/api/health` and a single `GET ''` handler returning `{"status": "ok", "service": "mailing"}`. The seed framework mounts its own health router via `create_product_app()` in `seed/framework/backend/noctusai_seed/app.py`, which in turn pulls from `seed/framework/backend/noctusai_seed/routers.py::health_router` and exposes `GET /api/health` to every product by default. Whether the product-level router is actually reachable depends on FastAPI's router-mount order in `main.py` — typically the framework route wins silently, masking the duplicate until the seed evolves its health semantics. The pattern exists because early products (pre-seed-v3) carried their own health endpoints and the habit propagated.
 
 ---
 
@@ -30,7 +30,7 @@ Deletion is the right move precisely because the framework already provides the 
 
 ### 3.2 Application instructions
 
-1. Diff `products/mailing/backend/app/routers/health.py` against `seed/backend/framework/noctusai_seed/routers.py` — specifically the `health_router` definition — to confirm no mailing-specific customization (custom payload fields, dependency checks, auth requirements) has accreted.
+1. Diff `products/mailing/backend/app/routers/health.py` against `seed/framework/backend/noctusai_seed/routers.py` — specifically the `health_router` definition — to confirm no mailing-specific customization (custom payload fields, dependency checks, auth requirements) has accreted.
 2. If the diff shows only the framework-provided shape, delete the file: `rm products/mailing/backend/app/routers/health.py`.
 3. `grep -r 'from app.routers.health' products/mailing/` — there should be zero hits; if any, remove those imports too.
 4. Check `products/mailing/backend/app/main.py` for an explicit `include_router(health.router)` and remove it if present — `create_product_app()` already mounts the framework health router.
@@ -40,7 +40,7 @@ Deletion is the right move precisely because the framework already provides the 
 ### 3.3 Seed APIs / shared lib involved
 
 - `noctusai_seed.routers.health_router` — Framework-supplied `APIRouter` mounted by `create_product_app()` at `/api/health`; returns the standard health payload every product inherits.
-- `noctusai_seed.create_product_app()` — Factory in `seed/backend/framework/noctusai_seed/app.py` that auto-includes the framework health router. Product `main.py` files must not include their own.
+- `noctusai_seed.create_product_app()` — Factory in `seed/framework/backend/noctusai_seed/app.py` that auto-includes the framework health router. Product `main.py` files must not include their own.
 
 ### 3.4 Risks before applying
 
@@ -61,7 +61,7 @@ When this is applied, these change:
 - **Behavior:** `GET /api/health` continues to respond; response shape converges to the framework payload. No user-facing downtime.
 - **Risk profile:** Silent divergence risk between product and framework health semantics is removed. Future seed evolutions to the health contract now propagate to mailing automatically.
 - **Ergonomics:** Mailing backend loses 10 lines of boilerplate; one fewer file in the product-local routers list. Pattern becomes: 'health is a framework concern, not a product concern.'
-- **Coverage:** Framework-level health tests (in `seed/backend/framework/tests/`) now exclusively cover the endpoint for mailing — no duplicate product-level test maintenance.
+- **Coverage:** Framework-level health tests (in `seed/framework/backend/tests/`) now exclusively cover the endpoint for mailing — no duplicate product-level test maintenance.
 
 ---
 
@@ -73,7 +73,7 @@ When this is applied, these change:
 - [ ] Backend tests still pass for the affected product(s)
 - [ ] If the change touched shared code, `python mcp/noctusai/cli.py --catalog` shows no new orphans or duplicate candidates
 - [ ] Documentation updated KB-first, CLAUDE.md second (per `KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md → Docs stay in sync`)
-- [ ] Diff against `seed/backend/framework/noctusai_seed/routers.py::health_router` captured in the commit message (or explicitly confirmed no diff).
+- [ ] Diff against `seed/framework/backend/noctusai_seed/routers.py::health_router` captured in the commit message (or explicitly confirmed no diff).
 - [ ] Framework health endpoint verified reachable: `curl http://localhost:<port>/api/health` returns framework payload.
 
 ---
@@ -81,7 +81,7 @@ When this is applied, these change:
 ## 6. Related files
 
 - `products/mailing/backend/app/routers/health.py` — The file to delete (after diff).
-- `seed/backend/framework/noctusai_seed/routers.py` — Contains `health_router` — the framework-supplied replacement. Confirm shape matches.
-- `seed/backend/framework/noctusai_seed/app.py` — `create_product_app()` — auto-includes the framework health router; product `main.py` files inherit automatically.
+- `seed/framework/backend/noctusai_seed/routers.py` — Contains `health_router` — the framework-supplied replacement. Confirm shape matches.
+- `seed/framework/backend/noctusai_seed/app.py` — `create_product_app()` — auto-includes the framework health router; product `main.py` files inherit automatically.
 - `products/mailing/backend/app/main.py` — Check for explicit `include_router(health.router)` — remove if present.
 - `mcp/noctusai/tools/compliance.py` — `check_seed_compliance` — the detector that flagged this. Same check fires for `notificacoes.py`, `team.py`; the fix pattern documented here applies to all three.

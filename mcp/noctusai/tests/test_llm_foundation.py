@@ -13,7 +13,7 @@ import pytest
 
 # Ensure the lib is importable even when the test runs from the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_LIB = _REPO_ROOT / "seed" / "backend" / "lib"
+_LIB = _REPO_ROOT / "seed" / "lib" / "backend"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 

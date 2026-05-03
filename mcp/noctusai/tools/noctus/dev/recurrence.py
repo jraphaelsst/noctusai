@@ -197,24 +197,24 @@ def _suggest_for_classification(classification: str) -> str:
     return {
         "main.py-import": (
             "Recurring boilerplate in product main.py — promote to a "
-            "`create_product_app(...)` kwarg in `seed/backend/framework/"
+            "`create_product_app(...)` kwarg in `seed/framework/backend/"
             "noctusai_seed/app.py`. Pattern formalized 2026-04-28 via "
             "`consent_features=` (see `KB § 03-SEED-ARCHITECTURE § Seed Contract`)."
         ),
         "frontend-entry": (
             "Recurring boilerplate in product frontend entry — promote to "
             "`createProductApp(...)` config or default behavior in "
-            "`seed/frontend/framework/src/app.tsx`."
+            "`seed/framework/frontend/src/app.tsx`."
         ),
         "conftest-line": (
             "Recurring conftest line — absorb into a seed-lib testing "
             "helper (e.g. `noctusai_lib.testing.<helper>`) OR auto-load via "
-            "the `pytest11` entry-point plugin in `seed/backend/lib/pyproject.toml`."
+            "the `pytest11` entry-point plugin in `seed/lib/backend/pyproject.toml`."
         ),
         "config-line": (
             "Recurring config line — absorb into the seed-side config "
             "factory (e.g. `createProductVitestConfig` in "
-            "`seed/frontend/framework/`)."
+            "`seed/framework/frontend/`)."
         ),
     }.get(classification, "Consider absorbing into seed.")
 
@@ -859,7 +859,7 @@ _BLOCK_SCAN_GLOBS: list[str] = [
     "products/*/backend/app/routers/*.py",
     "products/*/backend/app/routers/**/*.py",
     "products/*/backend/app/dependencies.py",
-    "seed/backend/lib/noctusai_lib/**/*.py",
+    "seed/lib/backend/noctusai_lib/**/*.py",
 ]
 
 
@@ -1379,7 +1379,7 @@ def scan_test_fixture_recurrence(
         suggestion = (
             f"Test helper `{name}` recurs in {len(products)} products: "
             f"{', '.join(products)}. Absorb into `noctusai_lib.testing.<helper>` "
-            f"or `seed/backend/lib/noctusai_lib/testing/` (see existing adopters: "
+            f"or `seed/lib/backend/noctusai_lib/testing/` (see existing adopters: "
             f"`bind_consent_module_to_mock`, `MockRequestBuilder.inserted_payloads`). "
             f"Cross-product test scaffolding belongs in seed-lib so the next "
             f"product gets the helper for free."
@@ -1448,7 +1448,7 @@ _SQL_PATTERN_PROBES: list[tuple[str, "re.Pattern", str]] = [
             re.IGNORECASE | re.DOTALL,
         ),
         "RLS policy with subquery `auth.uid()` — the platform standard. "
-        "Absorb into a `seed/backend/lib/noctusai_lib/sql/rls_templates.sql` "
+        "Absorb into a `seed/lib/backend/noctusai_lib/sql/rls_templates.sql` "
         "or a Python helper that emits the canonical shape with table name "
         "interpolated.",
     ),

@@ -14,7 +14,7 @@ seed/
     framework/    @noctusai/seed     Structural framework (createProductApp, createProductLayout, createViteConfig)
 ```
 
-### Layer 1: Shared Library (`seed/backend/lib/` + `seed/frontend/lib/`)
+### Layer 1: Shared Library (`seed/lib/backend/` + `seed/lib/frontend/`)
 
 Reusable, atomic code that products import as functions and components.
 
@@ -23,7 +23,7 @@ Reusable, atomic code that products import as functions and components.
 
 **How products consume it:** `from noctusai_lib.auth import ...` / `import { ... } from '@noctusai/lib'`
 
-### Layer 2: Framework (`seed/backend/framework/` + `seed/frontend/framework/`)
+### Layer 2: Framework (`seed/framework/backend/` + `seed/framework/frontend/`)
 
 Structural bones that define HOW a product is assembled. Products don't copy this code — they import and extend it.
 
@@ -46,8 +46,8 @@ You don't build a new spine for every organ. You attach the organ to the existin
 
 | What changed | What happens |
 |-------------|-------------|
-| Fix in `seed/backend/lib/` or `seed/frontend/lib/` | All products get the fix (imported dependency) |
-| Fix in `seed/backend/framework/` or `seed/frontend/framework/` | All products get the fix (imported dependency) |
+| Fix in `seed/lib/backend/` or `seed/lib/frontend/` | All products get the fix (imported dependency) |
+| Fix in `seed/framework/backend/` or `seed/framework/frontend/` | All products get the fix (imported dependency) |
 | New shared component | Available to all products immediately via import |
 | New framework feature | Available to all products immediately via import |
 
@@ -104,7 +104,7 @@ TooltipProvider, QueryClient, AuthProvider, ErrorBoundary, Suspense, routing, pa
 ```
 seed/
   backend/
-    lib/                        noctusai_lib (pip install -e seed/backend/lib)
+    lib/                        noctusai_lib (pip install -e seed/lib/backend)
       noctusai_lib/
         auth.py                 JWT validation, SSO resolution
         roles.py                7-role hierarchy constants
@@ -120,7 +120,7 @@ seed/
         responses.py            success_response, paginated_response
         rate_limit.py           create_limiter()
         testing/                MockSupabaseClient, AuthClient
-    framework/                  noctusai_seed (pip install -e seed/backend/framework)
+    framework/                  noctusai_seed (pip install -e seed/framework/backend)
       noctusai_seed/
         app.py                  create_product_app()
         config.py               ProductSettings

@@ -113,7 +113,7 @@ products/therapy-platform/backend/app/services/messaging_service.py:179
 **After (post-Phase 1, predecessor's lib in place):**
 
 ```
-seed/backend/lib/noctusai_lib/integrations/whatsapp/__init__.py
+seed/lib/backend/noctusai_lib/integrations/whatsapp/__init__.py
   async def send_text(phone, message, config) -> Dict:
     # The single canonical Meta Cloud API send.
     # Owns: dry-run fallback, phone normalization, error envelope.
@@ -205,7 +205,7 @@ KB § PATTERNS/accept-with-rationale.md
 
 ```bash
 # Verify predecessor lib exists (Phase 0 gate)
-ls seed/backend/lib/noctusai_lib/integrations/whatsapp/__init__.py
+ls seed/lib/backend/noctusai_lib/integrations/whatsapp/__init__.py
 python -c "from noctusai_lib.integrations.whatsapp import send_text; print('ok')"
 
 # Re-grep current site count (catch N=3 escalation)

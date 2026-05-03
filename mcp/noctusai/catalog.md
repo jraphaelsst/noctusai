@@ -4,7 +4,7 @@
 > This artifact replaces the drift-prone handwritten catalog. It answers:
 > *what's in the lib, who uses it, and what's duplicated across products that probably shouldn't be.*
 
-- **Lib roots scanned**: `noctusai_lib` (seed/backend/lib/noctusai_lib), `noctusai_seed` (seed/backend/framework/noctusai_seed)
+- **Lib roots scanned**: `noctusai_lib` (seed/lib/backend/noctusai_lib), `noctusai_seed` (seed/framework/backend/noctusai_seed)
 - **Products scanned**: `adconnect`, `daily-life`, `erp-imobiliario`, `mailing`, `personal-finance`, `seed`, `therapy-platform`
 - **Totals**: 112 symbols · 34 orphans · 43 single-consumer · 27 duplicate candidates
 
@@ -335,40 +335,40 @@ or intentionally-public for future consumers).
 
 | Symbol | Kind | Location |
 |---|---|---|
-| `noctusai_lib.auth.get_sso_context` | def | `seed/backend/lib/noctusai_lib/auth.py:117` |
-| `noctusai_lib.auth.make_get_current_user` | def | `seed/backend/lib/noctusai_lib/auth.py:62` |
-| `noctusai_lib.auth.require_role` | def | `seed/backend/lib/noctusai_lib/auth.py:140` |
-| `noctusai_lib.email_templates.send_password_reset_email` | def | `seed/backend/lib/noctusai_lib/email_templates.py:136` |
-| `noctusai_lib.exceptions.ConflictError` | class | `seed/backend/lib/noctusai_lib/exceptions.py:92` |
-| `noctusai_lib.exceptions.ForbiddenError` | class | `seed/backend/lib/noctusai_lib/exceptions.py:81` |
-| `noctusai_lib.exceptions.InternalError` | class | `seed/backend/lib/noctusai_lib/exceptions.py:107` |
-| `noctusai_lib.exceptions.NotFoundError` | class | `seed/backend/lib/noctusai_lib/exceptions.py:40` |
-| `noctusai_lib.exceptions.UnauthorizedError` | class | `seed/backend/lib/noctusai_lib/exceptions.py:70` |
-| `noctusai_lib.exceptions.ValidationError_` | class | `seed/backend/lib/noctusai_lib/exceptions.py:55` |
-| `noctusai_lib.exceptions.format_error_response` | def | `seed/backend/lib/noctusai_lib/exceptions.py:122` |
-| `noctusai_lib.invitations.expire_old_invitations` | def | `seed/backend/lib/noctusai_lib/invitations.py:205` |
-| `noctusai_lib.llm.cache.flush_for_model` | async def | `seed/backend/lib/noctusai_lib/llm/cache.py:116` |
-| `noctusai_lib.llm.providers.anthropic_provider.AnthropicProvider` | class | `seed/backend/lib/noctusai_lib/llm/providers/anthropic_provider.py:33` |
-| `noctusai_lib.llm.providers.gemini_provider.GeminiProvider` | class | `seed/backend/lib/noctusai_lib/llm/providers/gemini_provider.py:27` |
-| `noctusai_lib.llm.providers.openai_provider.OpenAIProvider` | class | `seed/backend/lib/noctusai_lib/llm/providers/openai_provider.py:30` |
-| `noctusai_lib.notifications.map_notification_from_pt` | def | `seed/backend/lib/noctusai_lib/notifications.py:26` |
-| `noctusai_lib.page_status.get_visible_pages` | def | `seed/backend/lib/noctusai_lib/page_status.py:17` |
-| `noctusai_lib.responses.PaginatedResponse` | class | `seed/backend/lib/noctusai_lib/responses.py:25` |
-| `noctusai_lib.responses.PaginationMeta` | class | `seed/backend/lib/noctusai_lib/responses.py:17` |
-| `noctusai_lib.responses.calculate_pagination` | def | `seed/backend/lib/noctusai_lib/responses.py:110` |
-| `noctusai_lib.responses.deleted_response` | def | `seed/backend/lib/noctusai_lib/responses.py:92` |
-| `noctusai_lib.roles.ADMIN_ROLES` | const | `seed/backend/lib/noctusai_lib/roles.py:13` |
-| `noctusai_lib.roles.MANAGE_TEAM_ROLES` | const | `seed/backend/lib/noctusai_lib/roles.py:16` |
-| `noctusai_lib.roles.ORG_ROLES` | const | `seed/backend/lib/noctusai_lib/roles.py:10` |
-| `noctusai_lib.roles.PRODUCT_ADMIN_ROLES` | const | `seed/backend/lib/noctusai_lib/roles.py:23` |
-| `noctusai_lib.roles.can_manage_billing` | def | `seed/backend/lib/noctusai_lib/roles.py:47` |
-| `noctusai_lib.roles.can_manage_team` | def | `seed/backend/lib/noctusai_lib/roles.py:42` |
-| `noctusai_lib.roles.is_dev_or_owner` | def | `seed/backend/lib/noctusai_lib/roles.py:37` |
-| `noctusai_seed.database.DatabaseModule` | class | `seed/backend/framework/noctusai_seed/database.py:25` |
-| `noctusai_seed.dependencies.ProductDependencies` | class | `seed/backend/framework/noctusai_seed/dependencies.py:28` |
-| `noctusai_seed.llm_router.ModelInfo` | class | `seed/backend/framework/noctusai_seed/llm_router.py:38` |
-| `noctusai_seed.llm_router.PreferencesBody` | class | `seed/backend/framework/noctusai_seed/llm_router.py:46` |
-| `noctusai_seed.llm_router.ProviderInfo` | class | `seed/backend/framework/noctusai_seed/llm_router.py:32` |
+| `noctusai_lib.auth.get_sso_context` | def | `seed/lib/backend/noctusai_lib/auth.py:117` |
+| `noctusai_lib.auth.make_get_current_user` | def | `seed/lib/backend/noctusai_lib/auth.py:62` |
+| `noctusai_lib.auth.require_role` | def | `seed/lib/backend/noctusai_lib/auth.py:140` |
+| `noctusai_lib.email_templates.send_password_reset_email` | def | `seed/lib/backend/noctusai_lib/email_templates.py:136` |
+| `noctusai_lib.exceptions.ConflictError` | class | `seed/lib/backend/noctusai_lib/exceptions.py:92` |
+| `noctusai_lib.exceptions.ForbiddenError` | class | `seed/lib/backend/noctusai_lib/exceptions.py:81` |
+| `noctusai_lib.exceptions.InternalError` | class | `seed/lib/backend/noctusai_lib/exceptions.py:107` |
+| `noctusai_lib.exceptions.NotFoundError` | class | `seed/lib/backend/noctusai_lib/exceptions.py:40` |
+| `noctusai_lib.exceptions.UnauthorizedError` | class | `seed/lib/backend/noctusai_lib/exceptions.py:70` |
+| `noctusai_lib.exceptions.ValidationError_` | class | `seed/lib/backend/noctusai_lib/exceptions.py:55` |
+| `noctusai_lib.exceptions.format_error_response` | def | `seed/lib/backend/noctusai_lib/exceptions.py:122` |
+| `noctusai_lib.invitations.expire_old_invitations` | def | `seed/lib/backend/noctusai_lib/invitations.py:205` |
+| `noctusai_lib.llm.cache.flush_for_model` | async def | `seed/lib/backend/noctusai_lib/llm/cache.py:116` |
+| `noctusai_lib.llm.providers.anthropic_provider.AnthropicProvider` | class | `seed/lib/backend/noctusai_lib/llm/providers/anthropic_provider.py:33` |
+| `noctusai_lib.llm.providers.gemini_provider.GeminiProvider` | class | `seed/lib/backend/noctusai_lib/llm/providers/gemini_provider.py:27` |
+| `noctusai_lib.llm.providers.openai_provider.OpenAIProvider` | class | `seed/lib/backend/noctusai_lib/llm/providers/openai_provider.py:30` |
+| `noctusai_lib.notifications.map_notification_from_pt` | def | `seed/lib/backend/noctusai_lib/notifications.py:26` |
+| `noctusai_lib.page_status.get_visible_pages` | def | `seed/lib/backend/noctusai_lib/page_status.py:17` |
+| `noctusai_lib.responses.PaginatedResponse` | class | `seed/lib/backend/noctusai_lib/responses.py:25` |
+| `noctusai_lib.responses.PaginationMeta` | class | `seed/lib/backend/noctusai_lib/responses.py:17` |
+| `noctusai_lib.responses.calculate_pagination` | def | `seed/lib/backend/noctusai_lib/responses.py:110` |
+| `noctusai_lib.responses.deleted_response` | def | `seed/lib/backend/noctusai_lib/responses.py:92` |
+| `noctusai_lib.roles.ADMIN_ROLES` | const | `seed/lib/backend/noctusai_lib/roles.py:13` |
+| `noctusai_lib.roles.MANAGE_TEAM_ROLES` | const | `seed/lib/backend/noctusai_lib/roles.py:16` |
+| `noctusai_lib.roles.ORG_ROLES` | const | `seed/lib/backend/noctusai_lib/roles.py:10` |
+| `noctusai_lib.roles.PRODUCT_ADMIN_ROLES` | const | `seed/lib/backend/noctusai_lib/roles.py:23` |
+| `noctusai_lib.roles.can_manage_billing` | def | `seed/lib/backend/noctusai_lib/roles.py:47` |
+| `noctusai_lib.roles.can_manage_team` | def | `seed/lib/backend/noctusai_lib/roles.py:42` |
+| `noctusai_lib.roles.is_dev_or_owner` | def | `seed/lib/backend/noctusai_lib/roles.py:37` |
+| `noctusai_seed.database.DatabaseModule` | class | `seed/framework/backend/noctusai_seed/database.py:25` |
+| `noctusai_seed.dependencies.ProductDependencies` | class | `seed/framework/backend/noctusai_seed/dependencies.py:28` |
+| `noctusai_seed.llm_router.ModelInfo` | class | `seed/framework/backend/noctusai_seed/llm_router.py:38` |
+| `noctusai_seed.llm_router.PreferencesBody` | class | `seed/framework/backend/noctusai_seed/llm_router.py:46` |
+| `noctusai_seed.llm_router.ProviderInfo` | class | `seed/framework/backend/noctusai_seed/llm_router.py:32` |
 
 ## Single-consumer symbols
 

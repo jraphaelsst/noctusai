@@ -130,7 +130,7 @@ Recommendation: **Option 2 for speed** — keep the existing layouts, wire them 
 - [ ] Update `products/adconnect/MASTER-PROMPT.md` — authoritative dev guide
 - [ ] Add to `start.sh` (backend 8007, frontend 8130)
 - [ ] Add to `CLAUDE.md` product table
-- [ ] Add to `PRODUCT_MAP` in `seed/frontend/framework/vite.config.factory.ts`
+- [ ] Add to `PRODUCT_MAP` in `seed/framework/frontend/vite.config.factory.ts`
 - [ ] Insert into `public.products` table (Supabase)
 
 ### 2. Backend — Migrate Domain Code

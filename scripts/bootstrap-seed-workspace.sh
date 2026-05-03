@@ -122,7 +122,7 @@ mkdir -p "$TARGET"
 
 # ----- the 7 surfaces consumed from noc -----
 # Note: `noctusai_lib` is NOT a top-level surface in noc — it lives at
-# `seed/backend/lib/noctusai_lib/` and is editable-installed by mcp's
+# `seed/lib/backend/noctusai_lib/` and is editable-installed by mcp's
 # requirements.txt. Symlinking `seed/` already exposes it; the MCP toolkit
 # in template (symlinked from noc) inherits the same editable install.
 SURFACES=(

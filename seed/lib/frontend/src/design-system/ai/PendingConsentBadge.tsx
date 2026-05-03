@@ -6,7 +6,7 @@
  * Null-renders when `pending === 0` so the layout slot stays empty when
  * there's nothing to nudge about. Clicking links to `/settings/ai`
  * (auto-mounted by the seed framework — see
- * `seed/frontend/framework/src/app.tsx`).
+ * `seed/framework/frontend/src/app.tsx`).
  *
  * Mounted by default via the framework layout factory — products do
  * NOT mount this themselves. Products that want different `aiBadge`

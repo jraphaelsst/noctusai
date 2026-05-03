@@ -10,10 +10,10 @@ Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + T
 ## The Seed (most important concept)
 
 Everything inherits from `seed/`. The seed has two layers:
-- `seed/backend/lib/` (`noctusai_lib`) — reusable code: auth, roles, invitations, email, testing
-- `seed/backend/framework/` (`noctusai_seed`) — structural framework: `create_product_app()`, `ProductSettings`, standard routers
-- `seed/frontend/lib/` (`@noctusai/lib`) — reusable code: api, sso, roles, hooks, design system
-- `seed/frontend/framework/` (`@noctusai/seed`) — structural framework: `createProductApp()`, `createProductLayout()`, `createProductInfra()`, `createViteConfig()`
+- `seed/lib/backend/` (`noctusai_lib`) — reusable code: auth, roles, invitations, email, testing
+- `seed/framework/backend/` (`noctusai_seed`) — structural framework: `create_product_app()`, `ProductSettings`, standard routers
+- `seed/lib/frontend/` (`@noctusai/lib`) — reusable code: api, sso, roles, hooks, design system
+- `seed/framework/frontend/` (`@noctusai/seed`) — structural framework: `createProductApp()`, `createProductLayout()`, `createProductInfra()`, `createViteConfig()`
 
 Products IMPORT from the seed. They never duplicate it. Read `seed/README.md` for the full architecture.
 

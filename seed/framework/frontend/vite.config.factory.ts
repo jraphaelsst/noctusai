@@ -9,7 +9,7 @@
  *   - VITE_BACKEND_API_URL injection from port config
  *
  * Usage:
- *   import { createViteConfig } from "../../../seed/frontend/framework/vite.config.factory";
+ *   import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
  *   export default createViteConfig({ port: 8120, backendPort: 8006 });
  */
 import path from "path";
@@ -36,8 +36,8 @@ function resolveFromProductDir(productDir: string) {
   const repoRoot = isProduct
     ? path.resolve(productDir, "../../..")
     : path.resolve(productDir, "../..");
-  const seedLib = path.resolve(repoRoot, "seed/frontend/lib/src");
-  const seedFramework = path.resolve(repoRoot, "seed/frontend/framework/src");
+  const seedLib = path.resolve(repoRoot, "seed/lib/frontend/src");
+  const seedFramework = path.resolve(repoRoot, "seed/framework/frontend/src");
   const nodeModules = path.resolve(productDir, "node_modules");
 
   return { repoRoot, seedLib, seedFramework, nodeModules };

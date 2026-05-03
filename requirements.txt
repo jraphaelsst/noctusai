@@ -2,7 +2,7 @@
 # Per-backend requirements.txt files are kept for independent Docker deploys.
 
 # Shared package (editable install)
--e seed/backend/lib
+-e seed/lib/backend
 
 # Core dependencies (shared by all backends)
 fastapi==0.115.0

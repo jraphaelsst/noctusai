@@ -136,10 +136,10 @@ def check_seed_compliance(product_path: Path) -> list[dict]:
 
     if req_txt.exists():
         req_content = req_txt.read_text()
-        if "seed/backend/framework" not in req_content:
-            issues.append({"product": name, "file": "backend/requirements.txt", "issue": "Missing -e seed/backend/framework", "severity": "high"})
-        if "seed/backend/lib" not in req_content:
-            issues.append({"product": name, "file": "backend/requirements.txt", "issue": "Missing -e seed/backend/lib", "severity": "high"})
+        if "seed/framework/backend" not in req_content:
+            issues.append({"product": name, "file": "backend/requirements.txt", "issue": "Missing -e seed/framework/backend", "severity": "high"})
+        if "seed/lib/backend" not in req_content:
+            issues.append({"product": name, "file": "backend/requirements.txt", "issue": "Missing -e seed/lib/backend", "severity": "high"})
 
     # "Has own <router>.py — framework provides this" — suppress for control-plane
     # products that legitimately OWN the route (e.g., core owns team + notifications
@@ -536,8 +536,8 @@ def check_seed_version_propagation(repo_root: Path | None = None) -> list[dict]:
         return issues
 
     for package_name, attr_name, stamp_hint in (
-        ("noctusai_seed", "__seed_version__", "seed/backend/framework"),
-        ("noctusai_lib", "__lib_version__", "seed/backend/lib"),
+        ("noctusai_seed", "__seed_version__", "seed/framework/backend"),
+        ("noctusai_lib", "__lib_version__", "seed/lib/backend"),
     ):
         # Prefer reading `_version_static.py` from the filesystem — this
         # avoids requiring `pip install -e` of the seed packages in the venv
@@ -1411,8 +1411,8 @@ def _walk_test_files(root: Path):
     }
     for base in (
         root / "products",
-        root / "seed" / "backend" / "lib",
-        root / "seed" / "backend" / "framework",
+        root / "seed" / "lib" / "backend",
+        root / "seed" / "framework" / "backend",
         root / "mcp",
     ):
         if not base.exists():
@@ -1666,7 +1666,8 @@ def _walk_python_files(root: Path):
     }
     bases = [
         root / "products",
-        root / "seed" / "backend",
+        root / "seed" / "lib" / "backend",
+        root / "seed" / "framework" / "backend",
         root / "mcp" / "noctusai",
     ]
     for base in bases:

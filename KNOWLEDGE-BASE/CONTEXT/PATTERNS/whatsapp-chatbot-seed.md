@@ -302,15 +302,15 @@ that pattern stays consumer-side.
 
 ## 7. Tests + verification
 
-- `seed/backend/lib/tests/integrations/whatsapp/` — 21 cases (mappers + router).
-- `seed/backend/lib/tests/domain/conversation/` — 28 cases (buffer +
+- `seed/lib/backend/tests/integrations/whatsapp/` — 21 cases (mappers + router).
+- `seed/lib/backend/tests/domain/conversation/` — 28 cases (buffer +
   worker + dispatcher + mappers + summary).
-- `seed/backend/lib/tests/integrations/google_calendar/` — 9 cases
+- `seed/lib/backend/tests/integrations/google_calendar/` — 9 cases
   (Fake adapter + mappers).
-- `seed/backend/lib/tests/integrations/google_maps/` — 11 cases (Static
+- `seed/lib/backend/tests/integrations/google_maps/` — 11 cases (Static
   + mocked Google Maps + mappers).
 
-Run: `cd seed/backend/lib && pytest tests/{integrations,domain/conversation}/`.
+Run: `cd seed/lib/backend && pytest tests/{integrations,domain/conversation}/`.
 
 ---
 

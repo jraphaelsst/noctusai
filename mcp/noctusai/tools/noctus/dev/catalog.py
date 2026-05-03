@@ -81,8 +81,8 @@ from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 # flat top-level packages; for dotted names (PEP 420 namespace packages)
 # the key must be the full dotted prefix as it appears in import statements.
 LIB_ROOTS: dict[str, Path] = {
-    "noctusai_lib": REPO_ROOT / "seed" / "backend" / "lib" / "noctusai_lib",
-    "noctusai_seed": REPO_ROOT / "seed" / "backend" / "framework" / "noctusai_seed",
+    "noctusai_lib": REPO_ROOT / "seed" / "lib" / "backend" / "noctusai_lib",
+    "noctusai_seed": REPO_ROOT / "seed" / "framework" / "backend" / "noctusai_seed",
 }
 
 CATALOG_OUTPUT = REPO_ROOT / "mcp" / "noctusai" / "catalog.md"
@@ -99,7 +99,7 @@ class Symbol:
     kind: str                  # "def" | "async def" | "class" | "const"
     signature: str             # "(user: dict) -> Optional[str]"  or ""
     doc: str                   # first line of docstring or ""
-    location: str              # "seed/backend/lib/noctusai_lib/auth.py:42"
+    location: str              # "seed/lib/backend/noctusai_lib/auth.py:42"
 
     # Populated after product scan
     importers: list[str] = field(default_factory=list)   # product slugs

@@ -3,7 +3,7 @@ seed-side `noctusai_lib.api.scheduler` primitive.
 
 Covers `configure()` (env-flag gate + registration) and `audio_retention_job`
 (sweep invocation + error swallow). The primitive itself is tested
-upstream at `seed/backend/lib/tests/test_scheduler.py`.
+upstream at `seed/lib/backend/tests/test_scheduler.py`.
 """
 from __future__ import annotations
 

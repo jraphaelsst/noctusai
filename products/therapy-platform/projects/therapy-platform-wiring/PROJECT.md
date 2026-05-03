@@ -124,7 +124,7 @@ The admin UI already *shows* a Rejeitar button and a Rejeitado tab. Leaving the 
 
 - Every `therapy-platform` backend endpoint that a frontend hook calls. Includes: `/api/admin/*`, `/api/therapists/*`, `/api/patients/*`, `/api/clinics/*`, `/api/appointments/*`, `/api/invoices/*`, `/api/reviews/*`, `/api/conversations/*`, `/api/longitudinal/*`, `/api/matching/*`, `/api/sessions/*`, `/api/wallets/*`, and any others Phase 0 discovers.
 - Every therapy-platform migration needed to support the above (notably the reject-audit migration; anything else Phase 0 discovers).
-- The shared identity resolver in `seed/backend/lib/noctusai_lib/` (the one cross-product absorption this project is committing to).
+- The shared identity resolver in `seed/lib/backend/noctusai_lib/` (the one cross-product absorption this project is committing to).
 - Frontend corrections required to consume corrected DTOs or fix pre-existing UI bugs uncovered during the sweep (Radix Select misuse, `Avatar` initial helpers, status-badge resolvers, etc.).
 - Tests (unit + router + any integration paths) landing in the same phase as the code they cover.
 - LGPD awareness: `noctusai_lgpd_flag` calls where new endpoints aggregate personal data in shapes not previously flagged.
@@ -149,7 +149,7 @@ The admin UI already *shows* a Rejeitar button and a Rejeitado tab. Leaving the 
 ### 5.1 Shared identity resolver *(delivered by Phase 1)*
 
 ```
-seed/backend/lib/noctusai_lib/identity/
+seed/lib/backend/noctusai_lib/identity/
 ├── __init__.py          # re-exports UserIdentity, fetch_user_identities
 ├── resolver.py          # implementation
 └── types.py             # UserIdentity dataclass
@@ -252,8 +252,8 @@ Produces the concrete gap table in §5.4. Every subsequent phase references rows
 Seed absorption for the "I need `nome`/`email` from `auth.users` given a list of UUIDs" pattern. The ad-hoc admin-therapists fix (landed earlier today in `products/therapy-platform/backend/app/services/admin_service.py::_fetch_user_identity`) is this phase's starting point — Phase 1 replaces it with the seed helper.
 
 - [ ] Design the module layout per §5.1. Decide between list_users / get_user_by_id / direct `auth.users` select (benchmark page_size=100 on a realistic dataset via the Supabase MCP).
-- [ ] Implement `UserIdentity` dataclass + `fetch_user_identities()` in `seed/backend/lib/noctusai_lib/identity/`.
-- [ ] Unit tests in `seed/backend/lib/tests/test_identity_resolver.py` — happy path, missing IDs, empty input, mocked auth client.
+- [ ] Implement `UserIdentity` dataclass + `fetch_user_identities()` in `seed/lib/backend/noctusai_lib/identity/`.
+- [ ] Unit tests in `seed/lib/backend/tests/test_identity_resolver.py` — happy path, missing IDs, empty input, mocked auth client.
 - [ ] Update `CONTEXT/04-SHARED-LIBRARY.md` catalog section with the new helper.
 - [ ] Replace `products/therapy-platform/backend/app/services/admin_service.py::_fetch_user_identity` with a call to the new helper. Keep the `_therapist_row_to_dto` mapper local to the service.
 - [ ] Re-run `pytest products/therapy-platform/backend/tests/routers/test_admin_router.py` — must stay green.
@@ -371,7 +371,7 @@ Likely scope: landing/marketing routes (if routed through the same Vite app), `/
 
 - [ ] `cd products/therapy-platform/frontend && npx vite build` — clean.
 - [ ] `cd products/therapy-platform/backend && python -m pytest tests/ -q` — full suite green.
-- [ ] `cd seed/backend/lib && python -m pytest tests/` — seed tests green (identity resolver, anything else Phase 1 touched).
+- [ ] `cd seed/lib/backend && python -m pytest tests/` — seed tests green (identity resolver, anything else Phase 1 touched).
 - [ ] `cd mcp/noctusai && python -m pytest tests/` — MCP toolkit tests green.
 - [ ] `python mcp/noctusai/cli.py --review products/therapy-platform` — final keeper pass; triage any remaining proposals.
 - [ ] Manual browser QA of the golden path per surface: admin, therapist, patient, clinic, public. Record any regressions in §11 and either fix inline or open a follow-up project.
@@ -439,7 +439,7 @@ cd products/therapy-platform/backend && \
   /Users/rapha/Documents/repository/NoctusAI/noctusai/venv/bin/python -m pytest tests/ -q
 
 # Seed tests (Phase 1 and any phase that touches seed)
-cd seed/backend/lib && \
+cd seed/lib/backend && \
   /Users/rapha/Documents/repository/NoctusAI/noctusai/venv/bin/python -m pytest tests/
 
 # MCP tests (only if the MCP toolkit was touched)

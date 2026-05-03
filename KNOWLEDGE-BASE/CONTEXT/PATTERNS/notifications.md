@@ -13,7 +13,7 @@ Notifications are a **platform concern**, not per-product.
 Every product gets a notification proxy router out of the box via the seed framework:
 
 - Routes: `GET /api/notificacoes`, `GET /api/notificacoes/contagem`, `PATCH /api/notificacoes/{id}/ler`, `POST /api/notificacoes/ler-todas`.
-- Implementation: `seed/backend/framework/noctusai_seed/routers.py → _create_notificacoes_router`.
+- Implementation: `seed/framework/backend/noctusai_seed/routers.py → _create_notificacoes_router`.
 - Talks to Core via `deps.get_core_client()` (service role).
 
 Products don't write notification routers. They just include the auto-wired one.

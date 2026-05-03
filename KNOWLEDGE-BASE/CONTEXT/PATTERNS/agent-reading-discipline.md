@@ -78,7 +78,7 @@ turn. The narrow-read rule recovers that headroom for thinking.
   is 383 lines. Editing `IMOVEL_LIST_FIELDS` requires lines 47-76
   (~30 lines) — a `Read offset=40 limit=40` is enough; reading the
   whole file is wasteful.
-- `seed/frontend/lib/src/api.ts` is hundreds of lines but the
+- `seed/lib/frontend/src/api.ts` is hundreds of lines but the
   question "does `api.get` return `{data: T}` or `T`?" is answered
   by `grep -n "handleResponse\|return response.json" <path>` then a
   20-line targeted read of `handleResponse`.

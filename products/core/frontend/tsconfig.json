@@ -25,23 +25,23 @@
                 "./src/*"
             ],
             "@noctusai/lib/*": [
-                "../../seed/frontend/lib/src/*"
+                "../../seed/lib/frontend/src/*"
             ],
             "@noctusai/lib": [
-                "../../seed/frontend/lib/src/index.ts"
+                "../../seed/lib/frontend/src/index.ts"
             ],
             "@noctusai/seed/*": [
-                "../../seed/frontend/framework/src/*"
+                "../../seed/framework/frontend/src/*"
             ],
             "@noctusai/seed": [
-                "../../seed/frontend/framework/src/index.ts"
+                "../../seed/framework/frontend/src/index.ts"
             ]
         },
         "baseUrl": "."
     },
     "include": [
         "src",
-        "../../seed/frontend/lib/src",
-        "../../seed/frontend/framework/src"
+        "../../seed/lib/frontend/src",
+        "../../seed/framework/frontend/src"
     ]
 }

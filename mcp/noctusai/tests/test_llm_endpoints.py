@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-_LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
-_FRAMEWORK = Path(__file__).resolve().parents[3] / "seed" / "backend" / "framework"
+_LIB = Path(__file__).resolve().parents[3] / "seed" / "lib" / "backend"
+_FRAMEWORK = Path(__file__).resolve().parents[3] / "seed" / "framework" / "backend"
 _CORE = Path(__file__).resolve().parents[3] / "products" / "core" / "backend"
 for p in (_LIB, _FRAMEWORK, _CORE):
     if str(p) not in sys.path:

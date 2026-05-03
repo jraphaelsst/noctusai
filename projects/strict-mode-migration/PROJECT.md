@@ -1,54 +1,387 @@
-# TypeScript Strict Mode Migration
+# TypeScript Strict Mode at the Seed Boundary — Project Document
 
-Status: **DEFERRED** — to be tackled after v2.4 stabilization.
+> **What this project is.** Stand up TypeScript `strict: true` at the seed
+> boundary (`seed/lib/frontend/` + `seed/framework/frontend/`) plus a CI
+> gate that runs `tsc --noEmit` on both, so cross-product type contracts
+> tighten at one place and propagate to every product via inheritance —
+> *without* paying a per-product migration cost.
+>
+> **Re-scope of an older project.** This file replaces a 54-line
+> 2026-04-27 checklist that planned strict-mode migration across all 8
+> product frontends (~16-24h, low-leverage). The 2026-05-03 audit
+> retired that ambition (cataloged as opt-in over time) and locked the
+> narrower seed-boundary scope per user direction.
+>
+> **Run-by.** Designed for a fresh-session agent. §1 inlines context, §2
+> quotes user direction, §5 names every file, §10 commands are
+> copy-paste ready. Phase 0 audit already executed — findings are
+> inlined in §6.
 
-## Why
+- **Created:** 2026-04-27 (original) · **rewritten 2026-05-03**
+- **Last updated:** 2026-05-03
+- **Status:** 📋 **READY FOR EXECUTION** — Phase 0 ✅ (audit complete; 3 findings inlined). Phases 1-4 ready for a separate agent / future session. Filed standalone so the current main-core-migrations-batch session can close.
+- **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
+- **Project slug:** `strict-mode-migration` (subject=strict-mode, intent=migration; slug retained for path stability — `projects/main-core-migrations-batch/` references it)
+- **Project location:** `projects/strict-mode-migration/` (cross-product / platform — the work lives at the seed boundary, not inside any one product)
+- **Parent batch:** `projects/main-core-migrations-batch/` Tier 2 — Phase 2.a §7 round complete; this child is the Phase 2.b deliverable
+- **Related docs:**
+  - `KB § 03-SEED-ARCHITECTURE.md § Seed as Skeleton` — why seed-boundary work propagates to products
+  - `KB § PATTERNS/accept-with-rationale.md` — destination for the "per-product strict is opt-in over time" entry (Phase 5 catalog deliverable)
+  - `KB § PATTERNS/project-execution.md § 0` — execution workflow this child runs through
 
-TypeScript strict mode (`"strict": true` in tsconfig.json) catches type errors at compile time that currently slip through: null/undefined mishandling, implicit `any` types, missing return types, unreachable code. Enabling it makes the codebase significantly more robust.
+---
 
-## Current State
+## 1. Context & Purpose
 
-All 5 frontends have `"strict": false` in tsconfig.json:
-- `products/core/frontend/tsconfig.json`
-- `products/erp-imobiliario/frontend/tsconfig.json`
-- `products/personal-finance/frontend/tsconfig.json`
-- `products/therapy-platform/frontend/tsconfig.json`
-- `products/seed/frontend/tsconfig.json` (when created)
+### What problem this project solves
 
-## Migration Checklist
+Cross-product type contracts live in two seed-boundary packages: `@noctusai/lib` (`seed/lib/frontend/`) and `@noctusai/seed` (`seed/framework/frontend/`). Today both have `strict: false` (lib) or no tsconfig at all (framework). When a lib helper returns `User | undefined` but the type signature says `User`, no one catches it — the bug rides the inheritance edge into every product.
 
-### Phase 1: Shared packages (do first — everything depends on these)
-- [ ] Enable strict in `shared/frontend/tsconfig.json` (if exists, or add one)
-- [ ] Fix all type errors in `shared/frontend/src/*.ts`
-- [ ] Fix all type errors in `shared/frontend/src/design-system/**/*.tsx`
-- [ ] Add explicit return types to all exported functions
-- [ ] Replace all `any` with proper types (especially Supabase client types)
+Because product frontends import seed types as **source** (workspace links, not built `.d.ts` files), the type strictness of the seed determines the type strictness of what every consumer sees. Tightening strict at the seed therefore tightens types for all 8 products without each product having to opt into strict mode itself. This is the high-leverage subset of strict-mode work.
 
-### Phase 2: Core frontend
-- [ ] Enable `"strict": true` in `products/core/frontend/tsconfig.json`
-- [ ] Fix null/undefined errors (auth-context, api client, admin pages)
-- [ ] Add proper types to all components and hooks
-- [ ] Verify build passes with `npx tsc --noEmit`
+### What "done" looks like
 
-### Phase 3: Product frontends (one at a time)
-- [ ] ERP: enable strict → fix errors → verify build
-- [ ] PF: enable strict → fix errors → verify build
-- [ ] Therapy: enable strict → fix errors → verify build
-- [ ] Seed: enable strict → fix errors → verify build
+- `seed/lib/frontend/tsconfig.json` has `"strict": true` and `tsc --noEmit` is green
+- `seed/framework/frontend/tsconfig.json` exists with `"strict": true` and `tsc --noEmit` is green
+- A CI workflow runs both `tsc --noEmit` checks on every PR; the gate fires on deliberate type errors
+- `KB § PATTERNS/accept-with-rationale.md` has a documented entry stating per-product strict mode is intentionally opt-in over time (not a campaign), so future agents don't reopen the question
+- The original 8-frontend ambition is closed-by-rationale, not orphaned
 
-### Phase 4: Enforce going forward
-- [ ] Add `npx tsc --noEmit` to CI pipeline
-- [ ] Update CLAUDE.md: "All new code must compile with strict mode"
-- [ ] Add pre-commit hook (optional)
+### Why this is a project, not a one-shot script
 
-## Expected Error Categories
+- **The lib has never been type-checked standalone** (Phase 0 finding — see §6 Phase 0). 24 `TS2307` errors fire today from missing peer-dep types. Phase 1 is "stand up the standalone tsc check" before strict-mode gains can even be measured.
+- **The framework has no tsconfig at all** — adding one is a real architectural decision (jsx mode, lib targets, types arrays) that needs to match how products consume it.
+- **CI gate is the durability point.** Without it, the strict flip rots within months as new code lands without strict checking.
+- **The original 8-frontend plan needs a deliberate retirement** — silently dropping it is a slip; cataloging it as accept-with-rationale is the correct landing per `feedback_triage_at_decision_time.md`.
 
-1. **Implicit `any`** — function params without types, untyped destructuring
-2. **Null checks** — `user?.email` where `user` could be null but isn't checked
-3. **Missing return types** — void functions that should return something
-4. **Index signature** — accessing object properties with string keys
-5. **Supabase types** — `AnySupabaseClient` pattern needs real generic types
+---
 
-## Estimated Effort
+## 2. Confirmed constraints
 
-~200-400 type errors across all frontends. Most are mechanical fixes (add `!` assertions, add null checks, add explicit types). Expect 2-3 hours per product.
+User direction during the 2026-05-03 §7 round (parent batch Phase 2.a):
+
+- **Q: "does this strict mode project does actually add value to the project?"** → Agent surfaced honest assessment that full 8-frontend sweep is low-leverage (16-24h, mostly mechanical `!`-assertion fixes that mask the same null risk).
+- **Q: User picked narrower path?** → "i liked the narrower path, let's strict the fw + lib"
+- **Q: Scope decision after Phase 0 surfaced larger work than initially advertised?** → "lets go with C. file it as a separate project so i can clear this session"
+
+Implications:
+- **Scope is locked to fw + lib + CI gate.** Per-product strict is **explicitly retired** as a campaign and gets cataloged as opt-in over time in Phase 5.
+- **Filed standalone for separate execution.** Parent batch `main-core-migrations-batch` does not block on Phases 1-4; this child runs to completion in a fresh session/agent.
+- **Standalone tsc infrastructure is in scope.** Phase 0 audit revealed the lib has no standalone tsc today. Phase 1 fixes that — it's load-bearing for the strict-mode delivery, not a separate concern.
+
+Carried-in constraints from CLAUDE.md / memory:
+- **No `!` non-null assertion fixes** unless the value is genuinely guaranteed by upstream invariants. Default fix is a real null check or tightened upstream type. (`feedback_no_silent_errors.md`.)
+- **No bypassing tsc errors** with `// @ts-ignore` or `// @ts-expect-error` outside genuinely third-party-broken cases.
+- **Commit per phase, push at project close** (`feedback_no_auto_commit.md`).
+- **Three-way doc sync** at close — KB / CLAUDE.md / memory move together for any new methodology this surfaces (`feedback_three_way_doc_sync.md`).
+
+---
+
+## 3. Design principles
+
+### 3.1 Seed-boundary gate, not per-product flag flip
+
+Strict mode lands at one place: the workspace packages products import from. The flip's value comes through the inheritance chain — products get strict-quality types whether or not they themselves are strict. This is why the narrow scope works.
+
+### 3.2 Standalone tsc infrastructure first
+
+Today the lib's tsc fails 24 times on module-resolution before strict-mode rules can fire. Phase 1 installs peer-dep types as `devDependencies` (not as `dependencies` — the runtime-peer relationship doesn't change; only the standalone-typecheck path gains them). This is a normal pattern for workspace packages whose peers are provided by consumers.
+
+### 3.3 Lib first, framework second
+
+Lib has 52 files (larger surface, has tsconfig already). Framework has 5 files (smaller, depends on lib). Tighten lib → framework picks up tightened types automatically when its tsconfig is added. Reverse order means re-fixing.
+
+### 3.4 No `!`-assertion masking
+
+A non-null assertion on a value that's actually nullable is a silent error wearing a strict-mode costume. Default fix is a real null check or tighter upstream type. Use `!` only when the invariant is genuinely upstream-guaranteed (e.g. ref captured after mount). Capture every `!` introduced in §11 with a one-line justification.
+
+### 3.5 Retire the per-product ambition with paperwork
+
+Per `feedback_triage_at_decision_time.md`: "accept" is a real landing — silently dropping the 8-frontend plan is a slip. Phase 5 files an accept-with-rationale entry that future agents see when they grep for "strict mode" intent.
+
+---
+
+## 3a. Seed-first analysis (REQUIRED)
+
+Run of the six-question checklist (`KB § GUIDES/seed-first-design.md`):
+
+1. **Is the contract identical for every product?** YES — every product imports types from `@noctusai/lib` and `@noctusai/seed`; tightening once tightens everywhere.
+2. **Is the data source product-specific?** N/A — no data; type-checking infrastructure.
+3. **Is the placement product-specific?** NO — placement is `seed/lib/frontend/` and `seed/framework/frontend/`. Per-product code count = 0.
+4. **Is the visibility / permission rule the same?** N/A.
+5. **Does the seam already exist in seed?** YES — the workspace packages (`@noctusai/lib`, `@noctusai/seed`) ARE the seam. Each has (or will have) its own `tsconfig.json` + `package.json` + `tsc --noEmit` script.
+6. **Default-on or opt-in?** **Default-on at the seed boundary.** Products remain non-strict by default (their own tsconfig says so) — that's an opt-in concern handled separately. The seed gate is non-negotiable once landed.
+
+**Litmus — per-product code count this design requires:**
+
+- [x] **0 lines** — all changes land in `seed/{lib,framework}/frontend/`. No product file is touched. Products inherit tightened types via existing imports.
+
+**Phase plan implication:** §6 phases are ordered by dependency (lib before framework) and infrastructure-before-flag (peer-dep install before strict flip). No per-product replication framing.
+
+---
+
+## 4. Scope
+
+**In scope:**
+- `seed/lib/frontend/tsconfig.json` → `strict: true`, with all errors fixed
+- `seed/framework/frontend/tsconfig.json` → created, `strict: true` from day 1, with all errors fixed
+- Peer-dep types installed as `devDependencies` in both packages (so standalone tsc resolves modules)
+- `npm run check` (or equivalent) script in both `package.json` files
+- CI workflow (GitHub Actions) that runs both checks on every PR + push to main
+- One catalog entry in `KB § PATTERNS/accept-with-rationale.md` documenting per-product strict mode as opt-in over time
+
+**Out of scope:**
+- Strict mode in any of the 8 product frontends (`products/*/frontend/tsconfig.json` stays as-is per user direction)
+- ESLint rule additions (separate concern; can layer on later if value emerges)
+- Pre-commit hook (CI gate is the durability point; pre-commit is opt-in)
+- Refactoring lib/framework code beyond what strict mode mechanically requires
+- Adding new types or rewriting Supabase generic patterns (separate project if it surfaces)
+
+---
+
+## 5. Architecture / current state of the seed boundary
+
+### 5.1 `seed/lib/frontend/` (52 .ts/.tsx files)
+
+Source layout (`src/`):
+- `api.ts`, `auth.ts`, `env.ts`, `hooks.ts`, `index.ts`, `llm.ts`, `notifications.ts`, `page-status.ts`, `query-client.ts`, `roles.ts`, `sso.ts`, `stores.ts`, `supabase.ts`, `utils.ts`
+- `components/` — `AuthProvider.tsx`, `ErrorBoundary.tsx`, `SSOCallback.tsx`, `index.ts`
+- `design-system/` — `useTheme.ts`, `useActivityRefresh.ts`, plus subdirectories `ai/`, `components/`, `ui/`, `tailwind.config.base.ts`
+
+Current `tsconfig.json` (lines 1-19):
+- `target: ES2020`, `lib: ["ES2020", "DOM", "DOM.Iterable"]`, `module: ESNext`, `moduleResolution: bundler`
+- `jsx: react-jsx`, `noEmit: true`, `skipLibCheck: true`
+- **`strict: false`** ← the flip
+
+Current `package.json`:
+- `name: @noctusai/lib`, `type: module`, `main: src/index.ts`
+- Peer deps include `@supabase/supabase-js`, `@tanstack/react-query`, `clsx`, `react`, `sonner`, `tailwind-merge`, `zustand`
+- **Missing from peer-deps in node_modules** (causing 24 TS2307s): `lucide-react`, `@radix-ui/react-collapsible`, `@radix-ui/react-hover-card`, `tailwindcss`, plus the workspace-link to `@noctusai/seed` (for `@noctusai/seed/infra` import)
+
+### 5.2 `seed/framework/frontend/` (5 .ts/.tsx files)
+
+Source layout (`src/`):
+- `app.tsx` — `createProductApp` factory
+- `infra.tsx` — supabase + react-query providers
+- `layout.tsx` — default layout shell
+- `index.ts` — re-exports
+- `pages/ConsentSettingsPage.tsx` — default consent page
+
+Current state:
+- `package.json` (`name: @noctusai/seed`, `type: module`, `main: src/index.ts`) ✅
+- `vite.config.factory.ts` ✅, `vitest.config.factory.ts` ✅
+- **No `tsconfig.json`** ← Phase 3 creates this
+- Peer deps: `@radix-ui/react-tooltip`, `@supabase/supabase-js`, `@tanstack/react-query`, `react`, `react-dom`, `react-router-dom`, `sonner`
+
+### 5.3 Phase 0 baseline measurements
+
+Run from `seed/lib/frontend/` using framework's tsc binary:
+
+```
+./../framework/node_modules/.bin/tsc --noEmit -p .
+→ 24 errors, all TS2307 (cannot find module)
+
+./../framework/node_modules/.bin/tsc --noEmit --strict -p .
+→ 24 errors, all TS2307 (strict-mode errors masked by resolution failures)
+```
+
+Strict-mode error count is **unmeasurable** until Phase 1 lands the peer-dep installs.
+
+### 5.4 Why source-import (no build step) makes this work
+
+Both packages export `src/*.ts` directly via `package.json#main` and `exports`. Consumers (products) get the raw `.ts` files at type-check time, so the strict-quality of the seed's types directly affects what consumers see. This is also why a build-step wouldn't help here — it would just emit weaker `.d.ts` files.
+
+---
+
+## 6. Implementation phases
+
+**Phase status icons:** no icon = pending · `⏳` = partial · `✅` = complete · `❌` = blocked.
+
+### Phase 0 — Audit ✅ (executed 2026-05-03)
+
+- [x] Surveyed strict state across 11 frontend tsconfigs (8 products + 2 seed packages + design-system base) — all `strict: false` or missing.
+- [x] Counted lib files (52) and framework files (5).
+- [x] Ran `tsc --noEmit -p .` against lib using framework's tsc binary — found 24 TS2307 module-resolution errors.
+- [x] Re-ran with `--strict` flag — same 24 errors (strict-mode errors masked by resolution failures, can't be measured yet).
+- [x] Verified `seed/framework/frontend/tsconfig.json` is missing entirely.
+- [x] Confirmed lib + framework export source files (no build step) so strict propagates to product consumers via raw `.ts` import.
+
+**Improvements / findings:**
+- The lib has **never been tsc-checked standalone**. This is the blocker; Phase 1 is "stand it up." The work is bigger than initially advertised (~2-4h) because of this — realistic estimate is now 4-8h end-to-end.
+- The framework has 5 files only — Phase 3 is small.
+- The lib has lucide-react / radix imports that need installation as devDeps. These are real peer relationships; products provide them at runtime, but tsc-time needs them for module resolution.
+- Original 8-frontend ambition is being retired in Phase 5 as opt-in over time; this prevents a future agent from re-opening the question.
+
+### Phase 1 — Lib: install peer-dep types + standalone tsc green (non-strict)
+
+Goal: zero `tsc --noEmit -p .` errors in lib's current `strict: false` state.
+
+- [ ] From `seed/lib/frontend/`, install peer-dep types as devDeps:
+  ```
+  npm install --save-dev \
+    lucide-react \
+    @radix-ui/react-collapsible \
+    @radix-ui/react-hover-card \
+    tailwindcss
+  ```
+- [ ] Resolve the `@noctusai/seed/infra` import — this is a workspace cross-package reference. Install via `npm install --save-dev ../framework` (workspace link) or add path-mapping in tsconfig (preferred — keeps node_modules clean).
+- [ ] Run `tsc --noEmit -p .` — confirm zero errors.
+- [ ] Add `"check": "tsc --noEmit"` script to `package.json`.
+
+**Verification:**
+- `npm run check` exits 0
+- `git status --short -- seed/lib/frontend/` shows only `package.json`, `package-lock.json`, `tsconfig.json` (if path-mapping added) modified — no source-file edits needed.
+
+### Phase 2 — Lib: flip strict + fix errors
+
+Goal: zero `tsc --noEmit -p .` errors with `strict: true`.
+
+- [ ] Flip `tsconfig.json`: `"strict": true` (replace `"strict": false`).
+- [ ] Run `tsc --noEmit -p .` — capture the actual strict-mode error count (now measurable).
+- [ ] Fix errors per principle 3.4. Common categories expected:
+  - **Implicit any** — function params without types, untyped destructuring → add explicit types.
+  - **Null/undefined** — `user?.email` where TS now requires the optional-chain to be exhaustive → add real null guards.
+  - **Missing return types on exported functions** → add explicit return types (lib exports — these are part of the public surface, deserve explicit signatures).
+  - **Index signature** — Supabase client generics returning `unknown` → tighten to real generics where possible; cast at boundaries.
+- [ ] Verify zero errors.
+
+**Improvements (capture live):**
+- One bullet per non-trivial fix decision — what was changed, why this fix vs. an alternative.
+- Any `!` non-null assertion introduced gets one line with the upstream invariant that justifies it. If no good justification, fix differently.
+
+### Phase 3 — Framework: add tsconfig + strict from day 1
+
+Goal: `seed/framework/frontend/tsconfig.json` exists with `strict: true` and zero errors.
+
+- [ ] Create `seed/framework/frontend/tsconfig.json`. Mirror lib's config except start with `strict: true`:
+  ```json
+  {
+    "compilerOptions": {
+      "target": "ES2020",
+      "lib": ["ES2020", "DOM", "DOM.Iterable"],
+      "module": "ESNext",
+      "moduleResolution": "bundler",
+      "allowImportingTsExtensions": true,
+      "isolatedModules": true,
+      "moduleDetection": "force",
+      "noEmit": true,
+      "jsx": "react-jsx",
+      "strict": true,
+      "skipLibCheck": true,
+      "noUnusedLocals": false,
+      "noUnusedParameters": false,
+      "types": ["node"],
+      "paths": {
+        "@noctusai/lib": ["../lib/src/index.ts"],
+        "@noctusai/lib/*": ["../lib/src/*"]
+      }
+    },
+    "include": ["src"]
+  }
+  ```
+- [ ] Install any missing peer-dep types as devDeps (the framework's 5 files import less than the lib; survey via TS2307s and install accordingly).
+- [ ] Run `tsc --noEmit -p .` — fix errors.
+- [ ] Add `"check": "tsc --noEmit"` script to `package.json`.
+
+### Phase 4 — CI gate
+
+Goal: PRs that introduce strict-mode regressions fail CI.
+
+- [ ] Add `.github/workflows/seed-typecheck.yml`:
+  - Runs on PRs touching `seed/lib/frontend/**` or `seed/framework/frontend/**` and on push to main
+  - Two jobs: `lib-typecheck` (cd lib && npm ci && npm run check), `framework-typecheck` (cd framework && npm ci && npm run check)
+  - Fails the workflow on any tsc error
+- [ ] Verify gate fires: introduce a deliberate type error in a throwaway branch, push, observe CI failure, then revert.
+- [ ] Document the gate in `KB § 03-SEED-ARCHITECTURE.md § Seed contract` so future agents see "type-checking the seed boundary is part of the contract."
+
+### Phase 5 — Close + paperwork
+
+- [ ] File an `accept-with-rationale.md` entry stating per-product strict mode is intentionally opt-in (not a campaign):
+  - **Pattern:** Per-product TS strict mode
+  - **Decision:** Opt-in over time, not a coordinated campaign
+  - **Rationale:** 8 product frontends × ~2-3h each = 16-24h of mostly mechanical `!`-assertion fixes that mask the same null risk. Strict at the seed boundary captures the high-leverage subset; per-product strict is a quality-of-life improvement individual maintainers can opt into when they're touching a frontend deeply. Recurrence flips this toward "formalize" if 3+ product frontends end up wanting strict on their own.
+  - **Trigger to revisit:** Any product frontend independently flipping strict, OR a real null-safety incident traced to a non-strict product file.
+- [ ] Update `projects/main-core-migrations-batch/PROJECT.md` §11 with this child's outcomes.
+- [ ] Three-way doc sync verification (`bash scripts/verify-kb-sync.sh`).
+- [ ] Final commit + push.
+- [ ] Delete this folder.
+
+---
+
+## 7. Open questions
+
+All material questions resolved by user direction 2026-05-03 (see §2). Remaining minor:
+
+1. **Path mapping vs. workspace symlink for `@noctusai/seed/infra` in lib?** *Default rec:* tsconfig `paths` with relative path to framework's `src/`. Cleaner than node_modules symlinks; no ambiguity at type-check time. Decide during Phase 1 execution.
+2. **CI workflow path filtering — touch-files vs. always-run?** *Default rec:* always-run (the seed boundary is small; <30s tsc is fine to pay on every PR). Decide during Phase 4 execution.
+
+---
+
+## 8. Dependencies & blockers
+
+- **Parallel-agent collision protocol.** At handoff time (2026-05-03), the current working tree has in-flight work from other agents (`scheduling-engine-seed`, `session-review-baseline`, `send-message-consolidation`, MCP `session_review` tool). The executing agent must check `git status --short` at start and stage explicitly to avoid touching files outside this project's scope. Per-phase commit only after parallel agents have finished or the staged set is verified clean.
+- **`npm install` reliability.** The lib's `node_modules` was confirmed installable (2026-05-03). If it fails on next run, check Node version + npm registry access.
+- **`KB § PATTERNS/accept-with-rationale.md` is currently in working-tree-modified state** by a parallel agent (2026-05-03 state). Phase 5 catalog-entry must wait for that edit to land first (or be co-edited carefully). Defer if collision risks fire.
+
+---
+
+## 9. Success criteria
+
+Measurable, verifiable.
+
+- [ ] `cd seed/lib/frontend && npm run check` exits 0 with `"strict": true` in tsconfig
+- [ ] `cd seed/framework/frontend && npm run check` exits 0 with `"strict": true` in a tsconfig that exists
+- [ ] CI workflow `.github/workflows/seed-typecheck.yml` exists; runs both checks on PRs; deliberate type error fails the workflow
+- [ ] `KB § PATTERNS/accept-with-rationale.md` has an entry for per-product TS strict mode as opt-in
+- [ ] Zero `!` non-null assertions added without a §11-logged invariant justification
+- [ ] No product code touched (`git diff --stat` since branch start shows only `seed/{lib,framework}/frontend/`, `.github/workflows/`, `KB § PATTERNS/accept-with-rationale.md`, this PROJECT.md)
+- [ ] Parent batch `main-core-migrations-batch/PROJECT.md` §11 updated with this child's close
+- [ ] §11 closing entry written; folder deleted; final push complete
+
+---
+
+## 10. How to use this plan
+
+```bash
+# ── Phase 0 baseline replay (already executed; safe to re-run) ──
+cd /Users/rapha/Documents/repository/NoctusAI/noctusai
+cd seed/lib/frontend
+./../framework/node_modules/.bin/tsc --noEmit -p .              # expect 24 TS2307 errors today
+./../framework/node_modules/.bin/tsc --noEmit --strict -p .     # same 24 errors (masked)
+
+# ── Phase 1 — install peer types ──
+npm install --save-dev lucide-react @radix-ui/react-collapsible @radix-ui/react-hover-card tailwindcss
+# Add tsconfig "paths" mapping for @noctusai/seed/infra → ../framework/src/
+./node_modules/.bin/tsc --noEmit -p .                            # expect 0 errors
+# Add "check": "tsc --noEmit" to package.json
+
+# ── Phase 2 — flip strict ──
+# Edit tsconfig.json: "strict": false → "strict": true
+npm run check                                                    # capture strict-mode error count
+# Fix errors; iterate; final npm run check exits 0
+
+# ── Phase 3 — framework tsconfig + strict from day 1 ──
+cd ../framework
+# Create tsconfig.json per §6 Phase 3 template
+# Install missing peer types if any TS2307s fire
+npm run check                                                    # exits 0
+
+# ── Phase 4 — CI gate ──
+# Create .github/workflows/seed-typecheck.yml per §6 Phase 4
+# Push deliberate type error on a test branch; verify CI fails; revert
+
+# ── Phase 5 — paperwork + close ──
+# Add accept-with-rationale entry
+# Update parent batch §11
+bash scripts/verify-kb-sync.sh
+# Final commit + push; delete this folder
+```
+
+---
+
+## 11. Change log
+
+| Date | Change | By |
+|---|---|---|
+| 2026-04-27 | Original 54-line PROJECT.md drafted as TS strict-mode migration across all 8 frontends (~16-24h, never executed). | (prior session) |
+| 2026-05-03 | **Re-scope to seed-boundary + Phase 0 ✅.** Parent batch `main-core-migrations-batch` Phase 2.a §7 round surfaced honest cost/leverage tradeoff; user picked narrower scope ("strict the fw + lib") then accepted Option C (full fw + lib + CI gate scope) and asked for the project to be filed standalone for separate execution. Doc rewritten to PROJECT-TEMPLATE.md format. Phase 0 audit fired and surfaced 3 findings: (1) lib has never been tsc-checked standalone (24 TS2307 errors from missing peer-dep types — strict-mode errors are masked by resolution failures and can't be measured yet); (2) framework has no tsconfig.json at all; (3) lib + framework export source `.ts` directly so strict tightens types at source-import boundary, propagating to all 8 products via inheritance without per-product migration. Honest re-estimate: 4-8 hours (vs. originally quoted 2-4h). Original 8-frontend ambition retired and slated for accept-with-rationale paperwork in Phase 5. **Status: 📋 READY FOR EXECUTION** — Phases 1-4 ready for fresh-session agent. | Claude Opus 4.7 |

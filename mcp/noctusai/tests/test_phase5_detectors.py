@@ -92,7 +92,7 @@ class TestControlPlaneClassification:
         product = _mk_product(
             tmp_path, "core",  # name matches CONTROL_PLANE_PRODUCTS
             main_py=main_py,
-            requirements="-e ../../seed/backend/framework\n-e ../../seed/backend/lib\n",
+            requirements="-e ../../seed/framework/backend\n-e ../../seed/lib/backend\n",
             router_files=["team.py", "notifications.py"],
         )
         issues = check_seed_compliance(product)
@@ -110,7 +110,7 @@ class TestControlPlaneClassification:
         product = _mk_product(
             tmp_path, "consumer-with-team",  # name NOT in CONTROL_PLANE_PRODUCTS
             main_py=main_py,
-            requirements="-e ../../seed/backend/framework\n-e ../../seed/backend/lib\n",
+            requirements="-e ../../seed/framework/backend\n-e ../../seed/lib/backend\n",
             router_files=["team.py"],
         )
         issues = check_seed_compliance(product)
@@ -135,7 +135,7 @@ class TestControlPlaneClassification:
         product = _mk_product(
             tmp_path, "core",
             main_py=main_py,
-            requirements="-e ../../seed/backend/framework\n-e ../../seed/backend/lib\n",
+            requirements="-e ../../seed/framework/backend\n-e ../../seed/lib/backend\n",
             vite_config="import { createViteConfig } from 'seed'; export default createViteConfig();\n",
             app_tsx=app_tsx_content,
             layout_file_content="export const Layout = () => null;\n",

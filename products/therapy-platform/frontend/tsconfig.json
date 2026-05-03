@@ -21,11 +21,11 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@noctusai/lib/*": ["../../../seed/frontend/lib/src/*"],
-      "@noctusai/lib": ["../../../seed/frontend/lib/src/index.ts"],
-      "@noctusai/seed/*": ["../../../seed/frontend/framework/src/*"],
-      "@noctusai/seed": ["../../../seed/frontend/framework/src/index.ts"]
+      "@noctusai/lib/*": ["../../../seed/lib/frontend/src/*"],
+      "@noctusai/lib": ["../../../seed/lib/frontend/src/index.ts"],
+      "@noctusai/seed/*": ["../../../seed/framework/frontend/src/*"],
+      "@noctusai/seed": ["../../../seed/framework/frontend/src/index.ts"]
     }
   },
-  "include": ["src", "../../../seed/frontend/lib/src", "../../../seed/frontend/framework/src"]
+  "include": ["src", "../../../seed/lib/frontend/src", "../../../seed/framework/frontend/src"]
 }

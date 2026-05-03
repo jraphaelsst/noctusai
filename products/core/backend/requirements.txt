@@ -1,5 +1,5 @@
--e seed/backend/lib
--e seed/backend/framework
+-e seed/lib/backend
+-e seed/framework/backend
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.0

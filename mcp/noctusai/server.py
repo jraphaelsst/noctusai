@@ -31,7 +31,7 @@ except ImportError as exc:
     )
     logging.getLogger(__name__).warning(
         "server: noctusai_lib not installed (%s); using basicConfig fallback. "
-        "Run `pip install -e seed/backend/lib` from the repo root to fix.",
+        "Run `pip install -e seed/lib/backend` from the repo root to fix.",
         exc,
     )
 

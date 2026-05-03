@@ -9,8 +9,8 @@ tiktoken>=0.7.0  # cost_evaluation precise tokenizer; chars/4 fallback if absent
 # Editable install of the platform shared lib — gives MCP tools access to
 # `noctusai_lib.logging_config.auto_configure_for_cli(...)` so MCP CLI/server
 # output uses the same formatter as backend products. Path is relative to
-# this requirements.txt; resolves to <repo>/seed/backend/lib.
--e ../../seed/backend/lib
+# this requirements.txt; resolves to <repo>/seed/lib/backend.
+-e ../../seed/lib/backend
 
 # Note: pyproject.toml (mcp/noctusai/pyproject.toml) is the canonical package
 # manifest. This file mirrors the runtime deps for the existing -e install

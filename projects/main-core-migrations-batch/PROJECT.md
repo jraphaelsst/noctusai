@@ -26,7 +26,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** ⏳ **EXECUTING (Phase 0 ✅)** — children categorized, tier order locked, ready for Phase 1 §7 interrogation round + staleness audit (especially `repo-state-consolidation` which may be partly subsumed by recent commits).
+- **Status:** ⏳ **EXECUTING (Phase 0 ✅, Phase 1 ✅ Path B subsumed, Phase 2.a ✅ child re-scoped + filed standalone)** — Tier 1 closed via Path B (folder deleted). Tier 2 §7 round complete: user retired the original 8-frontend ambition and locked the seed-boundary scope (fw + lib + CI gate, Option C). `projects/strict-mode-migration/` rewritten to PROJECT-TEMPLATE.md format with Phase 0 audit findings inlined and Phases 1-4 ready for fresh-session execution. Phase 2.b execution intentionally deferred to a separate session per user direction. **Next:** Phase 3 — Tier 3 `therapy-platform-wiring` §7 interrogation round when this batch resumes.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
 - **Project slug:** `main-core-migrations-batch` (subject=main-core-migrations, intent=batch)
 - **Project location:** `projects/main-core-migrations-batch/` (cross-product / platform-coordinator — drives 7 child projects across root + products)
@@ -146,35 +146,46 @@ Six-question checklist:
 - `repo-state-consolidation` may be partially stale: Phase 0 was 2026-04-28 and shipped commits have happened since (`5acf4c4`, `d4b571f`, `a3e87e2`, `e1ba4e3`, `146abe3`, `0a562d0`). A future agent picking up this batch must read `git log --since=2026-04-28` and reconcile against the consolidation plan in §6 of that child before resuming. Captured here at the batch layer because it survives child-folder deletion.
 - `vista-api-mcp` and `VISTA-API-MCP-GUIDE.md` (904-line repo-root portable guide) are interlocked: the in-repo MCP build (this child) consumes the guide as source-of-truth. If the guide gets updated externally, surface the diff at child Phase 0.
 
-### Phase 1 — Tier 1: resume `repo-state-consolidation`
+### Phase 1 — Tier 1: resume `repo-state-consolidation` ✅ (Path B — subsumed + closed 2026-05-03)
 
-**1.a Staleness audit (gates Phase 1.b).**
-- [ ] Read `projects/repo-state-consolidation/PROJECT.md` §6 (Phases 1-4 commit allocation table).
-- [ ] Run `git log --since=2026-04-28 --oneline` and reconcile against §6: which commits in §6 actually shipped? which are still pending?
-- [ ] If >50% of §6 commits already shipped in the recent history, the child's scope has collapsed — flip to "subsumed; close" and run a minimal Phase 4 (final push only) instead of Phases 1-3.
-- [ ] If the project's scope is still substantial, surface §7 to user with the staleness summary; user decides resume vs. abandon.
+**1.a Staleness audit (gates Phase 1.b).** ✅
+- [x] Read `projects/repo-state-consolidation/PROJECT.md` §6 (Phases 1-4 commit allocation table).
+- [x] Run `git log --since=2026-04-28 --oneline` and reconcile against §6: 35+ commits shipped between 2026-04-28 and 2026-05-03; every load-bearing target of the original 11-commit plan has landed.
+- [x] >50% threshold breached on every §6 commit category — flip to "subsumed; close" path.
+- [x] No user §7 round needed — verdict is unambiguous (see verdict-evidence in Improvements).
 
-**1.b Execute `repo-state-consolidation` to ✅** *(Path A: scope still substantial.)*
-- [ ] Execute Phases 1-3 per child PROJECT.md.
-- [ ] Phase 4 final push (the project's documented hard-gate; this batch's Phase 1 close hands off to the user for explicit push approval).
-- [ ] Close-phase commit; child folder deleted; outcomes folded into this batch §11.
+**1.b' Subsume + close `repo-state-consolidation`** ✅ *(Path B: scope already shipped.)*
+- [x] Document what shipped vs. what was planned (verdict-evidence below).
+- [x] Delete child folder per close protocol; no Phase 4 push needed (commits already in remote).
 
-**1.b' Subsume + close `repo-state-consolidation`** *(Path B: scope already shipped.)*
-- [ ] Document what shipped vs. what was planned in this batch's §11.
-- [ ] Delete child folder per close protocol; no Phase 4 push needed (commits already in remote).
+**Improvements (Phase 1 — Path B verdict-evidence):**
+- **`core/` → `products/core/` migration (commit #2 of original plan):** ✅ subsumed. `core/` no longer exists at root; `products/core/{backend,frontend,MASTER-PROMPT.md}` populated; landed via the `core-seed-wiring` project's close.
+- **Root cleanup (commit #3):** ✅ subsumed. `TODO-*.md`, `PLAN-SEED-AGENTS.md`, `ROADMAP-v2.2-v2.4.md`, `TESTING-GUIDE.md`, `task.md`, `improvements.md`, `AI-EXPANSION-PROJECT.md` all gone from root and from the git index. `NEXT-STEPS.md`, `OPENAI.md`, `LGPD-WARNINGS.md` all tracked.
+- **Seed framework + lib evolution (commit #4):** ✅ subsumed via `62dce54` (seed-lib layered architecture), `bfe4f83` (scheduler primitive formalization), `07afb18` (digest helper trio), `e1ba4e3` (webhook signature verifier), and the `context-budget-overhaul` series.
+- **Product migrations (commits #5-8):** ✅ subsumed. Every product is on `create_product_app` / `createProductApp` per the absorption batch (`5acf4c4`) and the per-product seed-wiring closes that landed since.
+- **MCP toolkit modernization (commit #9):** ✅ subsumed via the `mcp-server-expansion` project (`bfe4f83`, `b3af71f`, `9d90f99`) plus dotted-naming + Pydantic schema absorption.
+- **PROJECT.md scaffolds (commit #10):** ✅ subsumed. The active `projects/` tree now reflects current work; closed projects deleted; `archive/projects/` houses PARKED + INFEASIBLE entries (`9447b6b`).
+- **Infra cleanup (commit #11):** ✅ subsumed. Scripts, templates, requirements, n8n, .github, .gitignore all in tracked state through pre-commit hook chain commits.
+- **Current working-tree drift (~18 entries) is parallel-agent in-flight work, NOT legacy drift** — it belongs to `scheduling-engine-seed`, `session-review-baseline`, `send-message-consolidation`, and the MCP `session_review` tool. Collision protocol applies — this batch coordinator MUST NOT touch those files. The original Path B "delete child folder" close-commit is therefore deferred: the folder deletion lands inline this session, but the commit is held until the parallel agents finish (per `KB § PATTERNS/project-execution.md § 2.9 collision protocol`).
+- **Lesson for the batch layer:** the original consolidation-plan threat model — "uncommitted drift accumulates because no one commits as they ship" — was solved structurally during 2026-04-28 → 2026-05-03 by the **commit-per-phase methodology** (`KB § PATTERNS/project-execution.md § 2.10`). The 35+ commits in that window each closed a specific phase, leaving the working tree near-empty by default. Confirms the methodology is doing what was hoped.
 
 ### Phase 2 — Tier 2: `strict-mode-migration`
 
-Smallest of the 7 (54 lines). Phase 1 is "shared packages first," Phase 2 core frontend, Phase 3 per-product frontends, Phase 4 enforce-going-forward. The blast radius is contained because TypeScript strict only flips compile-time semantics + may surface real bugs.
+The original child PROJECT.md was a 54-line checklist planning strict mode across all 8 frontends. Phase 2.a §7 round (2026-05-03) surfaced honest cost/leverage tradeoff to user → user retired the 8-frontend ambition and locked the seed-boundary scope (fw + lib + CI gate). Child PROJECT.md rewritten to PROJECT-TEMPLATE.md format with Phase 0 audit findings inlined. Phase 2.b execution intentionally deferred to a separate fresh-session agent per user direction "lets go with C. file it as a separate project so i can clear this session."
 
-**2.a §7 interrogation round (gates Phase 2.b).**
-- [ ] Read `projects/strict-mode-migration/PROJECT.md` §7. Surface open questions to user (default recommendation: shared packages first per existing §6 ordering).
+**2.a §7 interrogation round (gates Phase 2.b).** ✅
+- [x] Read original `projects/strict-mode-migration/PROJECT.md` (54-line checklist, predates modern template).
+- [x] Surveyed strict state across 11 frontend tsconfigs + ran tsc baseline on lib (24 TS2307 module-resolution errors; lib has never been tsc-checked standalone).
+- [x] Surfaced honest cost/leverage assessment to user (full 8-frontend sweep is low-leverage; seed-boundary is the high-leverage subset).
+- [x] User locked scope: Option C (fw + lib + CI gate). Original 8-frontend ambition retired and slated for accept-with-rationale paperwork at child's Phase 5.
+- [x] Child PROJECT.md rewritten to PROJECT-TEMPLATE.md format with §3a Seed-first analysis, Phase 0 findings, Phases 1-4 ready-to-execute.
 
-**2.b `strict-mode-migration` — drive to ✅.**
-- [ ] Phase 1 — shared packages strict first (everything depends on these).
-- [ ] Phase 2 — core frontend strict.
-- [ ] Phase 3 — product frontends, one at a time. Per-product `vite build` + visual sanity check on each.
-- [ ] Phase 4 — enforce going forward (eslint rule, CI gate, or template default).
+**2.b `strict-mode-migration` — drive to ✅.** *(Deferred to separate session by user direction.)*
+- [ ] Phase 1 — Lib: install peer-dep types as devDeps, get standalone tsc green in non-strict.
+- [ ] Phase 2 — Lib: flip strict, fix errors (no `!`-assertion masking).
+- [ ] Phase 3 — Framework: create tsconfig.json with strict:true from day 1, fix errors.
+- [ ] Phase 4 — CI gate: `.github/workflows/seed-typecheck.yml` runs both checks on PR.
+- [ ] Phase 5 — Paperwork: file accept-with-rationale entry for per-product strict as opt-in over time.
 - [ ] Close-phase commit; child folder deleted; outcomes folded into this batch §11.
 
 ### Phase 3 — Tier 3: `therapy-platform-wiring`
@@ -311,3 +322,5 @@ python mcp/noctusai/cli.py --improvements projects/main-core-migrations-batch/PR
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | **Project scaffolded + Phase 0 ✅.** 7 main-core / large migration children categorized into 5 tiers: Tier 1 resume-blocked (`repo-state-consolidation`), Tier 2 short-foundational (`strict-mode-migration`), Tier 3 product-wiring (`therapy-platform-wiring`), Tier 4 concept-stage trio (`vista-api-mcp`, `project-history-ledger`, `methodology-mirror-and-workspaces`), Tier 5 full-product migration (`adconnect-migration`). Phase 0 surfaced staleness risk on `repo-state-consolidation` (Phase 0 was 2026-04-28, multiple commits since) — Tier 1 must staleness-audit first. Awaiting Phase 1.a staleness audit + §7 interrogation round to start Tier 1 execution. | Claude Opus 4.7 |
+| 2026-05-03 | **Phase 1 ✅ — Tier 1 closed via Path B (subsumed).** Staleness audit verdict: every load-bearing target in the original `repo-state-consolidation` 11-commit plan has shipped through natural project-close commits between 2026-04-28 and 2026-05-03 (35+ commits in that window). Specifically: `core/` → `products/core/` migration ✅, root TODO/PLAN/ROADMAP cleanup ✅, seed-framework evolution ✅ (via `62dce54` + `bfe4f83` + `07afb18` + `e1ba4e3` + context-budget-overhaul series), product migrations to `create_product_app`/`createProductApp` ✅ (via `5acf4c4` absorption batch + per-product seed-wiring closes), MCP toolkit modernization ✅ (via `mcp-server-expansion` project), PROJECT.md scaffolds + `archive/projects/` housekeeping ✅ (via `9447b6b`), infra cleanup ✅. Current working-tree drift (~18 entries) is parallel-agent in-flight work (`scheduling-engine-seed`, `session-review-baseline`, `send-message-consolidation`, MCP session_review tool), NOT legacy drift — collision protocol applies. **Child folder `projects/repo-state-consolidation/` deleted inline this session** per close protocol; close-commit deferred until parallel agents finish (per `KB § PATTERNS/project-execution.md § 2.9 collision protocol`). Validates the commit-per-phase methodology — the structural fix to the "uncommitted drift" threat model. | Claude Opus 4.7 |
+| 2026-05-03 | **Phase 2.a ✅ — Tier 2 §7 round complete; child re-scoped + filed standalone.** Surfaced 4 evidence-backed open questions on `strict-mode-migration` (doc-shape upgrade, stale `shared/frontend/` path, frontend count grew 5→8, missing `seed/framework/frontend/tsconfig.json`); user asked the deeper question "does this strict mode project actually add value?". Honest assessment: full 8-frontend sweep is low-leverage (~16-24h, mostly mechanical `!`-assertion fixes that mask the same null risk). User picked the narrower seed-boundary scope ("strict the fw + lib"). Phase 0 audit fired and surfaced 3 findings: lib has never been tsc-checked standalone (24 TS2307 errors from missing peer-dep types — strict-mode errors masked by resolution failures); framework has no tsconfig.json at all; lib + framework export source `.ts` directly so strict tightens types at source-import boundary, propagating to all 8 products via inheritance without per-product migration. Honest re-estimate surfaced (4-8h, vs. originally quoted 2-4h). User accepted Option C (full scope = fw + lib + CI gate + accept-with-rationale paperwork retiring per-product ambition) and asked for it filed as a separate project so this session can close. **Child `projects/strict-mode-migration/PROJECT.md` rewritten** from 54-line checklist to full PROJECT-TEMPLATE.md format with §3a Seed-first analysis, Phase 0 findings inlined, Phases 1-5 ready-to-execute, copy-paste commands in §10. Phase 2.b execution **deferred to fresh-session agent**; this batch's Phase 2.a sub-tasks all ✅. **Next batch action:** Phase 3 — Tier 3 `therapy-platform-wiring` §7 interrogation round (when batch resumes). | Claude Opus 4.7 |

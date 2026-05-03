@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-_LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
+_LIB = Path(__file__).resolve().parents[3] / "seed" / "lib" / "backend"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 

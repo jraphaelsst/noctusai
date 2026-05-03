@@ -1,3 +1,3 @@
-import { createProductVitestConfig } from "../../../seed/frontend/framework/vitest.config.factory";
+import { createProductVitestConfig } from "../../../seed/framework/frontend/vitest.config.factory";
 
 export default createProductVitestConfig();

@@ -59,8 +59,8 @@ step "Step 3/5: Backend dependencies"
 pip install -q -r requirements.txt 2>/dev/null
 log "Root requirements installed"
 
-pip install -q -e seed/backend/lib 2>/dev/null
-pip install -q -e seed/backend/framework 2>/dev/null
+pip install -q -e seed/lib/backend 2>/dev/null
+pip install -q -e seed/framework/backend 2>/dev/null
 log "Seed packages installed (shared + framework, dev mode)"
 
 # ── Step 4: Frontend deps ────────────────────────────────────

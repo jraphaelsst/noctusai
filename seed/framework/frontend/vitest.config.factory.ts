@@ -17,7 +17,7 @@
  *
  * Usage:
  *   // products/<X>/frontend/vitest.config.ts
- *   import { createProductVitestConfig } from "../../../seed/frontend/framework/vitest.config.factory";
+ *   import { createProductVitestConfig } from "../../../seed/framework/frontend/vitest.config.factory";
  *   export default createProductVitestConfig();
  *
  * With overrides:
@@ -51,8 +51,8 @@ function resolveFromProductDir(productDir: string) {
   const repoRoot = isProduct
     ? path.resolve(productDir, "../../..")
     : path.resolve(productDir, "../..");
-  const seedLib = path.resolve(repoRoot, "seed/frontend/lib/src");
-  const seedFramework = path.resolve(repoRoot, "seed/frontend/framework/src");
+  const seedLib = path.resolve(repoRoot, "seed/lib/frontend/src");
+  const seedFramework = path.resolve(repoRoot, "seed/framework/frontend/src");
   const seedInfra = path.resolve(seedFramework, "infra.tsx");
   return { repoRoot, seedLib, seedFramework, seedInfra };
 }

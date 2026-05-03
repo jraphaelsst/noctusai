@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-_LIB = Path(__file__).resolve().parents[3] / "seed" / "backend" / "lib"
+_LIB = Path(__file__).resolve().parents[3] / "seed" / "lib" / "backend"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
@@ -184,7 +184,7 @@ class TestConstruction:
 
 class TestDefaultConfigAutoWires:
     def test_redis_url_enables_cache(self):
-        _SEED = Path(__file__).resolve().parents[3] / "seed" / "backend" / "framework"
+        _SEED = Path(__file__).resolve().parents[3] / "seed" / "framework" / "backend"
         if str(_SEED) not in sys.path:
             sys.path.insert(0, str(_SEED))
         from noctusai_seed.llm_defaults import default_llm_config
@@ -197,7 +197,7 @@ class TestDefaultConfigAutoWires:
         assert type(cfg.cache_backend).__name__ == "RedisCacheBackend"
 
     def test_no_redis_url_keeps_cache_disabled(self):
-        _SEED = Path(__file__).resolve().parents[3] / "seed" / "backend" / "framework"
+        _SEED = Path(__file__).resolve().parents[3] / "seed" / "framework" / "backend"
         if str(_SEED) not in sys.path:
             sys.path.insert(0, str(_SEED))
         from noctusai_seed.llm_defaults import default_llm_config

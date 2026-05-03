@@ -6,8 +6,8 @@
 ## Purpose
 
 The seed is the structural foundation of every NoctusAI product. It provides two layers:
-- **Library** (`seed/backend/lib/` + `seed/frontend/lib/`) — reusable code (auth, roles, hooks, components)
-- **Framework** (`seed/backend/framework/` + `seed/frontend/framework/`) — structural factories that products inherit
+- **Library** (`seed/lib/backend/` + `seed/lib/frontend/`) — reusable code (auth, roles, hooks, components)
+- **Framework** (`seed/framework/backend/` + `seed/framework/frontend/`) — structural factories that products inherit
 
 Every product imports from the seed. Zero products duplicate it. Change the seed, change all products at once.
 
@@ -16,7 +16,7 @@ Every product imports from the seed. Zero products duplicate it. Change the seed
 ```
 seed/
   backend/
-    lib/          noctusai_lib     pip install -e seed/backend/lib
+    lib/          noctusai_lib     pip install -e seed/lib/backend
       noctusai_lib/
         auth.py                    JWT validation, SSO resolution, make_get_current_user
         roles.py                   7-role hierarchy: owner, admin, manager, member, viewer, dev, test
@@ -34,7 +34,7 @@ seed/
         page_status.py             Dev-gated page visibility
         action_log.py              Shared action logging (parameterized table/column)
         testing/                   MockSupabaseClient, MockUser, AuthClient
-    framework/    noctusai_seed    pip install -e seed/backend/framework
+    framework/    noctusai_seed    pip install -e seed/framework/backend
       noctusai_seed/
         app.py                     create_product_app(name, schema, settings, routers, lifespan)
         config.py                  ProductSettings(BaseAppSettings) + JWT production check
@@ -43,7 +43,7 @@ seed/
         routers.py                 build_standard_routers(names=...) → subset of [health, notificacoes, team, llm]; products opt in via create_product_app(standard_routers=[...])
         rate_limit.py              create_product_limiter(settings)
   frontend/
-    lib/          @noctusai/lib    Vite alias → seed/frontend/lib/src
+    lib/          @noctusai/lib    Vite alias → seed/lib/frontend/src
       src/
         api.ts                     createApiClient() with auth token + 401 retry
         auth.ts                    useSupabaseAuthInit()
@@ -59,7 +59,7 @@ seed/
         utils.ts                   cn(), formatCurrency(), formatDate()
         components/                SSOCallback, ErrorBoundary, createAuthProvider
         design-system/             AppShell, Sidebar, Header, LoginForm, NotificationBell, PageSkeleton, useTheme, tokens.css
-    framework/    @noctusai/seed   Vite alias → seed/frontend/framework/src
+    framework/    @noctusai/seed   Vite alias → seed/framework/frontend/src
       src/
         app.tsx                    createProductApp() — flat + role-based routing, providers, auth
         layout.tsx                 createProductLayout() — sidebar, header, page status, useLayoutEnrichment
@@ -121,7 +121,7 @@ Injects: `VITE_BACKEND_API_URL` (from PRODUCT_MAP), `VITE_PRODUCT_SCHEMA` (from 
 
 ```bash
 # Backend lib
-cd seed/backend/lib && python -m pytest  # if tests exist
+cd seed/lib/backend && python -m pytest  # if tests exist
 
 # Validate all products use the seed correctly
 python mcp/noctusai/cli.py --validate

@@ -39,13 +39,13 @@ class TestRegexMatching:
         return [m.group(1) for m in _SEED_RELATIVE_PATH_PATTERN.finditer(content)]
 
     def test_matches_literal_seed_import(self):
-        assert self._matches('import x from "../../../seed/frontend/framework/vite.config.factory";') == [
-            "../../../seed/frontend/framework/vite.config.factory"
+        assert self._matches('import x from "../../../seed/framework/frontend/vite.config.factory";') == [
+            "../../../seed/framework/frontend/vite.config.factory"
         ]
 
     def test_matches_glob_with_braces_and_stars(self):
-        assert self._matches('"../../../seed/frontend/lib/src/**/*.{ts,tsx}"') == [
-            "../../../seed/frontend/lib/src/**/*.{ts,tsx}"
+        assert self._matches('"../../../seed/lib/frontend/src/**/*.{ts,tsx}"') == [
+            "../../../seed/lib/frontend/src/**/*.{ts,tsx}"
         ]
 
     def test_matches_terminal_seed(self):
@@ -112,15 +112,15 @@ class TestGlobPrefix:
 
 class TestCompliantConfigs:
     def test_synthetic_compliant_layout(self, tmp_path):
-        # Mock seed at <tmp>/seed/frontend/framework/vite.config.factory.ts
-        seed_factory = tmp_path / "seed" / "frontend" / "framework"
+        # Mock seed at <tmp>/seed/framework/frontend/vite.config.factory.ts
+        seed_factory = tmp_path / "seed" / "framework" / "frontend"
         seed_factory.mkdir(parents=True)
         (seed_factory / "vite.config.factory.ts").write_text("")
         # Build product at <tmp>/products/fake-product/frontend/
         product = tmp_path / "products" / "fake-product"
         (product / "frontend").mkdir(parents=True)
         (product / "frontend" / "vite.config.ts").write_text(
-            'import { x } from "../../../seed/frontend/framework/vite.config.factory";'
+            'import { x } from "../../../seed/framework/frontend/vite.config.factory";'
         )
         assert check_frontend_config_paths(product) == []
 
@@ -135,21 +135,21 @@ class TestCompliantConfigs:
 class TestViolations:
     def test_broken_vite_path_flagged(self, tmp_path):
         # Right product layout, wrong path depth — simulates the post-2026-04-20-move bug.
-        seed_factory = tmp_path / "seed" / "frontend" / "framework"
+        seed_factory = tmp_path / "seed" / "framework" / "frontend"
         seed_factory.mkdir(parents=True)
         (seed_factory / "vite.config.factory.ts").write_text("")
         product = tmp_path / "products" / "fake-product"
         (product / "frontend").mkdir(parents=True)
         # Path uses ../../seed/ (one too few) instead of ../../../seed/
         (product / "frontend" / "vite.config.ts").write_text(
-            'import { x } from "../../seed/frontend/framework/vite.config.factory";'
+            'import { x } from "../../seed/framework/frontend/vite.config.factory";'
         )
         issues = check_frontend_config_paths(product)
         assert len(issues) == 1
         assert issues[0]["product"] == "fake-product"
         assert issues[0]["file"] == "frontend/vite.config.ts"
         assert issues[0]["severity"] == "critical"
-        assert "../../seed/frontend/framework/vite.config.factory" in issues[0]["issue"]
+        assert "../../seed/framework/frontend/vite.config.factory" in issues[0]["issue"]
         assert "Frontend will fail to build" in issues[0]["issue"]
 
     def test_broken_tailwind_glob_flagged(self, tmp_path):
@@ -157,7 +157,7 @@ class TestViolations:
         product = tmp_path / "products" / "fake-product"
         (product / "frontend").mkdir(parents=True)
         (product / "frontend" / "tailwind.config.ts").write_text(
-            'export default { content: ["../../../seed/frontend/lib/src/**/*.{ts,tsx}"] };'
+            'export default { content: ["../../../seed/lib/frontend/src/**/*.{ts,tsx}"] };'
         )
         issues = check_frontend_config_paths(product)
         assert len(issues) == 1

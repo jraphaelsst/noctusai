@@ -6,7 +6,7 @@ import { resolve } from "path";
  * Vitest config for the seed frontend framework tests.
  *
  * `@noctusai/lib` and its sub-paths are resolved via alias (not npm) because
- * the lib lives at `seed/frontend/lib/` and is consumed the same way by every
+ * the lib lives at `seed/lib/frontend/` and is consumed the same way by every
  * product's vite build. Aliases are ORDERED LONGEST-PREFIX-FIRST so that
  * `@noctusai/lib/design-system` matches before the bare `@noctusai/lib`.
  */

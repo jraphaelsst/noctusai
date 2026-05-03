@@ -4,7 +4,7 @@
 
 ## Backend: `noctusai_lib` (Python)
 
-Install: `pip install -e seed/backend/lib`. Import: `from noctusai_lib.<module> import ...`
+Install: `pip install -e seed/lib/backend`. Import: `from noctusai_lib.<module> import ...`
 
 ### `auth.py` — Authentication & SSO
 
@@ -293,7 +293,7 @@ result = await send_digest(digest, recipient=user.email, org_id=org_id, log_pref
 | `products/daily-life/.../weekly_review_service.py` | `weekly_review.{html,txt}.j2` | Extends lib base. D6 Friday review. |
 | `products/mailing/.../campaign_debrief_service.py` | `campaign_debrief.{html,txt}.j2` | Extends lib base. M4 post-send debrief. |
 
-**Dep:** `jinja2>=3.1.0` in `seed/backend/lib/pyproject.toml` (added 2026-04-25 alongside the helper).
+**Dep:** `jinja2>=3.1.0` in `seed/lib/backend/pyproject.toml` (added 2026-04-25 alongside the helper).
 
 ### `ai/` — Per-entity AI-output storage (P1 pattern)
 
@@ -357,7 +357,7 @@ Shipped 2026-04-26 by ai-expansion Phase 19. Platform-wide opt-in/opt-out for AI
 | **Catalog auto-load** via `create_product_app(consent_features="app.services.ai_consent_features")` | Framework-side seam (formalized 2026-04-28). Imports the dotted path once per process; the module's `register_feature(...)` calls populate the catalog as a side effect. Replaces the per-product `from app.services import ai_consent_features  # noqa: F401` line in `app/main.py`. Failure is non-fatal — logged warning, catalog stays empty. |
 | **Test catalog auto-load** via `noctusai_lib.testing.pytest_plugin` (entry point `pytest11`) | Auto-registered by every test session that has `noctusai-lib` installed. Probes `app.main`; if importable, imports it (which triggers the framework's catalog load via the seam above). Non-product test sessions silently no-op. **Zero per-product `tests/conftest.py` boilerplate** — the bootstrap line lives in seed-lib, not in each product's conftest. |
 
-**Frontend consent UI** (Wave 4 — `consent-ui-rollout`, shipped 2026-04-28 to `seed/frontend/lib/src/design-system/ai/`):
+**Frontend consent UI** (Wave 4 — `consent-ui-rollout`, shipped 2026-04-28 to `seed/lib/frontend/src/design-system/ai/`):
 
 | Symbol | Purpose |
 |---|---|
@@ -369,14 +369,14 @@ Shipped 2026-04-26 by ai-expansion Phase 19. Platform-wide opt-in/opt-out for AI
 
 **Frontend framework auto-integration** (consumes the seed-lib components above):
 
-- `seed/frontend/framework/src/pages/ConsentSettingsPage.tsx` — page wrapper at `/settings/ai`. Title + LGPD-friendly intro paragraph + `<AIConsentToggles/>`. Auto-routed by `createProductApp` for both flat and role-based products.
-- `seed/frontend/framework/src/app.tsx` — `SEED_ROUTES` list (single entry today; extensible) injected into both `FlatContent` and `RoleContent` `<Routes>` trees BEFORE product routes.
-- `seed/frontend/framework/src/layout.tsx` — `aiBadge` slot defaults to `<PendingConsentBadge/>` when `enrichment.aiBadge === undefined`. Products pass `null` to opt out, or pass any other React node to override (e.g. Wave 5's `<AIBadgeStack/>` will compose multiple badges here).
-- `seed/frontend/framework/src/index.ts` — re-exports `ConsentSettingsPage` for products that want to host the panel inside their own route shell.
+- `seed/framework/frontend/src/pages/ConsentSettingsPage.tsx` — page wrapper at `/settings/ai`. Title + LGPD-friendly intro paragraph + `<AIConsentToggles/>`. Auto-routed by `createProductApp` for both flat and role-based products.
+- `seed/framework/frontend/src/app.tsx` — `SEED_ROUTES` list (single entry today; extensible) injected into both `FlatContent` and `RoleContent` `<Routes>` trees BEFORE product routes.
+- `seed/framework/frontend/src/layout.tsx` — `aiBadge` slot defaults to `<PendingConsentBadge/>` when `enrichment.aiBadge === undefined`. Products pass `null` to opt out, or pass any other React node to override (e.g. Wave 5's `<AIBadgeStack/>` will compose multiple badges here).
+- `seed/framework/frontend/src/index.ts` — re-exports `ConsentSettingsPage` for products that want to host the panel inside their own route shell.
 
 **Per-product code count: zero.** Every product picks up `/settings/ai` + the pending badge automatically by virtue of calling `createProductApp(...)`. Verified via cross-product `vite build` × 8 (consent-ui-rollout Phase 2 close, 2026-04-28).
 
-**LLM spend badge stack** (Wave 5 — `llm-spend-badge-mount`, shipped 2026-04-28 to `seed/frontend/lib/src/design-system/ai/`):
+**LLM spend badge stack** (Wave 5 — `llm-spend-badge-mount`, shipped 2026-04-28 to `seed/lib/frontend/src/design-system/ai/`):
 
 | Symbol | Purpose |
 |---|---|
@@ -386,13 +386,13 @@ Shipped 2026-04-26 by ai-expansion Phase 19. Platform-wide opt-in/opt-out for AI
 | `useLLMSpend(orgId, isAdmin)` | TanStack query against `GET /api/admin/llm-spend/{org_id}`. `enabled: orgId && isAdmin` — non-admins never fetch. `refetchInterval: 5min` (spend doesn't change at sub-minute granularity). |
 | `LLM_SPEND_REFETCH_INTERVAL_MS` | 5 × 60s. Tunable if products need a different cadence. |
 
-**Default `aiBadge` stack** (in `seed/frontend/framework/src/layout.tsx`):
+**Default `aiBadge` stack** (in `seed/framework/frontend/src/layout.tsx`):
 
 `DEFAULT_AI_BADGES = [<PendingConsentBadge/>, <LLMSpendBadge/>]` — the seed-mounted default. Layout factory composes `<AIBadgeStack badges={DEFAULT_AI_BADGES}/>` when `enrichment.aiBadge` is `undefined` (use default). Products that want product-specific badges spread the defaults: `aiBadge: <AIBadgeStack badges={[<MyBadge/>, ...DEFAULT_AI_BADGES]}/>`. Reference adopter: Daily Life (composes `<DailyBriefBadge/>` with the seed defaults; one-line update in `daily-life/frontend/src/App.tsx`). Every other product gets the default stack automatically — per-product code count = 0.
 
 **Per-product code count: zero for the default case** (every product picks up the consent + spend badges automatically). Daily Life is the single legitimate exception (~1 line) because it has its own product-specific `<DailyBriefBadge/>` that needs to compose with the defaults — that's domain-specific content, not replication. Verified via cross-product `vite build` × 8 (llm-spend-badge-mount close, 2026-04-28).
 
-**Digest narrative card** (`digest-ui-pages` — shipped 2026-04-28 to `seed/frontend/lib/src/design-system/ai/`):
+**Digest narrative card** (`digest-ui-pages` — shipped 2026-04-28 to `seed/lib/frontend/src/design-system/ai/`):
 
 | Symbol | Purpose |
 |---|---|
@@ -587,9 +587,9 @@ Import: `import { ... } from '@noctusai/lib/design-system'`
 
 ## Adding Shared Code
 
-1. **Backend**: `seed/backend/lib/noctusai_lib/<module>.py`
-2. **Frontend**: `seed/frontend/lib/src/<module>.ts`, export from `index.ts`
-3. **Design system**: `seed/frontend/lib/src/design-system/components/`, export from `design-system/index.ts`
+1. **Backend**: `seed/lib/backend/noctusai_lib/<module>.py`
+2. **Frontend**: `seed/lib/frontend/src/<module>.ts`, export from `index.ts`
+3. **Design system**: `seed/lib/frontend/src/design-system/components/`, export from `design-system/index.ts`
 4. **Document**: Update this file
 5. **Update seed product**: `products/seed/` — the live reference implementation. Template auto-syncs via the pre-commit hook when seed files are staged.
 
