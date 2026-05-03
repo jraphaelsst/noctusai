@@ -37,21 +37,61 @@ A project lives in root `projects/` when its scope is:
 
 If the project is scoped to a single product, move it under that product. If it is scoped to `core/` (auth, SSO, billing, orgs, entitlements), move it under `core/projects/`.
 
-## Current root-level projects
+## Current root-level projects (snapshot 2026-05-03)
+
+### ✅ Closed — folders awaiting deletion gate (per clean-folder rule, deletion happens at PROJECT CLOSE final commit)
+
+| Slug | Title | Notes |
+|---|---|---|
+| `methodology-extraction` | Behavioral methodology + AST tools extraction | All 6 phases ✅ 2026-05-02; apply-inline-then-delete done; folder retention pending close gate |
+| `llm-tool-call-audit` | LLM tool-call audit trail (`tool_call_audits` per-product table + `AuditRecord`) | Phases 0-3+5+6 ✅ 2026-05-03; Phase 4 deferred to `whatsapp-seed-absorption` Phase 5 |
+| `mcp-server-expansion` | MCP server hardening (Pydantic schemas, dotted naming, KB conventions) | Phases 0-3+6+7 ✅ 2026-05-03; Phase 4 carry-forward → `mcp-server-fastmcp-switch`; Phase 5 deferred to that project's Phase 4 |
+| `vista-api-mcp` | Vista API documentation + in-repo MCP server | Phase 1 ✅ 2026-05-03 (`mcp/vista/` + seed-lib formalization); Phases 2-5 deferred per §7 Q6 reactivation triggers |
+
+### ⏳ Active in-flight (work underway; next step well-defined)
+
+| Slug | Title | Next concrete step |
+|---|---|---|
+| `absorbed-projects-batch` | Cross-cutting absorption batch coordinator | Tier 1.c → execute `scheduling-engine-seed` Phase 0; Tier 1.d → execute `whatsapp-seed-absorption` Phase 0 |
+| `erp-schema-drift-deep-audit` | ERP-side schema-drift remediation | Phase 1 ✅ (profiles.org_id security fix); Phase 2 (11-table audit) awaits user §7 sign-off on org-scoping model |
+| `repo-state-consolidation` | Pre-commit pre-flight gate consolidation | Phase 0 ✅ 2026-04-28; paused at user direction; resume Phases 1-3 (re-run gates) |
+| `main-core-migrations-batch` | Core migrations batch coordinator | Phase 0 ✅; Tier 1 staleness audit on `repo-state-consolidation` required before Tier 1 phase work |
+
+### 🟡 Phase-0-ready (scaffolded; awaits focused-session pickup)
+
+| Slug | Title | Blocker |
+|---|---|---|
+| `scheduling-engine-seed` | Scheduler primitive absorption (folded cancellation/rescheduling sibling) | none — Phase 0 ready |
+| `whatsapp-seed-absorption` | WhatsApp framework absorption + idempotency-keys | none — Phase 0 ready |
+| `imobi-scheduling-bot-creation` | Imobi scheduling bot creation | downstream of `scheduling-engine-seed` + `whatsapp-seed-absorption` |
+| `session-review-baseline` | Session-axis review (JSONL transcript detector) | filed-only per user directive; awaits explicit reactivation |
+| `mcp-server-fastmcp-switch` | FastMCP runtime swap-out (carry-forward from mcp-server-expansion Phase 4) | Phase 0 ready |
+| `mcp-tool-name-deprecation` | Alias retirement after dotted-naming bedded | blocked on `mcp-server-fastmcp-switch` Phase 5 close |
+
+### 🔵 Concept-stage / interrogation pending
+
+| Slug | Title | Gate |
+|---|---|---|
+| `project-history-ledger` | Long-term project ledger (audit trail across closed projects) | §7 user interrogation pending before Phase 0 |
+| `adconnect-migration` | AdConnect B2B marketplace migration into seed framework | Product description only; no PROJECT.md phase structure yet |
+
+### ⚪ Future-direction / deferred (design only — no execution scheduled)
 
 | Slug | Title | Status |
 |---|---|---|
-| `multi-provider-llm` | Multi-Provider LLM Platform (seed/platform-infra) | ✅ Phases 1–16 shipped |
-| `ai-expansion` | Cross-product AI opportunity atlas | ⏳ Phase 1 done · Phase 2 user triage pending |
-| `adconnect-migration` | AdConnect B2B marketplace migration into the seed framework | ⏳ Scaffolded, not yet migrated |
-| `strict-mode-migration` | TypeScript strict mode across all frontends | ⏳ Deferred |
+| `agno-dev-team-future-direction` | Agno-based dev-team agent system | Deferred; design preserved |
+| `dev-observability-bot-future-direction` | Dev observability bot | Deferred; design preserved |
+| `user-context-bot-future-direction` | User context bot | Deferred; design preserved |
+| `strict-mode-migration` | TypeScript strict mode across all frontends | Deferred to v2.4 stabilization |
 
 ## Product-scoped projects (not here)
 
 | Slug | Lives at | Status |
 |---|---|---|
 | `erp-metas` | `products/erp-imobiliario/projects/erp-metas/` | ✅ All 11 phases shipped |
-| `therapy-platform-wiring` | `products/therapy-platform/projects/therapy-platform-wiring/` | Design drafted — Phase 0 pending |
+| `vista-crm-wiring` | `products/erp-imobiliario/projects/vista-crm-wiring/` | ✅ All 4 phases shipped 2026-05-02 |
+| `pf-org-scoping-migration` | `products/personal-finance/projects/pf-org-scoping-migration/` | Phases 0-7 ✅ 2026-05-03; Phase 8 (bundled proposal + close + folder deletion) pending |
+| `therapy-platform-wiring` | `products/therapy-platform/projects/therapy-platform-wiring/` | Design drafted — Phase 0 (api-call inventory) pending |
 
 ## Starting a new project
 
