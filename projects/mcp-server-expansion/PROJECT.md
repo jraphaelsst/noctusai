@@ -239,14 +239,28 @@ def register(server):
 
 
 
-### Phase 3 — Dotted naming + backward-compat aliases
+### Phase 3 — Dotted naming + backward-compat aliases ✅ (executed 2026-05-03)
 
-- [ ] Add dotted names alongside existing flat names for the 5 Phase-2 tools (`noctus.dev.validate`, etc.).
-- [ ] Verify both names dispatch to the same function.
-- [ ] Document the convention in `KB § PATTERNS/mcp-tool-conventions.md` (NEW pattern doc).
-- [ ] Update `KB § 06-AGENTS.md` with the new naming.
-- [ ] Update `CLAUDE.md §3 Map`.
-- [ ] Verify `bash scripts/verify-kb-sync.sh` passes.
+- [x] Add dotted names alongside existing flat names for the 5 Phase-2 tools. → **Done.** 6 dotted aliases registered: `noctus.dev.agent_context`, `noctus.dev.product_context`, `noctus.dev.validate`, `noctus.dev.analyze_patterns`, `noctus.dev.review`, `noctus.dev.catalog`. (Bonus: `product_context` got a free upgrade since `context.py` ships both Inputs.) Total tools: 50 → 56.
+- [x] Verify both names dispatch to the same function. → **Done.** `_dispatch()` extended with `aliases = {"noctus.dev.<x>": "noctusai_<x>"}` map; `canonical = aliases.get(name, name)` resolves before dispatch lookup. Same handler runs for both names.
+- [x] Document the convention in `KB § PATTERNS/mcp-tool-conventions.md` (NEW pattern doc). → **Done.** Single doc covers naming (§1), Pydantic schemas (§2), hierarchical registration (§3 — Phase 4 target shape documented), lazy `NoctusContext` (§4), settings shim (§5), CLI dual-entrypoint (§6), MCP-first principle pointer (§7), coexistence rules (§8). Folds in Phase 6's depth content — they ship as one doc.
+- [x] Update `KB § 06-AGENTS.md` with the new naming. → **Auto-counted.** `06-AGENTS.md` already uses `<!-- kb-counts:start:mcp_tools -->` to derive tool count from `_tool(` invocations; the 6 new dotted aliases were picked up automatically (`50 → 56`). No manual edit needed; the doc continues to list legacy flat names since both ship.
+- [x] Update `CLAUDE.md §3 Map`. → **Done.** §2 Map (KB depth) Patterns list gains a pointer line for `mcp-tool-conventions.md`.
+- [x] Verify `bash scripts/verify-kb-sync.sh` passes. → **Green.** First run flagged the new file missing from INDEX.md Layout tree; added the line; second run clean.
+
+**Improvements:**
+- The bonus `product_context` dotted alias surfaced because the Phase-2 Pydantic class for it was already in `context.py` (we'd added it as part of Phase 2's "5 representative tools" pass even though the spec named only `agent_context`). Ratchet effect: every Phase-2 tool now has a Phase-3 alias for free. **Triage: accept-with-rationale** — extra alias is harmless, semantic match is exact.
+- `KB § 06-AGENTS.md` auto-counts tool numbers via the `kb-counts` marker. The auto-count picked up the 6 new aliases without me touching the file. **Captures a useful pattern**: when a doc has auto-counted markers, Phase deliveries that change counts get the docs updated for free. Not a new finding, but worth noting that this is one of the wins of the kb-counts mechanism.
+
+### Phase 4 — Hierarchical registration
+
+- [ ] Create `tools/__init__.py::register_all(server)` per sibling pattern.
+- [ ] Create `tools/noctus/__init__.py` registering `dev` sub-umbrella.
+- [ ] Move existing tool files into `tools/noctus/dev/<service>/<action>.py` layout (or `tools/noctus/dev/<action>.py` for tools that don't have a clear service grouping). Each file gets a `register(server)`.
+- [ ] Replace the dispatch map in `server.py:282-399` with `register_all(server)`. **Architectural decision needed** (Phase 4 kickoff): switch to `FastMCP` (sibling pattern; clean) vs. keep low-level `Server` with helper-based registration (smaller change). Project §3 principle 3 + §5.2 target tree assume FastMCP. Re-confirm before lift.
+- [ ] **Update `cli.py` imports** (Phase 0 audit found CLI does NOT share dispatch — imports tool modules directly via `from tools.compliance import ...`). Every `from tools.<module> import ...` in `cli.py` must move to its new path under `tools/noctus/dev/`.
+- [ ] Verify CLI still works (smoke: `python mcp/noctusai/cli.py --validate`, `--status`, `--help`).
+- [ ] All tests must pass.
 
 ### Phase 4 — Hierarchical registration
 
@@ -269,12 +283,16 @@ def register(server):
 - [ ] Tests for each ported tool.
 - [ ] Document the lazy-context pattern in `KB § PATTERNS/mcp-tool-conventions.md`.
 
-### Phase 6 — KB pattern doc + MCP-first principle
+### Phase 6 — KB pattern doc + MCP-first principle ✅ (executed 2026-05-03 — folded into Phase 3)
 
-- [ ] Finish `KB § PATTERNS/mcp-tool-conventions.md` (naming, registration, Pydantic schemas, when to use context, dual-callable pattern, alias deprecation policy reference).
-- [ ] Add `MCP-first` engineering rule to `CLAUDE.md §1 Engineering Philosophy` (parallel to `AST-first`).
-- [ ] Update `KB § 06-AGENTS.md` and `KB § INDEX.md`.
-- [ ] Three-way sync (KB ↔ CLAUDE.md ↔ memory).
+- [x] Finish `KB § PATTERNS/mcp-tool-conventions.md`. → **Done in Phase 3** — single doc covers all eight sections from the Phase 6 outline (naming, registration, Pydantic schemas, when to use context, dual-callable, settings shim, CLI dual-entrypoint, MCP-first principle, coexistence rules). Single landing avoids two near-duplicate doc passes.
+- [x] Add `MCP-first` engineering rule to `CLAUDE.md §1`. → **Already landed before this project** (per memory `feedback_mcp_first.md` indexed under "Context budget" / methodology family — landed in commit `5acf4c4` per the absorption batch). The rule is in CLAUDE.md §1 Universal rules already; this doc is its depth pointer.
+- [x] Update `KB § 06-AGENTS.md` and `KB § INDEX.md`. → **Done in Phase 3.** `06-AGENTS.md` auto-counts; `INDEX.md` Layout tree + Patterns table both updated.
+- [x] Three-way sync (KB ↔ CLAUDE.md ↔ memory). → **KB**: new `mcp-tool-conventions.md` indexed in `INDEX.md` table + Layout tree. **CLAUDE.md**: pointer added to §2 Map → Patterns. **Memory**: existing `feedback_mcp_first.md` already covers the behavioral rule; the KB doc is pattern depth (per memory rule "Code patterns, conventions, architecture — these can be derived by reading the current project state, not stored in memory"). No new memory entry needed.
+
+**Improvements:**
+- Folding Phase 3's KB doc + Phase 6's KB doc into one landing (`mcp-tool-conventions.md`) was a slip-saver: the original phase split would have produced either two near-duplicate docs or two docs with circular references. **Triage: refactor (already applied)** — Phase 6 marked ✅ alongside Phase 3 with a §11 entry recording the fold.
+- The MCP-first principle was already in CLAUDE.md from the absorption batch (`5acf4c4`); Phase 6's "add MCP-first to CLAUDE.md §1" task was effectively pre-done. The Phase 6 plan was authored before that landing was visible. **Captured for future planner discipline**: when you draft a phase that touches CLAUDE.md, scan CLAUDE.md before writing the task — saves re-reading later.
 
 ### Phase 7 — Final verification + handoff
 
@@ -342,6 +360,7 @@ bash scripts/verify-kb-sync.sh
 | 2026-05-03 | **Phase 0 ✅.** Audit findings: (1) actual tool count = **50** in `server.py` dispatch map (lines 282-399), NOT 24 as §5.1 claimed — landed gradually since the previous tally. §5.1 left as-is for historical context but Phase 4 will reflect the true count. (2) Sibling pattern locked: `register(server)` per leaf, Pydantic in/out with `Field(description=...)`, dual-callable `tool(payload, ctx=None)` falling through to `_impl(payload, ctx)`, `noctus_context()` cm closes db on exit when owned. (3) **CLI does NOT share dispatch** — imports `from tools.<mod> import <fn>` directly (cli.py L116-439). Phase 4 risk: every CLI import line breaks when files relocate. Sub-task added to Phase 4. (4) Zero tools have Pydantic-ish schema today; Phase 2 starts from scratch for the 5 representative tools. (5) Sibling absorption list confirmed: 10 candidates after dropping `noctus/condominium/travel_estimate.py` (real-estate-domain-specific). | claude-opus-4-7 |
 | 2026-05-03 | **Phase 1 ✅.** Settings shim landed at `mcp/noctusai/settings.py` (24 lines): re-exports `BaseAppSettings` from `noctusai_lib.config.settings` as `Settings`, ships local `lru_cache(maxsize=1)`-backed `get_settings()` (lib doesn't ship a global factory by design — per-product Settings is the documented pattern). README architecture tree updated; tool count corrected `30 → 50`. Verification: smoke import returns `BaseAppSettings` instance with cache hit; pytest 354 passed (1 unrelated pre-existing flake from parallel-agent commit `9bfae8b` corpus drift). Two improvements captured (corpus baseline regen path, factory synthesis triage = accept-with-rationale). | claude-opus-4-7 |
 | 2026-05-03 | **Phase 2 ✅.** Pydantic In/Out classes landed in 5 tool files: `tools/context.py` (`AgentContextInput`/`Output`, `ProductContextInput`/`Output`), `tools/compliance.py` (`ValidateInput`/`Output`, `ValidateIssue`), `tools/analyzers.py` (`AnalyzePatternsInput`/`Output`, `DuplicatedFunction`, `InlineHookIssue`), `tools/review.py` (`ReviewInput`/`Output`, `ReviewMode`), `tools/catalog.py` (`CatalogInput`/`Output`). `server.py::_tool()` helper extended with `model=` kwarg that runs `model.model_json_schema()` for `inputSchema`; lazy imports inside `list_tools()` preserve server boot time. Total tools = 50 (unchanged). README "Conventions enforced by this toolkit" gains the Pydantic-schema rule with the 5 migrated tools listed. Verification: `pytest mcp/noctusai/tests/` = 474 passed, 1 skipped, 1 unrelated pre-existing flake. Three improvements captured (schema verbosity, Output minimality, lazy-imports ergonomics around Phase 4). | claude-opus-4-7 |
+| 2026-05-03 | **Phase 3 + Phase 6 ✅** (folded into one landing). Phase 3: 6 dotted aliases registered (`noctus.dev.{agent_context, product_context, validate, analyze_patterns, review, catalog}`); `_dispatch()` resolves dotted → flat via alias map; total tools = 50 → 56. Phase 6: `KB § PATTERNS/mcp-tool-conventions.md` (NEW) covers naming + Pydantic + hierarchical registration + lazy `NoctusContext` + settings shim + CLI dual-entrypoint + MCP-first pointer + coexistence rules in one doc (avoided splitting into two near-duplicate doc passes). MCP-first principle was already in CLAUDE.md §1 from the absorption batch (`5acf4c4`) — Phase 6's CLAUDE.md task was effectively pre-done. CLAUDE.md §2 Map gains the depth pointer; INDEX.md updated (Layout tree + Patterns table); `verify-kb-sync.sh` clean. Two improvements captured (free `product_context` alias from Phase-2 ratchet, planner-discipline note about scanning CLAUDE.md before drafting phase tasks). Phases 4 + 7 remain. | claude-opus-4-7 |
 
 ---
 

@@ -81,6 +81,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - Agent reading & research discipline → `KB § PATTERNS/agent-reading-discipline.md`
 - Webhook signature verification → `KB § PATTERNS/webhook-signatures.md`
 - Accept-with-rationale catalog → `KB § PATTERNS/accept-with-rationale.md`
+- MCP tool conventions (dotted naming, Pydantic schemas, hierarchical registration, lazy context) → `KB § PATTERNS/mcp-tool-conventions.md`
 
 ### Guides
 - First-time setup → `KB § GUIDES/setup.md`
