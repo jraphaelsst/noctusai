@@ -245,6 +245,15 @@ shape just changes when the decision moves.
 - **Revisit trigger:** when `mcp-server-expansion` adds the tool — at that point, update `KB § 2.8 § Measurement discipline` to remove this divergence and switch any usage examples from `wc -w` to `noctusai_count_tokens`. Revisit trigger also fires if a future project compares phase-block metrics across history (the case where tokenizer-aware drift would matter).
 - **Recorded by:** `context-budget-overhaul/PROJECT.md` Phase 2 + Phase 8 (2026-05-03).
 
+### Per-product `app/scheduler.py` at N=3 (mailing/PF/therapy) — pending seed-side primitive
+
+- **Subject:** `products/mailing/backend/app/scheduler.py`, `products/personal-finance/backend/app/scheduler.py`, and `products/therapy-platform/backend/app/scheduler.py` all implement the same APScheduler-based startup/shutdown wiring with product-specific job functions. Reaching N=3 trips the recurrence rule's `MUST formalize` threshold.
+- **Decision:** keep the 3 per-product files for now. Therapy's was added 2026-05-03 to wire the audio-retention sweep into the `lifespan_startup` / `lifespan_shutdown` seam without blocking on the formalization.
+- **Reason:** the formalization is non-trivial (designs the seed-lib API, migrates 3 products one-by-one, exercises the cron + interval triggers, preserves the 4,500+ test platform baseline). Doing it inline with a product feature commit would scope-creep. The follow-up project `seed-side-scheduler-primitive` is filed at `projects/seed-side-scheduler-primitive/` to land it as a focused initiative.
+- **Scope:** the 3 product `app/scheduler.py` files + the future seed-lib home `seed/backend/lib/noctusai_lib/api/scheduler.py`.
+- **Revisit trigger:** `projects/seed-side-scheduler-primitive/` Phase 0 starts (or a 4th product needs scheduling — at that point, do not add a 4th `app/scheduler.py`; promote the seed-side primitive to active execution first).
+- **Recorded by:** `projects/side-projects-batch/` Phase 1.c (`therapy-scheduler-for-retention` execution, 2026-05-03).
+
 ---
 
 ## How to add a new entry

@@ -7,6 +7,7 @@ Run with: uvicorn app.main:app --reload --port 8003
 from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
+from app.scheduler import start_scheduler, stop_scheduler
 from app.routers import (
     admin,
     admin_financials,
@@ -98,4 +99,6 @@ app = create_product_app(
     limiter=limiter,
     standard_routers=["health", "notificacoes", "llm"],
     consent_features="app.services.ai_consent_features",
+    lifespan_startup=start_scheduler,
+    lifespan_shutdown=stop_scheduler,
 )

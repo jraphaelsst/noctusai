@@ -37,5 +37,12 @@ class TherapySettings(ProductSettings):
     therapy_google_client_id: Optional[str] = None
     therapy_google_client_secret: Optional[str] = None
 
+    # Scheduler — daily audio-retention sweep + future therapy retention jobs.
+    # Default ON in prod; the FastAPI TestClient skips lifespan unless used as
+    # a context manager so tests are safe. Set to False in any env that should
+    # not sweep (local dev pointed at live DB, etc.).
+    therapy_scheduler_enabled: bool = True
+    therapy_audio_retention_sweep_interval_hours: int = 24
+
 
 settings = TherapySettings()
