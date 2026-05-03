@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from noctusai_lib.integrations.google_calendar import (
     EventAttendee,
     EventInput,
@@ -118,6 +120,45 @@ def test_fake_adapter_delete_removes_event() -> None:
 
     adapter.delete_event("primary", created.event_id)
     assert adapter.get_event("primary", created.event_id) is None
+
+
+def test_fake_adapter_update_event_replaces_in_place_preserving_event_id() -> None:
+    adapter = FakeCalendarAdapter()
+    created = adapter.create_event(
+        "primary",
+        _event(
+            datetime(2026, 5, 12, 9, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
+        ),
+    )
+
+    moved = adapter.update_event(
+        "primary",
+        created.event_id,
+        _event(
+            datetime(2026, 5, 12, 11, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 12, 12, 0, tzinfo=timezone.utc),
+        ),
+    )
+
+    assert moved.event_id == created.event_id
+    fetched = adapter.get_event("primary", created.event_id)
+    assert fetched is not None
+    assert fetched.raw["start"]["dateTime"].startswith("2026-05-12T11:00:00")
+
+
+def test_fake_adapter_update_event_raises_for_unknown_event() -> None:
+    adapter = FakeCalendarAdapter()
+
+    with pytest.raises(KeyError):
+        adapter.update_event(
+            "primary",
+            "missing-event-id",
+            _event(
+                datetime(2026, 5, 12, 9, 0, tzinfo=timezone.utc),
+                datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
+            ),
+        )
 
 
 def test_fake_adapter_preserves_request_id_for_idempotency() -> None:

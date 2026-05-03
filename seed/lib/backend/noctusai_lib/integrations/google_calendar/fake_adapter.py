@@ -63,5 +63,27 @@ class FakeCalendarAdapter:
         items.sort(key=lambda created: created.raw["start"]["dateTime"])
         return items
 
+    def update_event(
+        self,
+        calendar_id: str,
+        event_id: str,
+        event: EventInput,
+    ) -> CreatedEvent:
+        existing = self._events.get(calendar_id, {}).get(event_id)
+        if existing is None:
+            raise KeyError(
+                f"Event {event_id} not found on calendar {calendar_id}"
+            )
+        body = event_to_google_body(event)
+        body["id"] = event_id
+        body["status"] = existing.get("status", "confirmed")
+        body["htmlLink"] = existing.get("htmlLink")
+        body["creator"] = existing.get("creator")
+        body["organizer"] = existing.get("organizer", {"email": calendar_id, "self": True})
+        if event.request_id:
+            body["x_request_id"] = event.request_id
+        self._events[calendar_id][event_id] = body
+        return google_body_to_created_event(body)
+
     def delete_event(self, calendar_id: str, event_id: str) -> None:
         self._events.get(calendar_id, {}).pop(event_id, None)

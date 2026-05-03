@@ -457,6 +457,12 @@ class MockRequestBuilder:
         strict_unknown_tables: bool = False,
     ):
         self.inserted_payloads: list = []
+        # Mirror of `inserted_payloads` for `.update(...)` calls. Tests
+        # read `db.table(t).updated_payloads` to assert that an update
+        # was issued with the expected dict — same shape as the
+        # insert-side pattern. The list collects every dict passed to
+        # `update(...)`, in call order.
+        self.updated_payloads: list = []
         self._data = data or []
         if isinstance(self._data, dict):
             self._data = [self._data]
@@ -573,6 +579,12 @@ class MockRequestBuilder:
                 self._schema, self._table, data, operation="update",
                 strict_unknown_tables=self._strict_unknown_tables,
             )
+        # Mirror inserted_payloads — track the update payload so tests
+        # can assert side effects without monkey-patching the helper.
+        if isinstance(data, list):
+            self.updated_payloads.extend(data)
+        elif data is not None:
+            self.updated_payloads.append(data)
         return MockFilterBuilder(
             self._data,
             response_queue=self._response_queue,

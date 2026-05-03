@@ -113,6 +113,23 @@ class GoogleCalendarServiceAccountAdapter:
         items = result.get("items", [])
         return [google_body_to_created_event(item) for item in items]
 
+    def update_event(
+        self,
+        calendar_id: str,
+        event_id: str,
+        event: EventInput,
+    ) -> CreatedEvent:
+        body = event_to_google_body(event)
+        kwargs: dict[str, Any] = {
+            "calendarId": calendar_id,
+            "eventId": event_id,
+            "body": body,
+        }
+        if self.supports_attendees:
+            kwargs["sendUpdates"] = "all"
+        updated = self._service().events().update(**kwargs).execute()
+        return google_body_to_created_event(updated)
+
     def delete_event(self, calendar_id: str, event_id: str) -> None:
         kwargs: dict[str, Any] = {"calendarId": calendar_id, "eventId": event_id}
         if self.supports_attendees:

@@ -75,4 +75,11 @@ class CalendarAdapter(Protocol):
         time_max: datetime,
     ) -> list[CreatedEvent]: ...
 
+    def update_event(
+        self,
+        calendar_id: str,
+        event_id: str,
+        event: EventInput,
+    ) -> CreatedEvent: ...
+
     def delete_event(self, calendar_id: str, event_id: str) -> None: ...

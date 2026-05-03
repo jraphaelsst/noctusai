@@ -243,6 +243,81 @@ def test_sa_adapter_passes_send_updates_all_when_attendees_supported() -> None:
 # ---- OAuth adapter ----------------------------------------------------------
 
 
+def test_sa_adapter_update_event_calls_update_with_body_and_event_id() -> None:
+    fake_service = MagicMock()
+    fake_service.events.return_value.update.return_value.execute.return_value = {
+        "id": "evt-1",
+        "htmlLink": "https://calendar.google.com/event?eid=evt-1",
+        "summary": "Property tour rescheduled",
+    }
+
+    with patch(
+        "noctusai_lib.integrations.google_calendar.service_account_adapter.service_account.Credentials.from_service_account_info"
+    ), patch(
+        "noctusai_lib.integrations.google_calendar.service_account_adapter.build",
+        return_value=fake_service,
+    ):
+        adapter = GoogleCalendarServiceAccountAdapter(resolver=_resolver(_sa_creds()))
+        result = adapter.update_event("primary", "evt-1", _event())
+
+    assert result.event_id == "evt-1"
+    update_kwargs = fake_service.events.return_value.update.call_args.kwargs
+    assert update_kwargs["calendarId"] == "primary"
+    assert update_kwargs["eventId"] == "evt-1"
+    assert "body" in update_kwargs
+    # Without supports_attendees, no sendUpdates is set.
+    assert "sendUpdates" not in update_kwargs
+
+
+def test_sa_adapter_update_event_passes_send_updates_all_when_attendees_supported() -> None:
+    fake_service = MagicMock()
+    fake_service.events.return_value.update.return_value.execute.return_value = {
+        "id": "evt-2",
+        "htmlLink": "",
+        "summary": "x",
+    }
+
+    with patch(
+        "noctusai_lib.integrations.google_calendar.service_account_adapter.service_account.Credentials.from_service_account_info"
+    ), patch(
+        "noctusai_lib.integrations.google_calendar.service_account_adapter.build",
+        return_value=fake_service,
+    ):
+        adapter = GoogleCalendarServiceAccountAdapter(
+            resolver=_resolver(_sa_creds()), supports_attendees=True
+        )
+        adapter.update_event("primary", "evt-2", _event())
+
+    update_kwargs = fake_service.events.return_value.update.call_args.kwargs
+    assert update_kwargs["sendUpdates"] == "all"
+
+
+def test_oauth_adapter_update_event_uses_send_updates_all() -> None:
+    fake_service = MagicMock()
+    fake_service.events.return_value.update.return_value.execute.return_value = {
+        "id": "oauth-evt-1",
+        "htmlLink": "https://calendar.google.com/event?eid=oauth-evt-1",
+        "summary": "x",
+    }
+    fake_creds = MagicMock()
+    fake_creds.valid = True
+
+    with patch(
+        "noctusai_lib.integrations.google_calendar.oauth_adapter.Credentials",
+        return_value=fake_creds,
+    ), patch(
+        "noctusai_lib.integrations.google_calendar.oauth_adapter.build",
+        return_value=fake_service,
+    ):
+        adapter = GoogleCalendarOAuthAdapter(resolver=_resolver(_oauth_creds()))
+        adapter.update_event("primary", "oauth-evt-1", _event())
+
+    update_kwargs = fake_service.events.return_value.update.call_args.kwargs
+    assert update_kwargs["calendarId"] == "primary"
+    assert update_kwargs["eventId"] == "oauth-evt-1"
+    assert update_kwargs["sendUpdates"] == "all"
+
+
 def test_oauth_adapter_create_event_uses_send_updates_all() -> None:
     fake_service = MagicMock()
     fake_service.events.return_value.insert.return_value.execute.return_value = {

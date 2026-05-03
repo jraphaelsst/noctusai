@@ -113,6 +113,26 @@ class GoogleCalendarOAuthAdapter:
         items = result.get("items", [])
         return [google_body_to_created_event(item) for item in items]
 
+    def update_event(
+        self,
+        calendar_id: str,
+        event_id: str,
+        event: EventInput,
+    ) -> CreatedEvent:
+        body = event_to_google_body(event)
+        updated = (
+            self._service()
+            .events()
+            .update(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=body,
+                sendUpdates="all",
+            )
+            .execute()
+        )
+        return google_body_to_created_event(updated)
+
     def delete_event(self, calendar_id: str, event_id: str) -> None:
         self._service().events().delete(
             calendarId=calendar_id, eventId=event_id, sendUpdates="all"
