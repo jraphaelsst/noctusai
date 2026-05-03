@@ -565,6 +565,41 @@ This repo is regularly worked by multiple agents in parallel (a Claude Code sess
 
 ---
 
+## 2.11 Phase enrichment loop — every shipped phase enriches the next phase with new learnings (2026-05-03)
+
+**The rule.** When a phase ships, capture **at least one** non-obvious learning discovered during the phase via `noctus.dev.phase_learning_log`. Before opening the next phase, query unconsumed learnings via `noctus.dev.phase_learning_query` (`unconsumed_only=True`) — fold the relevant ones into the next phase's plan, then call `noctus.dev.phase_learning_consume` for each one used. Learnings that would benefit other projects (cross-cutting) get promoted to the absorption catalog, filed as follow-up projects, OR three-way-synced into KB / CLAUDE / memory if they're methodology-level.
+
+**Why durability matters.** The recurrence rule (§ 2.7) only fires when learnings are durable. A learning that lives in the agent's context window evaporates with that context. A learning that lives in §11 prose is durable but unstructured — hard to query, hard to consume mechanically, easy to skip when the agent is mid-execution. The SQLite tracker (`mcp/noctusai/tools/noctus/dev/phase_learnings.py`, db at `mcp/noctusai/data/phase_learnings.db`, gitignored) makes "what did the previous phase teach us?" a one-liner, which makes the consumption habit cheap. Cheap habits compound.
+
+**What counts as a learning.** Any **non-obvious** insight surfaced during the phase:
+
+- **methodology** — a procedural gap or refinement (e.g. "no-workaround applies to detector regex precision, not just product code").
+- **technical** — a tool, API, or library behaviour that surprised you (e.g. "FastMCP `_tool_manager._tools` is the stable accessor for registered tool names").
+- **process** — a workflow refinement (e.g. "when helper + register coexist in one module, combine the commits — splitting was theatrical").
+- **tool** — a slip in our own tooling discovered while using it (e.g. "phase-state detector regex didn't strip code spans before matching, so cross-file references self-claimed").
+- **other** — escape hatch when none of the above fits.
+
+Trivial restatements of "we did X" don't count — those go in §11 prose. The bar: would a future agent picking up similar work benefit from knowing this? If yes, log it.
+
+**Anti-patterns.**
+
+- **Skipping the log because "this phase had no learnings."** A non-trivial multi-file phase always has at least one. If you genuinely found nothing, reconsider whether the phase was actually non-trivial — or whether the active-robustness-review pass (§ 2.6) was skipped. Log "no non-obvious learnings; phase was straightforward execution of an already-designed seam" with kind=`other` so the absence is itself recorded.
+- **Logging without consuming.** The next phase MUST call `noctus.dev.phase_learning_query --unconsumed-only` before opening, even if the answer is "0 unconsumed." Open the phase having ASKED, not having assumed there's nothing.
+- **Logging at project close instead of phase close.** Defeats the whole point — the value is between adjacent phases, not at the end.
+- **Capturing prose-archeology elsewhere.** §11, scratchpad files, conversation memory all carry historical learnings. The tracker is for **structured durable** ones. Don't replace the tracker with another freeform medium.
+
+**Cross-project learnings.** When a learning would benefit other projects, **also** route it appropriately:
+
+- Cross-cutting helper / pattern → `cross-product-absorption-catalog.md` (or follow-up seed-absorption project).
+- Methodology rule → three-way sync (KB + `CLAUDE/<topic>.md` + memory).
+- Tooling defect → file a follow-up project (don't silently work around).
+
+The SQLite log is the **per-project record**; the catalog / KB / memory are the **cross-project** propagators.
+
+**Worked example — this very project (`phase-detector-and-enrichment-loop`) in Phase 6.** After shipping Phases 1-5, the closing phase (Phase 6) logs ≥1 learning per phase to the tracker, then enriches the gated downstream project (`repo-state-consolidation-wave-2`) with the relevant ones. That dogfoods the loop on its own work.
+
+---
+
 ## 3. Phase-by-phase cadence
 
 Default cadence: **execute exactly one phase, then stop.** Wait for the user to say "continue" / "next phase" / "do phase N" before advancing.
