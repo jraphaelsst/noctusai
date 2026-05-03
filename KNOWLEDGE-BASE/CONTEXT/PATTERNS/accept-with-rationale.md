@@ -288,13 +288,13 @@ When the revisit trigger fires:
 Don't delete entries. The catalog is append-only-ish; retirement is a
 state change, not a removal.
 
-### Template-workspace chmod is symbolic, not enforcing
-- **Subject:** `scripts/bootstrap-template-workspace.sh` applies `chmod -h a-w` to every symlinked surface in the template workspace.
+### Seed-workspace chmod is symbolic, not enforcing
+- **Subject:** `scripts/bootstrap-seed-workspace.sh` applies `chmod -h a-w` to every symlinked surface in the seed workspace.
 - **Decision:** chmod runs at bootstrap time and is documented as a Layer 3 SYMBOLIC defense — not an actual write barrier.
 - **Reason:** The user's stated mechanism *"chmod the symlinked surfaces"* cannot work as imagined cross-platform: macOS symlinks ignore mode bits at the kernel level (no-op), Linux mostly-ignores them too, and chmoding the symlink TARGETS would lock noc itself out of editing its own files (same OS user owns both directories). The realistic enforcement boundary is at commit-time via the template-side pre-commit hook (Layer 1 — PRIMARY); chmod stays as a marker that the surface is read-only by intent.
-- **Scope:** `scripts/bootstrap-template-workspace.sh` + `templates/template-workspace-README.md` + `KB § PATTERNS/template-workspace.md`.
+- **Scope:** `scripts/bootstrap-seed-workspace.sh` + `templates/seed-workspace-README.md` + `KB § PATTERNS/seed-workspace.md`.
 - **Revisit trigger:** macOS gains symlink mode-bit enforcement (unlikely), OR a new POSIX-portable per-symlink immutability mechanism appears (chflags+immutable that doesn't affect the target), OR a wrapper layer (FUSE / OverlayFS) becomes available on macOS that lets template see noc as read-only without affecting noc's own writes.
-- **Recorded by:** `projects/template-workspace/` Phase 0 audit (2026-05-03).
+- **Recorded by:** `projects/seed-workspace/` Phase 0 audit (2026-05-03).
 
 ### Per-product `_render_bodies` + `_generate_narrative` digest wrappers retained at N=4
 
@@ -303,15 +303,31 @@ state change, not a removal.
 - **Reason:** the wrappers are the *domain-binding boundary*. The LLM prompts (security-audit narrative vs. weekly habit review vs. campaign metrics vs. monthly cashflow) are fundamentally per-product; abstracting them through a `prompt_factory` indirection would either bloat the seed-lib API with per-domain prompt knowledge or split the prompt from its data-shape (creating a brittle two-piece API). The recurrence-rule's MUST-formalize threshold (N=3+) fired here, but Phase 0 audit found the formalize-target was the *primitives*, not the wrappers — which is what shipped. The remaining wrappers are correctly per-product code.
 - **Scope:** `products/{core,daily-life,mailing,personal-finance}/backend/app/services/*_digest_service.py` (or equivalent name). ERP excluded per the existing "ERP metas digest does NOT use `noctusai_lib.domain.digest`" entry above.
 - **Revisit trigger:** a fifth narrative-using digest product joins (N=5 → re-evaluate whether a class-based `DigestService` pattern pays off), OR the existing 4 wrappers start sharing identical prompt-shape boilerplate (e.g. all begin with the same system-prompt prefix), at which point pull the prefix into a `digest_system_preamble` helper.
-- **Recorded by:** `projects/digest-helpers-absorption/` PROJECT CLOSE (2026-05-03; commit `07afb18`). The originating decision was made implicitly during that project's Phase 0; this entry promotes the rationale into the catalog now per the new rule "promote permanent accepts to the catalog before the project folder is deleted".
+- **Recorded by:** `projects/digest-helpers-absorption/` PROJECT CLOSE (2026-05-03; commit `07afb18`). Originating decision made implicitly during Phase 0; catalog promotion landed in follow-up commit `274e02d` rather than inline with the close — a timing miss against this doc's "promote here BEFORE the folder is deleted" rule (§ When to add a catalog entry). Going forward: project-close commits that produce a permanent accept-with-rationale must land the catalog entry in the same commit as folder deletion. Entry retained as historical context per the append-only-ish convention; this `Recorded by` note preserves the timing miss as a learning artifact for future agents.
+
+### MCP settings shim ships its own local `get_settings()` factory (not in `noctusai_lib`)
+- **Subject:** `mcp/noctusai/settings.py` re-exports `BaseAppSettings` from `noctusai_lib.config.settings` as `Settings` AND ships a local `lru_cache(maxsize=1)`-backed `get_settings()` singleton. The lib does NOT ship a global `get_settings()` of its own.
+- **Decision:** keep the factory MCP-local, not in the lib.
+- **Reason:** `noctusai_lib/config/settings.py:13-22` documents that products extend `BaseAppSettings` per-product (each backend resolves the root `.env` from a different `__file__`). A lib-level singleton would force every consumer process to share one Settings instance — wrong shape for per-product backends. The MCP server is one of N future consumers of the shim pattern; an MCP-scoped factory is the right granularity. When this MCP eventually extracts to its own repo (per `mcp/noctusai/settings.py:1-7` docstring), the shim becomes the source — every consumer reads its own `.env` against the same `BaseAppSettings` shape.
+- **Scope:** `mcp/noctusai/settings.py` (today). Future extracted MCP repo's own `settings.py`.
+- **Revisit trigger:** a second non-product process needs the same `Settings()` singleton (e.g. a CLI orchestrator, a webhook gateway, a separate MCP server in a sibling repo). At N=2 the factory pattern moves into the lib (e.g. `noctusai_lib.config.factories.lru_singleton(BaseAppSettings)`). Trigger also fires if `BaseAppSettings` itself starts requiring multi-process coordination (very unlikely; would force a redesign).
+- **Recorded by:** `projects/mcp-server-expansion/` Phase 1 (2026-05-03; commit `bfe4f83`).
+
+### `noctusai_lib.domain.ai.tool_audit._safe_jsonable` accepts string + repr fallbacks instead of raising
+- **Subject:** the `_safe_jsonable(value)` helper in `seed/backend/lib/noctusai_lib/domain/ai/tool_audit.py`. Its job is to coerce an arbitrary `arguments` / `result` value into something a Postgres JSONB column will accept.
+- **Decision:** when `json.dumps(default=str)` round-trip succeeds it returns whatever JSON-load produces — including bare strings (e.g. a Pydantic model whose `__repr__` rendered via `default=str`). When even that fails, it returns `{"_repr": repr(value)}` and emits `logger.debug(...)`. Never raises.
+- **Reason:** the audit writer is **best-effort** by contract — failing to persist a row must NEVER break the user-facing tool dispatch (the audit table is for visibility, not correctness). A strict serializer that raised on unknown types would either: (a) propagate up into the dispatch and break the user flow, or (b) need a try/except wrapper at every call site that swallowed the failure differently — multiplying the silent-error surface. Keeping the fallback inside `_safe_jsonable` centralizes the policy + keeps `make_audit_writer` callers simple. The string / `_repr` fallback is acceptable for an observability table; a strict consumer wanting structured data builds its own wrapper.
+- **Scope:** `seed/backend/lib/noctusai_lib/domain/ai/tool_audit.py::_safe_jsonable` and every consumer wired via `make_audit_writer(db, table_class)`.
+- **Revisit trigger:** a downstream BI consumer reports it can't query a meaningful percentage of rows because `arguments` / `result` arrived as bare strings or `_repr` envelopes. At that point either (a) flip `_safe_jsonable` to opt-in strict mode (`make_audit_writer(..., on_unserializable="raise")`) so producers learn to redact upstream, or (b) ship a typed companion table for the strict-shape rows. Not before — premature strictness would break products mid-rollout.
+- **Recorded by:** `projects/llm-tool-call-audit/` Phase 1 (2026-05-03; commit `bf0bfe3`).
 
 ### MCP workspace-aware tool integration ~~deferred to parallel project~~ — **FORMALIZED 2026-05-03**
-- **Subject:** the workspace-aware integration of `mcp/noctusai/tools/{status,proposals,scaffold}.py` + `mcp/noctusai/server.py` registration of `noctusai_promote_from_template` + `noctusai_list_promotions` MCP tools.
+- **Subject:** the workspace-aware integration of `mcp/noctusai/tools/{status,proposals,scaffold}.py` + `mcp/noctusai/server.py` registration of `noctusai_promote_from_seed_workspace` + `noctusai_list_promotions` MCP tools.
 - **Decision:** ship the `workspace.py` utility module + `promotion.py` standalone tool today; defer integration of those into `server.py` + per-tool `REPO_ROOT` swaps to the parallel `projects/mcp-server-expansion/` project's Phase 4 (which restructures every tool under `tools/noctus/dev/<service>/<action>.py` and replaces the flat dispatch map).
-- **Reason:** the `template-workspace` project ran in parallel with `mcp-server-expansion` Phases 2-4 actively restructuring those exact files. Coordinating the workspace-aware swap mid-restructure risked collision and rollback (and did — the parallel agent reverted my edits twice during the session, surfacing the need for the parallel-agent collision protocol now at `KB § PATTERNS/project-execution.md § 2.9`).
+- **Reason:** the `seed-workspace` project ran in parallel with `mcp-server-expansion` Phases 2-4 actively restructuring those exact files. Coordinating the workspace-aware swap mid-restructure risked collision and rollback (and did — the parallel agent reverted my edits twice during the session, surfacing the need for the parallel-agent collision protocol now at `KB § PATTERNS/project-execution.md § 2.9`).
 - **Scope:** `mcp/noctusai/tools/{status,proposals,scaffold}.py` REPO_ROOT swaps + `mcp/noctusai/server.py` dispatch entries + `_tool()` declarations for the 2 promotion tools.
 - **Revisit trigger:** ~~`projects/mcp-server-expansion/` Phase 4 closes~~ — fired 2026-05-03 when the user said *"apply now, the other agent is done"*. Resolution-path-2 from the collision protocol fired: re-applied the 4 edits in one session, verified `508/508` MCP tests pass + smoke test (status from template cwd shows 0 noc projects; status from noc cwd shows 23 noc projects — both scoping behaviors correct).
-- **Recorded by:** `projects/template-workspace/` PROJECT CLOSE (2026-05-03); FORMALIZED in same session 2026-05-03 after parallel-agent completion signal. Entry retained as historical context per "don't delete entries" rule.
+- **Recorded by:** `projects/seed-workspace/` PROJECT CLOSE (2026-05-03); FORMALIZED in same session 2026-05-03 after parallel-agent completion signal. Entry retained as historical context per "don't delete entries" rule.
 
 ---
 
