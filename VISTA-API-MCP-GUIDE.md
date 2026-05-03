@@ -4,7 +4,8 @@
 > Vista Software / Loft CRM **MCP server** from scratch. Folds three sources
 > into one: (1) the public docs at `https://vistasoft.com.br/api/`,
 > (2) live probe results against a real production tenant
-> (`oneconsu-rest.vistahost.com.br`, captured 2026-05-01..2026-05-02), and
+> (`oneconsu-rest.vistahost.com.br`, captured 2026-05-01..2026-05-03 with
+> a re-probe confirming all known surfaces still hold), and
 > (3) lessons learned implementing a typed adapter against the live API.
 >
 > **This document is portable.** It contains zero relative pointers into the
@@ -289,13 +290,23 @@ Returns a flat object keyed by field, not wrapped:
 
 ### 3.3 Error responses
 
-| HTTP | Body shape (variants) | Meaning |
+All non-200 responses share the **same envelope shape**:
+`{"message": <str|array>, "status": <int>}`. The `message` field is
+sometimes a string, sometimes an array, sometimes embeds the masked key
+hash. Verified live on `oneconsu-rest` 2026-05-03:
+
+| HTTP | Body shape (live, verbatim) | Meaning |
 |---|---|---|
 | 200 | normal payload | OK |
-| 400 | `{"campo": "X não está disponível"}` (or similar phrasings) | Field-level permission denied or field unknown for this endpoint |
-| 401 | `{"mensagem": "Permissão Negada"}` | Endpoint exists; this key lacks permission |
-| 404 | typically empty / Vista 404 page | Endpoint not exposed on this tenant's subscription tier |
+| 400 | `{"message": ["Campo Estado não está disponível. Consulte a documentação para obter os campos disponíveis."], "status": 400}` — note `message` is an **array** in field-rejection cases | Field-level permission denied or field unknown for this endpoint |
+| 401 | `{"message": "Permissão Negada: \"<key-hash>\" Método: <path>", "status": 401}` — string, embeds masked key hash + the requested path | Endpoint exists; this key lacks permission |
+| 404 | `{"message": "No route found for \"GET http://<tenant>/<path>\": Method Not Allowed (Allow: ...)", "status": 404}` — Symfony-style routing message | Endpoint not exposed on this tenant's subscription tier |
 | 5xx | varies | Upstream error |
+
+**MCP implication.** When parsing `message` for the field name in 400
+responses, do substring search for `"Campo "` against the JSON-serialized
+body — that survives both the string and array shapes. If Vista changes
+the phrase, your field extraction will degrade gracefully to "unknown."
 
 **Numeric values returned as strings.** Decimals (`ValorVenda`,
 `AreaTotal`, `Latitude`, etc.), integers (`Dormitorios`, `Vagas`,
@@ -308,19 +319,46 @@ time unless the tenant declares otherwise.
 
 ### 3.4 Recommended typed-error model for the MCP
 
+Use a 7-class hierarchy so callers can `except` at the granularity that
+matters. **Inheritance matters for catch order**:
+
 ```
-VistaConfigError(message)         — base URL or API key missing
-VistaTimeout(endpoint)            — httpx.TimeoutException or socket timeout
-VistaUpstreamError(status, body)  — 5xx + uncategorized 4xx wrapper
-VistaPermissionDenied(endpoint)   — 401 with "Permissão Negada"
-VistaFieldNotAvailable(field, endpoint)
-                                  — 400 with the "não está disponível" pattern
-VistaNotFound(endpoint)           — 404 (endpoint not enabled here)
+VistaError                                # base — catch-all for any Vista failure
+├── VistaConfigError                      # base URL or API key missing/empty
+│                                         # raise at request time, NOT at __init__
+├── VistaTimeout(endpoint)                # httpx.TimeoutException or socket timeout
+└── VistaUpstreamError(status, body, endpoint)
+    ├── VistaPermissionDenied             # HTTP 401 — "Permissão Negada"
+    ├── VistaNotFound                     # HTTP 404 — endpoint not enabled here
+    └── VistaFieldNotAvailable(field, …)  # HTTP 400 — "Campo X não está disponível"
+                                          # `.field` parsed best-effort from body
 ```
 
-The MCP host should see each as a structured tool-error payload, never
-raw 4xx text. Map non-200 responses to one of these classes; surface raw
-body only as a debug field.
+**Catch-order rule** — leaves before parents, otherwise the parent
+swallows them. Concrete (Python):
+
+```python
+try:
+    result = await client.listar_imoveis(...)
+except VistaPermissionDenied: ...      # 401 → host sees PERMISSION_DENIED
+except VistaNotFound: ...              # 404 → host sees NOT_FOUND
+except VistaFieldNotAvailable as e: ...# 400 → MUST come before VistaUpstreamError
+except VistaTimeout: ...               # → host sees TIMEOUT
+except VistaUpstreamError as e: ...    # everything else 4xx/5xx → host sees UPSTREAM_ERROR
+```
+
+Reversing `VistaFieldNotAvailable` and `VistaUpstreamError` would silently
+mask field-permission errors as generic upstream errors — exactly the
+failure mode our reference implementation tripped (see §10).
+
+**Result carrier.** Successful requests should carry `data`, `status`,
+`latency_ms`, `endpoint`, and `params_keys` (sorted query-param names —
+NEVER values; supports LGPD-clean audit logging without re-running the
+request).
+
+The MCP host should see each error as a structured tool-error payload,
+never raw 4xx text. Map non-200 responses to one of these classes;
+surface raw body only as a debug field.
 
 ---
 
@@ -345,7 +383,7 @@ a lower bound — your tenant may have more enabled.
 
 | Op | Method | Path | ID param | This tenant | Public docs | Notes |
 |---|---|---|---|---|---|---|
-| List | GET | `/imoveis/listar` | — | ✅ | 📖 | 1,784 properties live. |
+| List | GET | `/imoveis/listar` | — | ✅ | 📖 | ~1,783 properties live 2026-05-03 (count fluctuates as listings come and go). |
 | Detail | GET | `/imoveis/detalhes` | `?imovel=` | ✅ | 📖 | `Foto` field NOT available here — use `Foto` from `listar`. |
 | List enum content | GET | `/imoveis/listarConteudo` | — | ✅ | ❓ | Returns enum values for filters. Drives dropdowns. |
 | Photos | GET | `/imoveis/fotos` | `?imovel=` | ❌ | 📖 | Returns 404 (not 401) on this tenant — different tier. Workaround: use `Foto` field on `listar`. |
@@ -421,9 +459,22 @@ Foto                → use FotoDestaque
 FotoPrincipal       → use FotoDestaque
 Slug                → not exposed
 PalavrasChave       → not exposed
-CodigoImobiliaria   → cannot be requested explicitly; sometimes appears in
-                       the response anyway. Don't depend on either way.
+CodigoImobiliaria   → cannot be requested explicitly (400) — but Vista
+                       returns it anyway in the response (typically null
+                       on this tenant). See "auto-included fields" below.
 ```
+
+**Auto-included fields (Vista returns these unrequested — confirmed live
+2026-05-03):**
+
+- `CodigoImobiliaria`: returned as `null` on `oneconsu-rest`, even though
+  requesting it returns 400. Don't filter, don't try to request — just
+  accept it in the response payload.
+- `Corretor_Codigo`: a flat string copy of the first corretor's id,
+  returned alongside the nested `Corretor` dict (e.g. `"103"`). Useful
+  as a faster ID-only check than walking the nested dict, but the
+  `Corretor` nested dict remains authoritative when you need the broker
+  name / email.
 
 **MCP design implication.** The MCP server should ship a per-tenant
 `safe_fields` map populated at boot via the probe routine in §7.
@@ -456,6 +507,22 @@ explicitly at the API boundary so the next drift surfaces clearly.
   values (one array per requested field) used to populate filter dropdowns
   without scanning the full catalog.
 - Useful first call for an MCP `list_property_filters` tool.
+- **Live enum content for `oneconsu-rest` 2026-05-03** (the response is a
+  flat dict keyed by the requested field names — NOT the dict-keyed-by-id
+  envelope — so do NOT use `extract_items` here):
+
+  | Field | Values returned |
+  |---|---|
+  | `Status` | `["Aluguel", "Venda", "Venda e Aluguel"]` (3 — exhaustive on this tenant) |
+  | `Categoria` | 20+ values incl. `Apartamento`, `Casa`, `Casa em Condomínio`, `Chácara`, `Galpão`, `Salas/Conjuntos`, `Cobertura`, `Sítio`, `Sobrado`, `Terreno em Condomínio`, `Loja`, `Loft`, `Ponto Comercial`, `Prédio Comercial`, … |
+  | `Cidade` | 17 values (incl. a casing duplicate — see below) |
+  | `Bairro` | 60+ values |
+
+- **Casing duplicates.** `Cidade` returned both `"Embu das Artes"` and
+  `"Embu Das Artes"` — Vista does NOT canonicalize. A filter using
+  exactly one form misses properties listed under the other. **MCP
+  authors should normalize case-insensitively when filtering** OR
+  surface the duplication to the model so it can pick one.
 
 ### 4.2 `/clientes` — Clients
 
@@ -496,7 +563,7 @@ data including potentially CPF/RG. An MCP exposing this surface should:
 
 | Op | Method | Path | This tenant | Notes |
 |---|---|---|---|---|
-| List | GET | `/usuarios/listar` | ✅ | 16+ rows on the probed tenant |
+| List | GET | `/usuarios/listar` | ✅ | 10 rows on the probed tenant 2026-05-03 |
 
 #### Confirmed live field set
 
@@ -932,7 +999,18 @@ should document the answer and update this file (or its downstream copy):
   - `https://ajuda.vistasoft.com.br/para-que-serve-a-api/`
   - `https://ajuda.vistasoft.com.br/como-solicitar-uma-nova-chave-api/`
 - **Live probe environment.** `oneconsu-rest.vistahost.com.br` (One
-  Consultoria Imobiliária — Cotia/SP), 2026-05-01..2026-05-02.
+  Consultoria Imobiliária — Cotia/SP).
+  - **2026-05-01..2026-05-02** — initial probe pass producing the
+    calibrated field sets, error envelope shapes, and endpoint inventory.
+  - **2026-05-03** — re-probe (8 endpoints + 1 negative test). All
+    known surfaces still hold. New findings folded in: error envelope
+    is uniformly `{"message", "status"}` (NOT the previously-noted
+    `{"mensagem"}` — wrong key); 400 `message` is an **array** in
+    field-rejection cases; 404 has Symfony "No route found" shape;
+    `/imoveis/listar` returns `Corretor_Codigo` and `CodigoImobiliaria`
+    unrequested; `/imoveis/listarConteudo` `Status` enum is exhaustively
+    `["Aluguel", "Venda", "Venda e Aluguel"]`; `Cidade` enum has casing
+    duplicates (`Embu das Artes` ‖ `Embu Das Artes`).
 - **Reference adapter.** Built into a real ERP integration; the typed
   classes, normalizers, and audit-log path described above are the same
   shapes used in production.

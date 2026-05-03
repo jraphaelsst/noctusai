@@ -1,22 +1,22 @@
-"""Vista payload → showcase DTO mappers.
+"""Vista payload → showcase DTO mappers — canonical platform implementation.
 
-Centralizing this in one place is a deliberate seam: a future migration
-project will reuse these to seed `erp.ativos`, `erp.clientes`, etc. Don't
-inline these into the service layer.
+See `KB § INTEGRATIONS/vista.md § 5.2` for the full normalizer field-mapping
+contract — every Vista key, every type-coercion rule, every per-tenant
+fallback chain.
 
-Vista quirks we deliberately defend against:
-- Numeric fields come back as strings ("250000.00") or empty strings.
+Vista quirks defended against:
+- Numeric fields come back as strings (`"250000.00"`) or empty strings.
 - `Caracteristicas` is a deeply nested object whose keys vary per property.
 - `Foto` is missing on `/imoveis/detalhes` — pull from `/imoveis/listar`.
-- Field names use Portuguese capitalization; preserve `raw` for debugging.
-- The primary id (`Codigo`) is read from the payload, not from the dict
-  key in `extract_items()` — the dict key may be alphanumeric or numeric.
+- `Estado` ‖ `UF`, `Banheiros` ‖ `BanheiroSocial`, `Foto` ‖ `FotoDestaque`
+  fallbacks because per-tenant permissions vary.
+- `Corretor` is dict-keyed-by-id on most tenants but flat on some.
 """
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from app.integrations.vista.types import (
+from .types import (
     ShowcaseAgencia,
     ShowcaseImovel,
     ShowcaseImovelDetalhes,
@@ -24,11 +24,12 @@ from app.integrations.vista.types import (
 )
 
 
+# ─── Type coercion helpers ───────────────────────────────────────────────
+
+
 def _to_float(value: Any) -> Optional[float]:
+    """Empty/None → None. 0/'0' → 0.0. Comma decimal separator normalized."""
     if value in (None, "", "0", 0):
-        # 0/'0' kept as None to keep "no data" distinct from "actually zero"
-        # for valor/area fields. The raw payload preserves the literal value
-        # for callers who need to disambiguate.
         return None if value in (None, "") else 0.0
     try:
         return float(str(value).replace(",", "."))
@@ -52,10 +53,12 @@ def _str_or_none(value: Any) -> Optional[str]:
 
 
 def _first_corretor_nome(payload: dict) -> Optional[str]:
-    """Vista returns `Corretor` as a dict keyed by corretor id:
-    `{"103": {"Nome": "Fernanda", ...}, "104": {"Nome": "Elisa", ...}}`.
-    The flat-shape `{"Nome": "..."}` only appears in some single-corretor
-    payloads. Walk both shapes and return the first usable name.
+    """Walk both flat and dict-keyed-by-id Corretor shapes; return first usable name.
+
+    Vista returns `Corretor` as a dict keyed by corretor id on most tenants:
+      `{"103": {"Nome": "Fernanda", ...}, "104": {"Nome": "Elisa", ...}}`.
+    A flat shape `{"Nome": "..."}` appears on some single-corretor payloads.
+    Returns ONLY the first matched name — not a list.
     """
     corretor = payload.get("Corretor")
     if not isinstance(corretor, dict):
@@ -71,6 +74,9 @@ def _first_corretor_nome(payload: dict) -> Optional[str]:
     return None
 
 
+# ─── Payload mappers ─────────────────────────────────────────────────────
+
+
 def vista_imovel_to_showcase(payload: dict) -> ShowcaseImovel:
     return ShowcaseImovel(
         codigo=str(payload.get("Codigo") or ""),
@@ -82,8 +88,8 @@ def vista_imovel_to_showcase(payload: dict) -> ShowcaseImovel:
         bairro=_str_or_none(payload.get("Bairro")),
         endereco=_str_or_none(payload.get("Endereco")),
         cep=_str_or_none(payload.get("CEP")),
-        # Vista exposes the UF in either `UF` or `Estado` depending on the
-        # tenant's permissioning — try both. On `oneconsu-rest` only `UF` works.
+        # Per-tenant fallback (vista.md § 5.2): public docs say `Estado`,
+        # `oneconsu-rest` only exposes `UF`.
         estado=_str_or_none(payload.get("UF") or payload.get("Estado")),
         valor_venda=_to_float(payload.get("ValorVenda")),
         valor_locacao=_to_float(payload.get("ValorLocacao")),
@@ -93,8 +99,8 @@ def vista_imovel_to_showcase(payload: dict) -> ShowcaseImovel:
         dormitorios=_to_int(payload.get("Dormitorios")),
         suites=_to_int(payload.get("Suites")),
         vagas=_to_int(payload.get("Vagas")),
-        # `Banheiros` (aggregate) is denied on this tenant; `BanheiroSocial`
-        # is what's exposed — fall through both so other tenants still work.
+        # `Banheiros` (count) is denied on `oneconsu-rest`; `BanheiroSocial`
+        # is what's exposed there. Try both for tenant portability.
         banheiros=_to_int(payload.get("Banheiros") or payload.get("BanheiroSocial")),
         foto_url=_str_or_none(payload.get("Foto") or payload.get("FotoDestaque")),
         latitude=_to_float(payload.get("Latitude")),
@@ -110,8 +116,12 @@ def vista_imovel_detalhes_to_showcase(
     *,
     listing_payload: Optional[dict] = None,
 ) -> ShowcaseImovelDetalhes:
-    """Compose detail view from /imoveis/detalhes + (optionally) the
-    matching /imoveis/listar row, since `Foto` is unavailable on detalhes.
+    """Compose detail view from /imoveis/detalhes + (optionally) the matching
+    /imoveis/listar row, since `Foto` is unavailable on detalhes.
+
+    Merge strategy: `{**listing, **detalhes}` (detail wins). Plus a special
+    `Foto` override: if listing has it and detalhes doesn't, listing wins.
+    See vista.md § 4.1 (`/imoveis/detalhes` quirks).
     """
     base_payload = {**(listing_payload or {}), **detalhes_payload}
     if listing_payload and listing_payload.get("Foto") and not detalhes_payload.get("Foto"):
@@ -149,3 +159,11 @@ def vista_agencia_to_showcase(payload: dict) -> ShowcaseAgencia:
         site=_str_or_none(payload.get("Site")),
         raw=payload,
     )
+
+
+__all__ = [
+    "vista_imovel_to_showcase",
+    "vista_imovel_detalhes_to_showcase",
+    "vista_usuario_to_showcase",
+    "vista_agencia_to_showcase",
+]

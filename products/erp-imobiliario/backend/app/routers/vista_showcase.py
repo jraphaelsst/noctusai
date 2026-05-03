@@ -4,9 +4,10 @@ This router never touches Vista directly; it goes through
 `app.services.vista_showcase_service`, which funnels every outbound call
 through one audit-log path.
 
-LGPD posture: see `products/erp-imobiliario/projects/vista-crm-wiring/PROJECT.md` § 5.
-Admin-only is the v1 mitigation, not an exemption — every call writes an
-audit-log row to `erp.user_actions_log`.
+LGPD posture: see `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` § 5.4
+(audit-log contract) and § 5.6 (admin-gating). Admin-only is the v1
+mitigation, not an exemption — every call writes an audit-log row to
+`erp.user_actions_log`.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from app.config import settings
 from app.dependencies import get_current_user
-from app.integrations.vista.client import (
+from noctusai_lib.integrations.vista import (
     VistaClient,
     VistaConfigError,
     VistaFieldNotAvailable,

@@ -1,11 +1,14 @@
-"""Vista CRM HTTP client — typed, async, audit-aware.
+"""Vista CRM HTTP client — typed, async, audit-aware. Canonical platform implementation.
 
-This is the only module that talks to Vista over the network. Everything
-else (services, routers, normalizers) goes through this client.
+Both consumers — `mcp/vista/` (in-repo MCP server) and the ERP showcase
+router/service (`products/erp-imobiliario/backend/app/{routers,services}/vista_showcase*.py`) —
+import this from `noctusai_lib.integrations.vista`.
 
-See `products/erp-imobiliario/projects/vista-crm-wiring/VISTA-API.md` for
-the full Vista contract — auth, query convention, response shape, and
-error model. Keep this file in sync when the contract evolves.
+**Formalized 2026-05-03** from two parallel ports at N=2 → triage time.
+See `KB § INTEGRATIONS/vista.md` § 1-3 for the full Vista contract (auth,
+query convention, response shape, error model), § 5.1-5.6 for the
+adapter behavior this client implements, and § 6 for the per-tenant
+calibration gap addressed by `mcp/vista/calibration.py`.
 """
 from __future__ import annotations
 
@@ -21,6 +24,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_PAGE_SIZE = 50
 PAGINATION_KEYS = {"total", "paginas", "pagina", "quantidade"}
+
+
+# ─── Error hierarchy (vista.md §3 typed-error model) ───────────────────────
 
 
 class VistaError(Exception):
@@ -65,11 +71,16 @@ class VistaTimeout(VistaError):
         self.endpoint = endpoint
 
 
+# ─── Result carrier ───────────────────────────────────────────────────────
+
+
 class VistaCallResult:
     """Lightweight tuple-like carrier for a successful request.
 
     Carries both the parsed JSON and the raw response so the caller can
-    audit-log latency + status without re-running the request.
+    audit-log latency + status without re-running the request. (Same shape
+    as the showcase adapter — kept compatible so absorbing into seed-lib
+    later is a rename, not a rewrite.)
     """
 
     __slots__ = ("data", "status", "latency_ms", "endpoint", "params_keys")
@@ -89,11 +100,16 @@ class VistaCallResult:
         self.params_keys = params_keys
 
 
+# ─── Client ───────────────────────────────────────────────────────────────
+
+
 class VistaClient:
     """Async HTTP client for the Vista REST API.
 
-    Follows the dep-factory leniency rule: __init__ never raises on missing
-    config. Any request raises VistaConfigError at call time.
+    Follows the dep-factory leniency rule (vista.md § 1): __init__ never
+    raises on missing config. Any request raises VistaConfigError at call
+    time. This lets the MCP server start even when no Vista key is
+    configured yet.
     """
 
     def __init__(
@@ -117,9 +133,7 @@ class VistaClient:
     def base_url(self) -> str:
         return self._base_url
 
-    # ------------------------------------------------------------------
-    # Low-level request
-    # ------------------------------------------------------------------
+    # ─── Low-level request ──────────────────────────────────────────────
 
     async def _request(
         self,
@@ -145,6 +159,7 @@ class VistaClient:
 
         url = f"{self._base_url}{endpoint}"
         headers = {"Accept": "application/json"}
+        # Sorted, key-only — never values (LGPD: vista.md § 5.4).
         params_keys = sorted(params.keys())
 
         started = time.perf_counter()
@@ -190,17 +205,16 @@ class VistaClient:
             logger.info("Vista %s not found (404) — not exposed on this tenant", endpoint)
             raise VistaNotFound(404, body_text, endpoint)
 
-        if resp.status_code == 400 and "não está disponível" in body_text:
-            field = _extract_unavailable_field(body_text)
-            logger.info("Vista %s rejected field %r", endpoint, field)
-            raise VistaFieldNotAvailable(field, body_text, endpoint)
+        if resp.status_code == 400:
+            matched, field = _detect_unavailable_field(body_text)
+            if matched:
+                logger.info("Vista %s rejected field %r", endpoint, field)
+                raise VistaFieldNotAvailable(field, body_text, endpoint)
 
         logger.warning("Vista %s returned %d: %s", endpoint, resp.status_code, body_text[:200])
         raise VistaUpstreamError(resp.status_code, body_text, endpoint)
 
-    # ------------------------------------------------------------------
-    # Domain-level helpers
-    # ------------------------------------------------------------------
+    # ─── Domain-level helpers ───────────────────────────────────────────
 
     async def listar_imoveis(
         self,
@@ -240,15 +254,27 @@ class VistaClient:
     async def listar_agencias(self, *, fields: list[str]) -> VistaCallResult:
         return await self._request("/agencias/listar", pesquisa={"fields": fields})
 
-    # ------------------------------------------------------------------
-    # Diagnostics — health probe used by the "Diagnóstico" sub-tab
-    # ------------------------------------------------------------------
+    async def listar_clientes(self, *, fields: list[str]) -> VistaCallResult:
+        """Permission-gated on most tenants (returns 401 → VistaPermissionDenied).
+
+        Kept here so the MCP server can register `vista.clientes.list` as
+        a real tool; the typed error becomes the response when the tenant
+        key lacks permission (vista.md § 4.2).
+        """
+        return await self._request("/clientes/listar", pesquisa={"fields": fields})
+
+    async def listar_corretores(self, *, fields: list[str]) -> VistaCallResult:
+        """Permission-gated on most tenants (vista.md § 4.5)."""
+        return await self._request("/corretores/listar", pesquisa={"fields": fields})
+
+    # ─── Diagnostics ────────────────────────────────────────────────────
 
     async def probe(self, endpoint: str) -> dict:
         """Probe a single endpoint and return a structured status row.
 
-        Used by the diagnostics tab. Catches typed errors and returns
-        a JSON-friendly summary instead of raising.
+        Catches typed errors and returns a JSON-friendly summary instead of
+        raising. Used by `tools/diagnostics.py` and by `calibration.py`'s
+        per-tenant field-set discovery.
         """
         try:
             result = await self._request(endpoint, pesquisa={"fields": ["Codigo"]})
@@ -270,18 +296,51 @@ class VistaClient:
             return {"endpoint": endpoint, "status": "upstream_error", "http_status": e.status}
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ─── Helpers ──────────────────────────────────────────────────────────────
 
 
-def _extract_unavailable_field(body: str) -> str:
-    """Best-effort parse of `"Campo X não está disponível"` payloads."""
+def _detect_unavailable_field(body: str) -> tuple[bool, str]:
+    """Detect the "Campo X não está disponível" pattern in a Vista 400 body.
+
+    Vista's server JSON-escapes non-ASCII characters in the wire body
+    (`"n\\u00e3o est\\u00e1 dispon\\u00edvel"` — five literal chars per
+    escape, NOT pre-decoded). A naive `"não está disponível" in body`
+    substring check misses every real Vista 400 because the source-code
+    `não` (UTF-8 bytes) doesn't appear in the wire body.
+
+    The fix: JSON-parse the body so unicode escapes resolve, then search
+    the parsed `message` field (string or array of strings — vista.md
+    § 3.3). Falls back to raw-body search for endpoints that may emit
+    plain-text bodies.
+
+    Returns (matched, field_name); `field_name` is `<unknown>` if the
+    pattern matched but the field couldn't be parsed.
+    """
+    candidates: list[str] = [body]
+    try:
+        payload = json.loads(body)
+        if isinstance(payload, dict):
+            msg = payload.get("message")
+            if isinstance(msg, str):
+                candidates.append(msg)
+            elif isinstance(msg, list):
+                candidates.extend(s for s in msg if isinstance(s, str))
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    for text in candidates:
+        if "não está disponível" in text:
+            return True, _extract_field_name(text)
+    return False, "<unknown>"
+
+
+def _extract_field_name(text: str) -> str:
+    """Pull `<X>` out of `"Campo <X> não está disponível"`."""
     marker = "Campo "
-    idx = body.find(marker)
+    idx = text.find(marker)
     if idx < 0:
         return "<unknown>"
-    tail = body[idx + len(marker):]
+    tail = text[idx + len(marker):]
     end = tail.find(" ")
     return tail[:end] if end > 0 else tail[:32]
 
@@ -292,10 +351,11 @@ def extract_items(payload: dict) -> tuple[list[dict], dict]:
     Vista returns `{"<id1>": {...}, "<id2>": {...}, "total": 1784, ...}`.
     Pagination siblings are `total`, `paginas`, `pagina`, `quantidade`.
 
-    Note: the dict key is whatever Vista uses as the primary id — that's
-    alphanumeric for /imoveis ("CA2830") and numeric-as-string for
-    /usuarios ("16") and /agencias ("1"). Don't read the key — read
-    `Codigo` from the payload.
+    The dict key is whatever Vista uses as the primary id — alphanumeric for
+    /imoveis ("CA2830"), numeric-as-string for /usuarios ("16") and
+    /agencias ("1"). Don't read the key — read `Codigo` from the payload.
+
+    Defensive: returns ([], {}) for non-dict input.
     """
     if not isinstance(payload, dict):
         return [], {}
@@ -308,3 +368,20 @@ def extract_items(payload: dict) -> tuple[list[dict], dict]:
         if isinstance(value, dict):
             items.append(value)
     return items, pagination
+
+
+__all__ = [
+    "DEFAULT_TIMEOUT_SECONDS",
+    "DEFAULT_PAGE_SIZE",
+    "PAGINATION_KEYS",
+    "VistaError",
+    "VistaConfigError",
+    "VistaUpstreamError",
+    "VistaPermissionDenied",
+    "VistaNotFound",
+    "VistaFieldNotAvailable",
+    "VistaTimeout",
+    "VistaCallResult",
+    "VistaClient",
+    "extract_items",
+]

@@ -3,12 +3,12 @@
 The router never instantiates VistaClient directly; it goes through this
 module so every outbound call is funnelled through the same audit path.
 
-LGPD posture: see `products/erp-imobiliario/projects/vista-crm-wiring/PROJECT.md` § 5.
-The Vista response payload is NEVER persisted — `_audit` only stores
-metadata (path, status, latency, params keys). The DTOs returned to the
-caller include the raw payload so the live request can render in-memory,
-but nothing about the payload survives the request lifecycle on the
-server.
+LGPD posture: see `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` § 5.4
+(audit-log contract). The Vista response payload is NEVER persisted —
+`_audit` only stores metadata (path, status, latency, params keys). The
+DTOs returned to the caller include the raw payload so the live request
+can render in-memory, but nothing about the payload survives the request
+lifecycle on the server.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app import dependencies as _deps  # call _deps.log_action(...) so test patches apply
-from app.integrations.vista.client import (
+from noctusai_lib.integrations.vista import (
     VistaCallResult,
     VistaClient,
     VistaConfigError,
@@ -27,14 +27,13 @@ from app.integrations.vista.client import (
     VistaTimeout,
     VistaUpstreamError,
     extract_items,
-)
-from app.integrations.vista.normalizers import (
     vista_agencia_to_showcase,
     vista_imovel_detalhes_to_showcase,
     vista_imovel_to_showcase,
     vista_usuario_to_showcase,
 )
-from app.integrations.vista.types import (
+
+from app.services.vista_showcase_types import (
     ShowcaseDiagnostic,
     ShowcaseEnvelope,
     ShowcasePagination,
@@ -45,10 +44,17 @@ logger = logging.getLogger(__name__)
 
 
 # Field sets calibrated against the live tenant `oneconsu-rest.vistahost.com.br`
-# 2026-05-02 (probe results in projects/.../vista-crm-wiring/PROJECT.md §5).
+# 2026-05-02, re-verified 2026-05-03 (full inventory + per-field rationale in
+# KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md §5.1).
 # Vista enforces field-level permissions per tenant key; unknown / blocked
 # fields return HTTP 400 with `Campo X não está disponível` and fail the
 # WHOLE request. Restrict to fields verified live before adding more.
+#
+# IMPORTANT — per-tenant calibration is NOT runtime-probed. Constants below
+# are hardcoded for `oneconsu-rest`. A different tenant key may need a
+# different set; see vista.md §6 ("Per-tenant calibration — current state
+# vs design intent") for the gap and the Phase-0/1 routine the in-repo
+# MCP server must ship to fix it generically.
 #
 # Tenant-specific notes:
 #   - `Estado` is rejected — Vista returns the UF in a field literally named `UF`.
