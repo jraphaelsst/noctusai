@@ -507,6 +507,37 @@ Use `noctusai_count_tokens` (the offline MCP tool) to measure CLAUDE.md / KB / p
 
 ---
 
+## 2.9 Parallel-agent collision protocol — STOP and file at the second revert (2026-05-03)
+
+This repo is regularly worked by multiple agents in parallel (a Claude Code session here, a remote routine there, a cron job somewhere else). Their work areas usually don't intersect, but when they DO — and one agent's edit gets reverted by another's — the right move is **not** to re-apply harder.
+
+**The trigger.** You edit a file. The parallel agent's continuing work reverts your edit (often incidentally, as part of their file-restructure / branch-switch / stash-pop). You re-apply. They revert again. **Re-applying a third time would loop indefinitely** — both sessions burn cycles fighting over the same lines, and neither work-shape lands cleanly.
+
+**Protocol when triggered:**
+
+1. **STOP at the second revert — do not re-apply on top.** Two reverts is the loop signal. The parallel agent isn't malicious; their work-shape requires whatever pattern is colliding with yours. Silently fighting them wastes both sessions and produces a noisy git history.
+2. **File a collision-report project.** Slug shape: `parallel-collision-<topic>-<YYYY-MM-DD>` at `projects/<slug>/`. Treat as a normal project (copy `templates/PROJECT-TEMPLATE.md`; §3a if applicable). Section content:
+   - **§1 Context** — what each agent was attempting; what the collision is.
+   - **§5 Architecture / data model** — the actual divergence, side-by-side: what your edit looked like, what the parallel agent's shape looks like.
+   - **§7 Open questions** — resolution paths, paired with recommendations: **wait** (parallel agent's work will land naturally; your edit becomes a clean follow-up), **apply now** (parallel agent is done; re-apply once and verify no further reverts), **coordinate** (explicit handoff to a human or the parallel agent's next session), **abandon** (your edit is no longer needed; their shape covers the use case differently).
+   - **§11 Change log** — log the revert sequence with timestamps so a future agent reading this can see the loop pattern that triggered the file.
+3. **Continue with non-colliding deliverables.** The collision blocks ONE seam, not the whole project. Ship what's independent + catalog the deferred work in `KB § PATTERNS/accept-with-rationale.md` so it survives folder deletion.
+4. **Surface in end-of-work summary.** The summary's "deferred" section names the collision project so the user knows what happened without reading every line of git history.
+
+**The protocol does NOT apply when:**
+
+- A linter / auto-formatter reverts a stylistic concern (just adapt to the linter).
+- Your edit was wrong (the parallel agent fixed a bug). That's a learning moment, not a collision — investigate, don't re-apply.
+- You haven't yet attempted re-application (single revert isn't a loop signal — investigate the parallel agent's intent first; sometimes the revert was deliberate cleanup that supersedes your edit).
+
+**Recurrence flips this protocol harder.** N=2 collisions on **different files in the same session** = signal that the parallel agent's scope and yours overlap structurally. Pause the entire project, surface to user, and let them decide whether to merge the projects, sequence them, or kill one. The collision rule is per-file; structural overlap is per-session.
+
+**Worked example.** `template-workspace` project (2026-05-03) tried to integrate `mcp/noctusai/workspace.py` into `tools/{status,proposals,scaffold}.py` + `server.py`. The parallel `mcp-server-expansion` agent was simultaneously restructuring those files (their Phase 4 moves every tool under `tools/noctus/dev/<service>/<action>.py` and replaces the dispatch map). My edit landed; their continuing work reverted it. I re-applied; reverted again. After the second revert I stopped, filed the deferral in `accept-with-rationale.md § MCP workspace-aware tool integration deferred to parallel project`, surfaced the deferral in end-of-work summary. The user later said "apply now, the other agent is done" — that's the **resolution-path-2 trigger** (apply once + verify no further reverts).
+
+→ catalog the deferred work in `KB § PATTERNS/accept-with-rationale.md`.
+
+---
+
 ## 3. Phase-by-phase cadence
 
 Default cadence: **execute exactly one phase, then stop.** Wait for the user to say "continue" / "next phase" / "do phase N" before advancing.

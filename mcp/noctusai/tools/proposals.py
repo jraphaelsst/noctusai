@@ -21,8 +21,13 @@ from pathlib import Path
 from typing import Optional
 
 from noctusai_lib.primitives.timeutil import now_utc
+from workspace import get_noctusai_home, get_workspace_root
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# Workspace-aware: projects/products live under the workspace's own root
+# (so file_proposal from a template lands in template's projects, not
+# noc's). The proposal TEMPLATE itself lives only in noc — fetched via
+# get_noctusai_home(). See mcp/noctusai/workspace.py + KB § PATTERNS/template-workspace.md.
+REPO_ROOT = get_workspace_root()
 # Two valid locations for project folders — see
 # `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md §1` for the rule:
 #
@@ -37,7 +42,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # locations. The resolver below walks both and returns the match.
 PROJECTS_DIR = REPO_ROOT / "projects"
 PRODUCTS_DIR = REPO_ROOT / "products"
-TEMPLATE_PATH = REPO_ROOT / "templates" / "PROPOSAL-TEMPLATE.md"
+# Template lives only in noc — read from canonical home regardless of workspace.
+TEMPLATE_PATH = get_noctusai_home() / "templates" / "PROPOSAL-TEMPLATE.md"
 
 
 def _find_project_dir(slug: str) -> Optional[Path]:

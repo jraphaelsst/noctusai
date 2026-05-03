@@ -25,9 +25,14 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from workspace import get_workspace_root
+
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# Workspace-aware: walks up from cwd looking for `.noctusai-workspace`
+# marker. Falls back to file-relative noc root if no marker found.
+# See mcp/noctusai/workspace.py + KB § PATTERNS/template-workspace.md.
+REPO_ROOT = get_workspace_root()
 
 
 # Reuse the project finder from compliance.py to avoid duplicating the

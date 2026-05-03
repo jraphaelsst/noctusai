@@ -14,11 +14,17 @@ import logging
 import shutil
 from pathlib import Path
 
+from workspace import get_noctusai_home, get_workspace_root
+
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# Workspace-aware: products/ created under the workspace's own root (so
+# scaffold_product from a template lands in template's products/, not
+# noc's). The seed template lives only in noc — fetched via get_noctusai_home().
+# See mcp/noctusai/workspace.py + KB § PATTERNS/template-workspace.md.
+REPO_ROOT = get_workspace_root()
 PRODUCTS_DIR = REPO_ROOT / "products"
-TEMPLATE_DIR = REPO_ROOT / "templates" / "product-seed"
+TEMPLATE_DIR = get_noctusai_home() / "templates" / "product-seed"
 
 
 def scaffold_product(name: str, slug: str, schema: str, backend_port: int, frontend_port: int, icon: str = "Box") -> dict:
