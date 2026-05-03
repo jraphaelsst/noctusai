@@ -9,10 +9,10 @@ Thin wrapper around scripts/verify-kb-sync.sh so the same check is callable from
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from typing import TypedDict
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+from settings import REPO_ROOT
+
 SCRIPT = REPO_ROOT / "scripts" / "verify-kb-sync.sh"
 
 

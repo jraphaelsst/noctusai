@@ -204,6 +204,27 @@ When the MCP gets extracted to its own repo, this shim becomes the
 source — every consumer (the platform, future bots, …) reads its own
 `.env` against the same shape.
 
+### Path constants — `REPO_ROOT` and `PRODUCTS_DIR` live in settings.py
+
+Every tool module that needs the noc repo root imports from settings:
+
+```python
+from settings import REPO_ROOT, PRODUCTS_DIR
+```
+
+Internally, settings.py delegates to
+`workspace.get_noctusai_home()` — the canonical marker-file-based
+resolver in `mcp/noctusai/workspace.py` — which already handles
+primary-vs-seed-workspace resolution correctly. PRODUCTS_DIR is
+`REPO_ROOT / "products"`.
+
+**Forbidden** in tool modules: re-deriving the path locally via
+`Path(__file__).resolve().parents[N]`. This was the canonical pattern
+across 18 of 24 dev tools until mcp-server-fastmcp-switch Phase 3 had
+to bump every `parents[3]` to `parents[5]` (the file relocation
+changed the depth). Rule: **path constants are framework-level; tools
+import, never compute.**
+
 ---
 
 ## 6. CLI dual-entrypoint stays

@@ -358,6 +358,44 @@ state change, not a removal.
 - **Revisit trigger:** any of (a) a future agent gets confused looking up a `noctusai_lib.integrations.whatsapp` symbol via the catalog and surfaces it, (b) a paperwork follow-up commit sweeps the catalog (cheap inline update once multiple deferred catalog rows accumulate), (c) the shared-library doc is rewritten end-to-end. None today.
 - **Recorded by:** `projects/whatsapp-seed-absorption/` Phase 9 (closed 2026-05-03).
 
+### Hard-coded `tools/<x>.py` paths in test code — scanner deferred at N=1
+- **Subject:** Test files occasionally hard-code module file paths in
+  `mock.patch("<dotted.module.path>.func")` strings or
+  `Path(...) / "tools" / "<x>.py"` literals. mcp-server-fastmcp-switch
+  Phase 3 found 4 such sites in 3 test files
+  (`test_outline_python.py:214`, `test_compliance.py:992-1022` ×3,
+  `test_three_way_sync.py:31`) — they had to be fixed by hand because
+  the libcst-based import rewriter only walks `import` / `from-import`
+  statements, not string literals.
+- **Decision:** do NOT formalize a complementary scanner today; just
+  log the pattern + the known features that could detect it.
+- **Reason:** **N=1 today** (one focused-session relocation event
+  surfaced the pattern). The libcst rewriter handled the 99% case
+  (statements); a string-aware scanner is meaningfully more code (must
+  parse the dotted-string into a real module reference + cross-check
+  against the moved set). At N=1 the cost-benefit doesn't pencil out.
+- **Scope:** `mcp/noctusai/tests/**/*.py` — and any future test file
+  that hard-codes module paths in `mock.patch(<str>)` or
+  `Path(...) / "<dirname>" / "<filename>.py"` constructions.
+- **Known features that could help when this fires again:**
+  - `noctusai_scan_recurrence` — detects recurring code shapes
+    across files; could be extended to recognize the
+    `mock.patch("<str>")` literal-path pattern.
+  - `noctusai_scan_within_product_helpers` — already inspects
+    string literals for product-specific paths; extending its
+    detection set to module-path strings is incremental.
+  - libcst's `cst.SimpleString` visitor — a future
+    `relocate_string_paths.py` rewriter would visit
+    `cst.SimpleString` nodes whose value parses as a dotted path
+    starting with `tools.` or matches the moved-files set.
+- **Revisit trigger:** **N=2** — any future code-relocation project
+  that has to manually fix similar hard-coded paths in tests, OR a
+  string-aware scan tool gets built independently for another reason
+  and could absorb this case for free. Recurrence flips this from
+  accept → formalize.
+- **Recorded by:** `projects/mcp-server-fastmcp-switch/` Phase 3
+  (closed 2026-05-03).
+
 ---
 
 ## Cross-references
