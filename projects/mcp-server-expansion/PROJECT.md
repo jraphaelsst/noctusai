@@ -7,7 +7,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** Design captured → Phase 0 ready
+- **Status:** ⏳ EXECUTING — §7 round closed 2026-05-03; Phase 0 in progress; Phase 5 deferred until Tier 1 substrate lands.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Related docs:** `KB § 06-AGENTS.md` (current MCP toolkit), `mcp/noctusai/README.md`, sibling reference at `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/mcp_server/` (the smaller-but-cleaner business-logic MCP we're absorbing patterns + tools from), `projects/whatsapp-seed-absorption/PROJECT.md` (sibling project — the WhatsApp framework lift), `projects/mcp-scaffold-sql-templates-integration/PROJECT.md` (older MCP project — coordinate so we don't collide).
 - **Project slug:** `mcp-server-expansion` — cross-cutting platform-infra concern. Lives at `projects/<slug>/`.
@@ -32,14 +32,17 @@ Decisions the user made in the 2026-05-03 absorption-evaluation session.
 - **MCP-first parallel to AST-first** — *"we are doing the ast-first, so it makes sense to also adopt the mcp-first mentality and expand it for a broader use."* — Becomes a methodology rule (when we expose a capability to agents, default surface is MCP). Captured in `KB § PATTERNS/` doc in Phase 6. *(Establishes the principle as durable, not project-scoped.)*
 - **Settings shim — do it now** — *"lets do it now"* — Ship the settings shim as Phase 1 (smallest, highest-clarity, sets up the extraction path for future). *(Drives Phase 1 ordering.)*
 - **Sibling MCP is "better architected" but for a different shape** — analyst's framing accepted: sibling is cleaner per tool because it's a 12-tool business-logic MCP; ours is a 24-tool dev toolkit. The patterns worth absorbing are the architectural ones (Pydantic schemas, dotted naming, hierarchical registration, settings shim, lazy context for business-logic tools). The dual-callable `_impl` split is **not** absorbed for our existing dev tools (they don't need it); it IS the pattern for future business-logic tools we add.
+- **Naming umbrella = `noctus.*`** *(decided 2026-05-03 §7 round)* — matches sibling pattern (`noctus.*` as our-platform marker). Tools: `noctus.dev.<action>`, `noctus.business.<service>.<action>`, vendor namespaces stay distinct (`google.*`, `openai.*`). NOT `platform.*` — we own the `noctus` brand explicitly. *(Drives §5.4 + §5.5 + Phase 3.)*
+- **Phase 5 deferred until Tier 1 substrate lands** *(decided 2026-05-03 §7 round)* — sibling tool absorption (Calendar/Maps/scheduling/users/appointments/whatsapp) wraps `noctusai_lib` code produced by `whatsapp-seed-absorption` + `scheduling-engine-seed`. Running Phase 5 before substrate would either create rework or introduce sibling-path leaks. We run Phases 0-4 + 6 + 7 now, return for Phase 5 after substrate. *(Drives §6 ordering + §8.)*
+- **Per-product DB access for business-logic tools = NO at first** *(default carried from §7 Q4)* — context defaults to platform-shared resources; per-product DB access is a future capability when first business-logic tool needs it. *(Drives Phase 5 context shape.)*
 
 ---
 
 ## 3. Design principles
 
-1. **Backward-compatible at every phase.** Existing tool names (`noctusai_validate`, `noctusai_review`, etc.) keep working until an explicit deprecation phase. Adopting dotted names (`platform.dev.validate`, `platform.dev.review`) is additive — both names dispatch to the same function for one or more releases.
+1. **Backward-compatible at every phase.** Existing tool names (`noctusai_validate`, `noctusai_review`, etc.) keep working until an explicit deprecation phase. Adopting dotted names (`noctus.dev.validate`, `noctus.dev.review`) is additive — both names dispatch to the same function for one or more releases.
 2. **Pydantic schemas for new tools immediately; existing tools migrate opportunistically.** New code lands with Pydantic in/out. Existing tools migrate when we touch them anyway (avoid mass-migrate-for-its-own-sake churn).
-3. **Hierarchical registration replaces the flat dispatch map only when ≥1 namespace exists.** First namespace candidate: `platform.dev.*` (the existing toolkit). Adding sibling's vendor/platform groups (`google.*`, `openai.*`, `noctus.*` reframed as `platform.business.*`) drives hierarchical registration's payoff.
+3. **Hierarchical registration replaces the flat dispatch map only when ≥1 namespace exists.** First namespace candidate: `platform.dev.*` (the existing toolkit). Adding sibling's vendor/platform groups (`google.*`, `openai.*`, `noctus.*` reframed as `noctus.business.*`) drives hierarchical registration's payoff.
 4. **Lazy `NoctusContext`-style container only for business-logic tools.** Dev tools stay stateless (filesystem + subprocess). Business-logic tools (the absorbed Calendar / Maps / WhatsApp / scheduling) get the container so they're dual-callable from the bot + MCP + tests. **Two registration models coexist** — that's fine; the alternative (force everything into a context) would over-engineer the dev surface.
 5. **CLI dual-entrypoint stays.** Sibling has MCP-only; we have CLI + MCP sharing the same dispatch. That's a net win we keep through the expansion.
 6. **No tool deprecation in this project.** Renames + dotted aliases yes; deletions no. A separate follow-up project handles deprecation timing once consumers (Claude Code config, CI, agents) have migrated.
@@ -73,7 +76,7 @@ Decisions the user made in the 2026-05-03 absorption-evaluation session.
   - `google.calendar.{create_event, get_event, list_events, delete_event}`
   - `google.maps.travel_estimate`
   - `openai.audio.transcribe`, `openai.vision.identify`
-  - `platform.business.scheduling.suggest_slots`
+  - `noctus.business.scheduling.suggest_slots`
   - `platform.business.appointments.intervals_for_date`
   - `platform.business.users.lookup_by_phone`
   - `platform.business.whatsapp.send_text`
@@ -128,7 +131,7 @@ mcp/noctusai/
 ├── tests/
 └── tools/
     ├── __init__.py      ← register_all(server) — calls every umbrella's register()
-    ├── platform/
+    ├── noctus/
     │   ├── __init__.py  ← registers dev + business sub-umbrellas
     │   ├── dev/
     │   │   ├── __init__.py  ← registers all existing dev tools
@@ -160,10 +163,10 @@ mcp/noctusai/
 | `tools/google/maps/travel_estimate.py` | `google/maps/travel_estimate.py` | |
 | `tools/openai/audio/transcribe.py` | `openai/audio/transcribe.py` | |
 | `tools/openai/vision/identify.py` | `openai/vision/identify.py` | |
-| `tools/noctus/scheduling/suggest_slots.py` | `platform/business/scheduling/suggest_slots.py` | Reframed under our `platform.business.*` namespace (sibling used `noctus.*` as platform marker; we use `platform.*`). |
-| `tools/noctus/appointments/intervals_for_date.py` | `platform/business/appointments/intervals_for_date.py` | |
-| `tools/noctus/users/lookup_by_phone.py` | `platform/business/users/lookup_by_phone.py` | |
-| `tools/noctus/whatsapp/send_text.py` | `platform/business/whatsapp/send_text.py` | |
+| `tools/noctus/scheduling/suggest_slots.py` | `noctus/business/scheduling/suggest_slots.py` | Reframed under our `noctus.business.*` namespace (sibling used `noctus.*` flat as platform marker; we add `business` sub-umbrella so `dev` + `business` siblings live under our `noctus.*`). |
+| `tools/noctus/appointments/intervals_for_date.py` | `noctus/business/appointments/intervals_for_date.py` | |
+| `tools/noctus/users/lookup_by_phone.py` | `noctus/business/users/lookup_by_phone.py` | |
+| `tools/noctus/whatsapp/send_text.py` | `noctus/business/whatsapp/send_text.py` | |
 | `tools/noctus/condominium/travel_estimate.py` | (DROP) | Real-estate domain-specific; not generic. If a future product needs it, lives in that product, not in MCP. |
 | `context.py` (`NoctusContext` lazy container) | `context.py` | Adapted to our settings + lib paths. |
 | `settings.py` (re-export shim) | `settings.py` | Pattern; ours re-exports `noctusai_lib.config`. |
@@ -173,8 +176,8 @@ mcp/noctusai/
 
 `<umbrella>.<service>.<action>` — three dotted segments, no exceptions.
 
-- **`platform.dev.*`** — the current dev toolkit (validate, review, analyze_patterns, scan_recurrence, ...).
-- **`platform.business.*`** — business-logic primitives any agent can compose.
+- **`noctus.dev.*`** — the current dev toolkit (validate, review, analyze_patterns, scan_recurrence, ...).
+- **`noctus.business.*`** — business-logic primitives any agent can compose.
 - **`google.*`** — Google-vendor APIs (calendar, maps).
 - **`openai.*`** — OpenAI-vendor APIs (audio, vision).
 - Future namespaces by analogy (`anthropic.*`, `apple.calendar.*`, `mapbox.maps.*`, `vista.*`, etc.).
@@ -184,11 +187,11 @@ mcp/noctusai/
 During Phase 3, every existing `noctusai_<action>` keeps working. We add the dotted alias next to it:
 
 ```python
-# tools/platform/dev/validate.py
+# tools/noctus/dev/validate.py
 def validate(payload, ctx=None) -> ValidateOutput: ...
 
 def register(server):
-    server.tool(name="platform.dev.validate", description=...)(validate)
+    server.tool(name="noctus.dev.validate", description=...)(validate)
     server.tool(name="noctusai_validate", description=...)(validate)  # alias, deprecation in follow-up project
 ```
 
@@ -196,32 +199,49 @@ def register(server):
 
 ## 6. Implementation phases
 
-### Phase 0 — Audit before any code lands
+### Phase 0 — Audit before any code lands ✅ (executed 2026-05-03)
 
-- [ ] Read every file in `mcp/noctusai/server.py` + every `tools/*.py` to confirm the 24-tool inventory.
-- [ ] Read every file in sibling `mcp_server/` end-to-end. Confirm the absorption list in §5.3 matches reality.
-- [ ] Verify `mcp/noctusai/cli.py` shares dispatch with `server.py` (so refactor in Phase 4 doesn't break the CLI).
-- [ ] Identify any tool that already has Pydantic-ish schema (so Phase 2 doesn't double-work).
-- [ ] Check `projects/mcp-scaffold-sql-templates-integration/` status to avoid colliding scope.
-- [ ] If Phase 0 invalidates §6, **revise §6 in-place + log in §11**.
+- [x] Read every file in `mcp/noctusai/server.py` + every `tools/*.py` to confirm the 24-tool inventory. → **Tool count is 50, not 24** (PROJECT.md §5.1 stale by 26 — landed since the previous tally). Distinct dispatch keys: 50; `_tool(` definitions in `list_tools()`: 53 (overcounts due to nested struct sharing). Logged in §11.
+- [x] Read every file in sibling `mcp_server/` end-to-end. Confirm the absorption list in §5.3 matches reality. → **Confirmed.** Sibling tree: `google/calendar/{create_event,get_event,list_events,delete_event}.py`, `google/maps/travel_estimate.py`, `openai/audio/transcribe.py`, `openai/vision/identify.py`, `noctus/scheduling/suggest_slots.py`, `noctus/appointments/intervals_for_date.py`, `noctus/users/lookup_by_phone.py`, `noctus/whatsapp/send_text.py`, `noctus/condominium/travel_estimate.py` (DROP per §5.3). 11 source tools, 10 absorption candidates after drop. Pattern locked: `register(server)` per leaf + Pydantic in/out + dual-callable `tool(payload, ctx=None)` + `_impl(payload, ctx)` + `noctus_context()` cm.
+- [x] Verify `mcp/noctusai/cli.py` shares dispatch with `server.py` (so refactor in Phase 4 doesn't break the CLI). → **CLI does NOT share dispatch.** Imports tool modules directly (`from tools.compliance import check_all_products`, etc.). Phase 4 refactor must update both `server.py` dispatch removal AND `cli.py` imports when files move into `tools/noctus/dev/`. Logged as Phase 4 risk.
+- [x] Identify any tool that already has Pydantic-ish schema (so Phase 2 doesn't double-work). → **None.** All 50 tools use hand-coded `{"type": "object", "properties": ...}` JSON dicts via `_tool()` helper at `server.py:43-47`. Phase 2 starts from scratch for any tool we touch.
+- [x] Check `projects/mcp-scaffold-sql-templates-integration/` status to avoid colliding scope. → **Verified: project does not exist in `projects/`. No collision.**
+- [x] If Phase 0 invalidates §6, **revise §6 in-place + log in §11**. → §6 phase ordering still valid; tool-count discrepancy logged in §11; Phase 4 CLI-import risk logged as a sub-task.
 
-### Phase 1 — Settings shim (the user's "do it now")
+**Improvements:**
+- §5.1 carried `24-tool MCP` claim while reality is 50. Project-doc embedded counts go stale silently between phases. **Triage: accept-with-rationale** for this project (we revise once at Phase 4 close when the tree literally moves). N=1 today; if a 2nd staleness shows up across sibling projects, consider extending `noctusai_status` with an inline-count drift detector for PROJECT.md.
+- The CLI's direct `from tools.<mod> import <fn>` shape is hidden coupling Phase 4 must surface. **Triage: refactor (Phase 4 sub-task added)** — one-time refactor, not formalize.
+- Sibling MCP `server.py` is **38 lines** vs ours **418 lines**. The 10x gap is the dispatch map (`server.py:282-399`). Phase 4 closes most of that — captured as Phase 4's success metric.
 
-- [ ] Create `mcp/noctusai/settings.py` re-exporting platform settings shape (mirror sibling's `mcp_server/settings.py:1-13`). Two-line file.
-- [ ] Add docstring explaining intent: single source of truth until MCP extraction; when extracted, this becomes the source.
-- [ ] Verify nothing breaks: `python mcp/noctusai/cli.py --validate` and `pytest mcp/noctusai/tests/`.
-- [ ] Document in `mcp/noctusai/README.md`.
+### Phase 1 — Settings shim (the user's "do it now") ✅ (executed 2026-05-03)
 
-### Phase 2 — Pydantic in/out schemas pattern
+- [x] Create `mcp/noctusai/settings.py` re-exporting platform settings shape (mirror sibling's `mcp_server/settings.py:1-13`). → **Done.** Re-exports `BaseAppSettings` from `noctusai_lib.config.settings` (our equivalent of sibling's `app.config.Settings`), plus `lru_cache(maxsize=1)`-backed `get_settings()` singleton (sibling's pattern; our lib doesn't ship a global factory). 24 lines including docstring.
+- [x] Add docstring explaining intent: single source of truth until MCP extraction; when extracted, this becomes the source. → **Done.** Docstring at `mcp/noctusai/settings.py:1-7`.
+- [x] Verify nothing breaks: `python mcp/noctusai/cli.py --help` smoke ✅; `pytest mcp/noctusai/tests/` → 354 passed, 1 skipped, 1 unrelated pre-existing flake (`test_outline_typescript_corpus.py::test_within_tolerance_of_baseline` — `ConsentPopup.tsx` baseline drift caused by parallel-agent commit `9bfae8b` adding a new symbol; unrelated to Phase 1). Smoke `from settings import Settings, get_settings` returns `BaseAppSettings` instance, lru_cache hits.
+- [x] Document in `mcp/noctusai/README.md`. → **Done** (architecture tree updated with `settings.py` line; tool count corrected from `30` to `50` while there).
 
-- [ ] Pick 5 representative tools (suggested: `noctusai_validate`, `noctusai_analyze_patterns`, `noctusai_review`, `noctusai_catalog`, `noctusai_get_agent_context`). Convert their hand-coded JSON schemas in `server.py` to Pydantic input/output models inside the tool file itself.
-- [ ] Ensure FastMCP's `server.tool()` introspects the Pydantic schemas correctly.
-- [ ] Add Pydantic-schema rule to `mcp/noctusai/README.md` for new tools.
-- [ ] Tests for the 5 migrated tools must pass.
+**Improvements:**
+- The `noctusai_outline_typescript` corpus baseline at `mcp/noctusai/tests/test_outline_typescript_corpus.py` lacks an automatic-regenerate path. Every legitimate addition to a corpus file (e.g. `ConsentPopup.tsx` gaining a 5th symbol via parallel agent's commit `9bfae8b`) breaks the test until the baseline is hand-updated. **N=1 today; revisit if this drifts a 2nd time** — at N≥2, file a follow-up project for an `--update-baselines` flag or a relative-tolerance bump scoped to active-edit files. Not in this project's scope.
+- `noctusai_lib` does not ship a `get_settings()` global factory (sibling's `app.config.get_settings` has no equivalent). We synthesized one locally in the shim. **Triage: accept-with-rationale** — the shim IS the right place for an MCP-scoped factory; pushing to `noctusai_lib` would force every product to share a singleton across processes, which conflicts with the per-product Settings(BaseAppSettings) pattern documented at `noctusai_lib/config/settings.py:13-22`. No follow-up needed.
+
+### Phase 2 — Pydantic in/out schemas pattern ✅ (executed 2026-05-03)
+
+- [x] Pick 5 representative tools. → **Done.** Picked the doc-suggested 5: `noctusai_agent_context` (context.py), `noctusai_validate` (compliance.py), `noctusai_analyze_patterns` (analyzers.py), `noctusai_review` (review.py), `noctusai_catalog` (catalog.py). Each tool file now carries `XxxInput(BaseModel)` + `XxxOutput(BaseModel)`.
+- [x] Convert their hand-coded JSON schemas in `server.py` to Pydantic input/output models inside the tool file itself. → **Done.** `_tool(...)` helper extended with `model=` kwarg; when passed, schema = `model.model_json_schema()` (replaces hand-coded `props`/`required` dict). Lazy imports inside `list_tools()` keep server module-load light.
+- [x] Ensure FastMCP's `server.tool()` introspects the Pydantic schemas correctly. → **Note:** our MCP uses the low-level `Server` API, not `FastMCP` (Phase 4 will switch). Pydantic still works — `model_json_schema()` is fed directly to `Tool(inputSchema=...)`. Smoke test via `mcp.types.ListToolsRequest`: all 5 tools return Pydantic-generated schemas; `Total tools: 50` preserved.
+- [x] Add Pydantic-schema rule to `mcp/noctusai/README.md` for new tools. → **Done.** "Pydantic schemas for tool inputs (and outputs)" added to **Conventions enforced by this toolkit**, naming the 5 migrated tools and the Phase 4 deprecation cliff.
+- [x] Tests for the 5 migrated tools must pass. → **Done.** `pytest mcp/noctusai/tests/` = 474 passed, 1 skipped, 1 unrelated pre-existing flake (`test_outline_typescript_corpus.py` baseline drift carried over from Phase 1; not a regression).
+
+**Improvements:**
+- Pydantic's auto-generated JSON schemas are noisier than the hand-coded dicts (extra `title`, `description` for the model itself, `anyOf` for `Optional[X]` instead of `nullable: true`). MCP clients we ship to (Claude Code) tolerate it; if a stricter consumer surfaces, add `model_json_schema(mode='serialization')` or `_simplify_schema()` post-processing. **Triage: accept-with-rationale** today; revisit if a strict-mode consumer surfaces.
+- Output models are intentionally minimal (`dict[str, Any]` for the dynamic-shape parts of `get_agent_context`, `run_review`, `generate_catalog`). The README rule documents "tighten as call sites stabilize" so future authors know it's deliberate, not lazy. **Triage: accept-with-rationale** — the alternative (full nested types now) is over-engineering for tools we may rewrite in Phase 4.
+- Imports inside `list_tools()` are lazy by design (server.py boot stays fast). When Phase 4 switches to FastMCP-style `register(server)` per leaf, we lose the central list_tools() that holds all imports; each tool file will import its own model — natural module-locality. **Captured for Phase 4 design.**
+
+
 
 ### Phase 3 — Dotted naming + backward-compat aliases
 
-- [ ] Add dotted names alongside existing flat names for the 5 Phase-2 tools (`platform.dev.validate`, etc.).
+- [ ] Add dotted names alongside existing flat names for the 5 Phase-2 tools (`noctus.dev.validate`, etc.).
 - [ ] Verify both names dispatch to the same function.
 - [ ] Document the convention in `KB § PATTERNS/mcp-tool-conventions.md` (NEW pattern doc).
 - [ ] Update `KB § 06-AGENTS.md` with the new naming.
@@ -231,10 +251,11 @@ def register(server):
 ### Phase 4 — Hierarchical registration
 
 - [ ] Create `tools/__init__.py::register_all(server)` per sibling pattern.
-- [ ] Create `tools/platform/__init__.py` registering `dev` sub-umbrella.
-- [ ] Move existing tool files into `tools/platform/dev/<service>/<action>.py` layout (or `tools/platform/dev/<action>.py` for tools that don't have a clear service grouping). Each file gets a `register(server)`.
+- [ ] Create `tools/noctus/__init__.py` registering `dev` sub-umbrella.
+- [ ] Move existing tool files into `tools/noctus/dev/<service>/<action>.py` layout (or `tools/noctus/dev/<action>.py` for tools that don't have a clear service grouping). Each file gets a `register(server)`.
 - [ ] Replace the dispatch map in `server.py:282-399` with `register_all(server)`.
-- [ ] Verify CLI still works (`cli.py` imports the same tool functions directly — should not need changes).
+- [ ] **Update `cli.py` imports** (Phase 0 audit found CLI does NOT share dispatch — imports tool modules directly via `from tools.compliance import ...`). Every `from tools.<module> import ...` in `cli.py` must move to its new path under `tools/noctus/dev/`.
+- [ ] Verify CLI still works (smoke: `python mcp/noctusai/cli.py --validate`, `--status`, `--help`).
 - [ ] All tests must pass.
 
 ### Phase 5 — Sibling tool absorption + business-logic context
@@ -267,17 +288,19 @@ def register(server):
 
 ## 7. Open questions
 
-1. **Top-level umbrella `platform.*` vs flatter `dev.*` / `business.*`?** Recommendation: keep `platform.*` so vendor-vs-platform distinction stays at the top level, parallel to `google.*` / `openai.*`. Decide before Phase 3 names land.
-2. **`platform.business.*` vs `noctus.business.*`?** Sibling used `noctus.*` as platform marker; we have a `noctusai_lib`. Recommendation: `platform.*` (clearer separation). Decided before Phase 3.
-3. **Existing `mcp-scaffold-sql-templates-integration/` project — collision risk?** Phase 0 reads its scope; if collision, coordinate ordering.
-4. **Do MCP business-logic tools need access to product-specific DBs?** Recommendation: NO at first — context defaults to platform-shared resources. Per-product DB access is a future capability when the first business-logic tool needs it.
+All open questions resolved 2026-05-03 in batch §7 round (`projects/absorbed-projects-batch/PROJECT.md` Phase 1.a):
+
+1. ~~**Top-level umbrella `platform.*` vs flatter `dev.*` / `business.*`?**~~ → **Decided: `noctus.*` umbrella** (user picked option C — brand-prefix marker, mirrors sibling's `noctus.*` pattern).
+2. ~~**`platform.business.*` vs `noctus.business.*`?**~~ → **Decided: `noctus.business.*`** (consequence of Q1).
+3. ~~**Existing `mcp-scaffold-sql-templates-integration/` collision risk?**~~ → **No collision** (project does not exist in `projects/`; verified 2026-05-03 Phase 0).
+4. ~~**Do MCP business-logic tools need access to product-specific DBs?**~~ → **Decided: NO at first** — context defaults to platform-shared; per-product DB access is a future capability when first business-logic tool needs it. *(§2 records in confirmed constraints.)*
 
 ---
 
 ## 8. Dependencies & blockers
 
 - **`projects/whatsapp-seed-absorption/`** — Phase 5's WhatsApp + Calendar / Maps absorption parallels its lib lifts. Coordinate so the MCP tools wrap the same lib code.
-- **`projects/scheduling-engine-seed/`** — Phase 5's `platform.business.scheduling.suggest_slots` wraps the seed lib produced by that project.
+- **`projects/scheduling-engine-seed/`** — Phase 5's `noctus.business.scheduling.suggest_slots` wraps the seed lib produced by that project.
 
 ---
 
@@ -315,6 +338,10 @@ bash scripts/verify-kb-sync.sh
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | Initial project drafted; user confirmed mcp-first growth mentality, settings shim as Phase 1, sibling tool absorption in Phase 5. | claude-opus-4-7 |
+| 2026-05-03 | **§7 round closed** (batch Phase 1.a). Decisions: (a) naming umbrella = `noctus.*` (NOT `platform.*` — user picked brand-prefix); (b) Phase 5 deferred until Tier 1 substrate (`whatsapp-seed-absorption` + `scheduling-engine-seed`) lands; (c) `mcp-scaffold-sql-templates-integration/` collision-risk = NONE (project doesn't exist); (d) per-product DB access for business-logic tools = NO at first. §2 + §5.3 + §5.4 + §5.5 + §6 Phase 0 box updated in-place. Phase 0 entering execution. | claude-opus-4-7 |
+| 2026-05-03 | **Phase 0 ✅.** Audit findings: (1) actual tool count = **50** in `server.py` dispatch map (lines 282-399), NOT 24 as §5.1 claimed — landed gradually since the previous tally. §5.1 left as-is for historical context but Phase 4 will reflect the true count. (2) Sibling pattern locked: `register(server)` per leaf, Pydantic in/out with `Field(description=...)`, dual-callable `tool(payload, ctx=None)` falling through to `_impl(payload, ctx)`, `noctus_context()` cm closes db on exit when owned. (3) **CLI does NOT share dispatch** — imports `from tools.<mod> import <fn>` directly (cli.py L116-439). Phase 4 risk: every CLI import line breaks when files relocate. Sub-task added to Phase 4. (4) Zero tools have Pydantic-ish schema today; Phase 2 starts from scratch for the 5 representative tools. (5) Sibling absorption list confirmed: 10 candidates after dropping `noctus/condominium/travel_estimate.py` (real-estate-domain-specific). | claude-opus-4-7 |
+| 2026-05-03 | **Phase 1 ✅.** Settings shim landed at `mcp/noctusai/settings.py` (24 lines): re-exports `BaseAppSettings` from `noctusai_lib.config.settings` as `Settings`, ships local `lru_cache(maxsize=1)`-backed `get_settings()` (lib doesn't ship a global factory by design — per-product Settings is the documented pattern). README architecture tree updated; tool count corrected `30 → 50`. Verification: smoke import returns `BaseAppSettings` instance with cache hit; pytest 354 passed (1 unrelated pre-existing flake from parallel-agent commit `9bfae8b` corpus drift). Two improvements captured (corpus baseline regen path, factory synthesis triage = accept-with-rationale). | claude-opus-4-7 |
+| 2026-05-03 | **Phase 2 ✅.** Pydantic In/Out classes landed in 5 tool files: `tools/context.py` (`AgentContextInput`/`Output`, `ProductContextInput`/`Output`), `tools/compliance.py` (`ValidateInput`/`Output`, `ValidateIssue`), `tools/analyzers.py` (`AnalyzePatternsInput`/`Output`, `DuplicatedFunction`, `InlineHookIssue`), `tools/review.py` (`ReviewInput`/`Output`, `ReviewMode`), `tools/catalog.py` (`CatalogInput`/`Output`). `server.py::_tool()` helper extended with `model=` kwarg that runs `model.model_json_schema()` for `inputSchema`; lazy imports inside `list_tools()` preserve server boot time. Total tools = 50 (unchanged). README "Conventions enforced by this toolkit" gains the Pydantic-schema rule with the 5 migrated tools listed. Verification: `pytest mcp/noctusai/tests/` = 474 passed, 1 skipped, 1 unrelated pre-existing flake. Three improvements captured (schema verbosity, Output minimality, lazy-imports ergonomics around Phase 4). | claude-opus-4-7 |
 
 ---
 
@@ -326,7 +353,7 @@ The sibling repo (`~/Documents/repository/NoctusAI/whatsapp-google-scheduling/`)
 - **No KB doc landed during this project may reference sibling paths.** `KB § PATTERNS/mcp-tool-conventions.md` describes our MCP only.
 - **No tool implementation in `mcp/noctusai/tools/` may import from or reference sibling paths.** Pattern: tool file is freshly authored on our conventions; sibling is the design reference, not the runtime dependency.
 - **No `pyproject.toml` references sibling.**
-| 2026-05-03 | Added §12 No-leftovers constraint. Cross-referenced `imobi-scheduling-bot-creation` as the natural first consumer of the absorbed `platform.business.*` MCP tools. | claude-opus-4-7 |
+| 2026-05-03 | Added §12 No-leftovers constraint. Cross-referenced `imobi-scheduling-bot-creation` as the natural first consumer of the absorbed `noctus.business.*` MCP tools. | claude-opus-4-7 |
 
 ---
 

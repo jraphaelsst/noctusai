@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** Design captured → Phase 0 ready
+- **Status:** ⏳ EXECUTING — §7 round closed 2026-05-03 (per-product table; defaults accepted on Q2-Q6); waits on MCP work to close before starting Phase 0.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Related docs:** `KB § 04-SHARED-LIBRARY.md § llm/`, `projects/whatsapp-seed-absorption/PROJECT.md` (depends on this for end-to-end completeness; preserves audit-row schema verbatim from sibling), sibling reference at `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/app/services/openai/tools/registry.py`.
 - **Project slug:** `llm-tool-call-audit` — cross-cutting seed-lib concern. Lives at `projects/<slug>/`.
@@ -173,12 +173,14 @@ The chatbot framework's `llm_dispatcher.py` accepts `audit_writer: AuditWriter |
 
 ## 7. Open questions
 
-1. **Single shared `tool_call_audits` table per product, or namespaced (`<product>_tool_call_audits`)?** Recommendation: per-product table (each product's DB owns its own rows; cross-product BI is a future concern). Decided before Phase 2.
-2. **Retention default in the migration template?** Recommendation: none in v1, but include a commented-out `archived_at` column + index hint so future TTL is cheap to add. Decided in Phase 2.
-3. **Any LGPD implications with `arguments` / `result` JSON storing PII?** Run the LGPD five questions (`KB § PATTERNS/lgpd.md`). Recommendation: products handling Art. 11 sensitive data (clinical text in therapy) must redact those fields before passing to the dispatcher. Document the pattern in Phase 3 KB doc. Use `noctusai_lgpd_flag(...)` if uncertain.
-4. **Data retention for `tool_call_audits` (folded sibling `data-retention` idea).** Recommendation: no automatic TTL in v1; products opt into retention via a follow-up. Imobi-scheduling proposes 90-day on raw rows + permanent on aggregated metrics — decision lives in `projects/imobi-scheduling-bot-creation/` §7 Q5. File `projects/llm-audit-retention/` once a second product consumer surfaces.
-5. **GPT confidence thresholds (folded sibling `gpt-confidence-thresholds` idea).** Recommendation: **out of scope here** — confidence belongs in the LLM dispatcher (chatbot framework), not in the audit. Capture the pattern in `KB § PATTERNS/llm-bot-security.md` (§6 Phase 5 here): low-confidence tool calls trigger a follow-up question to the user instead of execution. Implementation lives in consumer products (e.g., `projects/imobi-scheduling-bot-creation/` §7 Q3).
-6. **Provider-payload audit (folded sibling `provider-payload-audit` idea).** Recommendation: **separate concern** — raw provider payloads (WAHA inbound, OpenAI raw responses, Google API responses) deserve their own `webhook_events`-style table at the consumer level, with its own retention. Not bundled with tool-call audit. Captured in `projects/imobi-scheduling-bot-creation/` Phase 2 schema. The lib doesn't ship a model for this; consumers define their own per-provider shape.
+All open questions resolved 2026-05-03 in batch §7 round (`projects/absorbed-projects-batch/PROJECT.md` Phase 1.a):
+
+1. ~~**Single shared `tool_call_audits` table per product, or namespaced?**~~ → **Decided: per-product table** (recommendation accepted). Each product's DB owns its rows; cross-product BI is a future concern. Aligns with cross-product LGPD block.
+2. ~~**Retention default in the migration template?**~~ → **Decided: none in v1**, include commented-out `archived_at` column + index hint so future TTL is cheap. (Default carried.)
+3. ~~**LGPD implications with `arguments`/`result` JSON storing PII?**~~ → **Decided: products handling Art. 11 sensitive data (clinical text in therapy) MUST redact those fields before passing to the dispatcher.** Document the pattern in Phase 3 KB doc. Use `noctusai_lgpd_flag(...)` if uncertain. (Default carried.)
+4. ~~**Data retention follow-up?**~~ → **Decided: no automatic TTL in v1**; products opt in via a follow-up. File `projects/llm-audit-retention/` once second product consumer surfaces. Imobi-scheduling proposes 90-day raw + permanent aggregated — decision lives in `projects/imobi-scheduling-bot-creation/` §7 Q5. (Default carried.)
+5. ~~**GPT confidence thresholds?**~~ → **Decided: out of scope here** — confidence belongs in the LLM dispatcher (chatbot framework), not the audit. Capture pattern in `KB § PATTERNS/llm-bot-security.md` (§6 Phase 5 here). Implementation lives in consumer products. (Default carried.)
+6. ~~**Provider-payload audit?**~~ → **Decided: separate concern** — raw provider payloads deserve their own `webhook_events`-style table at consumer level, with its own retention. Not bundled with tool-call audit. Lib does NOT ship a model for this; consumers define their own per-provider shape. (Default carried.)
 
 ---
 
@@ -220,6 +222,7 @@ bash scripts/verify-kb-sync.sh
 |---|---|---|
 | 2026-05-03 | Initial project drafted; user confirmed priority #1 (highest observability ROI). | claude-opus-4-7 |
 | 2026-05-03 | Added §7 Q4 noting sibling's `provider-payload-audit` and `data-retention` ideas as future-work hooks (raw integration payloads + retention TTL). Captured here as open questions rather than separate projects so the lessons aren't lost when sibling folder is deleted. | claude-opus-4-7 |
+| 2026-05-03 | **§7 round closed** (batch Phase 1.a). Decision: per-product `tool_call_audits` table (Q1, user-confirmed). Q2-Q6 accepted at recommended defaults (no v1 TTL, Art. 11 redaction at dispatcher, confidence out-of-scope, provider-payload separate concern). Project status flipped to ⏳ EXECUTING — Phase 0 begins after MCP-server-expansion closes (per user-reordered tier sequence: MCP → LLM-audit → finish). | claude-opus-4-7 |
 
 ---
 

@@ -191,8 +191,12 @@ Claude Code config (`.claude/settings.local.json`):
 
 ```
 mcp/noctusai/
-  server.py               MCP server — 30 tools exposed via stdio
+  server.py               MCP server — 50 tools exposed via stdio
   cli.py                  CLI for humans — same tools, human-formatted
+  settings.py             Settings shim — re-exports `noctusai_lib.config.settings.BaseAppSettings`
+                          + lazy `get_settings()` singleton. Single source of
+                          truth until MCP is extracted to its own repo. Added
+                          by `projects/mcp-server-expansion/` Phase 1.
   requirements.txt        Tool deps (separate from product venvs)
   tools/                  One module per tool family
     context.py            agent_context, product_context
@@ -219,6 +223,7 @@ Each tool is **stateless** and **idempotent**: re-running never corrupts state, 
 
 ## Conventions enforced by this toolkit
 
+- **Pydantic schemas for tool inputs (and outputs).** New tools land with `XxxInput(BaseModel)` and `XxxOutput(BaseModel)` classes in the tool file itself; `server.py`'s `_tool(name, desc, model=XxxInput)` auto-generates the JSON schema via `model_json_schema()`. Existing tools migrate opportunistically when touched. The pattern is established for `noctusai_agent_context`, `noctusai_validate`, `noctusai_analyze_patterns`, `noctusai_review`, `noctusai_catalog` (Phase 2 of `projects/mcp-server-expansion/`); legacy hand-coded `props` / `required` dicts still work for un-migrated tools and will be retired in Phase 4. Output models grow opportunistically — start with `dict[str, Any]` for dynamic surface, tighten as call sites stabilize.
 - **`noctusai_catalog`** enforces the "shared-library first" rule — run it before writing anything that might already exist in `noctusai_lib`, and after any change to the seed to verify no new orphans/duplicates shipped. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/shared-library-conventions.md`.
 - **`noctusai_improvements`** enforces the "retrospective-per-phase" rule — projects are living documents, and each phase captures learnings inline as an `**Improvements:**` block. The tool aggregates these into `improvements.md` next to the project file, so future reworkers of a phase read the original-build friction before touching anything. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`.
 - **`noctusai_review`** enforces the "no violations ship" rule *without* touching code. Every detected issue becomes a proposal the human triages. Referenced from `CLAUDE.md → Engineering Philosophy → MCP toolkit reviews after every change (observation-only)`.

@@ -7,11 +7,35 @@ import logging
 import re
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
+
+
+class AnalyzePatternsInput(BaseModel):
+    """No inputs — runs duplicated-functions + inline-hooks scans together."""
+
+
+class DuplicatedFunction(BaseModel):
+    function: str
+    products: list[str]
+    locations: list[dict[str, Any]]
+
+
+class InlineHookIssue(BaseModel):
+    product: str
+    file: str
+    severity: str
+
+
+class AnalyzePatternsOutput(BaseModel):
+    duplicated: list[DuplicatedFunction] = Field(default_factory=list)
+    inline_hooks: list[InlineHookIssue] = Field(default_factory=list)
 
 
 def _list_products():

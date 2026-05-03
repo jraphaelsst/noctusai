@@ -30,10 +30,41 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
+
+
+ReviewMode = Literal["agent", "headless", "evaluate"]
+
+
+class ReviewInput(BaseModel):
+    product: Optional[str] = Field(
+        None, description="Optional: scope to one product slug. Default = all products."
+    )
+    mode: ReviewMode = Field(
+        "agent",
+        description="Review mode. agent = return findings for in-session author. headless = OpenAI files proposals. evaluate = side-by-side scratch.",
+    )
+    model: str = Field(
+        "gpt-4o-mini",
+        description="OpenAI model used in headless + evaluate modes. Ignored in agent mode.",
+    )
+
+
+class ReviewOutput(BaseModel):
+    """Output shape varies by mode (`agent` returns review_prompt + issues; `headless`
+    returns proposal-write counts; `evaluate` returns scratch dir locations). Treat
+    as a discriminated bag — the `mode` field tells you which shape to expect."""
+
+    mode: ReviewMode
+    reviewed_products: list[str] = Field(default_factory=list)
+    issues: list[dict[str, Any]] = Field(default_factory=list)
+    review_prompt: Optional[str] = None
+    extra: dict[str, Any] = Field(default_factory=dict, description="Mode-specific keys.")
 
 
 def _detect(product_slug: str | None) -> tuple[list[Path], list[dict]]:

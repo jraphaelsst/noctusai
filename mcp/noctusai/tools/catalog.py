@@ -45,9 +45,34 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
+
+from pydantic import BaseModel, Field as PydField
 
 logger = logging.getLogger(__name__)
+
+
+class CatalogInput(BaseModel):
+    write: bool = PydField(
+        True,
+        description="Write the markdown artifact to mcp/noctusai/catalog.md. False returns markdown inline.",
+    )
+
+
+class CatalogOutput(BaseModel):
+    output_path: str | None = PydField(
+        None, description="Relative path to the written artifact. None when `write=False`."
+    )
+    markdown: str | None = PydField(
+        None, description="Inline markdown when `write=False`. None when `write=True`."
+    )
+    summary: dict[str, Any] = PydField(
+        default_factory=dict,
+        description="Counts: total_symbols, products, orphans, single_consumer, duplicate_candidates.",
+    )
+    symbols: list[dict[str, Any]] = PydField(default_factory=list)
+    orphans: list[dict[str, Any]] = PydField(default_factory=list)
+    duplicate_candidates: list[dict[str, Any]] = PydField(default_factory=list)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

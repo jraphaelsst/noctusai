@@ -14,6 +14,8 @@ import logging
 import re
 from pathlib import Path
 
+from pydantic import BaseModel, Field
+
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -2013,6 +2015,22 @@ def check_detector_has_regression_test(repo_root: Path | None = None) -> list[di
 
 
 # ---------------------------------------------------------------------------
+
+
+class ValidateInput(BaseModel):
+    """No inputs — `validate` runs across every product unconditionally."""
+
+
+class ValidateIssue(BaseModel):
+    product: str | None = None
+    severity: str
+    issue: str
+    detector: str | None = None
+
+
+class ValidateOutput(BaseModel):
+    score: int = Field(description="Platform-wide score 0-100. Average across products.")
+    issues: list[ValidateIssue] = Field(default_factory=list)
 
 
 def check_all_products() -> tuple[int, list]:

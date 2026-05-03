@@ -1,7 +1,39 @@
 """Agent context tools — provide structured platform context."""
 from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+class AgentContextInput(BaseModel):
+    """No inputs — the call returns the full bootstrap context unconditionally."""
+
+
+class AgentContextOutput(BaseModel):
+    platform: str
+    stack: str
+    seed_path: str
+    seed_layers: dict[str, str]
+    products: list[dict[str, Any]]
+    agents: dict[str, str]
+    key_files: dict[str, str]
+    env: str
+    top_rules: list[str]
+
+
+class ProductContextInput(BaseModel):
+    slug: str = Field(description="Product slug, e.g. 'erp-imobiliario'.")
+
+
+class ProductContextOutput(BaseModel):
+    """Product structure + MASTER-PROMPT + README. Shape is dynamic; structure
+    fields are merged from `get_product_structure(slug)` and not enumerated here."""
+
+    structure: dict[str, Any] = Field(description="Full product structure dict.")
+    master_prompt: str | None
+    readme: str | None
 
 
 def get_agent_context() -> dict:
