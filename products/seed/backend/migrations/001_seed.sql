@@ -2,7 +2,13 @@
 -- Seed Product schema
 -- Schema: seed
 -- Description: Minimal product schema that proves the entire shared stack works.
+--
+-- Future migrations should use the canonical helpers from
+-- `noctusai_lib.domain.sql_templates` (set_search_path, updated_at_function,
+-- updated_at_trigger, rls_subquery_policy) so the conventions cannot drift.
 -- ============================================================================
+
+SET search_path = seed, public;
 
 CREATE SCHEMA IF NOT EXISTS seed;
 
@@ -28,6 +34,9 @@ CREATE TABLE seed.status_pagina (
 
 ALTER TABLE seed.status_pagina ENABLE ROW LEVEL SECURITY;
 
+-- Note: this policy intentionally does NOT use `rls_subquery_policy` — that
+-- helper always emits `TO authenticated`, but `todos_veem_producao` is an
+-- anonymous-readable policy (anon role too).
 CREATE POLICY "todos_veem_producao" ON seed.status_pagina
     FOR SELECT USING (status = 'producao');
 
@@ -50,6 +59,9 @@ CREATE TABLE seed.invitations (
 
 ALTER TABLE seed.invitations ENABLE ROW LEVEL SECURITY;
 
+-- Matches `rls_subquery_policy(seed, "invitations", "invitations_select_own_org",
+--   "SELECT", using="org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid")`
+-- output (whitespace-normalized). The scaffold's regression test enforces this.
 CREATE POLICY "invitations_select_own_org" ON seed.invitations
     FOR SELECT TO authenticated
     USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);

@@ -136,6 +136,15 @@ if [ "$DRY_RUN" != "--dry" ]; then
         perl -pi -e 's/Sprout/{{PRODUCT_ICON}}/g' "$file" 2>/dev/null || true
         perl -pi -e 's/\b8004\b/{{BACKEND_PORT}}/g' "$file" 2>/dev/null || true
         perl -pi -e 's/\b8100\b/{{FRONTEND_PORT}}/g' "$file" 2>/dev/null || true
+
+        # SQL-specific: bare schema refs (e.g. CREATE SCHEMA seed; seed.table;
+        # SET search_path = seed, public). \bseed\b only — won't match identifiers
+        # like idx_seed_invitations_org (underscore is a word char, no boundary).
+        # idx_seed_ handled separately for the prefix case.
+        if [[ "$file" == *.sql ]]; then
+            perl -pi -e 's/\bseed\b/{{SCHEMA_NAME}}/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/idx_seed_/idx_{{SCHEMA_NAME}}_/g' "$file" 2>/dev/null || true
+        fi
     done
 
     log "Replaced product values with placeholders"

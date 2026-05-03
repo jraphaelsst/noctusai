@@ -148,6 +148,39 @@ project.saveSync();
 
 ---
 
+## Structural refactors — literal grep is incomplete
+
+When refactoring paths or identifiers, `grep -E 'seed/backend/lib'` finds **literal substring** matches, but path/identifier construction is often **segmented across multiple string literals** joined at runtime. The substring grep is looking for never appears as a contiguous run of bytes, so the file is silently skipped.
+
+Canonical failure shape:
+
+```python
+# grep finds this (literal "seed/backend/lib" substring):
+LIB = REPO_ROOT / "seed/backend/lib"
+
+# grep does NOT find this (no contiguous substring — "seed", "backend", "lib"
+# are three separate string literals joined by the / operator at runtime):
+LIB = REPO_ROOT / "seed" / "backend" / "lib"
+```
+
+Same trap shape, other forms:
+
+- `os.path.join("a", "b", "c")` and `Path("a", "b", "c")` — Python
+- `["a", "b"].join("/")` and template literals with interpolation — TS
+- String concatenation: `"prefix_" + var + "_suffix"`
+- Dynamic imports: `__import__("module." + name)` / `importlib.import_module(f"...{x}")`
+- Multi-line string literals, URL builders, format-string segments
+
+**Defense in three layers:**
+
+1. **AST tools find these.** `libcst` sees the `BinaryOp` / `Call` / `List` node and can match string-sequence shapes that grep can't. `ts-morph` exposes the same for TypeScript. Use them for any rename whose blast radius isn't trivially small.
+2. **The toolchain is the ground truth.** Always run **pytest + frontend builds + KB-sync verifier BEFORE commit** on a structural refactor — not after grep verification. The compiler / interpreter / test runner is the only oracle that catches every form of indirection (segmented construction, computed paths, dynamic imports, runtime symbol concat). A green grep is necessary but not sufficient.
+3. **Re-grep with a relaxed pattern.** After the obvious literal substitutions, run a second grep that allows the segmented form: `'/ "<segment_1>" / "<segment_2>"'` etc. This won't catch every case but catches the ones segmented purely on `/`-style joins.
+
+> **Rule of thumb**: if your refactor's "grep clean" verification step succeeds in <5 seconds but you haven't run a single test yet, you're not done — you're at the *start* of verification.
+
+---
+
 ## When regex IS the right tool
 
 - **Search-only** — `grep` / `rg` for finding occurrences before deciding what to edit. The keeper's `noctusai_scan_*` recurrence scans use regex internally on string-line shape, intentionally.
