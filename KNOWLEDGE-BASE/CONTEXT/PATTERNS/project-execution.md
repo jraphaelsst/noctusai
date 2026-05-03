@@ -514,13 +514,10 @@ This repo is regularly worked by multiple agents in parallel (a Claude Code sess
 **Protocol when triggered:**
 
 1. **STOP at the second revert — do not re-apply on top.** Two reverts is the loop signal. The parallel agent isn't malicious; their work-shape requires whatever pattern is colliding with yours. Silently fighting them wastes both sessions and produces a noisy git history.
-2. **File a collision-report project.** Slug shape: `parallel-collision-<topic>-<YYYY-MM-DD>` at `projects/<slug>/`. Treat as a normal project (copy `templates/PROJECT-TEMPLATE.md`; §3a if applicable). Section content:
-   - **§1 Context** — what each agent was attempting; what the collision is.
-   - **§5 Architecture / data model** — the actual divergence, side-by-side: what your edit looked like, what the parallel agent's shape looks like.
-   - **§7 Open questions** — resolution paths, paired with recommendations: **wait** (parallel agent's work will land naturally; your edit becomes a clean follow-up), **apply now** (parallel agent is done; re-apply once and verify no further reverts), **coordinate** (explicit handoff to a human or the parallel agent's next session), **abandon** (your edit is no longer needed; their shape covers the use case differently).
-   - **§11 Change log** — log the revert sequence with timestamps so a future agent reading this can see the loop pattern that triggered the file.
-3. **Continue with non-colliding deliverables.** The collision blocks ONE seam, not the whole project. Ship what's independent + catalog the deferred work in `KB § PATTERNS/accept-with-rationale.md` so it survives folder deletion.
-4. **Surface in end-of-work summary.** The summary's "deferred" section names the collision project so the user knows what happened without reading every line of git history.
+2. **Wait for the parallel agent to finish.** Do NOT file a collision-report project — the project artifact would be stale by the time the parallel agent's restructure completes (often within the same session or shortly after). Keeping the colliding edit on a shelf is enough; the catalog entry below preserves the design intent across the wait.
+3. **Continue with non-colliding deliverables.** The collision blocks ONE seam, not the whole project. Ship what's independent + catalog the deferred work in `KB § PATTERNS/accept-with-rationale.md` so the design intent survives folder deletion + the wait window.
+4. **Surface in end-of-work summary.** The summary's "deferred" section names the colliding seam, the parallel project that's restructuring it, and the catalog entry's short-title — so the user knows what happened and where the deferred work is recorded.
+5. **Re-apply when the user signals or the parallel project closes.** Once the parallel agent's work has landed (user says "apply now, the other agent is done", OR the parallel project's PROJECT.md flips to ✅), re-apply the edit once and verify no further reverts. Update the catalog entry to **FORMALIZED** with the apply-commit hash.
 
 **The protocol does NOT apply when:**
 
@@ -530,9 +527,9 @@ This repo is regularly worked by multiple agents in parallel (a Claude Code sess
 
 **Recurrence flips this protocol harder.** N=2 collisions on **different files in the same session** = signal that the parallel agent's scope and yours overlap structurally. Pause the entire project, surface to user, and let them decide whether to merge the projects, sequence them, or kill one. The collision rule is per-file; structural overlap is per-session.
 
-**Worked example.** `seed-workspace` project (2026-05-03) tried to integrate `mcp/noctusai/workspace.py` into `tools/{status,proposals,scaffold}.py` + `server.py`. The parallel `mcp-server-expansion` agent was simultaneously restructuring those files (their Phase 4 moves every tool under `tools/noctus/dev/<service>/<action>.py` and replaces the dispatch map). My edit landed; their continuing work reverted it. I re-applied; reverted again. After the second revert I stopped, filed the deferral in `accept-with-rationale.md § MCP workspace-aware tool integration deferred to parallel project`, surfaced the deferral in end-of-work summary. The user later said "apply now, the other agent is done" — that's the **resolution-path-2 trigger** (apply once + verify no further reverts).
+**Worked example.** `seed-workspace` project (2026-05-03) tried to integrate `mcp/noctusai/workspace.py` into `tools/{status,proposals,scaffold}.py` + `server.py`. The parallel `mcp-server-expansion` agent was simultaneously restructuring those files (their Phase 4 moves every tool under `tools/noctus/dev/<service>/<action>.py` and replaces the dispatch map). My edit landed; their continuing work reverted it. I re-applied; reverted again. After the second revert I stopped, cataloged the deferral in `accept-with-rationale.md § MCP workspace-aware tool integration deferred to parallel project`, surfaced it in end-of-work summary, and waited. The user later said "apply now, the other agent is done" — re-applied once + verified no further reverts + flipped the catalog entry to **FORMALIZED**.
 
-→ catalog the deferred work in `KB § PATTERNS/accept-with-rationale.md`.
+→ catalog the deferred work in `KB § PATTERNS/accept-with-rationale.md`. No collision-report project.
 
 ---
 
