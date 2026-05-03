@@ -77,6 +77,43 @@ When both children's batch-tasks are ✅:
 5. **Create per-batch local commit** in the master scope (no push). The children's per-phase commits land alongside, scoped to each child's diff.
 6. **Pause for user signal** before opening the next batch — same phase-by-phase cadence as a single project, just at the batch level.
 
+### 2.5 Cross-reference Improvements blocks in child phases
+
+**The convention.** A child phase's `**Improvements:**` block does NOT duplicate what's already in the master scratchpad — it **cross-references** it. The master root remains the canonical source of truth for batch-level improvements; each child PROJECT.md cites where the durable record lives.
+
+**Why.** Without this convention, child agents either:
+- (a) **Skip the block entirely** because "the improvements live in the live-patterns-log, why duplicate?" → trips the phase-state detector (`compliance.check_phase_state_consistency` rule 3 flags `✅ but lacks an Improvements block`).
+- (b) **Duplicate the master scratchpad's content** into each child's §6 → drift problem on the next master sync, plus duplication noise that obscures which file is authoritative.
+
+The cross-reference shape resolves both: the block exists (detector happy) AND the master root is canonical (no drift).
+
+**The shape.** Under each child phase header, write:
+
+```markdown
+**Improvements:** captured in master scratchpad per `KB § PATTERNS/master-tree-parallel-batches.md` — see
+`projects/<master-slug>/live-patterns-log.md` and `cross-product-absorption-catalog.md` (<comma-separated
+list of specific items + brief identifiers, e.g. "Pattern H DELETE-related-rows helper, framework gap
+on /api/notificacoes/preferencias, N+1 audit hits"). Cross-references rather than duplicates so the
+master root remains canonical for sister-batched work.
+```
+
+**Worked example.** From `products/erp-imobiliario/projects/erp-imobiliario-wiring/PROJECT.md` Phase 0 (master `products-wiring-rollout`):
+
+```markdown
+### Phase 0 ✅ — Discovery & inventory (parallel with PF P0 in master batch B0)
+
+**Improvements:** captured in master scratchpad per `KB § PATTERNS/master-tree-parallel-batches.md` — see
+`projects/products-wiring-rollout/live-patterns-log.md` and `cross-product-absorption-catalog.md` (Pattern
+H DELETE-related-rows helper, Pattern I role-aware-handler, `/api/notificacoes/preferencias` framework
+gap, N+1 audit hits at `metas_digest_service.py:66` + `banco_service.py:227`, integration-visibility
+gaps in ContratoDetalhes / ImovelDetalhes / Metas pages). Cross-references rather than duplicates so
+the master root remains canonical for sister-batched work.
+```
+
+**Detector compatibility.** The phase-state detector (`mcp/noctusai/tools/noctus/dev/compliance.py § check_phase_state_consistency`) accepts any non-empty `**Improvements:**` block — body content isn't validated, only presence is. So cross-reference bodies satisfy rule 3 the same as a `none identified.` placeholder or a fully-itemized list. The convention is purely guidance for child agents; no detector change required.
+
+**When this convention does NOT apply.** If a child phase's improvements are entirely product-specific and sister batches won't benefit from them, the master scratchpad is the wrong home. Use the standard `**Improvements:**` block (itemized inline) for those — same shape as a single-project workflow. Mixed cases (some shared, some product-specific) write a hybrid block: cross-reference for the shared, inline for the product-specific.
+
 ---
 
 ## 3. Live shared artifacts
