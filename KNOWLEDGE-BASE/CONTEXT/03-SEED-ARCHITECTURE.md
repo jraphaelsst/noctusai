@@ -59,6 +59,24 @@ Any agent proposing or implementing a structural change MUST answer these four q
 
 This test is the operational form of the seed-first rule. Every triage outcome (formalize / refactor / accept-with-rationale per `01-PHILOSOPHY.md`) flows through this test.
 
+### Verify-the-seed-ships-it test — for any "consume the seed X" decision
+
+Before locking a decision that depends on a seed capability ("Phase N adopts `noctusai_lib.X`," "this product wires through the seed Y adapter," "we'll just use the seed Protocol"), verify the seed concretely ships what the consumer needs **at runtime** — not just the Protocol/interface or an in-memory Fake.
+
+The slip looks like: *"Yes, the seed has a `CalendarAdapter` Protocol, so we can do two-way Google Calendar sync."* Reality: the Protocol exists, but only `FakeCalendarAdapter` ships; the real OAuth + service-account adapters are deferred. Locking the decision without checking turns a planned *consume* into a hidden *seed-build* inside the consumer's scope, silently expanding the project.
+
+**How to apply:**
+
+1. Open the seed module's `__init__.py` and read what is **exported** — not what the docstring promises or the Protocol implies.
+2. Open the concrete adapter / implementation file and confirm it covers the consumer's runtime path (real network, real DB, real auth) — not just the Fake.
+3. If the seed only ships the Protocol + a Fake, name the gap explicitly. Two outcomes:
+   - **Single consumer, gap small** — consumer ships against Fake (dev / test only) and surfaces the real-adapter need as a follow-up.
+   - **N=2+ consumers needing the same gap** — DRY-recurrence rule fires (`KB § PATTERNS/project-execution.md § 2.7`) → file the seed real-adapter follow-up project; consumers proceed against Fake until it lands.
+
+**Pattern origin:** surfaced 2026-05-03 during `therapy-scheduling-pilot` Phase 0 when *"Internal + Google Calendar two-way"* was about to lock without checking that the real GCal adapter actually shipped (it didn't — only the Fake). Filing `projects/google-calendar-real-adapters/` as a separate seed project — instead of silently expanding pilot scope to include OAuth work — is the right shape.
+
+This test is a corollary to "Seed first. Always." — that rule says *use* the seed; this test says *verify* the seed actually ships what you're about to use, **before** locking the decision.
+
 ### Runtime inheritance vs scaffold inheritance
 
 These are different mechanisms and should never be conflated.

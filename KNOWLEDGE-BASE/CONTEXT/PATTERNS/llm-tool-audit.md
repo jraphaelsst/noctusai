@@ -201,7 +201,7 @@ audit_writer(AuditRecord(
 ```
 
 When uncertain whether a field needs redaction, run the LGPD five
-questions (`KB § PATTERNS/lgpd.md`) or call `noctusai_lgpd_flag(...)`.
+questions (`KB § PATTERNS/lgpd.md`) or call `noctus.dev.lgpd_flag(...)`.
 
 ---
 

@@ -95,7 +95,7 @@ like, but the cost compounds across a multi-file investigation.
 
 ### Companion tooling
 
-- ✅ **`noctusai_outline_python(path)`** (Phase 3 ship 2026-05-02) —
+- ✅ **`noctus.dev.outline_python(path)`** (Phase 3 ship 2026-05-02) —
   returns a Python file's symbol tree (classes, functions, methods,
   module-level UPPER_SNAKE_CASE constants, imports) with line
   ranges. No bodies. Stdlib `ast`, no extra deps. CLI:
@@ -103,7 +103,7 @@ like, but the cost compounds across a multi-file investigation.
   The structure pass on a Python file is now a single tool call —
   prefer it over the `grep -n "^def \|^class …"` heuristic when
   working with `.py` files.
-- ✅ **`noctusai_outline_typescript(path)`** (Phase 4 ship 2026-05-02) —
+- ✅ **`noctus.dev.outline_typescript(path)`** (Phase 4 ship 2026-05-02) —
   same `OutlineResult` shape for `.ts` / `.tsx`. Captures classes,
   interfaces, type aliases, top-level functions, arrow-fn consts
   (React components and hooks land here), methods inside classes,
@@ -119,7 +119,7 @@ like, but the cost compounds across a multi-file investigation.
 
 ### Detector (Phase 3 ship 2026-05-03 — `session-review-baseline`)
 
-- ✅ **`noctusai_review_session`** — walks one Claude Code JSONL
+- ✅ **`noctus.dev.review_session`** — walks one Claude Code JSONL
   transcript and emits a body-free issue when a whole-file `Read`
   (no `offset` / `limit`) on a >200-line repo file was not preceded
   by an `outline_python` / `outline_typescript`. Severity is INFO
@@ -127,7 +127,7 @@ like, but the cost compounds across a multi-file investigation.
   whole-file reads exist; the WARNING bump is gated on a future
   manual-ground-truth calibration). The detector lives at
   `mcp/noctusai/tools/session_review.py` and is wired into the
-  static-axis `noctusai_review` family as a session-axis sibling.
+  static-axis `noctus.dev.review` family as a session-axis sibling.
   See `KB § 06-AGENTS.md § Session-axis review`.
 
 ---
@@ -200,8 +200,8 @@ isn't filtered through a digest.
 
 - The Explore subagent (built-in `Agent` tool with
   `subagent_type=Explore`) is the canonical delegate.
-- For `noctusai_*` MCP scans (`noctusai_scan_cross_product_helpers`,
-  `noctusai_refs`, `noctusai_status`), the scan IS the digest —
+- For `noctusai_*` MCP scans (`noctus.dev.scan_cross_product_helpers`,
+  `noctus.dev.refs`, `noctus.dev.status`), the scan IS the digest —
   prefer the dedicated tool over delegating a generic Explore for
   the same question.
 - After narrow-read (above) is fluent, "is this a delegate?" usually

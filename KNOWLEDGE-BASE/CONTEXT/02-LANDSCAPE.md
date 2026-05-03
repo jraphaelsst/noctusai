@@ -29,11 +29,11 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Core | 28 | 12 | 26 | 0 | 38 | 423 |
 | ERP | 59 | 52 | 68 | 66 | 110 | 1,646 |
 | PF | 15 | 17 | 24 | 16 | 44 | 453 |
-| Therapy | 39 | 41 | 65 | 27 | 71 | 938 |
+| Therapy | 40 | 44 | 66 | 29 | 73 | 962 |
 | Seed | 0 | 0 | 8 | 0 | 3 | 31 |
 | Daily Life | 7 | 7 | 12 | 7 | 15 | 226 |
 | Mailing | 10 | 10 | 22 | 9 | 16 | 191 |
-| **Total** | **158** | **139** | **225** | **125** | **297** | **3,908** |
+| **Total** | **159** | **142** | **226** | **127** | **299** | **3,932** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

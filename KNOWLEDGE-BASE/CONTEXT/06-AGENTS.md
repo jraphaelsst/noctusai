@@ -10,17 +10,17 @@
 <!-- kb-counts:end:mcp_tools -->
 
 ### Context
-- noctusai_agent_context — full platform overview
-- noctusai_product_context — product structure + docs
+- noctus.dev.agent_context — full platform overview
+- noctus.dev.product_context — product structure + docs
 
 ### Products
-- noctusai_list_products, noctusai_get_product, noctusai_platform_metrics
+- noctus.dev.list_products, noctus.dev.get_product, noctus.dev.platform_metrics
 
 ### Scaffold
-- noctusai_scaffold_product, noctusai_available_ports
+- noctus.dev.scaffold_product, noctus.dev.available_ports
 
 ### Compliance
-- noctusai_validate, noctusai_validate_product
+- noctus.dev.validate, noctus.dev.validate_product
 - **Detectors in `tools/compliance.py`** (deterministic, zero-AI):
   - `check_seed_compliance` — verifies `create_product_app()` usage, `-e seed/{lib,framework}/backend` in requirements, no boilerplate routers, `createProductApp/Layout` on frontend. **Tuned by the control-plane classification set `CONTROL_PLANE_PRODUCTS = {"core"}`**: control-plane products legitimately OWN `team` / `notifications` / custom `Layout` (they ARE the identity/team authority), so the "has own team.py / Layout.tsx" warnings are suppressed for them. Consumer products still get flagged. Introduced 2026-04-23 (originating project archived after close) (fold of `keeper-control-plane-classification` backlog).
   - `check_path_references` — catches stale `shared/*` paths that should be `seed/*`.
@@ -34,49 +34,49 @@
   - `check_detector_has_regression_test` — meta-detector enforcing the platform-wide testing methodology: every other `check_*` keeper detector MUST ship colocated with a regression test. Self-parses `mcp/noctusai/tools/compliance.py` to enumerate all `check_*` functions, then verifies each has a matching `Test<CamelCase>` class somewhere under `mcp/noctusai/tests/` (case-insensitive matcher accepts `TestCheckSilentErrors`, `TestSilentErrors`, and acronym-preserving forms like `TestAIFeatureCompleteness`). Detectors whose tests live under non-matching names register an explicit override in `_DETECTOR_TEST_OVERRIDES`. Severity `high` — a missing detector test is the kind of gap that lets a real-world miss ship without being noticed. Introduced 2026-04-29 by `platform-logging-standardization` Phase 6 (user directive: regression-test-the-detector becomes platform-wide methodology, integrated into the code validation system). Convention + worked examples at `KB § PATTERNS/testing.md § Regression-test-the-detector`.
 
 ### Review (observation-only — never modifies code)
-- noctusai_review — detect seed-compliance issues + surface them for authoring. Three modes:
-  - `mode=agent` (default): returns the issue list + a review prompt the in-session agent uses. The agent fills `templates/PROPOSAL-TEMPLATE.md` per issue using session context and files via `noctusai_file_proposal`. Zero LLM cost at this layer.
+- noctus.dev.review — detect seed-compliance issues + surface them for authoring. Three modes:
+  - `mode=agent` (default): returns the issue list + a review prompt the in-session agent uses. The agent fills `templates/PROPOSAL-TEMPLATE.md` per issue using session context and files via `noctus.dev.file_proposal`. Zero LLM cost at this layer.
   - `mode=headless`: OpenAI `gpt-4o-mini` authors proposals (for CI / cron / solo CLI without an agent).
   - `mode=evaluate`: writes OpenAI + agent proposals side-by-side to `products/<product>/proposals/evaluations/<ts>/` for comparison.
   - Replaces the retired `noctusai_heal`. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/proposals-and-improvements.md` for the full protocol (two capture triggers, phase → proposal flow, promote boundary).
-- noctusai_proposal_template — return `templates/PROPOSAL-TEMPLATE.md` content so agents get a consistent starting point.
-- noctusai_file_proposal — write a filled-template proposal to `products/<product>/proposals/` (keeper, via `product=`) or `projects/<slug>/proposals/` (project-phase, via `project=`).
+- noctus.dev.proposal_template — return `templates/PROPOSAL-TEMPLATE.md` content so agents get a consistent starting point.
+- noctus.dev.file_proposal — write a filled-template proposal to `products/<product>/proposals/` (keeper, via `product=`) or `projects/<slug>/proposals/` (project-phase, via `project=`).
 
 ### Analyzers
-- noctusai_analyze, noctusai_analyze_patterns, noctusai_analyze_deps, noctusai_analyze_tests
+- noctus.dev.analyze, noctus.dev.analyze_patterns, noctus.dev.analyze_deps, noctus.dev.analyze_tests
 
 ### AI
-- noctusai_ai_discover, noctusai_ai_advisory
+- noctus.dev.ai_discover, noctus.dev.ai_advisory
 
 ### Master Prompts
-- noctusai_sync_master_prompt, noctusai_sync_all_master_prompts, noctusai_check_master_prompt
+- noctus.dev.sync_master_prompt, noctus.dev.sync_all_master_prompts, noctus.dev.check_master_prompt
 
 ### Testing
-- noctusai_run_tests, noctusai_run_all_tests, noctusai_build_frontend, noctusai_build_all_frontends
+- noctus.dev.run_tests, noctus.dev.run_all_tests, noctus.dev.build_frontend, noctus.dev.build_all_frontends
 
 ### Diff & Quality
-- noctusai_diff_against_seed, noctusai_find_orphans, noctusai_check_api_consistency
+- noctus.dev.diff_against_seed, noctus.dev.find_orphans, noctus.dev.check_api_consistency
 
 ### Proposals
-- noctusai_list_proposals, noctusai_accept_proposal, noctusai_reject_proposal
+- noctus.dev.list_proposals, noctus.dev.accept_proposal, noctus.dev.reject_proposal
 
 ### Cross-cutting utilities (added 2026-04-28 by `mcp-tooling-expansion`)
-- **`noctusai_refs <pattern>`** — recursive reference finder across CLAUDE.md / KB / projects / mcp / seed / products. Replaces the manual `grep -rln` ritual run before deletes / renames / closures. Excludes vendored deps + binaries. Used 8× during the 2026-04-28 closed-folder cleanup; tool absorbs the pattern.
-- **`noctusai_build_parallel`** — parallel cross-product `vite build` sweep. Supersedes the legacy sequential `noctusai_build_all_frontends`. Combine with `changed_only=True` to scope to git-changed products only (perf — skips unchanged products). 4-worker default; configurable.
-- **`noctusai_status`** — cross-project state digest. Walks every PROJECT.md across the three valid locations + emits status / sub-task progress / last-updated / `⏳`-`✅` icon / §3a presence / phase-state-detector flags. Sorted: executing → ready → parked → blocked → shipped (audit history at the bottom).
-- **`noctusai_check_three_way_sync`** — verify KB ↔ CLAUDE.md ↔ memory parity. Closes the gap that `verify-kb-sync.sh` cannot cover (memory dir lives outside the repo at `~/.claude/.../memory/`). Reports missing index entries, dangling links, missing KB anchors, and CLAUDE.md keyword mismatches per the three-way-sync rule (`KB § 01-PHILOSOPHY § Docs stay in sync`).
+- **`noctus.dev.refs <pattern>`** — recursive reference finder across CLAUDE.md / KB / projects / mcp / seed / products. Replaces the manual `grep -rln` ritual run before deletes / renames / closures. Excludes vendored deps + binaries. Used 8× during the 2026-04-28 closed-folder cleanup; tool absorbs the pattern.
+- **`noctus.dev.build_parallel`** — parallel cross-product `vite build` sweep. Supersedes the legacy sequential `noctus.dev.build_all_frontends`. Combine with `changed_only=True` to scope to git-changed products only (perf — skips unchanged products). 4-worker default; configurable.
+- **`noctus.dev.status`** — cross-project state digest. Walks every PROJECT.md across the three valid locations + emits status / sub-task progress / last-updated / `⏳`-`✅` icon / §3a presence / phase-state-detector flags. Sorted: executing → ready → parked → blocked → shipped (audit history at the bottom).
+- **`noctus.dev.check_three_way_sync`** — verify KB ↔ CLAUDE.md ↔ memory parity. Closes the gap that `verify-kb-sync.sh` cannot cover (memory dir lives outside the repo at `~/.claude/.../memory/`). Reports missing index entries, dangling links, missing KB anchors, and CLAUDE.md keyword mismatches per the three-way-sync rule (`KB § 01-PHILOSOPHY § Docs stay in sync`).
 - **Absorption-search sextet (use whenever working in product code — the user's standing directive 2026-04-28):**
 
   | Scan | What it catches | First-run calibration (2026-04-28) |
   |---|---|---|
-  | **`noctusai_scan_recurrence`** | Verbatim LINES recurring in `main.py` / `main.tsx` / `App.tsx` / `conftest.py` / `vitest.config.ts`. Allowlists `from noctusai_seed` / `from @noctusai/...` (inheritance, not replication). | 216 findings, 68 high. Signal MODERATE — most hits are platform-standard inheritance markers. Use only for explicit replication cases (mount-line, fixture). |
-  | **`noctusai_scan_cross_product_helpers`** | Function/class NAMES recurring across N≥2 products in services/routers/dependencies/hooks/components. Suggests seed-lib target per name shape. | 75 findings, **14 high (all real)**: digest pipeline (5 products: `_render_bodies` / `_generate_narrative` / `_aggregate` / `_fetch_window` / `_empty_output`), Metas gamification CRUD + hooks (3 products), `login` / `list_invoices`. **HIGH-SIGNAL — primary scan.** |
-  | **`noctusai_scan_service_line_recurrence`** | Verbatim LINES in service/router files with strict filters (≥60 chars + has `(`). Catches `datetime.fromisoformat(s.replace("Z", "+00:00"))`, HTTPException Portuguese-error patterns, pagination expressions. | 52 findings, **9 high** including `_TEMPLATE_DIR` (5 products), pagination shape (4 products). HIGH-SIGNAL. |
-  | **`noctusai_scan_block_patterns`** *(closed gap #1, 2026-04-28)* | AST-walks `try/except` blocks; normalizes identifiers; hashes structural fingerprint. Catches multi-line block recurrence the line/name scans miss — `try: from app.services import audit_service / await audit_service.log(...) except: logger.warning(...)` × 7 in one product. Suggests `safely_log_action`/`safely_dispatch`/`safely_run` helpers per body shape. | 241 findings, 28 high. Top hit: 7× `audit_service.log` block in core. **HIGH-SIGNAL for the within-core best-effort patterns.** |
-  | **`noctusai_scan_within_product_helpers`** *(closed gap #2, 2026-04-28)* | Helper names duplicated N≥3 files INSIDE one product. Closes the gap that cross-product scans require N≥2 distinct products. Suggests `app/utils.py` (product-scope) or `noctusai_lib.<area>` (cross-cutting). | 12 findings, 3 high: `get_resumo` × 6 in ERP, `_get_service` × 5 in mailing, `_get_platform_setting` × 5 in therapy. |
-  | **`noctusai_scan_pydantic_model_shapes`** *(closed gap #3, 2026-04-28)* | Pydantic `BaseModel` field-set recurrence across products (different class names, identical field set + types). Suggests `noctusai_lib.schemas.<canonical>`. | 1 finding (`LoginRequest`/`LoginInput` 2 fields). LOW-VOLUME — Pydantic schemas are mostly product-bound by design. |
-  | **`noctusai_scan_test_fixture_recurrence`** *(closed second-wave gap #4, 2026-04-28)* | pytest fixtures + helpers across `tests/conftest.py` + `tests/services/` + `tests/routers/` + `tests/integration/`. Stricter blacklist than production helper scan (excludes `test_*` methods + ALL_CAPS sample-data names). Suggests `noctusai_lib.testing.<helper>`. | 88 findings, **17 high**: `pytest_configure` × 8 products, `_fake_build`/`_fake_fetch` × 4, `Stateful*` mock infrastructure × 2 (ERP + PF). |
-  | **`noctusai_scan_migration_patterns`** *(closed second-wave gap #3, 2026-04-28)* | Regex-probes 5 known SQL pattern shapes (RLS subquery `auth.uid()`, FK-with-index, `SET search_path`, audit-log trigger, `updated_at` trigger) across product migrations. Reports per-product occurrence counts. | 3 findings, **2 high**: `search_path_lock` × 5 products / **176 occurrences** (huge template recurrence), `updated_at_trigger` × 4 products / 42 occurrences. |
+  | **`noctus.dev.scan_recurrence`** | Verbatim LINES recurring in `main.py` / `main.tsx` / `App.tsx` / `conftest.py` / `vitest.config.ts`. Allowlists `from noctusai_seed` / `from @noctusai/...` (inheritance, not replication). | 216 findings, 68 high. Signal MODERATE — most hits are platform-standard inheritance markers. Use only for explicit replication cases (mount-line, fixture). |
+  | **`noctus.dev.scan_cross_product_helpers`** | Function/class NAMES recurring across N≥2 products in services/routers/dependencies/hooks/components. Suggests seed-lib target per name shape. | 75 findings, **14 high (all real)**: digest pipeline (5 products: `_render_bodies` / `_generate_narrative` / `_aggregate` / `_fetch_window` / `_empty_output`), Metas gamification CRUD + hooks (3 products), `login` / `list_invoices`. **HIGH-SIGNAL — primary scan.** |
+  | **`noctus.dev.scan_service_line_recurrence`** | Verbatim LINES in service/router files with strict filters (≥60 chars + has `(`). Catches `datetime.fromisoformat(s.replace("Z", "+00:00"))`, HTTPException Portuguese-error patterns, pagination expressions. | 52 findings, **9 high** including `_TEMPLATE_DIR` (5 products), pagination shape (4 products). HIGH-SIGNAL. |
+  | **`noctus.dev.scan_block_patterns`** *(closed gap #1, 2026-04-28)* | AST-walks `try/except` blocks; normalizes identifiers; hashes structural fingerprint. Catches multi-line block recurrence the line/name scans miss — `try: from app.services import audit_service / await audit_service.log(...) except: logger.warning(...)` × 7 in one product. Suggests `safely_log_action`/`safely_dispatch`/`safely_run` helpers per body shape. | 241 findings, 28 high. Top hit: 7× `audit_service.log` block in core. **HIGH-SIGNAL for the within-core best-effort patterns.** |
+  | **`noctus.dev.scan_within_product_helpers`** *(closed gap #2, 2026-04-28)* | Helper names duplicated N≥3 files INSIDE one product. Closes the gap that cross-product scans require N≥2 distinct products. Suggests `app/utils.py` (product-scope) or `noctusai_lib.<area>` (cross-cutting). | 12 findings, 3 high: `get_resumo` × 6 in ERP, `_get_service` × 5 in mailing, `_get_platform_setting` × 5 in therapy. |
+  | **`noctus.dev.scan_pydantic_model_shapes`** *(closed gap #3, 2026-04-28)* | Pydantic `BaseModel` field-set recurrence across products (different class names, identical field set + types). Suggests `noctusai_lib.schemas.<canonical>`. | 1 finding (`LoginRequest`/`LoginInput` 2 fields). LOW-VOLUME — Pydantic schemas are mostly product-bound by design. |
+  | **`noctus.dev.scan_test_fixture_recurrence`** *(closed second-wave gap #4, 2026-04-28)* | pytest fixtures + helpers across `tests/conftest.py` + `tests/services/` + `tests/routers/` + `tests/integration/`. Stricter blacklist than production helper scan (excludes `test_*` methods + ALL_CAPS sample-data names). Suggests `noctusai_lib.testing.<helper>`. | 88 findings, **17 high**: `pytest_configure` × 8 products, `_fake_build`/`_fake_fetch` × 4, `Stateful*` mock infrastructure × 2 (ERP + PF). |
+  | **`noctus.dev.scan_migration_patterns`** *(closed second-wave gap #3, 2026-04-28)* | Regex-probes 5 known SQL pattern shapes (RLS subquery `auth.uid()`, FK-with-index, `SET search_path`, audit-log trigger, `updated_at` trigger) across product migrations. Reports per-product occurrence counts. | 3 findings, **2 high**: `search_path_lock` × 5 products / **176 occurrences** (huge template recurrence), `updated_at_trigger` × 4 products / 42 occurrences. |
 
   **Rule for future agents:** before writing a new helper / DTO / service shell / try-except block in a product, run `--scan-helpers` + `--scan-service-lines` + `--scan-blocks` + (if scoped to one product) `--scan-within-product`. If the name or shape recurs, absorb instead of replicate. After completing any product cleanup pass, re-run all 6 and triage anything new at N=2+ per `KB § PATTERNS/project-execution.md § 2.7`. Per `KB § 01-PHILOSOPHY § DRY` + standing user directive 2026-04-28: *"vamos aproveitar to search for absorption opportunities to the seed along the way"*.
 
@@ -104,9 +104,9 @@ Companion tooling for the **narrow-read** rule (`CLAUDE.md §1` → `KB § PATTE
 
 | Tool | What it returns | Backed by | Source | Tests |
 |---|---|---|---|---|
-| **`noctusai_outline_python <path>`** | `OutlineResult` — every top-level `class` / `def` / `async def`, first-level methods (with `parent`), `UPPER_SNAKE_CASE` module constants, import lines. Each carries `line` / `end_line` / `decorators` / `docstring_first_line`. **No bodies.** Returns `parse_error` instead of raising on missing file / `SyntaxError` / encoding error. | stdlib `ast` (no new dep) | `mcp/noctusai/tools/outline_python.py` | `mcp/noctusai/tests/test_outline_python.py` (14 cases incl. real-world smoke against `cost_evaluation.py`) |
-| **`noctusai_outline_typescript <path>`** | Same `OutlineResult` shape — classes (incl. `abstract`), interfaces (kind=`interface`), type aliases (kind=`type`), top-level functions (regular + async + default-export), arrow-fn consts (React components & hooks), first-level methods, constants, imports (multi-line collapsed). Block + line comments stripped before regex passes so `/* function fakeFn */` doesn't false-match. | regex (audit-driven deviation from the §7 default Compiler API — Phase 4 of `methodology-extraction` chose regex for ~5ms/call vs ~200ms+50MB; ~95% precision on prettier/eslint-formatted TS; upgrade path open) | `mcp/noctusai/tools/outline_typescript.py` | `mcp/noctusai/tests/test_outline_typescript.py` (23 cases incl. smoke against `VistaShowcase.tsx` + `useVistaShowcase.ts`) |
-| **`noctusai_count_tokens path=… text=… extensions=…`** | `TokenCountResult` — total + per-file `tokens` / `chars` / `words` / `lines`; reports `tokenizer_used` so callers know the precision. Accepts a path, inline text, or recursive walk over a tree (with `extensions=` filter). | tiktoken cascade → `chars/4` fallback | `mcp/noctusai/tools/cost_evaluation.py` | `mcp/noctusai/tests/test_cost_evaluation.py` (15 cases) |
+| **`noctus.dev.outline_python <path>`** | `OutlineResult` — every top-level `class` / `def` / `async def`, first-level methods (with `parent`), `UPPER_SNAKE_CASE` module constants, import lines. Each carries `line` / `end_line` / `decorators` / `docstring_first_line`. **No bodies.** Returns `parse_error` instead of raising on missing file / `SyntaxError` / encoding error. | stdlib `ast` (no new dep) | `mcp/noctusai/tools/outline_python.py` | `mcp/noctusai/tests/test_outline_python.py` (14 cases incl. real-world smoke against `cost_evaluation.py`) |
+| **`noctus.dev.outline_typescript <path>`** | Same `OutlineResult` shape — classes (incl. `abstract`), interfaces (kind=`interface`), type aliases (kind=`type`), top-level functions (regular + async + default-export), arrow-fn consts (React components & hooks), first-level methods, constants, imports (multi-line collapsed). Block + line comments stripped before regex passes so `/* function fakeFn */` doesn't false-match. | regex (audit-driven deviation from the §7 default Compiler API — Phase 4 of `methodology-extraction` chose regex for ~5ms/call vs ~200ms+50MB; ~95% precision on prettier/eslint-formatted TS; upgrade path open) | `mcp/noctusai/tools/outline_typescript.py` | `mcp/noctusai/tests/test_outline_typescript.py` (23 cases incl. smoke against `VistaShowcase.tsx` + `useVistaShowcase.ts`) |
+| **`noctus.dev.count_tokens path=… text=… extensions=…`** | `TokenCountResult` — total + per-file `tokens` / `chars` / `words` / `lines`; reports `tokenizer_used` so callers know the precision. Accepts a path, inline text, or recursive walk over a tree (with `extensions=` filter). | tiktoken cascade → `chars/4` fallback | `mcp/noctusai/tools/cost_evaluation.py` | `mcp/noctusai/tests/test_cost_evaluation.py` (15 cases) |
 
 **When to call which.** Outline first when a file is large or unknown; then targeted `Read offset=<line> limit=N` only the symbols you need. Use `count_tokens` to budget reads / measure CLAUDE.md or MEMORY.md drift / size up generated content. The `OutlineResult` shape is **identical** across both outliners — caller code stays parser-agnostic.
 
@@ -126,11 +126,11 @@ python mcp/noctusai/cli.py --count-tokens-ext .py KNOWLEDGE-BASE/   # recursive,
 
 ### Session-axis review (added 2026-05-03 by `session-review-baseline`)
 
-The static-axis review surface (`noctusai_review`) walks repo files. The **session-axis review** sibling walks one Claude Code JSONL transcript and emits keeper-shaped issues for **agent-discipline** rules — the rules in `CLAUDE.md § 1` that `noctusai_review` cannot enforce because they only manifest as patterns of tool calls, not as static code.
+The static-axis review surface (`noctus.dev.review`) walks repo files. The **session-axis review** sibling walks one Claude Code JSONL transcript and emits keeper-shaped issues for **agent-discipline** rules — the rules in `CLAUDE.md § 1` that `noctus.dev.review` cannot enforce because they only manifest as patterns of tool calls, not as static code.
 
 | Tool | What it returns | Backed by | Source | Tests |
 |---|---|---|---|---|
-| **`noctusai_review_session path=… latest=…`** | Body-free issue list. Each issue: `{rule, severity, message, suggestion, jsonl_line, tool_name, target_path}`. Pure-function detector logic over an event stream extracted from one JSONL. Privacy: no user/assistant message bodies ever leave the adapter. | stdlib `json` parser; pure Python detectors | `mcp/noctusai/tools/session_review.py` + adapter at `mcp/noctusai/session_loader.py` | `mcp/noctusai/tests/test_session_review.py` (26 cases) + `tests/test_session_loader.py` (14 cases) |
+| **`noctus.dev.review_session path=… latest=…`** | Body-free issue list. Each issue: `{rule, severity, message, suggestion, jsonl_line, tool_name, target_path}`. Pure-function detector logic over an event stream extracted from one JSONL. Privacy: no user/assistant message bodies ever leave the adapter. | stdlib `json` parser; pure Python detectors | `mcp/noctusai/tools/session_review.py` + adapter at `mcp/noctusai/session_loader.py` | `mcp/noctusai/tests/test_session_review.py` (26 cases) + `tests/test_session_loader.py` (14 cases) |
 
 **Detectors live (Phase 2 + 3):**
 - `ast-first` (WARNING) — `Bash` mutating `sed/awk/perl -i` / `s/.../` body / `> *.py|*.ts|*.tsx` redirect, immediately followed by `Edit/Write` on the same source file. Mutation-marker predicate scopes around the read-only `sed -n '…p'` pattern (Phase 0 calibration found this is the dominant `sed` shape — false-positive rate is 0/5 sessions when the predicate is enforced).

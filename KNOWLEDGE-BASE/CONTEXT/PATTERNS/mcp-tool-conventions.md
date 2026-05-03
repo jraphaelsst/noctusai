@@ -4,8 +4,10 @@
 > `projects/mcp-server-expansion/` Phase 3 (naming + Pydantic) and Phase 6
 > (the principle); `noctusai_lib`-side patterns referenced inline.
 >
-> **Status:** active. Backward-compat aliases coexist with legacy flat
-> names until a separate alias-deprecation project retires them.
+> **Status:** active. Backward-compat flat aliases (`noctusai_<x>`)
+> were retired 2026-05-03 by `projects/mcp-tool-name-deprecation/` —
+> dotted `noctus.dev.<x>` is the sole canonical form. The "Backward-compat
+> aliases" section below is historical reference only.
 
 ---
 
@@ -76,27 +78,22 @@ vendor namespace when the **capability itself** is vendor-specific
 *own* that happen to call out to a vendor under the hood live under
 `noctus.*` — the vendor is an implementation detail.
 
-### Backward-compat aliases
+### Backward-compat aliases (HISTORICAL — retired 2026-05-03)
 
-During Phase 3 of the expansion, every existing `noctusai_<action>`
-keeps working. We add the dotted alias next to it; both names dispatch
-to the same handler:
+> Retired by `projects/mcp-tool-name-deprecation/` on 2026-05-03. The
+> dual-name pattern is no longer in use; every dev tool registers under
+> `noctus.dev.<action>` only. Section preserved for historical context;
+> see git history at commits `dc5de6a` (mcp-server-fastmcp-switch close)
+> and the `mcp-tool-name-deprecation` close commit for the migration.
 
-```python
-# server.py
-_tool("noctusai_validate", "...", model=ValidateInput),
-_tool("noctus.dev.validate", "Dotted alias for noctusai_validate.", model=ValidateInput),
-```
-
-```python
-# _dispatch()
-aliases = {"noctus.dev.validate": "noctusai_validate", ...}
-canonical = aliases.get(name, name)
-handler = dispatch_map.get(canonical)
-```
-
-A separate follow-up project retires the flat names once consumers
-(Claude Code config, CI, agents) have migrated.
+During mcp-server-expansion Phase 3 (originally) every `noctusai_<action>`
+flat tool kept working alongside a newly added dotted `noctus.dev.<action>`
+alias — both names dispatched to the same handler. After the FastMCP
+per-file `register()` switch (Phase 4 of mcp-server-fastmcp-switch),
+adding the dotted alias became a one-line addition per tool file. The
+2026-05-03 retirement removed the flat-name registrations once every
+consumer surface (KB, project docs, CLAUDE.md, templates, tests, READMEs)
+referenced the dotted form.
 
 ---
 
@@ -150,10 +147,9 @@ exposes `register_all(server)` that the FastMCP server calls once at
 startup.
 
 ```python
-# tools/noctus/dev/validate.py (Phase 4 target shape)
+# tools/noctus/dev/validate.py (Phase 4 target shape, post-2026-05-03)
 def register(server):
     server.tool(name="noctus.dev.validate", description=...)(validate)
-    server.tool(name="noctusai_validate", description=...)(validate)  # alias
 ```
 
 This replaces the flat dispatch map at `server.py:282-399`. Phase 4
@@ -251,12 +247,17 @@ is its depth pointer.
 
 ## 8. Coexistence rules
 
-- **Backward-compatible at every phase.** Existing tool names keep
-  working until an explicit deprecation project retires them.
+- **Backward-compatible during expansion phases (historical).** During
+  mcp-server-expansion Phase 3 and the FastMCP switch, flat tool names
+  kept working alongside dotted aliases. The
+  `mcp-tool-name-deprecation` project completed retirement on
+  2026-05-03 — flat `noctusai_<x>` is no longer registered.
 - **Hierarchical registration replaces the flat dispatch map only when
   ≥1 namespace exists.** First namespace candidate: `noctus.dev.*` (the
   existing toolkit). Adding sibling vendor/platform groups
   (`google.*`, `openai.*`, `noctus.business.*`) drives the payoff.
-- **No tool deprecation in Phase 3.** Renames + dotted aliases yes;
-  deletions no. A separate follow-up project handles deprecation
-  timing.
+- **Future renames stage through dotted aliases.** Any future rename
+  follows the same protocol the 2026-05-03 retirement codified: add
+  the new name as a dual registration, migrate every consumer surface,
+  then delete the old registration. No "rename + retire in one commit"
+  for in-use names.

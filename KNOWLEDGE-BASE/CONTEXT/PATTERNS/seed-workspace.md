@@ -168,12 +168,12 @@ The classification of which tools should adopt workspace-aware roots vs stay noc
 
 | Tool | Should resolve via | Reason |
 |---|---|---|
-| `noctusai_status`, `noctusai_file_proposal`, `noctusai_scaffold_product`, `noctusai_promote_from_seed_workspace`, `noctusai_list_promotions` | `get_workspace_root()` | Workspace-local — operate on cwd's projects/products |
-| `noctusai_catalog`, `noctusai_kb_sync`, `noctusai_lgpd_*`, `noctusai_three_way_sync`, `noctusai_ai_*` | unchanged (file-relative noc root) | Noc-shared — operate on noc's authoritative resources regardless of where the MCP was invoked |
+| `noctus.dev.status`, `noctus.dev.file_proposal`, `noctus.dev.scaffold_product`, `noctus.dev.promote_from_seed_workspace`, `noctus.dev.list_promotions` | `get_workspace_root()` | Workspace-local — operate on cwd's projects/products |
+| `noctus.dev.catalog`, `noctusai_kb_sync`, `noctusai_lgpd_*`, `noctusai_three_way_sync`, `noctusai_ai_*` | unchanged (file-relative noc root) | Noc-shared — operate on noc's authoritative resources regardless of where the MCP was invoked |
 
 Per-workspace MCP state (proposals registry, scan caches, status snapshots) lives under `<workspace>/.noctusai-state/` — never in noc.
 
-**Integration status (as of 2026-05-03):** the `workspace.py` utility ships ready-to-use; integration into the workspace-local tools listed above (`status.py`, `proposals.py`, `scaffold.py` + `server.py` registration of the promotion tools) is **deferred to the parallel `mcp-server-expansion` project's Phase 4** (which restructures every tool file under `tools/noctus/dev/<service>/<action>.py` and replaces the flat dispatch map). When that restructure lands, each workspace-local tool gets a one-line `from workspace import get_workspace_root` + `REPO_ROOT = get_workspace_root()` swap. Until then, the MCP from a template cwd reports noc's projects/products (back-compat fallback). The `noctusai_promote_from_seed_workspace` + `noctusai_list_promotions` tools live in `mcp/noctusai/tools/promotion.py` and are import-callable today from any Python entrypoint; their MCP server registration also lands in `mcp-server-expansion` Phase 4 alongside the dotted `noctus.dev.promote_from_seed_workspace` alias.
+**Integration status (as of 2026-05-03):** the `workspace.py` utility ships ready-to-use; integration into the workspace-local tools listed above (`status.py`, `proposals.py`, `scaffold.py` + `server.py` registration of the promotion tools) is **deferred to the parallel `mcp-server-expansion` project's Phase 4** (which restructures every tool file under `tools/noctus/dev/<service>/<action>.py` and replaces the flat dispatch map). When that restructure lands, each workspace-local tool gets a one-line `from workspace import get_workspace_root` + `REPO_ROOT = get_workspace_root()` swap. Until then, the MCP from a template cwd reports noc's projects/products (back-compat fallback). The `noctus.dev.promote_from_seed_workspace` + `noctus.dev.list_promotions` tools live in `mcp/noctusai/tools/promotion.py` and are import-callable today from any Python entrypoint; their MCP server registration also lands in `mcp-server-expansion` Phase 4 alongside the dotted `noctus.dev.promote_from_seed_workspace` alias.
 
 ---
 
@@ -209,14 +209,14 @@ What bootstrap does (in order):
 
 ```bash
 # In a seed workspace, after building an addition + creating its .promotions/ entry:
-python -m mcp.noctusai.cli noctusai_list_promotions
+python -m mcp.noctusai.cli noctus.dev.list_promotions
 # → reports pending vs promoted
 
-python -m mcp.noctusai.cli noctusai_promote_from_seed_workspace \
+python -m mcp.noctusai.cli noctus.dev.promote_from_seed_workspace \
        --slug=<addition-slug> --dry-run
 # → prints the plan: origin, destination, would-copy paths
 
-python -m mcp.noctusai.cli noctusai_promote_from_seed_workspace \
+python -m mcp.noctusai.cli noctus.dev.promote_from_seed_workspace \
        --slug=<addition-slug>
 # → copies into noc; rewrites manifest's promoted_on to today
 ```

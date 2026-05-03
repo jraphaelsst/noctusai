@@ -61,7 +61,7 @@ If any answer is "I don't know" or "it depends", that's the moment to **flag it*
 
 ---
 
-## 5. The `noctusai_lgpd_flag` tool
+## 5. The `noctus.dev.lgpd_flag` tool
 
 When developing a feature that touches personal data and you're unsure whether an approach meets LGPD, **flag it**. The flag is a record, not a block — the code still ships. A future review picks up the flag as a checklist item before the feature can call itself "done".
 
@@ -74,7 +74,7 @@ python mcp/noctusai/cli.py --lgpd-flag \
     --mitigation "Redact patient-identifiable tokens before the LLM call; drop the request-body log."
 
 # MCP tool
-noctusai_lgpd_flag(
+noctus.dev.lgpd_flag(
     code_path="...",
     concern="...",
     reason="...",
@@ -98,7 +98,7 @@ The file is a rolling log. Items are checkboxes (`- [ ]`). They get ticked when 
 
 ## 6. When to flag (non-exhaustive)
 
-Call `noctusai_lgpd_flag` whenever you:
+Call `noctus.dev.lgpd_flag` whenever you:
 
 - Add a new table column that holds personal data (flag with the column's retention question).
 - Send data to a 3rd-party API (OpenAI, Anthropic, Gemini, Resend, WAHA, Clickhouse, Sentry, …) — flag the destination + the data shape.

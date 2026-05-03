@@ -22,7 +22,7 @@
 
 ### Improvements — the per-project retrospective
 
-- **Lives in:** the project file itself (`**Improvements:**` blocks inside each phase) → aggregated into `improvements.md` next to the project file by `noctusai_improvements`.
+- **Lives in:** the project file itself (`**Improvements:**` blocks inside each phase) → aggregated into `improvements.md` next to the project file by `noctus.dev.improvements`.
 - **Scope:** one project. Retained for the life of the project document.
 - **Shape:** free-form bullets, written fast, in the voice of the agent who just built the step.
 - **Purpose:** narrative. What *implementing this phase* taught us — friction, refactor candidates, edge cases the project didn't anticipate, shortcuts accepted.
@@ -65,7 +65,7 @@ When every sub-task in the phase is ticked **and before** the phase header flips
 1. **Reads the entire `**Improvements:**` block** accumulated during the phase.
 2. **Considers the whole project context** — not just this phase: how do these improvements interact with each other? What other phases do they touch? Is there a project-level insight that emerged from assembling the phase?
 3. **Authors ONE phase proposal** from `templates/PROPOSAL-TEMPLATE.md`, bundling the improvements as independently-executable items inside.
-4. **Files via `noctusai_file_proposal(project="<project-slug>", ...)`** — the `project` argument puts the proposal in `projects/<project-slug>/proposals/`.
+4. **Files via `noctus.dev.file_proposal(project="<project-slug>", ...)`** — the `project` argument puts the proposal in `projects/<project-slug>/proposals/`.
 
 **Not one proposal per improvement — ONE bundled proposal for the phase.** Each improvement within the bundle retains individual execution (the reviewer schedules them separately) but the proposal itself is a single coherent context-transfer vehicle.
 
@@ -107,11 +107,11 @@ The heavy structural work lives in the template. The authoring agent's job is to
 
 ## 4. Non-project proposal origins
 
-Not every proposal comes from a project phase. Keeper (`noctusai_review`) files proposals for compliance-detector findings. `noctusai_lgpd_flag` records LGPD concerns that sometimes escalate to proposals. The pattern works the same: structured template, context-rich, triageable. The `Origin:` field distinguishes:
+Not every proposal comes from a project phase. Keeper (`noctus.dev.review`) files proposals for compliance-detector findings. `noctus.dev.lgpd_flag` records LGPD concerns that sometimes escalate to proposals. The pattern works the same: structured template, context-rich, triageable. The `Origin:` field distinguishes:
 
 - `project:<slug>:phase-<N>` → `projects/<slug>/proposals/` **or** `products/<product>/projects/<slug>/proposals/` — the MCP tool resolves the slug to whichever location holds the project folder (see `project-execution.md §1`). Authors pass only the slug; the tool picks the path.
-- `keeper:noctusai_validate:<product>` → `products/<product>/proposals/` (product-scoped)
-- `lgpd:noctusai_lgpd_flag:<label>` → `products/<product>/proposals/` (product-scoped) or a dedicated origin folder when the volume grows
+- `keeper:noctus.dev.validate:<product>` → `products/<product>/proposals/` (product-scoped)
+- `lgpd:noctus.dev.lgpd_flag:<label>` → `products/<product>/proposals/` (product-scoped) or a dedicated origin folder when the volume grows
 
 Keeper proposals remain **one-per-issue** (different aggregation rule from projects), because each compliance finding is an independent problem the detector surfaced separately.
 
@@ -154,7 +154,7 @@ Mechanics (mandatory):
 
 **Per user directive 2026-05-02:** *"please implement improvements found then go on with the next phase. Also update our methodology with this new 'auto-improvement' method. just tell me they were implemented, no need to ask so we gain time."*
 
-This **amends** §2 / §4b. The previous protocol required filing a `noctusai_file_proposal` artifact at every phase close, then applying inline, then deleting the file. The new default is tighter: **for routine in-scope improvements the agent applies them immediately at phase close — no proposal file is created at all, no user prompt is issued.**
+This **amends** §2 / §4b. The previous protocol required filing a `noctus.dev.file_proposal` artifact at every phase close, then applying inline, then deleting the file. The new default is tighter: **for routine in-scope improvements the agent applies them immediately at phase close — no proposal file is created at all, no user prompt is issued.**
 
 When the auto-improvement path applies (default for most phase closes):
 
@@ -166,7 +166,7 @@ When the auto-improvement path applies (default for most phase closes):
 4. Add the §11 Change-Log entry capturing what was applied / what was deferred.
 5. Continue to the next phase **without prompting the user**.
 
-When to **still** file a formal `noctusai_file_proposal` artifact:
+When to **still** file a formal `noctus.dev.file_proposal` artifact:
 
 - Items that are out-of-scope for the current phase AND need scheduling (not just a follow-up project).
 - Items that need explicit reviewer / human approval before applying (e.g. cross-team, security-sensitive, public-API-breaking).
@@ -226,12 +226,12 @@ During phase execution:
   read all improvement bullets
   consider whole-project context
   fill templates/PROPOSAL-TEMPLATE.md — ONE bundled phase proposal
-  file via noctusai_file_proposal(project="<slug>", ...)
+  file via noctus.dev.file_proposal(project="<slug>", ...)
      → lands in projects/<slug>/proposals/  OR
                 products/<product>/projects/<slug>/proposals/
      (the MCP tool picks whichever folder contains the project — pass just the slug)
   phase header flips to ✅
-  noctusai_improvements regenerates improvements.md (retrospective)
+  noctus.dev.improvements regenerates improvements.md (retrospective)
   change-log entry added
   pause for user
 ```
