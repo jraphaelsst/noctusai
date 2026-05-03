@@ -39,7 +39,7 @@ If the project is scoped to a single product, move it under that product. If it 
 
 ## Current root-level projects (snapshot 2026-05-03)
 
-> Recently closed + deleted (2026-05-03): `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1 close; Phases 2-5 deferred per §7 Q6 reactivation triggers — see git history for the original PROJECT.md), `scheduling-engine-seed` (lib landed at `noctusai_lib.domain.scheduling`; KB doc at `KB § PATTERNS/scheduling-seed.md`; therapy-scheduling-pilot scaffolded as second-consumer follow-up), `mcp-server-fastmcp-switch` (Phase 4 vendor ports + Phase 5 verification — commits `dc5de6a` + `cf87f1d`; carry-forward of `mcp-server-expansion` Phase 4+5 now satisfied). Carry-forward projects remaining: `whatsapp-seed-absorption` Phase 5 (llm-tool-call-audit Phase 4). Folder removed in working tree pending commit: `repo-state-consolidation` (deletions staged 2026-05-03).
+> Recently closed + deleted (2026-05-03): `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1 close; Phases 2-5 deferred per §7 Q6 reactivation triggers — see git history for the original PROJECT.md), `scheduling-engine-seed` (lib landed at `noctusai_lib.domain.scheduling`; KB doc at `KB § PATTERNS/scheduling-seed.md`; therapy-scheduling-pilot scaffolded as second-consumer follow-up), `mcp-server-fastmcp-switch` (Phase 4 vendor ports + Phase 5 verification — commits `dc5de6a` + `cf87f1d`; carry-forward of `mcp-server-expansion` Phase 4+5 now satisfied), `mcp-tool-name-deprecation` (single-session ram-through closing all 3 phases — 53 dotted dev tools, 0 flat `noctusai_<x>` remain, 261 consumer references migrated; commits `2d2ec68` + `a7a2d03` + `46baf38`; KB convention doc at `KB § PATTERNS/mcp-tool-conventions.md` Backward-compat aliases section marked HISTORICAL retired 2026-05-03). Carry-forward projects remaining: `whatsapp-seed-absorption` Phase 5 (llm-tool-call-audit Phase 4). Folder removed in working tree pending commit: `repo-state-consolidation` (deletions staged 2026-05-03).
 
 ### ⏳ Active in-flight (work underway; next step well-defined)
 
@@ -56,7 +56,6 @@ If the project is scoped to a single product, move it under that product. If it 
 | `whatsapp-seed-absorption` | WhatsApp framework absorption + idempotency-keys | none — Phase 0 ready |
 | `imobi-scheduling-bot-creation` | Imobi scheduling bot creation | downstream of `scheduling-engine-seed` + `whatsapp-seed-absorption` |
 | `session-review-baseline` | Session-axis review (JSONL transcript detector) | filed-only per user directive; awaits explicit reactivation |
-| `mcp-tool-name-deprecation` | Alias retirement after dotted-naming bedded | **unblocked 2026-05-03** — `mcp-server-fastmcp-switch` Phase 5 closed; Phase 0 audit ✅; Phase 1 (consumer-class migration) ready |
 | `send-message-consolidation` | N=2 `send_message` collision (ERP + therapy WhatsApp) → seed-lib `send_text` consolidation | blocked on `whatsapp-seed-absorption` Phase 1 (lib must exist) |
 | `products-wiring-rollout` | Cross-product wiring sweep coordinator (PF + ERP in **parallel batches**; therapy = input/pilot) | scaffolded 2026-05-03 + restructured same day to parallel-batch model (`KB § PATTERNS/master-tree-parallel-batches.md`); §7 closed; B0 dispatch in flight |
 
