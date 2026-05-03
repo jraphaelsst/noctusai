@@ -309,6 +309,36 @@ User direction (established 2026-05-03 in the absorption-evaluation session): *"
 
 ---
 
+## Flag MCP-first / AST-first opportunities proactively
+
+Both default-surface rules above (`MCP-first`, `AST-first`) describe what to do when the surface is the **target** of your work. This rule fires when the surface is a **bystander** — you spot a missed opportunity *while doing something else* and the temptation is to silently move on.
+
+User direction (established 2026-05-03 during the FastMCP-switch session): *"add to claude.md a point for specifically flagging mcp-first opportunities, as well as possible ast-first also … we actively search for improvements ops for our projects, why wouldn't we do the same for the great connector and tooler we have?"*
+
+**Why this is its own rule (not a footnote on the others):** the existing project-execution methodology already encodes active opportunity-spotting (`KB § PATTERNS/project-execution.md § Active robustness review during execution` — eyes open while editing, capture in the live `**Improvements:**` block). The platform's two default surfaces — MCP for agent-exposable capabilities, AST for code edits — deserve the same active lens. Without an explicit rule, "I'll just write a quick helper" / "I'll just sed-edit the file" wins by default and the surface erodes one shortcut at a time.
+
+**The rule:**
+
+- **While working anywhere in the codebase, scan for two opportunity classes:**
+  1. *MCP-first* — a capability you're authoring that has (or will plausibly have) a second consumer, but is being written as a private helper / per-product service.
+  2. *AST-first* — a code edit you're about to do (or about to recommend) via regex / sed / find-replace where libcst / ts-morph would be safer.
+- **When you spot one, surface it.** Two valid responses:
+  1. **Apply now** — when the work is in scope and the cost is low (e.g., wrap the helper in `register(server)` instead of leaving it inline; reach for libcst instead of sed).
+  2. **Defer with destination** — log the opportunity in the active project's `**Improvements:**` block, the accept-with-rationale catalog (if recurring), or as a follow-up project. Silent skipping is forbidden — it's the same anti-pattern as "absence of findings is a claim" (`§ No silent errors`).
+- **The trigger is opportunity, not certainty.** If you're not sure whether the second consumer exists, surface the question; don't treat "I don't know" as a reason to proceed without flagging.
+
+**Anti-patterns:**
+
+- *"I'll add this MCP tool later."* — there is no later; either apply now or log the deferral with a destination.
+- *"It's just one sed call, the regex is safe."* — same trap as "the regex matches only one place" (§ AST-first); flag it and reach for libcst, or document the regex carve-out in the improvements block.
+- *"This helper is only for product X."* — fine until product Y needs it. The MCP-first boundary rule fires on plausible second consumers, not certain ones; flag the candidate so the recurrence rule can act when N=2 lands.
+
+**Companion to** Active robustness review during execution (same active-search behavior, applied to a different opportunity class), No silent errors (silent skipping is the same shape of slip), the recurrence rule (flagged candidates feed N=2 triage and N=3 formalization).
+
+**Operational reference:** `KB § PATTERNS/mcp-tool-conventions.md § 0. The MCP server is a living organism` + `KB § PATTERNS/ast.md`.
+
+---
+
 ## Projects are living documents — and planners interrogate before designing
 
 Two halves of the same rule. Every `*-PROJECT.md` is a guideline that evolves with execution, and every revision begins with questions to the user — not assumptions.

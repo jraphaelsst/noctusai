@@ -9,6 +9,52 @@
 
 ---
 
+## 0. The MCP server is a living organism
+
+Like a project, the MCP server **evolves over phases** — it doesn't ship in
+one batch and stop growing. The 24-tool dev branch (`noctus.dev.*`) was the
+first branch; vendor adapters (`google.*`, `openai.*`, `vista.*`),
+business-logic primitives (`noctus.business.*`), and future umbrellas are
+subsequent branches that land as the substrate matures.
+
+User direction (established 2026-05-03 during the FastMCP-switch session):
+*"the mcp server is also a living organism that grows and evolves over time
+… we got devtools, but why not expand for other utilities as well?"* — and,
+on opportunity-spotting: *"we actively search for improvements ops for our
+projects, why wouldn't we do the same for the great connector and tooler we
+have?"*
+
+**Implications for future agents:**
+
+- **Assume growth.** Treat new umbrellas as welcome (not a violation) when
+  they earn their place — a second consumer + a substrate that exists
+  (in `noctusai_lib` or vendor SDK).
+- **Apply the same active-improvement lens** the project workflow uses
+  (`KB § 01-PHILOSOPHY.md § Flag MCP-first / AST-first opportunities`):
+  while working anywhere in the codebase, if you see a missed branch /
+  missed exposure, surface it in the work output's improvements block —
+  don't silently move on.
+- **Branches over sprawl.** New tools follow the existing `<umbrella>.<service>.<action>`
+  contract (§1) — growth doesn't mean ad-hoc additions; it means new
+  branches that share the trunk's design discipline.
+
+**How to spot a missing branch:**
+
+- A capability used by 2+ products with no shared abstraction →
+  candidate for `noctus.business.*` (or formalize into `noctusai_lib`
+  first, then expose).
+- A vendor SDK called from products with bespoke wiring → candidate
+  for vendor umbrella (`google.*`, `openai.*`, `vista.*`).
+- A pattern that **agents** (Claude Code, future bots) would benefit
+  from — even before products use it — → candidate for new dev sub-branch
+  under `noctus.dev.*` or its own dev sibling.
+
+The dev branch is **one face of a wide-purpose toolkit, not the entire
+identity**. Future projects scoped against this server should plan in
+that frame — phases, branches, growth — not as one-off tool dumps.
+
+---
+
 ## 1. Naming — three dotted segments
 
 `<umbrella>.<service>.<action>` — three segments, no exceptions.
