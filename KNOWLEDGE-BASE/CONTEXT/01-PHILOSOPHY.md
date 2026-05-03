@@ -254,6 +254,61 @@ All Python imports go at the top of the file (module scope). Never defer imports
 
 ---
 
+## AST-first — never regex code edits
+
+Every code change goes through an **AST tool** — `libcst` for Python (parse → modify → render with formatting preserved), `ts-morph` for TypeScript, `tree-sitter` for cross-language analysis. **Regex / sed is for prose, search, and log inspection only — never for editing code.**
+
+User direction (absorbed into NoctusAI on 2026-05-03 from the methodology lab): *"Any code change goes through an AST tool (libcst / ts-morph / tree-sitter); regex/sed only for prose, search, log inspection."*
+
+**Why:** regex-driven code edits silently corrupt code. The same substring inside a string literal, a comment, a docstring, or an unrelated identifier gets rewritten alongside the target; multi-line constructs break under one-line patterns; whitespace and trailing-comma variants slip through. AST tools parse the structure, so every edit is scope-aware: rename-in-scope only renames the binding, find-callers only catches the callers, codemods preserve formatting.
+
+**The rule:**
+
+- **Code edits → AST tool.** `libcst` for `.py`; `ts-morph` for `.ts` / `.tsx` / `.js` / `.jsx`. Repo-level codemods live in `scripts/codemods/` or as MCP tools.
+- **Markdown / config / log inspection → regex / sed / grep is fine.** Prose has no syntactic structure to violate.
+- **Search-only → regex is the right tool.** `grep` / `rg` for finding occurrences. The discipline kicks in when you EDIT.
+- **One-shot text replacement in a single non-code file** — fine.
+
+**Boundary rule:** *if the file you're editing is parsed by a compiler / interpreter / type-checker, use the AST tool. If it's parsed by humans only, regex is fine.*
+
+**Anti-patterns:**
+
+- *"It's just a quick rename, I'll use sed."* — sed will rename the matching strings in comments / docstrings / unrelated identifiers. Use a libcst `RenameInScope` codemod.
+- *"The regex matches only one place — I checked."* — *now*. The next agent rerunning the same regex on a refactored tree will hit a different set of matches.
+- *"Hand-edit + find-and-replace in the editor for a multi-file change."* — same trap as sed; just slower. The editor's "find in scope" is only language-aware when it's running an LSP — and LSP renaming IS an AST operation, just exposed differently.
+
+**Companion to** the seed-first rule (every code edit in this repo runs against framework code that products import — a regex slip-up cascades) and no-quick-fixes (a sed-driven "fix" that hits the wrong substring is the textbook quick-fix that creates future work).
+
+**Toolchain reference + concrete recipes** (rename-in-scope, find-callers, find-pattern, apply-codemod): `PATTERNS/ast.md`.
+
+The MCP toolkit at `mcp/noctusai/` already ships AST-based tools (`outline_python.py`, `outline_typescript.py`); future repo-wide rename / codemod tools land via `projects/mcp-server-expansion/`.
+
+---
+
+## MCP-first — agent-exposable capabilities default to MCP
+
+When you want to expose a capability to **agents** (Claude Code, future Claude Desktop / VS Code MCP hosts, future bots, future product agents), the **default surface is the MCP server at `mcp/noctusai/`**. Dev tooling, business-logic primitives, vendor adapters all converge there as one growing wide-purpose toolkit. The 24-tool dev toolkit is **one branch among many**, not the whole identity.
+
+User direction (established 2026-05-03 in the absorption-evaluation session): *"the idea is for us to really evolve our mcp server. I'm talking about literally growing it, the dev toolkit should be a branch of it, we should bring the other mcp inside so we have a broader and even better wide-purpose toolkit, for more tools rather than only deving."* Explicitly parallel to AST-first: *"we are doing the ast-first, so it makes sense to also adopt the mcp-first mentality and expand it for a broader use."*
+
+**Why:** both rules establish a default surface for a class of work — AST for code edits, MCP for agent-exposable capabilities — so we stop re-deriving the answer per task. When the surface is consistent, the tooling around it (testing, observability, naming, registration) compounds.
+
+**The rule:**
+
+- **Agent-exposable capability → MCP tool first.** Scheduling helpers, calendar / maps lookups, message senders, codebase / log search, schema queries, audit-row writers, business-logic primitives all land as `mcp/noctusai/tools/<umbrella>/<service>/<action>.py`.
+- **Naming convention.** 3-segment dotted (`<umbrella>.<service>.<action>`) per `projects/mcp-server-expansion/` Phase 3.
+- **Pattern shape.** Pydantic in/out schemas with `Field(description=...)` for self-documenting MCP introspection. Hierarchical registration (umbrella → service → leaf, each `register(server)`). Lazy dependency container at `mcp/noctusai/context.py` for business-logic tools that need DB / adapters / clients.
+- **Composition belongs to the consumer.** MCP tools are primitives; bot orchestrations / pipelines compose them. Don't bake bot-specific orchestration into the MCP itself.
+- **Existing dev tools stay.** The 24 `noctusai_*` dev tools at `mcp/noctusai/tools/*.py` are the first branch (`platform.dev.*`); they migrate to dotted naming + Pydantic schemas opportunistically per the broaden project's phased plan.
+
+**Boundary rule (MCP vs in-process import):** if a capability has only one consumer and that consumer always co-locates with it, a plain Python function is fine. The MCP-first rule fires when there's a plausible second consumer (another agent, another product, Claude Code) — that's when MCP becomes the default. Promotion is cheap (wrap an existing function with `register(server)`); demotion is rare.
+
+**Companion to** AST-first (both establish a default surface for a class of work) and Seed-first (the MCP becomes the platform's agent-exposable surface, just as `seed/` is the platform's framework surface).
+
+**Operational reference (forthcoming):** `KB § PATTERNS/mcp-tool-conventions.md` lands via `projects/mcp-server-expansion/` Phase 6.
+
+---
+
 ## Projects are living documents — and planners interrogate before designing
 
 Two halves of the same rule. Every `*-PROJECT.md` is a guideline that evolves with execution, and every revision begins with questions to the user — not assumptions.

@@ -37,7 +37,8 @@ KNOWLEDGE-BASE/
 │   │   ├── seed-lib-layout.md ← 6-layer model + decision tree
 │   │   ├── agent-reading-discipline.md ← narrow-read first; Explore delegation (forthcoming)
 │   │   ├── webhook-signatures.md ← four shapes (Hub-Signature / hex HMAC / Svix / Stripe SDK); helpers in noctusai_lib.security.webhook_signatures
-│   │   └── accept-with-rationale.md ← pattern definition + durable catalog of every active accept-with-rationale on the platform
+│   │   ├── accept-with-rationale.md ← pattern definition + durable catalog of every active accept-with-rationale on the platform
+│   │   └── ast.md                  ← AST-first toolchain (libcst / ts-morph / tree-sitter) + recipes + anti-patterns + boundary rule
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
 │   │   ├── new-product.md
@@ -100,6 +101,7 @@ KNOWLEDGE-BASE/
 | Agent reading & research discipline (narrow-read first; Explore delegation rule forthcoming) | `CONTEXT/PATTERNS/agent-reading-discipline.md` |
 | Webhook signature verification (the four shapes: Hub-Signature / hex HMAC / Svix / Stripe SDK; constant-time compare; helper module in `noctusai_lib.security.webhook_signatures`) | `CONTEXT/PATTERNS/webhook-signatures.md` |
 | Accept-with-rationale catalog (durable home for every legitimate divergence on the platform — survives project folder deletion; how to add / retire entries) | `CONTEXT/PATTERNS/accept-with-rationale.md` |
+| AST-driven code edits (libcst for Python / ts-morph for TypeScript / tree-sitter cross-language; recipes for rename / find-callers / codemods; anti-patterns; boundary rule) | `CONTEXT/PATTERNS/ast.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
@@ -142,6 +144,8 @@ KNOWLEDGE-BASE/
 | Working on env / deployment | `CONTEXT/PATTERNS/environment.md` + `CONTEXT/05-INFRASTRUCTURE.md` |
 | Touching UI with performance data / gamification | `CONTEXT/07-GAMIFICATION.md` |
 | Reading a large/unfamiliar file (default — narrow-read first) | `CONTEXT/PATTERNS/agent-reading-discipline.md § Narrow-read first` |
+| About to edit `.py` / `.ts` / `.tsx` source — rename, codemod, find-callers, anything beyond a 1-line targeted edit | `CONTEXT/PATTERNS/ast.md` (AST-first; never sed/regex on source) |
+| Adding any helper or function an agent might want to call (Claude Code / future bot / future product agent) | `CONTEXT/01-PHILOSOPHY.md § MCP-first` (default surface is `mcp/noctusai/`) |
 | Designing a new agent / skill / MCP | `INSTRUCTIONS/00-MASTER.md` |
 
 ---
