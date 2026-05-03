@@ -6,7 +6,7 @@ never exposed to the client.
 import logging
 from typing import Literal, Optional
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action, first_or_none
 from app.responses import success_response, ok_response
 
@@ -25,8 +25,12 @@ class ProfileUpdate(BaseModel):
     nome: Optional[str] = None
     telefone: Optional[str] = None
     cargo: Optional[str] = None
-    avatar_url: Optional[str] = None
+    # Live DB column is `avatar` (verified 2026-05-03). The Pydantic field name
+    # accepts the live name; frontend may submit either via the alias.
+    avatar: Optional[str] = Field(default=None, alias="avatar_url")
     tema: Optional[Literal["light", "dark"]] = None
+
+    model_config = {"populate_by_name": True}
 
 
 @router.get("")

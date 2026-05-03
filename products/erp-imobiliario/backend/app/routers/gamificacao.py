@@ -71,7 +71,7 @@ async def leaderboard(
     # Enrich with profile names
     if ranking:
         user_ids = [r["user_id"] for r in ranking]
-        profiles_result = db.table("profiles").select("id, nome, avatar_url").in_(
+        profiles_result = db.table("profiles").select("id, nome, avatar").in_(
             "id", user_ids
         ).execute()
         profiles_map = {p["id"]: p for p in (profiles_result.data or [])}
@@ -79,7 +79,10 @@ async def leaderboard(
         for entry in ranking:
             profile = profiles_map.get(entry["user_id"], {})
             entry["nome"] = profile.get("nome", "Usuário")
-            entry["avatar_url"] = profile.get("avatar_url")
+            # Frontend reads `avatar_url`; live DB stores the column as `avatar`.
+            # Keep the response key stable so the leaderboard UI doesn't break
+            # while the broader rename happens in a follow-up project.
+            entry["avatar_url"] = profile.get("avatar")
 
     return success_response(ranking)
 
