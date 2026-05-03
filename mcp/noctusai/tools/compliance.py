@@ -2033,6 +2033,95 @@ class ValidateOutput(BaseModel):
     issues: list[ValidateIssue] = Field(default_factory=list)
 
 
+def check_section_7_placeholder_consistency(repo_root: Path | None = None) -> list[dict]:
+    """Detect PROJECT.md files where §7 says "all answered" but §2 still
+    carries the unfilled `_Interrogate ..._` template placeholder.
+
+    The bug shape this catches: a child PROJECT.md is scaffolded from
+    `templates/PROJECT-TEMPLATE.md` and §7 gets filled with the template's
+    default `See §2 — all answered at interrogation time.` line BEFORE
+    §2 is actually filled. §7 then misleads future agents into thinking
+    the §7 questions were answered, when in fact §2 is still empty.
+
+    Surfaced 2026-05-03 by `projects/side-projects-batch/` Phase 0 audit:
+    three Tier-1 children carried this exact mismatch (N=3 → triage; N≥4
+    → MUST formalize). This detector formalizes the check.
+
+    The fired rule:
+      - §7 contains "See §2 — all answered" or "answered at interrogation time"
+      - AND §2 still contains "_Interrogate the user before filling"
+        (or similar template-default placeholder pattern)
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    answered_marker_re = re.compile(
+        r"answered at interrogation time|See \xa7?2\s*[—-]\s*all answered",
+        re.IGNORECASE,
+    )
+    placeholder_re = re.compile(
+        r"_Interrogate the user before filling|"
+        r"_TBD after interrogation_|"
+        r"_\(filled at Phase 0 interrogation\)_",
+        re.IGNORECASE,
+    )
+    section_2_re = re.compile(
+        r"^## 2\..*?(?=^## 3\.)",
+        re.MULTILINE | re.DOTALL,
+    )
+    section_7_re = re.compile(
+        r"^## 7\..*?(?=^## 8\.)",
+        re.MULTILINE | re.DOTALL,
+    )
+
+    for project_md in _find_all_project_md(root):
+        try:
+            content = project_md.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.warning(
+                "compliance: cannot read PROJECT.md %s (%s), skipping",
+                project_md, exc,
+            )
+            continue
+
+        s2 = section_2_re.search(content)
+        s7 = section_7_re.search(content)
+        if not s2 or not s7:
+            continue
+
+        s7_says_answered = bool(answered_marker_re.search(s7.group(0)))
+        s2_still_placeholder = bool(placeholder_re.search(s2.group(0)))
+
+        if s7_says_answered and s2_still_placeholder:
+            try:
+                relative = str(project_md.relative_to(root))
+            except ValueError:
+                relative = str(project_md)
+            product_label = "<projects>"
+            if relative.startswith("products/"):
+                product_label = relative.split("/", 2)[1]
+            elif relative.startswith("core/"):
+                product_label = "core"
+            issues.append({
+                "product": product_label,
+                "file": relative,
+                "issue": (
+                    f"`{relative}` §7 claims questions are 'answered at "
+                    f"interrogation time' but §2 still carries the "
+                    f"`_Interrogate the user before filling_` template "
+                    f"placeholder. Either fill §2 with the actual answers "
+                    f"or restore §7 to the unanswered shape (list the "
+                    f"questions explicitly with recommendations). "
+                    f"Misleading template-fill artifact — future agents "
+                    f"will read §7 as resolved when it isn't."
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
 def check_all_products() -> tuple[int, list]:
     """Run all compliance checks on all products. Returns (score, issues)."""
     all_issues = []
@@ -2063,6 +2152,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_no_self_monkeypatch())
     all_issues.extend(check_silent_errors())
     all_issues.extend(check_clean_folder_violations())
+    all_issues.extend(check_section_7_placeholder_consistency())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

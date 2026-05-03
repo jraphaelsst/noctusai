@@ -15,6 +15,7 @@ from tools.compliance import (
     check_silent_errors,
     check_clean_folder_violations,
     check_detector_has_regression_test,
+    check_section_7_placeholder_consistency,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -866,6 +867,91 @@ class TestCheckCleanFolderViolations:
         )
         issues = check_clean_folder_violations(repo)
         assert issues == []
+
+
+# ---------------------------------------------------------------------------
+# `check_section_7_placeholder_consistency` — flags PROJECT.md files where
+# §7 claims questions are answered but §2 still carries the unfilled
+# `_Interrogate the user before filling_` template placeholder.
+# ---------------------------------------------------------------------------
+
+
+class TestCheckSection7PlaceholderConsistency:
+    """Surfaced 2026-05-03 from `projects/side-projects-batch/` Phase 0
+    audit — three Tier-1 children carried §7 "all answered" while §2 was
+    still a placeholder. Detector formalizes the check."""
+
+    def _mk_project(self, section_2: str, section_7: str, slug: str = "p1") -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="s7_placeholder_test_"))
+        (tmp / "projects" / slug).mkdir(parents=True)
+        body = (
+            f"# Project\n\n- **Status:** ⏳\n\n"
+            f"## 1. Context\n\nfoo\n\n---\n\n"
+            f"## 2. Confirmed constraints\n\n{section_2}\n\n---\n\n"
+            f"## 3. Design\n\nfoo\n\n---\n\n"
+            f"## 6. Phases\n\nphase\n\n---\n\n"
+            f"## 7. Open questions\n\n{section_7}\n\n---\n\n"
+            f"## 8. Deps\n\nx\n\n---\n\n"
+            f"## 11. Change log\n\n| Date | x | y |\n"
+        )
+        (tmp / "projects" / slug / "PROJECT.md").write_text(body)
+        return tmp
+
+    def test_flags_when_s7_answered_but_s2_placeholder(self):
+        repo = self._mk_project(
+            section_2="_Interrogate the user before filling. Candidate questions:_\n- one\n- two",
+            section_7="See §2 — all answered at interrogation time.",
+        )
+        issues = check_section_7_placeholder_consistency(repo)
+        assert len(issues) == 1
+        assert "answered" in issues[0]["issue"].lower()
+        assert issues[0]["severity"] == "high"
+
+    def test_does_not_flag_when_both_filled(self):
+        repo = self._mk_project(
+            section_2=(
+                "- **Cadence** — daily, configurable. *(Q3 answered.)*\n"
+                "- **Scope** — recording-only v1."
+            ),
+            section_7=(
+                "All §7 questions resolved 2026-05-03. See §2 for answers."
+            ),
+        )
+        issues = check_section_7_placeholder_consistency(repo)
+        assert issues == []
+
+    def test_does_not_flag_when_both_placeholders(self):
+        """Both unfilled is consistent — the project hasn't been
+        interrogated yet, and §7 carries the open-questions list."""
+        repo = self._mk_project(
+            section_2="_Interrogate the user before filling._",
+            section_7=(
+                "1. **Q1** — first question. *Recommendation:* foo.\n"
+                "2. **Q2** — second question. *Recommendation:* bar."
+            ),
+        )
+        issues = check_section_7_placeholder_consistency(repo)
+        assert issues == []
+
+    def test_flags_alternate_placeholder_phrasings(self):
+        """The detector recognizes multiple template-default phrasings
+        for both §7 ("answered at interrogation time") and §2
+        ("_TBD after interrogation_", "(filled at Phase 0 interrogation)")."""
+        repo = self._mk_project(
+            section_2="_(filled at Phase 0 interrogation)_",
+            section_7="See §2 — all answered.",
+        )
+        issues = check_section_7_placeholder_consistency(repo)
+        assert len(issues) == 1
+
+    def test_real_repo_clean(self):
+        """The current repo must satisfy this rule — no PROJECT.md should
+        carry the placeholder mismatch at HEAD."""
+        issues = check_section_7_placeholder_consistency()
+        assert issues == [], (
+            f"Active §7-placeholder violations: "
+            f"{[(i['file'], i['issue']) for i in issues]}"
+        )
 
 
 # ---------------------------------------------------------------------------
