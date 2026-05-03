@@ -39,14 +39,7 @@ If the project is scoped to a single product, move it under that product. If it 
 
 ## Current root-level projects (snapshot 2026-05-03)
 
-### ✅ Closed — folders awaiting deletion gate (per clean-folder rule, deletion happens at PROJECT CLOSE final commit)
-
-| Slug | Title | Notes |
-|---|---|---|
-| `methodology-extraction` | Behavioral methodology + AST tools extraction | All 6 phases ✅ 2026-05-02; apply-inline-then-delete done; folder retention pending close gate |
-| `llm-tool-call-audit` | LLM tool-call audit trail (`tool_call_audits` per-product table + `AuditRecord`) | Phases 0-3+5+6 ✅ 2026-05-03; Phase 4 deferred to `whatsapp-seed-absorption` Phase 5 |
-| `mcp-server-expansion` | MCP server hardening (Pydantic schemas, dotted naming, KB conventions) | Phases 0-3+6+7 ✅ 2026-05-03; Phase 4 carry-forward → `mcp-server-fastmcp-switch`; Phase 5 deferred to that project's Phase 4 |
-| `vista-api-mcp` | Vista API documentation + in-repo MCP server | Phase 1 ✅ 2026-05-03 (`mcp/vista/` + seed-lib formalization); Phases 2-5 deferred per §7 Q6 reactivation triggers |
+> Recently closed + deleted (2026-05-03): `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1 close; Phases 2-5 deferred per §7 Q6 reactivation triggers — see git history for the original PROJECT.md). Carry-forward projects: `mcp-server-fastmcp-switch` (mcp-server-expansion Phase 4+5); `whatsapp-seed-absorption` Phase 5 (llm-tool-call-audit Phase 4).
 
 ### ⏳ Active in-flight (work underway; next step well-defined)
 
@@ -90,7 +83,6 @@ If the project is scoped to a single product, move it under that product. If it 
 |---|---|---|
 | `erp-metas` | `products/erp-imobiliario/projects/erp-metas/` | ✅ All 11 phases shipped |
 | `vista-crm-wiring` | `products/erp-imobiliario/projects/vista-crm-wiring/` | ✅ All 4 phases shipped 2026-05-02 |
-| `pf-org-scoping-migration` | `products/personal-finance/projects/pf-org-scoping-migration/` | Phases 0-7 ✅ 2026-05-03; Phase 8 (bundled proposal + close + folder deletion) pending |
 | `therapy-platform-wiring` | `products/therapy-platform/projects/therapy-platform-wiring/` | Design drafted — Phase 0 (api-call inventory) pending |
 
 ## Starting a new project

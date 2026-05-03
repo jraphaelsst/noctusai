@@ -1,8 +1,9 @@
 """`noctusai_count_tokens` — count tokens for a file, directory, or glob.
 
 Used by:
-- `projects/methodology-extraction/` Phase 5 — measure per-turn token cost
-  reduction precisely (Phase 0 used rough char/word approximations).
+- Methodology / context-budget work — measure per-turn token cost reduction
+  precisely (originating project `methodology-extraction` closed 2026-05-02
+  + folder deleted; see git history).
 - `projects/project-history-ledger/` (deferred) — token-count column for
   every closed/deleted project entry.
 

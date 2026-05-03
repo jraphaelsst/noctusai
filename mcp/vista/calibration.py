@@ -1,11 +1,10 @@
 """Per-tenant field-set calibration — addresses the gap in vista.md § 6.
 
-**Why this module exists.** PROJECT.md §2 (`projects/vista-api-mcp/`) and
-`KB § INTEGRATIONS/vista.md § 6` both name per-tenant calibration as
-mandatory. The ERP showcase adapter does NOT implement it — it uses
-hardcoded constants for `oneconsu-rest`. Phase 4.5 of the showcase
-shipped a 422 surface for `VistaFieldNotAvailable` so drift is recoverable,
-but the constants don't auto-correct.
+**Why this module exists.** `KB § INTEGRATIONS/vista.md § 6` names
+per-tenant calibration as mandatory. The ERP showcase adapter does NOT
+implement it — it uses hardcoded constants for `oneconsu-rest`. Phase 4.5
+of the showcase shipped a 422 surface for `VistaFieldNotAvailable` so
+drift is recoverable, but the constants don't auto-correct.
 
 This module is the in-repo MCP server's solution: an actual probe-based
 discovery routine that runs on first real call and caches the resulting

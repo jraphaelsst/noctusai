@@ -1,7 +1,8 @@
 # Vista CRM MCP Server
 
-Typed MCP server wrapping the Vista Software / Loft CRM REST API. Built
-per `projects/vista-api-mcp/PROJECT.md` Phase 1 directive (2026-05-03).
+Typed MCP server wrapping the Vista Software / Loft CRM REST API. Phase 1
+shipped 2026-05-03 (originating project `vista-api-mcp` closed + folder
+deleted; see git history for the original PROJECT.md).
 
 The full Vista API contract lives at `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md`
 — this README is the operations doc; the KB doc is the spec.
