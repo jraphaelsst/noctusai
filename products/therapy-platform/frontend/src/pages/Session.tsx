@@ -14,9 +14,14 @@ import {
 } from '@/hooks/useSessions';
 import { useCreateObservation } from '@/hooks/useJournal';
 import { useCreatePatientNote } from '@/hooks/useJournal';
+import {
+  useConsents,
+  useGrantConsent,
+  getActiveConsent,
+} from '@/hooks/useConsents';
 import { VideoPlaceholder } from '@/components/session/VideoPlaceholder';
 import { SessionControls } from '@/components/session/SessionControls';
-import { ConsentPopup, ConsentDeclinedMessage } from '@/components/session/ConsentPopup';
+import { ConsentPopup, ConsentDeclinedMessage, type ConsentActor } from '@/components/session/ConsentPopup';
 import { PostSessionPopup } from '@/components/session/PostSessionPopup';
 import { OvertimeAlerts } from '@/components/session/OvertimeAlerts';
 import { TextChat } from '@/components/session/TextChat';
@@ -52,6 +57,14 @@ export default function Session() {
   const reopenSession = useReopenSession();
   const createObservation = useCreateObservation();
   const createPatientNote = useCreatePatientNote();
+  const grantConsent = useGrantConsent();
+
+  // Consent state — backend `POST /sessions/:id/start` requires an active
+  // recording consent before it'll succeed (compliance-audit Phase 5, 2026-04-22).
+  const { data: consents } = useConsents(appointmentId);
+  const recordingConsent = getActiveConsent(consents, 'recording');
+  const recordingConsentGranted = !!recordingConsent;
+  const consentActor: ConsentActor = isTherapist ? 'therapist_attesting' : 'patient';
 
   // State
   const [phase, setPhase] = useState<SessionPhase>('loading');
@@ -101,19 +114,56 @@ export default function Session() {
 
   // Handlers
   const handleStartClick = useCallback(() => {
+    // Therapist clicked "Iniciar Sessao". Skip the consent modal if the
+    // patient already self-served their consent (saves a click + makes the
+    // therapist-attest UI a fallback rather than the only path).
+    if (recordingConsentGranted) {
+      if (!appointmentId) return;
+      startSession.mutate(appointmentId, {
+        onSuccess: () => setPhase('active'),
+      });
+      return;
+    }
+    setPhase('consent');
+  }, [appointmentId, recordingConsentGranted, startSession]);
+
+  const handlePatientGrantClick = useCallback(() => {
+    // Patient self-serve path — opens the same modal but with patient copy.
     setPhase('consent');
   }, []);
 
-  const handleConsentAccept = useCallback(() => {
+  const handleConsentAccept = useCallback(async () => {
     if (!appointmentId) return;
-    startSession.mutate(appointmentId, {
-      onSuccess: () => setPhase('active'),
-    });
-  }, [appointmentId, startSession]);
+    // 1. Grant the recording consent (idempotent if already granted; backend
+    //    will create a new record but the active-consent guard only checks
+    //    that at least one non-revoked exists).
+    if (!recordingConsentGranted) {
+      try {
+        await grantConsent.mutateAsync({
+          appointment_id: appointmentId,
+          scope: 'recording',
+        });
+      } catch {
+        // useGrantConsent already surfaced a toast; stay on the consent phase
+        // so the user can retry or decline.
+        return;
+      }
+    }
+    // 2. If the actor is the therapist, also start the session (the
+    //    "Atestar e Iniciar" flow). Patient self-serve closes the modal and
+    //    waits for the therapist.
+    if (isTherapist) {
+      startSession.mutate(appointmentId, {
+        onSuccess: () => setPhase('active'),
+      });
+    } else {
+      setPhase('waiting');
+    }
+  }, [appointmentId, recordingConsentGranted, grantConsent, isTherapist, startSession]);
 
   const handleConsentDecline = useCallback(() => {
-    setPhase('consent_declined');
-  }, []);
+    setPhase(isTherapist ? 'consent_declined' : 'waiting');
+  }, [isTherapist]);
 
   const handleEndSession = useCallback(() => {
     if (!appointmentId) return;
@@ -181,8 +231,14 @@ export default function Session() {
       {/* Overtime alerts */}
       {phase === 'active' && <OvertimeAlerts minutesRemaining={overtime?.minutes_remaining} />}
 
-      {/* Consent popup */}
-      <ConsentPopup open={phase === 'consent'} onAccept={handleConsentAccept} onDecline={handleConsentDecline} />
+      {/* Consent popup — actor copy depends on who's interacting. */}
+      <ConsentPopup
+        open={phase === 'consent'}
+        actor={consentActor}
+        isPending={grantConsent.isPending || startSession.isPending}
+        onAccept={handleConsentAccept}
+        onDecline={handleConsentDecline}
+      />
 
       {/* Consent declined */}
       {phase === 'consent_declined' && <ConsentDeclinedMessage visible />}
@@ -225,13 +281,26 @@ export default function Session() {
               Iniciar Sessao
             </Button>
           ) : (
-            <div className="flex items-center gap-2 text-gray-400">
-              <span>Aguardando o terapeuta iniciar a sessao</span>
-              <span className="inline-flex">
-                <span className="animate-[bounce_1.4s_infinite_0ms] text-lg">.</span>
-                <span className="animate-[bounce_1.4s_infinite_200ms] text-lg">.</span>
-                <span className="animate-[bounce_1.4s_infinite_400ms] text-lg">.</span>
-              </span>
+            <div className="flex flex-col items-center gap-4">
+              <div className="flex items-center gap-2 text-gray-400">
+                <span>Aguardando o terapeuta iniciar a sessao</span>
+                <span className="inline-flex">
+                  <span className="animate-[bounce_1.4s_infinite_0ms] text-lg">.</span>
+                  <span className="animate-[bounce_1.4s_infinite_200ms] text-lg">.</span>
+                  <span className="animate-[bounce_1.4s_infinite_400ms] text-lg">.</span>
+                </span>
+              </div>
+              {/* Patient self-serve consent (Q6). Hidden once active consent exists. */}
+              {!recordingConsentGranted && (
+                <Button variant="outline" size="sm" onClick={handlePatientGrantClick}>
+                  Conceder consentimento de gravação
+                </Button>
+              )}
+              {recordingConsentGranted && (
+                <p className="text-xs text-emerald-400">
+                  Consentimento de gravação registrado.
+                </p>
+              )}
             </div>
           )}
         </div>
