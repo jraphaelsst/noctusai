@@ -22,18 +22,76 @@ processing webhook callbacks from providers, and audit trails.
 --   updated_at timestamptz NOT NULL DEFAULT now()
 -- );
 """
+import json
 import logging
 from typing import Optional, Literal, List
+
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+
+from noctusai_lib.security.webhook_signatures import (
+    ResolvedSecret,
+    VerifiedWebhook,
+    webhook_endpoint,
+)
+
+from app.config import settings
 from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action
+from app.rate_limit import limiter
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.assinatura_service import AssinaturaService
-from app.webhook_utils import verify_hmac_sha256
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/assinaturas", tags=["Assinaturas"])
+
+
+async def _resolve_assinatura_secret(request: Request, body: bytes) -> ResolvedSecret:
+    """Resolve the per-org webhook secret for the assinatura referenced
+    in the (unverified) request body.
+
+    Looks up `org_settings.assinatura_webhook_secret` keyed by the
+    `org_id` of the named assinatura. Returns a `None` secret when no
+    config row exists — paired with `bypass_when_unset=True`, that
+    preserves the legacy "no secret configured" pass-through.
+    """
+    try:
+        payload_dict = json.loads(body) if body else {}
+    except (ValueError, TypeError):
+        return ResolvedSecret(secret=None, extras=None)
+
+    assinatura_id = payload_dict.get("assinatura_id")
+    if not assinatura_id:
+        return ResolvedSecret(secret=None, extras=None)
+
+    db = get_admin_client()
+    if not db:
+        return ResolvedSecret(secret=None, extras=None)
+
+    res = (
+        db.table("assinaturas")
+        .select("org_id, provedor")
+        .eq("id", assinatura_id)
+        .execute()
+    )
+    if not res.data:
+        return ResolvedSecret(secret=None, extras={"assinatura_id": assinatura_id, "org_id": None})
+
+    org_id = res.data[0].get("org_id")
+    if not org_id:
+        return ResolvedSecret(secret=None, extras={"assinatura_id": assinatura_id, "org_id": None})
+
+    secret_res = (
+        db.table("org_settings")
+        .select("value")
+        .eq("org_id", org_id)
+        .eq("key", "assinatura_webhook_secret")
+        .execute()
+    )
+    webhook_secret = secret_res.data[0]["value"] if secret_res.data else None
+    return ResolvedSecret(
+        secret=webhook_secret,
+        extras={"assinatura_id": assinatura_id, "org_id": org_id},
+    )
 
 
 # --- Pydantic models ---
@@ -164,44 +222,34 @@ async def obter_assinatura(assinatura_id: str, authorization: Optional[str] = He
 
 
 @router.post("/webhook")
+@limiter.limit(settings.webhook_rate_limit)
 async def processar_webhook(
     request: Request,
-    body: WebhookPayload,
-    x_hub_signature_256: Optional[str] = Header(None),
+    verified: VerifiedWebhook = webhook_endpoint(
+        secret_resolver=_resolve_assinatura_secret,
+        scheme="sha256_prefixed",
+        signature_header="X-Hub-Signature-256",
+        bypass_when_unset=True,
+        log_prefix="assinaturas-webhook",
+    ),
 ):
     """
     Callback endpoint for signing provider events.
 
-    This endpoint does not require user authentication since it is called
-    directly by the signing provider (ClickSign, DocuSign, D4Sign, etc.).
-    Verifies HMAC-SHA256 signature when a webhook secret is configured.
+    Unauthenticated — called directly by the signing provider (ClickSign,
+    DocuSign, D4Sign, etc.). Signature verification runs in the
+    `webhook_endpoint(...)` dependency before this body executes; on
+    bypass (no secret configured for the org) the seed-lib helper logs
+    a WARNING and lets the request through.
     """
+    try:
+        payload_dict = json.loads(verified.body) if verified.body else {}
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    body = WebhookPayload.model_validate(payload_dict)
+
     db = get_admin_client()
-
-    # Verify signature: look up the assinatura to find its provider, then
-    # check if the org has a webhook_secret configured for that provider.
-    assinatura_result = (
-        db.table("assinaturas")
-        .select("org_id, provedor")
-        .eq("id", body.assinatura_id)
-        .execute()
-    )
-    if assinatura_result.data:
-        org_id = assinatura_result.data[0].get("org_id")
-        if org_id:
-            secret_result = (
-                db.table("org_settings")
-                .select("value")
-                .eq("org_id", org_id)
-                .eq("key", "assinatura_webhook_secret")
-                .execute()
-            )
-            webhook_secret = secret_result.data[0]["value"] if secret_result.data else None
-            if webhook_secret:
-                body_bytes = await request.body()
-                if not x_hub_signature_256 or not verify_hmac_sha256(body_bytes, x_hub_signature_256, webhook_secret):
-                    raise HTTPException(status_code=401, detail="Assinatura do webhook inválida")
-
     service = AssinaturaService(db, user_id="webhook")
 
     updated = await service.processar_webhook(

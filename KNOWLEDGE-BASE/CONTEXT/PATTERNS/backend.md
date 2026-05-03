@@ -157,8 +157,54 @@ If you're tempted to capture `db.get_admin_client` or `deps.get_current_user` at
 
 ---
 
+## Webhook signature carve-outs
+
+Inbound webhook receivers go through `noctusai_lib.security.webhook_signatures`
+(four shapes: HMAC-SHA256 prefixed, bare hex, Svix protocol, plus the
+Stripe carve-out). Two divergences from "always use the seed-lib helper"
+are explicit and load-bearing:
+
+### Stripe SDK is the canonical verifier — don't wrap, don't reinvent
+
+**Use:** `stripe.Webhook.construct_event(payload, sig_header, secret)`
+inside `core/backend/app/services/stripe_service.construct_webhook_event`.
+
+**Don't:** call `verify_hmac_sha256` against `Stripe-Signature`. Stripe's
+header is multi-version (`t=<ts>,v1=<sig>,v0=<legacy>`), the signed
+payload is `f"{t}.{body}"` (not the bare body), and the SDK enforces a
+default 5-minute tolerance window — re-implementing it loses every
+property at once. The SDK is the canonical verifier; the seed-lib
+helper is for non-Stripe webhooks. → `KB § PATTERNS/accept-with-rationale.md
+§ Stripe SDK is the canonical webhook verifier`.
+
+### Outbound webhook signing stays in `core/services/webhook_delivery.py`
+
+**Use:** `compute_hmac_sha256_hex(signature_payload, secret)` from the
+seed-lib for the cryptographic primitive, but the surrounding signer
+(envelope construction `{timestamp}.{body}`, header set
+`X-Webhook-Signature` / `X-Webhook-Event` / `X-Webhook-Timestamp`,
+delivery row insert into `webhook_deliveries`, retention sweep, retry
+loop, payload classification) stays in core.
+
+**Don't:** absorb the outbound signer into `noctusai_lib.security`. The
+helper would either drag delivery lifecycle (storage / retention /
+retry / classification) into seed-lib (wrong layer — it's a
+domain-bounded feature of core's webhook subscription product) or
+split the signer from its lifecycle (creating a brittle two-piece API).
+Inbound verifiers belong in seed-lib because they're pure crypto;
+outbound delivery is a product feature. → `KB § PATTERNS/accept-with-rationale.md
+§ Outbound webhook signer stays in core/services/webhook_delivery.py`.
+
+The cryptographic primitive does route through `compute_hmac_sha256_hex`
+so the underlying constant-time compare path is one canonical helper —
+that's the absorbed layer; the lifecycle is the carved-out layer.
+
+---
+
 See also:
 - `../03-SEED-ARCHITECTURE.md` — how `create_product_app()` works
 - `../04-SHARED-LIBRARY.md` — catalog of reusable helpers
 - `database-rls.md` — deeper RLS patterns
 - `notifications.md` — notification flow details
+- `webhook-signatures.md` — the four-shape catalog + universal rules
+- `accept-with-rationale.md` — durable register of legitimate divergences

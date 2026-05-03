@@ -61,6 +61,10 @@ CLOSE — at every phase end
   └─ Apply each bundled improvement INLINE during the same session.
   └─ Delete the proposal file (apply-inline-then-delete protocol).
   └─ Run `python mcp/noctusai/cli.py --improvements <PROJECT.md path>` to regenerate `improvements.md`.
+  └─ **Phase commit (NEW 2026-05-03).** Stage the phase's diff with explicit file paths and commit it locally
+          with a phase-scoped subject (e.g. `feat(<area>): <project-slug> phase <N> — <one-line summary>`).
+          DO NOT push. Per-phase commits keep the history bisectable and let the user review state before the
+          project-close push. `git status` first; never `git add .` / `-A`.
 
 PROJECT CLOSE — at the last phase
 
@@ -84,6 +88,13 @@ PROJECT-END VERIFICATION CHECKLIST — runs once before folder deletion (NEW 202
 
 CLOSE PROJECT (only after the verification checklist is fully green)
   └─ Folder deletion — clean-folder rule. Empty `proposals/` ok (delete with the project).
+  └─ **Final commit + push (NEW 2026-05-03).** Stage everything still uncommitted (per-phase commits already
+          captured each phase; the close commit captures the methodology amendments + folder deletion + any
+          end-of-project polish). Subject: `feat(<area>): close <project-slug> — <one-line outcome>`. Then
+          `git push`. Pushing is the literal last step of the project — it makes the work visible to other
+          agents and pinned in remote history. Never push partway through; never push without an explicit
+          project-close gate. If the user explicitly delegated the close (e.g. "commit and push the project"),
+          this step runs without a re-confirmation prompt; absent that delegation, ask before pushing.
 ```
 
 **Cross-cutting language trigger that fires at every step.** If you see or write any of these phrasings — in your own response, in the project doc, in a user prompt — STOP and challenge the framing: *"per-product X"*, *"mount across N products"*, *"for each product Y"*, *"mount on each ___"*. The right per-product code count for cross-product concerns is **zero**. See the language-trigger rule (§ The replication-to-seed symmetry rule).

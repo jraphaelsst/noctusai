@@ -1,16 +1,28 @@
 """Resend webhook receiver — processes email events (Svix-protocol signature verified)."""
+import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
-from noctusai_lib.security.webhook_signatures import verify_svix_signature
+from noctusai_lib.security.webhook_signatures import (
+    ResolvedSecret,
+    VerifiedWebhook,
+    webhook_endpoint,
+)
 
 from app.config import settings
 from app.database import get_admin_client
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
+
+
+async def _resolve_resend_secret(request, body):
+    """Per-request lookup of `RESEND_WEBHOOK_SECRET` so test-time monkeypatches
+    on the settings module are honored (bypasses the import-time-capture trap)."""
+    return ResolvedSecret(secret=settings.resend_webhook_secret or None)
 
 # Map Resend event types to send_log status + timestamp field
 EVENT_MAP = {
@@ -23,47 +35,32 @@ EVENT_MAP = {
 
 
 @router.post("/resend")
-async def resend_webhook(request: Request):
+@limiter.limit(settings.webhook_rate_limit)
+async def resend_webhook(
+    request: Request,
+    verified: VerifiedWebhook = webhook_endpoint(
+        secret_resolver=_resolve_resend_secret,
+        scheme="svix",
+        bypass_when_unset=True,
+        log_prefix="resend-webhook",
+    ),
+):
     """Receive Resend webhook events and update send_logs accordingly.
 
-    Auth: Svix-protocol HMAC signature on every payload, verified before
-    any DB work. Resend signs `f"{svix-id}.{svix-timestamp}.{body}"` with
-    the webhook secret (configured per-endpoint in the Resend dashboard,
-    stored as `RESEND_WEBHOOK_SECRET`). Mismatch → 401, no DB writes.
+    Auth: Svix-protocol HMAC signature on every payload, verified by the
+    `webhook_endpoint(...)` dependency before any DB work. Resend signs
+    `f"{svix-id}.{svix-timestamp}.{body}"` with the webhook secret
+    (`RESEND_WEBHOOK_SECRET`). Mismatch → 401, no DB writes.
 
-    Bypass: when `resend_webhook_secret` is unset (early-dev), accept
-    unsigned payloads with a WARNING. Same convention as every other
-    webhook on the platform — see
-    KNOWLEDGE-BASE/CONTEXT/PATTERNS/webhook-signatures.md.
+    Bypass: when `resend_webhook_secret` is unset (early-dev), the seed-lib
+    helper accepts unsigned payloads with a WARNING. → KB §
+    PATTERNS/webhook-signatures.md.
     """
-    body = await request.body()
-
-    secret = settings.resend_webhook_secret
-    if secret:
-        svix_id = request.headers.get("svix-id", "")
-        svix_timestamp = request.headers.get("svix-timestamp", "")
-        signature_header = request.headers.get("svix-signature", "")
-        if not verify_svix_signature(
-            svix_id=svix_id,
-            svix_timestamp=svix_timestamp,
-            body=body,
-            signature_header=signature_header,
-            secret=secret,
-        ):
-            logger.warning(
-                "Resend webhook rejected: signature mismatch (svix_id=%s)",
-                svix_id or "<missing>",
-            )
-            raise HTTPException(status_code=401, detail="invalid webhook signature")
-    else:
-        logger.warning(
-            "RESEND_WEBHOOK_SECRET unset — accepting Resend webhook without verification. "
-            "Set it in any environment receiving real Resend traffic."
-        )
+    body = verified.body
 
     try:
-        payload = await request.json()
-    except Exception:
+        payload = json.loads(body) if body else {}
+    except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     event_type = payload.get("type")

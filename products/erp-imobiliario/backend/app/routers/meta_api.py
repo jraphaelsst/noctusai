@@ -6,12 +6,22 @@ Tables:
   erp.meta_leads — imported leads from Lead Ads
   erp.meta_campanhas_sync — synced campaign metrics
 """
+import json
 import logging
 from typing import Optional
+
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from noctusai_lib.security.webhook_signatures import (
+    ResolvedSecret,
+    VerifiedWebhook,
+    webhook_endpoint,
+)
+
+from app.config import settings
 from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id
+from app.rate_limit import limiter
 from app.responses import success_response, paginated_response
 from app.services.meta_api_service import (
     MetaApiConfig,
@@ -22,6 +32,43 @@ from app.services.meta_api_service import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meta", tags=["meta-api"])
+
+
+async def _resolve_meta_secret(request: Request, body: bytes) -> ResolvedSecret:
+    """Resolve the per-page Meta webhook secret from `meta_config`.
+
+    Parses the (unverified) body to extract `page_id`, fetches the row,
+    stashes the resolved org_id + lead_data on `extras` so the handler
+    avoids re-parsing.
+    """
+    try:
+        payload = json.loads(body) if body else {}
+    except (ValueError, TypeError):
+        return ResolvedSecret(secret=None, extras=None)
+
+    lead_data = parse_lead_webhook(payload)
+    if not lead_data:
+        return ResolvedSecret(secret=None, extras={"lead_data": None, "org_id": None})
+
+    page_id = lead_data.get("page_id")
+    admin = get_admin_client()
+    if not admin or not page_id:
+        return ResolvedSecret(secret=None, extras={"lead_data": lead_data, "org_id": None})
+
+    res = (
+        admin.table("meta_config")
+        .select("org_id, access_token, webhook_verify_token")
+        .eq("page_id", page_id)
+        .execute()
+    )
+    if not res.data:
+        return ResolvedSecret(secret=None, extras={"lead_data": lead_data, "org_id": None})
+
+    row = res.data[0]
+    return ResolvedSecret(
+        secret=row.get("webhook_verify_token") or None,
+        extras={"lead_data": lead_data, "org_id": row["org_id"]},
+    )
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -286,46 +333,30 @@ async def meta_webhook_verify(
 
 
 @router.post("/webhook")
+@limiter.limit(settings.webhook_rate_limit)
 async def meta_webhook_event(
     request: Request,
-    x_hub_signature_256: Optional[str] = Header(None),
+    verified: VerifiedWebhook = webhook_endpoint(
+        secret_resolver=_resolve_meta_secret,
+        scheme="sha256_prefixed",
+        signature_header="X-Hub-Signature-256",
+        bypass_when_unset=True,
+        log_prefix="meta-webhook",
+    ),
 ):
     """Receive Meta Lead Ads webhook events (POST)."""
-    body_bytes = await request.body()
+    extras = verified.extras or {}
+    lead_data = extras.get("lead_data")
+    org_id = extras.get("org_id")
 
-    try:
-        import json
-        payload = json.loads(body_bytes)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-
-    lead_data = parse_lead_webhook(payload)
     if not lead_data:
         return {"status": "ignored"}
+    if not org_id:
+        return {"status": "ignored", "reason": "page_not_configured"}
 
     admin = get_admin_client()
     if not admin:
         raise HTTPException(status_code=503, detail="Serviço indisponível")
-
-    page_id = lead_data.get("page_id")
-    config_result = (
-        admin.table("meta_config")
-        .select("org_id, access_token, webhook_verify_token")
-        .eq("page_id", page_id)
-        .execute()
-    )
-    if not config_result.data:
-        return {"status": "ignored", "reason": "page_not_configured"}
-
-    # Verify HMAC-SHA256 signature when a webhook secret is configured
-    config_row = config_result.data[0]
-    webhook_secret = config_row.get("webhook_verify_token")
-    if webhook_secret:
-        from app.webhook_utils import verify_hmac_sha256
-        if not x_hub_signature_256 or not verify_hmac_sha256(body_bytes, x_hub_signature_256, webhook_secret):
-            raise HTTPException(status_code=401, detail="Assinatura do webhook inválida")
-
-    org_id = config_row["org_id"]
 
     # Store the lead reference (full data fetched on sync); upsert to handle duplicate webhooks
     admin.table("meta_leads").upsert({

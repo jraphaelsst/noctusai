@@ -7,17 +7,63 @@ messages. Routes events to the appropriate handler based on event type.
 Table: erp.whatsapp_messages (updates status on delivery/read)
 Table: erp.whatsapp_config (reads provider config)
 """
+import json
 import logging
 from typing import Optional
+
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from noctusai_lib.security.webhook_signatures import (
+    ResolvedSecret,
+    VerifiedWebhook,
+    webhook_endpoint,
+)
+
+from app.config import settings
 from app.dependencies import get_current_user, get_user_client, get_admin_client
+from app.rate_limit import limiter
 from app.responses import success_response
-from app.webhook_utils import verify_hmac_sha256
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp-webhook"])
+
+
+async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
+    """Look up the WAHA per-session webhook secret from `whatsapp_config`.
+
+    The session name comes from the (unverified) request body. The resolver
+    parses the body once to find the session, fetches the row, and stashes
+    `(org_id, session_name)` on `extras` so the handler doesn't repeat the
+    lookup. If the session isn't configured, returns a `None` secret —
+    paired with `bypass_when_unset=True`, that preserves the legacy
+    behavior of letting unconfigured sessions through (security gap
+    tracked as a follow-up).
+    """
+    try:
+        payload = json.loads(body) if body else {}
+    except (ValueError, TypeError):
+        return ResolvedSecret(secret=None, extras=None)
+
+    session_name = payload.get("session") or "default"
+    admin = get_admin_client()
+    if not admin:
+        return ResolvedSecret(secret=None, extras=None)
+    res = (
+        admin.table("whatsapp_config")
+        .select("org_id, webhook_secret")
+        .eq("waha_session_name", session_name)
+        .eq("provider", "waha")
+        .eq("is_active", True)
+        .execute()
+    )
+    if not res.data:
+        return ResolvedSecret(secret=None, extras={"session_name": session_name, "org_id": None})
+    row = res.data[0]
+    return ResolvedSecret(
+        secret=row.get("webhook_secret") or None,
+        extras={"session_name": session_name, "org_id": row["org_id"]},
+    )
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -35,7 +81,17 @@ class WAHASessionRequest(BaseModel):
 # ── Webhook Endpoint (unauthenticated — called by WAHA server) ──────
 
 @router.post("/webhook")
-async def waha_webhook(event: WAHAMessageEvent, request: Request, x_hub_signature: Optional[str] = Header(None)):
+@limiter.limit(settings.webhook_rate_limit)
+async def waha_webhook(
+    request: Request,
+    verified: VerifiedWebhook = webhook_endpoint(
+        secret_resolver=_resolve_waha_secret,
+        scheme="sha256_prefixed",
+        signature_header="X-Hub-Signature",
+        bypass_when_unset=True,
+        log_prefix="waha-webhook",
+    ),
+):
     """
     Receive webhook events from WAHA.
 
@@ -44,34 +100,22 @@ async def waha_webhook(event: WAHAMessageEvent, request: Request, x_hub_signatur
     - message.ack: delivery/read status update
     - session.status: session connection status changes
     """
+    try:
+        payload_dict = json.loads(verified.body) if verified.body else {}
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    event = WAHAMessageEvent.model_validate(payload_dict)
     logger.info(f"WAHA webhook event: {event.event} session={event.session}")
 
     admin = get_admin_client()
     if not admin:
         raise HTTPException(status_code=503, detail="Serviço indisponível")
 
-    # Find org by WAHA session
-    config_result = (
-        admin.table("whatsapp_config")
-        .select("org_id, webhook_secret")
-        .eq("waha_session_name", event.session)
-        .eq("provider", "waha")
-        .eq("is_active", True)
-        .execute()
-    )
-    if not config_result.data:
+    org_id = (verified.extras or {}).get("org_id")
+    if not org_id:
         logger.warning(f"No config found for WAHA session: {event.session}")
         return {"status": "ignored", "reason": "session_not_configured"}
-
-    config_row = config_result.data[0]
-    org_id = config_row["org_id"]
-
-    # Verify HMAC signature when webhook_secret is configured
-    webhook_secret = config_row.get("webhook_secret")
-    if webhook_secret:
-        body_bytes = await request.body()
-        if not x_hub_signature or not verify_hmac_sha256(body_bytes, x_hub_signature, webhook_secret):
-            raise HTTPException(status_code=401, detail="Assinatura do webhook inválida")
 
     if event.event == "message":
         return await _handle_incoming_message(admin, org_id, event.payload)

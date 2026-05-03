@@ -3,17 +3,26 @@ NoctusAI Core — Webhook Delivery Service.
 
 Dispatches webhook events to registered endpoints with HMAC-SHA256 signed payloads.
 Logs delivery attempts and results.
+
+# accept-with-rationale: outbound-webhook-signer-stays-here
+#   See KB § PATTERNS/accept-with-rationale.md. The signer is tightly
+#   coupled to delivery lifecycle (DB row insert, retention window,
+#   retry loop, classification minimization) so it does NOT migrate
+#   into noctusai_lib.security. The cryptographic primitive does
+#   route through `compute_hmac_sha256_hex` so the underlying compare-
+#   digest path is the one canonical helper.
 """
 import asyncio
-import hmac
 import json
-import hashlib
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
+
+from noctusai_lib.security.webhook_signatures import compute_hmac_sha256_hex
+
 from app.database import get_admin_client
 from app.services.webhook_classification import (
     apply_classification,
@@ -91,13 +100,13 @@ async def _send_webhook(endpoint: dict, event_type: str, payload: dict) -> dict:
     payload_json = json.dumps(payload, default=str, ensure_ascii=False)
     timestamp = str(int(time.time()))
 
-    # Create HMAC-SHA256 signature
+    # HMAC-SHA256 over the Stripe-style `{timestamp}.{body}` envelope.
+    # Routed through the canonical seed-lib helper so the cryptographic
+    # primitive lives in one place even though the surrounding lifecycle
+    # (storage, retention, retry) stays product-local — see the
+    # accept-with-rationale note at the top of this file.
     signature_payload = f"{timestamp}.{payload_json}"
-    signature = hmac.new(
-        secret.encode(),
-        signature_payload.encode(),
-        hashlib.sha256,
-    ).hexdigest()
+    signature = compute_hmac_sha256_hex(signature_payload.encode("utf-8"), secret)
 
     headers = {
         "Content-Type": "application/json",

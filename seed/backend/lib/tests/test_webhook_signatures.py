@@ -19,6 +19,7 @@ import hmac
 from noctusai_lib.security.webhook_signatures import (
     compute_hmac_sha256_hex,
     verify_hmac_sha256,
+    verify_hmac_sha256_hex,
     verify_svix_signature,
 )
 
@@ -63,6 +64,96 @@ def test_compute_hmac_sha256_hex_matches_stdlib():
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
     assert compute_hmac_sha256_hex(body, secret) == expected
+
+
+def test_verify_hmac_sha256_hex_accepts_correctly_signed_body():
+    secret = "k"
+    body = b"payload"
+    sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    assert verify_hmac_sha256_hex(body, sig, secret) is True
+
+
+def test_verify_hmac_sha256_hex_rejects_tampered_body():
+    secret = "k"
+    body = b"payload"
+    sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    assert verify_hmac_sha256_hex(b"different", sig, secret) is False
+
+
+def test_verify_hmac_sha256_hex_rejects_missing_inputs():
+    assert verify_hmac_sha256_hex(b"x", "", "secret") is False
+    assert verify_hmac_sha256_hex(b"x", "abc", "") is False
+
+
+# -- Replay-window guard ---------------------------------------------------
+
+
+def _fresh_sig(body: bytes, secret: str) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def test_verify_hmac_sha256_accepts_when_timestamp_is_fresh():
+    import time
+
+    secret = "k"
+    body = b"x"
+    sig = _fresh_sig(body, secret)
+
+    assert verify_hmac_sha256(
+        body, sig, secret,
+        timestamp_value=int(time.time()),
+    ) is True
+
+
+def test_verify_hmac_sha256_rejects_expired_timestamp():
+    import time
+
+    secret = "k"
+    body = b"x"
+    sig = _fresh_sig(body, secret)
+    # 1 hour ago, default 300s window
+    assert verify_hmac_sha256(
+        body, sig, secret,
+        timestamp_value=int(time.time()) - 3600,
+    ) is False
+
+
+def test_verify_hmac_sha256_rejects_future_timestamp_outside_window():
+    import time
+
+    secret = "k"
+    body = b"x"
+    sig = _fresh_sig(body, secret)
+    # 1 hour in the future — clock-skew abuse
+    assert verify_hmac_sha256(
+        body, sig, secret,
+        timestamp_value=int(time.time()) + 3600,
+    ) is False
+
+
+def test_verify_hmac_sha256_no_timestamp_means_no_replay_check():
+    """Default behavior — `timestamp_value=None` opts out cleanly."""
+    secret = "k"
+    body = b"x"
+    sig = _fresh_sig(body, secret)
+    assert verify_hmac_sha256(body, sig, secret) is True
+
+
+def test_verify_hmac_sha256_hex_replay_window_applies():
+    import time
+
+    secret = "k"
+    body = b"x"
+    sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    assert verify_hmac_sha256_hex(
+        body, sig, secret, timestamp_value=int(time.time()) - 3600,
+    ) is False
+    assert verify_hmac_sha256_hex(
+        body, sig, secret, timestamp_value=int(time.time()),
+    ) is True
 
 
 # -- Pattern 3: Svix -------------------------------------------------------
@@ -172,3 +263,65 @@ def test_verify_svix_signature_rejects_garbage_secret():
         signature_header="v1,abc",
         secret="not!base64@@@",
     ) is False
+
+
+def test_verify_svix_signature_replay_window_accepts_fresh():
+    import time
+
+    body = b"x"
+    ts = str(int(time.time()))
+    secret_b64, sig_header = _svix_secret_and_signature(body, "m", ts)
+
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp=ts,
+        body=body,
+        signature_header=sig_header,
+        secret=secret_b64,
+        enforce_replay_window=True,
+    ) is True
+
+
+def test_verify_svix_signature_replay_window_rejects_stale():
+    import time
+
+    body = b"x"
+    stale = str(int(time.time()) - 3600)
+    secret_b64, sig_header = _svix_secret_and_signature(body, "m", stale)
+
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp=stale,
+        body=body,
+        signature_header=sig_header,
+        secret=secret_b64,
+        enforce_replay_window=True,
+    ) is False
+
+
+def test_verify_svix_signature_replay_window_rejects_non_numeric_timestamp():
+    body = b"x"
+    secret_b64, sig_header = _svix_secret_and_signature(body, "m", "not-a-number")
+
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp="not-a-number",
+        body=body,
+        signature_header=sig_header,
+        secret=secret_b64,
+        enforce_replay_window=True,
+    ) is False
+
+
+def test_verify_svix_signature_default_no_replay_check():
+    """Default `enforce_replay_window=False` keeps existing callers working."""
+    body = b"x"
+    secret_b64, sig_header = _svix_secret_and_signature(body, "m", "1")
+
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp="1",
+        body=body,
+        signature_header=sig_header,
+        secret=secret_b64,
+    ) is True

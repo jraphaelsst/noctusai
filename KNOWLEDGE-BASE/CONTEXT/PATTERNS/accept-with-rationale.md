@@ -221,13 +221,21 @@ shape just changes when the decision moves.
 - **Revisit trigger:** when `products/erp-imobiliario/projects/erp-schema-drift-reconciliation/` closes and ERP flips to `validate_schema=True`, the Vista audit path will need explicit validation against the real `user_actions_log` columns. Re-evaluate at that close gate.
 - **Recorded by:** `vista-crm-wiring` (closed + folder deleted 2026-05-02; this entry promoted at the close).
 
-### Legacy `webhook_utils.py` re-export shim (ERP)
-- **Subject:** `products/erp-imobiliario/backend/app/webhook_utils.py` post-2026-05-02 commit `e1ba4e3`.
-- **Decision:** the file is a 16-line re-export shim over `noctusai_lib.security.webhook_signatures`; existing 3 ERP routers continue to `from app.webhook_utils import verify_hmac_sha256` unchanged.
-- **Reason:** changing the call sites + the helper in one commit is riskier than a re-export migration; new code already imports from `noctusai_lib.security` directly per the docstring.
-- **Scope:** `products/erp-imobiliario/backend/app/webhook_utils.py`.
-- **Revisit trigger:** `webhook-hmac-consolidation/PROJECT.md` Phase 2 migrates the 3 ERP routers to the FastAPI dep-factory pattern → at that point the re-export is no longer needed; delete.
-- **Recorded by:** commit `e1ba4e3` (parallel agent); `webhook-hmac-consolidation/PROJECT.md` Phase 1.a.
+### Outbound webhook signer stays in `core/services/webhook_delivery.py`
+- **Subject:** `products/core/backend/app/services/webhook_delivery.py` HMAC-SHA256 signing of outbound deliveries to org-registered endpoints (Stripe-style `{timestamp}.{body}` envelope; `X-Webhook-Signature` / `X-Webhook-Event` / `X-Webhook-Timestamp` headers).
+- **Decision:** outbound signer stays in core. Only the cryptographic primitive (`hmac.new(...).hexdigest()` → `compute_hmac_sha256_hex(...)`) routes through the seed-lib helper.
+- **Reason:** the signer is tightly coupled to delivery lifecycle — DB insert into `webhook_deliveries`, retention sweep, retry loop with exponential backoff, payload classification (LGPD minimization), failure logging. Pulling it into `noctusai_lib.security` would either drag the lifecycle into the seed-lib (wrong layer — it's a domain-bounded concern of core's webhook subscription product) or split the signer from its lifecycle (creating a brittle two-piece API). Inbound verifiers ARE seed-lib material because they're pure crypto; outbound delivery is a product feature.
+- **Scope:** `products/core/backend/app/services/webhook_delivery.py`.
+- **Revisit trigger:** a second product builds an outbound webhook subscription product (delivery + retention + retry). At that point, formalize the lifecycle pattern into seed-lib OR keep both implementations and re-record. Until then, single-adopter at core.
+- **Recorded by:** `webhook-hmac-consolidation/PROJECT.md` Phase 2 close (2026-05-03).
+
+### Alphabet/Google webhook signature scheme deferred (sibling-repo intake)
+- **Subject:** the 2026-05-02 originating directive for `webhook-hmac-consolidation` mentioned both Meta-style `X-Hub-Signature-256` and Alphabet/Google-style schemes from the user's `whatsapp-google-scheduling` sibling repo.
+- **Decision:** ship the seed-lib helper covering Meta / GitHub / WAHA / Svix / Stripe (the four shapes already adopted in this monorepo). Defer the Alphabet/Google scheme port to a small follow-up project when the sibling-repo findings land.
+- **Reason:** none of the 4 current adopters speaks an Alphabet/Google webhook protocol. The seed-lib helper API is already format-agnostic-ready (`scheme` literal + `signature_header` + `timestamp_header` knobs); adding Alphabet's scheme will be additive when the spec arrives. Blocking this project's close on a spec we don't have would freeze the platform-wide hardening behind a single absent input.
+- **Scope:** `seed/backend/lib/noctusai_lib/security/webhook_signatures.py`.
+- **Revisit trigger:** the user pulls the `whatsapp-google-scheduling` Alphabet/Google webhook findings into this repo, OR a NoctusAI product gains an inbound Google API webhook integration — whichever comes first. Open `webhook-alphabet-scheme-port` then.
+- **Recorded by:** `webhook-hmac-consolidation/PROJECT.md` §7 Q1 (2026-05-03).
 
 ---
 

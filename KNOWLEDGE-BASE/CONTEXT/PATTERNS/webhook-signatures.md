@@ -111,6 +111,20 @@ event = stripe.Webhook.construct_event(
 - **Don't log the secret. Don't log the signature.** Both leak through
   to log aggregators. Log the `svix-id` / payload event type for
   diagnostics; not the signed material.
+- **Replay window when the provider sends a timestamp.** Pass it to
+  `verify_hmac_sha256(..., timestamp_value=ts)` /
+  `verify_hmac_sha256_hex(..., timestamp_value=ts)` or set
+  `enforce_replay_window=True` on `verify_svix_signature(...)`.
+  Default tolerance is 300s (matches Stripe). Capture-and-replay is
+  a real attack against any verified-but-stateless receiver; if the
+  provider sends a timestamp, enforce the window.
+- **LGPD lens applies after verification.** Verified-but-unparsed
+  payloads from Meta / Resend / WhatsApp commonly carry PII (names,
+  email addresses, phone numbers, message bodies). Once the body is
+  parsed, every downstream write (DB row, audit log, queue payload)
+  is a personal-data event under LGPD. Apply the standard checklist:
+  documented basis, retention rule, no cross-product spillover, no
+  response cache for clinical text. → `KB § PATTERNS/lgpd.md`.
 
 ## Where the helpers live
 

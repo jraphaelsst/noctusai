@@ -4,6 +4,7 @@ Middleware for request tracking, logging, and monitoring.
 Provides:
 - CorrelationIdMiddleware: generates/extracts correlation IDs for request tracing
 - RequestLoggingMiddleware: logs request/response details with timing
+- MaxBodySizeMiddleware: rejects oversized request bodies before handlers run
 - get_correlation_id(): accessor for the current request's correlation ID
 """
 from __future__ import annotations
@@ -11,10 +12,13 @@ from __future__ import annotations
 import time
 import uuid
 import logging
-from typing import Callable
+from typing import Callable, Optional
 
 from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
 
 # `correlation_id_var` and `get_correlation_id` live in the dep-free
 # `primitives._correlation` module so logging_config can use them without
@@ -127,3 +131,79 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 }
             )
             raise
+
+
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    """Reject requests whose body exceeds `max_bytes` with 413 before any
+    handler runs.
+
+    Two checks, cheapest-first:
+
+    1. **`Content-Length` header.** If the client declared more than the
+       cap, reject immediately — no body buffering, no handler invocation.
+    2. **Streaming counter.** For chunked / unset-Content-Length requests,
+       count bytes as they arrive and reject as soon as the cap trips.
+       Stops the attack lane where an unbounded stream forces full
+       buffering before HMAC verification fires.
+
+    The middleware does NOT rewrite the request body; it just bounds
+    incoming bytes. Handlers / dependencies that read `request.body()`
+    behave normally below the cap.
+
+    Override the cap per product via `settings.webhook_max_body_bytes`
+    (or pass `max_bytes` directly when wiring).
+    """
+
+    def __init__(self, app, *, max_bytes: int = DEFAULT_MAX_BODY_BYTES):
+        super().__init__(app)
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                declared = int(cl)
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "invalid Content-Length header"},
+                )
+            if declared > self.max_bytes:
+                return _payload_too_large_response(self.max_bytes, declared)
+
+        # Streaming counter — only matters for chunked / unset-Content-Length.
+        if cl is None:
+            original_receive = request.receive
+            counter = {"n": 0}
+            cap = self.max_bytes
+
+            async def counting_receive():
+                msg = await original_receive()
+                if msg["type"] == "http.request":
+                    counter["n"] += len(msg.get("body", b"") or b"")
+                    if counter["n"] > cap:
+                        return {"type": "http.disconnect"}
+                return msg
+
+            request._receive = counting_receive  # noqa: SLF001 — Starlette idiom
+
+        response = await call_next(request)
+
+        # When the streaming counter tripped, downstream typically raises;
+        # catch the case where it returned a plain 200 anyway by re-checking.
+        if cl is None and "counter" in dir() and counter["n"] > self.max_bytes:  # pragma: no cover
+            return _payload_too_large_response(self.max_bytes, counter["n"])
+
+        return response
+
+
+def _payload_too_large_response(limit: int, observed: Optional[int] = None) -> JSONResponse:
+    detail = {
+        "error": "request body too large",
+        "limit_bytes": limit,
+    }
+    if observed is not None:
+        detail["observed_bytes"] = observed
+    return JSONResponse(status_code=413, content=detail)

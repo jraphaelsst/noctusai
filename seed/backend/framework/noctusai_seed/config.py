@@ -37,6 +37,19 @@ class ProductSettings(BaseAppSettings):
     core_api_url: str = "http://localhost:8000"
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
+    # Inbound request body cap. Applies to every endpoint via
+    # `MaxBodySizeMiddleware`; bumps the 1 MB default for products that
+    # legitimately receive large payloads (file-upload-via-webhook, etc.).
+    max_body_bytes: int = 1 * 1024 * 1024  # 1 MB
+
+    # Rate limit applied to inbound webhook routes via the product's
+    # slowapi `@limiter.limit(settings.webhook_rate_limit)` decorator.
+    # Tuned generous-but-not-absurd: providers commonly burst on retry
+    # (Meta / Resend redrive a queue on outage), but a single attacker
+    # IP shouldn't sustain hundreds per minute. Override per product if
+    # legitimate burst exceeds the default.
+    webhook_rate_limit: str = "60/minute"
+
     @field_validator("jwt_secret")
     @classmethod
     def validate_jwt_secret(cls, v, info):

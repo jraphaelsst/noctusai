@@ -22,7 +22,12 @@ from noctusai_lib.primitives.exceptions import (
     postgrest_exception_handler,
     generic_exception_handler,
 )
-from .middleware import CorrelationIdMiddleware, RequestLoggingMiddleware
+from .middleware import (
+    CorrelationIdMiddleware,
+    DEFAULT_MAX_BODY_BYTES,
+    MaxBodySizeMiddleware,
+    RequestLoggingMiddleware,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,7 @@ def configure_app(
     limiter=None,
     cors_allow_headers: list[str] | None = None,
     cors_expose_headers: list[str] | None = None,
+    max_body_bytes: int | None = None,
 ) -> None:
     """
     Apply shared configuration to a FastAPI app instance.
@@ -44,17 +50,22 @@ def configure_app(
     - Rate-limit exceeded handler (if limiter is provided)
     - Exception handlers (AppException, HTTPException, ValidationError,
       PostgREST APIError, and generic Exception)
-    - CorrelationIdMiddleware and RequestLoggingMiddleware
+    - CorrelationIdMiddleware, RequestLoggingMiddleware, MaxBodySizeMiddleware
 
     Args:
         app: The FastAPI application instance
         settings: Application settings (must have cors_origins_list,
-                  sentry_dsn, is_production, debug attributes)
+                  sentry_dsn, is_production, debug attributes; optionally
+                  max_body_bytes)
         limiter: Optional slowapi Limiter instance
         cors_allow_headers: Custom list of allowed CORS headers.
                             Defaults to standard set with correlation ID headers.
         cors_expose_headers: Custom list of exposed CORS headers.
                              Defaults to correlation ID and response time headers.
+        max_body_bytes: Override the body-size cap (default 1 MB or
+                        `settings.max_body_bytes` when present). Set to a
+                        higher value for products that legitimately receive
+                        large payloads (file-upload-via-webhook, etc.).
     """
     # -----------------------------------------------------------------------
     # Sentry (optional)
@@ -121,10 +132,20 @@ def configure_app(
     )
 
     # -----------------------------------------------------------------------
-    # Middleware (order matters: CorrelationId must run before Logging)
+    # Middleware (order matters: registered last runs first)
+    #
+    # Stack order on incoming requests:
+    #   MaxBodySizeMiddleware → CorrelationIdMiddleware → RequestLoggingMiddleware → handler
+    #
+    # Rationale: oversized bodies short-circuit before correlation/logging
+    # do any work; correlation IDs must be set before request-logging emits
+    # records.
     # -----------------------------------------------------------------------
+    if max_body_bytes is None:
+        max_body_bytes = getattr(settings, "max_body_bytes", DEFAULT_MAX_BODY_BYTES)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
+    app.add_middleware(MaxBodySizeMiddleware, max_bytes=max_body_bytes)
 
     # -----------------------------------------------------------------------
     # Exception handlers

@@ -92,6 +92,20 @@ def test_period_at_utc_midnight():
 
 `resolve_credential(key_name, org_id=None)` — `org_settings` → `platform_settings` → env var. Lifted from ERP's local resolver in the LLM consolidation. `configure_credentials(url, anon_key, service_role_key)` is auto-called by `create_product_app()` from `settings.supabase_*` — products get tier 1+2 for free from the single root `.env`.
 
+### `security/` — Webhook signatures + (future) secret-redaction
+
+Top-level seed-lib layer for cross-product security primitives. Today it ships `webhook_signatures` (every inbound webhook in the monorepo verifies through this module). Future redaction / scrubbing helpers land here too.
+
+| Symbol | Purpose |
+|---|---|
+| `compute_hmac_sha256_hex(body, secret)` | Hex-encoded HMAC-SHA256 of `body` keyed with `secret`. Use when the provider sends a bare hex digest (WAHA, internal). |
+| `verify_hmac_sha256(body, signature, secret, *, timestamp_value=None, max_age_seconds=300)` | Verify a `sha256=<hex>` header (Meta `X-Hub-Signature-256`, GitHub). Constant-time; pass `timestamp_value` to enforce a replay window. |
+| `verify_hmac_sha256_hex(body, signature_hex, secret, *, timestamp_value=None, max_age_seconds=300)` | Symmetric counterpart for bare-hex digests (no `sha256=` prefix). Forces callers off `==`. |
+| `verify_svix_signature(*, svix_id, svix_timestamp, body, signature_header, secret, enforce_replay_window=False, max_age_seconds=300)` | Verify Svix-protocol headers (Resend etc.). Multi-version header rotation supported. |
+| `webhook_endpoint(*, secret_env, signature_header, ...)` | FastAPI dependency factory — verifies before the handler runs, returns the raw body bytes (Phase 2 deliverable). |
+
+**Adopters:** ERP (`assinaturas`, `meta_api`, `whatsapp_webhook`) and Mailing (`webhooks/resend`). Stripe SDK is the documented carve-out — it ships its own verifier; don't wrap it. → `KB § PATTERNS/webhook-signatures.md` for the four-shape catalog + universal rules.
+
 ### `llm/` — Multi-Provider LLM Client
 
 Every product accesses LLMs exclusively through this package. No product code imports `openai` / `anthropic` / `google-generativeai` directly.

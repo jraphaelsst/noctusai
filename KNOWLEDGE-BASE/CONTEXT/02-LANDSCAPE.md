@@ -32,8 +32,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Therapy | 39 | 40 | 65 | 25 | 68 | 924 |
 | Seed | 0 | 0 | 8 | 0 | 3 | 31 |
 | Daily Life | 7 | 7 | 12 | 7 | 15 | 226 |
-| Mailing | 10 | 10 | 22 | 9 | 15 | 187 |
-| **Total** | **158** | **136** | **225** | **123** | **292** | **3,879** |
+| Mailing | 10 | 10 | 22 | 9 | 16 | 191 |
+| **Total** | **158** | **136** | **225** | **123** | **293** | **3,883** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
