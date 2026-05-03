@@ -37,18 +37,28 @@ green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 errors=0
 warnings=0
 
-# ─── 1. CLAUDE.md pointers resolve to real KB files
-echo "Checking CLAUDE.md pointers resolve to real KB files..."
+# ─── 1. CLAUDE.md + topical CLAUDE/*.md pointers resolve to real KB files
+echo "Checking CLAUDE.md + CLAUDE/*.md pointers resolve to real KB files..."
+# Build the list of router files to scan: CLAUDE.md + any CLAUDE/*.md sibling routers
+# (introduced 2026-05-03 by `context-budget-overhaul` — topical CLAUDE/<topic>.md
+# files load on-demand and reference KB anchors; their pointers must also resolve.)
+router_files=("$CLAUDE_MD")
+if [[ -d "CLAUDE" ]]; then
+  while IFS= read -r f; do
+    router_files+=("$f")
+  done < <(find CLAUDE -maxdepth 2 -type f -name '*.md' | sort -u)
+fi
+
 while IFS= read -r path; do
   # Skip illustrative brace-alternation patterns
   if [[ "$path" == *"{"* ]]; then
     continue
   fi
   if [[ ! -f "$path" ]]; then
-    red "  ✗ BROKEN: $path (referenced in CLAUDE.md, not on disk)"
+    red "  ✗ BROKEN: $path (referenced by a CLAUDE.md / CLAUDE/*.md router, not on disk)"
     errors=$((errors + 1))
   fi
-done < <(grep -oE '`KNOWLEDGE-BASE/[^`]+\.md`' "$CLAUDE_MD" 2>/dev/null | sed 's/`//g' | sort -u)
+done < <(grep -hoE '`KNOWLEDGE-BASE/[^`]+\.md`' "${router_files[@]}" 2>/dev/null | sed 's/`//g' | sort -u)
 
 # ─── 2. Top-level KB docs are indexed in INDEX.md
 echo "Checking all KB docs are indexed in $KB_INDEX..."

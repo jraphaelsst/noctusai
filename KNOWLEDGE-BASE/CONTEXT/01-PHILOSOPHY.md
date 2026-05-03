@@ -449,7 +449,73 @@ When a task needs Supabase access — apply a migration, audit a schema, verify 
 
 ---
 
-## `CLAUDE.md` vs `KNOWLEDGE-BASE/`
+## Context budget discipline — `CLAUDE.md` is router, KB is depth, topical loads on-demand
+
+> **Rule.** Auto-loaded surfaces (`CLAUDE.md`, `MEMORY.md` index) stay slim — every line costs per-turn tokens. Depth, examples, slip-history, and topical rules live in the on-demand layer (KB, individual `feedback_*.md` files, `CLAUDE/<topic>.md` sub-files). New rules go KB-first, then CLAUDE.md (or topical sub-file) gets a lean pointer. *Why this matters:* the auto-loaded budget compounds — a 10K bloat in CLAUDE.md costs 10K *every reply* across the entire session. The on-demand layer pays the cost only when the topic is actually relevant.
+
+### The three layers
+
+- **`CLAUDE.md`** (auto-loaded, always) — universal behavioral rules + pointers. Kept lean. Every §1 bullet ≤80 words (per § 2.8 in `KB § PATTERNS/project-execution.md`).
+- **`CLAUDE/<topic>.md`** (auto-loaded NO — read by agent when working on the topic) — topical behavioral rules: `CLAUDE/backend.md`, `CLAUDE/frontend.md`, `CLAUDE/projects.md`, `CLAUDE/platform.md`. Each is a sibling-of-CLAUDE.md routing extension, NOT depth.
+- **`KNOWLEDGE-BASE/`** (on-demand) — heavyweight depth, examples, slip-history, audit trails, principle-level reasoning. Pointed-to from CLAUDE.md and the topical files.
+
+### Topical CLAUDE/<topic>.md loading discipline
+
+The agent loads a topical sub-file when starting work on that topic. The §3 "When to read what" table in `CLAUDE.md` is the canonical routing manifest. Default loadings:
+
+- **Backend code edit** → also read `CLAUDE/backend.md`.
+- **Frontend code edit** → also read `CLAUDE/frontend.md`.
+- **Starting a project / phase / scaffold** → also read `CLAUDE/projects.md`.
+- **Touching cross-cutting platform** (LGPD, MCP toolkit, MCP-first decisions, clean-folder, KB depth itself) → also read `CLAUDE/platform.md`.
+
+A topical file is NOT auto-loaded by the harness — the discipline is the agent's. If you skip the topical file when the topic applies, you're missing rules that exist. Treat the §3 table as a checklist, not a suggestion.
+
+### MCP keep-list
+
+Active MCP servers in this repo are restricted to a keep-list:
+
+- **`noctusai`** — local project MCP (dev toolkit + business primitives + vendor adapters). Configured in `.mcp.json` + `.claude/settings.local.json`.
+- **`supabase`** (claude.ai connector) — DB ops via `mcp__claude_ai_Supabase__*`.
+
+**Anything else is off-list.** Notably, `claude-in-chrome` and the wide catalog of `mcp__claude_ai_*` connectors (Notion, Stripe, Gmail, etc.) are NOT on the keep-list — they exist as catalog entries but should not be invoked in this repo without explicit user OK.
+
+Disable paths for non-keep-list MCPs:
+- `claude-in-chrome` — Chrome extension toggle (Claude Desktop preferences → `chromeExtensionEnabled`) or Claude.ai connector settings; the CLI cannot directly disable a Chrome-extension-registered MCP server.
+- `mcp__claude_ai_*` connectors — managed at claude.ai web settings → Connectors. Most appear in the deferred-tool catalog as unauthenticated stubs and are harmless until invoked.
+
+Adding a new MCP requires explicit user approval (not "did the agent guess this would help?").
+
+### Skills keep-list
+
+Bundled Claude Code skills used in this repo:
+
+- **`update-config`** — harness config edits (settings.json, hooks).
+- **`loop`** — recurring tasks / polling.
+- **`schedule`** — background routines (CronCreate-based).
+- **`security-review`** — occasional security passes.
+
+**Off-list (policy)**: `keybindings-help`, `simplify`, `fewer-permission-prompts`, `claude-api`, `init`, `review`. Bundled skills can't be CLI-disabled, but the policy reduces accidental invocation. (`init` and `review` overlap with repo-native tooling — `CLAUDE.md` already exists; the MCP keeper performs reviews.) `claude-api` is for building Anthropic SDK apps directly; this repo's LLM access goes through `noctusai_lib.llm` so the skill rarely applies.
+
+### Why this rule earns its CLAUDE.md slot
+
+The `CLAUDE.md`-vs-`KB` split was already a methodology rule. This expanded version codifies the *topical* layer that didn't previously exist (`CLAUDE/<topic>.md`), and codifies *which MCPs and skills are in-scope* — both directly bear on per-turn cost. Without an explicit keep-list, future agents add MCP servers casually, each one inflating the deferred-tool catalog and the system-reminder budget.
+
+### How to apply
+
+- New behavioral rule → land KB anchor first; pointer in CLAUDE.md OR the appropriate `CLAUDE/<topic>.md` sub-file (universal vs. topical decision); memory file added with three-way sync.
+- New §1 bullet pushing >100 words → trim to ≤80; push the long-form into KB; pointer points to the new anchor.
+- New MCP server proposed → check the keep-list. If not on it, file a project requesting addition with rationale.
+- New bundled-skill use proposed → same drill.
+
+### Cross-references
+
+- `KB § PATTERNS/project-execution.md § 2.8 Multi-phase rule shipments — forward-stub + bullet-weight discipline` — the ≤80-word rule + measurement discipline.
+- `KB § PATTERNS/agent-reading-discipline.md § Narrow-read first` — same per-turn-cost framing applied to file reads.
+- This file § Docs stay in sync — three-way sync across KB, CLAUDE.md, and memory.
+
+---
+
+## `CLAUDE.md` vs `KNOWLEDGE-BASE/` (preserved — see § Context budget discipline above)
 
 - **`CLAUDE.md`** = pointer/map + compact behavioral rules. Loaded every session. Kept lean on purpose.
 - **`KNOWLEDGE-BASE/`** = deep context, technical specs, architectural reasoning. Loaded on-demand when Claude needs it.
