@@ -189,21 +189,31 @@ On demand (when a topic is touched):
 
 ### Phase 4 — (merged into Phase 2 above)
 
-### Phase 5 — MCP allowlist trim
-- [ ] Verify `.mcp.json` only contains noctusai. (Already true.)
-- [ ] Verify `.claude/settings.local.json` `enabledMcpjsonServers` only contains `noctusai`. (Already true.)
-- [ ] Document keep-list policy: noctusai + supabase only. claude-in-chrome rare, intentionally not in the keep-list.
-- [ ] Document the user-side disable path for claude-in-chrome (Chrome extension → toggle, or Claude.ai connector settings) since CLI can't disable a Chrome-extension MCP.
-- [ ] Land the policy in CLAUDE.md (or CLAUDE-platform.md if topical split is by then live).
+### Phase 5 — MCP allowlist trim ✅
+- [x] Verify `.mcp.json` only contains noctusai → `['noctusai']`.
+- [x] Verify `.claude/settings.local.json` `enabledMcpjsonServers` only contains `noctusai` → `['noctusai']`.
+- [x] Verify `~/.claude.json` project section MCP fields are empty → confirmed `mcpServers: {}`, `enabledMcpjsonServers: []`, `disabledMcpjsonServers: []`.
+- [x] Keep-list policy documented in three places (Phase 2 already landed it): `KB § 01-PHILOSOPHY.md § Context budget discipline § MCP keep-list`, `CLAUDE.md §1 "Context budget discipline"` bullet, `feedback_context_budget_discipline.md`.
+- [x] User-side disable path for claude-in-chrome documented in the KB anchor: Chrome extension toggle (Claude Desktop preferences → `chromeExtensionEnabled`, or `/chrome` Claude Code slash command per `~/.claude/cache/changelog.md`); the CLI cannot directly disable a Chrome-extension-registered MCP.
 
-### Phase 6 — Skills keep-list policy
-- [ ] Identify which Claude Code bundled skills are actually used (`update-config`, `schedule`, `loop` likely yes; `init`, `review`, `security-review`, `keybindings-help`, `simplify`, `fewer-permission-prompts`, `claude-api` likely no in this repo).
-- [ ] Document keep-list policy in CLAUDE.md.
+**Improvements:**
+- Phase 0 audit's framing — "trim what's locally trimmable + document the rest" — held: project-level config was already at the minimum, so Phase 5's actual delta is policy-doc, not config-edit. Recurrence cross-check: this is the second time the audit's "verification only" phase produced a proposal-quality finding (Phase 1 was the first); confirms Phase 0's audit-first methodology is paying back per `feedback_phase_zero_audit.md`.
 
-### Phase 7 — Three-way sync (new methodology rule)
-- [ ] Land new rule: "Context budget discipline — CLAUDE.md is a router; KB is depth; MCP/skills follow keep-list; new rules KB-first." Three-way sync: KB anchor + CLAUDE.md pointer + memory file + MEMORY.md index entry.
-- [ ] Run `bash scripts/verify-kb-sync.sh`.
-- [ ] Run `python scripts/update-kb-counts.py --check`.
+### Phase 6 — Skills keep-list policy ✅
+- [x] Skills available identified (per session-start system reminder): `update-config`, `keybindings-help`, `simplify`, `fewer-permission-prompts`, `loop`, `schedule`, `claude-api`, `init`, `review`, `security-review`.
+- [x] Keep-list landed in `KB § 01-PHILOSOPHY.md § Context budget discipline § Skills keep-list`: `update-config` / `loop` / `schedule` / `security-review`.
+- [x] Off-list (policy): `keybindings-help` / `simplify` / `fewer-permission-prompts` / `claude-api` / `init` / `review`. Bundled skills can't be CLI-disabled, but the policy reduces accidental invocation. (`init`/`review` overlap with repo-native tooling; `claude-api` is for direct Anthropic SDK apps and rarely applies because LLM access goes through `noctusai_lib.llm`.)
+
+**Improvements:** none identified — pure policy doc.
+
+### Phase 7 — Three-way sync (new methodology rule) ✅
+- [x] Verified four-layer sync of "Context budget discipline" rule: (1) KB anchor `KB § 01-PHILOSOPHY.md § Context budget discipline`, (2) CLAUDE.md §1 bullet, (3) memory file `feedback_context_budget_discipline.md` (4109 bytes), (4) MEMORY.md index entry.
+- [x] Ran `bash scripts/verify-kb-sync.sh` — passes (also via pre-commit on every Phase 2/3/5-7 commit).
+- [x] Ran `python scripts/update-kb-counts.py --check` — passes via pre-commit hook.
+- [x] Ran MCP keeper `--review` — 0 issues.
+
+**Improvements:**
+- The forward-stub pattern from `KB § PATTERNS/project-execution.md § 2.8` would have been useful if we'd planned the new "Context budget discipline" rule across multiple phases. Here we landed it in Phase 2 alongside the compaction work, so no forward-stub was needed. Documenting this so future multi-phase rule shipments default to the stub pattern.
 
 ### Phase 8 — Project close
 - [ ] Bundled improvement proposal: read all phase Improvements blocks, synthesize ONE proposal at `projects/context-budget-overhaul/proposals/...`. Apply inline (per apply-inline-then-delete methodology). Delete the proposal file.
@@ -267,3 +277,4 @@ On demand (when a topic is touched):
 | 2026-05-03 | Phase 1 ✅ — KB-anchor preservation: verified all 86 pointers resolve and slip-history sections exist; no parking needed (memory files + KB carry the depth already). Discovered existing `KB § PATTERNS/project-execution.md § 2.8` mandates ≤80 words / §1 bullet — Phase 2 alignment target. | claude-opus-4-7 |
 | 2026-05-03 | Phase 2 ✅ — CLAUDE.md compaction with topical split (merged from original Phase 2 + Phase 4). New `KB § 01-PHILOSOPHY.md § Context budget discipline` anchor codifies router/topical/depth layers + MCP/skills keep-lists. New `CLAUDE/` directory with `backend.md`, `frontend.md`, `projects.md`, `platform.md` topical sub-files (read on-demand by agent discipline per §3 routing table). CLAUDE.md compacted 4318 → 2109 words (-51%). `verify-kb-sync.sh` extended to scan `CLAUDE/*.md` too — passes. Improvements applied inline; deferred items: `noctusai_count_tokens` MCP tool (accept-with-rationale this round, defer to MCP-server-expansion); ≤80-word distinction for topical files needs §2.8 backfill (future docs pass). | claude-opus-4-7 |
 | 2026-05-03 | Phase 3 ✅ — MEMORY.md index compaction + retirement triage. Compacted 83/2993 → 106/1388 (lines +28%, words -54%; line bump is the new category headers + new `feedback_context_budget_discipline.md` entry). New memory file for the context-budget-discipline rule. Retire decision reversed for `feedback_apply_inline_delete_proposals.md` (Phase 0 audit claim invalidated by re-read — keeping; complementary to `feedback_auto_improvement.md`). Categorized layout added as in-flight improvement. **Combined Phase 2+3 auto-loaded surface: 7311 → 3497 words = ~52% reduction in per-turn token cost.** | claude-opus-4-7 |
+| 2026-05-03 | Phases 5+6+7 ✅ — verification + bookkeeping. Phase 5: project-level MCP allowlist confirmed at the desired minimum (`['noctusai']` in both `.mcp.json` and `.claude/settings.local.json`); keep-list policy landed in Phase 2. Phase 6: skills keep-list policy landed in Phase 2. Phase 7: four-layer three-way sync verified for the new "Context budget discipline" rule (KB + CLAUDE.md + memory file + MEMORY.md). MCP keeper `--review` returned 0 issues. | claude-opus-4-7 |
