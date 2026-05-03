@@ -173,11 +173,19 @@ On demand (when a topic is touched):
 
 **Phase proposal**: applied inline; no separate `proposals/` artifact (per apply-inline-then-delete methodology + auto-improvement at phase close).
 
-### Phase 3 — MEMORY.md index compaction + retire
-- [ ] Rewrite each MEMORY.md entry to one line ~150 chars: `- [Title](file.md) — one-line hook`.
-- [ ] Retire `feedback_apply_inline_delete_proposals.md` (merged into `feedback_auto_improvement.md`).
-- [ ] Add `feedback_context_budget_discipline.md` (new rule).
-- [ ] Target: ~80 lines.
+### Phase 3 — MEMORY.md index compaction + retire ✅
+- [x] Rewrite each MEMORY.md entry to one line ~150 chars: `- [Title](file.md) — one-line hook`.
+- [x] ~~Retire `feedback_apply_inline_delete_proposals.md` (merged into `feedback_auto_improvement.md`)~~ — **kept**: re-read showed it describes a complementary protocol (proposal-file lifecycle when one IS filed) referenced by `feedback_auto_improvement.md` for its non-simple-case branch. Audit claim invalidated; retire skipped. §11 logged.
+- [x] Add `feedback_context_budget_discipline.md` — the new methodology rule (router/topical/depth + MCP/skills keep-lists).
+- [x] Categorized index for easier scanning (Architecture & seed; DRY; Code quality; Testing; Security; MCP & DB; Reading discipline; Project execution; Product hygiene; Documentation; Context budget).
+
+**Result vs target:**
+- Target: ~80 lines.  **Actual: 106 lines / 1388 words** (line count up slightly from 83 because category headers + new entry; word count down 54% from 2993).
+- Combined CLAUDE.md + MEMORY.md auto-loaded surface: 7311 → 3497 words = **~52% reduction in per-turn token cost.**
+
+**Improvements:**
+- Phase 0 audit's retire claim for `feedback_apply_inline_delete_proposals.md` was wrong — Phase 1's "verification reads what's actually there" methodology fired correctly here (re-read both files, found complementarity, decided to keep). Lesson cataloged: audit claims about *file relationships* need a same-pass verification before acting on them.
+- The categorized layout (`### Architecture & seed`, `### DRY`, etc.) was a stretch goal, not in the original plan — turned out to be a high-value usability win at zero token cost. Future MEMORY.md edits should preserve the categorical grouping (drop entries into the right bucket; resist temptation to add new top-level sections).
 
 ### Phase 4 — (merged into Phase 2 above)
 
@@ -258,3 +266,4 @@ On demand (when a topic is touched):
 | 2026-05-03 | Phase 0 ✅ — audit produced `audit.md`. CLAUDE.md = 193 lines / ~9-10K tokens; MEMORY.md = 83 lines / ~6-7K tokens; auto-loaded meta total ≈ 15-17K tokens/turn. 36 §1 rule bullets, 86 KB-shorthand pointers, 5 literal pointers. Rule taxonomy: 18 universal + 5 backend + 2 frontend + 8 projects + 5 platform. Retire candidate: `feedback_apply_inline_delete_proposals.md` (merged into `feedback_auto_improvement.md`). | claude-opus-4-7 |
 | 2026-05-03 | Phase 1 ✅ — KB-anchor preservation: verified all 86 pointers resolve and slip-history sections exist; no parking needed (memory files + KB carry the depth already). Discovered existing `KB § PATTERNS/project-execution.md § 2.8` mandates ≤80 words / §1 bullet — Phase 2 alignment target. | claude-opus-4-7 |
 | 2026-05-03 | Phase 2 ✅ — CLAUDE.md compaction with topical split (merged from original Phase 2 + Phase 4). New `KB § 01-PHILOSOPHY.md § Context budget discipline` anchor codifies router/topical/depth layers + MCP/skills keep-lists. New `CLAUDE/` directory with `backend.md`, `frontend.md`, `projects.md`, `platform.md` topical sub-files (read on-demand by agent discipline per §3 routing table). CLAUDE.md compacted 4318 → 2109 words (-51%). `verify-kb-sync.sh` extended to scan `CLAUDE/*.md` too — passes. Improvements applied inline; deferred items: `noctusai_count_tokens` MCP tool (accept-with-rationale this round, defer to MCP-server-expansion); ≤80-word distinction for topical files needs §2.8 backfill (future docs pass). | claude-opus-4-7 |
+| 2026-05-03 | Phase 3 ✅ — MEMORY.md index compaction + retirement triage. Compacted 83/2993 → 106/1388 (lines +28%, words -54%; line bump is the new category headers + new `feedback_context_budget_discipline.md` entry). New memory file for the context-budget-discipline rule. Retire decision reversed for `feedback_apply_inline_delete_proposals.md` (Phase 0 audit claim invalidated by re-read — keeping; complementary to `feedback_auto_improvement.md`). Categorized layout added as in-flight improvement. **Combined Phase 2+3 auto-loaded surface: 7311 → 3497 words = ~52% reduction in per-turn token cost.** | claude-opus-4-7 |
