@@ -26,10 +26,12 @@ from __future__ import annotations
 
 from .narrative import narrative
 from .orchestrate import build_and_send
-from .render import render_with_narrative
+from .render import email_template_dir, render_digest_pair, render_with_narrative
 
 __all__ = [
     "narrative",
     "render_with_narrative",
+    "render_digest_pair",
+    "email_template_dir",
     "build_and_send",
 ]

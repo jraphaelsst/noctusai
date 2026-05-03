@@ -30,15 +30,16 @@ from typing import Any, Optional
 
 from noctusai_lib.domain.digest import (
     build_and_send,
+    email_template_dir,
     narrative as digest_narrative,
-    render_with_narrative,
+    render_digest_pair,
 )
 from noctusai_lib.integrations.email.digest import Digest
 
 logger = logging.getLogger(__name__)
 
-# `app/email_templates/` lives next to `app/services/`.
-_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "email_templates"
+# `app/email_templates/` lives next to `app/services/` — resolved by the seed helper.
+_TEMPLATE_DIR = email_template_dir(__file__)
 
 MODEL = "gpt-4o-mini"
 PROMPT_VERSION = "core-audit-digest@v1"
@@ -124,9 +125,8 @@ def _render_bodies(
     total_events: int,
 ) -> tuple[str, str]:
     """Render `(html, text)` digest bodies via the shared seed helper."""
-    return render_with_narrative(
-        html_template="audit_digest.html.j2",
-        text_template="audit_digest.txt.j2",
+    return render_digest_pair(
+        "audit_digest",
         narrative=narrative,
         context={
             "org_name": org_name,

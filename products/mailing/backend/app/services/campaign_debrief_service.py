@@ -32,14 +32,15 @@ from typing import Any, Optional
 
 from noctusai_lib.domain.digest import (
     build_and_send,
+    email_template_dir,
     narrative as digest_narrative,
-    render_with_narrative,
+    render_digest_pair,
 )
 from noctusai_lib.integrations.email.digest import Digest
 
 logger = logging.getLogger(__name__)
 
-_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "email_templates"
+_TEMPLATE_DIR = email_template_dir(__file__)
 
 MODEL = "gpt-4o-mini"
 PROMPT_VERSION = "mailing-campaign-debrief@v1"
@@ -203,9 +204,8 @@ def _build_metric_rows(metrics: dict[str, Any]) -> list[dict[str, Any]]:
 def _render_bodies(
     *, campaign_name: str, metrics: dict[str, Any], top_links: list[tuple[str, int]], narrative: str
 ) -> tuple[str, str]:
-    return render_with_narrative(
-        html_template="campaign_debrief.html.j2",
-        text_template="campaign_debrief.txt.j2",
+    return render_digest_pair(
+        "campaign_debrief",
         narrative=narrative,
         context={
             "campaign_name": campaign_name,

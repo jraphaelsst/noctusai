@@ -14,7 +14,9 @@ import pytest
 
 from noctusai_lib.domain.digest import (
     build_and_send,
+    email_template_dir,
     narrative,
+    render_digest_pair,
     render_with_narrative,
 )
 from noctusai_lib.integrations.email.digest import Digest, DigestSendResult
@@ -268,3 +270,91 @@ class TestBuildAndSend:
             assert result["dry_run"] is False
             assert result["error"] == "Resend 5xx"
             assert result["subject"] == "X"
+
+
+# ---------------------------------------------------------------------------
+# email_template_dir()
+# ---------------------------------------------------------------------------
+
+
+class TestEmailTemplateDir:
+    """Replaces `Path(__file__).resolve().parent.parent / "email_templates"`
+    that recurred verbatim in 5 products before formalization."""
+
+    def test_resolves_relative_to_caller(self, tmp_path):
+        """Given a service file at `<root>/services/<name>_service.py`,
+        the helper resolves to `<root>/email_templates/`."""
+        services_dir = tmp_path / "app" / "services"
+        services_dir.mkdir(parents=True)
+        fake_service_file = str(services_dir / "fake_digest_service.py")
+
+        result = email_template_dir(fake_service_file)
+        assert result == tmp_path / "app" / "email_templates"
+
+    def test_returns_path_object(self, tmp_path):
+        """Adopters use the result as a Path (e.g. for Jinja search_paths
+        or os.fspath); confirm the return is `pathlib.Path`."""
+        from pathlib import Path
+
+        services_dir = tmp_path / "app" / "services"
+        services_dir.mkdir(parents=True)
+        result = email_template_dir(str(services_dir / "x_service.py"))
+        assert isinstance(result, Path)
+
+
+# ---------------------------------------------------------------------------
+# render_digest_pair()
+# ---------------------------------------------------------------------------
+
+
+class TestRenderDigestPair:
+    """Convenience over `render_with_narrative` for the common case where
+    html + text templates share a basename."""
+
+    def test_derives_html_and_text_template_names(self, tmp_path):
+        """The basename `audit_digest` resolves to `audit_digest.html.j2`
+        + `audit_digest.txt.j2`."""
+        templates = tmp_path / "email_templates"
+        templates.mkdir()
+        (templates / "audit_digest.html.j2").write_text(
+            "<p>{{ org_name }}: {{ narrative }}</p>"
+        )
+        (templates / "audit_digest.txt.j2").write_text(
+            "{{ org_name }}: {{ narrative }}"
+        )
+
+        html, text = render_digest_pair(
+            "audit_digest",
+            narrative="Hello world.",
+            context={"org_name": "Acme"},
+            search_paths=[templates],
+            prompt_version="audit@v1",
+        )
+        assert "Acme: Hello world." in html
+        assert "Acme: Hello world." in text
+
+    def test_passes_through_to_render_with_narrative(self, tmp_path):
+        """`render_digest_pair` is a thin wrapper — assert it calls
+        `render_with_narrative` with the derived template names + the
+        same arguments."""
+        from unittest.mock import patch
+
+        with patch(
+            "noctusai_lib.domain.digest.render.render_with_narrative",
+            return_value=("<p>html</p>", "text"),
+        ) as mock_render:
+            render_digest_pair(
+                "weekly_review",
+                narrative="N",
+                context={"k": "v"},
+                search_paths=["/tmp/templates"],
+                prompt_version="weekly@v2",
+            )
+        mock_render.assert_called_once_with(
+            html_template="weekly_review.html.j2",
+            text_template="weekly_review.txt.j2",
+            narrative="N",
+            context={"k": "v"},
+            search_paths=["/tmp/templates"],
+            prompt_version="weekly@v2",
+        )

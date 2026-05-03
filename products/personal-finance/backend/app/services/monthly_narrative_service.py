@@ -28,15 +28,16 @@ from typing import Any, Optional
 
 from noctusai_lib.domain.digest import (
     build_and_send,
+    email_template_dir,
     narrative as digest_narrative,
-    render_with_narrative,
+    render_digest_pair,
 )
 from noctusai_lib.integrations.email.digest import Digest
 from noctusai_lib.primitives.parsing import format_brl
 
 logger = logging.getLogger(__name__)
 
-_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "email_templates"
+_TEMPLATE_DIR = email_template_dir(__file__)
 
 MODEL = "gpt-4o-mini"
 PROMPT_VERSION = "pf-monthly-narrative@v1"
@@ -157,9 +158,8 @@ def _render_bodies(
     top_categorias: list[tuple[str, float]],
     narrative: str,
 ) -> tuple[str, str]:
-    return render_with_narrative(
-        html_template="monthly_narrative.html.j2",
-        text_template="monthly_narrative.txt.j2",
+    return render_digest_pair(
+        "monthly_narrative",
         narrative=narrative,
         context={
             "org_name": org_name,

@@ -27,14 +27,15 @@ from typing import Any, Optional
 
 from noctusai_lib.domain.digest import (
     build_and_send,
+    email_template_dir,
     narrative as digest_narrative,
-    render_with_narrative,
+    render_digest_pair,
 )
 from noctusai_lib.integrations.email.digest import Digest
 
 logger = logging.getLogger(__name__)
 
-_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "email_templates"
+_TEMPLATE_DIR = email_template_dir(__file__)
 
 MODEL = "gpt-4o-mini"
 PROMPT_VERSION = "daily-life-weekly-review@v1"
@@ -193,9 +194,8 @@ def _render_bodies(
     *, user_label: str, period_label: str, agg: dict[str, Any], narrative: str
 ) -> tuple[str, str]:
     fm = agg["focus_minutes"]
-    return render_with_narrative(
-        html_template="weekly_review.html.j2",
-        text_template="weekly_review.txt.j2",
+    return render_digest_pair(
+        "weekly_review",
         narrative=narrative,
         context={
             "user_label": user_label,
