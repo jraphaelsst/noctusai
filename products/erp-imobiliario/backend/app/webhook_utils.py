@@ -1,24 +1,15 @@
 """
 Shared webhook verification utilities.
 
-Provides HMAC-SHA256 signature verification for webhook endpoints
-(Meta Lead Ads, WhatsApp WAHA, signing providers, etc.).
+Thin re-export layer over `noctusai_lib.security.webhook_signatures` so
+existing call sites (`from app.webhook_utils import verify_hmac_sha256`)
+keep working while the canonical implementation lives in the platform
+shared library. New code should import from `noctusai_lib.security`
+directly.
 """
-import hashlib
-import hmac
 
-
-def verify_hmac_sha256(body: bytes, signature: str, secret: str) -> bool:
-    """
-    Verify an HMAC-SHA256 webhook signature.
-
-    Args:
-        body: Raw request body bytes.
-        signature: The signature header value (e.g. "sha256=abc123...").
-        secret: The shared secret used to compute the expected signature.
-
-    Returns:
-        True if the signature is valid, False otherwise.
-    """
-    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature)
+from noctusai_lib.security.webhook_signatures import (  # noqa: F401
+    compute_hmac_sha256_hex,
+    verify_hmac_sha256,
+    verify_svix_signature,
+)

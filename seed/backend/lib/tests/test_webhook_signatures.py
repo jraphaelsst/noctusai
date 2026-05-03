@@ -1,0 +1,174 @@
+"""Unit tests for `noctusai_lib.security.webhook_signatures`.
+
+Covers all three signature shapes the platform speaks:
+  - HMAC-SHA256 with `sha256=…` prefix (Meta, GitHub)
+  - Bare HMAC-SHA256 hex (WAHA, internal)
+  - Svix protocol (Resend)
+
+The helpers MUST be constant-time (use `hmac.compare_digest`); these
+tests exercise the success paths plus several tampering / wrong-secret
+paths that should reject.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+
+from noctusai_lib.security.webhook_signatures import (
+    compute_hmac_sha256_hex,
+    verify_hmac_sha256,
+    verify_svix_signature,
+)
+
+
+# -- Pattern 1: sha256=<hex> -----------------------------------------------
+
+
+def test_verify_hmac_sha256_accepts_correctly_signed_body():
+    secret = "shared-secret"
+    body = b'{"event":"lead.created"}'
+    sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    assert verify_hmac_sha256(body, sig, secret) is True
+
+
+def test_verify_hmac_sha256_rejects_tampered_body():
+    secret = "shared-secret"
+    body = b'{"event":"lead.created"}'
+    sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    assert verify_hmac_sha256(b'{"event":"lead.deleted"}', sig, secret) is False
+
+
+def test_verify_hmac_sha256_rejects_wrong_secret():
+    body = b"x"
+    sig = "sha256=" + hmac.new(b"right-secret", body, hashlib.sha256).hexdigest()
+
+    assert verify_hmac_sha256(body, sig, "wrong-secret") is False
+
+
+def test_verify_hmac_sha256_rejects_missing_signature_or_secret():
+    assert verify_hmac_sha256(b"x", "", "secret") is False
+    assert verify_hmac_sha256(b"x", "sha256=abc", "") is False
+
+
+# -- Pattern 2: bare hex ---------------------------------------------------
+
+
+def test_compute_hmac_sha256_hex_matches_stdlib():
+    secret = "k"
+    body = b"payload"
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    assert compute_hmac_sha256_hex(body, secret) == expected
+
+
+# -- Pattern 3: Svix -------------------------------------------------------
+
+
+def _svix_secret_and_signature(body: bytes, svix_id: str, svix_timestamp: str) -> tuple[str, str]:
+    """Generate a valid (secret, signature_header) pair for the given message."""
+    secret_bytes = b"the-actual-key-bytes"
+    secret_b64 = base64.b64encode(secret_bytes).decode("ascii")
+    payload = f"{svix_id}.{svix_timestamp}.{body.decode()}".encode("utf-8")
+    sig = base64.b64encode(hmac.new(secret_bytes, payload, hashlib.sha256).digest()).decode("ascii")
+    return secret_b64, f"v1,{sig}"
+
+
+def test_verify_svix_signature_accepts_valid_payload():
+    body = b'{"type":"email.delivered"}'
+    secret_b64, sig_header = _svix_secret_and_signature(body, "msg_1", "1700000000")
+
+    assert verify_svix_signature(
+        svix_id="msg_1",
+        svix_timestamp="1700000000",
+        body=body,
+        signature_header=sig_header,
+        secret=secret_b64,
+    ) is True
+
+
+def test_verify_svix_signature_accepts_whsec_prefixed_secret():
+    body = b'{"x":1}'
+    secret_b64, sig_header = _svix_secret_and_signature(body, "m", "1")
+
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp="1",
+        body=body,
+        signature_header=sig_header,
+        secret=f"whsec_{secret_b64}",
+    ) is True
+
+
+def test_verify_svix_signature_handles_multiple_versions_in_header():
+    body = b"hi"
+    secret_b64, real_sig = _svix_secret_and_signature(body, "m", "1")
+    # Real header from Svix often carries a stale + current key for rotation:
+    multi = f"v1,old-stale-base64-junk {real_sig}"
+
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp="1",
+        body=body,
+        signature_header=multi,
+        secret=secret_b64,
+    ) is True
+
+
+def test_verify_svix_signature_rejects_tamper():
+    body = b'{"amount":10}'
+    secret_b64, sig_header = _svix_secret_and_signature(body, "m", "1")
+
+    # Same signature, different body → reject
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp="1",
+        body=b'{"amount":10000}',
+        signature_header=sig_header,
+        secret=secret_b64,
+    ) is False
+
+
+def test_verify_svix_signature_rejects_missing_inputs():
+    assert verify_svix_signature(
+        svix_id="", svix_timestamp="1", body=b"x", signature_header="v1,abc", secret="k"
+    ) is False
+    assert verify_svix_signature(
+        svix_id="m", svix_timestamp="", body=b"x", signature_header="v1,abc", secret="k"
+    ) is False
+    assert verify_svix_signature(
+        svix_id="m", svix_timestamp="1", body=b"x", signature_header="", secret="k"
+    ) is False
+    assert verify_svix_signature(
+        svix_id="m", svix_timestamp="1", body=b"x", signature_header="v1,abc", secret=""
+    ) is False
+
+
+def test_verify_svix_signature_rejects_non_v1_versions():
+    body = b"hi"
+    secret_b64, real_sig = _svix_secret_and_signature(body, "m", "1")
+    # Provider claims v9 — we don't trust unknown version tags.
+    spoofed = real_sig.replace("v1,", "v9,")
+
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp="1",
+        body=body,
+        signature_header=spoofed,
+        secret=secret_b64,
+    ) is False
+
+
+def test_verify_svix_signature_rejects_garbage_secret():
+    """Non-base64 secret can't possibly verify; must return False, not raise."""
+    body = b"x"
+    assert verify_svix_signature(
+        svix_id="m",
+        svix_timestamp="1",
+        body=body,
+        signature_header="v1,abc",
+        secret="not!base64@@@",
+    ) is False

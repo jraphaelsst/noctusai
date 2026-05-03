@@ -35,6 +35,7 @@ KNOWLEDGE-BASE/
 │   │   ├── llm-usage.md       ← Phase 15 DB-backed usage sink + admin endpoints
 │   │   ├── logging.md         ← level guide, no-`# silent-ok` rule, correlation IDs
 │   │   ├── seed-lib-layout.md ← 6-layer model + decision tree
+│   │   ├── webhook-signatures.md ← HMAC / Svix / Stripe-SDK patterns; canonical adopters list
 │   │   └── agent-reading-discipline.md ← narrow-read first; Explore delegation (forthcoming)
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
@@ -94,6 +95,7 @@ KNOWLEDGE-BASE/
 | LGPD awareness (keeper principle, the five questions, noctusai_lgpd_flag tool) | `CONTEXT/PATTERNS/lgpd.md` |
 | LLM usage tracking (SupabaseUsageSink, /api/llm/usage, cost estimation, RLS scoping) | `CONTEXT/PATTERNS/llm-usage.md` |
 | Logging convention (when-to-log, level guide, no-`# silent-ok` rule, correlation IDs) | `CONTEXT/PATTERNS/logging.md` |
+| Webhook signatures (HMAC-prefix / bare-hex / Svix / Stripe-SDK; canonical adopters list) | `CONTEXT/PATTERNS/webhook-signatures.md` |
 | Seed-lib layout (6 layers — primitives/config/testing/integrations/domain/api — where to put new helpers, where to find existing ones) | `CONTEXT/PATTERNS/seed-lib-layout.md` |
 | Agent reading & research discipline (narrow-read first; Explore delegation rule forthcoming) | `CONTEXT/PATTERNS/agent-reading-discipline.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
