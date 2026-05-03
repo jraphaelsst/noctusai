@@ -215,15 +215,28 @@ On demand (when a topic is touched):
 **Improvements:**
 - The forward-stub pattern from `KB § PATTERNS/project-execution.md § 2.8` would have been useful if we'd planned the new "Context budget discipline" rule across multiple phases. Here we landed it in Phase 2 alongside the compaction work, so no forward-stub was needed. Documenting this so future multi-phase rule shipments default to the stub pattern.
 
-### Phase 8 — Project close
-- [ ] Bundled improvement proposal: read all phase Improvements blocks, synthesize ONE proposal at `projects/context-budget-overhaul/proposals/...`. Apply inline (per apply-inline-then-delete methodology). Delete the proposal file.
-- [ ] Cross-product builds (mind: this project doesn't touch product code, but standard project-close ritual): `cd products/<one>/frontend && npx vite build` for spot-check.
-- [ ] Backend tests: `pytest tests/` for any product where CLAUDE.md changes might be cited (none expected — meta only).
-- [ ] MCP keeper review: `python mcp/noctusai/cli.py --review`.
-- [ ] Final `bash scripts/verify-kb-sync.sh`.
-- [ ] Run `python mcp/noctusai/cli.py --improvements <this-project>.md`.
+### Phase 8 — Project close ⏳
+- [x] Bundled improvement proposal: improvements were captured live in each phase's `**Improvements:**` block and applied inline as encountered (per `feedback_auto_improvement.md` rule). Two deferred items now properly destinated: (1) `noctusai_count_tokens` MCP tool → `mcp-server-expansion` project (cataloged as accept-with-rationale 2026-05-03); (2) ≤80-word distinction for topical files → applied inline as `KB § PATTERNS/project-execution.md § 2.8 § Auto-loaded vs. topical CLAUDE/<topic>.md`. No `proposals/` artifact to delete.
+- [x] **Cross-product builds + backend tests SKIPPED** — accept-with-rationale: this project touched only `CLAUDE.md`, `CLAUDE/*.md`, `KB`, memory files, and `scripts/verify-kb-sync.sh`. None of these are inputs to Vite or pytest; product builds/tests would be 100% wasted vs. zero risk of regression. Pre-commit hook ran `verify-kb-sync.sh` + KB count check + §6↔§11 consistency on every phase commit (5 commits) and passed every time.
+- [x] MCP keeper review: 0 issues (run twice — Phase 7 verification + Phase 8 close).
+- [x] Final `bash scripts/verify-kb-sync.sh` — passes.
+- [x] `python scripts/update-kb-counts.py --check` — passes ("KB counts are up to date").
+- [x] `noctusai_file_proposal` not invoked — improvements applied inline; no `improvements.md` regeneration needed.
 - [ ] Delete the project folder per apply-inline-then-delete.
 - [ ] Final `git add` (explicit paths, never `-A`) + `git commit` + `git push`. Push is the literal last step.
+
+**Improvements:** none identified — verification phase.
+
+**Project final summary**
+
+| Surface | Before (lines / words) | After (lines / words) | Word reduction |
+|---|---|---|---|
+| `CLAUDE.md` (auto-loaded) | 193 / 4318 | 142 / 2109 | **-51%** |
+| `MEMORY.md` (auto-loaded) | 83 / 2993 | 106 / 1388 | **-54%** |
+| **Combined auto-loaded** | **276 / 7311** | **248 / 3497** | **-52%** |
+| `CLAUDE/*.md` (on-demand topical) | n/a | 79 / 1997 | new |
+
+Per-reply token saving: ~3814 words ≈ 5000 tokens *every reply* across the entire session. New "Context budget discipline" methodology rule three-way-synced (KB + CLAUDE.md + memory) — codifies router/topical/depth layers + MCP keep-list (noctusai + supabase only) + skills keep-list (update-config / loop / schedule / security-review only). New script gate (`verify-kb-sync.sh` extended to scan `CLAUDE/*.md` too).
 
 ---
 
@@ -278,3 +291,4 @@ On demand (when a topic is touched):
 | 2026-05-03 | Phase 2 ✅ — CLAUDE.md compaction with topical split (merged from original Phase 2 + Phase 4). New `KB § 01-PHILOSOPHY.md § Context budget discipline` anchor codifies router/topical/depth layers + MCP/skills keep-lists. New `CLAUDE/` directory with `backend.md`, `frontend.md`, `projects.md`, `platform.md` topical sub-files (read on-demand by agent discipline per §3 routing table). CLAUDE.md compacted 4318 → 2109 words (-51%). `verify-kb-sync.sh` extended to scan `CLAUDE/*.md` too — passes. Improvements applied inline; deferred items: `noctusai_count_tokens` MCP tool (accept-with-rationale this round, defer to MCP-server-expansion); ≤80-word distinction for topical files needs §2.8 backfill (future docs pass). | claude-opus-4-7 |
 | 2026-05-03 | Phase 3 ✅ — MEMORY.md index compaction + retirement triage. Compacted 83/2993 → 106/1388 (lines +28%, words -54%; line bump is the new category headers + new `feedback_context_budget_discipline.md` entry). New memory file for the context-budget-discipline rule. Retire decision reversed for `feedback_apply_inline_delete_proposals.md` (Phase 0 audit claim invalidated by re-read — keeping; complementary to `feedback_auto_improvement.md`). Categorized layout added as in-flight improvement. **Combined Phase 2+3 auto-loaded surface: 7311 → 3497 words = ~52% reduction in per-turn token cost.** | claude-opus-4-7 |
 | 2026-05-03 | Phases 5+6+7 ✅ — verification + bookkeeping. Phase 5: project-level MCP allowlist confirmed at the desired minimum (`['noctusai']` in both `.mcp.json` and `.claude/settings.local.json`); keep-list policy landed in Phase 2. Phase 6: skills keep-list policy landed in Phase 2. Phase 7: four-layer three-way sync verified for the new "Context budget discipline" rule (KB + CLAUDE.md + memory file + MEMORY.md). MCP keeper `--review` returned 0 issues. | claude-opus-4-7 |
+| 2026-05-03 | Phase 8 partial — verification complete + deferred-item destinations finalized. Two deferred items resolved inline: (1) `noctusai_count_tokens` accept-with-rationale entry catalogued at `KB § PATTERNS/accept-with-rationale.md` (revisit trigger: when `mcp-server-expansion` ships the tool); (2) ≤80-word/topical-file distinction backfilled into `KB § PATTERNS/project-execution.md § 2.8` as a new sub-section. Cross-product builds + backend tests skipped under documented accept-with-rationale (project touched only meta files; not inputs to product builds). All gates green. Folder deletion + final push remain as literal last steps. | claude-opus-4-7 |

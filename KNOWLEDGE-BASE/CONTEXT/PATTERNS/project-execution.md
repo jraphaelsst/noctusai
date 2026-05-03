@@ -493,9 +493,17 @@ CLAUDE.md is loaded every turn — every bullet costs per-turn tokens. When addi
 
 Default reading: 3+ heavy bullets = formalize unless rationale says otherwise.
 
+#### Auto-loaded vs. topical CLAUDE/<topic>.md (added 2026-05-03 by `context-budget-overhaul`)
+
+The ≤80-word soft cap applies to **CLAUDE.md §1 bullets only** — those are auto-loaded every turn. Topical `CLAUDE/<topic>.md` files (e.g. `CLAUDE/backend.md`, `CLAUDE/projects.md`) are **siblings of CLAUDE.md, NOT auto-loaded**: they're read on-demand by the agent when starting work on the matching topic, per the §3 "When to read what" routing table in CLAUDE.md. Because they're not paid every turn, their per-bullet word budget is intentionally relaxed (50-100 words is fine; the platform-rules bullets in `CLAUDE/projects.md` average ~115 words and that's correct). The discipline that **does** apply to topical files: each rule still ends with a KB pointer; the rule body is rule + why + how-to-apply + pointer, never expanded into deep examples (those live in KB).
+
+Full layered model: see `KB § 01-PHILOSOPHY.md § Context budget discipline § The three layers`.
+
 ### Measurement discipline
 
 Use `noctusai_count_tokens` (the offline MCP tool) to measure CLAUDE.md / KB / project-doc sizes during phase work. Eyeballing word counts with `wc` produces approximate numbers that miss tokenizer-aware drift; the dedicated tool reports the same number Phase 5's measurement will use, so phase-block metrics across a project's history stay comparable.
+
+> **2026-05-03 status:** the `noctusai_count_tokens` MCP tool referenced above does not yet exist; cataloged as accept-with-rationale at `KB § PATTERNS/accept-with-rationale.md § noctusai_count_tokens MCP tool referenced by KB § 2.8 does not yet exist`. Until shipped (deferred to `projects/mcp-server-expansion/`), measurement falls back to `wc -w` — sufficient for directional-reduction signals (50%+) but not for tokenizer-aware comparison across history.
 
 ---
 

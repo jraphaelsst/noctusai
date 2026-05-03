@@ -237,6 +237,14 @@ shape just changes when the decision moves.
 - **Revisit trigger:** the user pulls the `whatsapp-google-scheduling` Alphabet/Google webhook findings into this repo, OR a NoctusAI product gains an inbound Google API webhook integration — whichever comes first. Open `webhook-alphabet-scheme-port` then.
 - **Recorded by:** `webhook-hmac-consolidation/PROJECT.md` §7 Q1 (2026-05-03).
 
+### `noctusai_count_tokens` MCP tool referenced by `KB § PATTERNS/project-execution.md § 2.8` does not yet exist
+- **Subject:** `KB § PATTERNS/project-execution.md § 2.8 Multi-phase rule shipments — forward-stub + bullet-weight discipline § Measurement discipline` says: *"Use `noctusai_count_tokens` (the offline MCP tool) to measure CLAUDE.md / KB / project-doc sizes during phase work."*
+- **Decision:** for now, fall back to `wc -w` (or platform-aware approximations) for measurement. The tool is referenced by the methodology rule but not yet shipped.
+- **Reason:** `wc -w` was sufficient for the `context-budget-overhaul` project's 50%+ reduction signal — the directional metric is robust under any reasonable tokenizer. Building the MCP tool inside the same project that consumed it would have been scope creep; defer to the active `mcp-server-expansion` project where MCP tooling is the explicit deliverable.
+- **Scope:** `mcp/noctusai/` (the tool, when shipped); `KB § PATTERNS/project-execution.md § 2.8` (the rule that references it).
+- **Revisit trigger:** when `mcp-server-expansion` adds the tool — at that point, update `KB § 2.8 § Measurement discipline` to remove this divergence and switch any usage examples from `wc -w` to `noctusai_count_tokens`. Revisit trigger also fires if a future project compares phase-block metrics across history (the case where tokenizer-aware drift would matter).
+- **Recorded by:** `context-budget-overhaul/PROJECT.md` Phase 2 + Phase 8 (2026-05-03).
+
 ---
 
 ## How to add a new entry
