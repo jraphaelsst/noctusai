@@ -1,4 +1,4 @@
-"""`noctusai_outline_typescript` — return a TS / TSX file's symbol tree without bodies.
+"""`noctus.dev.outline_typescript` — return a TS / TSX file's symbol tree without bodies.
 
 Companion to `outline_python` for the narrow-read rule (CLAUDE.md +
 `KB § PATTERNS/agent-reading-discipline.md`). Same `OutlineResult`
@@ -433,11 +433,11 @@ def outline_typescript(path: str | Path) -> OutlineResult:
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_outline_typescript",
+        name="noctus.dev.outline_typescript",
         description=(
             "Return a TS / TSX file's symbol tree (classes, interfaces, types, functions, "
             "arrow-fn consts, methods, constants, imports). Same shape as "
-            "`noctusai_outline_python`. Regex-based — no Node spawn, no npm install; "
+            "`noctus.dev.outline_python`. Regex-based — no Node spawn, no npm install; "
             "see `mcp/noctusai/tools/outline_typescript.py` for the design tradeoff "
             "against the Compiler API path."
         ),

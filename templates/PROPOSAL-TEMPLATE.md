@@ -20,7 +20,7 @@
 > the full two-system protocol.
 
 **Agent:** {{AGENT}}  <!-- e.g. keeper, keeper-openai-gpt-4o-mini, claude-opus-4-7 -->
-**Origin:** {{ORIGIN}}  <!-- e.g. "project:erp-metas:phase-3", "keeper:noctusai_validate", "lgpd:noctusai_lgpd_flag" -->
+**Origin:** {{ORIGIN}}  <!-- e.g. "project:erp-metas:phase-3", "keeper:noctus.dev.validate", "lgpd:noctus.dev.lgpd_flag" -->
 **Generated:** {{YYYY-MM-DD HH:MM}}
 **Severity:** {{high | medium | low}}
 **Effort:** {{high | medium | low}}

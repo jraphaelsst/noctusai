@@ -158,21 +158,21 @@ def _replace_section(content: str, section_name: str, new_content: str) -> tuple
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_sync_master_prompt",
+        name="noctus.dev.sync_master_prompt",
         description="Regenerate MASTER-PROMPT structural sections from filesystem",
     )
     def _sync(slug: str) -> dict:
         return sync_master_prompt(slug)
 
     @server.tool(
-        name="noctusai_sync_all_master_prompts",
+        name="noctus.dev.sync_all_master_prompts",
         description="Sync all product MASTER-PROMPTs",
     )
     def _sync_all() -> list:
         return sync_all_master_prompts()
 
     @server.tool(
-        name="noctusai_check_master_prompt",
+        name="noctus.dev.check_master_prompt",
         description="Check if a MASTER-PROMPT is stale",
     )
     def _check(slug: str) -> dict:

@@ -25,7 +25,7 @@ core/projects/                              ← core-platform-control-plane proj
     proposals/
 ```
 
-Every product has its own `projects/` folder (even when empty, pinned with `.gitkeep`) — including core. Slugs are globally unique: a slug exists in exactly one of the three locations. The MCP tool (`noctusai_file_proposal`) resolves slugs by walking all three and picking the match — callers pass only the slug.
+Every product has its own `projects/` folder (even when empty, pinned with `.gitkeep`) — including core. Slugs are globally unique: a slug exists in exactly one of the three locations. The MCP tool (`noctus.dev.file_proposal`) resolves slugs by walking all three and picking the match — callers pass only the slug.
 
 ## What belongs at the root (here)
 
@@ -39,7 +39,7 @@ If the project is scoped to a single product, move it under that product. If it 
 
 ## Current root-level projects (snapshot 2026-05-03)
 
-> Recently closed + deleted (2026-05-03): `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1 close; Phases 2-5 deferred per §7 Q6 reactivation triggers — see git history for the original PROJECT.md), `scheduling-engine-seed` (lib landed at `noctusai_lib.domain.scheduling`; KB doc at `KB § PATTERNS/scheduling-seed.md`; therapy-scheduling-pilot scaffolded as second-consumer follow-up). Carry-forward projects: `mcp-server-fastmcp-switch` (mcp-server-expansion Phase 4+5); `whatsapp-seed-absorption` Phase 5 (llm-tool-call-audit Phase 4).
+> Recently closed + deleted (2026-05-03): `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1 close; Phases 2-5 deferred per §7 Q6 reactivation triggers — see git history for the original PROJECT.md), `scheduling-engine-seed` (lib landed at `noctusai_lib.domain.scheduling`; KB doc at `KB § PATTERNS/scheduling-seed.md`; therapy-scheduling-pilot scaffolded as second-consumer follow-up), `mcp-server-fastmcp-switch` (Phase 4 vendor ports + Phase 5 verification — commits `dc5de6a` + `cf87f1d`; carry-forward of `mcp-server-expansion` Phase 4+5 now satisfied). Carry-forward projects remaining: `whatsapp-seed-absorption` Phase 5 (llm-tool-call-audit Phase 4). Folder removed in working tree pending commit: `repo-state-consolidation` (deletions staged 2026-05-03).
 
 ### ⏳ Active in-flight (work underway; next step well-defined)
 
@@ -47,8 +47,7 @@ If the project is scoped to a single product, move it under that product. If it 
 |---|---|---|
 | `absorbed-projects-batch` | Cross-cutting absorption batch coordinator | Tier 1.c → execute `scheduling-engine-seed` Phase 0; Tier 1.d → execute `whatsapp-seed-absorption` Phase 0 |
 | `erp-schema-drift-deep-audit` | ERP-side schema-drift remediation | Phase 1 ✅ (profiles.org_id security fix); Phase 2 (11-table audit) awaits user §7 sign-off on org-scoping model |
-| `repo-state-consolidation` | Pre-commit pre-flight gate consolidation | Phase 0 ✅ 2026-04-28; paused at user direction; resume Phases 1-3 (re-run gates) |
-| `main-core-migrations-batch` | Core migrations batch coordinator | Phase 0 ✅; Tier 1 staleness audit on `repo-state-consolidation` required before Tier 1 phase work |
+| `main-core-migrations-batch` | Core migrations batch coordinator | Phase 0 ✅; Tier 1 staleness audit pending (note: `repo-state-consolidation` folder retired in working tree — see top footnote; coordinator may need its blocker text updated by the project's owner agent) |
 
 ### 🟡 Phase-0-ready (scaffolded; awaits focused-session pickup)
 
@@ -57,9 +56,9 @@ If the project is scoped to a single product, move it under that product. If it 
 | `whatsapp-seed-absorption` | WhatsApp framework absorption + idempotency-keys | none — Phase 0 ready |
 | `imobi-scheduling-bot-creation` | Imobi scheduling bot creation | downstream of `scheduling-engine-seed` + `whatsapp-seed-absorption` |
 | `session-review-baseline` | Session-axis review (JSONL transcript detector) | filed-only per user directive; awaits explicit reactivation |
-| `mcp-server-fastmcp-switch` | FastMCP runtime swap-out (carry-forward from mcp-server-expansion Phase 4) | Phase 0 ready |
-| `mcp-tool-name-deprecation` | Alias retirement after dotted-naming bedded | blocked on `mcp-server-fastmcp-switch` Phase 5 close |
+| `mcp-tool-name-deprecation` | Alias retirement after dotted-naming bedded | **unblocked 2026-05-03** — `mcp-server-fastmcp-switch` Phase 5 closed; Phase 0 audit ✅; Phase 1 (consumer-class migration) ready |
 | `send-message-consolidation` | N=2 `send_message` collision (ERP + therapy WhatsApp) → seed-lib `send_text` consolidation | blocked on `whatsapp-seed-absorption` Phase 1 (lib must exist) |
+| `products-wiring-rollout` | Cross-product wiring sweep coordinator (PF + ERP in **parallel batches**; therapy = input/pilot) | scaffolded 2026-05-03 + restructured same day to parallel-batch model (`KB § PATTERNS/master-tree-parallel-batches.md`); §7 closed; B0 dispatch in flight |
 
 ### 🔵 Concept-stage / interrogation pending
 
@@ -83,8 +82,10 @@ If the project is scoped to a single product, move it under that product. If it 
 |---|---|---|
 | `erp-metas` | `products/erp-imobiliario/projects/erp-metas/` | ✅ All 11 phases shipped |
 | `vista-crm-wiring` | `products/erp-imobiliario/projects/vista-crm-wiring/` | ✅ All 4 phases shipped 2026-05-02 |
-| `therapy-platform-wiring` | `products/therapy-platform/projects/therapy-platform-wiring/` | Design drafted — Phase 0 (api-call inventory) pending |
+| `erp-imobiliario-wiring` | `products/erp-imobiliario/projects/erp-imobiliario-wiring/` | Scaffolded 2026-05-03 — Phase 0 runs in lockstep with PF P0 in master batch B0 (parent: `products-wiring-rollout` parallel-batch model; serial-gate removed 2026-05-03) |
+| `therapy-platform-wiring` | `products/therapy-platform/projects/therapy-platform-wiring/` | Design re-aligned 2026-05-03 — Phase 0 ready (pilot for the wiring methodology; input to `products-wiring-rollout`) |
 | `therapy-scheduling-pilot` | `products/therapy-platform/projects/therapy-scheduling-pilot/` | PARKED — second-consumer placeholder for `noctusai_lib.domain.scheduling`; scaffolded 2026-05-03 |
+| `personal-finance-wiring` | `products/personal-finance/projects/personal-finance-wiring/` | Scaffolded 2026-05-03 — interrogation pending → Phase 0 ready (parent: `products-wiring-rollout`) |
 
 ## Starting a new project
 
@@ -99,7 +100,7 @@ If the project is scoped to a single product, move it under that product. If it 
 
 1. Every sub-task ticked (`- [x]`).
 2. Phase's `**Improvements:**` block populated with in-flow bullets.
-3. Synthesize ONE bundled proposal via `noctusai_file_proposal(project="<slug>", ...)` → lands in the project's own `proposals/` folder (resolver picks the correct location).
+3. Synthesize ONE bundled proposal via `noctus.dev.file_proposal(project="<slug>", ...)` → lands in the project's own `proposals/` folder (resolver picks the correct location).
 4. Flip the phase header icon to `✅`.
 5. Run `python mcp/noctusai/cli.py --improvements <path-to-PROJECT.md>` to regenerate the retrospective.
 6. Log the change in the project's §11 Change log.

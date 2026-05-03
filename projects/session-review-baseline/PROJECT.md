@@ -87,7 +87,7 @@ This project lives in the MCP dev toolkit (`mcp/noctusai/`), not in product code
 **In scope:**
 
 - New adapter at `mcp/noctusai/session_loader.py` — `load_session(path: Path) -> List[Event]` parsing the JSONL into a stable internal shape (see §5).
-- New tool at `mcp/noctusai/tools/session_review.py` — exposes `noctusai_review_session` (MCP tool) and the orchestration that fans out across detectors and aggregates issues.
+- New tool at `mcp/noctusai/tools/session_review.py` — exposes `noctus.dev.review_session` (MCP tool) and the orchestration that fans out across detectors and aggregates issues.
 - New CLI surface in `mcp/noctusai/cli.py` — `--review-session <path>` and `--review-session-latest` (resolves newest JSONL in the default dir).
 - **Detector #1: AST-first non-compliance.** Flags any `Edit` / `Write` on a `.py` / `.ts` / `.tsx` file that follows a `Bash(sed|awk|regex-on-source)` call targeting the same path within the same session.
 - **Detector #2: Narrow-read non-compliance.** Flags any `Read(path)` (no `offset` / `limit`) on a file >200 lines where no `outline_python(path)` / `outline_typescript(path)` preceded it in the session. Calibration tunable (severity, threshold).
@@ -205,7 +205,7 @@ for each ToolUse r where r.name == "Read" and r.input has no "offset" and no "li
   resolve the actual file's line count (statable from the local repo; skip if missing)
   if line_count > 200:
     scan backward for any ToolUse o where:
-      o.name in {"outline_python", "outline_typescript", "noctusai_outline_python", "noctusai_outline_typescript"}
+      o.name in {"outline_python", "outline_typescript", "noctus.dev.outline_python", "noctus.dev.outline_typescript"}
       and o.input.path matches r.input.file_path
     if not found → emit SessionIssue(rule="narrow-read", severity="INFO", ...)
 ```
@@ -275,7 +275,7 @@ mcp/noctusai/
 - `session_loader.py` shipped — adapter is the only module that touches raw JSONL keys (drift-isolation principle).
 - `tools/session_review.py` shipped with both detectors implemented inline (Phase 2/3 detectors landed eagerly per "ram through" directive). Pure-function contract honoured.
 - CLI surface live: `--review-session <path>` and `--review-session-latest`. Color/JSON output matches the existing review surface.
-- MCP server registration added (`noctusai_review_session` + `noctus.dev.review_session` dotted alias).
+- MCP server registration added (`noctus.dev.review_session` + `noctus.dev.review_session` dotted alias).
 - `tests/test_session_loader.py` — 14 tests, all green (parsing, pairing, error paths, latest-resolution).
 - Smoke test on a real local session: 119 events parsed, 1 narrow-read issue caught (this session's first whole-file `PROJECT.md` Read). Detector fired correctly on real data.
 
@@ -325,8 +325,8 @@ mcp/noctusai/
 
 **Phase 4 close (2026-05-03):**
 - `KB § 06-AGENTS.md` gained a "Session-axis review" subsection alongside the existing "Reading & cost utilities" block. CLI invocation list updated to include `--review-session` / `--review-session-latest`.
-- `KB § PATTERNS/agent-reading-discipline.md § Companion tooling` gained a "Detector (Phase 3 ship 2026-05-03)" entry pointing to `noctusai_review_session`.
-- `KB § PATTERNS/ast.md § Tools available in our MCP` gained a `noctusai_review_session` line scoped to AST-first session-axis enforcement.
+- `KB § PATTERNS/agent-reading-discipline.md § Companion tooling` gained a "Detector (Phase 3 ship 2026-05-03)" entry pointing to `noctus.dev.review_session`.
+- `KB § PATTERNS/ast.md § Tools available in our MCP` gained a `noctus.dev.review_session` line scoped to AST-first session-axis enforcement.
 - Memory: new file `architecture_session_review_harness.md`; `MEMORY.md` Architecture index line added.
 - Verifications: `scripts/verify-kb-sync.sh` ✓; `pytest mcp/noctusai/tests/` ✓ (553 passed; 40 new + 513 pre-existing).
 - No phase proposals were filed during this project — the ramming directive let me apply-inline throughout. §11 carries the audit trail.
@@ -351,7 +351,7 @@ mcp/noctusai/
 ## 8. Dependencies & blockers
 
 - **Soft dependency: JSONL format stability.** Anthropic can change the Claude Code session-log schema in any release. **Mitigation:** §3 principle 1 (adapter isolates format risk). **Tripwire:** Phase 0 records the field-name set we depend on; Phase 4 docs name them so a future agent knows what to check on Anthropic release notes.
-- **Soft dependency: parent `mcp-ast-tools-hardening` close.** Until the AST tools are catalog-listed and stable, the narrow-read detector's "outline_*" preceded check has a moving target name. **Mitigation:** Detector #2's matcher list is config-driven (matches both `outline_python` and `noctusai_outline_python`).
+- **Soft dependency: parent `mcp-ast-tools-hardening` close.** Until the AST tools are catalog-listed and stable, the narrow-read detector's "outline_*" preceded check has a moving target name. **Mitigation:** Detector #2's matcher list is config-driven (matches both `outline_python` and `noctus.dev.outline_python`).
 - **No hard blockers.** The original "infeasibility" (no transcript surface) is resolved by the local JSONL discovery.
 
 ---
@@ -406,4 +406,4 @@ mcp/noctusai/
 | 2026-05-03 | Initial project drafted from `templates/PROJECT-TEMPLATE.md` after user discussion ("lets discuss" → "please follow your recommendations and file a project for it. After that, ram through it all" → "actually just file the project, dont implement yet"). Project supersedes the archived `narrow-read-compliance-detector` stub (filed 2026-05-02, marked infeasible due to missing transcript surface — resolved by 2026-05-03 discovery of local Claude Code JSONL session logs at `~/.claude/projects/-Users-rapha-Documents-repository-NoctusAI-noctusai/*.jsonl`). Phase plan reframed as a **harness** (one adapter + CLI surface + N detectors) with AST-first as Detector #1 (cleaner signal, sharper false-positive boundary) and narrow-read as Detector #2 (un-archives the stub on Phase 3 close). Filing-only directive locks §6 phases as un-started. | Claude Opus 4.7 (1M context) |
 | 2026-05-03 | Project reactivated by user directive "ram through this project". §7 Q1 (default JSONL discovery on non-macOS) decided per agent recommendation: hardcode the macOS path as `DEFAULT_JSONL_DIR`, require explicit `--path` on other platforms. Status flipped from filing-only → execution. | Claude Opus 4.7 (1M context) |
 | 2026-05-03 | Phase 0 audit complete on 5 recent sessions (149 KB–3.4 MB). Findings: tool_use ↔ tool_result pairing has ZERO orphans (n=669); §5 field-name assumptions confirmed; `is_error=True` will be counted + tagged (§7 Q2 decision); new `queue-operation` record type observed but skipped (non-`assistant`/`user`). Reshaped §5.4: simple `\b(sed\|awk)\b` regex over-flags read-only `sed -n` patterns — replaced with explicit MUTATION predicate (matcher list + mutation markers `-i` / `s/...` / `>` redirect). Calibration preview confirms §5.5 INFO severity start (zero outline_* usage in real sessions; whole-file Reads dominant). | Claude Opus 4.7 (1M context) |
-| 2026-05-03 | Phases 1–4 shipped end-to-end. Adapter `mcp/noctusai/session_loader.py` + orchestrator `mcp/noctusai/tools/session_review.py` + CLI surface (`--review-session`, `--review-session-latest`) + MCP tool registration (`noctusai_review_session` + `noctus.dev.review_session`). Two detectors live: `ast-first` (WARNING) with mutation-marker predicate (sed -i / perl -*i* / s/.../ body / >*.{py,ts,tsx} redirect); `narrow-read` (INFO) with `repo_root=` DI seam to honor the no-monkey-patching rule. 40 new tests (14 adapter + 26 orchestrator/detectors); 553 total MCP tests green. KB updates: §06-AGENTS new "Session-axis review" subsection + CLI list line; agent-reading-discipline + ast.md detector cross-links. Memory entry + MEMORY.md index added. Calibration on 5 real sessions: 0 ast-first false positives, 6 legitimate narrow-read flags. Archived stub deleted; `archive/projects/README.md` table row removed. §7 Q1 (macOS-only default) and §7 Q4 (delete archived stub outright) decisions applied per agent recommendations. | Claude Opus 4.7 (1M context) |
+| 2026-05-03 | Phases 1–4 shipped end-to-end. Adapter `mcp/noctusai/session_loader.py` + orchestrator `mcp/noctusai/tools/session_review.py` + CLI surface (`--review-session`, `--review-session-latest`) + MCP tool registration (`noctus.dev.review_session` + `noctus.dev.review_session`). Two detectors live: `ast-first` (WARNING) with mutation-marker predicate (sed -i / perl -*i* / s/.../ body / >*.{py,ts,tsx} redirect); `narrow-read` (INFO) with `repo_root=` DI seam to honor the no-monkey-patching rule. 40 new tests (14 adapter + 26 orchestrator/detectors); 553 total MCP tests green. KB updates: §06-AGENTS new "Session-axis review" subsection + CLI list line; agent-reading-discipline + ast.md detector cross-links. Memory entry + MEMORY.md index added. Calibration on 5 real sessions: 0 ast-first false positives, 6 legitimate narrow-read flags. Archived stub deleted; `archive/projects/README.md` table row removed. §7 Q1 (macOS-only default) and §7 Q4 (delete archived stub outright) decisions applied per agent recommendations. | Claude Opus 4.7 (1M context) |

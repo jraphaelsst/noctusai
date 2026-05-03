@@ -274,7 +274,7 @@ def ai_advisory(product_path=None):
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_ai_discover",
+        name="noctus.dev.ai_discover",
         description="AI-powered improvement discovery (requires OPENAI_API_KEY)",
     )
     def _ai_discover() -> dict:
@@ -282,7 +282,7 @@ def register(server) -> None:
         return analyze_findings(run_all_analyzers())
 
     @server.tool(
-        name="noctusai_ai_advisory",
+        name="noctus.dev.ai_advisory",
         description="AI reads CLAUDE.md rules and validates code (requires OPENAI_API_KEY)",
     )
     def _ai_advisory() -> dict:

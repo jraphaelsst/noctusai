@@ -39,7 +39,7 @@ _ENTRY_RE = re.compile(
 
 _FILE_HEADER = """# LGPD Concerns — Rolling Log
 
-> **Auto-generated** by `noctusai_lgpd_flag` (see
+> **Auto-generated** by `noctus.dev.lgpd_flag` (see
 > `mcp/noctusai/tools/lgpd.py`). Each item is an unresolved concern
 > discovered during development. They are **not blockers** — the code
 > ships and this file tracks what must be reviewed before the feature
@@ -224,7 +224,7 @@ def list_warnings() -> dict:
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_lgpd_flag",
+        name="noctus.dev.lgpd_flag",
         description=(
             "Record an unresolved LGPD concern in `LGPD-WARNINGS.md`. Call whenever "
             "data-touching code raises an LGPD question (retention unclear, 3rd-party "
@@ -247,7 +247,7 @@ def register(server) -> None:
         )
 
     @server.tool(
-        name="noctusai_lgpd_list",
+        name="noctus.dev.lgpd_list",
         description="List all LGPD concerns from `LGPD-WARNINGS.md` (unresolved + resolved).",
     )
     def _lgpd_list() -> dict:

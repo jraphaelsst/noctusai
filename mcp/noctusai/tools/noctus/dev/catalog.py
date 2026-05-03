@@ -640,10 +640,9 @@ def register(server) -> None:
     def _catalog(write: bool = True) -> dict:
         return generate_catalog(write=write)
 
-    server.tool(name="noctusai_catalog", description=desc)(_catalog)
     server.tool(
         name="noctus.dev.catalog",
-        description="Dotted alias for noctusai_catalog.",
+        description=desc,
     )(_catalog)
 
 

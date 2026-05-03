@@ -1,4 +1,4 @@
-"""`noctusai_check_three_way_sync` — verify KB ↔ CLAUDE.md ↔ memory parity.
+"""`noctus.dev.check_three_way_sync` — verify KB ↔ CLAUDE.md ↔ memory parity.
 
 Closes the gap that `verify-kb-sync.sh` cannot cover (memory lives
 outside the repo at `~/.claude/projects/.../memory/`). The three-way-sync
@@ -275,7 +275,7 @@ def check_three_way_sync(repo_root: Path | None = None) -> dict:
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_check_three_way_sync",
+        name="noctus.dev.check_three_way_sync",
         description=(
             "Verify KB ↔ CLAUDE.md ↔ memory parity. Closes the gap that "
             "`verify-kb-sync.sh` cannot cover (memory directory lives outside the repo). "

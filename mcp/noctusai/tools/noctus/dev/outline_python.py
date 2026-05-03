@@ -1,4 +1,4 @@
-"""`noctusai_outline_python` — return a Python file's symbol tree without bodies.
+"""`noctus.dev.outline_python` — return a Python file's symbol tree without bodies.
 
 The narrow-read rule (CLAUDE.md + `KB § PATTERNS/agent-reading-discipline.md`)
 asks the agent to read structure before bodies. This tool makes that
@@ -313,7 +313,7 @@ def outline_python(path: str | Path) -> OutlineResult:
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_outline_python",
+        name="noctus.dev.outline_python",
         description=(
             "Return a Python file's symbol tree (classes / functions / methods / "
             "constants / imports) without bodies. Makes the narrow-read rule ergonomic: "

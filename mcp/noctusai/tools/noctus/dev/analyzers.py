@@ -202,14 +202,14 @@ def run_all_analyzers():
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_platform_metrics",
+        name="noctus.dev.platform_metrics",
         description="Code metrics for all products: lines, routers, services, pages",
     )
     def _platform_metrics() -> dict:
         return get_code_metrics()
 
     @server.tool(
-        name="noctusai_analyze",
+        name="noctus.dev.analyze",
         description="Run all analyzers: patterns, deps, tests, metrics",
     )
     def _analyze() -> dict:
@@ -223,21 +223,20 @@ def register(server) -> None:
             "inline_hooks": find_inline_hooks(),
         }
 
-    server.tool(name="noctusai_analyze_patterns", description=desc_patterns)(_analyze_patterns)
     server.tool(
         name="noctus.dev.analyze_patterns",
-        description="Dotted alias for noctusai_analyze_patterns.",
+        description=desc_patterns,
     )(_analyze_patterns)
 
     @server.tool(
-        name="noctusai_analyze_deps",
+        name="noctus.dev.analyze_deps",
         description="Check dependency version consistency",
     )
     def _analyze_deps() -> dict:
         return audit_python_deps()
 
     @server.tool(
-        name="noctusai_analyze_tests",
+        name="noctus.dev.analyze_tests",
         description="Check test coverage per product",
     )
     def _analyze_tests() -> dict:

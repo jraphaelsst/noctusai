@@ -140,21 +140,21 @@ def check_api_consistency(slug: str) -> dict:
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_diff_against_seed",
+        name="noctus.dev.diff_against_seed",
         description="Compare a product's structural files against the seed product",
     )
     def _diff(slug: str) -> dict:
         return diff_product_against_seed(slug)
 
     @server.tool(
-        name="noctusai_find_orphans",
+        name="noctus.dev.find_orphans",
         description="Find orphaned files not imported anywhere",
     )
     def _orphans(slug: str) -> dict:
         return find_orphaned_files(slug)
 
     @server.tool(
-        name="noctusai_check_api_consistency",
+        name="noctus.dev.check_api_consistency",
         description="Check API response pattern consistency",
     )
     def _api_consistency(slug: str) -> dict:

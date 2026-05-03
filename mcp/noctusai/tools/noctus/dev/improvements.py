@@ -335,7 +335,7 @@ def generate_improvements(project_path: str | Path, *, write: bool = True) -> di
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_improvements",
+        name="noctus.dev.improvements",
         description=(
             "Regenerate `improvements.md` next to a project file. Run this after "
             "ticking a phase header to `✅`. Aggregates the `**Improvements:**` block "

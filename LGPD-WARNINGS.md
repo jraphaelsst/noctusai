@@ -1,6 +1,6 @@
 # LGPD Concerns — Rolling Log
 
-> **Auto-generated** by `noctusai_lgpd_flag` (see
+> **Auto-generated** by `noctus.dev.lgpd_flag` (see
 > `mcp/noctusai/tools/lgpd.py`). Each item is an unresolved concern
 > discovered during development. They are **not blockers** — the code
 > ships and this file tracks what must be reviewed before the feature

@@ -1,4 +1,4 @@
-"""`noctusai_refs` — find all references to a slug / path / symbol across
+"""`noctus.dev.refs` — find all references to a slug / path / symbol across
 the repo. Used before deleting a project folder, renaming a module, or
 cleaning up after a closed initiative.
 
@@ -169,7 +169,7 @@ def find_refs(pattern: str, repo_root: Path | None = None) -> RefsResult:
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_refs",
+        name="noctus.dev.refs",
         description=(
             "Find every reference to a literal pattern across CLAUDE.md / KB / "
             "projects / mcp / seed / products. Replaces the manual `grep -rln` ritual "

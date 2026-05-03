@@ -1,4 +1,4 @@
-"""`noctusai_status` — cross-project state digest.
+"""`noctus.dev.status` — cross-project state digest.
 
 Replaces the multi-grep ritual ("what's still active? what's parked?
 what's next?") that runs every "what's left of value" question. Walks
@@ -226,7 +226,7 @@ def _date_sort_key(date_str: str | None) -> int:
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_status",
+        name="noctus.dev.status",
         description=(
             "Cross-project state digest. Walks every PROJECT.md across `projects/`, "
             "`products/*/projects/`, `core/projects/` and returns status icon, "

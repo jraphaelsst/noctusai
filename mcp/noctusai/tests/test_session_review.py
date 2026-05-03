@@ -155,7 +155,7 @@ class TestDetectNarrowRead:
     def test_outline_before_read_does_not_flag(self, tmp_path):
         big = _make_big_file(tmp_path / "big.py", 300)
         events = [
-            _tu(1, "noctusai_outline_python", path=str(big)),
+            _tu(1, "noctus.dev.outline_python", path=str(big)),
             _tu(2, "Read", file_path=str(big)),
         ]
         assert detect_narrow_read(events, repo_root=tmp_path) == []

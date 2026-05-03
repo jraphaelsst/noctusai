@@ -243,11 +243,11 @@ def build_products(
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_build_parallel",
+        name="noctus.dev.build_parallel",
         description=(
             "Run `npx vite build` across product frontends in parallel. "
             "Parallel + scoped supersedes the legacy sequential "
-            "`noctusai_build_all_frontends`. `slugs=[...]` builds specific products; "
+            "`noctus.dev.build_all_frontends`. `slugs=[...]` builds specific products; "
             "`changed_only=True` uses `git diff --name-only HEAD` to scope to affected "
             "products only (perf)."
         ),

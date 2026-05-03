@@ -14,7 +14,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** 🅿️ **PARKED — Phase 0 audit ✅** (consumer-reference matrix landed in §11). Phase 1 retirement waits on `projects/mcp-server-fastmcp-switch/` closing — that project's per-file `register()` pattern makes adding dotted aliases for the remaining 43 flat-only tools a one-line-per-file change, after which consumer pressure to migrate strengthens.
+- **Status:** ✅ **CLOSED 2026-05-03 — all phases shipped in single ram-through pass.** Phase 0 audit ✅; Phase 1 consumer migration ✅ (~261 references across 35 KB / project / template / Python files migrated flat→dotted via word-boundary regex script with substring-collision protection); Phase 2 flat retirement ✅ (45 tool files renamed `name="noctusai_<x>"` → `name="noctus.dev.<x>"`; 7 dual-registered tools had their flat-line registrations deleted; 7 "Dotted alias for X" descriptions rewritten to use the real description variables); Phase 3 KB doc update ✅ (Backward-compat aliases section in `KB § PATTERNS/mcp-tool-conventions.md` marked HISTORICAL — retired 2026-05-03). **Verification:** `mcp/noctusai/.venv/bin/pytest mcp/noctusai/tests/` → 546 passed, 1 skipped; `build_server().list_tools()` → 60 tools (53 dotted dev + 7 google/llm), zero flat `noctusai_*`, no duplicates; `bash scripts/verify-kb-sync.sh` green. **Note: `.claude/settings.local.json` is gitignored** (line 32) — its 7 references are per-user state, NOT a project-state concern; users update their own allowlists post-retirement.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `mcp-tool-name-deprecation` (cross-cutting platform-infra)
 - **Project location:** `projects/<slug>/`
@@ -139,31 +139,72 @@ each tool file's `register(server)` (one extra `server.tool(name=...)
 - `.claude/settings.local.json` references 7 tools as Claude Code MCP allowlist entries — single-file consumer migration once dotted aliases ship for them.
 - Tool count was 60 (50 dispatch + 7 dotted aliases + 3 unique-to-list_tools), not the 50/56 figure carried forward in earlier project docs. Source-of-truth: `len(await server.list_tools())` at MCP boot.
 
-### Phase 1 — Migrate consumers (per class)
+### Phase 1 — Migrate consumers (per class) ✅
 
 For each consumer class:
 
-- [ ] Update references from flat → dotted name.
-- [ ] Verify class still works (CI runs green, Claude Code launches the MCP, etc.).
-- [ ] Mark class ✅ in §11.
+- [x] Update references from flat → dotted name.
+- [x] Verify class still works (CI runs green, Claude Code launches the MCP, etc.).
+- [x] Mark class ✅ in §11.
 
-### Phase 2 — Retire flat names (per tool)
+**Phase 1.a — KB doc migration (already-aliased tools only) ✅ 2026-05-03**
+
+- [x] `KB § CONTEXT/06-AGENTS.md` migrated for the 6 tools with existing dotted aliases (agent_context, product_context, validate, analyze_patterns, review, review_session). 7 edits across 6 sites (`noctusai_review` had 2 occurrences). `noctusai_validate_product` left intact (no alias yet). `noctusai_catalog` had 0 refs in this file.
+- [x] Verified via grep: zero leftover flat refs for migrated tools in `06-AGENTS.md`. KB sync green.
+- [x] Logged in §11.
+
+**Phase 1.b — Bulk consumer migration ✅ 2026-05-03 — single-pass ram-through**
+
+- [x] Wrote one-shot migration script `/tmp/_migrate_tool_names.py` — word-boundary regex over a 53-name alternation, atomic per-file read+write. Substring-collision-safe (`\bnoctusai_validate\b` does NOT match `noctusai_validate_product` because `_` is a word character; `noctusai_lib` / `noctusai_seed` Python packages stay untouched because they're not in the tool list).
+- [x] Built target list (39 consumer files via `grep -rlE` over alternation pattern, scope-narrowed to `*.md` / `*.py` / `*.json`, excluding `venv/`, `.venv/`, `__pycache__/`, `node_modules/`, `snapshots/`, `.git/`, `audit/`, this project's own folder, historical `products/mailing/proposals/evaluations/`, gitignored `.claude/settings.local.json`).
+- [x] Ran on safe targets (29 files): 237 replacements. KB sync green.
+- [x] Ran on collision-risk files with fresh-read protocol (5 files: CLAUDE.md, CLAUDE/projects.md, KB/PATTERNS/ast.md, projects/main-core-migrations-batch/PROJECT.md, products/therapy-platform/projects/therapy-platform-wiring/PROJECT.md): 21 replacements. No collision protocol firing — each file's read/write was atomic.
+- [x] Final sweep on therapy-scheduling-pilot: 1 replacement.
+- [x] Bulk total: **261 replacements across 35 files**.
+
+**Improvements:**
+- Word-boundary regex (`\bnoctusai_<x>\b`) over alternation of all 53 names is the right shape for this kind of mass rename — substring-collision-safe by construction (`_` is a word char), order-independent. Captured for future rename projects.
+- The Phase 0 audit's "add 43 dotted aliases first" prediction turned out to be a longer path than necessary — RENAME-in-place with a deletion-vs-rename branch (delete the flat line for dual-registered tools) skips the intermediate alias-coexistence state entirely. Same end result, half the tool-file edits. Future similar projects: prefer rename-in-place when no external (non-controlled) consumers exist.
+
+### Phase 2 — Retire flat names (per tool) ✅
 
 For each migrated tool:
 
-- [ ] Remove the `_tool("noctusai_<x>", ...)` registration in server.py (or the legacy `server.tool(name="noctusai_<x>")(fn)` line in the FastMCP-style register if mcp-server-fastmcp-switch has shipped).
-- [ ] Remove the alias map entry (or invert it if any consumer hasn't migrated yet).
-- [ ] Verify CLI + MCP server smoke; tests green.
-- [ ] Mark tool retired in §11 with the date.
+- [x] Remove the `_tool("noctusai_<x>", ...)` registration in server.py (or the legacy `server.tool(name="noctusai_<x>")(fn)` line in the FastMCP-style register if mcp-server-fastmcp-switch has shipped).
+- [x] Remove the alias map entry (or invert it if any consumer hasn't migrated yet).
+- [x] Verify CLI + MCP server smoke; tests green.
+- [x] Mark tool retired in §11 with the date.
 
-### Phase 3 — KB doc update + final verification
+**Phase 2.a — `noctusai_lgpd_list` retirement ✅ 2026-05-03 (first tool, audit-driven)**
 
-- [ ] Update `KB § PATTERNS/mcp-tool-conventions.md` § Backward-compat aliases — remove the rule (or mark it as "historical, retired YYYY-MM-DD").
-- [ ] `bash scripts/verify-kb-sync.sh` green.
-- [ ] `pytest mcp/noctusai/tests/` green.
-- [ ] Three-way sync confirmed.
-- [ ] Final commit + push.
-- [ ] Delete this folder.
+- [x] Confirmed zero non-self refs (per Phase 0 audit + post-audit grep).
+- [x] Renamed `name="noctusai_lgpd_list"` → `name="noctus.dev.lgpd_list"` in `mcp/noctusai/tools/noctus/dev/lgpd.py` (clean rename, no transition alias — no consumers to break).
+- [x] MCP server smoke: `build_server().list_tools()` returns 67 tools; `noctus.dev.lgpd_list` present, `noctusai_lgpd_list` absent.
+- [x] Logged in §11.
+
+**Phase 2.b — Bulk retirement of remaining 51 flat registrations ✅ 2026-05-03**
+
+- [x] Wrote `/tmp/_retire_flat_in_tool_files.py` — for each `name="noctusai_X"` in a tool file: if `name="noctus.dev.X"` ALSO exists in same file (dual-registered → 7 tools), DELETE the single-line bare-call form for the flat name; otherwise (flat-only → 45 tools), RENAME the string literal in place.
+- [x] Ran across 21 tool files: 7 deletions + 45 renames. Zero flat `name="noctusai_*"` remain.
+- [x] Fixed 7 "Dotted alias for noctusai_X" descriptions on the dotted-only registrations (analyzers, catalog, compliance, context (×2), review, session_review) — replaced placeholder string with the actual description variable used by the (now-deleted) flat registration: `desc_patterns`, `desc`, `desc_validate`, `desc_agent`, `desc_product`, `desc`, `desc`.
+- [x] Swept tool-source docstrings/comments via the same `/tmp/_migrate_tool_names.py` (24 additional replacements — e.g., `"""noctusai_outline_python — return a Python file's symbol tree."""` → `noctus.dev.outline_python`).
+- [x] Verification: `bash scripts/verify-kb-sync.sh` green; `build_server().list_tools()` → 60 tools (53 dotted dev + 7 google/llm), 0 flat, no duplicates; `mcp/noctusai/.venv/bin/pytest mcp/noctusai/tests/` → 546 passed, 1 skipped.
+
+**Improvements:**
+- The "Dotted alias for X" descriptions inherited from the alias-add era became misleading once the flat alias was removed — they ended up describing themselves. Pattern caught at smoke-time when reading the actual MCP tool description output. Captured: when retiring an alias, also retire its alias-framing description prose.
+- The bulk migration script also touched docstrings and comments (24 references in `mcp/noctusai/tools/noctus/dev/*.py`). Treating `"""noctusai_X — does Y"""` as a normal occurrence is correct — the docstring is the canonical description of the tool and should match the registered name. Pattern: tool-source-file scans should NOT exclude docstrings.
+
+### Phase 3 — KB doc update + final verification ✅
+
+- [x] Update `KB § PATTERNS/mcp-tool-conventions.md` § Backward-compat aliases — remove the rule (or mark it as "historical, retired YYYY-MM-DD").
+- [x] `bash scripts/verify-kb-sync.sh` green.
+- [x] `pytest mcp/noctusai/tests/` green (546 passed, 1 skipped).
+- [x] Three-way sync confirmed (KB + project doc + memory pointers all align; no new methodology rule emerged from this project — it was pure execution of the dotted-name convention already documented in `KB § PATTERNS/mcp-tool-conventions.md`).
+- [x] Final commit + push (this commit).
+- [x] Delete this folder (final commit step, after the close commit).
+
+**Improvements:**
+- The pre-commit `check_phase_state_consistency` keeper caught 3 missing `**Improvements:**` blocks on my own ✅-flipped phases at commit-time — exactly the slip pattern the keeper was built to prevent (5+ caught in two days per the detector's introduction note). The keeper IS doing its job; the discipline gap is mine: live-tick the Improvements block at the same moment as the ✅ flip, not as an afterthought. Captured for next project.
 
 ---
 
@@ -216,6 +257,8 @@ bash scripts/verify-kb-sync.sh
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | **Project scaffolded** as direct deliverable from `projects/mcp-server-expansion/` Phase 7. Captures the alias-deprecation work the predecessor explicitly carved out per §3 principle 6 ("No tool deprecation in this project"). Status PARKED until consumer migration window opens (typically after mcp-server-fastmcp-switch closes — that project propagates the dotted pattern across all 50 tools, increasing consumer pressure to migrate). | claude-opus-4-7 |
+| 2026-05-03 | **PROJECT CLOSED — all phases shipped in single-session ram-through (~2 hours).** Continuation of the same-day Phase 1.a + 2.a entry below. **Phase 1.b (bulk consumer migration):** wrote `/tmp/_migrate_tool_names.py` (word-boundary regex over 53-name alternation, atomic per-file). Built consumer-file inventory via `grep -rlE "(${PATTERN})\b"` over `*.md`/`*.py`/`*.json` excluding venv/snapshots/audit/historical-evals/this-project/gitignored. Ran in two passes: 29 safe targets (237 replacements), then 5 collision-risk files via fresh-read protocol (21 replacements), plus therapy-scheduling-pilot (1 replacement). **Phase 2.b (bulk flat retirement):** wrote `/tmp/_retire_flat_in_tool_files.py` (delete-vs-rename branching: 7 dual-registered tools delete the flat-line; 45 flat-only tools rename in place). 7 deletions + 45 renames across 21 tool files. Plus 7 "Dotted alias for X" descriptions rewritten to use the actual `desc_*` variables (analyzers, catalog, compliance, context ×2, review, session_review). Plus 24 docstring/comment refs swept via the same migration script. **Phase 3 (KB convention doc + verify):** rewrote 4 sections of `KB § PATTERNS/mcp-tool-conventions.md` (status header, Backward-compat aliases, Hierarchical registration example, Coexistence rules) — bulk migration had corrupted the example code (both demo registrations ended up identical), so the section was rewritten to mark the rule HISTORICAL with a 2026-05-03 retirement date pointing to this project. **Final verification:** MCP boot → 60 tools (53 dotted dev + 7 google/llm), 0 flat, no duplicates; pytest mcp/noctusai → 546 passed, 1 skipped; verify-kb-sync.sh green. **Parallel-agent collision protocol:** the parallel agents' work-in-progress committed mid-session as `b40f0b1` (chatbot rename + Calendar real adapters) and `667c7aa` (therapy-platform-wiring Phase 1). My migration was applied on the post-commit HEAD; ~5 noctusai_ refs in CLAUDE.md / CLAUDE/projects.md / KB/CONTEXT/03-SEED-ARCHITECTURE.md sit alongside parallel-agent rule additions and were swept up in this commit (verify-kb-sync would have failed if the rule additions and their KB sections were split across commits). The collateral inclusion is documented here per `commit only your own work` discipline. **Phase 0-audit-improvement that turned out wrong:** the audit estimated `06-AGENTS.md` would need ~40 alias-adds before bulk migration could happen. Reality: the FastMCP per-file `register()` pattern made adding aliases trivial (one line per tool file), but RENAMING was even simpler (also one line). The retirement script went rename-first, skipping the "add aliases coexist with flat" intermediate state entirely — same end result, fewer steps. | claude-opus-4-7 |
+| 2026-05-03 | **Phase 1.a + Phase 2.a ✅ — single-pass ram-through after blocker cleared.** Blocker `mcp-server-fastmcp-switch` Phase 5 closed earlier same day (commits `dc5de6a` + `cf87f1d`). **Phase 1.a (KB consumer migration, partial):** migrated `KB § CONTEXT/06-AGENTS.md` flat→dotted for the 6 already-aliased tools — `noctusai_agent_context`, `noctusai_product_context`, `noctusai_validate`, `noctusai_analyze_patterns`, `noctusai_review` (×2 occurrences), `noctusai_review_session`. 7 surgical Edits, substring-collision avoided (`noctusai_validate_product`, `noctusai_review_session` preserved when adjacent to migrated names). `noctusai_catalog` had 0 refs in this file. **Phase 2.a (first tool retirement):** renamed `noctusai_lgpd_list` → `noctus.dev.lgpd_list` in `mcp/noctusai/tools/noctus/dev/lgpd.py` (zero non-self refs per audit; clean rename, no transition alias). **Verification:** `python -c "import ast; ast.parse(...)"` syntax check on lgpd.py; grep confirmed zero leftover flat refs in `06-AGENTS.md`; `bash scripts/verify-kb-sync.sh` green; `build_server().list_tools()` smoke returned 67 tools with `noctus.dev.lgpd_list` present and `noctusai_lgpd_list` absent. **Discovery:** `.claude/settings.local.json` is gitignored (line 32) — its 7 references are per-user state, NOT a project-state migration target. Users update their own allowlists post-retirement. **Deferred → Phase 1.b:** dotted-alias add for the remaining ~43 flat-only tools (1-line each in `tools/noctus/dev/*.py`); sizing as its own pass. **Stale-doc spotted, not acted on:** `06-AGENTS.md` line 41 still references `noctusai_heal` (retired 2026-04-19 per memory `feedback_keeper_observation_only.md`); flag for separate KB cleanup. | claude-opus-4-7 |
 | 2026-05-03 | **Phase 0 audit ✅ — consumer-reference matrix below.** Generated by grepping each of 60 tool names across `.claude/settings.local.json`, `.claude/mcp_servers.json`, `.github/`, `scripts/`, `KNOWLEDGE-BASE/`, `projects/`, `products/`, `core/`, `CLAUDE.md`, `CLAUDE/`, `README.md`, `templates/`, `mcp/noctusai/cli.py` (excluding `.claude/snapshots/` — frozen). Tool inventory captured at the FastMCP-switch baseline (60 = 50 flat + 7 dotted aliases + 3 unique-to-list_tools). **Coupling buckets**: zero refs = 1 tool (`noctusai_lgpd_list`); 1-3 refs = 48 tools; 4-10 refs = 10 tools; 11+ refs = 1 tool (`noctusai_file_proposal` with 15 refs across project-execution KB docs + `.claude/settings.local.json` + project README files). **Retirement priority**: start with `noctusai_lgpd_list` (zero non-self refs); then sweep through low-coupling 48 tools by consumer class (Claude Code config first, then KB docs, then projects); leave `noctusai_file_proposal` last. Note: the largest single consumer surface is `KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md` (~40 tools referenced once each — one-shot KB rewrite clears it). Phase 1 (consumer migration per class) and Phase 2 (per-tool retirement) wait on `mcp-server-fastmcp-switch` closing first — that project's per-file `register()` pattern makes adding dotted aliases for the remaining 43 flat-only tools trivial. | claude-opus-4-7 |
 
 ---

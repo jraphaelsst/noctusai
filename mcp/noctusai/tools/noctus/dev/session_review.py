@@ -1,4 +1,4 @@
-"""`noctusai_review_session` — session-axis review.
+"""`noctus.dev.review_session` — session-axis review.
 
 Walks one Claude Code JSONL transcript and emits keeper-shaped issues
 for any agent-discipline rule we have a detector for. The harness is
@@ -200,7 +200,7 @@ def detect_narrow_read(
             continue
         # Track outline_* calls so subsequent reads on those paths are
         # exempt. Match both flat (`outline_python`) and prefixed
-        # (`noctusai_outline_python`, `mcp__noctusai__noctusai_outline_python`)
+        # (`noctus.dev.outline_python`, `mcp__noctusai__noctusai_outline_python`)
         # tool names — the agent surface ships under multiple aliases.
         lname = ev.name.lower()
         if "outline_python" in lname or "outline_typescript" in lname:
@@ -232,7 +232,7 @@ def detect_narrow_read(
                     f"says: structure before bodies for files >200 lines."
                 ),
                 suggestion=(
-                    f"Outline first: `noctusai_outline_python` (or "
+                    f"Outline first: `noctus.dev.outline_python` (or "
                     f"`outline_typescript` for `.ts`/`.tsx`); then `Read` with "
                     f"`offset`/`limit` for the symbol you actually need. "
                     f"See `KB § PATTERNS/agent-reading-discipline.md`."
@@ -348,8 +348,7 @@ def register(server) -> None:
     ) -> dict:
         return review_session(path=path, latest=latest)
 
-    server.tool(name="noctusai_review_session", description=desc)(_review_session)
     server.tool(
         name="noctus.dev.review_session",
-        description="Dotted alias for noctusai_review_session.",
+        description=desc,
     )(_review_session)

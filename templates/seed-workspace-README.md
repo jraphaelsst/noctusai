@@ -105,10 +105,10 @@ When ready to promote into noc:
 
 ```bash
 # Dry-run (from noc cwd or template cwd):
-python -m mcp.noctusai.cli noctusai_promote_from_seed_workspace --slug=<name>-product --dry-run
+python -m mcp.noctusai.cli noctus.dev.promote_from_seed_workspace --slug=<name>-product --dry-run
 
 # Real promotion:
-python -m mcp.noctusai.cli noctusai_promote_from_seed_workspace --slug=<name>-product
+python -m mcp.noctusai.cli noctus.dev.promote_from_seed_workspace --slug=<name>-product
 ```
 
 ### 3. Parallel agent

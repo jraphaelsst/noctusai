@@ -170,7 +170,7 @@ KB § PATTERNS/accept-with-rationale.md
 - [ ] Replace the `accept-with-rationale.md § "send_message exists in ERP and therapy"` entry with a `FORMALIZED YYYY-MM-DD` entry; `Recorded by: send-message-consolidation Phase 3 (closed); commit <hash>`.
 - [ ] Update `projects/README.md` — drop this project's row from active.
 - [ ] Update `NEXT-STEPS.md` — strike `send_message` collision from P2 deferrals.
-- [ ] File ONE bundled phase proposal via `noctusai_file_proposal(project="send-message-consolidation", ...)` if any improvements accumulated; otherwise apply-inline-then-skip.
+- [ ] File ONE bundled phase proposal via `noctus.dev.file_proposal(project="send-message-consolidation", ...)` if any improvements accumulated; otherwise apply-inline-then-skip.
 - [ ] Flip phase headers to ✅; add §11 close entry; delete this folder; final commit + push (project-close gate).
 
 ---

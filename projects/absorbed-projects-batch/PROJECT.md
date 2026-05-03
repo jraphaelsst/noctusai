@@ -236,7 +236,7 @@ These do **NOT** execute. Phase 4 only confirms they remain deferred and self-co
 
 - [ ] Confirm Tier 1-3 children closed + folders deleted (5 active children).
 - [ ] Confirm Tier 4 deferred drafts are documented + untouched (3 children).
-- [ ] Roll up this batch's improvements + recurrence captures into one final `noctusai_file_proposal` if any cross-tier patterns emerged worth preserving beyond §11.
+- [ ] Roll up this batch's improvements + recurrence captures into one final `noctus.dev.file_proposal` if any cross-tier patterns emerged worth preserving beyond §11.
 - [ ] `python mcp/noctusai/cli.py --improvements projects/absorbed-projects-batch/PROJECT.md`.
 - [ ] Three-way sync verification (`bash scripts/verify-kb-sync.sh`).
 - [ ] Final commit + push (literal last step per `KB § PATTERNS/project-execution.md § 0`).

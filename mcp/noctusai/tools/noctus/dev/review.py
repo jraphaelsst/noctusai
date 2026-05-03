@@ -9,7 +9,7 @@ Three execution modes (see `run_review(mode=...)`):
      the in-session agent (Claude, etc.) uses to author proposals with full
      conversation context. Zero LLM cost at this layer. The agent is expected
      to Read `templates/PROPOSAL-TEMPLATE.md`, fill it per issue, and file via
-     `noctusai_file_proposal` (or `tools.proposals.file_proposal` directly).
+     `noctus.dev.file_proposal` (or `tools.proposals.file_proposal` directly).
 
   2. **headless** — no agent in the loop (CI, cron, solo CLI without a chat
      session). OpenAI `gpt-4o-mini` authors proposals, Python fills the
@@ -169,13 +169,13 @@ def _headless_author(issue: dict, product_path: Path, model: str, agent_tag: str
     body = fill_proposal_template(
         title=analysis.get("title") or f"Compliance: {issue.get('issue', '')[:60]}",
         agent=agent_tag,
-        origin=f"keeper:noctusai_validate:{issue.get('product', 'unknown')}",
+        origin=f"keeper:noctus.dev.validate:{issue.get('product', 'unknown')}",
         severity=issue.get("severity", "medium"),
         effort=analysis.get("effort", "medium"),
         affected_products=[issue.get("product", "unknown")],
         context=analysis.get("context") or (
             f"Keeper's deterministic compliance detector flagged this in product "
-            f"`{issue.get('product', 'unknown')}` during a `noctusai_review` pass. "
+            f"`{issue.get('product', 'unknown')}` during a `noctus.dev.review` pass. "
             f"No plan phase produced it — the finding is standalone."
         ),
         situation=analysis.get("situation") or issue.get("issue", ""),
@@ -236,7 +236,7 @@ def run_review(
         report["note"] = (
             "Agent mode: this call does NOT file any proposals. "
             "The in-session agent uses `review_prompt` + `templates/PROPOSAL-TEMPLATE.md` "
-            "to author one proposal per issue and file via `noctusai_file_proposal`."
+            "to author one proposal per issue and file via `noctus.dev.file_proposal`."
         )
         return report
 
@@ -316,8 +316,7 @@ def register(server) -> None:
     ) -> dict:
         return run_review(product_slug=product, mode=mode, model=model)
 
-    server.tool(name="noctusai_review", description=desc)(_review)
     server.tool(
         name="noctus.dev.review",
-        description="Dotted alias for noctusai_review.",
+        description=desc,
     )(_review)

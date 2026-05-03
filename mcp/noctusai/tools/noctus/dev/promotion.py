@@ -1,4 +1,4 @@
-"""`noctusai_promote_from_seed_workspace` + `noctusai_list_promotions` —
+"""`noctus.dev.promote_from_seed_workspace` + `noctus.dev.list_promotions` —
 absorption pipeline from a seed workspace into noc.
 
 A seed workspace stores per-addition metadata under
@@ -374,7 +374,7 @@ __all__ = [
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_promote_from_seed_workspace",
+        name="noctus.dev.promote_from_seed_workspace",
         description=(
             "Promote a seed-workspace addition into noc per its `.promotions/<slug>.md` "
             "manifest. Reads origin path(s) + intended_noc_destination + seed-first "
@@ -388,7 +388,7 @@ def register(server) -> None:
         return promote_from_seed_workspace(slug=slug, dry_run=dry_run, force=force)
 
     @server.tool(
-        name="noctusai_list_promotions",
+        name="noctus.dev.list_promotions",
         description=(
             "List promotion manifests in the current workspace, split into pending "
             "(`promoted_on=not-yet`) vs promoted (with date). Reads `.promotions/*.md`. "

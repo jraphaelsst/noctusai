@@ -125,13 +125,11 @@ def register(server) -> None:
     def _product_context(slug: str) -> dict:
         return get_product_context(slug)
 
-    server.tool(name="noctusai_agent_context", description=desc_agent)(_agent_context)
     server.tool(
         name="noctus.dev.agent_context",
-        description="Dotted alias for noctusai_agent_context. Prefer the dotted form going forward (Phase 3+).",
+        description=desc_agent,
     )(_agent_context)
-    server.tool(name="noctusai_product_context", description=desc_product)(_product_context)
     server.tool(
         name="noctus.dev.product_context",
-        description="Dotted alias for noctusai_product_context.",
+        description=desc_product,
     )(_product_context)

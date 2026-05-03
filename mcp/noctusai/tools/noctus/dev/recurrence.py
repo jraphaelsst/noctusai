@@ -1656,7 +1656,7 @@ def scan_migration_patterns(
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_scan_recurrence",
+        name="noctus.dev.scan_recurrence",
         description=(
             "Scan product main.py / conftest.py / vitest.config.ts for repeated lines "
             "that should be absorbed into seed. N=2 → triage warning; N=3+ → high "
@@ -1674,11 +1674,11 @@ def register(server) -> None:
         )
 
     @server.tool(
-        name="noctusai_scan_cross_product_helpers",
+        name="noctus.dev.scan_cross_product_helpers",
         description=(
             "Scan service/router/dependency/hook/component files for function/class "
             "NAMES that recur across N≥2 products. Catches the absorption shape "
-            "`noctusai_scan_recurrence` misses — same NAME implemented slightly "
+            "`noctus.dev.scan_recurrence` misses — same NAME implemented slightly "
             "differently per product (`_safe_float`, `_format_money`, `useMetas`, "
             "`_PipelineHooks`). Suggests seed-side absorption targets "
             "(`noctusai_lib.parsing`, `@noctusai/lib/hooks`, etc.). Use BEFORE writing "
@@ -1695,7 +1695,7 @@ def register(server) -> None:
         )
 
     @server.tool(
-        name="noctusai_scan_service_line_recurrence",
+        name="noctus.dev.scan_service_line_recurrence",
         description=(
             "Scan service/router/dependency lines for verbatim repetition across N≥2 "
             "products. Strict filter (≥60 chars, must contain `(`). Catches ad-hoc "
@@ -1703,7 +1703,7 @@ def register(server) -> None:
             "`datetime.fromisoformat(s.replace(\"Z\", \"+00:00\"))`, `raise "
             "HTTPException(...)` shapes, pagination expressions like "
             "`query.range(offset, offset + page_size - 1).execute()`. Complements "
-            "`noctusai_scan_cross_product_helpers`."
+            "`noctus.dev.scan_cross_product_helpers`."
         ),
     )
     def _scan_service_line(
@@ -1718,7 +1718,7 @@ def register(server) -> None:
         )
 
     @server.tool(
-        name="noctusai_scan_block_patterns",
+        name="noctus.dev.scan_block_patterns",
         description=(
             "AST-walk service/router/seed-lib files; group `try/except` blocks by "
             "structural fingerprint (call targets normalized, identifiers stripped). "
@@ -1741,7 +1741,7 @@ def register(server) -> None:
         )
 
     @server.tool(
-        name="noctusai_scan_within_product_helpers",
+        name="noctus.dev.scan_within_product_helpers",
         description=(
             "Find helper names duplicated N+ times INSIDE one product (across files). "
             "Closes the gap that the cross-product helper scan requires N≥2 distinct "
@@ -1754,7 +1754,7 @@ def register(server) -> None:
         return scan_within_product_helpers(min_count=min_count)
 
     @server.tool(
-        name="noctusai_scan_pydantic_model_shapes",
+        name="noctus.dev.scan_pydantic_model_shapes",
         description=(
             "Find Pydantic `BaseModel` field-set shapes that recur across N≥`min_count` "
             "products. Catches the absorption signal the class-name scan misses — same "
@@ -1775,7 +1775,7 @@ def register(server) -> None:
         )
 
     @server.tool(
-        name="noctusai_scan_test_fixture_recurrence",
+        name="noctus.dev.scan_test_fixture_recurrence",
         description=(
             "Scan products' test trees (conftest.py, tests/services, tests/routers, "
             "tests/integration) for pytest fixtures + helper names recurring across "
@@ -1794,7 +1794,7 @@ def register(server) -> None:
         )
 
     @server.tool(
-        name="noctusai_scan_migration_patterns",
+        name="noctus.dev.scan_migration_patterns",
         description=(
             "Scan SQL migration files for known structural patterns (RLS policy with "
             "subquery `auth.uid()`, FK-with-index, `SET search_path`, audit-log "

@@ -2180,14 +2180,13 @@ def register(server) -> None:
         score, issues = check_all_products()
         return {"score": score, "issues": issues}
 
-    server.tool(name="noctusai_validate", description=desc_validate)(_validate)
     server.tool(
         name="noctus.dev.validate",
-        description="Dotted alias for noctusai_validate.",
+        description=desc_validate,
     )(_validate)
 
     @server.tool(
-        name="noctusai_validate_product",
+        name="noctus.dev.validate_product",
         description="Check seed compliance for one product",
     )
     def _validate_product(slug: str) -> dict:

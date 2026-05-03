@@ -108,7 +108,7 @@ def list_available_ports() -> dict:
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_scaffold_product",
+        name="noctus.dev.scaffold_product",
         description="Create a new product from the seed template",
     )
     def _scaffold(
@@ -122,7 +122,7 @@ def register(server) -> None:
         return scaffold_product(name, slug, schema, backend_port, frontend_port, icon)
 
     @server.tool(
-        name="noctusai_available_ports",
+        name="noctus.dev.available_ports",
         description="Find next available backend and frontend ports",
     )
     def _available_ports() -> dict:

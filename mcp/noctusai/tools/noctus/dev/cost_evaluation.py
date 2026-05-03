@@ -1,4 +1,4 @@
-"""`noctusai_count_tokens` — count tokens for a file, directory, or glob.
+"""`noctus.dev.count_tokens` — count tokens for a file, directory, or glob.
 
 Used by:
 - Methodology / context-budget work — measure per-turn token cost reduction
@@ -269,7 +269,7 @@ def count_tokens(
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_count_tokens",
+        name="noctus.dev.count_tokens",
         description=(
             "Count tokens for a file, directory, or glob (offline). Tokenizer cascade: "
             "tiktoken (if installed in the venv — ~5-10% off Claude) → chars/4 "

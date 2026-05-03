@@ -48,7 +48,7 @@ def build_server() -> FastMCP:
             "<vendor_or_namespace>.<service>.<action> (e.g. `noctus.dev.validate`, "
             "`noctus.dev.review`). Legacy flat names (`noctusai_<action>`) are "
             "registered as aliases until consumers migrate. Call "
-            "`noctusai_agent_context` first when starting a fresh session."
+            "`noctus.dev.agent_context` first when starting a fresh session."
         ),
     )
     register_all(server)

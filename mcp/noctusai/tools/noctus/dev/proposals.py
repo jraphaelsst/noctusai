@@ -189,7 +189,7 @@ def fill_proposal_template(
     Args:
         title: Short action-oriented title (< 80 chars).
         agent: Authoring agent tag — `claude-opus-4-7`, `keeper-openai-gpt-4o-mini`, etc.
-        origin: Source tag — `plan:<name>:<phase>`, `keeper:noctusai_validate`, `lgpd:noctusai_lgpd_flag`, etc.
+        origin: Source tag — `plan:<name>:<phase>`, `keeper:noctus.dev.validate`, `lgpd:noctus.dev.lgpd_flag`, etc.
         severity: high | medium | low.
         effort: high | medium | low.
         affected_products: Product slugs the fix must touch.
@@ -573,24 +573,24 @@ def update_proposal_status(filename, status, reason="", product=None):
 
 def register(server) -> None:
     @server.tool(
-        name="noctusai_proposal_template",
+        name="noctus.dev.proposal_template",
         description=(
             "Return `templates/PROPOSAL-TEMPLATE.md` content so agents get a consistent "
             "starting point when authoring a proposal. Agents fill every "
-            "`{{PLACEHOLDER}}` in the template and submit via `noctusai_file_proposal`."
+            "`{{PLACEHOLDER}}` in the template and submit via `noctus.dev.file_proposal`."
         ),
     )
     def _template() -> dict:
         return {"template": get_proposal_template()}
 
     @server.tool(
-        name="noctusai_file_proposal",
+        name="noctus.dev.file_proposal",
         description=(
             "Write a fully-rendered proposal markdown. For project-phase proposals "
             "pass `project=<slug>` — the file lands in `projects/<slug>/proposals/` "
             "(ONE bundled proposal per phase). For keeper/compliance proposals pass "
             "`product=<slug>` — the file lands in `products/<product>/proposals/`. "
-            "Agents typically call `noctusai_proposal_template`, fill it, then submit "
+            "Agents typically call `noctus.dev.proposal_template`, fill it, then submit "
             "via this tool. Dedups by title slug + key entity."
         ),
     )
@@ -612,7 +612,7 @@ def register(server) -> None:
         )
 
     @server.tool(
-        name="noctusai_list_proposals",
+        name="noctus.dev.list_proposals",
         description=(
             "List pending improvement proposals across all products (or one product "
             "if `product` is set)"
@@ -625,14 +625,14 @@ def register(server) -> None:
         return list_proposals(agent, product=product)
 
     @server.tool(
-        name="noctusai_accept_proposal",
+        name="noctus.dev.accept_proposal",
         description="Accept a proposal",
     )
     def _accept(filename: str, product: str | None = None) -> dict:
         return update_proposal_status(filename, "accepted", product=product)
 
     @server.tool(
-        name="noctusai_reject_proposal",
+        name="noctus.dev.reject_proposal",
         description="Reject a proposal",
     )
     def _reject(

@@ -8,36 +8,36 @@
 
 | Goal | CLI | MCP tool |
 |---|---|---|
-| Full platform context | — | `noctusai_agent_context` |
-| One product's structure | — | `noctusai_product_context(slug)` |
-| List all products + counts | — | `noctusai_list_products` |
-| Code metrics per product | `--metrics` | `noctusai_platform_metrics` |
-| Scaffold a new product | — | `noctusai_scaffold_product` |
-| Next available ports | — | `noctusai_available_ports` |
-| Seed compliance score | `--validate` | `noctusai_validate` |
-| Review (observation-only, LLM-backed proposals) | `--review` | `noctusai_review` |
-| Pattern/dep/test analysis | `--analyze` | `noctusai_analyze` |
-| Duplicated functions | — | `noctusai_analyze_patterns` |
-| Dep version mismatch | — | `noctusai_analyze_deps` |
-| Test coverage gaps | — | `noctusai_analyze_tests` |
-| AI-assisted discovery | `--discover` | `noctusai_ai_discover` |
-| AI rule advisory | — | `noctusai_ai_advisory` |
-| Sync one product's MASTER-PROMPT | — | `noctusai_sync_master_prompt(slug)` |
-| Sync all MASTER-PROMPTs | `--sync-prompts` | `noctusai_sync_all_master_prompts` |
-| Check one MASTER-PROMPT staleness | — | `noctusai_check_master_prompt(slug)` |
-| Run one product's tests | — | `noctusai_run_tests(slug)` |
-| Run all tests | `--test` | `noctusai_run_all_tests` |
-| Build one frontend | — | `noctusai_build_frontend(slug)` |
-| Build all frontends | `--build` | `noctusai_build_all_frontends` |
-| Diff product vs seed | — | `noctusai_diff_against_seed(slug)` |
-| Orphaned files in product | — | `noctusai_find_orphans(slug)` |
-| API consistency check | — | `noctusai_check_api_consistency(slug)` |
+| Full platform context | — | `noctus.dev.agent_context` |
+| One product's structure | — | `noctus.dev.product_context(slug)` |
+| List all products + counts | — | `noctus.dev.list_products` |
+| Code metrics per product | `--metrics` | `noctus.dev.platform_metrics` |
+| Scaffold a new product | — | `noctus.dev.scaffold_product` |
+| Next available ports | — | `noctus.dev.available_ports` |
+| Seed compliance score | `--validate` | `noctus.dev.validate` |
+| Review (observation-only, LLM-backed proposals) | `--review` | `noctus.dev.review` |
+| Pattern/dep/test analysis | `--analyze` | `noctus.dev.analyze` |
+| Duplicated functions | — | `noctus.dev.analyze_patterns` |
+| Dep version mismatch | — | `noctus.dev.analyze_deps` |
+| Test coverage gaps | — | `noctus.dev.analyze_tests` |
+| AI-assisted discovery | `--discover` | `noctus.dev.ai_discover` |
+| AI rule advisory | — | `noctus.dev.ai_advisory` |
+| Sync one product's MASTER-PROMPT | — | `noctus.dev.sync_master_prompt(slug)` |
+| Sync all MASTER-PROMPTs | `--sync-prompts` | `noctus.dev.sync_all_master_prompts` |
+| Check one MASTER-PROMPT staleness | — | `noctus.dev.check_master_prompt(slug)` |
+| Run one product's tests | — | `noctus.dev.run_tests(slug)` |
+| Run all tests | `--test` | `noctus.dev.run_all_tests` |
+| Build one frontend | — | `noctus.dev.build_frontend(slug)` |
+| Build all frontends | `--build` | `noctus.dev.build_all_frontends` |
+| Diff product vs seed | — | `noctus.dev.diff_against_seed(slug)` |
+| Orphaned files in product | — | `noctus.dev.find_orphans(slug)` |
+| API consistency check | — | `noctus.dev.check_api_consistency(slug)` |
 | KB ↔ CLAUDE.md sync check | `--verify-kb-sync` | — |
-| Shared-library catalog | `--catalog` | `noctusai_catalog` |
-| **Project → improvements.md (retrospective)** | `--improvements PROJECT` | `noctusai_improvements(project_path)` |
-| List proposals | `--proposals` | `noctusai_list_proposals` |
-| Accept proposal | — | `noctusai_accept_proposal(filename)` |
-| Reject proposal | — | `noctusai_reject_proposal(filename, reason)` |
+| Shared-library catalog | `--catalog` | `noctus.dev.catalog` |
+| **Project → improvements.md (retrospective)** | `--improvements PROJECT` | `noctus.dev.improvements(project_path)` |
+| List proposals | `--proposals` | `noctus.dev.list_proposals` |
+| Accept proposal | — | `noctus.dev.accept_proposal(filename)` |
+| Reject proposal | — | `noctus.dev.reject_proposal(filename, reason)` |
 
 ---
 
@@ -45,64 +45,64 @@
 
 Agents should default to invoking an MCP tool rather than shelling out to the CLI. The MCP tool returns structured data; the CLI is formatted for humans.
 
-**Start-of-session discovery** — agents new to the repo call `noctusai_agent_context` first. For product-specific work, follow up with `noctusai_product_context(slug)`.
+**Start-of-session discovery** — agents new to the repo call `noctus.dev.agent_context` first. For product-specific work, follow up with `noctus.dev.product_context(slug)`.
 
-**Before any code change** — call `noctusai_catalog` (check for existing shared-lib symbols + duplicate signals) and `noctusai_analyze_patterns` (find existing duplications the change might absorb or worsen).
+**Before any code change** — call `noctus.dev.catalog` (check for existing shared-lib symbols + duplicate signals) and `noctus.dev.analyze_patterns` (find existing duplications the change might absorb or worsen).
 
-**After any code change** — call `noctusai_review` scoped to the affected product. The review pass detects seed-compliance issues deterministically and asks an LLM (OpenAI) to author one proposal per issue in `products/<product>/proposals/`. **It never modifies code** — you triage each proposal and apply the fixes yourself. (The former `noctusai_heal` auto-fix loop was retired — deterministic text rewrites could corrupt code and the string-match checks rotted as the seed evolved.)
+**After any code change** — call `noctus.dev.review` scoped to the affected product. The review pass detects seed-compliance issues deterministically and asks an LLM (OpenAI) to author one proposal per issue in `products/<product>/proposals/`. **It never modifies code** — you triage each proposal and apply the fixes yourself. (The former `noctusai_heal` auto-fix loop was retired — deterministic text rewrites could corrupt code and the string-match checks rotted as the seed evolved.)
 
-**When executing a project** — tick phase headers live, append an `**Improvements:**` block to the just-completed phase capturing learnings, then *always* call `noctusai_improvements(project_path)`. The generated `improvements.md` is the project's retrospective knowledge base — read first when any phase is reworked.
+**When executing a project** — tick phase headers live, append an `**Improvements:**` block to the just-completed phase capturing learnings, then *always* call `noctus.dev.improvements(project_path)`. The generated `improvements.md` is the project's retrospective knowledge base — read first when any phase is reworked.
 
-**Before shipping a PR** — run `noctusai_validate` (compliance score) and `noctusai_analyze_tests` (coverage gaps). If the change touched the seed or a shared lib, re-run `noctusai_catalog` to confirm no new orphans or duplications.
+**Before shipping a PR** — run `noctus.dev.validate` (compliance score) and `noctus.dev.analyze_tests` (coverage gaps). If the change touched the seed or a shared lib, re-run `noctus.dev.catalog` to confirm no new orphans or duplications.
 
 ---
 
 ## Tool catalog — grouped
 
 ### Context & discovery
-- `noctusai_agent_context` — Full platform overview for a fresh agent. Call first.
-- `noctusai_product_context(slug)` — One product's structure + MASTER-PROMPT + README.
-- `noctusai_list_products` — All products with router/service/page/hook counts.
-- `noctusai_get_product(slug)` — Detailed structure: endpoints, config, tests, migrations.
-- `noctusai_platform_metrics` — Code metrics (lines, routers, services, pages) per product.
+- `noctus.dev.agent_context` — Full platform overview for a fresh agent. Call first.
+- `noctus.dev.product_context(slug)` — One product's structure + MASTER-PROMPT + README.
+- `noctus.dev.list_products` — All products with router/service/page/hook counts.
+- `noctus.dev.get_product(slug)` — Detailed structure: endpoints, config, tests, migrations.
+- `noctus.dev.platform_metrics` — Code metrics (lines, routers, services, pages) per product.
 
 ### Scaffolding
-- `noctusai_scaffold_product(name, slug, schema, backend_port, frontend_port, icon?)` — Create a new product from the seed template.
-- `noctusai_available_ports` — Find the next free backend + frontend port pair.
+- `noctus.dev.scaffold_product(name, slug, schema, backend_port, frontend_port, icon?)` — Create a new product from the seed template.
+- `noctus.dev.available_ports` — Find the next free backend + frontend port pair.
 
 ### Compliance + review
-- `noctusai_validate` — Compliance score (0–100) + issues list for all products.
-- `noctusai_validate_product(slug)` — Same, scoped to one product.
-- `noctusai_review(product?)` — **Observation-only.** Detect seed-compliance issues deterministically, then ask an LLM (OpenAI, requires `OPENAI_API_KEY`) to author one proposal per issue in `products/<product>/proposals/`. **Never modifies code.** Falls back to skeleton proposals if the LLM is unavailable so nothing is silently dropped.
+- `noctus.dev.validate` — Compliance score (0–100) + issues list for all products.
+- `noctus.dev.validate_product(slug)` — Same, scoped to one product.
+- `noctus.dev.review(product?)` — **Observation-only.** Detect seed-compliance issues deterministically, then ask an LLM (OpenAI, requires `OPENAI_API_KEY`) to author one proposal per issue in `products/<product>/proposals/`. **Never modifies code.** Falls back to skeleton proposals if the LLM is unavailable so nothing is silently dropped.
 
 ### Pattern & dependency analysis
-- `noctusai_analyze` — Run all analyzers at once.
-- `noctusai_analyze_patterns` — Duplicated functions + inline hooks.
-- `noctusai_analyze_deps` — Python dep version consistency across products.
-- `noctusai_analyze_tests` — Three-layer test coverage gaps.
+- `noctus.dev.analyze` — Run all analyzers at once.
+- `noctus.dev.analyze_patterns` — Duplicated functions + inline hooks.
+- `noctus.dev.analyze_deps` — Python dep version consistency across products.
+- `noctus.dev.analyze_tests` — Three-layer test coverage gaps.
 
 ### AI-assisted review
-- `noctusai_ai_discover` — AI reads analyzer findings and proposes improvements. Requires `OPENAI_API_KEY`.
-- `noctusai_ai_advisory` — AI reads `CLAUDE.md` rules and audits recent code. Requires `OPENAI_API_KEY`.
+- `noctus.dev.ai_discover` — AI reads analyzer findings and proposes improvements. Requires `OPENAI_API_KEY`.
+- `noctus.dev.ai_advisory` — AI reads `CLAUDE.md` rules and audits recent code. Requires `OPENAI_API_KEY`.
 
 ### MASTER-PROMPT sync
-- `noctusai_sync_master_prompt(slug)` — Regenerate the structural sections of one product's MASTER-PROMPT from the filesystem.
-- `noctusai_sync_all_master_prompts` — Same for every product.
-- `noctusai_check_master_prompt(slug)` — Is a MASTER-PROMPT stale? (changed code, unchanged prompt)
+- `noctus.dev.sync_master_prompt(slug)` — Regenerate the structural sections of one product's MASTER-PROMPT from the filesystem.
+- `noctus.dev.sync_all_master_prompts` — Same for every product.
+- `noctus.dev.check_master_prompt(slug)` — Is a MASTER-PROMPT stale? (changed code, unchanged prompt)
 
 ### Testing & building
-- `noctusai_run_tests(slug)` — Run pytest for one product.
-- `noctusai_run_all_tests` — All products.
-- `noctusai_build_frontend(slug)` — `vite build` for one frontend.
-- `noctusai_build_all_frontends` — All frontends.
+- `noctus.dev.run_tests(slug)` — Run pytest for one product.
+- `noctus.dev.run_all_tests` — All products.
+- `noctus.dev.build_frontend(slug)` — `vite build` for one frontend.
+- `noctus.dev.build_all_frontends` — All frontends.
 
 ### Diff & quality
-- `noctusai_diff_against_seed(slug)` — Compare a product's structural files against the seed.
-- `noctusai_find_orphans(slug)` — Files defined but not imported anywhere.
-- `noctusai_check_api_consistency(slug)` — Response-pattern consistency (`success_response`/`paginated_response`).
+- `noctus.dev.diff_against_seed(slug)` — Compare a product's structural files against the seed.
+- `noctus.dev.find_orphans(slug)` — Files defined but not imported anywhere.
+- `noctus.dev.check_api_consistency(slug)` — Response-pattern consistency (`success_response`/`paginated_response`).
 
 ### Catalog (shared-library observation)
-- `noctusai_catalog` — Scans `seed/lib/backend` + `seed/framework/backend` for every public symbol; scans every product's backend for imports; produces `mcp/noctusai/catalog.md` with:
+- `noctus.dev.catalog` — Scans `seed/lib/backend` + `seed/framework/backend` for every public symbol; scans every product's backend for imports; produces `mcp/noctusai/catalog.md` with:
   - Every symbol + its importers + import count.
   - **Orphans** (lib symbols with zero importers).
   - **Single-consumer** (informational — one product uses this symbol).
@@ -111,7 +111,7 @@ Agents should default to invoking an MCP tool rather than shelling out to the CL
   Conventions for resolving its findings live at `KNOWLEDGE-BASE/CONTEXT/PATTERNS/shared-library-conventions.md`.
 
 ### Improvements (phase retrospective) — **MANDATORY after phase tick**
-- `noctusai_improvements(project_path)` — Parses a project file and regenerates `improvements.md` in the project's folder. Surfaces:
+- `noctus.dev.improvements(project_path)` — Parses a project file and regenerates `improvements.md` in the project's folder. Surfaces:
   - Each completed phase's `**Improvements:**` block — observations, refactor candidates, edge cases, tech debt captured *while implementing that phase*.
   - Completed phases missing an improvements block (nudge to back-fill).
   - Items carried from §4 "Out of scope" (deferred candidates).
@@ -124,9 +124,9 @@ Agents should default to invoking an MCP tool rather than shelling out to the CL
   Full conventions at `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`.
 
 ### Proposals
-- `noctusai_list_proposals(agent?)` — Pending proposals, optionally filtered by agent.
-- `noctusai_accept_proposal(filename)` — Mark accepted.
-- `noctusai_reject_proposal(filename, reason)` — Mark rejected with a reason.
+- `noctus.dev.list_proposals(agent?)` — Pending proposals, optionally filtered by agent.
+- `noctus.dev.accept_proposal(filename)` — Mark accepted.
+- `noctus.dev.reject_proposal(filename, reason)` — Mark rejected with a reason.
 
 ### Sync checks (CLI-only)
 - `--verify-kb-sync` — Verifies `CLAUDE.md` pointers resolve and all KB docs are indexed in `KNOWLEDGE-BASE/INDEX.md`. Enforced by pre-commit hook.
@@ -223,10 +223,10 @@ Each tool is **stateless** and **idempotent**: re-running never corrupts state, 
 
 ## Conventions enforced by this toolkit
 
-- **Pydantic schemas for tool inputs (and outputs).** New tools land with `XxxInput(BaseModel)` and `XxxOutput(BaseModel)` classes in the tool file itself; `server.py`'s `_tool(name, desc, model=XxxInput)` auto-generates the JSON schema via `model_json_schema()`. Existing tools migrate opportunistically when touched. The pattern is established for `noctusai_agent_context`, `noctusai_validate`, `noctusai_analyze_patterns`, `noctusai_review`, `noctusai_catalog` (Phase 2 of `projects/mcp-server-expansion/`); legacy hand-coded `props` / `required` dicts still work for un-migrated tools and will be retired in Phase 4. Output models grow opportunistically — start with `dict[str, Any]` for dynamic surface, tighten as call sites stabilize.
-- **`noctusai_catalog`** enforces the "shared-library first" rule — run it before writing anything that might already exist in `noctusai_lib`, and after any change to the seed to verify no new orphans/duplicates shipped. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/shared-library-conventions.md`.
-- **`noctusai_improvements`** enforces the "retrospective-per-phase" rule — projects are living documents, and each phase captures learnings inline as an `**Improvements:**` block. The tool aggregates these into `improvements.md` next to the project file, so future reworkers of a phase read the original-build friction before touching anything. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`.
-- **`noctusai_review`** enforces the "no violations ship" rule *without* touching code. Every detected issue becomes a proposal the human triages. Referenced from `CLAUDE.md → Engineering Philosophy → MCP toolkit reviews after every change (observation-only)`.
+- **Pydantic schemas for tool inputs (and outputs).** New tools land with `XxxInput(BaseModel)` and `XxxOutput(BaseModel)` classes in the tool file itself; `server.py`'s `_tool(name, desc, model=XxxInput)` auto-generates the JSON schema via `model_json_schema()`. Existing tools migrate opportunistically when touched. The pattern is established for `noctus.dev.agent_context`, `noctus.dev.validate`, `noctus.dev.analyze_patterns`, `noctus.dev.review`, `noctus.dev.catalog` (Phase 2 of `projects/mcp-server-expansion/`); legacy hand-coded `props` / `required` dicts still work for un-migrated tools and will be retired in Phase 4. Output models grow opportunistically — start with `dict[str, Any]` for dynamic surface, tighten as call sites stabilize.
+- **`noctus.dev.catalog`** enforces the "shared-library first" rule — run it before writing anything that might already exist in `noctusai_lib`, and after any change to the seed to verify no new orphans/duplicates shipped. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/shared-library-conventions.md`.
+- **`noctus.dev.improvements`** enforces the "retrospective-per-phase" rule — projects are living documents, and each phase captures learnings inline as an `**Improvements:**` block. The tool aggregates these into `improvements.md` next to the project file, so future reworkers of a phase read the original-build friction before touching anything. See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`.
+- **`noctus.dev.review`** enforces the "no violations ship" rule *without* touching code. Every detected issue becomes a proposal the human triages. Referenced from `CLAUDE.md → Engineering Philosophy → MCP toolkit reviews after every change (observation-only)`.
 
 ---
 
@@ -252,13 +252,13 @@ A future agent's first question is "which rule is mechanically enforced by which
 | **Clean folder — closed projects deleted** | `check_clean_folder_violations` | warning | Closed (✅) PROJECT.md with surviving folder |
 | **Every keeper detector has a regression test** | `check_detector_has_regression_test` | high | Self-parses `compliance.py`; matches `Test<CamelCase>` classes case-insensitively; `_DETECTOR_TEST_OVERRIDES` for non-conforming names |
 | **Logging convention — no `# silent-ok`** | `check_silent_errors` (above) + `KB § PATTERNS/logging.md` | warning | Bootstrap code uses `logger.debug(...)`; convention doc is the single source of truth |
-| **Recurrence rule (DRY-into-seed at N=2 / N=3+)** | `noctusai_scan_recurrence` (utility) | warning / high | Scans main.py / conftest.py / vite config for repeated lines |
-| **Three-way doc sync (KB ↔ CLAUDE.md ↔ memory)** | `noctusai_check_three_way_sync` (utility) | high / warning | Closes the gap `verify-kb-sync.sh` cannot cover (memory is outside the repo) |
-| Cross-product reference sweep before deletes / renames | `noctusai_refs <pattern>` (utility) | n/a | Replaces manual `grep -rln` |
-| Cross-product `vite build` sweep | `noctusai_build [--changed]` (utility) | n/a | Parallel; supersedes `noctusai_build_all_frontends` |
-| Project status snapshot | `noctusai_status` (utility) | n/a | Walks every PROJECT.md + emits sorted digest |
+| **Recurrence rule (DRY-into-seed at N=2 / N=3+)** | `noctus.dev.scan_recurrence` (utility) | warning / high | Scans main.py / conftest.py / vite config for repeated lines |
+| **Three-way doc sync (KB ↔ CLAUDE.md ↔ memory)** | `noctus.dev.check_three_way_sync` (utility) | high / warning | Closes the gap `verify-kb-sync.sh` cannot cover (memory is outside the repo) |
+| Cross-product reference sweep before deletes / renames | `noctus.dev.refs <pattern>` (utility) | n/a | Replaces manual `grep -rln` |
+| Cross-product `vite build` sweep | `noctusai_build [--changed]` (utility) | n/a | Parallel; supersedes `noctus.dev.build_all_frontends` |
+| Project status snapshot | `noctus.dev.status` (utility) | n/a | Walks every PROJECT.md + emits sorted digest |
 
-**Rules NOT yet mechanically enforced** (agent-discipline-only): "Estimate off evidence", "Triage at decision time", "Phase 0 audit — expand loudly" (judgment about whether to expand or hard-stop), "Active robustness review during execution" (looking for vague improvements doesn't mechanise cleanly), "Apply-inline-then-delete" methodology (decision about which improvements stay in-scope is judgment), "Componentize everything" taste-call (subset is mechanised via `noctusai_scan_recurrence`).
+**Rules NOT yet mechanically enforced** (agent-discipline-only): "Estimate off evidence", "Triage at decision time", "Phase 0 audit — expand loudly" (judgment about whether to expand or hard-stop), "Active robustness review during execution" (looking for vague improvements doesn't mechanise cleanly), "Apply-inline-then-delete" methodology (decision about which improvements stay in-scope is judgment), "Componentize everything" taste-call (subset is mechanised via `noctus.dev.scan_recurrence`).
 
 ---
 
