@@ -135,8 +135,8 @@ The chatbot framework's `llm_dispatcher.py` accepts `audit_writer: AuditWriter |
 - [x] Check whether any product already has an ad-hoc tool-call log. → **No.** No product currently has `tool_call_audit*` / `ToolCallAudit` references (excluding `node_modules` matches in core/frontend).
 
 **Improvements:**
-- Sibling stores arguments/result as TEXT (JSON-stringified) for cross-DB portability (their stack supported SQLite for tests). We're Postgres-only via Supabase, so JSONB is the native fit. **Triage: refactor (applied)** — schema deviates from sibling's TEXT in favor of JSONB; documented in KB doc + migration template.
-- The project doc Phase 1 sketch had the lib ship a SQLAlchemy ORM model directly. After Phase 0 audit of sibling `noctusai_lib/domain/ai/` we found existing modules (`consent.py`, `outputs.py`) keep ORM bindings out of the lib by design — products own DB. **Triage: refactor (applied)** — scope shifted to dataclass + writer factory + migration template; products define their own ORM class. Adoption boilerplate captured in KB doc §3.
+- **Refactor (applied):** sibling stores arguments/result as TEXT (JSON-stringified) for cross-DB portability (their stack supported SQLite for tests). We're Postgres-only via Supabase, so JSONB is the native fit. Schema deviates from sibling's TEXT in favor of JSONB; documented in KB doc + migration template.
+- **Refactor (applied):** the project doc Phase 1 sketch had the lib ship a SQLAlchemy ORM model directly. After Phase 0 audit of sibling `noctusai_lib/domain/ai/` we found existing modules (`consent.py`, `outputs.py`) keep ORM bindings out of the lib by design — products own DB. Scope shifted to dataclass + writer factory + migration template; products define their own ORM class. Adoption boilerplate captured in KB doc §3.
 
 ### Phase 1 — Model + writer ✅ (executed 2026-05-03)
 
@@ -145,8 +145,8 @@ The chatbot framework's `llm_dispatcher.py` accepts `audit_writer: AuditWriter |
 - [x] Tests: success path + DB-failure path (must not raise) + unknown-tool path. → **Done.** 9 tests at `seed/backend/lib/tests/domain/ai/test_tool_audit.py`: round-trip, safe_jsonable variants (dict, None, Pydantic-like, repr fallback), success persists row, DB-failure logs WARNING + does NOT raise, unknown_tool path, now_utc returns aware datetime. All green: `pytest seed/backend/lib/tests/domain/ai/` = 9 passed.
 
 **Improvements:**
-- `_safe_jsonable` falls through `json.dumps(default=str)` so Pydantic models / dataclasses / Decimals round-trip through JSON cleanly. Non-serializable values (circular refs, etc.) wrap as `{"_repr": repr(value)}` with a debug log — audit row still lands. Caught a subtle case during testing: a default-str fallback returns a string (Pydantic-like → `"Sentinel(value=42)"`), which the test now asserts is acceptable. **Triage: accept-with-rationale** — best-effort means we trade structural fidelity for "row always lands"; documented.
-- The lib ships ZERO SQLAlchemy imports at runtime (TYPE_CHECKING-guarded). Tests run without sqlalchemy in the venv (which our MCP venv lacks today). **Triage: refactor (applied)** — keeps lib portable across deployment environments + matches the existing `noctusai_lib.domain.*` style.
+- **Triage: accept-with-rationale** — `_safe_jsonable` accepts string + repr fallbacks instead of raising. Catalogued at `KB § PATTERNS/accept-with-rationale.md § noctusai_lib.domain.ai.tool_audit._safe_jsonable accepts string + repr fallbacks instead of raising`. Inline wayfinder added at the function's docstring. Rationale lives in the catalog entry; revisit trigger is a downstream BI consumer reporting unusable bare-string / `_repr` rows.
+- **Refactor (applied):** the lib ships ZERO SQLAlchemy imports at runtime (TYPE_CHECKING-guarded). Tests run without sqlalchemy in the venv (which our MCP venv lacks today). Keeps lib portable across deployment environments + matches the existing `noctusai_lib.domain.*` style.
 
 ### Phase 2 — Migration template ✅ (executed 2026-05-03)
 
@@ -154,8 +154,8 @@ The chatbot framework's `llm_dispatcher.py` accepts `audit_writer: AuditWriter |
 - [x] Document the migration mirroring rule (`KB § PATTERNS/database-rls.md`). → Adoption flow documented in `KB § PATTERNS/llm-tool-audit.md § 3a` (apply via Supabase MCP) — the database-rls.md rule reference is in the template header.
 
 **Improvements:**
-- Added a `status` column (`success`/`failure`/`unknown_tool`) with its own index. Sibling didn't have this — they parsed the `error` field for status. Indexed status is much faster for error-rate dashboards (`SELECT status, count(*) GROUP BY status`). **Triage: refactor (applied)** — schema improvement over sibling.
-- Added `(conversation_id, started_at)` composite index for per-conversation reconstruction queries. Sibling has only `correlation_id` indexed; conversation reconstruction would be a sequential scan. **Triage: refactor (applied)**.
+- **Refactor (applied):** added a `status` column (`success`/`failure`/`unknown_tool`) with its own index. Sibling didn't have this — they parsed the `error` field for status. Indexed status is much faster for error-rate dashboards (`SELECT status, count(*) GROUP BY status`). Schema improvement over sibling.
+- **Refactor (applied):** added `(conversation_id, started_at)` composite index for per-conversation reconstruction queries. Sibling has only `correlation_id` indexed; conversation reconstruction would be a sequential scan.
 
 ### Phase 3 — KB pattern doc ✅ (executed 2026-05-03)
 
@@ -164,8 +164,8 @@ The chatbot framework's `llm_dispatcher.py` accepts `audit_writer: AuditWriter |
 - [x] Add `CLAUDE.md §2 Map` pointer. → **Done.** Patterns list gains a depth pointer line.
 
 **Improvements:**
-- The KB doc includes 4 worked SQL queries (per-user 24h trail, failure-rate-per-tool weekly, conversation reconstruction, log-join via correlation_id). Worked queries are quoted-runnable in the BI surface that surfaces in Phase 4 wiring. **Triage: refactor (applied)** — saves consumer projects from re-deriving them.
-- Adoption checklist (§8) is a tickable for any product wiring the audit. **Triage: accept-with-rationale** — checklists are where adoption errors get caught early.
+- **Refactor (applied):** the KB doc includes 4 worked SQL queries (per-user 24h trail, failure-rate-per-tool weekly, conversation reconstruction, log-join via correlation_id). Quoted-runnable queries save consumer projects from re-deriving them.
+- **Observation:** adoption checklist (§8) is a tickable for any product wiring the audit. Standard KB doc shape — not a divergence.
 
 ### Phase 4 — Wire into chatbot framework ⏳ **DEFERRED**
 
@@ -189,8 +189,8 @@ This project ships the lib code + migration template + KB doc + adoption checkli
 - [x] First consumers: `projects/imobi-scheduling-bot-creation/` Phase 9 + future bot products use this checklist. → **Captured.** Section §5 names `imobi-scheduling-bot-creation` Phase 9 as the first consumer.
 
 **Improvements:**
-- Folded sibling's "security-hardening" planning artifact ENTIRELY into one doc. The sibling's plan was scattered across multiple `.md` files; this consolidates it into a single durable reference that survives sibling deletion. **Triage: accept-with-rationale** — single-doc fold is right shape for a checklist-style rule; KB structure favors one substantive doc over five thin ones.
-- The §3 confirm-then-execute pattern surfaces as a strong default for ANY destructive LLM tool, not just scheduling. Captured as the platform default; products override only if they have a clear UX reason. **Triage: accept-with-rationale** — recurrence rule applies if 3+ products override (revisit then).
+- **Refactor (applied):** folded sibling's "security-hardening" planning artifact ENTIRELY into one KB doc. The sibling's plan was scattered across multiple `.md` files; this consolidates it into a single durable reference that survives sibling deletion. Doc-structure choice, not a platform divergence.
+- **Captured for future watch-list (no divergence yet):** the §3 confirm-then-execute pattern is now the documented platform default for destructive LLM tools. Products may override if a clear UX reason exists; if 3+ products override, the default itself is wrong-shape — re-evaluate then.
 
 ### Phase 6 — Final verification ✅ (executed 2026-05-03)
 
@@ -199,8 +199,8 @@ This project ships the lib code + migration template + KB doc + adoption checkli
 - [x] Three-way sync confirmed. KB ↔ CLAUDE.md ↔ memory: KB has 2 new pattern docs; CLAUDE.md §2 Map has 2 new depth pointers; **memory** does NOT need new entries (per memory rule "Code patterns, conventions, architecture — these can be derived by reading the current project state, not stored in memory"). Existing memory `feedback_lgpd_first.md` already covers the LGPD redaction angle.
 
 **Improvements:**
-- Total project surface: 1 lib module (`tool_audit.py`, 175 lines), 1 migration template (~70 lines), 2 KB pattern docs (~250 + ~190 lines), 9 tests. Ratio of doc to code is ~3:1 — reflects the "this is a foundational primitive every future bot uses" framing. **Triage: accept-with-rationale** — the doc cost is upfront; downstream consumers (imobi-scheduling-bot-creation, future bots) avoid re-deriving the schema + wiring + LGPD posture.
-- Phase 4 carved out cleanly into `whatsapp-seed-absorption` Phase 5 with the exact import line + wiring shape pre-documented in `KB § PATTERNS/llm-tool-audit.md § 3c`. When that project picks it up, integration is mechanical. **Triage: accept-with-rationale** — clean handoff is what good cross-project carve-outs look like.
+- **Process observation (not a divergence):** total project surface — 1 lib module (`tool_audit.py`, 175 lines), 1 migration template (~70 lines), 2 KB pattern docs (~250 + ~190 lines), 9 tests. Ratio of doc to code is ~3:1; reflects the "this is a foundational primitive every future bot uses" framing. The doc cost is upfront; downstream consumers avoid re-deriving the schema + wiring + LGPD posture.
+- **Deferred-formalize (not accept):** Phase 4 carved out cleanly into `whatsapp-seed-absorption` Phase 5 with the exact import line + wiring shape pre-documented in `KB § PATTERNS/llm-tool-audit.md § 3c`. Scheduled work with named destination — not a divergence accepted in place.
 
 ---
 

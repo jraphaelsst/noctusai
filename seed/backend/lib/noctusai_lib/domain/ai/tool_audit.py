@@ -167,6 +167,13 @@ def _safe_jsonable(value: Any) -> Any:
       land as plain JSON.
     - non-serializable values → wrapped as ``{"_repr": repr(value)}``
       with a debug log; audit row still lands.
+
+    accept-with-rationale: "_safe_jsonable accepts string + repr
+    fallbacks instead of raising" in
+    KB § PATTERNS/accept-with-rationale.md — the audit writer is
+    best-effort; raising would either break user-facing dispatch or
+    multiply silent-error wrappers at every call site. Revisit when a
+    BI consumer reports unusable bare-string / _repr rows.
     """
     if value is None:
         return None

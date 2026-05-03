@@ -209,9 +209,9 @@ def register(server):
 - [x] If Phase 0 invalidates §6, **revise §6 in-place + log in §11**. → §6 phase ordering still valid; tool-count discrepancy logged in §11; Phase 4 CLI-import risk logged as a sub-task.
 
 **Improvements:**
-- §5.1 carried `24-tool MCP` claim while reality is 50. Project-doc embedded counts go stale silently between phases. **Triage: accept-with-rationale** for this project (we revise once at Phase 4 close when the tree literally moves). N=1 today; if a 2nd staleness shows up across sibling projects, consider extending `noctusai_status` with an inline-count drift detector for PROJECT.md.
-- The CLI's direct `from tools.<mod> import <fn>` shape is hidden coupling Phase 4 must surface. **Triage: refactor (Phase 4 sub-task added)** — one-time refactor, not formalize.
-- Sibling MCP `server.py` is **38 lines** vs ours **418 lines**. The 10x gap is the dispatch map (`server.py:282-399`). Phase 4 closes most of that — captured as Phase 4's success metric.
+- **Observation:** §5.1 carried `24-tool MCP` claim while reality is 50. Project-doc embedded counts go stale silently between phases. *Not a divergence worth catalogue paperwork* — single-doc staleness fixed in this project's §11; if it recurs across sibling projects, consider extending `noctusai_status` with an inline-count drift detector for PROJECT.md.
+- **Refactor (Phase 4 sub-task added):** the CLI's direct `from tools.<mod> import <fn>` shape is hidden coupling Phase 4 must surface. One-time refactor, not formalize.
+- **Observation:** sibling MCP `server.py` is **38 lines** vs ours **418 lines**. The 10x gap is the dispatch map (`server.py:282-399`). Phase 4 closes most of that — captured as Phase 4's success metric.
 
 ### Phase 1 — Settings shim (the user's "do it now") ✅ (executed 2026-05-03)
 
@@ -221,8 +221,8 @@ def register(server):
 - [x] Document in `mcp/noctusai/README.md`. → **Done** (architecture tree updated with `settings.py` line; tool count corrected from `30` to `50` while there).
 
 **Improvements:**
-- The `noctusai_outline_typescript` corpus baseline at `mcp/noctusai/tests/test_outline_typescript_corpus.py` lacks an automatic-regenerate path. Every legitimate addition to a corpus file (e.g. `ConsentPopup.tsx` gaining a 5th symbol via parallel agent's commit `9bfae8b`) breaks the test until the baseline is hand-updated. **N=1 today; revisit if this drifts a 2nd time** — at N≥2, file a follow-up project for an `--update-baselines` flag or a relative-tolerance bump scoped to active-edit files. Not in this project's scope.
-- `noctusai_lib` does not ship a `get_settings()` global factory (sibling's `app.config.get_settings` has no equivalent). We synthesized one locally in the shim. **Triage: accept-with-rationale** — the shim IS the right place for an MCP-scoped factory; pushing to `noctusai_lib` would force every product to share a singleton across processes, which conflicts with the per-product Settings(BaseAppSettings) pattern documented at `noctusai_lib/config/settings.py:13-22`. No follow-up needed.
+- **Observation (watch-list, N=1):** the `noctusai_outline_typescript` corpus baseline at `mcp/noctusai/tests/test_outline_typescript_corpus.py` lacks an automatic-regenerate path. Every legitimate addition to a corpus file (e.g. `ConsentPopup.tsx` gaining a 5th symbol via parallel agent's commit `9bfae8b`) breaks the test until the baseline is hand-updated. Revisit if it drifts a 2nd time — at N≥2, file a follow-up project for an `--update-baselines` flag or a relative-tolerance bump. Not catalogued (single occurrence, transient symptom).
+- **Triage: accept-with-rationale** — `noctusai_lib` does not ship a global `get_settings()` factory (per-product `Settings(BaseAppSettings)` is the documented pattern at `noctusai_lib/config/settings.py:13-22`); we synthesized one locally in the shim. Catalogued at `KB § PATTERNS/accept-with-rationale.md § MCP settings shim ships its own local get_settings() factory`. Inline wayfinder added at `mcp/noctusai/settings.py` above `get_settings()`.
 
 ### Phase 2 — Pydantic in/out schemas pattern ✅ (executed 2026-05-03)
 
@@ -233,9 +233,9 @@ def register(server):
 - [x] Tests for the 5 migrated tools must pass. → **Done.** `pytest mcp/noctusai/tests/` = 474 passed, 1 skipped, 1 unrelated pre-existing flake (`test_outline_typescript_corpus.py` baseline drift carried over from Phase 1; not a regression).
 
 **Improvements:**
-- Pydantic's auto-generated JSON schemas are noisier than the hand-coded dicts (extra `title`, `description` for the model itself, `anyOf` for `Optional[X]` instead of `nullable: true`). MCP clients we ship to (Claude Code) tolerate it; if a stricter consumer surfaces, add `model_json_schema(mode='serialization')` or `_simplify_schema()` post-processing. **Triage: accept-with-rationale** today; revisit if a strict-mode consumer surfaces.
-- Output models are intentionally minimal (`dict[str, Any]` for the dynamic-shape parts of `get_agent_context`, `run_review`, `generate_catalog`). The README rule documents "tighten as call sites stabilize" so future authors know it's deliberate, not lazy. **Triage: accept-with-rationale** — the alternative (full nested types now) is over-engineering for tools we may rewrite in Phase 4.
-- Imports inside `list_tools()` are lazy by design (server.py boot stays fast). When Phase 4 switches to FastMCP-style `register(server)` per leaf, we lose the central list_tools() that holds all imports; each tool file will import its own model — natural module-locality. **Captured for Phase 4 design.**
+- **Observation (watch-list, no divergence yet):** Pydantic's auto-generated JSON schemas are noisier than the hand-coded dicts (extra `title`, `description` for the model itself, `anyOf` for `Optional[X]` instead of `nullable: true`). Claude Code tolerates it. If a stricter consumer surfaces, add `model_json_schema(mode='serialization')` or `_simplify_schema()` post-processing — at that point catalog the choice.
+- **Documented pattern, not divergence:** Output models are intentionally minimal (`dict[str, Any]` for the dynamic-shape parts of `get_agent_context`, `run_review`, `generate_catalog`). The "tighten as call sites stabilize" rule lives in `KB § PATTERNS/mcp-tool-conventions.md § 2` — that's the canonical pattern, not a divergence from it.
+- **Captured for Phase 4 design:** imports inside `list_tools()` are lazy by design (server.py boot stays fast). When Phase 4 switches to FastMCP-style `register(server)` per leaf, we lose the central list_tools() that holds all imports; each tool file will import its own model — natural module-locality.
 
 
 
@@ -249,8 +249,8 @@ def register(server):
 - [x] Verify `bash scripts/verify-kb-sync.sh` passes. → **Green.** First run flagged the new file missing from INDEX.md Layout tree; added the line; second run clean.
 
 **Improvements:**
-- The bonus `product_context` dotted alias surfaced because the Phase-2 Pydantic class for it was already in `context.py` (we'd added it as part of Phase 2's "5 representative tools" pass even though the spec named only `agent_context`). Ratchet effect: every Phase-2 tool now has a Phase-3 alias for free. **Triage: accept-with-rationale** — extra alias is harmless, semantic match is exact.
-- `KB § 06-AGENTS.md` auto-counts tool numbers via the `kb-counts` marker. The auto-count picked up the 6 new aliases without me touching the file. **Captures a useful pattern**: when a doc has auto-counted markers, Phase deliveries that change counts get the docs updated for free. Not a new finding, but worth noting that this is one of the wins of the kb-counts mechanism.
+- **Observation:** the bonus `product_context` dotted alias surfaced because the Phase-2 Pydantic class for it was already in `context.py` (we'd added it as part of Phase 2's "5 representative tools" pass even though the spec named only `agent_context`). Ratchet effect: every Phase-2 tool now has a Phase-3 alias for free. Not a divergence — extra alias is harmless, semantic match is exact.
+- **Observation:** `KB § 06-AGENTS.md` auto-counts tool numbers via the `kb-counts` marker. The auto-count picked up the 6 new aliases without me touching the file. Worth noting that this is one of the wins of the kb-counts mechanism — when a doc has auto-counted markers, Phase deliveries that change counts get the docs updated for free.
 
 ### Phase 4 — Hierarchical registration ⏳ **DEFERRED** to follow-up project
 
@@ -298,8 +298,8 @@ After Phase 0-3 + 6 landed, three constraints turned Phase 4 into a focused-sess
 - [x] Three-way sync (KB ↔ CLAUDE.md ↔ memory). → **KB**: new `mcp-tool-conventions.md` indexed in `INDEX.md` table + Layout tree. **CLAUDE.md**: pointer added to §2 Map → Patterns. **Memory**: existing `feedback_mcp_first.md` already covers the behavioral rule; the KB doc is pattern depth (per memory rule "Code patterns, conventions, architecture — these can be derived by reading the current project state, not stored in memory"). No new memory entry needed.
 
 **Improvements:**
-- Folding Phase 3's KB doc + Phase 6's KB doc into one landing (`mcp-tool-conventions.md`) was a slip-saver: the original phase split would have produced either two near-duplicate docs or two docs with circular references. **Triage: refactor (already applied)** — Phase 6 marked ✅ alongside Phase 3 with a §11 entry recording the fold.
-- The MCP-first principle was already in CLAUDE.md from the absorption batch (`5acf4c4`); Phase 6's "add MCP-first to CLAUDE.md §1" task was effectively pre-done. The Phase 6 plan was authored before that landing was visible. **Captured for future planner discipline**: when you draft a phase that touches CLAUDE.md, scan CLAUDE.md before writing the task — saves re-reading later.
+- **Refactor (already applied):** folding Phase 3's KB doc + Phase 6's KB doc into one landing (`mcp-tool-conventions.md`) saved a slip — the original phase split would have produced either two near-duplicate docs or two docs with circular references. Phase 6 marked ✅ alongside Phase 3 with a §11 entry recording the fold.
+- **Captured for future planner discipline (process note, not divergence):** the MCP-first principle was already in CLAUDE.md from the absorption batch (`5acf4c4`); Phase 6's "add MCP-first to CLAUDE.md §1" task was effectively pre-done. When drafting a phase that touches CLAUDE.md, scan CLAUDE.md first — saves re-reading later.
 
 ### Phase 7 — Final verification + handoff ✅ (executed 2026-05-03)
 
@@ -311,9 +311,9 @@ After Phase 0-3 + 6 landed, three constraints turned Phase 4 into a focused-sess
 - [x] **Bonus:** scaffold the Phase 4 carry-forward project at `projects/mcp-server-fastmcp-switch/` (deferred Phase 4 work).
 
 **Improvements:**
-- `noctusai_review` keeper findings (triage logged here, not bundled into a phase proposal): 0 new issues introduced by Phases 0-3 + 6 (Pydantic schema additions / dotted aliases / KB doc are pure additions, no detector concerns). Pre-existing keeper warnings unrelated to this project.
-- Phases 4 + 5 deferred via two named follow-up projects (FastMCP switch, alias deprecation) rather than left as floating intent — the decision points + scope are durable, survive `apply-inline-then-delete` of this project's folder.
-- Total tools delivered by this project: 50 → 56 (added 6 dotted aliases). Phase 5's substrate-tool absorption (Calendar/Maps/scheduling/users/appointments/whatsapp) lands once Tier 1 substrate ships — captured in `projects/mcp-server-expansion/` Phase 5 (deferred per §7 round) and the new `mcp-server-fastmcp-switch` follow-up.
+- **Observation:** `noctusai_review` keeper findings — 0 new issues introduced by Phases 0-3 + 6 (Pydantic schema additions / dotted aliases / KB doc are pure additions, no detector concerns). Pre-existing keeper warnings unrelated to this project.
+- **Deferred-formalize (not accept):** Phases 4 + 5 deferred via two named follow-up projects (`mcp-server-fastmcp-switch`, `mcp-tool-name-deprecation`) rather than left as floating intent. These are scheduled formalizations with clear scope, not divergences accepted in place — no catalog entry needed (per `KB § PATTERNS/accept-with-rationale.md § When to add a catalog entry`: deferred-formalize is NOT an accept).
+- **Observation:** total tools delivered by this project: 50 → 56 (added 6 dotted aliases). Phase 5's substrate-tool absorption lands once Tier 1 substrate ships — captured in the new `mcp-server-fastmcp-switch` follow-up.
 
 
 

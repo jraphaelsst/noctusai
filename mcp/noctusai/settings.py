@@ -17,6 +17,12 @@ from noctusai_lib.config.settings import BaseAppSettings
 Settings = BaseAppSettings
 
 
+# accept-with-rationale: "MCP settings shim ships its own local
+# get_settings() factory (not in noctusai_lib)" in
+# KB § PATTERNS/accept-with-rationale.md — lib intentionally exposes
+# only the BaseAppSettings shape; per-product Settings is the documented
+# pattern. MCP-scoped factory is the right granularity. Revisit when a
+# 2nd non-product process needs the same singleton.
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()

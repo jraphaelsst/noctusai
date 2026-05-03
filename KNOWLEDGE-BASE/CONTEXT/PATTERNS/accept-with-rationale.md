@@ -321,13 +321,9 @@ state change, not a removal.
 - **Revisit trigger:** a downstream BI consumer reports it can't query a meaningful percentage of rows because `arguments` / `result` arrived as bare strings or `_repr` envelopes. At that point either (a) flip `_safe_jsonable` to opt-in strict mode (`make_audit_writer(..., on_unserializable="raise")`) so producers learn to redact upstream, or (b) ship a typed companion table for the strict-shape rows. Not before — premature strictness would break products mid-rollout.
 - **Recorded by:** `projects/llm-tool-call-audit/` Phase 1 (2026-05-03; commit `bf0bfe3`).
 
-### MCP workspace-aware tool integration ~~deferred to parallel project~~ — **FORMALIZED 2026-05-03**
-- **Subject:** the workspace-aware integration of `mcp/noctusai/tools/{status,proposals,scaffold}.py` + `mcp/noctusai/server.py` registration of `noctusai_promote_from_seed_workspace` + `noctusai_list_promotions` MCP tools.
-- **Decision:** ship the `workspace.py` utility module + `promotion.py` standalone tool today; defer integration of those into `server.py` + per-tool `REPO_ROOT` swaps to the parallel `projects/mcp-server-expansion/` project's Phase 4 (which restructures every tool under `tools/noctus/dev/<service>/<action>.py` and replaces the flat dispatch map).
-- **Reason:** the `seed-workspace` project ran in parallel with `mcp-server-expansion` Phases 2-4 actively restructuring those exact files. Coordinating the workspace-aware swap mid-restructure risked collision and rollback (and did — the parallel agent reverted my edits twice during the session, surfacing the need for the parallel-agent collision protocol now at `KB § PATTERNS/project-execution.md § 2.9`).
-- **Scope:** `mcp/noctusai/tools/{status,proposals,scaffold}.py` REPO_ROOT swaps + `mcp/noctusai/server.py` dispatch entries + `_tool()` declarations for the 2 promotion tools.
-- **Revisit trigger:** ~~`projects/mcp-server-expansion/` Phase 4 closes~~ — fired 2026-05-03 when the user said *"apply now, the other agent is done"*. Resolution-path-2 from the collision protocol fired: re-applied the 4 edits in one session, verified `508/508` MCP tests pass + smoke test (status from template cwd shows 0 noc projects; status from noc cwd shows 23 noc projects — both scoping behaviors correct).
-- **Recorded by:** `projects/seed-workspace/` PROJECT CLOSE (2026-05-03); FORMALIZED in same session 2026-05-03 after parallel-agent completion signal. Entry retained as historical context per "don't delete entries" rule.
+### MCP workspace-aware tool integration — **SUPERSEDED by parallel-agent collision protocol 2026-05-03**
+- One-shot collision between the `seed-workspace` project and the parallel `mcp-server-expansion` agent (parallel agent reverted my edits twice during the session). Originally landed here as a deferral; resolved same-day when the user signalled the parallel agent was done. **Now subsumed by the parallel-agent collision protocol** at `KB § PATTERNS/project-execution.md § 2.9` — future collisions get a `projects/parallel-collision-<topic>-<YYYY-MM-DD>/` project per the protocol, not a catalog entry. This entry is the worked example referenced from § 2.9; preserved as the originating incident, not as an active divergence.
+- **Recorded by:** `projects/seed-workspace/` PROJECT CLOSE (2026-05-03).
 
 ---
 
