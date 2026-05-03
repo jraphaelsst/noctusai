@@ -26,7 +26,7 @@ from workspace import get_noctusai_home, get_workspace_root
 # Workspace-aware: projects/products live under the workspace's own root
 # (so file_proposal from a template lands in template's projects, not
 # noc's). The proposal TEMPLATE itself lives only in noc — fetched via
-# get_noctusai_home(). See mcp/noctusai/workspace.py + KB § PATTERNS/template-workspace.md.
+# get_noctusai_home(). See mcp/noctusai/workspace.py + KB § PATTERNS/seed-workspace.md.
 REPO_ROOT = get_workspace_root()
 # Two valid locations for project folders — see
 # `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md §1` for the rule:

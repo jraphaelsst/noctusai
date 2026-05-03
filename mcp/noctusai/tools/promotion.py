@@ -1,7 +1,7 @@
-"""`noctusai_promote_from_template` + `noctusai_list_promotions` —
-absorption pipeline from a template workspace into noc.
+"""`noctusai_promote_from_seed_workspace` + `noctusai_list_promotions` —
+absorption pipeline from a seed workspace into noc.
 
-A template workspace stores per-addition metadata under
+A seed workspace stores per-addition metadata under
 ``<workspace>/.promotions/<slug>.md`` with frontmatter:
 
     ---
@@ -27,7 +27,7 @@ Single-file and directory `origin` values both supported; lists of
 multiple `origin` paths supported by writing a YAML-ish list (the parser
 strips brackets and splits on commas — minimal-deps).
 
-See KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md § Promotion manifest.
+See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest.
 """
 from __future__ import annotations
 
@@ -211,14 +211,14 @@ def list_promotions(workspace_root: Path | None = None) -> dict:
 def _validate_workspace(workspace_root: Path) -> None:
     """Refuse to promote from a primary workspace (noc itself).
 
-    Promotion only makes sense from a template workspace (additions in
+    Promotion only makes sense from a seed workspace (additions in
     template land in noc). Primary→primary is meaningless.
     """
     ctx = get_workspace_context(workspace_root)
-    if ctx.kind != "template":
+    if ctx.kind != "seed":
         raise ValueError(
             f"Refusing to promote from a {ctx.kind!r} workspace. "
-            f"Promotion only flows from template → noc. "
+            f"Promotion only flows from a seed workspace → noc. "
             f"(Workspace at {ctx.root} has kind={ctx.kind!r}.)"
         )
 
@@ -237,7 +237,7 @@ def _resolve_destination(noc_home: Path, dest_rel: str) -> Path:
     return dest
 
 
-def promote_from_template(
+def promote_from_seed_workspace(
     slug: str,
     dry_run: bool = False,
     force: bool = False,
@@ -248,7 +248,7 @@ def promote_from_template(
 
     Steps:
       1. Locate manifest at `<workspace>/.promotions/<slug>.md`.
-      2. Validate workspace kind == "template" (refuse from primary).
+      2. Validate workspace kind == "seed" (refuse from primary).
       3. Validate every `origin` path exists in workspace.
       4. Resolve `intended_noc_destination` (refuse `..` escapes).
       5. Refuse if destination already exists (unless `force=True`).
@@ -367,6 +367,6 @@ def promote_from_template(
 __all__ = [
     "PromotionManifest",
     "parse_manifest",
-    "promote_from_template",
+    "promote_from_seed_workspace",
     "list_promotions",
 ]

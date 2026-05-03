@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Template-workspace pre-commit hook.
+# Seed-workspace pre-commit hook.
 #
-# Installed at <workspace>/.githooks/pre-commit by bootstrap-template-workspace.sh.
+# Installed at <workspace>/.githooks/pre-commit by bootstrap-seed-workspace.sh.
 # Activated via `git config core.hooksPath .githooks` (also set by bootstrap).
 #
 # Two enforcement rules — both run on every staged path. A single violation
@@ -21,7 +21,7 @@
 #     entry staged in the same commit. Sandbox/ is the carve-out for
 #     genuine throwaway.
 #
-# See KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md for the design.
+# See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md for the design.
 
 set -euo pipefail
 
@@ -35,9 +35,9 @@ if [[ ! -f "$MARKER" ]]; then
   exit 0
 fi
 
-# Only enforce in template workspaces, not in primary noc.
+# Only enforce in seed workspaces, not in primary noc.
 WORKSPACE_KIND="$(grep -E '^workspace_kind=' "$MARKER" | cut -d= -f2- | tr -d '[:space:]' || true)"
-if [[ "$WORKSPACE_KIND" != "template" ]]; then
+if [[ "$WORKSPACE_KIND" != "seed" ]]; then
   exit 0
 fi
 
@@ -137,7 +137,7 @@ done
 # Report + refuse.
 if [[ ${#violations_symlink[@]} -gt 0 || ${#violations_promotion[@]} -gt 0 ]]; then
   echo ""
-  echo "REFUSED: template-workspace pre-commit hook"
+  echo "REFUSED: seed-workspace pre-commit hook"
   echo ""
   if [[ ${#violations_symlink[@]} -gt 0 ]]; then
     echo "Rule 1 — read-only re: noc — VIOLATED:"
@@ -145,9 +145,9 @@ if [[ ${#violations_symlink[@]} -gt 0 || ${#violations_promotion[@]} -gt 0 ]]; t
       echo "  - $v"
     done
     echo ""
-    echo "  Edits to these surfaces belong in noc itself, not template."
-    echo "  Templates strictly cannot modify noc — see"
-    echo "  KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md."
+    echo "  Edits to these surfaces belong in noc itself, not the seed workspace."
+    echo "  Seed workspaces strictly cannot modify noc — see"
+    echo "  KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md."
     echo ""
   fi
   if [[ ${#violations_promotion[@]} -gt 0 ]]; then
@@ -159,7 +159,7 @@ if [[ ${#violations_symlink[@]} -gt 0 || ${#violations_promotion[@]} -gt 0 ]]; t
     echo "  Every non-sandbox addition needs a matching .promotions/<slug>.md"
     echo "  entry staged in the same commit, OR the file should live under"
     echo "  sandbox/ (the throwaway carve-out)."
-    echo "  See KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md § Promotion manifest."
+    echo "  See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest."
     echo ""
   fi
   echo "  Bypass with 'git commit --no-verify' only when genuinely necessary."

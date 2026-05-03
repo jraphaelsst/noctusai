@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Workspace-aware: walks up from cwd looking for `.noctusai-workspace`
 # marker. Falls back to file-relative noc root if no marker found.
-# See mcp/noctusai/workspace.py + KB § PATTERNS/template-workspace.md.
+# See mcp/noctusai/workspace.py + KB § PATTERNS/seed-workspace.md.
 REPO_ROOT = get_workspace_root()
 
 

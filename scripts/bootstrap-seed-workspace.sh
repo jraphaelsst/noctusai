@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Bootstrap a template workspace as a sibling of this noc repo.
+# Bootstrap a seed workspace as a sibling of this noc repo.
 #
-# A template workspace is a sibling folder that consumes noc strictly
+# A seed workspace is a sibling folder that consumes noc strictly
 # read-only via symlinks (CLAUDE.md, KB, .claude/, mcp/, seed/,
 # noctusai_lib/, templates/). Templates serve three use cases:
 # sandbox / new-product staging / parallel-agent isolation.
 #
-# Design source of truth: KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md
-# Project: projects/template-workspace/PROJECT.md
+# Design source of truth: KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md
+# Project: projects/seed-workspace/PROJECT.md
 #
 # Usage:
-#   bash scripts/bootstrap-template-workspace.sh --target <abs-path> [opts]
+#   bash scripts/bootstrap-seed-workspace.sh --target <abs-path> [opts]
 #
 # Idempotent: re-runs refresh symlinks + chmod + marker without touching
 # local content (projects/, sandbox/, products/, .promotions/, git history).
@@ -40,14 +40,14 @@ Optional:
   -h, --help          Show this help.
 
 Examples:
-  bash scripts/bootstrap-template-workspace.sh \\
+  bash scripts/bootstrap-seed-workspace.sh \\
        --target ~/Documents/repository/NoctusAI/noctusai-template
 
   # Re-run on existing workspace to refresh symlinks (idempotent):
-  bash scripts/bootstrap-template-workspace.sh \\
+  bash scripts/bootstrap-seed-workspace.sh \\
        --target ~/Documents/repository/NoctusAI/noctusai-template
 
-See projects/template-workspace/PROJECT.md for the design.
+See projects/seed-workspace/PROJECT.md for the design.
 EOF
 }
 
@@ -178,8 +178,8 @@ cat > "$TARGET/.noctusai-workspace" <<EOF
 # NoctusAI workspace marker — DO NOT EDIT.
 # Identifies this directory as a workspace for the MCP toolkit's
 # workspace-aware tools (status, file_proposal, scaffold_product).
-# See KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md.
-workspace_kind=template
+# See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md.
+workspace_kind=seed
 workspace_name=$NAME
 noctusai_home=$NOC_HOME
 bootstrap_version=1
@@ -190,7 +190,7 @@ EOF
 if [[ ! -f "$TARGET/.env" ]]; then
   echo "==> Creating .env (NOCTUSAI_HOME pointer)"
   cat > "$TARGET/.env" <<EOF
-# Template workspace .env — local; gitignored.
+# Seed workspace .env — local; gitignored.
 # Pointer to the noc repo this workspace consumes.
 NOCTUSAI_HOME=$NOC_HOME
 EOF
@@ -224,13 +224,13 @@ if [[ ! -f "$TARGET/PROMOTIONS.md" ]]; then
   cat > "$TARGET/PROMOTIONS.md" <<EOF
 # Promotion Manifest — $NAME
 
-Index of additions in this template workspace that are candidates for
+Index of additions in this seed workspace that are candidates for
 promotion into noc. One line per entry; full metadata in
 \`.promotions/<slug>.md\`.
 
 Format mirrors \`MEMORY.md\` — pointer-only, ≤150 chars per line.
 
-See KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md § Promotion manifest.
+See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest.
 
 ## Pending
 
@@ -243,7 +243,7 @@ EOF
 fi
 
 # ----- pre-commit hook -----
-HOOK_SRC="$NOC_HOME/templates/template-workspace-pre-commit.sh"
+HOOK_SRC="$NOC_HOME/templates/seed-workspace-pre-commit.sh"
 HOOK_DST="$TARGET/.githooks/pre-commit"
 if [[ -f "$HOOK_SRC" ]]; then
   echo "==> Installing pre-commit hook"
@@ -254,7 +254,7 @@ else
 fi
 
 # ----- README -----
-README_SRC="$NOC_HOME/templates/template-workspace-README.md"
+README_SRC="$NOC_HOME/templates/seed-workspace-README.md"
 README_DST="$TARGET/README.md"
 if [[ -f "$README_SRC" && ! -f "$README_DST" ]]; then
   echo "==> Installing README (workspace conventions)"
@@ -289,7 +289,7 @@ echo "  Marker:          $TARGET/.noctusai-workspace"
 echo ""
 echo "READ-ONLY DEFENSE:"
 echo "  Layer 1 (PRIMARY): pre-commit hook — refuses commits touching symlinked surfaces"
-echo "  Layer 2 (AGENT):   KB § PATTERNS/template-workspace.md + CLAUDE.md + agent memory"
+echo "  Layer 2 (AGENT):   KB § PATTERNS/seed-workspace.md + CLAUDE.md + agent memory"
 echo "  Layer 3 (SYMBOLIC): chmod -h a-w on symlinks — works partially on Linux, no-op on macOS"
 echo ""
 echo "  See $TARGET/README.md for full conventions."

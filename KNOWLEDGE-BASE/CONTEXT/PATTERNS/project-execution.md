@@ -501,9 +501,7 @@ Full layered model: see `KB § 01-PHILOSOPHY.md § Context budget discipline § 
 
 ### Measurement discipline
 
-Use `noctusai_count_tokens` (the offline MCP tool) to measure CLAUDE.md / KB / project-doc sizes during phase work. Eyeballing word counts with `wc` produces approximate numbers that miss tokenizer-aware drift; the dedicated tool reports the same number Phase 5's measurement will use, so phase-block metrics across a project's history stay comparable.
-
-> **2026-05-03 status:** the `noctusai_count_tokens` MCP tool referenced above does not yet exist; cataloged as accept-with-rationale at `KB § PATTERNS/accept-with-rationale.md § noctusai_count_tokens MCP tool referenced by KB § 2.8 does not yet exist`. Until shipped (deferred to `projects/mcp-server-expansion/`), measurement falls back to `wc -w` — sufficient for directional-reduction signals (50%+) but not for tokenizer-aware comparison across history.
+Use `noctusai_count_tokens` (the offline MCP tool, `mcp/noctusai/tools/cost_evaluation.py`) to measure CLAUDE.md / KB / project-doc sizes during phase work. Eyeballing word counts with `wc` produces approximate numbers that miss tokenizer-aware drift; the dedicated tool reports the same number Phase 5's measurement will use, so phase-block metrics across a project's history stay comparable. Tokenizer is `tiktoken` with a `chars/4` fallback if not installed.
 
 ---
 

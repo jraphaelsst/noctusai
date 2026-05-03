@@ -1,7 +1,7 @@
 # NoctusAI workspace marker — the primary noc monorepo.
 # Identifies this directory as a workspace for the MCP toolkit's
 # workspace-aware tools (status, file_proposal, scaffold_product).
-# See KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md.
+# See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md.
 workspace_kind=primary
 workspace_name=noctusai
 noctusai_home=/Users/rapha/Documents/repository/NoctusAI/noctusai

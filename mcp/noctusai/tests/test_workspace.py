@@ -3,7 +3,7 @@
 Covers:
 - marker discovery via cwd walk-up
 - fallback to file-relative noc root when no marker found
-- primary vs template workspace shapes
+- primary vs seed workspace shapes
 - key=value parser (comments / blank lines / malformed lines)
 - per-workspace state directory creation
 """
@@ -65,7 +65,7 @@ class TestMarkerDiscovery:
         inner = tmp_path / "inner"
         inner.mkdir()
         _write_marker(outer, kind="primary", name="outer")
-        _write_marker(inner, kind="template", name="inner")
+        _write_marker(inner, kind="seed", name="inner")
         deep = inner / "x" / "y"
         deep.mkdir(parents=True)
         # Nearest is inner — walk-up stops at first marker found.
@@ -82,29 +82,29 @@ class TestWorkspaceContext:
         assert ctx.noctusai_home == tmp_path
         assert ctx.marker_present is True
 
-    def test_template_workspace_shape(self, tmp_path: Path) -> None:
+    def test_seed_workspace_shape(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"
         noc = tmp_path / "noc"
         ws.mkdir()
         noc.mkdir()
-        _write_marker(ws, kind="template", name="my-template", noc_home=noc)
+        _write_marker(ws, kind="seed", name="my-template", noc_home=noc)
         ctx = get_workspace_context(ws)
-        assert ctx.kind == "template"
+        assert ctx.kind == "seed"
         assert ctx.name == "my-template"
         assert ctx.root == ws
         assert ctx.noctusai_home == noc
         assert ctx.marker_present is True
 
-    def test_template_marker_without_home_falls_back(self, tmp_path: Path) -> None:
+    def test_seed_marker_without_home_falls_back(self, tmp_path: Path) -> None:
         # A template marker missing `noctusai_home` falls back to file-relative
         # noc root (the in-repo install location). This is defensive — the
         # bootstrap always writes noctusai_home, but corrupted markers
         # shouldn't crash the resolver.
         ws = tmp_path / "ws"
         ws.mkdir()
-        _write_marker(ws, kind="template", name="orphan")  # no noc_home arg
+        _write_marker(ws, kind="seed", name="orphan")  # no noc_home arg
         ctx = get_workspace_context(ws)
-        assert ctx.kind == "template"
+        assert ctx.kind == "seed"
         # Falls back to noc-the-actual-noc (workspace.py.parents[2]).
         assert ctx.noctusai_home.exists()
         assert ctx.noctusai_home.name in {"noctusai", "noc"} or (ctx.noctusai_home / "CLAUDE.md").exists()
@@ -122,9 +122,9 @@ class TestWorkspaceContext:
 
 class TestMarkerParsing:
     def test_parses_key_value_pairs(self, tmp_path: Path) -> None:
-        _write_marker(tmp_path, kind="template", name="my-ws", noc_home=Path("/some/noc"))
+        _write_marker(tmp_path, kind="seed", name="my-ws", noc_home=Path("/some/noc"))
         ctx = get_workspace_context(tmp_path)
-        assert ctx.extra["workspace_kind"] == "template"
+        assert ctx.extra["workspace_kind"] == "seed"
         assert ctx.extra["workspace_name"] == "my-ws"
         assert ctx.extra["noctusai_home"] == "/some/noc"
         assert ctx.extra["bootstrap_version"] == "1"
@@ -134,7 +134,7 @@ class TestMarkerParsing:
         marker.write_text(
             "# leading comment\n"
             "\n"
-            "workspace_kind=template\n"
+            "workspace_kind=seed\n"
             "  # indented comment\n"
             "workspace_name=  spaced-out  \n"
             "\n"
@@ -142,36 +142,36 @@ class TestMarkerParsing:
             encoding="utf-8",
         )
         ctx = get_workspace_context(tmp_path)
-        assert ctx.kind == "template"
+        assert ctx.kind == "seed"
         assert ctx.name == "spaced-out"
         assert str(ctx.noctusai_home) == "/x"
 
     def test_malformed_lines_silently_skipped(self, tmp_path: Path) -> None:
         marker = tmp_path / MARKER_FILENAME
         marker.write_text(
-            "workspace_kind=template\n"
+            "workspace_kind=seed\n"
             "no-equals-sign-here\n"
             "workspace_name=ws\n",
             encoding="utf-8",
         )
         ctx = get_workspace_context(tmp_path)
-        assert ctx.kind == "template"
+        assert ctx.kind == "seed"
         assert ctx.name == "ws"
 
 
 class TestConvenienceWrappers:
     def test_get_workspace_root_returns_marker_dir(self, tmp_path: Path) -> None:
-        _write_marker(tmp_path, kind="template", name="ws", noc_home=tmp_path / "noc")
+        _write_marker(tmp_path, kind="seed", name="ws", noc_home=tmp_path / "noc")
         assert get_workspace_root(tmp_path) == tmp_path
 
     def test_get_noctusai_home_returns_marker_home(self, tmp_path: Path) -> None:
         noc = tmp_path / "noc"
         noc.mkdir()
-        _write_marker(tmp_path, kind="template", name="ws", noc_home=noc)
+        _write_marker(tmp_path, kind="seed", name="ws", noc_home=noc)
         assert get_noctusai_home(tmp_path) == noc
 
     def test_state_dir_created_on_demand(self, tmp_path: Path) -> None:
-        _write_marker(tmp_path, kind="template", name="ws", noc_home=tmp_path)
+        _write_marker(tmp_path, kind="seed", name="ws", noc_home=tmp_path)
         state = get_workspace_state_dir(tmp_path)
         assert state == tmp_path / WORKSPACE_STATE_DIRNAME
         assert state.is_dir()

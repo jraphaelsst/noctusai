@@ -21,7 +21,7 @@ Resolver behavior:
    which lands at noc root for the in-repo install. Back-compat is
    automatic — pre-workspace-aware code still finds the same root.
 
-See KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md for the full
+See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md for the full
 design + bootstrap recipe + read-only rule.
 """
 
@@ -45,7 +45,7 @@ class WorkspaceContext:
     ``root`` is the workspace's own filesystem root (where the marker
     was found OR the file-relative fallback noc root). ``noctusai_home``
     is the canonical noc repo path — equal to ``root`` for primary
-    workspaces, and pointing back to noc for template workspaces.
+    workspaces, and pointing back to noc for seed workspaces.
     """
 
     kind: str  # "primary" | "template"

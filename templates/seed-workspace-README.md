@@ -4,8 +4,8 @@ A sibling-of-noc workspace that **consumes noc strictly read-only** via symlinks
 You operate by noc's full methodology (CLAUDE.md, KB, hooks, MCP toolkit, seed,
 noctusai_lib) without ever modifying noc.
 
-> Bootstrap origin: `noctusai/scripts/bootstrap-template-workspace.sh`
-> Design source: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md` (in noc; symlinked here as `KNOWLEDGE-BASE/`)
+> Bootstrap origin: `noctusai/scripts/bootstrap-seed-workspace.sh`
+> Design source: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md` (in noc; symlinked here as `KNOWLEDGE-BASE/`)
 > Created: {{CREATED_AT}} · NoctusAI home: `{{NOCTUSAI_HOME}}`
 
 ---
@@ -40,7 +40,7 @@ If you find yourself wanting to edit `CLAUDE.md` or anything under `KNOWLEDGE-BA
 ├── products/           # LOCAL — staged products awaiting promotion to noc
 ├── .promotions/        # LOCAL — per-addition metadata (one .md per addition)
 ├── PROMOTIONS.md       # LOCAL — index of .promotions/ entries
-├── .noctusai-workspace # LOCAL — marker file (workspace_kind=template)
+├── .noctusai-workspace # LOCAL — marker file (workspace_kind=seed)
 ├── .noctusai-state/    # LOCAL — MCP per-workspace state (gitignored)
 ├── .env                # LOCAL — NOCTUSAI_HOME pointer (gitignored)
 ├── .githooks/          # LOCAL — pre-commit hook (Rule 1 + Rule 2)
@@ -105,10 +105,10 @@ When ready to promote into noc:
 
 ```bash
 # Dry-run (from noc cwd or template cwd):
-python -m mcp.noctusai.cli noctusai_promote_from_template --slug=<name>-product --dry-run
+python -m mcp.noctusai.cli noctusai_promote_from_seed_workspace --slug=<name>-product --dry-run
 
 # Real promotion:
-python -m mcp.noctusai.cli noctusai_promote_from_template --slug=<name>-product
+python -m mcp.noctusai.cli noctusai_promote_from_seed_workspace --slug=<name>-product
 ```
 
 ### 3. Parallel agent
@@ -159,7 +159,7 @@ Symlinks dangle harmlessly when removed; noc is unaffected.
 If noc moves on disk, or you want to refresh symlinks:
 
 ```bash
-bash {{NOCTUSAI_HOME}}/scripts/bootstrap-template-workspace.sh \
+bash {{NOCTUSAI_HOME}}/scripts/bootstrap-seed-workspace.sh \
   --target $(pwd) --noc-home <new-noc-path>
 ```
 

@@ -285,14 +285,14 @@ async def list_tools():
             "product": {"type": "string", "description": "Optional: product slug for scoped lookup"},
         }, ["filename"]),
 
-        # Template-workspace promotion (project: template-workspace).
-        # See KB § PATTERNS/template-workspace.md § Promotion workflow.
-        _tool("noctusai_promote_from_template", "Promote a template-workspace addition into noc per its `.promotions/<slug>.md` manifest. Reads origin path(s) + intended_noc_destination + seed-first analysis from the manifest, validates origin exists + destination is safe, copies file or directory into noc, rewrites manifest's `promoted_on` to today. Refuses from primary workspaces. Use `dry_run=True` first to preview the plan.", {
+        # Seed-workspace promotion (project: seed-workspace).
+        # See KB § PATTERNS/seed-workspace.md § Promotion workflow.
+        _tool("noctusai_promote_from_seed_workspace", "Promote a seed-workspace addition into noc per its `.promotions/<slug>.md` manifest. Reads origin path(s) + intended_noc_destination + seed-first analysis from the manifest, validates origin exists + destination is safe, copies file or directory into noc, rewrites manifest's `promoted_on` to today. Refuses from primary workspaces. Use `dry_run=True` first to preview the plan.", {
             "slug": {"type": "string", "description": "Manifest slug — matches `.promotions/<slug>.md` filename"},
             "dry_run": {"type": "boolean", "description": "When True, returns the plan without copying. Default False."},
             "force": {"type": "boolean", "description": "When True, overwrites already-promoted manifests AND existing destinations. Destructive. Default False."},
         }, ["slug"]),
-        _tool("noctusai_list_promotions", "List promotion manifests in the current workspace, split into pending (`promoted_on=not-yet`) vs promoted (with date). Reads `.promotions/*.md`. See KB § PATTERNS/template-workspace.md."),
+        _tool("noctusai_list_promotions", "List promotion manifests in the current workspace, split into pending (`promoted_on=not-yet`) vs promoted (with date). Reads `.promotions/*.md`. See KB § PATTERNS/seed-workspace.md."),
     ]
 
 
@@ -419,7 +419,7 @@ def _dispatch(name, args):
         "noctusai_list_proposals": lambda: proposals.list_proposals(args.get("agent"), product=args.get("product")),
         "noctusai_accept_proposal": lambda: proposals.update_proposal_status(args["filename"], "accepted", product=args.get("product")),
         "noctusai_reject_proposal": lambda: proposals.update_proposal_status(args["filename"], "rejected", args.get("reason", ""), product=args.get("product")),
-        "noctusai_promote_from_template": lambda: promotion.promote_from_template(
+        "noctusai_promote_from_seed_workspace": lambda: promotion.promote_from_seed_workspace(
             slug=args["slug"],
             dry_run=args.get("dry_run", False),
             force=args.get("force", False),
