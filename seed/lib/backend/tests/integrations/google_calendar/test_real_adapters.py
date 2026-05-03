@@ -189,6 +189,57 @@ def test_sa_adapter_supports_attendees_overridable() -> None:
     assert adapter.supports_attendees is True
 
 
+def test_sa_adapter_omits_send_updates_when_no_attendees() -> None:
+    """Default supports_attendees=False → sendUpdates must NOT be set
+    (lets Google default to "none", correct for no-attendees calendars).
+    Regression test for the dropped request_id → sendUpdates="none"
+    misuse — see PROJECT.md §11 #3."""
+    fake_service = MagicMock()
+    fake_service.events.return_value.insert.return_value.execute.return_value = {
+        "id": "evt-x",
+        "htmlLink": "h",
+        "summary": "tour",
+    }
+    with patch(
+        "noctusai_lib.integrations.google_calendar.service_account_adapter.service_account.Credentials.from_service_account_info"
+    ), patch(
+        "noctusai_lib.integrations.google_calendar.service_account_adapter.build",
+        return_value=fake_service,
+    ):
+        adapter = GoogleCalendarServiceAccountAdapter(resolver=_resolver(_sa_creds()))
+        adapter.create_event("primary", _event())
+
+    insert_kwargs = fake_service.events.return_value.insert.call_args.kwargs
+    assert "sendUpdates" not in insert_kwargs
+
+
+def test_sa_adapter_passes_send_updates_all_when_attendees_supported() -> None:
+    """supports_attendees=True (DWD-delegated) → sendUpdates="all" on
+    create AND delete, matching OAuth-adapter behavior."""
+    fake_service = MagicMock()
+    fake_service.events.return_value.insert.return_value.execute.return_value = {
+        "id": "evt-y",
+        "htmlLink": "h",
+        "summary": "tour",
+    }
+    with patch(
+        "noctusai_lib.integrations.google_calendar.service_account_adapter.service_account.Credentials.from_service_account_info"
+    ), patch(
+        "noctusai_lib.integrations.google_calendar.service_account_adapter.build",
+        return_value=fake_service,
+    ):
+        adapter = GoogleCalendarServiceAccountAdapter(
+            resolver=_resolver(_sa_creds()), supports_attendees=True
+        )
+        adapter.create_event("primary", _event())
+        adapter.delete_event("primary", "evt-y")
+
+    insert_kwargs = fake_service.events.return_value.insert.call_args.kwargs
+    delete_kwargs = fake_service.events.return_value.delete.call_args.kwargs
+    assert insert_kwargs["sendUpdates"] == "all"
+    assert delete_kwargs["sendUpdates"] == "all"
+
+
 # ---- OAuth adapter ----------------------------------------------------------
 
 

@@ -66,12 +66,14 @@ class GoogleCalendarServiceAccountAdapter:
 
     def create_event(self, calendar_id: str, event: EventInput) -> CreatedEvent:
         body = event_to_google_body(event)
-        kwargs = {"calendarId": calendar_id, "body": body}
-        if event.request_id:
-            kwargs["sendUpdates"] = "none"
-        created = (
-            self._service().events().insert(**kwargs).execute()
-        )
+        kwargs: dict[str, Any] = {"calendarId": calendar_id, "body": body}
+        # When supports_attendees is True (DWD-delegated or shared
+        # calendar with attendees), notify them. Otherwise leave
+        # sendUpdates at Google's default ("none"), which is correct
+        # for the typical no-attendees service-account use case.
+        if self.supports_attendees:
+            kwargs["sendUpdates"] = "all"
+        created = self._service().events().insert(**kwargs).execute()
         return google_body_to_created_event(created)
 
     def get_event(self, calendar_id: str, event_id: str) -> CreatedEvent | None:
@@ -112,9 +114,10 @@ class GoogleCalendarServiceAccountAdapter:
         return [google_body_to_created_event(item) for item in items]
 
     def delete_event(self, calendar_id: str, event_id: str) -> None:
-        self._service().events().delete(
-            calendarId=calendar_id, eventId=event_id
-        ).execute()
+        kwargs: dict[str, Any] = {"calendarId": calendar_id, "eventId": event_id}
+        if self.supports_attendees:
+            kwargs["sendUpdates"] = "all"
+        self._service().events().delete(**kwargs).execute()
 
 
 __all__ = ["GoogleCalendarServiceAccountAdapter"]

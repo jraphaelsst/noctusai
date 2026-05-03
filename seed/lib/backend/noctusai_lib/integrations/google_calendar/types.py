@@ -20,11 +20,17 @@ class EventAttendee:
 
 @dataclass(frozen=True)
 class EventInput:
-    """Calendar event payload. `request_id` enables idempotent
-    `events.insert` retries (Google honors a per-request ID for ~24h);
-    consumers should derive it from a stable identifier
-    (e.g. `appointment_request.id`) so retries don't double-create
-    events. See project §6 Phase 7 idempotency-keys note."""
+    """Calendar event payload.
+
+    `request_id` is consumer-provided metadata intended for idempotent
+    retries — derive it from a stable identifier (e.g.
+    `appointment_request.id`). **Adapters do NOT currently translate
+    `request_id` into Google's wire-level idempotency.** True idempotency
+    requires deriving `body["id"]` from `request_id` and swallowing 409
+    on duplicate insert; that work is deferred until a consumer hits
+    a real retry-storm (see `google-calendar-real-adapters` PROJECT.md
+    §11 #3). Until then, consumers must enforce idempotency at the call
+    site (e.g. by checking their own DB before invoking `create_event`)."""
 
     summary: str
     start_at: datetime
@@ -45,13 +51,16 @@ class CreatedEvent:
 
 class CalendarAdapter(Protocol):
     """Calendar adapter contract. Concrete implementations:
-    `FakeCalendarAdapter` (deterministic in-memory),
-    `GoogleCalendarAdapter` (service-account; deferred lift),
-    `GoogleCalendarOAuthAdapter` (consenting user; deferred lift).
+    `FakeCalendarAdapter` (deterministic in-memory; dev/test default),
+    `GoogleCalendarServiceAccountAdapter` (server-to-server; optional
+    Domain-Wide Delegation via `delegate_email`),
+    `GoogleCalendarOAuthAdapter` (user-delegated, refresh-token-based).
 
-    `supports_attendees` distinguishes service-account adapters
-    (cannot add attendees on personal-Gmail calendars without
-    Domain-Wide Delegation) from OAuth adapters (can)."""
+    `supports_attendees` distinguishes service-account adapters acting
+    on a calendar without DWD (cannot add attendees on personal-Gmail
+    calendars) from OAuth / DWD-delegated adapters (can). The factory
+    `get_calendar_adapter(resolver, tenant_id)` picks the concrete
+    adapter from the credentials kind returned by the resolver."""
 
     supports_attendees: bool
 
