@@ -2,7 +2,7 @@
 
 - **Created:** 2026-05-03 (original) / 2026-05-04 (resumed in dedicated worktree)
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ + Phase 0.5 ✅ → Phase 1 ready (awaiting user "continue")
+- **Status:** Phase 0 ✅ + Phase 0.5 ✅ + Phase 1 ✅ → Phase 2 ready (awaiting user "continue")
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · claude-opus-4-7
 - **Worktree:** `/Users/rapha/Documents/repository/NoctusAI/noctusai-worktrees/media-scheduling-port-resume/` (per worktree-per-engineer rule)
 - **Branch:** `media-scheduling-port-resume` (off `origin/main` at `062853b`)
@@ -150,12 +150,20 @@ products/media-scheduling/
 
 *Phase proposal:* none filed (improvements bundle small enough to live as PROJECT.md + findings.md notes; the venv-isolation item is genuinely cross-cutting and deserves its own project at the methodology layer, not a per-phase proposal).
 
-### Phase 1 — Scaffold `products/media-scheduling/`
+### Phase 1 — Scaffold `products/media-scheduling/` ✅
 
-- [ ] `noctus.dev.scaffold_product(name='Media Scheduling', slug='media-scheduling', schema='media_scheduling', icon='Calendar', backend_port=8096, frontend_port=8130)`.
-- [ ] Confirm `products/media-scheduling/{backend, frontend, projects, proposals, README.md, MASTER-PROMPT.md}` landed.
-- [ ] Confirm backend `app.py` calls `create_product_app(...)`; frontend `app.tsx` calls `createProductApp(...)`.
-- [ ] Update `KB § 02-LANDSCAPE.md`.
+- [x] **Manually scaffolded** (NOT via MCP `noctus.dev.scaffold_product` — the MCP server's `get_workspace_root()` resolves to the MAIN worktree, would have landed the new product outside this branch). Replicated the scaffold tool logic via `rsync templates/product-seed/ → products/media-scheduling/` + Python walk replacing `{{PRODUCT_NAME}}` → `Media Scheduling`, `{{SCHEMA_NAME}}` → `media_scheduling`, `{{BACKEND_PORT}}` → `8096`, `{{FRONTEND_PORT}}` → `8130`, `{{PRODUCT_ICON}}` → `Calendar`.
+- [x] Confirmed `products/media-scheduling/{backend, frontend, projects, README.md, MASTER-PROMPT.md}` landed (41 files; `proposals/` not in template — created lazily on first use).
+- [x] Confirmed `backend/app/main.py` calls `create_product_app(name='Media Scheduling', schema='media_scheduling', settings=settings, version='0.1.0', limiter=limiter, standard_routers=['health', 'notificacoes', 'team'])` ✓.
+- [x] Confirmed `frontend/src/App.tsx` calls `createProductApp({routes, Layout, ...})` with `createProductLayout(brandIcon=Calendar, brandTitle='Media Scheduling')` ✓.
+- [ ] **DEFERRED to Phase 7 close** — `KB § 02-LANDSCAPE.md` product-table entry. Reason: shared tracked file across worktrees; deferring cross-cutting tracked-file edits reduces collision risk while parallel sessions are active (collision learning from Phase 0.5 redo).
+
+**Improvements:**
+- **scaffold.py extension filter misses `.env.example`** — `frontend/.env.example` shipped with unreplaced `{{PRODUCT_NAME}}` + `{{BACKEND_PORT}}`. Manually fixed in the commit; flagged as an upstream improvement to `mcp/noctusai/tools/noctus/dev/scaffold.py:57` (add `.example` to the extension tuple, OR shift to a deny-list of binary extensions). Defer to a `scaffold-tool-extension-coverage` follow-up project.
+- **MCP `noctus.dev.scaffold_product` not workspace-aware enough for active worktree** — the tool reads `get_workspace_root()` which resolves at MCP-server-startup time. There's no per-call `target_dir=` override. In multi-worktree environments this forces manual scaffolding. Defer to a `mcp-workspace-per-call-override` follow-up project (could be a per-call kwarg on the tool, OR a hook that re-resolves workspace_root on each call).
+- **start.sh + vite.config.factory.ts PRODUCT_MAP wiring deferred** — both are tracked files shared across worktrees, same collision-risk reasoning as the LANDSCAPE.md deferral. Phase 7 close handles the batch.
+
+*Phase proposal:* none filed (improvements small + cross-cutting; flagged as deferred-with-named-followup).
 
 ### Phase 2 — Schema port (SQLAlchemy → Supabase numbered migrations)
 
@@ -277,3 +285,4 @@ git commit -m "phase(media-scheduling-port-resume): Phase 0.5 ✅ — seed Fake+
 | 2026-05-03 | Initial plan drafted (original session, lost in collision) | claude-opus-4-7 |
 | 2026-05-04 | Re-created in dedicated worktree `noctusai-worktrees/media-scheduling-port-resume/` post-collision; Phase 0 results preserved; Phase 0.5 in re-execution; per-phase commit cadence adopted as collision learning; new Q5 added (real-data migration during Phase 2) | claude-opus-4-7 |
 | 2026-05-04 | Phase 0.5 ✅ — G1-G4 backfill landed (commit `2defcfe`, 88 tests green). Improvements: (a) retrofit @runtime_checkable on RedisBufferClient — defer follow-up sweep for any other lacking-decorator seed Protocols; (b) worktree-venv-isolation gap surfaced (hook fallback to system python3 in fresh worktree) — defer follow-up project. Phase learnings logged via `noctus.dev.phase_learning_log` (3 entries: technical / methodology / process). | claude-opus-4-7 |
+| 2026-05-04 | Phase 1 ✅ — products/media-scheduling/ scaffolded (41 files, manually since MCP scaffold_product points at main worktree). backend/app/main.py + frontend/src/App.tsx confirmed using create_product_app() / createProductApp(). Improvements: scaffold.py extension filter misses .env.example (filed as `scaffold-tool-extension-coverage` follow-up), MCP scaffold_product needs per-call workspace override for multi-worktree environments (filed as `mcp-workspace-per-call-override` follow-up). LANDSCAPE.md + start.sh + vite.config.factory.ts wiring deferred to Phase 7 close (collision-risk on shared tracked files). | claude-opus-4-7 |
