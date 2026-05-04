@@ -15,6 +15,7 @@ def register_all(server) -> None:
     from . import ai_brain
     from . import analyzers
     from . import archive
+    from . import batch_speed_gains
     from . import build
     from . import catalog
     from . import compliance
@@ -42,6 +43,7 @@ def register_all(server) -> None:
     ai_brain.register(server)
     analyzers.register(server)
     archive.register(server)
+    batch_speed_gains.register(server)
     build.register(server)
     catalog.register(server)
     compliance.register(server)
