@@ -208,16 +208,16 @@ Branched-project workflow per `KB § PATTERNS/branching-and-merging.md § 11`. P
 
 **Improvements:** none identified — Phase 2 was clean three-doc amendment + new §11.2 section. Section ordering choice (§11.2 between §11 and §11.1) is intentional — clean-folder principle is the parent concept, archive system is its modern implementation, features section is the lightweight variant; reads naturally in this order.
 
-### Phase 3 — Memory updates
+### Phase 3 — Memory updates ✅
 
-- [ ] Amend `feedback_no_auto_commit.md`: replace "after folder deletion" with "after folder archive" in the project-close gate.
-- [ ] Amend `feedback_apply_inline_delete_proposals.md`: clarify that the apply-inline-then-DELETE pattern still applies to filed PROPOSALS (the per-phase artifacts in `proposals/` folders), but at project close the project folder ARCHIVES rather than deletes. Two distinct lifecycles.
-- [ ] Amend `feedback_features_methodology.md`: closure section now says archive (default) with delete (explicit override).
-- [ ] Add new `feedback_archive_system.md`: full system rule + Why + How to apply + companion rules.
-- [ ] Update `MEMORY.md` index.
-- [ ] Stage + commit: `docs(memory): archive-on-close 3-way sync — feedback amendments + new feedback_archive_system [archive-system Phase 3]`.
+- [x] Amend `feedback_no_auto_commit.md`: replaced "after folder deletion" with "after folder ARCHIVE via `noctus.dev.archive`" in the project-close gate (2 occurrences).
+- [x] Amend `feedback_apply_inline_delete_proposals.md`: not amended — already correctly scoped to "filed proposals" (per-phase artifacts), not project-folder deletion. Two-lifecycle distinction is implicit; cross-reference added in `feedback_archive_system.md` companion rules instead.
+- [x] Amend `feedback_features_methodology.md`: closure section now says archive (default) with delete (explicit override).
+- [x] Add new `feedback_archive_system.md`: full system rule + Why + How to apply + when-archive-vs-delete table + anti-patterns + companion rules.
+- [x] Update `MEMORY.md` index — new entry added under "Project execution" cluster after the exploratory-branching line.
+- [x] Stage + commit: `docs(memory): archive-on-close 3-way sync — feedback amendments + new feedback_archive_system [archive-system Phase 3]`.
 
-**Improvements:** _(captured live)_
+**Improvements:** apply-inline-then-delete entry didn't actually need amendment — re-read confirmed it's scoped to "filed proposals" (per-phase artifacts in `proposals/` folders), not the project-folder lifecycle. The two are distinct: proposals delete (apply-inline-then-delete); project folders archive (close-gate). Added cross-reference in `feedback_archive_system.md` to clarify the boundary. **applied — saved an unnecessary edit and clarified the lifecycle distinction by documenting it in the new memory entry rather than amending the old one.**
 
 ### Phase 4 — MCP tool `noctus.dev.archive`
 
