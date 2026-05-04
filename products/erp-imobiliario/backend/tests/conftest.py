@@ -9,6 +9,20 @@ After the seed framework migration, patches target DatabaseModule.get_client
 and DatabaseModule.get_admin_client instead of app.database.get_supabase_client.
 
 -----------------------------------------------------------------------------
+Parallel-worktree venv shadowing (defensive — mirrors seed/lib/backend/tests/conftest.py)
+-----------------------------------------------------------------------------
+The shared host venv has `noctusai_lib` editable-installed pointing at ONE
+worktree's seed/lib/backend path. When a sibling worktree runs tests, the
+editable finder shadows the local checkout and tests resolve `noctusai_lib`
+to the wrong worktree (potentially missing modules added on this branch).
+This conftest detects shadowing finders bound to other worktrees and pops
+them before any `from noctusai_lib...` import below executes. Mirrors the
+seed-side fix shipped by Batch 1B (`ai-plumbing-seed-absorption`), extended
+to product-side tests by `erp-metas-seed-wiring` (Batch 1C). See the project's
+bundled proposal §"cross-product follow-up: seed-shadow-purge in product
+conftests" for the rationale to mirror this in PF + daily-life conftests.
+
+-----------------------------------------------------------------------------
 Schema-validation rationale (mock-supabase-schema-validation Phase 3, 2026-04-24)
 -----------------------------------------------------------------------------
 MockSupabaseClient is constructed with validate_schema=False. Flipping to True
@@ -29,6 +43,42 @@ mock-supabase close. Same shape as therapy's schema drift (tracked by
 `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`).
 Once reconciled, flip this to `validate_schema=True, schema="erp"`.
 """
+import sys
+from pathlib import Path
+
+
+def _purge_shadowing_editable_finders() -> None:
+    """If the host venv installed `noctusai_lib` editable from another
+    worktree, its meta-path finder will shadow our local seed/lib. Remove
+    finders whose `MAPPING` points outside this worktree's seed/lib root,
+    then drop any cached `noctusai_lib*` modules so they re-resolve.
+    """
+    # Walk up to the worktree root (parents[3] = backend/tests → backend → ERP → products → worktree)
+    worktree_root = Path(__file__).resolve().parents[4]
+    local_lib = worktree_root / "seed" / "lib" / "backend"
+    if not local_lib.exists():
+        return
+    local_target = str(local_lib.resolve())
+    # Make local seed/lib importable.
+    if local_target not in sys.path:
+        sys.path.insert(0, local_target)
+    keep: list = []
+    for finder in sys.meta_path:
+        mapping = getattr(finder, "MAPPING", None)
+        if isinstance(mapping, dict) and "noctusai_lib" in mapping:
+            target = str(Path(mapping["noctusai_lib"]).resolve())
+            if not target.startswith(local_target):
+                continue  # editable finder bound to a different worktree
+        keep.append(finder)
+    sys.meta_path[:] = keep
+    for name in list(sys.modules):
+        if name == "noctusai_lib" or name.startswith("noctusai_lib."):
+            del sys.modules[name]
+
+
+_purge_shadowing_editable_finders()
+
+
 from datetime import date
 
 import pytest

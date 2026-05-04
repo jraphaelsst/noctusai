@@ -4,6 +4,19 @@ Curated knowledge artifact per `KB § 01-PHILOSOPHY.md § Knowledge tracking —
 
 ---
 
+## Speed-gain comparison (table format per `feedback_TEMP_methodology_validation_in_progress.md` rule #2)
+
+| Batch | Engineers | Wall-clock parallel | Estimated serial | Speed gain | Notes |
+|---|---|---|---|---|---|
+| 1A | 2 | ~527s (~9 min) | ~668s (~11 min) | ~21% | no-op + Phase 1 (PF wiring) — first parallel-test scale |
+| 1B | 3 | ~16 min | ~39 min | ~59% | full N=3 seed absorption (factory + AI-plumbing + metas) — real test_auth.py conflict resolved via union heuristic |
+| 1C | 3 | _running_ | _pending_ | _pending_ | wiring PF + ERP + Daily-Life to consume the metas seed |
+| **Cumulative** | **8** | **~25 min** | **~50 min** | **~50%** | (1A + 1B totals; 1C adds when complete) |
+
+**Trend:** speed-gain scales with engineer count (Amdahl-style). Going from N=2 to N=3 nearly tripled the gain. Methodology mechanics held at the conflict boundary (file-type union heuristic for tests).
+
+---
+
 ## Errors encountered
 
 _(none yet — Batch 1A dispatch pending)_
@@ -100,3 +113,58 @@ Modest speed gain (~21%) — but Batch 1A's MAIN VALUE was **methodology validat
 **Recommendation for Batch 1B:** scale to **3 engineers** in single Task turn (the 3 cross-product follow-ups Engineer 2 surfaced are PERFECT — clearly disjoint by file overlap; well-scoped; user-value-aligned: PF↔ERP factory + AI-plumbing absorption + metas-domain N=3 formalization). Worktree mechanism + architect-merge mechanism are validated; 3 is reasonable next scale.
 
 **Architect awaits user direction** on Batch 1B dispatch + on whether to also act on the methodology amendment for the pre-commit-hook-in-worktree gap (small follow-up feature, deferred to Batch 1B unless user wants it sooner).
+
+---
+
+## Batch 1B — CLOSED 2026-05-04
+
+| # | Engineer | Outcome | Commit on main |
+|---|---|---|---|
+| 1 | `make-get-current-user-org-factory` | **Phase 1+2 shipped** — seed factory + tests; PF+ERP wrappers consume seed. | `1db2706` (FF clean) |
+| 2 | `ai-plumbing-seed-absorption` | **Phase 0+1 shipped** — `safe_persist_indicator` + `require_credential_or_422` absorbed into seed; PF+ERP wrappers consume seed. Defensive `conftest.py` shadow-purge for parallel-worktree venv shadowing. | `2844338` (rebase + manual conflict resolve on `test_auth.py` + FF) |
+| 3 | `metas-domain-seed-absorption` | **Phase 0+1+2+3 shipped** — N=3 formalize; full `noctusai_lib.domain.metas` module (`value_objects`, `periods`, `progress`, `status`, `repository`); 111 metas tests + 638 full seed-lib tests; KB pattern doc + 3 wiring follow-up projects named. | `09fa759` (rebase clean + FF) |
+
+### Engineer 1's findings (make-get-current-user-org-factory) integrated by architect
+- Single-engineer focused brief shipped factory + tests + PF/ERP consumption in one tight branch. No methodology gaps surfaced.
+- Worktree merge sequence worked cleanly first → demonstrated that the simplest engineer-shape (single seed-lib factory + N=2 consumers) is the calibration baseline for orchestrator-merge timing.
+
+### Engineer 2's findings (ai-plumbing-seed-absorption) integrated by architect
+- **Errors encountered (added):** Parallel-worktree venv editable-install pinning. The shared `venv/` has `noctusai_lib` editable-installed pointing at ONE worktree's path; sibling worktrees running tests imported the wrong worktree's `noctusai_lib`. Engineer 2 shipped a defensive fix in `seed/lib/backend/tests/conftest.py` (shadow-purge for meta-path finders bound to sibling worktrees). Workaround pre-fix: prefix `PYTHON=<main-worktree>/venv/bin/python` for pytest invocations in worktrees.
+- **Mistakes / slips (added):** Engineer 1 + Engineer 2 both added test classes to `seed/lib/backend/tests/test_auth.py` — Engineer 2's rebase onto Engineer-1-merged main hit a 3-marker conflict at lines 302/441/512. **Architect resolved per `KB § PATTERNS/branching-and-merging.md § 10.4` file-type heuristic: test files = union most of the time.** Both classes (`TestMakeGetCurrentUserOrg` + `TestRequireCredentialOr422`) retained; 34 test_auth tests pass post-merge. **Lesson reinforced:** the file-type heuristic is the right mental model — read the file, recognize it as test-additive (no overlap on existing classes), apply union resolution.
+- **Lessons learned (added):** Defensive conftest fix lands at the seed-lib level (not at the architect's worktree-orchestration level) — once Engineer 2's branch FF'd into main, ALL future worktrees inherit the shadow-purge. **Pattern:** when an engineer hits an environment-shape failure that affects future parallel runs, ship the fix in the seed/lib (durable for everyone) rather than a one-off workaround in the engineer's brief.
+
+### Engineer 3's findings (metas-domain-seed-absorption) integrated by architect
+- **Lessons learned (added):**
+  - **Phase 1+2 collapse**: writing module + tests in one pass was the right shape for a clean N=3 absorption (no consumer code touched in same branch). Calibrates the engineer-brief shape for similar N≥3 absorption work.
+  - **Stdlib over `dateutil`**: PF's `obter_progresso` used `dateutil.relativedelta`; seed rewrite uses stdlib `calendar.monthrange` + custom `_add_months` (clamps Jan-31 + 1 month → Feb-28). **Pattern: domain-layer dep-free.** When absorbing per-product code that uses third-party datetime libs, rewrite at seed-time to stdlib so domain layer stays dep-free.
+  - **`crossed_threshold_pct` shipped ahead of consumer**: small extension on `accumulate_contribution` (~10 LOC + 3 tests) detecting 25/50/75/100% milestone crossings; no consumer today, but cheap and unblocks future gamification. Documented in proposal §2.3.
+  - **Test caught Engineer 3's arithmetic**: `test_project_completion_date_calculates_eta` confused total/months_distinct with monthly_avg. Fix was in test expected value, not production. **Lesson:** ETA-style math tests need the math chain spelled out in comments, not just the answer.
+  - **ERP has 9 metas-related service files**; only the math-layer recurrence was in scope this dispatch. Full absorption-depth audit deferred to ERP wiring cycle (proposal §2.4).
+- **Interesting findings (added):**
+  - **3-engineer parallel held up structurally.** Engineer 1's seed-lib touch (`api/auth.py`) + Engineer 2's seed-lib touch (`api/auth.py` + `domain/ai/`) collided ONLY in `test_auth.py` (test additions), resolvable via union heuristic. Engineer 3's seed-lib touch (`domain/metas/` — entirely new module + new test directory) had **zero overlap** with sister engineers. **Pattern:** cleanly-disjoint module boundaries → zero-conflict parallel possible at scale.
+
+### Performance evaluation — Batch 1B speed gains
+
+**Wall-clock parallelism:**
+- Engineer 1 (`make-get-current-user-org-factory`): completed first; ~10 min runtime estimate.
+- Engineer 2 (`ai-plumbing-seed-absorption`): completed second; ~13 min runtime estimate (Phase 0+1 + defensive conftest).
+- Engineer 3 (`metas-domain-seed-absorption`): completed last; **958s = ~16 min** (recorded duration).
+- **Total wall-clock parallel: ~16 min** (max — Engineer 3 set the cycle).
+- **Estimated serial total: ~10 + ~13 + ~16 = ~39 min.**
+- **Speed gain: ~59%** (from ~39 min serial to ~16 min parallel).
+
+**Cumulative across orchestration so far:**
+- Batch 1A: ~21% gain (2 engineers, no-op + Phase 1).
+- Batch 1B: ~59% gain (3 engineers, full N=3 absorption).
+- **Trend:** speed-gain scales with engineer count (more engineers → larger fraction of work happens in parallel; Amdahl-style).
+
+**Methodology validation (round 2 of N-needed per `feedback_TEMP_methodology_validation_in_progress.md`):**
+- ✅ 3-engineer parallel dispatch via single `Task` tool-use turn worked.
+- ✅ Worktree isolation prevented checkout-state contention.
+- ✅ Architect-merge mechanic handled both clean rebases (Engineer 1, 3) AND a real conflict (Engineer 2's `test_auth.py` line-overlap with Engineer 1).
+- ✅ File-type union heuristic for test files validated in real conflict resolution.
+- ✅ Defensive infrastructure fix (conftest shadow-purge) shipped at seed-lib level — durable for all future worktree parallelism.
+- ✅ Engineer findings evaluated locally + integrated into findings.md without surfacing every routine completion to user.
+- ✅ Three follow-up projects surfaced (`pf-metas-seed-wiring`, `erp-metas-seed-wiring`, `daily-life-goals-seed-wiring`) — Batch 1C candidates (master-tree-parallel-batches shape per Engineer 3's recommendation).
+
+**Architect awaits user direction** on Batch 1C dispatch (PF + ERP + Daily-Life metas wiring as a 3-product master-tree).

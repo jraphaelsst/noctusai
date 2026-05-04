@@ -32,9 +32,9 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | PF | 15 | 17 | 24 | 16 | 44 | 453 |
 | Therapy | 40 | 44 | 66 | 29 | 75 | 976 |
 | Seed | 0 | 0 | 8 | 0 | 3 | 31 |
-| Daily Life | 7 | 7 | 12 | 7 | 15 | 226 |
+| Daily Life | 7 | 7 | 12 | 7 | 15 | 228 |
 | Mailing | 10 | 10 | 22 | 9 | 16 | 191 |
-| **Total** | **159** | **142** | **226** | **127** | **301** | **3,946** |
+| **Total** | **159** | **142** | **226** | **127** | **301** | **3,948** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

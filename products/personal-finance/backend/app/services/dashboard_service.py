@@ -4,6 +4,7 @@ from typing import Dict
 from datetime import date, timedelta
 from app.services.patrimonio_service import PatrimonioService
 from app.services.relatorios_service import RelatoriosService
+from noctusai_lib.domain.metas import Target, compute_progress
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,6 @@ class DashboardService:
         }
 
     async def resumo(self) -> Dict:
-        """Dashboard summary: recent transactions, upcoming bills, active goals."""
         hoje = date.today()
 
         transacoes = self.db.table("transacoes").select(
@@ -60,9 +60,11 @@ class DashboardService:
         ).eq("status", "ativa").order("prioridade").limit(5).execute()
         metas_data = metas.data or []
         for meta in metas_data:
-            valor_alvo = float(meta.get("valor_alvo", 1))
-            valor_atual = float(meta.get("valor_atual", 0))
-            meta["percentual"] = min((valor_atual / valor_alvo * 100) if valor_alvo > 0 else 0, 100)
+            progress = compute_progress(
+                target=Target(float(meta.get("valor_alvo", 0))),
+                current=float(meta.get("valor_atual", 0)),
+            )
+            meta["percentual"] = progress.percent_complete
 
         return {
             "transacoes_recentes": transacoes.data or [],

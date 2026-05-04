@@ -51,13 +51,15 @@ from .consent import (
     reset_consent_module_for_test,
     upsert_decision,
 )
-from .outputs import AIOutput, persist_output, fetch_outputs_for
+from .outputs import AIOutput, persist_output, fetch_outputs_for, safe_persist_indicator
 
 __all__ = [
     # P1 indicator pattern (Phase 3)
     "AIOutput",
     "persist_output",
     "fetch_outputs_for",
+    # AI-plumbing absorption (ai-plumbing-seed-absorption, 2026-05-04)
+    "safe_persist_indicator",
     # X6 consent pattern (Phase 19)
     "AIConsentRequired",
     "MandatoryFeatureCannotBeToggled",

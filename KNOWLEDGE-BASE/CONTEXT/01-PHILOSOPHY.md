@@ -332,7 +332,17 @@ The methodology already structurally separates orchestrator from working agents 
 2. **Set up worktrees** per `KB § PATTERNS/branching-and-merging.md § 16` for parallel dispatch (mandatory when 2+ engineers concurrent).
 3. **Dispatch engineers** (subagents) in single `Task` tool-use turn with focused briefs (each brief includes the verified phase-state context from step 1). Single engineer when chunks are small / serial; team of engineers when work parallelizes cleanly.
 4. **Stay available for the user.** The user-facing conversation continues while engineers work; the architect is the one the user thinks-with. Don't get tunnel-vision into implementation; keep cycles for ideation + methodology refinement + judgment calls.
-5. **Maintain findings.md** for the orchestration (per `Knowledge tracking — durable findings file` principle below + `KB § PATTERNS/branching-and-merging.md § 17`). Append slips / errors / lessons / surprises as engineer reports come in.
+5. **Evaluate engineer findings locally + apply immediately when applicable; maintain findings.md.** As each engineer reports back, architect evaluates each finding against per-case decisions:
+   - **Methodology gap with clear fix** → amend KB / CLAUDE / memory **same session** (per `Safety nets capture failures` principle). Don't batch to retrospective; the gap closes structurally NOW.
+   - **Small in-scope cleanup** (typo, broken link, off-by-one in an example, etc.) → apply inline. The fix is faster than the file-it-for-later overhead.
+   - **Cross-product follow-up** → file as future Batch project (or surface to user when scoping that batch).
+   - **Engineer-internal slip** → log to `phase_learnings.db`; bundle in retrospective.
+   - **Interesting finding worth user attention** → surface (selectively, not exhaustively).
+   - **Routine sub-task completion** → bundle into retrospective summary; no per-finding surface.
+
+   **The default for actionable findings is IMMEDIATE IMPLEMENTATION when applicable** — don't defer fixes that could be applied now. Deferring an applicable fix is the same shape as silent-error: the finding becomes debt instead of a closed loop. (Companion to `Auto-improvement at phase close — apply, don't ask` per `KB § PATTERNS/proposals-and-improvements.md § 4d`.)
+
+   All finding evaluations + applied fixes get appended to `findings.md` for the orchestration (per `Knowledge tracking — durable findings file` principle below + `KB § PATTERNS/branching-and-merging.md § 17`).
 6. **Aggregate + merge** engineer branches at orchestrator-merge time (per § 12 of branching-and-merging).
 7. **Close the orchestration** — synthesize findings.md into the durable knowledge artifact; archive the project per § 11.2.
 

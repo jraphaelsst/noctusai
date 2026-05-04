@@ -12,10 +12,11 @@ See products/erp-imobiliario/METAS-PLAN.md §5 for design context.
 """
 from __future__ import annotations
 
-import calendar
 import logging
-from datetime import date, timedelta
+from datetime import date
 from typing import Literal
+
+from noctusai_lib.domain.metas import PeriodKind, period_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -83,40 +84,36 @@ def deletar_periodo(db, periodo_id: str) -> None:
         raise LookupError("Período não encontrado")
 
 
-# ── Date math (pure, testable) ──────────────────────────────────────
+# ── Date math (delegates to noctusai_lib.domain.metas.period_bounds) ─
 
 def quinzena_bounds(ref: date) -> tuple[date, date]:
     """Return (inicio, fim) of the quinzena containing `ref`.
 
-    Quinzenas: days 1–15 and 16–<last day of month>.
+    Quinzenas: days 1–15 and 16–<last day of month>. Delegates to seed
+    `period_bounds(PeriodKind.FORTNIGHTLY, ref)`.
     """
-    if ref.day <= 15:
-        inicio = ref.replace(day=1)
-        fim = ref.replace(day=15)
-    else:
-        inicio = ref.replace(day=16)
-        last_day = calendar.monthrange(ref.year, ref.month)[1]
-        fim = ref.replace(day=last_day)
-    return inicio, fim
+    return period_bounds(PeriodKind.FORTNIGHTLY, ref)
 
 
 def mes_bounds(ref: date) -> tuple[date, date]:
-    inicio = ref.replace(day=1)
-    last_day = calendar.monthrange(ref.year, ref.month)[1]
-    fim = ref.replace(day=last_day)
-    return inicio, fim
+    """Return (inicio, fim) of the month containing `ref`.
+
+    Delegates to seed `period_bounds(PeriodKind.MONTHLY, ref)`.
+    """
+    return period_bounds(PeriodKind.MONTHLY, ref)
 
 
 def trimestre_bounds(year: int, quarter: int) -> tuple[date, date]:
-    """Quarter is 1-4. Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 = Oct-Dec."""
+    """Quarter is 1-4. Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 = Oct-Dec.
+
+    Translates the (year, quarter) signature to a date inside the quarter
+    and delegates to seed `period_bounds(PeriodKind.QUARTERLY, ref)`.
+    """
     if quarter not in (1, 2, 3, 4):
         raise ValueError(f"trimestre inválido: {quarter}")
-    start_month = 3 * (quarter - 1) + 1
-    end_month = start_month + 2
-    inicio = date(year, start_month, 1)
-    last_day = calendar.monthrange(year, end_month)[1]
-    fim = date(year, end_month, last_day)
-    return inicio, fim
+    # First day of first month in the quarter — any date inside the quarter works.
+    ref = date(year, 3 * (quarter - 1) + 1, 1)
+    return period_bounds(PeriodKind.QUARTERLY, ref)
 
 
 def _months_in_trimestre(year: int, quarter: int) -> list[int]:

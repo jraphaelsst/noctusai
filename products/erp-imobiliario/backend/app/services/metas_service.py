@@ -2,112 +2,88 @@
 Metas Service — Business logic for goals/targets creation.
 
 Handles batch creation of daily metas from active configurations.
-All date math (period_end_date, calcular_meta_proporcional) is computed
-in Python to avoid N+1 RPC round-trips to the database.
+All date math (period_end_date, calcular_meta_proporcional) delegates
+to `noctusai_lib.domain.metas` (kept pure-Python in the seed to avoid
+N+1 RPC round-trips against the database). The local helpers are thin
+shims that map ERP `tipo` strings ↔ seed `PeriodKind` and preserve the
+legacy "unknown tipo" fallback at the boundary.
 """
 from __future__ import annotations
 
 import logging
-import math
-from datetime import date, timedelta
+from datetime import date
 from typing import List
+
+from noctusai_lib.domain.metas import (
+    PeriodKind,
+    count_business_days,
+    period_bounds,
+    proportional_target,
+    working_days_remaining_in_month,
+    working_days_remaining_in_week,
+    working_days_remaining_in_year,
+    working_days_total_in_month,
+    working_days_total_in_year,
+)
 
 logger = logging.getLogger(__name__)
 
 TIPOS = ["diaria", "semanal", "mensal", "anual"]
-
-
-# --------------- Date Math (replaces DB RPCs) ---------------
+_TIPO_TO_PERIOD_KIND: dict[str, PeriodKind] = {
+    "diaria": PeriodKind.DAILY,
+    "semanal": PeriodKind.WEEKLY,
+    "mensal": PeriodKind.MONTHLY,
+    "anual": PeriodKind.YEARLY,
+}
 
 
 def _period_end_date(tipo: str, data_ref: date) -> date:
-    """Calculate the end date of the period for a given tipo.
-
-    Replaces the DB function erp.period_end_date().
-    """
-    if tipo == "diaria":
+    """End-date of the period containing data_ref. Returns data_ref for
+    unknown tipos (legacy fallback)."""
+    kind = _TIPO_TO_PERIOD_KIND.get(tipo)
+    if kind is None:
         return data_ref
-    if tipo == "semanal":
-        # Sunday of the same ISO week
-        return data_ref + timedelta(days=7 - data_ref.isoweekday())
-    if tipo == "mensal":
-        # Last day of the month
-        if data_ref.month == 12:
-            return date(data_ref.year + 1, 1, 1) - timedelta(days=1)
-        return date(data_ref.year, data_ref.month + 1, 1) - timedelta(days=1)
-    if tipo == "anual":
-        return date(data_ref.year, 12, 31)
-    return data_ref
+    _, end = period_bounds(kind, data_ref)
+    return end
 
 
 def _count_weekdays(start: date, end: date) -> int:
-    """Count weekdays (Mon–Fri) between start and end (inclusive)."""
-    count = 0
-    d = start
-    while d <= end:
-        if d.isoweekday() <= 5:
-            count += 1
-        d += timedelta(days=1)
-    return count
+    """Mon-Fri count, inclusive on both ends. Delegates to seed."""
+    return count_business_days(start, end)
 
 
 def _dias_uteis_totais_mes(data_ref: date) -> int:
-    """Total working days in the month of data_ref."""
-    first = data_ref.replace(day=1)
-    if data_ref.month == 12:
-        last = date(data_ref.year + 1, 1, 1) - timedelta(days=1)
-    else:
-        last = date(data_ref.year, data_ref.month + 1, 1) - timedelta(days=1)
-    return _count_weekdays(first, last)
+    """Total Mon-Fri count in the month of data_ref."""
+    return working_days_total_in_month(data_ref)
 
 
 def _dias_uteis_restantes_semana(data_ref: date) -> int:
-    """Working days remaining in the ISO week (including today)."""
-    sunday = data_ref + timedelta(days=7 - data_ref.isoweekday())
-    return _count_weekdays(data_ref, sunday)
+    """Mon-Fri count from data_ref through Sunday of the same ISO week."""
+    return working_days_remaining_in_week(data_ref)
 
 
 def _dias_uteis_restantes_mes(data_ref: date) -> int:
-    """Working days remaining in the month (including today)."""
-    if data_ref.month == 12:
-        last = date(data_ref.year + 1, 1, 1) - timedelta(days=1)
-    else:
-        last = date(data_ref.year, data_ref.month + 1, 1) - timedelta(days=1)
-    return _count_weekdays(data_ref, last)
+    """Mon-Fri count from data_ref through last day of the month."""
+    return working_days_remaining_in_month(data_ref)
 
 
 def _dias_uteis_totais_ano(data_ref: date) -> int:
-    """Total working days in the year of data_ref."""
-    return _count_weekdays(date(data_ref.year, 1, 1), date(data_ref.year, 12, 31))
+    """Total Mon-Fri count in the year of data_ref."""
+    return working_days_total_in_year(data_ref)
 
 
 def _dias_uteis_restantes_ano(data_ref: date) -> int:
-    """Working days remaining in the year (including today)."""
-    return _count_weekdays(data_ref, date(data_ref.year, 12, 31))
+    """Mon-Fri count from data_ref through Dec 31 of the same year."""
+    return working_days_remaining_in_year(data_ref)
 
 
 def _calcular_meta_proporcional(meta_mensal: int, tipo: str, data_ref: date) -> int:
-    """Calculate proportional target for a given period type.
-
-    Replaces the DB function erp.calcular_meta_proporcional().
-    """
-    if tipo == "diaria":
-        total = _dias_uteis_totais_mes(data_ref)
-        return math.ceil(meta_mensal / max(total, 1))
-    if tipo == "semanal":
-        total = _dias_uteis_totais_mes(data_ref)
-        restantes = _dias_uteis_restantes_semana(data_ref)
-        diaria = meta_mensal / max(total, 1)
-        return math.ceil(diaria * restantes)
-    if tipo == "mensal":
-        total = _dias_uteis_totais_mes(data_ref)
-        restantes = _dias_uteis_restantes_mes(data_ref)
-        return math.ceil(meta_mensal * restantes / max(total, 1))
-    if tipo == "anual":
-        total = _dias_uteis_totais_ano(data_ref)
-        restantes = _dias_uteis_restantes_ano(data_ref)
-        return math.ceil(meta_mensal * 12 * restantes / max(total, 1))
-    return meta_mensal
+    """Per-tipo proportional target. Returns meta_mensal for unknown
+    tipos (legacy fallback)."""
+    kind = _TIPO_TO_PERIOD_KIND.get(tipo)
+    if kind is None:
+        return meta_mensal
+    return proportional_target(meta_mensal, kind, data_ref)
 
 
 # --------------- Main Logic ---------------

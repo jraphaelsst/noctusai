@@ -329,6 +329,42 @@ result = await send_digest(digest, recipient=user.email, org_id=org_id, log_pref
 
 **Dep:** `jinja2>=3.1.0` in `seed/lib/backend/pyproject.toml` (added 2026-04-25 alongside the helper).
 
+### `domain/metas/` — Goals / targets / value-and-target tracking primitives
+
+Lifted 2026-05-03 by `projects/metas-domain-seed-absorption/` per N=3 MUST-FORMALIZE — the same metas/goals math (`obter_progresso`, `_calcular_meta_proporcional`, `accumulate valor_atual`) recurred byte-for-similar across PF (`metas_service.py`, `orcamentos_service.py`), ERP (`metas_service.py`, `meta_periodos_service.py`) and Daily Life (`goals_service.py`). Pure-domain — no DB, no FastAPI, no SDK; product persistence stays product-side.
+
+| Symbol | Purpose |
+|---|---|
+| `Goal`, `Target`, `Progress`, `Period`, `Contribution`, `ProgressTransition` | Frozen dataclasses — value objects with invariants (Target rejects negative, Period rejects end-before-start, Contribution exposes `yyyymm` for monthly bucketing). |
+| `GoalStatus`, `PeriodKind` | StrEnums — `pending/in_progress/on_track/at_risk/overdue/completed/abandoned` and `daily/weekly/fortnightly/monthly/quarterly/yearly/open_ended`. Products may persist `.value` directly. |
+| `compute_progress(target, current, *, contributions, today, period_remaining_pct)` | Pure derivation of `Progress` (percent_complete capped at 100, remaining floor at 0, ETA from contribution history, status from `next_status`). |
+| `accumulate_contribution(target, current, increment) -> ProgressTransition` | Mirrors PF `adicionar_contribuicao` + Daily Life `register_checkin`. Returns new value, completed flag, and 25/50/75/100 milestone-crossed pct. |
+| `project_completion_date(target, current, contribs, today)` | ETA from monthly avg (stdlib month math; no `dateutil` dep). |
+| `period_bounds(kind, ref) -> (start, end)` | Inclusive bounds. ERP's quinzena (1-15 / 16-end-of-month) + ISO-week conventions baked in. |
+| `proportional_target(monthly, kind, ref) -> int` | ERP's `_calcular_meta_proporcional` lifted verbatim + extended to QUARTERLY. |
+| `count_business_days(start, end)` + `working_days_*_in_*` family | Mon-Fri counts, inclusive; helpers shared with `period_bounds`. |
+| `next_status(current, *, percent_complete, period_remaining_pct?)` | State-machine transition. Sticky terminals (COMPLETED / ABANDONED). |
+| `can_transition`, `from_pt_string`, `to_pt_string` | Guard rail + PT-BR ↔ enum mapping (legacy: `ativa/concluida/no_prazo/atrasada`). |
+| `GoalRepository`, `InMemoryGoalRepository` | Optional Protocol seam for consumers that want to inject persistence (per `KB § PATTERNS/seed-lib-layout.md § Consumer-injection seams`). InMemory implementation for tests / demos. |
+
+```python
+from noctusai_lib.domain.metas import (
+    accumulate_contribution, compute_progress, Target, Contribution,
+    PeriodKind, proportional_target,
+)
+
+# PF — register a contribution:
+transition = accumulate_contribution(target=50_000, current=12_500, increment=2_500)
+# → ProgressTransition(new_current=15_000, completed=False, crossed_threshold_pct=25.0)
+
+# ERP — daily target from monthly:
+target_today = proportional_target(monthly_target=300, kind=PeriodKind.DAILY, ref=date.today())
+```
+
+**Adopters (target):** PF metas/orcamentos services, ERP metas service, Daily Life goals service. Wiring is a follow-up cycle — three per-product wiring projects refactor each service to consume the seed without changing the product's persistence shape. Tests: 111 cases under `seed/lib/backend/tests/domain/metas/`.
+
+See `KB § PATTERNS/metas-seed.md` for the wiring recipe + status mapping table.
+
 ### `ai/` — Per-entity AI-output storage (P1 pattern)
 
 Shipped 2026-04-25 by ai-expansion Tier 2 Phase 3. Standardizes how products persist + retrieve per-entity AI outputs (categorizations, scores, flags, narratives).
