@@ -7,7 +7,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ → Phase 1 ready
+- **Status:** Done ✅ — Phase 0 ✅ + Phase 1 ✅ + Phase 2 ✅
 - **Owner / stakeholders:** joaoraphaelsst (architect) · Engineer B (this engineer)
 - **Related docs:**
   - `KNOWLEDGE-BASE/CONTEXT/PATTERNS/metas-seed.md` — wiring recipe (seed-side reference).
@@ -273,8 +273,8 @@ ERP's `meta_periodos_service.py` uses a different vocabulary
 - [x] Run baseline pytest (53 passing) before any change.
 - [x] File this PROJECT.md.
 
-### Phase 1 — Refactor `metas_service.py` + `meta_periodos_service.py` ✅ (planned single phase per Engineer 3 §2.5)
-- [ ] Add `from noctusai_lib.domain.metas import (PeriodKind,
+### Phase 1 — Refactor `metas_service.py` + `meta_periodos_service.py` ✅
+- [x] Add `from noctusai_lib.domain.metas import (PeriodKind,
       period_bounds, count_business_days,
       working_days_total_in_month,
       working_days_remaining_in_week,
@@ -282,37 +282,72 @@ ERP's `meta_periodos_service.py` uses a different vocabulary
       working_days_total_in_year,
       working_days_remaining_in_year, proportional_target)` to
       `metas_service.py`.
-- [ ] Add ERP `tipo` ↔ `PeriodKind` mapping.
-- [ ] Replace `_period_end_date` body with `period_bounds(...)[1]` +
+- [x] Add ERP `tipo` ↔ `PeriodKind` mapping (`_TIPO_TO_PERIOD_KIND`).
+- [x] Replace `_period_end_date` body with `period_bounds(...)[1]` +
       legacy-tipo fallback.
-- [ ] Delete `_count_weekdays`, `_dias_uteis_totais_mes`,
+- [x] Replace `_count_weekdays`, `_dias_uteis_totais_mes`,
       `_dias_uteis_restantes_semana`, `_dias_uteis_restantes_mes`,
-      `_dias_uteis_totais_ano`, `_dias_uteis_restantes_ano` bodies;
-      keep names as 1-line aliases ONLY if a test imports them.
-- [ ] Replace `_calcular_meta_proporcional` body with
+      `_dias_uteis_totais_ano`, `_dias_uteis_restantes_ano` bodies
+      with 1-line seed delegations (names preserved for test/caller
+      compat per §7 Open Question 1 resolution).
+- [x] Replace `_calcular_meta_proporcional` body with
       `proportional_target(...)` + legacy-tipo fallback (returns
       `meta_mensal` for unknown tipos).
-- [ ] Refactor `meta_periodos_service.py` `quinzena_bounds` /
+- [x] Drop unused `import math` and `import timedelta` from
+      `metas_service.py`.
+- [x] Refactor `meta_periodos_service.py` `quinzena_bounds` /
       `mes_bounds` / `trimestre_bounds` to delegate to seed
-      `period_bounds`.
-- [ ] Update tests: in `test_metas_service.py`, update
-      `from app.services.metas_service import _period_end_date`
-      imports to consume the still-exported alias OR redirect
-      directly to the seed (preferring seed-direct imports for the
-      `_count_weekdays` / `_dias_uteis_*` cases since those local
-      helpers go away).
-- [ ] Run ERP pytest — ALL 53+ tests still pass.
-- [ ] Run `seed/lib/backend/` pytest — 111+ tests still pass.
-- [ ] Phase commit on branch.
+      `period_bounds`. Drop unused `import calendar` + `timedelta`.
+- [x] Apply defensive shadow-purge to
+      `products/erp-imobiliario/backend/tests/conftest.py` (mirrors the
+      seed/lib/backend conftest fix; ERP-side product tests were
+      not previously protected — surfaced cross-product follow-up
+      to mirror in PF + daily-life conftests).
+- [x] Tests preserved as-is — every existing assertion passes
+      because the public function names + signatures + return shapes
+      are unchanged. No test refactor needed (Open Question 1
+      resolution: keep ERP-side names as thin shims).
+- [x] Run focused tests: 53 passed (`tests/services/test_metas_service.py`
+      + `tests/routers/test_meta_periodos_router.py`).
+- [x] Run full ERP backend pytest: **1819 passed** (excludes
+      `tests/realdb/` — those need a live Supabase). No regression.
+- [x] Run full `seed/lib/backend/` pytest: **660 passed**. No regression.
+- [x] AST-first: refactor used `libcst` transformers (`/tmp/refactor_metas_service.py`
+      + `/tmp/refactor_meta_periodos_service.py`); Edit only used for
+      whitespace formatting after libcst output (PEP 8 blank lines).
+
+**Improvements:**
+- The shadow-purge belongs in `noctusai_lib.testing` as a public
+  helper — every product conftest can call
+  `from noctusai_lib.testing import purge_shadowing_finders;
+  purge_shadowing_finders()` instead of duplicating the logic.
+  Cross-product follow-up: file `seed-shadow-purge-helper-lift`
+  project to absorb this into `noctusai_lib.testing`.
+- The `quinzena_bounds`/`mes_bounds`/`trimestre_bounds` shims could
+  become `__all__`-exported aliases pointing at seed names if/when
+  ERP-side callers migrate to `period_bounds(PeriodKind.X, ref)`
+  directly. Low-priority: 5 internal callers + one test file.
+- `metas_service.py` module docstring still says "All date math is
+  computed in Python to avoid N+1 RPC round-trips" — the ERP-keeper
+  shape is preserved (`criar_metas_hoje` still uses 2-3 DB queries +
+  pure-Python loop), but the math itself now lives in seed. Cosmetic;
+  next pass could clarify.
+- Sister engineers (PF + daily-life) likely need the same product
+  conftest shadow-purge fix this session for their `noctusai_lib.domain.metas`
+  imports to resolve. The architect should mirror the fix when merging
+  their branches.
 
 ### Phase 2 — Close + bundled proposal ✅
-- [ ] Synthesize the in-step `**Improvements:**` notes into ONE
+- [x] Synthesize the in-step `**Improvements:**` notes into ONE
       bundled proposal in `projects/erp-metas-seed-wiring/proposals/`.
-- [ ] Update `findings.md` (5 categories: errors / mistakes-slips /
-      lessons / interesting-findings / knowledge-pieces).
-- [ ] Flip Phase 1 + Phase 2 headers to ✅ in this PROJECT.md.
-- [ ] Phase commit on branch.
-- [ ] Report back to architect.
+- [x] Maintain `findings.md` (5 categories: errors / mistakes-slips /
+      lessons / interesting-findings / knowledge-pieces) — see
+      project-folder for the durable artifact OR the engineer's
+      response (the Write-tool restriction on findings.md surfaced
+      mid-execution; content captured in the engineer's report).
+- [x] Flip Phase 1 + Phase 2 headers to ✅ in this PROJECT.md.
+- [x] Phase commit on branch.
+- [x] Report back to architect.
 
 ---
 
@@ -372,3 +407,4 @@ ERP's `meta_periodos_service.py` uses a different vocabulary
 | Date | Change | By |
 |---|---|---|
 | 2026-05-04 | Initial PROJECT.md drafted from `templates/PROJECT-TEMPLATE.md` after audit of all 9 ERP meta* service files. | Engineer B (claude-opus-4-7) |
+| 2026-05-04 | Phase 1 + Phase 2 collapse shipped: refactored `metas_service.py` (7 helper bodies → seed delegations) + `meta_periodos_service.py` (3 bound helpers → seed delegations); dropped unused `math` / `timedelta` / `calendar` imports; added defensive shadow-purge to ERP `tests/conftest.py`. AST-first via libcst. Tests: 53 focused passed → 1819 full ERP (excl. realdb) passed → 660 seed/lib passed. Bundled proposal filed. | Engineer B (claude-opus-4-7) |
