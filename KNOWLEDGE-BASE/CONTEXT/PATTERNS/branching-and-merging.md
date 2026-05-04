@@ -278,6 +278,63 @@ git push origin <branch>:main → REJECTED (non-FF)
 
 **Anti-pattern: `--force` push to bypass non-FF.** Forbidden on main. `--force` rewrites remote history, invalidates everyone else's local clones, silently destroys their unpushed work. The non-FF rejection IS the safety net telling you "someone else has work here you don't"; bypassing it skips the integration step entirely.
 
+### 10.3 Multi-branch convergence
+
+When N≥2 branches all want to land on main concurrently. The mechanical truth: only one can fast-forward at a time. Once the first lands, every other branch becomes non-FF and needs §10.2 to reconcile.
+
+**The queue-pattern.** Branches don't merge in parallel — they queue. Order is determined by some negotiated rule:
+
+- **First-commit-wins** — whichever branch ships its work to remote first goes first. Default in this repo.
+- **Smallest-first** — when two branches differ greatly in scope, the smaller one merges first to minimize the integration window for the larger.
+- **Owner-priority** — when both branches have the same owner, that owner picks the order (they have full context). Cross-owner: negotiate or surface to the user.
+- **Critical-first** — when one branch is a hotfix (security, production breakage), it jumps the queue regardless of other rules.
+
+**Per-branch sequence:**
+
+```
+Branch A and Branch B both ready to land on main.
+    ↓
+Negotiate order (default: first-shipped wins) → A goes first.
+    ↓
+A: orchestrator fast-forward push: `git push origin A:main` → SUCCESS, origin/main now at A's tip.
+    ↓
+B: now non-FF. Run §10.2 (rebase or merge).
+    ↓
+B: rebase succeeds (no conflicts) → fast-forward push B → SUCCESS.
+    OR
+B: rebase has conflicts → §10.4 → resolve → push.
+```
+
+The mental model: **branches converge serially, not concurrently.** The merge button is single-threaded by mechanical necessity.
+
+**Branch-of-branch (chained branches).** When project Y depends on project X's work that hasn't merged yet, Y's branch can be based on X's branch instead of `origin/main`:
+
+```bash
+git checkout -b project-y origin/project-x   # base on X's branch, not main
+# ... do Y's work ...
+```
+
+When X merges to main, Y becomes "based on something now-merged into main." Y can rebase onto new origin/main:
+
+```bash
+git fetch origin
+git rebase origin/main   # Y's commits replay on top of new main (which now includes X's content)
+```
+
+**Anti-pattern: chained branches deeper than 2.** Branch C based on branch B based on branch A is a recipe for cascading rebases. Each layer adds rebase complexity. Keep chains shallow; promote intermediate branches to main as soon as they're ready, even if they're not "feature-complete" yet.
+
+**Parallel-projects-under-seed-workspace use case.** This is exactly what multi-branch convergence is for: each project gets its own branch, branches accumulate independently, they queue at the merge step. The orchestrator (per §12) is the queue manager — sees all in-flight branches, decides ordering, merges one at a time. Other agents wait for their turn (or rebase preemptively if they want to be ready when their turn comes).
+
+**Coordination via the patterns log (master-tree case).** When branches are part of a master-tree-parallel-batches project (`KB § PATTERNS/master-tree-parallel-batches.md`), the master root's `live-patterns-log.md` is the coordination surface. Each batch's branches land in order by batch number; mid-batch parallelism happens within a batch but the cross-batch ordering is sequential.
+
+**PR-shape review workflow.** GitHub provides this institutionally: each branch opens a PR; reviewers comment; the merge button is gated on review approval. Mapped to our orchestrator-merge model (§12): the orchestrator IS the reviewer + merger. The PR is the artifact making the branch's contents externally visible during review (vs. the branch ref alone, which doesn't auto-open a review surface). Use PRs when:
+
+- Multiple agents (or human reviewers) need to inspect the branch before merge.
+- The work spans enough surface that diff-by-diff review benefits from the GitHub UI (file tree, comment threads, suggested changes).
+- The work needs to wait on something external (CI, a code-owner sign-off, a stakeholder).
+
+For single-orchestrator-merge work (most projects in this repo), `git push origin <branch>:main` is the FF-merge action; the PR step is optional. The branch ref on remote is enough for the orchestrator's fresh-eyes pass.
+
 ---
 
 ## 11. Branch-per-project workflow

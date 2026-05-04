@@ -143,17 +143,18 @@ When the fast-forward push fails (origin/main moved past your branch base):
 
 **Improvements:** added §10.1 (build on git merge) as bonus subsection — wasn't in the original phase plan but emerged as the natural opening to anchor all subsequent merge subsections to the safety-net-as-foundation principle. **applied inline.** Decision flowchart at end of §10.2 also wasn't planned — emerged from the "rebase vs merge" content as a quick-reference. **applied inline.**
 
-### Phase 3 — Multi-branch convergence
+### Phase 3 — Multi-branch convergence ✅
 
 When N branches all want to land on main:
 
-- [ ] Document ordering rules: who merges first?
-- [ ] Document the queue / serialization pattern: branches don't merge in parallel; they queue.
-- [ ] Document branch-of-branch (chained branches) when one project's branch depends on another project's branch.
-- [ ] Especially relevant for parallel projects under seed-workspace.
-- [ ] Commit: `docs(kb): merging methodology §Y — multi-branch convergence [merging-methodology Phase 3]`.
+- [x] Document ordering rules: who merges first? Landed in §10.3 — first-commit-wins (default), smallest-first, owner-priority, critical-first.
+- [x] Document the queue / serialization pattern: branches don't merge in parallel; they queue. Landed with per-branch sequence diagram.
+- [x] Document branch-of-branch (chained branches) when one project's branch depends on another project's branch. Landed with rebase recipe.
+- [x] Especially relevant for parallel projects under seed-workspace. Landed.
+- [x] Bonus: PR-shape review workflow added — when to open a PR vs direct branch-tip-to-main push.
+- [x] Commit: `docs(kb): merging methodology §10.3 — multi-branch convergence [merging-methodology Phase 3]`.
 
-**Improvements:** _(captured live during Phase 3)_
+**Improvements:** PR-shape review workflow added as bonus subsection — wasn't in the original phase plan but emerged as a natural extension of multi-branch convergence (PR is the institutional artifact for the queue + review pattern). **applied inline.** Also added explicit anti-pattern: "chained branches deeper than 2" — surfaced while drafting branch-of-branch content; the cascading-rebase failure mode is real. **applied inline.**
 
 ### Phase 4 — Conflict resolution discipline
 
