@@ -198,7 +198,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 ### Phase 3 — Batch C (polish + propagation)
 - [ ] **3.1** Frontend `<FakeModeBadge>` + `useEnvMode()`
-- [ ] **3.2** `integrations/storage/` (Supabase Storage + Local + Fake)
+- [x] **3.2** `integrations/storage/` (Supabase Storage + Local + Fake) — Engineer H, branch `sh-yt-storage`. Canonical Protocol+Fake+Local+Supabase+factory. 7 source files (`__init__.py` / `protocol.py` / `types.py` / `fake.py` / `local.py` / `supabase.py` / `factory.py`) + 52 new tests (parametrized contract suite over Fake+Local; mock-client wire-shape suite for Supabase covering put/get/delete/list/signed_url/exists, 404→None translation, factory routing, public exports). 902/902 seed-lib tests green.
 - [ ] **3.3** `integrations/quota/` (Redis + Fake)
 - [ ] **3.4** Scaffold polish: README slug placeholder, `.env.example` whitelist, `validate_product` enforcement, `available_ports` range reservation
 
@@ -254,6 +254,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 | Date | Change | By |
 |---|---|---|
+| 2026-05-04 | Phase 3.2 — `integrations/storage/` (Engineer H, branch `sh-yt-storage`). Canonical Protocol+Fake+Local+Supabase+factory mirroring `google_calendar` / `google_maps` / `youtube` shape. Async surface across all backends; Supabase wraps storage3 sync SDK via `asyncio.to_thread`. 404 translated to `None`/`False` for `get`/`delete`/`exists`. Local persists user-metadata via `.meta.json` sidecars so round-trip semantics match Fake/Supabase. 52 new tests; 902/902 seed-lib tests green. Existing product call sites untouched (per brief). | Engineer H (Claude Opus 4.7) |
 | 2026-05-04 | Phase 2 close ✅ — all 4 Batch-B surfaces merged (jobs primitive+worker, oauth router, health endpoints). 850/850 seed-lib + 33/33 framework tests green. Five Phase 2 findings triaged: worktree-venv editable-install gap deferred to its own project, FAILED→PENDING FSM accepted-with-rationale, google_calendar OAuth migration + refresh encryption + MockSupabaseClient pattern doc all deferred-with-destination. | architect (Claude Opus 4.7) |
 | 2026-05-04 | Phase 2.4 — Health endpoints baked into `create_product_app` (Engineer F, branch `sh-yt-health`). New `seed/framework/backend/noctusai_seed/health.py` + libcst-edited `app.py` adds `health_config=` kwonly param + `__init__.py` re-exports + PF `app/main.py` opt-in example + 15 tests. | Engineer F (Claude Opus 4.7) |
 | 2026-05-04 | Phase 2.3 — `security/oauth/` (Engineer E, branch `sh-yt-oauth`). OAuthProvider Protocol + GoogleProvider lifted from google_calendar/oauth_adapter + Fake + factory + `oauth_router(*providers)` (authorize/callback/refresh/revoke). 39 tests. google_calendar/oauth_adapter UNTOUCHED. | Engineer E (Claude Opus 4.7) |
