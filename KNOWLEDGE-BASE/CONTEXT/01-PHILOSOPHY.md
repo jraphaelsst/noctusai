@@ -301,6 +301,14 @@ The output of chunk identification is one of:
 - **Treating multi-branch merge as a problem.** It's the methodology working. Per `§ 10.3`, branches queue at merge — auto-merge handles disjoint, manual resolution handles overlap. Both paths are documented.
 - **Delegating the orchestration itself to a subagent.** Caught 2026-05-03 — the orchestrator dispatched a subagent to do the analysis + batching + planning for an in-flight portfolio, then waited passively. That collapses the head/worker distinction: the subagent only sees its brief, not the session-spanning conversation; the orchestrator's broad-context advantage IS the planning value. **Subagents are EXECUTORS of focused chunks; they are never PLANNERS of orchestration.** The head plans + dispatches; subagents execute the chunks the head defined. Hand-off rule: if you're tempted to dispatch ONE subagent to "figure out how to parallelize this," STOP — that's the orchestrator's job. Read the files yourself; compute the batches yourself; THEN dispatch N parallel executors with focused briefs.
 
+**The orchestrator's responsibilities — full list:**
+1. **Plan + chunk** the work (file-overlap analysis + dependency analysis).
+2. **Set up worktrees** per `KB § PATTERNS/branching-and-merging.md § 16` for parallel dispatch (mandatory when 2+ subagents concurrent).
+3. **Dispatch subagents** in single `Task` tool-use turn with focused briefs.
+4. **Maintain findings.md** for the orchestration (per `Knowledge tracking — durable findings file` principle below + `KB § PATTERNS/branching-and-merging.md § 17`). Append slips / errors / lessons / surprises as subagent reports come in.
+5. **Aggregate + merge** subagent branches at orchestrator-merge time (per § 12 of branching-and-merging).
+6. **Close the orchestration** — synthesize findings.md into the durable knowledge artifact; archive the project per § 11.2.
+
 **Companion rules:**
 
 - `KB § PATTERNS/branching-and-merging.md § 11 Branch-per-project workflow` — the per-project branching mechanic this principle elevates.
@@ -308,6 +316,68 @@ The output of chunk identification is one of:
 - `KB § PATTERNS/branching-and-merging.md § 13 Branch-creation triggers` — user-phrase triggers ("branch this") are explicit; this principle adds an implicit trigger (orchestrator's default mental model).
 - `KB § PATTERNS/master-tree-parallel-batches.md` — when N≥2 same-shape children, this is the parallel-batches pattern.
 - `KB § PATTERNS/branching-and-merging.md § 14 Pre-work fetch protocol` — collision detection BEFORE editing; what enables clean parallel chunks.
+- `KB § PATTERNS/branching-and-merging.md § 16 Git worktree for true parallel agents` — single-worktree contention is the practical constraint; `git worktree add` is the resolution.
+- `KB § PATTERNS/branching-and-merging.md § 17 Knowledge tracking during orchestration` — orchestrator maintains findings.md aggregating subagent slips / errors / lessons / surprises.
+
+---
+
+## Knowledge tracking — durable findings file for any non-trivial work
+
+**The principle.** Any non-trivial work maintains a durable `findings.md` (or equivalent) file capturing **slips / errors / mistakes / lessons / interesting findings / discovered knowledge** as the work progresses. The file lives at the project / feature root during execution and travels with the project to archive at close.
+
+**Why:** Without a durable durable surface, learnings live in conversation memory (lost between sessions), commit messages (durable but unstructured), or §11 prose (durable but optimized for "what we did," not "what we learned"). The findings.md is purpose-built for the latter — a curated knowledge artifact, not a transcript.
+
+User directive 2026-05-04, verbatim:
+> *"Please, as their orchestrator, i need you to keep track of their work and their findings, gather pieces of knowledge throught the process and give me a file with them. I want interesting findings annotations and piece of knowledge gathered from errors, mistakes, slips, lessons and stuff. ... We want that doc'd even if we're not branching."*
+
+**Five categories** (all that the user specified, in standard headings):
+
+```markdown
+# <project-slug> — Findings
+
+## Errors encountered
+## Mistakes / slips
+## Lessons learned (durable rules)
+## Interesting findings (surprises, discoveries)
+## Knowledge pieces (durable patterns)
+```
+
+**When to maintain findings.md:**
+
+| Situation | findings.md? |
+|---|---|
+| Non-trivial project (multi-phase) | **Yes — default-on** |
+| Multi-step feature | **Yes — default-on** |
+| Master-tree orchestration | **Yes** (alongside existing live-patterns-log.md + absorption catalog) |
+| Orchestrator dispatch of 2+ subagents | **Yes** (per `KB § PATTERNS/branching-and-merging.md § 17`) |
+| Trivial direct fix (typo, broken link) | Skip |
+| Solo orchestrator-direct work, fully predictable | Optional (skip if no surprises; log absence to `phase_learnings` so silence is explicit) |
+
+**Append cadence:**
+
+- **In-the-moment** for surprises / errors / slips — freshness matters; don't batch.
+- **At each subagent report** (orchestration case) — extract findings from subagent's response, append.
+- **At each phase close** — review the phase, capture lessons.
+- **At project / feature close** — final synthesis pass: turn the log into a knowledge artifact (cross-reference KB amendments, group related lessons, mark which are durable vs. transient).
+
+**Distinct from sibling tracking files:**
+
+- **`phase_learnings.db`** (SQLite, per `§ 2.11 Phase enrichment loop`) — atomic per-phase learnings with structured kind tags. The findings.md is broader: orchestration-level meta-record, not just learnings.
+- **`live-patterns-log.md`** (master-tree) — append-only batch findings table. The findings.md is curated; the patterns log is raw append-only.
+- **`§11 Change log` of PROJECT.md** — narrative of WHAT was done. The findings.md captures WHAT WAS LEARNED.
+
+**Anti-patterns:**
+
+- **Skipping findings.md for non-trivial work.** Slips evaporate; methodology can't evolve from what wasn't captured.
+- **findings.md as a raw transcript.** Only INTERESTING / NON-OBVIOUS / SURPRISING content belongs. "We did X" goes in §11 of PROJECT.md.
+- **Skipping the close-time synthesis pass.** Without synthesis, the file is a list of timestamps; with synthesis, it's a curated knowledge artifact.
+- **Capturing in conversation memory only.** Lost between sessions. The findings.md is the durable surface.
+
+**Companion rules:**
+
+- `Safety nets capture failures; failures become learnings; methodology evolves` — durable findings → recurrence rule firing → methodology amendment. The findings.md is the input to that loop.
+- `§ 2.11 Phase enrichment loop` — atomic per-phase learnings; findings.md is the broader meta-record.
+- `KB § PATTERNS/branching-and-merging.md § 17 Knowledge tracking during orchestration` — orchestration-specific specialization.
 
 ---
 

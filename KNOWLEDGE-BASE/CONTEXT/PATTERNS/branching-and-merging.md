@@ -836,3 +836,154 @@ git push origin <topic>-combined:main
 **Default when ambiguous: ask.** The two patterns produce very different artifacts; picking the wrong one means redoing the work or running unnecessary spikes. Cheap to ask once; expensive to commit to the wrong pattern.
 
 **Companion to.** `KB § 01-PHILOSOPHY.md § Estimate off evidence` (the orchestrator's review of branch-and-compare results IS the evidence that grounds the user's pick); §11 Branch-per-project (each branch follows the per-project workflow); §12 Orchestrator role (the orchestrator runs the comparison, not the working agent — fresh-eyes vantage point).
+
+---
+
+## 16. Git worktree for true parallel agents
+
+**The problem.** Multiple subagents working on different branches in the SAME git worktree contend for the checkout state. When subagent A runs `git checkout -b branch-A` and subagent B runs `git checkout -b branch-B` simultaneously in the same repo directory, the second checkout overrides the first's worktree mid-flight — uncommitted work gets stashed, files swap to the wrong branch, the orchestrator's working state shifts under it. Caught 2026-05-04 on the first parallel-execution attempt: the projects-cleanup subagent's checkout displaced the orchestrator's uncommitted Phase 0 file (correctly auto-stashed by the subagent per its briefing, but the contention itself is the failure mode).
+
+**The mechanical truth:** git is single-worktree by default. Only one branch can be checked out per worktree. Parallel agents on different branches need separate worktrees.
+
+### 16.1 Recipe
+
+**For the orchestrator, before parallel dispatch:**
+
+```bash
+# Set up a sibling worktrees directory (gitignored — see §16.4)
+mkdir -p ../noctusai-worktrees
+
+# Per subagent: create a worktree on the subagent's branch
+git worktree add ../noctusai-worktrees/<subagent-branch-name> origin/main
+# Optionally specify the branch creation: -b <new-branch>
+git worktree add -b <subagent-branch-name> ../noctusai-worktrees/<subagent-branch-name> origin/main
+```
+
+The subagent's brief includes the absolute path to its worktree:
+
+```
+Your working directory: /Users/rapha/Documents/repository/NoctusAI/noctusai-worktrees/<subagent-branch-name>
+Your branch is already checked out there. Do not `git checkout` to a different branch in this worktree.
+All your edits, commits, and pushes happen from this directory.
+```
+
+The subagent operates in its own filesystem; the orchestrator's main worktree is untouched.
+
+**After the subagent's branch merges to main:**
+
+```bash
+git worktree remove ../noctusai-worktrees/<subagent-branch-name>
+# Cleanup: removes the worktree dir + its administrative files.
+```
+
+If a worktree has uncommitted changes, `git worktree remove` refuses by default. Pass `--force` only if you've confirmed the subagent's work is fully committed + pushed (i.e. nothing in the worktree is unsaved).
+
+### 16.2 When to use worktrees
+
+**Required:**
+- Dispatching 2+ subagents on different branches in a single `Task` tool-use turn (the parallelism case branching-first methodology is built for).
+
+**Not needed:**
+- Single subagent (no contention possible).
+- Sequential subagent dispatch (one finishes + reports before the next starts; orchestrator's worktree state is between dispatches, not during).
+- Orchestrator-direct work (orchestrator doing everything itself; no subagents).
+
+### 16.3 Worktree naming
+
+Mirror the branch naming convention (§ 5):
+- `../noctusai-worktrees/<project-slug>` for projects.
+- `../noctusai-worktrees/<feature-slug>` for features.
+- `../noctusai-worktrees/<topic>` for cross-cutting work.
+
+The worktree's directory name and the branch name match, so `cd ../noctusai-worktrees/<X>` always lands in the right branch's filesystem.
+
+### 16.4 Cleanup discipline
+
+After a worktree's branch lands on main and is merged + closed:
+
+```bash
+git worktree remove ../noctusai-worktrees/<branch-name>
+```
+
+Worktrees not auto-cleaned. Lingering worktrees consume disk space + clutter `git worktree list` output.
+
+**Add to `.gitignore` (or rely on default if `noctusai-worktrees/` is outside the repo):** if the worktrees directory is INSIDE the repo (not recommended), gitignore it. The recipe in §16.1 puts worktrees alongside the main repo (sibling), which is automatically outside git's tracking.
+
+### 16.5 Anti-patterns
+
+- **Dispatching N subagents into the same worktree.** Race-prone. Even if today they happen to interleave cleanly, tomorrow one will stomp another. Always worktree-add for parallel.
+- **Leaving worktrees lingering after close.** Disk waste + grep results from stale checkouts pollute future searches.
+- **`git worktree remove --force` without verifying clean state.** Drops uncommitted work silently. Confirm `git status` clean in the worktree first.
+- **Worktrees on the SAME branch as another worktree.** Git refuses by default (a branch can be checked out in only one worktree at a time). If you genuinely need this, you misunderstand the use case — branches are 1:1 with worktrees.
+
+### 16.6 Develop our own wrapper later
+
+User directive 2026-05-04: *"a git worktree, then we develop our own based on the git worktree work, yea?"* — start with vanilla `git worktree`; build NoctusAI-specific tooling on top once we've validated the workflow. Follow-up project (TBD): `noctus.dev.dispatch_parallel(briefs)` — orchestrator passes N subagent briefs; tool sets up worktrees, dispatches subagents, monitors, collects findings. Out of scope today; tracked when the gap surfaces N=2+.
+
+---
+
+## 17. Knowledge tracking during orchestration
+
+When the orchestrator dispatches subagents (parallel or serial), maintain a durable `findings.md` file at the orchestrator's project / feature root. Subagent reports contribute to it as they complete. At project close, `findings.md` is the orchestration's knowledge artifact.
+
+### 17.1 What goes in findings.md
+
+Five categories (the user's framing — *"errors, mistakes, slips, lessons and stuff"*):
+
+```markdown
+# <project-slug> — Orchestration Findings
+
+## Errors encountered
+- <date> · <subagent-name>: <error-or-failure>; root cause = <X>; recovery = <Y>.
+
+## Mistakes / slips
+- <date> · <subagent-name or orchestrator>: <slip-description>; caught by <Z>; lesson = <W>.
+
+## Lessons learned (durable rules)
+- <rule>; applicable when <conditions>; cross-reference to KB if amended.
+
+## Interesting findings (surprises, discoveries)
+- <finding>; surprised because <prior-assumption-was>.
+
+## Knowledge pieces (durable patterns)
+- <pattern-name>: <one-line description>. Example: <ref>.
+```
+
+### 17.2 Distinct from sibling tracking files
+
+| File | Scope | Format | Lifetime |
+|---|---|---|---|
+| `phase_learnings.db` (SQLite) | Per-phase, per-project | Structured rows | Local-only; gitignored |
+| `live-patterns-log.md` | Master-tree per-batch | Append-only table | In master-tree project |
+| `cross-product-absorption-catalog.md` | Master-tree per-pattern | Triage register | In master-tree project |
+| **`findings.md` (NEW §17)** | **Orchestration meta-record across the whole project** | **Free-form categorized markdown** | **In project / feature root, archived with project** |
+
+`findings.md` is the meta-record — what HAPPENED across the work, especially the unexpected stuff. The other three are atomic / per-batch / per-pattern.
+
+### 17.3 When to maintain findings.md
+
+**Default-on for:**
+- Projects (every project's root carries a findings.md by close).
+- Master-tree orchestration (alongside the existing live-patterns-log.md + absorption catalog).
+- Any orchestrator dispatch of 2+ subagents.
+
+**Optional for:**
+- Trivial features (typo fixes, one-line tweaks).
+- Single-orchestrator-direct work with no surprises.
+
+If the orchestrator chooses to skip findings.md (trivial work), log a learning to `phase_learnings` SQLite saying "no findings.md needed for <work> — trivial, no surprises." That way the absence is explicit, not silent.
+
+### 17.4 Orchestrator's append cadence
+
+- **At each subagent report:** orchestrator extracts interesting findings from the subagent's response; appends to findings.md.
+- **At each surprise:** mid-flight discovery → append immediately (don't batch — the freshness of the moment is the value).
+- **At project close:** orchestrator does a final pass — synthesizes lessons + cross-references to KB amendments — and the file lands in archive (project-close → archive per § 11.2 of project-execution.md).
+
+### 17.5 Anti-patterns
+
+- **Orchestrating without a findings.md.** Slips evaporate; the methodology can't evolve from what wasn't captured.
+- **findings.md as raw transcript.** Not the goal. Only INTERESTING / NON-OBVIOUS / SURPRISING content. Trivial "we did X" goes in §11 of PROJECT.md, not here.
+- **Skipping the close-time synthesis pass.** The pass is what turns the file from a log into a knowledge artifact. Without it, future agents read a list of timestamps; with it, they read a curated set of lessons.
+- **Capturing in conversation memory only.** That's lost between sessions. Findings.md is the durable surface.
+
+**Companion to** `KB § 01-PHILOSOPHY.md § Knowledge tracking — durable findings file for any non-trivial work` (foundational principle that this section specializes for orchestration).
