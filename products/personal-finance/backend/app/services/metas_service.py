@@ -1,9 +1,15 @@
 """Financial goals service — goal tracking and contributions."""
 import logging
 from typing import Dict, List, Optional
-from datetime import date, datetime
+from datetime import date
 from fastapi import HTTPException
 from app.dependencies import first_or_none
+from noctusai_lib.domain.metas import (
+    Contribution,
+    Target,
+    accumulate_contribution,
+    compute_progress,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +26,12 @@ class MetasService:
         result = query.execute()
         data = result.data or []
 
-        # Enrich with progress info
+        # Enrich with progress info via seed compute_progress
         for meta in data:
-            valor_alvo = float(meta.get("valor_alvo", 1))
+            valor_alvo = float(meta.get("valor_alvo", 0))
             valor_atual = float(meta.get("valor_atual", 0))
-            meta["percentual"] = min((valor_atual / valor_alvo * 100) if valor_alvo > 0 else 0, 100)
+            progress = compute_progress(target=Target(valor_alvo), current=valor_atual)
+            meta["percentual"] = progress.percent_complete
 
         return data
 
@@ -55,13 +62,17 @@ class MetasService:
         result = self.db.table("meta_contribuicoes").insert(data).execute()
         row = first_or_none(result)
 
-        # Update meta valor_atual
+        # Update meta valor_atual via seed accumulate_contribution
         if row:
             meta = await self.obter(meta_id)
             if meta:
-                novo_valor = float(meta.get("valor_atual", 0)) + float(data.get("valor", 0))
-                update_data = {"valor_atual": novo_valor}
-                if novo_valor >= float(meta.get("valor_alvo", 0)):
+                transition = accumulate_contribution(
+                    target=float(meta.get("valor_alvo", 0)),
+                    current=float(meta.get("valor_atual", 0)),
+                    increment=float(data.get("valor", 0)),
+                )
+                update_data = {"valor_atual": transition.new_current}
+                if transition.completed:
                     update_data["status"] = "concluida"
                 self.db.table("metas").update(update_data).eq("id", meta_id).execute()
 
@@ -73,28 +84,41 @@ class MetasService:
             return {}
 
         contribuicoes = self.db.table("meta_contribuicoes").select("*").eq("meta_id", meta_id).order("data", desc=True).execute()
-
-        valor_alvo = float(meta.get("valor_alvo", 1))
-        valor_atual = float(meta.get("valor_atual", 0))
-        percentual = min((valor_atual / valor_alvo * 100) if valor_alvo > 0 else 0, 100)
-
-        # Estimate completion date
-        data_previsao = None
         contribs = contribuicoes.data or []
-        if contribs and valor_atual < valor_alvo:
-            total_contrib = sum(float(c.get("valor", 0)) for c in contribs)
-            meses_com_contrib = len(set(c.get("data", "")[:7] for c in contribs))
-            if meses_com_contrib > 0:
-                media_mensal = total_contrib / meses_com_contrib
-                if media_mensal > 0:
-                    meses_restantes = (valor_alvo - valor_atual) / media_mensal
-                    from dateutil.relativedelta import relativedelta
-                    data_previsao = (date.today() + relativedelta(months=int(meses_restantes))).isoformat()
+
+        valor_alvo = float(meta.get("valor_alvo", 0))
+        valor_atual = float(meta.get("valor_atual", 0))
+
+        # Map PF contribution rows → seed Contribution value objects (skip rows
+        # missing a parseable date — the seed projection tolerates an empty list).
+        seed_contribs: list[Contribution] = []
+        for c in contribs:
+            raw_date = c.get("data") or ""
+            try:
+                at = date.fromisoformat(raw_date[:10])
+            except ValueError:
+                # Row has no usable date — exclude from projection but keep in
+                # response payload (tests rely on count of contribuicoes).
+                continue
+            seed_contribs.append(Contribution(amount=float(c.get("valor", 0)), at=at))
+
+        progress = compute_progress(
+            target=Target(valor_alvo),
+            current=valor_atual,
+            contributions=seed_contribs,
+            today=date.today(),
+        )
+
+        data_previsao = (
+            progress.projected_completion_date.isoformat()
+            if progress.projected_completion_date is not None
+            else None
+        )
 
         return {
             "meta": meta,
-            "percentual": percentual,
-            "faltam": max(valor_alvo - valor_atual, 0),
+            "percentual": progress.percent_complete,
+            "faltam": progress.remaining,
             "data_previsao": data_previsao,
             "contribuicoes": contribs,
         }

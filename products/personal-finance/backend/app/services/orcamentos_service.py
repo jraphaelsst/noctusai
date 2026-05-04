@@ -3,6 +3,7 @@ import logging
 from typing import Dict, List, Optional
 from fastapi import HTTPException
 from app.dependencies import first_or_none
+from noctusai_lib.domain.metas import Target, compute_progress
 
 logger = logging.getLogger(__name__)
 
@@ -109,13 +110,20 @@ class OrcamentosService:
         total_planejado = sum(float(i.get("valor_planejado", 0)) for i in itens)
         total_gasto = sum(float(i.get("valor_gasto", 0)) for i in itens)
 
+        # Budget percent-used = current spending vs planned target. Same math as
+        # goal accumulation; inverse semantic (spending vs accumulation).
+        progress = compute_progress(
+            target=Target(total_planejado),
+            current=total_gasto,
+        )
+
         return {
             "orcamento_id": orcamento_id,
             "periodo_mes": periodo_mes,
             "total_planejado": total_planejado,
             "total_gasto": total_gasto,
             "saldo": total_planejado - total_gasto,
-            "percentual_usado": (total_gasto / total_planejado * 100) if total_planejado > 0 else 0,
+            "percentual_usado": progress.percent_complete,
             "itens": itens,
         }
 

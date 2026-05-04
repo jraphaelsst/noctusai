@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ready
+- **Status:** Done — Phase 0 ✅ + Phase 1+2 (collapsed) ✅ + Phase 3 ✅ — proposal filed; branch ready for orchestrator FF
 - **Owner / stakeholders:** rapha (architect) · engineer-A (this agent — Batch 1C of `in-flight-execution-rollout`)
 - **Related docs:**
   - `KNOWLEDGE-BASE/CONTEXT/PATTERNS/metas-seed.md` — wiring recipe + status mapping table.
@@ -146,36 +146,47 @@ Six-question checklist:
 - `obter_progresso` for orcamentos has different semantics than for metas (spending vs accumulation) but the **math** (current/target × 100) is identical; reusing `compute_progress` is honest because the math IS the same — the framing (`percentual` vs `percentual_usado`) stays in the response dict naming.
 - Dashboard `resumo()` duplicates `metas_service.listar`'s percent loop verbatim — single helper call would close N=2 within PF. Inline `compute_progress` call works.
 
-### Phase 1 — Refactor MetasService + DashboardService + drop dateutil
+### Phase 1 — Refactor MetasService + DashboardService + OrcamentosService + drop dateutil ✅
 
-- [ ] AST-edit `metas_service.py`:
-  - Add `from noctusai_lib.domain.metas import (...)` import.
-  - Refactor `listar(...)` percent loop → seed `compute_progress` (no contributions context; just `target` + `current`).
-  - Refactor `adicionar_contribuicao(...)` → use `accumulate_contribution(target, current, valor)`.
-  - Refactor `obter_progresso(...)` → use `compute_progress(...)` + `project_completion_date(...)`. Replace `dateutil.relativedelta` with the seed's `project_completion_date` (which uses stdlib `_add_months` internally).
-  - Remove the now-unused `from datetime import date, datetime` if any imports become orphaned.
-- [ ] AST-edit `dashboard_service.py § resumo()`:
-  - Use seed `compute_progress(...)` for the metas percentual loop (same shape as `MetasService.listar`).
-- [ ] Run PF backend pytest — confirm green.
-- [ ] Verify `dateutil` no longer imported in `metas_service.py` (`grep "dateutil" products/personal-finance/backend/app/services/metas_service.py` → 0 hits).
+Phase 1+2 collapsed into a single libcst codemod pass (consistent with Batch 1B engineer 3's "collapsed phase" methodology learning §2.5 of the absorption-seed bundled proposal).
 
-### Phase 2 — Refactor OrcamentosService
+- [x] AST-edit `metas_service.py` via libcst codemod (`/tmp/pf_metas_refactor.py`):
+  - Added `from noctusai_lib.domain.metas import (Contribution, Target, accumulate_contribution, compute_progress)` import.
+  - Refactored `listar(...)` percent loop → seed `compute_progress(target=Target(valor_alvo), current=valor_atual)`.
+  - Refactored `adicionar_contribuicao(...)` → seed `accumulate_contribution(target, current, increment)` returning `ProgressTransition`; PF persists `transition.new_current` + flips status to `"concluida"` when `transition.completed`.
+  - Refactored `obter_progresso(...)` → seed `compute_progress(...)` with PF contribution rows mapped to `Contribution(amount, at)` value objects; `data_previsao` now sourced from `progress.projected_completion_date`. Dropped the inline `from dateutil.relativedelta import relativedelta` import.
+  - Trimmed `from datetime import date, datetime` → `from datetime import date` (datetime was unused after refactor).
+- [x] AST-edit `dashboard_service.py § resumo()`:
+  - Added `from noctusai_lib.domain.metas import Target, compute_progress`.
+  - Replaced the inline `min((valor_atual / valor_alvo * 100) if valor_alvo > 0 else 0, 100)` with seed `compute_progress(...).percent_complete`.
+- [x] AST-edit `orcamentos_service.py`:
+  - Added `from noctusai_lib.domain.metas import Target, compute_progress`.
+  - Replaced the inline `(total_gasto / total_planejado * 100) if total_planejado > 0 else 0` with seed `compute_progress(target=Target(total_planejado), current=total_gasto).percent_complete`. (Budget percent-used = current spending vs planned target — same math as goal accumulation, inverse semantic.)
+- [x] **Methodology fix (in-scope drive-by):** PF backend `tests/conftest.py` extended with worktree-aware seed-lib shadow-purge — same shape as `seed/lib/backend/tests/conftest.py` (Engineer 2 of Batch 1B fix), but corrected to read MAPPING from the FINDER MODULE (pip's PEP-660 layout) rather than the finder class. Without this, the worktree's seed-lib (which has the new metas/ module) was being shadowed by an editable install pointing at a stale sister worktree (`media-scheduling-port-resume`). Surfaced as a finding for the architect — likely a methodology-level fix (the seed-lib conftest has a real bug; absorbing the corrected shape into seed-lib's conftest would close the gap for all consuming products).
+- [x] Run PF backend pytest — 584 passed (full backend, excluding `realdb` which needs live Supabase).
+- [x] Run full seed-lib pytest — 660 passed.
+- [x] Verify `dateutil` no longer imported in `metas_service.py` / `orcamentos_service.py` / `dashboard_service.py` — confirmed via grep, 0 hits in those three files (`recorrentes_service.py` keeps its `dateutil` for transaction-recurrence math, out of scope).
 
-- [ ] AST-edit `orcamentos_service.py`:
-  - Add `from noctusai_lib.domain.metas import compute_progress, Target` import.
-  - Refactor `obter_progresso(...)` `percentual_usado` calculation → seed `compute_progress`.
-- [ ] Run PF backend pytest — confirm green.
-- [ ] Run full seed-lib pytest — confirm no regression (sanity, since we don't touch seed code).
+**Improvements:**
+- The PF backend tests' shadow-purge bug is a real methodology gap — the seed-lib conftest's `getattr(finder, "MAPPING", None)` returns None for pip's PEP-660 finders (because MAPPING lives on the *module* not the *class*). Backporting the corrected purge logic to `seed/lib/backend/tests/conftest.py` would close this for every consumer product. Surface as a finding; orchestrator decides scope.
+- `compute_progress(target=Target(0), current=0)` returns `percent_complete=0.0` cleanly — confirms the seed handles PF's `valor_alvo=0` edge case identically to the inline guard. No semantic regression.
+- The orcamentos `obter_progresso` percent-used framing is **inverse** to PF metas (spending vs accumulation) but the math is identical — `compute_progress` happily computes both because it has no opinion on what `current` and `target` mean. This is consistent with the seed's design rationale (`KB § PATTERNS/metas-seed.md § 1`) where it's explicitly platform-neutral.
+- The seed import block in dashboard_service.py and orcamentos_service.py was initially over-imported (4 names; only 2 used) by the codemod. Trimmed manually post-codemod. Future codemod could be context-aware; left as-is for this project.
+- The `obter_progresso` for metas now skips contribution rows with no parseable date instead of failing — the previous code did the same effective thing implicitly (the date-string slice `c.get("data", "")[:7]` would yield `""` for missing dates, producing a `set` element of `""` and counting as a single "month"). This is a subtle behavior improvement; tests pass identically because the test fixtures all have valid dates.
 
-### Phase 3 — Close + bundled proposal
+### Phase 2 — folded into Phase 1.
 
-- [ ] Verify all checkboxes ticked + phase headers ✅.
-- [ ] File `projects/pf-metas-seed-wiring/proposals/claude-opus-4-7-20260504-end-of-project-bundle.md`:
+(Per absorption proposal §2.5 — single-codemod-pass for tightly-coupled refactors. The orcamentos service was the only deliverable Phase 2 originally held; collapsing into Phase 1 reflects the actual execution shape.)
+
+### Phase 3 — Close + bundled proposal ✅
+
+- [x] Verify all checkboxes ticked + phase headers ✅.
+- [x] File `projects/pf-metas-seed-wiring/proposals/claude-opus-4-7-20260504-end-of-project-bundle.md`:
   - Duplications absorbed (before/after counts).
   - Anything noticed as a follow-up.
   - Phase learnings.
-- [ ] Synthesize `findings.md` (5 categories).
-- [ ] Phase commit; push branch.
+- [x] Synthesize `findings.md` (5 categories).
+- [x] Phase commit; push branch (push deferred to architect's FF-merge per orchestrator-merges-to-main rule).
 
 ---
 
@@ -217,3 +228,5 @@ Standard living-document protocol per `KB § PATTERNS/project-execution.md`. Eng
 | Date | Change | By |
 |---|---|---|
 | 2026-05-04 | Phase 0 filed: PROJECT.md + audit + 1:1 mapping table; seed surface verified (runtime-ready, not just Protocol/Fake) | claude-opus-4-7 (engineer-A, Batch 1C of in-flight-execution-rollout) |
+| 2026-05-04 | Phase 1+2 collapsed: libcst codemod refactored MetasService (3 methods), DashboardService.resumo, OrcamentosService.obter_progresso; dropped inline `dateutil.relativedelta` from metas_service; PF backend tests 584 passed; seed-lib tests 660 passed. Drive-by methodology fix: PF conftest shadow-purge corrected to read MAPPING from finder MODULE (pip PEP-660 shape) not class — surfaced as finding for orchestrator (gap likely lives in seed-lib conftest too). | claude-opus-4-7 (engineer-A) |
+| 2026-05-04 | Phase 3 closed: bundled proposal filed at `proposals/claude-opus-4-7-20260504-end-of-project-bundle.md`; findings.md synthesized (5 categories). | claude-opus-4-7 (engineer-A) |
