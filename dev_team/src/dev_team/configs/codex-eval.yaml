@@ -1,0 +1,37 @@
+# codex-eval.yaml — OpenAI Codex / o-series model evaluation template
+#
+# TODO — to activate this config:
+#   1. Uncomment the agent rows you want to swap (or all 11 for a full
+#      Codex eval).
+#   2. Pin specific model IDs you want compared (e.g. `o1-preview` vs
+#      `o1-mini` vs `gpt-4.1`). Mix-and-match is fine — the eval harness
+#      only cares that every required role has a `provider:` + `model:`.
+#   3. Ensure `OPENAI_API_KEY` is set in `.env` before running:
+#        python -m dev_team eval "<task>" --configs default,codex-eval
+#   4. Provider strings the loader recognizes today: `anthropic`,
+#      `openai`, `google`. Adapter wiring lives in (E engineer scope)
+#      `dev_team/src/dev_team/agents/base.py::_build_model_for_provider`.
+#
+# Rationale: comparing Codex against the Opus/Sonnet baseline tells us
+# whether the high-leverage Opus seats (Leader, PM, Architect, Security,
+# Code Reviewer) hold up against o1-class reasoning models, and whether
+# the Sonnet implementation seats can be cheaper on gpt-4.1-mini.
+
+agents:
+  # leader: { provider: openai, model: o1-preview } # TODO
+  # product_manager: { provider: openai, model: o1-preview } # TODO
+  # ux_designer: { provider: openai, model: gpt-4.1-mini } # TODO
+  # solution_architect: { provider: openai, model: o1-preview } # TODO
+  # backend_engineer: { provider: openai, model: gpt-4.1 } # TODO
+  # frontend_engineer: { provider: openai, model: gpt-4.1 } # TODO
+  # devops_engineer: { provider: openai, model: gpt-4.1 } # TODO
+  # security_engineer: { provider: openai, model: o1-preview } # TODO
+  # qa_engineer: { provider: openai, model: gpt-4.1-mini } # TODO
+  # code_reviewer: { provider: openai, model: o1-preview } # TODO
+  # technical_writer: { provider: openai, model: gpt-4.1-mini } # TODO
+
+  # Placeholder so the YAML parses while every agent is commented out.
+  # Remove this line once you uncomment at least one real agent above.
+  _placeholder:
+    provider: anthropic
+    model: claude-sonnet-4-6
