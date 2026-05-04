@@ -200,7 +200,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 - [ ] **3.1** Frontend `<FakeModeBadge>` + `useEnvMode()`
 - [ ] **3.2** `integrations/storage/` (Supabase Storage + Local + Fake)
 - [ ] **3.3** `integrations/quota/` (Redis + Fake)
-- [ ] **3.4** Scaffold polish: README slug placeholder, `.env.example` whitelist, `validate_product` enforcement, `available_ports` range reservation
+- [x] **3.4** Scaffold polish: README slug placeholder, `.env.example` whitelist, `validate_product` enforcement, `available_ports` range reservation
 
 ### Phase 4 — Project close
 - [ ] Final pytest green across seed/lib/backend + mcp/noctusai

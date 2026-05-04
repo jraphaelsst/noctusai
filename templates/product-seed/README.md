@@ -7,17 +7,17 @@ Minimal reference implementation — the spine with no organs. Proves that both 
 - **Backend**: FastAPI via `create_product_app()` from `noctusai_seed` (port {{BACKEND_PORT}})
 - **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed` (port {{FRONTEND_PORT}})
 - **Build**: `createViteConfig()` from seed framework (3-line vite.config.ts)
-- **Database**: Supabase (schema: `seed`)
+- **Database**: Supabase (schema: `{{SCHEMA_NAME}}`)
 - **Auth**: SSO + direct login
 
 ## Running
 
 ```bash
 # Backend
-uvicorn app.main:app --reload --port {{BACKEND_PORT}} --app-dir products/seed/backend
+uvicorn app.main:app --reload --port {{BACKEND_PORT}} --app-dir products/{{PRODUCT_SLUG}}/backend
 
 # Frontend
-cd products/seed/frontend && npm run dev
+cd products/{{PRODUCT_SLUG}}/frontend && npm run dev
 ```
 
 ## What it proves
@@ -34,5 +34,5 @@ cd products/seed/frontend && npm run dev
 ## Tests
 
 ```bash
-cd products/seed/backend && pytest  # 6 tests
+cd products/{{PRODUCT_SLUG}}/backend && pytest  # 6 tests
 ```
