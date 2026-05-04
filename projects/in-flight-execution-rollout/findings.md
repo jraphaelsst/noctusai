@@ -45,11 +45,58 @@ _(none yet — Batch 1A dispatch pending)_
 
 ---
 
-## Pending dispatch (Batch 1A — 2 nodes)
+## Batch 1A — CLOSED 2026-05-04
 
-| # | Project slug | Worktree path | Branch | Subagent task brief |
-|---|---|---|---|---|
-| 1 | `session-review-baseline` | `../noctusai-worktrees/session-review-baseline` | `session-review-baseline` | Continue Phase 2+ (AST-first detector + narrow-read detector). Files in `mcp/noctusai/`. |
-| 2 | `personal-finance-wiring` | `../noctusai-worktrees/personal-finance-wiring` | `personal-finance-wiring` | Execute Phase 1 (Pattern absorption + known-pattern fixes from Phase 0 gap inventory). Files in `products/personal-finance/`. |
+| # | Engineer | Outcome | Commit on main |
+|---|---|---|---|
+| 1 | `session-review-baseline` | **No-op** — project was already fully closed in prior sessions (4/4 phases shipped). Engineer correctly identified + reported back. Architect slip caught. | (none — branch had no new commits) |
+| 2 | `personal-finance-wiring` | **Phase 1 ✅ shipped** — seed-seam audit (standalone mode); 4 phase_learnings logged; 3 cross-product follow-ups surfaced; 1 methodology gap surfaced. | `062853b` (rebased + FF'd to main) |
 
-After Batch 1A closes + orchestrator-merges + retrospective lands in this file → define Batch 1B from remaining nodes.
+### Engineer 2's findings (PF Phase 1) integrated by architect
+
+**Errors encountered (added):** Pre-commit hook venv resolution failure in worktrees. Hook at `scripts/pre-commit:91` looks for `$REPO_ROOT/venv/bin/python`; worktree dir has no `venv/`. First commit failed with `ModuleNotFoundError`. Recovery: `PYTHON=<main-worktree>/venv/bin/python` env override. **Methodology gap to amend** — pre-commit hook should fall through to `<main-worktree>/venv/bin/python` when invoked from a worktree (detect via `git rev-parse --git-common-dir` vs `--git-dir`).
+
+**Mistakes / slips (added):** Subagent sandbox `cd <worktree> && <cmd>` denied; `git -C <abspath>` works. Future engineer briefs: prefer absolute paths; for git, `git -C <abspath>` not `cd && git`.
+
+**Lessons learned (added):**
+- Verify-the-seed-ships-it test fired exactly as designed: Engineer 2 read seed `__init__.py` exports + caught two phantom decisions on `make_get_current_user_org` factory + AI-plumbing wrappers. ~2-min read; saved hours of integration debugging.
+- Standalone-mode reframing of master-tree sub-tasks needs explicit landing: when parent master archives mid-rollout, child sub-tasks split into 3 buckets — (a) seed change → defer-with-destination; (b) cross-product project filing → surface to architect; (c) PF-internal items → apply inline.
+
+**Interesting findings (added):**
+- **PF↔ERP wrapper drift confirmed via byte-level diff.** `_persist_indicator` and `_require_openai` are byte-for-byte identical except `schema=` arg + ERP's `@limiter.limit` decorator. **Already drifted** — N=2 is no longer "watch" tier; it's actively diverging. Recurrence rule's N=2-triage-time fires.
+- **PF↔ERP shape divergence on `get_current_user_org`.** PF returns `(user, token, org_id)` tuple with hard-403; ERP exposes `get_org_id(user, *, required=False) -> Optional[str]`. Future seed factory must accommodate both via `required=` + `missing_status=` + `missing_detail=` kwargs.
+
+**Knowledge pieces (added):**
+- **Pattern: filing phase-end proposal for cross-product follow-ups.** Single-product engineer surfacing work that affects multiple products files a phase-end proposal in their project's `proposals/` (NOT inline cross-product edits — out of their dispatch scope). Engineer 2 filed `proposals/phase-1-seed-absorption-followups.md` (198 lines) with 3 follow-up project recommendations. Architect picks up at integration time.
+
+### 3 cross-product follow-ups surfaced for Batch 1B+ planning
+
+(Independent + parallel-dispatchable per file-overlap analysis.)
+
+1. **`make-get-current-user-org-factory`** — seed gift; lands in `seed/lib/backend/noctusai_lib/api/auth.py`. Affects PF + ERP.
+2. **`ai-plumbing-seed-absorption`** — `safe_persist_indicator` + `require_credential_or_422` wrappers; affects PF + ERP.
+3. **`metas-domain-seed-absorption`** — N=3+ MUST-FORMALIZE per recurrence rule; affects PF + ERP + daily-life.
+
+### Architect slips this batch
+
+- **Architect slip 1:** dispatched session-review-baseline assuming Phases 2+ remained. Reality: all 4 shipped in prior sessions. **Methodology amendment shipped same session** (commit `0a3f982`): `KB § PATTERNS/branching-and-merging.md § 14.1 Phase-state verification before dispatch`.
+- **Architect slip 2 — clean integration validation:** Engineer 2's branch was rebased onto new origin/main (origin/main moved forward with architect's methodology amendments + architect-engineer-roles feature while engineer worked); rebase was clean (zero file overlap); FF push to main succeeded. Methodology working as designed.
+
+### Performance evaluation (architect's call to user)
+
+**Wall-clock parallelism:**
+- Engineer 1 (session-review-baseline): ~141s, no-op result.
+- Engineer 2 (personal-finance-wiring): ~527s, Phase 1 shipped.
+- **Total wall-clock parallel: ~527s** (max). Serial would have been ~668s.
+
+Modest speed gain (~21%) — but Batch 1A's MAIN VALUE was **methodology validation**, not raw speed:
+
+- ✅ Worktree mechanism worked (no checkout race).
+- ✅ Architect-merge mechanic worked (rebase + FF cleanly).
+- ✅ Engineer reports surfaced real findings (1 methodology gap + 3 cross-product follow-ups + 4 phase learnings).
+- ✅ findings.md aggregation pattern works — captures slips/lessons in a way useful for future agents.
+- ⚠ Engineer 1's no-op surfaced the phase-state-verification slip → methodology amendment shipped same session.
+
+**Recommendation for Batch 1B:** scale to **3 engineers** in single Task turn (the 3 cross-product follow-ups Engineer 2 surfaced are PERFECT — clearly disjoint by file overlap; well-scoped; user-value-aligned: PF↔ERP factory + AI-plumbing absorption + metas-domain N=3 formalization). Worktree mechanism + architect-merge mechanism are validated; 3 is reasonable next scale.
+
+**Architect awaits user direction** on Batch 1B dispatch + on whether to also act on the methodology amendment for the pre-commit-hook-in-worktree gap (small follow-up feature, deferred to Batch 1B unless user wants it sooner).
