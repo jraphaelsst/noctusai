@@ -324,6 +324,29 @@ preserved-only future-direction skips.
 - #4 `dev-observability-bot-future-direction`
 - #13 `user-context-bot-future-direction`
 
+### 5.5 Orchestrator's final decisions (2026-05-04)
+
+User resolved §7 questions on 2026-05-04. Orchestrator's overlay on the subagent's plan:
+
+- **Q1 resolved → PROMOTE `agno-dev-team-future-direction` (#3) Deferred → Active.** User: *"q1 yes, the dev team is just the project scaffold."* Status flipped in its own PROJECT.md. **NOT a dispatch target** — agno Python doesn't exist on disk yet (sibling `automations/` repo's Phase 7 is the implementation gate). Active means scheduled, not in execution. Stays out of Batch 1.
+- **Q2 resolved → DELETE `erp-schema-drift-deep-audit` (#5) + file replacement `erp-org-scoping-completion`.** User: *"delete this project, its old and i dont remember what it does. If it was something important, please file another project to solve its issue, but uptodate."* Phase 1 (security fix) shipped 2026-05-03 and is durable in git history; replacement focuses on Phase 2+ (11-table org_id audit + design decision). Replacement is filed but **NOT in Batch 1A** — still gated on user §7 design-decision (option-a per-table column vs option-b rewire-via-join).
+- **Q3 resolved → `personal-finance-wiring` (#14) PROCEEDS STANDALONE.** Parent `products-wiring-rollout` is archived; PF's scope is product-internal. Confirmed in user: *"q3 a git worktree, then we develop our own based on the git worktree work, yea?"* (the git-worktree shape becomes the dispatch mechanism for PF itself in this batch). PF goes into Batch 1A.
+- **Worktree mechanism → `git worktree add` per subagent** per `KB § PATTERNS/branching-and-merging.md § 16` (shipped 2026-05-04). Solves single-worktree contention.
+- **Batch size for first dispatch → 2-3 (user directive).** *"batch size 2-3 for now, evaluate their performance and tell me what you think."*
+
+**Batch 1A definition (orchestrator's first parallel dispatch — 2 nodes, validated for file disjointness):**
+
+| Node | Subagent scope | Worktree path | Disjoint from sibling? |
+|---|---|---|---|
+| `session-review-baseline` (#11) | `mcp/noctusai/cli.py` + new detector module under `mcp/noctusai/tools/noctus/dev/` + `mcp/noctusai/tests/test_session_review.py` (Phase 2+ AST-first detector + Phase 3+ narrow-read detector) | `../noctusai-worktrees/session-review-baseline` | YES — entire scope under `mcp/noctusai/` |
+| `personal-finance-wiring` (#14) | `products/personal-finance/backend/{routers,services,migrations}/**` + `products/personal-finance/frontend/src/{hooks,pages,types}/**` (Phase 1 — Pattern absorption + known-pattern fixes from Phase 0 gap inventory) | `../noctusai-worktrees/personal-finance-wiring` | YES — entire scope under `products/personal-finance/` |
+
+Zero file overlap between the two — clean parallel.
+
+**After Batch 1A closes (orchestrator review + merge), Batch 1B will define remaining nodes.** Coordinator master-trees (#1 + #7) and gated nodes (`erp-org-scoping-completion`, `progressive-refinement-archive`) become Batch 1B+ candidates after we validate the parallel-dispatch mechanics + worktree workflow at smaller scale.
+
+**Findings tracking:** Orchestrator initializes `projects/in-flight-execution-rollout/findings.md` per `KB § 01-PHILOSOPHY.md § Knowledge tracking — durable findings file` + `KB § PATTERNS/branching-and-merging.md § 17`. Subagent reports → orchestrator extracts slips/errors/lessons/surprises → appends to findings.md. Synthesized at orchestration close.
+
 ---
 
 ## 6. Implementation phases

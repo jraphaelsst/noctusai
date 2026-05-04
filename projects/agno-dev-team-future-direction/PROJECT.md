@@ -2,11 +2,11 @@
 
 > **This is a living document, not a rigid checklist.**
 >
-> **DRAFT — IDEA PRESERVATION ONLY.** This project is **not scheduled**. Its purpose is to capture the design surfaced during the 2026-05-03 absorption-evaluation session so the idea isn't lost. Phase planning is intentionally skeletal. Promote to active project only when the user explicitly says so.
+> **PROMOTED 2026-05-04 — design preserved; active scaffold; implementation start gated on agno-Python existence verification.** User confirmed Q1 promotion 2026-05-04: *"q1 yes, the dev team is just the project scaffold."* Status flipped from Deferred to Active. Note: the actual agno Python implementation lives in the sibling `automations/` repo and does NOT exist on disk yet (per §1 — only design docs ship; the `dev-team/` Python package gets scaffolded in sibling's Phase 7). "Active" status means: this project is no longer a side-direction stub; it's scheduled work. Implementation start awaits either (a) agno-Python materializing in the sibling, or (b) explicit greenfield-start signal from user. Until then, scope = design-keeping + planning-readiness.
 
 - **Created:** 2026-05-03
-- **Last updated:** 2026-05-03
-- **Status:** **Deferred — design captured, implementation not scheduled**
+- **Last updated:** 2026-05-04 (promoted Deferred → Active per user Q1)
+- **Status:** **Active — scaffold preserved; implementation start gated on agno-Python existence verification or greenfield-start signal**
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Related docs:** Reference design at `~/Documents/repository/NoctusAI/automations/KNOWLEDGE-BASE/CONTEXT/07-DEV-TEAM.md` (469-line spec) + companion docs in the same `KNOWLEDGE-BASE/` (`06-AGENTS.md` rewrite, `PATTERNS/ast.md`, `PATTERNS/data-protection.md`, `INSTRUCTIONS/01-AGENTS.md` (Phase 7 of that project), `INSTRUCTIONS/02-TOOLS.md` (Phase 7)). Methodology consolidation project at `~/Documents/repository/NoctusAI/automations/projects/methodology-restructure/PROJECT.md` + `AUDIT.md`.
 - **Project slug:** `agno-dev-team-future-direction` — cross-cutting / not-yet-a-product concern. Lives at `projects/<slug>/`.
