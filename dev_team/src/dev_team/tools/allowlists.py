@@ -140,8 +140,123 @@ def tools_for(name: AgentName) -> list[Callable]:
     return [_RESOLVERS[t]() for t in names if t in _RESOLVERS]
 
 
-# Filled in by B2-engineer-B. Stub for now so smoke tests run.
-_RESOLVERS: dict[str, Callable] = {}
+# Filled in by B2-engineer-B. Each entry maps a tool NAME (as it appears in
+# TOOL_ALLOWLIST values) to a zero-arg callable returning the agno-tool
+# function. The build-functions live in sibling tool modules.
+def _build_read_kb():
+    from dev_team.tools.kb import build_read_kb_tool
+
+    return build_read_kb_tool()
+
+
+def _build_read_memory():
+    from dev_team.tools.memory_tool import build_read_memory_tool
+
+    return build_read_memory_tool()
+
+
+def _build_write_memory():
+    from dev_team.tools.memory_tool import build_write_memory_tool
+
+    return build_write_memory_tool()
+
+
+def _build_delegate():
+    from dev_team.tools.delegation import build_delegate_tool
+
+    return build_delegate_tool()
+
+
+def _build_invoke_subteam():
+    from dev_team.tools.delegation import build_invoke_subteam_tool
+
+    return build_invoke_subteam_tool()
+
+
+def _build_read_files():
+    from dev_team.tools.files import build_read_files_tool
+
+    return build_read_files_tool()
+
+
+def _build_write_files():
+    from dev_team.tools.files import build_write_files_tool
+
+    return build_write_files_tool()
+
+
+def _build_edit_files():
+    from dev_team.tools.files import build_edit_files_tool
+
+    return build_edit_files_tool()
+
+
+def _build_shell():
+    from dev_team.tools.shell import build_shell_tool
+
+    return build_shell_tool()  # default empty allowlist; role wires its own
+
+
+def _build_web_search():
+    from dev_team.tools.web import build_web_search_tool
+
+    return build_web_search_tool()
+
+
+def _build_recurrence_scan():
+    from dev_team.tools.recurrence import build_recurrence_scan_tool
+
+    return build_recurrence_scan_tool()
+
+
+def _build_keeper_validate():
+    from dev_team.tools.keeper import build_keeper_validate_tool
+
+    return build_keeper_validate_tool()
+
+
+def _build_keeper_review():
+    from dev_team.tools.keeper import build_keeper_review_tool
+
+    return build_keeper_review_tool()
+
+
+def _build_ast_python():
+    from dev_team.tools.ast_tools import build_ast_python_tool
+
+    return build_ast_python_tool()
+
+
+def _build_ast_typescript():
+    from dev_team.tools.ast_tools import build_ast_typescript_tool
+
+    return build_ast_typescript_tool()
+
+
+def _build_file_proposal():
+    from dev_team.tools.proposals import build_file_proposal_tool
+
+    return build_file_proposal_tool()
+
+
+_RESOLVERS: dict[str, Callable] = {
+    "read_kb": _build_read_kb,
+    "read_memory": _build_read_memory,
+    "write_memory": _build_write_memory,
+    "delegate": _build_delegate,
+    "invoke_subteam": _build_invoke_subteam,
+    "read_files": _build_read_files,
+    "write_files": _build_write_files,
+    "edit_files": _build_edit_files,
+    "shell": _build_shell,
+    "web_search": _build_web_search,
+    "recurrence_scan": _build_recurrence_scan,
+    "keeper_validate": _build_keeper_validate,
+    "keeper_review": _build_keeper_review,
+    "ast_python": _build_ast_python,
+    "ast_typescript": _build_ast_typescript,
+    "file_proposal": _build_file_proposal,
+}
 
 
 __all__ = ["TOOL_ALLOWLIST", "tools_for"]

@@ -13,9 +13,10 @@ from __future__ import annotations
 
 def register_all(server) -> None:
     """Register every tool under the ``noctus.*`` umbrella."""
-    from . import dev
+    from . import dev, team
 
     dev.register_all(server)
+    team.register_all(server)
 
 
 __all__ = ["register_all"]
