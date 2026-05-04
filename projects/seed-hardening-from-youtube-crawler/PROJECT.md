@@ -199,7 +199,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 ### Phase 3 — Batch C (polish + propagation)
 - [ ] **3.1** Frontend `<FakeModeBadge>` + `useEnvMode()`
 - [ ] **3.2** `integrations/storage/` (Supabase Storage + Local + Fake)
-- [ ] **3.3** `integrations/quota/` (Redis + Fake)
+- [x] **3.3** `integrations/quota/` (Redis + Fake) — Engineer I, branch `sh-yt-quota`. `noctusai_lib/integrations/quota/` ships `QuotaConfig` + `QuotaCheck` value objects, `QuotaTracker` Protocol (async surface, `runtime_checkable`), `InMemoryQuotaTracker` (deque-per-key sliding window with asyncio.Lock), `RedisQuotaTracker` (ZSET sliding window via WATCH/MULTI/EXEC optimistic concurrency — switched from Lua-EVAL on discovery that `fakeredis` 2.x ships without Lua support unless `lupa` is installed), `make_quota_tracker(kind='memory'|'redis', redis_client=...)` factory. 30 new tests parametrized over both backends + YouTube-quota examples + atomicity under `asyncio.gather(...)`. 880/880 lib green.
 - [ ] **3.4** Scaffold polish: README slug placeholder, `.env.example` whitelist, `validate_product` enforcement, `available_ports` range reservation
 
 ### Phase 4 — Project close
