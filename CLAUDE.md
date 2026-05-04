@@ -93,6 +93,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - LLM bot security (sanitize / validate / rate-limit trio, confirm-then-execute, prompt-injection mitigation) → `KB § PATTERNS/llm-bot-security.md`
 - Template workspace (sibling consume-only workspace; "templates can't modify noc" rule + 3-layer defense + promotion manifest) → `KB § PATTERNS/template-workspace.md`
 - Scheduling primitive (`noctusai_lib.domain.scheduling` — engine + Conflict/Scorer/TravelLookup Protocols + defaults + wiring recipe) → `KB § PATTERNS/scheduling-seed.md`
+- Metas / goals primitive (`noctusai_lib.domain.metas` — Goal/Target/Progress/Period value objects + GoalStatus/PeriodKind enums + compute_progress / accumulate_contribution / period_bounds / proportional_target / next_status pure fns + GoalRepository Protocol; lifted from PF/ERP/daily-life N=3) → `KB § PATTERNS/metas-seed.md`
 - WhatsApp connector + chatbot framework (`noctusai_lib.integrations.whatsapp` + `noctusai_lib.domain.chatbot` + `noctusai_lib.integrations.{google_calendar,google_maps}` — WAHA parser/sender/router + Redis-backed buffer/worker/LLM-dispatcher + Calendar/Maps adapters; wiring recipe) → `KB § PATTERNS/whatsapp-chatbot-seed.md`
 - Master-tree parallel batches (multi-product orchestrator: same-shape phases across N children execute as synchronized batches; live cross-pollination via shared scratchpad; sync-gates pre/mid/post; divergent-batch carve-out) → `KB § PATTERNS/master-tree-parallel-batches.md`
 

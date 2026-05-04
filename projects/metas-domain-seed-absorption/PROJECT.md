@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ → Phase 3 in progress
+- **Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ — DONE (closed 2026-05-03)
 - **Owner / stakeholders:** joaoraphaelsst · architect (parent orchestrator)
 - **Related docs:**
   - `KB § PATTERNS/seed-lib-layout.md` (target layer = `domain/`)
@@ -213,14 +213,18 @@ new_current, completed = accumulate_contribution(target=30, current=12, incremen
 - ERP's `_calcular_meta_proporcional` had no QUARTERLY case; I added one as a natural extension (monthly * 3 * remaining_in_quarter / total_in_quarter). Rationale: ERP's project has `quinzenal/mensal/trimestral/anual` periods but proportional target only handled `diaria/semanal/mensal/anual`. The QUARTERLY extension is consistent with the ERP shape and harmless (no consumer today).
 - `accumulate_contribution`'s "crossed_threshold_pct" milestone detection is bonus value that wasn't in any product today — it's a small extension (~10 LOC) that downstream gamification / notification consumers will appreciate. Catalog as accept-with-rationale: SHIPPED-AHEAD-OF-CONSUMER, well-tested, no maintenance burden.
 
-### Phase 3 — KB integration + project close
-- [ ] Add `KB § PATTERNS/metas-seed.md` (concise: shape + wiring recipe, modeled on `scheduling-seed.md`).
-- [ ] Add INDEX.md row for the new pattern doc.
-- [ ] Add `KB § 04-SHARED-LIBRARY.md` row for `domain/metas/`.
-- [ ] Add CLAUDE.md `§ The Map → Patterns` pointer (one-liner).
-- [ ] File ONE end-of-project proposal at `./proposals/` bundling all phase-1 + phase-2 + phase-3 improvements (per project-execution.md § proposals-and-improvements).
-- [ ] Run `python scripts/verify-kb-sync.sh` (or `python mcp/noctusai/cli.py --verify-kb-sync`).
-- [ ] Final commit + push branch (branch-to-branch, NOT to main).
+### Phase 3 — KB integration + project close ✅
+- [x] Add `KB § PATTERNS/metas-seed.md` (concise: shape + wiring recipe, modeled on `scheduling-seed.md`).
+- [x] Add INDEX.md row for the new pattern doc (Layout tree + by-topic table both updated).
+- [x] Add `KB § 04-SHARED-LIBRARY.md` row for `domain/metas/`.
+- [x] Add CLAUDE.md `§ The Map → Patterns` pointer (one-liner).
+- [x] File ONE end-of-project proposal at `./proposals/` bundling all phase improvements: `claude-opus-4-7-20260503-end-of-project-bundle.md`.
+- [x] Run `bash scripts/verify-kb-sync.sh` — KB sync OK.
+- [x] Final commit + push branch (branch-to-branch, NOT to main).
+
+**Improvements:**
+- KB sync verifier passed first try, but only because pre-commit hook also stamps the seed-version + reruns the same check — meaning a broken pointer would block commit, not break verification post-hoc. Worth noting the safety net here.
+- Filed end-of-project bundle (6 improvements, all independently executable). Largest is §2.1: three product-wiring follow-up cycles. Suggested architect dispatch them as a master-tree parallel-batch (same shape, can use `KB § PATTERNS/master-tree-parallel-batches.md`).
 
 ---
 
@@ -269,3 +273,4 @@ new_current, completed = accumulate_contribution(target=30, current=12, incremen
 |---|---|---|
 | 2026-05-03 | Initial PROJECT.md drafted from `templates/PROJECT-TEMPLATE.md` after Phase 0 audit of PF / ERP / daily-life metas services. Recurrence-rule trigger: N=3 MUST FORMALIZE per `KB § PATTERNS/project-execution.md § 2.7`. Predecessor: `products/personal-finance/projects/personal-finance-wiring/proposals/phase-1-seed-absorption-followups.md § 7.3`. | claude-opus-4-7 (engineer; dispatched by architect) |
 | 2026-05-03 | Phase 1 + Phase 2 shipped in a single commit (tightly coupled — module + tests written in one pass). New `seed/lib/backend/noctusai_lib/domain/metas/` ships 5 source modules (value_objects, periods, progress, status, repository) + 1 `__init__.py` re-export barrel. New `seed/lib/backend/tests/domain/metas/` ships 5 test files = 111 tests total. Full seed-lib pytest: 638 passed (was 527 baseline). Domain `__init__.py` doc-block updated to list `metas/` as active occupant. | claude-opus-4-7 |
+| 2026-05-03 | Phase 3 — KB integration + project close. New `KB § PATTERNS/metas-seed.md` (wiring recipe + status mapping). INDEX.md Layout tree + by-topic table updated. `KB § 04-SHARED-LIBRARY.md` `domain/metas/` row added. CLAUDE.md map pointer added. End-of-project proposal filed: `proposals/claude-opus-4-7-20260503-end-of-project-bundle.md` (6 improvements; largest is the three product-wiring follow-up cycles). KB sync verified clean. Project closed. | claude-opus-4-7 |
