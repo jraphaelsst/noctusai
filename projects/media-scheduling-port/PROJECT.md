@@ -2,7 +2,7 @@
 
 - **Created:** 2026-05-03 (original) / 2026-05-04 (resumed in dedicated worktree)
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ + Phase 0.5 ✅ → Phase 1 ready (awaiting user "continue")
+- **Status:** Phase 0 ✅ + Phase 0.5 ✅ + Phase 5 ✅ (parallel branch `media-scheduling-phase-5-frontend`) → Phase 1 ready (awaiting user "continue")
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · claude-opus-4-7
 - **Worktree:** `/Users/rapha/Documents/repository/NoctusAI/noctusai-worktrees/media-scheduling-port-resume/` (per worktree-per-engineer rule)
 - **Branch:** `media-scheduling-port-resume` (off `origin/main` at `062853b`)
@@ -182,13 +182,21 @@ products/media-scheduling/
 - [ ] Calendar writer via seed `google_calendar`.
 - [ ] Travel-time fetch via seed `google_maps` (cached into `routes` table).
 
-### Phase 5 — Frontend: thin admin via `createProductApp()`
+### Phase 5 ✅ — Frontend: thin admin via `createProductApp()`
 
-- [ ] `pages/AuthorizedUsersPage.tsx` — CRUD on `authorized_users`.
-- [ ] `pages/AppointmentsPage.tsx` — list + filter.
-- [ ] `pages/OAuthStatusPage.tsx` — Google Calendar OAuth status + reconnect.
-- [ ] All hooks in dedicated files.
-- [ ] Wire `authProvider=seed_sso`.
+- [x] `pages/AuthorizedUsersPage.tsx` — CRUD on `authorized_users` (WhatsApp-authorized phones, NOT SSO users).
+- [x] `pages/AppointmentsPage.tsx` — list + filter (date range, status, condominium).
+- [x] `pages/OAuthStatusPage.tsx` — Google Calendar OAuth status + reconnect.
+- [x] All hooks in dedicated files (`useAuthorizedUsers.ts`, `useAppointments.ts`, `useOAuthStatus.ts`).
+- [x] Wired into `createProductApp({routes,...})` + `NAV_GROUPS` + `NAV_FALLBACK` (icons: `UserCheck`, `Calendar`, `Link2`).
+- [x] `npx vite build` green — 1772 modules transformed, all 3 lazy-loaded chunks emitted (AuthorizedUsersPage 10.33 kB, AppointmentsPage 7.29 kB, OAuthStatusPage 4.67 kB).
+- Note: `authProvider=seed_sso` already wired upstream by `createProductApp` defaults via `infra.appConfig` — no Phase-5 change needed; `useAuthStore()` gates queries on the user being signed in.
+
+**Improvements:**
+- API endpoint paths in hooks are placeholders (`/api/authorized-users`, `/api/appointments`, `/api/condominiums`, `/api/oauth/google/status`, `/oauth/google/init`) marked `// TODO Phase 3 — confirm endpoint path`. Phase 3 backend engineer must align to these OR the hooks get a follow-up sweep.
+- `seed/lib/frontend` had no `node_modules` — every product build failed at rollup-resolving `clsx` from `seed/lib/frontend/src/utils.ts`. Workaround: ran `npm install` in `seed/lib/frontend/` so peer deps (clsx / tailwind-merge / etc.) resolve. **Better fix (defer to Phase 7 / shared-library follow-up project):** the shared `vite.config.factory.ts` should add `clsx`, `tailwind-merge`, `class-variance-authority` to `FRAMEWORK_DEPS` (so they `dedupe` to product node_modules) — currently only react/react-dom/router/query/zustand/sonner/lucide/radix/supabase are listed. Same surface as the worktree-venv-isolation Phase 0.5 finding (a shared-config gap that hits every product).
+- `package.json` name field is the literal `"seed-frontend"` (carried over from scaffold); naming is global to all scaffolded products. Defer to Phase 7 cleanup or future `scaffold_product` improvement.
+- AppointmentsPage filter for "condominium" relies on `useCondominiumOptions()` hook (also TODO-Phase 3). Could be inlined as a free-text filter as a fallback if the dropdown endpoint isn't ready by Phase 6 verification.
 
 ### Phase 6 — Test port + green-bar verification
 
@@ -277,3 +285,4 @@ git commit -m "phase(media-scheduling-port-resume): Phase 0.5 ✅ — seed Fake+
 | 2026-05-03 | Initial plan drafted (original session, lost in collision) | claude-opus-4-7 |
 | 2026-05-04 | Re-created in dedicated worktree `noctusai-worktrees/media-scheduling-port-resume/` post-collision; Phase 0 results preserved; Phase 0.5 in re-execution; per-phase commit cadence adopted as collision learning; new Q5 added (real-data migration during Phase 2) | claude-opus-4-7 |
 | 2026-05-04 | Phase 0.5 ✅ — G1-G4 backfill landed (commit `2defcfe`, 88 tests green). Improvements: (a) retrofit @runtime_checkable on RedisBufferClient — defer follow-up sweep for any other lacking-decorator seed Protocols; (b) worktree-venv-isolation gap surfaced (hook fallback to system python3 in fresh worktree) — defer follow-up project. Phase learnings logged via `noctus.dev.phase_learning_log` (3 entries: technical / methodology / process). | claude-opus-4-7 |
+| 2026-05-04 | Phase 5 ✅ — Frontend thin admin landed in dedicated worktree `media-scheduling-phase-5-frontend` (branched off `media-scheduling-port-resume`). 3 pages + 3 hooks + App.tsx wiring. `npx vite build` green (1772 modules, AuthorizedUsersPage 10.33 kB / AppointmentsPage 7.29 kB / OAuthStatusPage 4.67 kB lazy chunks). Hooks use placeholder API paths flagged `// TODO Phase 3`. Improvements surfaced: (a) `vite.config.factory.ts` missing `clsx`/`tailwind-merge`/`class-variance-authority` in `FRAMEWORK_DEPS` — shared-config gap, same shape as worktree-venv-isolation; defer to Phase 7 / follow-up project; (b) scaffold-generated `package.json` name is literal `"seed-frontend"`; (c) `useCondominiumOptions()` is its own hook — Phase 3 must wire `/api/condominiums` or the filter falls back to free-text. | claude-opus-4-7 (engineer B) |
