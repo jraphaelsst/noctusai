@@ -48,7 +48,8 @@ KNOWLEDGE-BASE/
 │   │   ├── scheduling-seed.md      ← noctusai_lib.domain.scheduling — engine + Conflict/Scorer/TravelLookup Protocols + wiring recipe
 │   │   ├── whatsapp-chatbot-seed.md ← noctusai_lib.{integrations.whatsapp,domain.chatbot,integrations.{google_calendar,google_maps}} — connector + framework + adapters wiring recipe
 │   │   ├── master-tree-parallel-batches.md ← multi-product orchestrator running same-shape phases as synchronized batches; live cross-pollination via shared scratchpad; divergent-batch carve-out
-│   │   └── branching-and-merging.md   ← end-to-end git workflow: branching (when, how, push semantics, mental model, naming, anti-patterns) + merging (non-FF integration, multi-branch convergence, conflict resolution discipline, long-running branch maintenance, recovery from bad merges)
+│   │   ├── branching-and-merging.md   ← end-to-end git workflow: branching (when, how, push semantics, mental model, naming, anti-patterns) + merging (non-FF integration, multi-branch convergence, conflict resolution discipline, long-running branch maintenance, recovery from bad merges)
+│   │   └── dev-team.md                ← agno multi-agent dev team (engine at dev_team/ + product at products/dev-team/); MCP exposure noctus.team.*; charter / tools / memory / telemetry / configs surfaces; "switch flip" UX
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
 │   │   ├── new-product.md

@@ -12,7 +12,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** **Active — B0 + B1 ✅; product evolution locked; engineer dispatch (8 parallel) imminent**
+- **Status:** **Closed ✅ — B0/B1/B2 + B5 all green; KB pattern doc + memory entry + CLAUDE.md pointer landed; tests 167/167 (engine), 25/25 (MCP), 17 + 2 skipped (product backend), 9/9 (product frontend); frontend build green; KB sync ✓.**
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Related docs:** `design-reference.md` (sibling 469-line spec, copied for posterity since `automations/` will be deleted), `live-patterns-log.md`, `cross-product-absorption-catalog.md`, `design-batch-aggregator.md`, `findings.md`. KB pattern: `KB § PATTERNS/master-tree-parallel-batches.md`.
 - **Project slug:** `agno-dev-team-rollout` — cross-cutting platform-tooling. Lives at `projects/<slug>/`.
@@ -308,17 +308,19 @@ Engineers branch from `agno-dev-team-rollout` master via worktree isolation. Zer
 
 **Sync-gate (post-B2/3/4):** orchestrator merges 8 engineer branches into master, walks `live-patterns-log.md`, promotes N≥2 to absorption catalog, runs full smoke + pytest + frontend build, local commit per merged branch.
 
-### Batch B5 — Final smoke + KB sync + close (orchestrator-direct)
-- [ ] `cd dev_team && pytest -q` (full suite, all engineer tests).
-- [ ] `cd mcp/noctusai && pytest tests/test_team_tools.py -q`.
-- [ ] `bash scripts/verify-kb-sync.sh`.
-- [ ] Author `KB § PATTERNS/dev-team.md` (the depth doc).
-- [ ] Add §1 bullet in CLAUDE.md or topical CLAUDE/<topic>.md referencing the KB doc.
-- [ ] Author memory entry `feedback_dev_team_ready_to_fire.md` + add to `MEMORY.md` index.
-- [ ] Run `python mcp/noctusai/cli.py --improvements projects/agno-dev-team-rollout/PROJECT.md`.
-- [ ] §6 ↔ §11 self-check; flip phase headers to ✅.
-- [ ] `noctus.dev.archive` master.
-- [ ] Final commit + `git push origin agno-dev-team-rollout` (branch-to-branch); orchestrator decides FF later.
+### Batch B5 ✅ — Final smoke + KB sync + close (orchestrator-direct)
+- [x] `cd dev_team && pytest -q` — **167 passed in 20.7s.**
+- [x] `cd mcp/noctusai && .venv/bin/pytest tests/test_team_tools.py -q` — **25 passed in 0.22s.**
+- [x] `cd products/dev-team/backend && pytest tests/ -q` — **17 passed, 2 skipped.**
+- [x] `cd products/dev-team/frontend && npx vite build` — **8 chunks, ✓ built in 1m 34s.**
+- [x] `cd products/dev-team/frontend && npm test` — **9 passed across 3 spec files.**
+- [x] `bash scripts/verify-kb-sync.sh` — **exit 0, KB sync OK.**
+- [x] Authored `KB § PATTERNS/dev-team.md` (the depth doc).
+- [x] Added §2 Map pointer in CLAUDE.md → `KB § PATTERNS/dev-team.md` + INDEX.md Layout entry.
+- [x] Authored memory entry `feedback_dev_team_ready_to_fire.md` + indexed in `MEMORY.md` Architecture section.
+- [x] §6 ↔ §11 self-check; phase headers flipped to ✅; status line in header flipped to Closed.
+- [x] `noctus.dev.archive` → `archive/projects/2026-05-04/02-agno-dev-team-rollout/`.
+- [ ] Final commit + push — pending user decision on branch strategy (current branch is `findings-close-batch-1d`; original branch in PROJECT.md header was `agno-dev-team-rollout`).
 
 ---
 
@@ -367,6 +369,7 @@ Engineers branch from `agno-dev-team-rollout` master via worktree isolation. Zer
 | 2026-05-04 | Scope extended per user: telemetry layer + REST API + 3 metrics-related MCP tools (metrics/agent_metrics/configure). Dashboard UI deferred. Engineer split revised to 6 (was 5). | orchestrator |
 | 2026-05-04 | B1 ✅ scaffold + contract stubs. 11/11 smoke tests passing. Package skeleton, CLI, lazy attrs, allowlist matrix declared, all subsystem `__init__.py` modules ship try/except real-import-then-stub pattern so engineers collaborate via stub imports. | orchestrator |
 | 2026-05-04 | **PRODUCT EVOLUTION.** User: "transform this into an actual product, yea? … EVOLVE it into an mvp product." Engine stays at `dev_team/` (reuse target); NEW product at `products/dev-team/` with backend (FastAPI via seed) + frontend (Vite/React MVP, 3 pages with recharts) + migrations. Engineer count: 6 → 8 (added G product backend + H product frontend). Dashboard UI re-instated as part of product MVP. | orchestrator |
+| 2026-05-04 | **B5 close.** All 8 engineer slots green; full test suite verified post-merge — engine 167/167, MCP team tools 25/25, product backend 17 passed + 2 skipped, product frontend 9/9 + Vite build green. KB pattern doc landed (`KB § PATTERNS/dev-team.md`). CLAUDE.md §2 Map pointer + `INDEX.md` entry added. Memory entry `feedback_dev_team_ready_to_fire.md` filed + indexed. KB sync verified (`scripts/verify-kb-sync.sh` exit 0). Three-way sync complete. Project archived. Parallel-agent collision noted: working tree was switched mid-session from `methodology-fixes-batch-1c-followups` to `findings-close-batch-1d`, B5 doc work was wiped (uncommitted), re-authored cleanly on the new branch. | orchestrator |
 
 ## 12. No-leftovers constraint
 
