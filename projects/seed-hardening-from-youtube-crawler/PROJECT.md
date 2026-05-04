@@ -184,7 +184,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 ### Phase 2 — Batch B (structural lifts)
 - [ ] **2.1** Generic worker — lift `domain/chatbot/worker.py` to `domain/jobs/worker.py`
 - [ ] **2.2** Jobs primitive — `domain/jobs/` (Job + repo + state machine)
-- [ ] **2.3** OAuth router — `security/oauth/` + seed-side `oauth_router(*providers)`
+- [x] **2.3** OAuth router — `security/oauth/` + seed-side `oauth_router(*providers)`
 - [ ] **2.4** Health endpoints — `/_health` + `/_ready` baked into `create_product_app`
 
 ### Phase 3 — Batch C (polish + propagation)

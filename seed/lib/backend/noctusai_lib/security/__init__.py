@@ -1,8 +1,10 @@
 """Security primitives shared across NoctusAI products.
 
-Currently exposes webhook signature verification (`webhook_signatures`)
-and at-rest secret encryption (`encrypted_tokens`). Future additions
-(request rate limiters, secret-redaction helpers) live here too.
+Currently exposes webhook signature verification (`webhook_signatures`),
+at-rest secret encryption (`encrypted_tokens`), and the generic OAuth
+callback infrastructure (`oauth` — Protocol + Google + Fake + factory
++ `oauth_router`). Future additions (request rate limiters,
+secret-redaction helpers) live here too.
 """
 
 from noctusai_lib.security.encrypted_tokens import (
@@ -25,6 +27,7 @@ from noctusai_lib.security.webhook_signatures import (
     verify_svix_signature,
     webhook_endpoint,
 )
+from noctusai_lib.security import oauth
 
 __all__ = [
     "DEFAULT_MAX_AGE_SECONDS",
@@ -37,6 +40,7 @@ __all__ = [
     "decrypt",
     "encrypt",
     "generate_key",
+    "oauth",
     "rotate_key",
     "static_secret_resolver",
     "verify_hmac_sha256",
