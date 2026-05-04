@@ -251,7 +251,7 @@ purge_shadowing_editable_finders(_LIB)
 ### Phase 5 — KB pointer + project close ✅
 - [x] Added entry in `KB § PATTERNS/testing.md § Parallel-worktree shadow purge` documenting helper + bootstrap pattern
 - [x] Filed bundled proposal at `projects/seed-shadow-purge-helper-lift/proposals/claude-opus-4-7-20260504-seed-shadow-purge-helper-lift-bundle.md`
-- [ ] Final-commit + branch-push (next)
+- [x] Final-commit + branch-push — landed in commit `f46f76a` on origin/main 2026-05-04
 
 **Improvements:** none identified — project-close mechanics.
 
