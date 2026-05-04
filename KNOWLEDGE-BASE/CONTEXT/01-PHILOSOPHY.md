@@ -299,6 +299,7 @@ The output of chunk identification is one of:
 - **Forcing parallelization when chunks genuinely depend.** If chunk B needs chunk A's output, parallelizing surfaces as merge conflicts or B-built-on-stale-A. Cheaper to serialize than to hand-merge later.
 - **Skipping chunk identification.** Dispatching subagents on overlapping file sets pre-emptively guarantees merge conflicts. Spend the 30 seconds to map file sets first.
 - **Treating multi-branch merge as a problem.** It's the methodology working. Per `§ 10.3`, branches queue at merge — auto-merge handles disjoint, manual resolution handles overlap. Both paths are documented.
+- **Delegating the orchestration itself to a subagent.** Caught 2026-05-03 — the orchestrator dispatched a subagent to do the analysis + batching + planning for an in-flight portfolio, then waited passively. That collapses the head/worker distinction: the subagent only sees its brief, not the session-spanning conversation; the orchestrator's broad-context advantage IS the planning value. **Subagents are EXECUTORS of focused chunks; they are never PLANNERS of orchestration.** The head plans + dispatches; subagents execute the chunks the head defined. Hand-off rule: if you're tempted to dispatch ONE subagent to "figure out how to parallelize this," STOP — that's the orchestrator's job. Read the files yourself; compute the batches yourself; THEN dispatch N parallel executors with focused briefs.
 
 **Companion rules:**
 
