@@ -1,12 +1,13 @@
-# Branching (and Merging — TBD) Methodology
+# Branching and Merging Methodology
 
-> **What this is.** The git-workflow methodology for NoctusAI when you can't push your work directly to `origin/main` — typically because parallel-agent commits sit in your unpushed range. Branching is the **structural solution** to authorship-violation pressure (per `feedback_commit_only_own_work.md` / `KB § PATTERNS/project-execution.md § 2.10`). It is also the workflow shape we'll standardize for **parallel projects under seed-workspace**, multi-session work, speculative experiments, and PR-shape review flows.
+> **What this is.** The end-to-end git-workflow methodology for NoctusAI. Two halves shipped 2026-05-03:
 >
-> **What this replaces.** Ad-hoc decisions like "should I just `git push --force` to bypass the parallel-agent commits?" or "should I revert their commits locally so I can push mine?" Both are destructive shortcuts. Branching is the non-destructive answer.
+> - **Branching** (§§1-9, 11-14) — the structural solution to authorship-violation pressure. When parallel-agent commits sit in your unpushed range, you cannot push from local main without sweeping up their work. Branch from `origin/main`, isolate your commits, push the branch (or fast-forward to main when ready). Also the workflow shape for parallel projects under seed-workspace, multi-session work, speculative experiments, and PR-shape review.
+> - **Merging** (§10) — the companion methodology for what happens when fast-forward push fails (origin/main moved past your branch base), when N branches converge on main, when same-line conflicts need resolution, when a branch accumulates integration debt, and when a merge goes wrong. Builds on `git merge` as the safety net (`KB § 01-PHILOSOPHY.md § Safety nets capture failures`).
 >
-> **What this does NOT cover.** The **merging methodology** for non-fast-forward integration (when `origin/main` has moved past your branch base — e.g. multiple agents pushing concurrently, or your branch sat unpushed long enough that main moved). That's a separate methodology pending. Tracked as a wish in agent memory; this doc gets a §10 follow-up section once the merging half lands.
+> **What this replaces.** Ad-hoc decisions like "should I just `git push --force` to bypass the parallel-agent commits?", "how do I rescue this bad merge?", "which branch goes first?" — all of which are destructive or unanswered without the methodology. Branching + merging together = a complete answer to the multi-agent git-workflow question.
 >
-> **Cross-references.** `KB § PATTERNS/project-execution.md § 2.10 Commit + push authorship discipline` (the rule branching solves), `feedback_commit_only_own_work.md`, `feedback_branching_methodology.md` (memory pointer back to this doc), `KB § PATTERNS/master-tree-parallel-batches.md` (parallel-agent collision context), `feedback_parallel_agent_collision_protocol.md`.
+> **Cross-references.** `KB § PATTERNS/project-execution.md § 2.10 Commit + push authorship discipline` (the rule branching solves), `KB § 01-PHILOSOPHY.md § Safety nets capture failures` (foundational principle that anchors §10 Merging), `feedback_commit_only_own_work.md`, `feedback_branching_methodology.md`, `feedback_merging_methodology.md`, `KB § PATTERNS/master-tree-parallel-batches.md` (parallel-agent collision context), `feedback_parallel_agent_collision_protocol.md`.
 
 ---
 

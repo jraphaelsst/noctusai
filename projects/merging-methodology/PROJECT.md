@@ -195,21 +195,23 @@ When a merge goes wrong:
 
 **Improvements:** failure-mode recovery table — wasn't planned as table; emerged because there are distinct failure modes each with different recovery operations, and a table compresses lookup. **applied inline.** Pre-mention "humans are the meta-safety-net" — strengthens the safety-nets-become-learnings principle by extending it from `git merge` to humans-as-safety-net-for-methodology. **applied inline.** Final anti-pattern "recovering silently" — ties recovery back to the foundational principle (failures captured become learnings; silent recovery destroys the learning). **applied inline.**
 
-### Phase 7 — Project close
+### Phase 7 — Project close ⏳ (close steps + orchestrator merge remaining)
 
-- [ ] Decide: split into `KB § PATTERNS/merging.md` (if >200 lines) or keep inline in `branching-and-merging.md §10`. Per §5.2.
-- [ ] Update `KB § INDEX.md` if a new top-level pattern doc was created.
-- [ ] Update `CLAUDE/projects.md` (amend branching bullet OR add merging bullet).
-- [ ] Update `feedback_branching_methodology.md` to remove "merging methodology TBD" — replace with pointer to live merging doc.
-- [ ] Add `feedback_merging_methodology.md`.
-- [ ] Delete `wish_develop_merging_methodology.md` + remove from MEMORY.md.
-- [ ] Update §10 in `KB § PATTERNS/branching-and-merging.md`: remove TBD framing; either inline content or pointer to sibling doc.
-- [ ] Final verification: `verify-kb-sync.sh` green, `update-kb-counts.py --check` green, no broken pointers anywhere.
+- [x] Decide: split into `KB § PATTERNS/merging.md` (if >200 lines) or keep inline in `branching-and-merging.md §10`. Per §5.2. **Decision: KEEP INLINE.** §10 landed at 310 lines (above the 200-line threshold), but user directive 2026-05-03 was to "merge branching with merging methodologies" — explicitly wants the combined doc. Inline preserves the "branching and merging" cohesion the user asked for. Doc total is 648 lines, reasonable for comprehensive workflow methodology.
+- [x] Update `KB § INDEX.md` — Layout tree description + table description both updated to remove "TBD" framing and list all 5 merging sub-areas.
+- [x] Update `CLAUDE/projects.md` — branching bullet amended (replaced "Merging methodology ... is TBD" with "When fast-forward push fails, the merging methodology applies — rebase OR merge ... file-type heuristics ... reflog + ORIG_HEAD + revert-m-1").
+- [x] Update `feedback_branching_methodology.md` — removed "TBD" framing; added pointer to `feedback_merging_methodology.md` and the foundational principle.
+- [x] Add `feedback_merging_methodology.md` — full ruleset memory entry covering all 5 sub-areas, foundational anchor, anti-patterns, companion rules.
+- [x] Delete `wish_develop_merging_methodology.md` + remove from MEMORY.md (now reads `_(none currently — wish retired 2026-05-03)_`).
+- [x] Update doc title in `KB § PATTERNS/branching-and-merging.md`: "Branching (and Merging — TBD) Methodology" → "Branching and Merging Methodology". Intro paragraph rewritten to describe both halves shipped 2026-05-03.
+- [x] Final verification: `verify-kb-sync.sh` green, `update-kb-counts.py --check` green, no broken pointers.
 - [ ] `git rm -r projects/merging-methodology/`.
 - [ ] Final commit: `chore(projects): merging-methodology close — folder delete (project close) [merging-methodology close]`.
-- [ ] Push branch (if not already): `git push -u origin merging-methodology`.
+- [x] Push branch (already done after Phase 1): `git push -u origin merging-methodology` ✅ at 51c53c1; subsequent phase commits land on origin/merging-methodology.
 - [ ] **Orchestrator** (CLI agent) takes fresh-eyes pass per `KB § PATTERNS/branching-and-merging.md § 12`.
 - [ ] Orchestrator fast-forward push: `git push origin merging-methodology:main`.
+
+**Improvements:** none identified — Phase 7 was clean cleanup of TBD framing + memory three-way sync. The foundational methodology principles (safety nets, three-way sync, branch-per-project) all carried through cleanly. The inline-vs-split decision deferred from §5.2 resolved itself naturally given the user's "merge branching with merging" directive arriving mid-execution.
 
 ---
 

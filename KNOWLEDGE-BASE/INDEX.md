@@ -46,7 +46,7 @@ KNOWLEDGE-BASE/
 │   │   ├── scheduling-seed.md      ← noctusai_lib.domain.scheduling — engine + Conflict/Scorer/TravelLookup Protocols + wiring recipe
 │   │   ├── whatsapp-chatbot-seed.md ← noctusai_lib.{integrations.whatsapp,domain.chatbot,integrations.{google_calendar,google_maps}} — connector + framework + adapters wiring recipe
 │   │   ├── master-tree-parallel-batches.md ← multi-product orchestrator running same-shape phases as synchronized batches; live cross-pollination via shared scratchpad; divergent-batch carve-out
-│   │   └── branching-and-merging.md   ← branching workflow (when, how, push semantics, mental model, naming, anti-patterns); merging methodology TBD per agent-memory wish
+│   │   └── branching-and-merging.md   ← end-to-end git workflow: branching (when, how, push semantics, mental model, naming, anti-patterns) + merging (non-FF integration, multi-branch convergence, conflict resolution discipline, long-running branch maintenance, recovery from bad merges)
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
 │   │   ├── new-product.md
@@ -119,7 +119,7 @@ KNOWLEDGE-BASE/
 | Scheduling primitive (`noctusai_lib.domain.scheduling`: engine + `TravelLookup`/`Conflict`/`Scorer` Protocols + `ZeroTravelLookup`/`DefaultConflict`/`DefaultScorer` defaults; wiring recipe; what stays consumer-side) | `CONTEXT/PATTERNS/scheduling-seed.md` |
 | WhatsApp connector + chatbot framework (`noctusai_lib.integrations.whatsapp` WAHA parser/sender/router + `noctusai_lib.domain.chatbot` buffer/worker/dispatcher/summary + `noctusai_lib.integrations.{google_calendar,google_maps}` adapters; wiring recipe; debounce-race documented; what stays consumer-side) | `CONTEXT/PATTERNS/whatsapp-chatbot-seed.md` |
 | Master-tree parallel batches (multi-product orchestrator: same-shape phases across N children execute as synchronized batches; live patterns log + absorption catalog as shared scratchpad; sync-gates pre/mid/post; divergent-batch carve-out; agent collaboration mechanics) | `CONTEXT/PATTERNS/master-tree-parallel-batches.md` |
-| Branching (and merging — TBD) methodology (when to branch, how to branch from `origin/main`, push semantics — branch-to-branch + branch-tip-to-main fast-forward, naming convention, mental-model upgrade, anti-patterns; merging methodology pending — wish tracked in agent memory) | `CONTEXT/PATTERNS/branching-and-merging.md` |
+| Branching and merging methodology — end-to-end git workflow (when to branch, how to branch from `origin/main`, push semantics — branch-to-branch + branch-tip-to-main fast-forward, naming convention, mental-model upgrade, anti-patterns; non-FF integration, multi-branch convergence, conflict resolution discipline, long-running branch maintenance, recovery from bad merges) | `CONTEXT/PATTERNS/branching-and-merging.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
