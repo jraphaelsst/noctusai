@@ -416,6 +416,55 @@ Both clauses now in the doc. The intent of both branches preserved. This is the 
 - **Resolving without reading the base.** Without the base, ours-vs-theirs is two competing claims. With the base, you see the evolution and can produce the unified path.
 - **Resolving silently and committing the merge without flagging it.** Per `feedback_no_silent_errors.md`, conflict resolutions should be visible in the commit message — quote the file + the resolution strategy ("KB-doc concat" / "test union" / "manual unified" / "preferred theirs after reading base"). Future-you (and other agents) can audit.
 
+### 10.5 Long-running branch maintenance
+
+A branch that sits unmerged for a while accumulates **integration debt** — the gap between the branch's content and main grows; rebases get harder; conflicts get more likely; the eventual merge gets riskier. The methodology for keeping long-running branches healthy.
+
+**Rebase cadence.** Two reasonable defaults:
+
+- **Daily** — at the start of each session, before doing new work on the branch, run `git fetch origin + git rebase origin/main`. Catches small divergence cheaply; spreads conflict resolution across many small steps instead of one big one at merge time.
+- **On-each-main-push** — when notified that main has advanced (parallel agent pushed, or you watch a notification feed), rebase opportunistically. Higher-frequency than daily; lower discipline cost than waiting until merge time.
+
+For most branches in this repo: **daily is the default**. Single-session features rarely need to outlive a session, so the daily rebase happens before the eventual merge naturally. Multi-session work + parallel-agent activity warrants the daily cadence to amortize integration cost.
+
+**Integration debt thresholds.** When does a branch become more cost than benefit?
+
+| Debt signal | Action |
+|---|---|
+| Branch is >7 days old | Mandatory rebase + assess: is the work still relevant given what's landed on main? |
+| Branch has >50 commits | Consider squashing (next sub-section) to make the eventual merge cleaner. |
+| Rebase produces >5 conflicts in one pass | Pause work; surface to user; consider whether the branch should be rebased or whether main has moved in a direction that invalidates the branch's premise. |
+| Branch is on a methodology that has since been amended | Read the new methodology; update the branch's plan to match; potentially abandon if the methodology change made the branch's approach wrong. |
+| Branch's feature/project file references a closed parent project | Re-base the work conceptually — the parent's outputs may be on main now and the branch can simplify. |
+
+**Squashing for cleanup.** Long branches with many small "wip" / "fix typo" / "tweak" commits can be squashed before merge to keep main's history clean:
+
+```bash
+# Interactive rebase to squash commits
+git rebase -i origin/main
+# Mark commits with "s" (squash) or "f" (fixup) in the editor
+# Save → git replays with the squashes applied
+```
+
+When to squash: many micro-commits that don't represent meaningful units of work. Don't squash:
+- Distinct phase commits (each phase is a meaningful unit; squashing destroys the audit trail).
+- Commits that survived in §11 change logs as historical references.
+- Commits that other agents may have rebased their work onto (squashing rewrites history; their commits would diverge).
+
+**When to abandon a branch.** Sometimes the work on a branch becomes obsolete — main moved in a direction that makes the branch's approach wrong, or the user changed direction, or the methodology changed. Abandon ≠ delete:
+
+1. **Read the branch's content** — even if the approach is wrong, the analysis often has lasting value. Capture in `feedback_*.md` memory or as a retrospective note in the project's PROJECT.md §11.
+2. **Document the abandonment** in the project's §11 with reason ("methodology X superseded the approach", "user changed direction at session 4", etc.).
+3. **Delete the local branch** — `git branch -D <branch-name>`.
+4. **Optionally delete the remote branch** — `git push origin --delete <branch-name>`. Or leave it with a `-abandoned` suffix as audit history.
+
+**Anti-patterns:**
+
+- **Letting branches sit indefinitely.** "I'll rebase it eventually" — eventually never comes. Set a calendar item or use the daily-rebase cadence.
+- **Squashing distinct phase commits to "clean up history."** Destroys the audit trail. Phases are meaningful units; preserve them.
+- **Abandoning silently.** A deleted branch with no §11 entry is lost work + lost reasoning. Document why before deleting.
+- **Treating divergence as failure.** Long-running branches diverge from main by design — the question is whether the divergence is being maintained (rebasing) or accumulating (rotting). Maintenance is the methodology.
+
 ---
 
 ## 11. Branch-per-project workflow

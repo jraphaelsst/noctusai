@@ -170,16 +170,17 @@ The hardest section. Same-line conflicts; manual resolution.
 
 **Improvements:** added file-type heuristic table — wasn't planned as a table but emerged as the right shape for "different file types → different resolution defaults." **applied inline.** Also added the "read the base, not just ours and theirs" emphasis with the `git show :1:<file>` recipe — surfaced while writing because the base is invisible by default and ignoring it is the most common resolution mistake. **applied inline.** Worked example for KB-doc concat — the canonical pattern needed a concrete example; abstract rules without an example are too easy to misapply. **applied inline.**
 
-### Phase 5 — Long-running branch maintenance
+### Phase 5 — Long-running branch maintenance ✅
 
-When a branch sits unpushed-to-main for >1 day:
+When a branch sits unmerged for a while:
 
-- [ ] Document rebase cadence: daily? on-each-main-push? user-triggered?
-- [ ] Integration debt thresholds: when does a branch become more cost than benefit?
-- [ ] When to abandon a branch and re-do.
-- [ ] Commit: `docs(kb): merging methodology §W — long-running branch maintenance [merging-methodology Phase 5]`.
+- [x] Document rebase cadence: daily (default) vs on-each-main-push. Landed.
+- [x] Integration debt thresholds (table format): >7 days, >50 commits, >5 conflicts/pass, methodology-amended, parent-project-closed. Landed with action per signal.
+- [x] When to abandon a branch and re-do — 4-step protocol (read content, document in §11, delete local, optionally delete remote with -abandoned suffix). Landed.
+- [x] Bonus: squashing for cleanup — when to squash, when NOT to squash. Landed.
+- [x] Commit: `docs(kb): merging methodology §10.5 — long-running branch maintenance [merging-methodology Phase 5]`.
 
-**Improvements:** _(captured live during Phase 5)_
+**Improvements:** integration-debt threshold table — wasn't planned as table form; emerged because there are 5 distinct signals each with their own action. **applied inline.** Squashing-for-cleanup section — wasn't in the original phase plan; surfaced because long-running branches often have micro-commit clutter, and the methodology should specify when to squash vs preserve. **applied inline.**
 
 ### Phase 6 — Recovery from bad merges
 
