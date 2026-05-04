@@ -39,6 +39,7 @@ from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
 
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
+from noctusai_seed.health import HealthEndpointConfig, mount_health_endpoints
 from noctusai_seed.llm_defaults import default_llm_config
 from noctusai_seed.routers import build_standard_routers
 
@@ -58,6 +59,7 @@ def create_product_app(
     *,
     standard_routers: Sequence[str] = (),
     consent_features: Optional[str] = None,
+    health_config: Optional[HealthEndpointConfig] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -103,6 +105,34 @@ def create_product_app(
             continues — the catalog stays empty, which is the same posture
             as not setting the kwarg at all (fail-closed at request time
             via `is_granted` resolution rule 4: unknown feature → False).
+        health_config: Optional `HealthEndpointConfig` declaring liveness +
+            readiness hooks for the seed-baked `/_health` and `/_ready`
+            endpoints. Default `None` → empty config → both endpoints exist
+            and always return `{ok: true, checks: []}` (the polite seed
+            default). Products opt-in to richer probes by passing a
+            populated config::
+
+                from noctusai_seed import HealthEndpointConfig
+
+                async def db_ping() -> tuple[bool, str | None]:
+                    try:
+                        db.get_admin_client().table("notifications") \
+                            .select("id").limit(1).execute()
+                        return (True, None)
+                    except Exception as exc:
+                        return (False, str(exc))
+
+                app = create_product_app(
+                    ...,
+                    health_config=HealthEndpointConfig(
+                        readiness_hooks=[db_ping],
+                    ),
+                )
+
+            Liveness checks should be FAST + light (process responsiveness
+            only — keep them network-free); readiness checks may include
+            DB / Redis / vendor pings. Hook exceptions are caught + logged
+            at WARN, never escalated to a 500.
 
     Returns:
         Configured FastAPI application instance.
@@ -241,6 +271,15 @@ def create_product_app(
     if routers:
         for router in routers:
             app.include_router(router)
+
+    # 11. Mount the seed-baked /_health + /_ready ops endpoints. Idempotent
+    #     by design (raises if mounted twice on the same app). An empty
+    #     `HealthEndpointConfig()` is the polite default — every product
+    #     gets the endpoints, and a product that doesn't opt-in still
+    #     answers 200 with `checks=[]`. Mounted last so probe URLs sit
+    #     alongside the product's routes (no path conflicts: `/_*`
+    #     prefix is reserved for ops surfaces).
+    mount_health_endpoints(app, health_config or HealthEndpointConfig())
 
     from noctusai_seed._version import __seed_version__
     from noctusai_lib._version import __lib_version__

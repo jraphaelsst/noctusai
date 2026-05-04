@@ -18,6 +18,11 @@ from noctusai_seed.app import create_product_app
 from noctusai_seed.config import ProductSettings
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
+from noctusai_seed.health import (
+    HealthCheckHook,
+    HealthEndpointConfig,
+    mount_health_endpoints,
+)
 from noctusai_seed.llm_defaults import DEFAULT_LLM_CONFIG, default_llm_config
 
 __all__ = [
@@ -26,6 +31,10 @@ __all__ = [
     "ProductSettings",
     "create_database_module",
     "create_dependencies",
+    # Ops endpoints (`/_health` + `/_ready` baked into create_product_app)
+    "HealthCheckHook",
+    "HealthEndpointConfig",
+    "mount_health_endpoints",
     # LLM inheritance (re-exported so products can do one-stop imports)
     "LLMConfig",
     "default_llm_config",
