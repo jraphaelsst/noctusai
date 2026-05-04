@@ -185,7 +185,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 - [ ] **2.1** Generic worker — lift `domain/chatbot/worker.py` to `domain/jobs/worker.py`
 - [ ] **2.2** Jobs primitive — `domain/jobs/` (Job + repo + state machine)
 - [ ] **2.3** OAuth router — `security/oauth/` + seed-side `oauth_router(*providers)`
-- [ ] **2.4** Health endpoints — `/_health` + `/_ready` baked into `create_product_app`
+- [x] **2.4** Health endpoints — `/_health` + `/_ready` baked into `create_product_app` — Engineer F in `sh-yt-health` worktree. New `seed/framework/backend/noctusai_seed/health.py` (HealthCheckHook Protocol + HealthEndpointConfig dataclass + `mount_health_endpoints` with idempotency guard); `app.py` adds `health_config=` kwonly param via libcst + always-mount call at end of factory; `__init__.py` re-exports `HealthCheckHook` + `HealthEndpointConfig` + `mount_health_endpoints`; PF `app/main.py` documents real-product opt-in with a `db_ping` readiness hook; new `tests/test_health.py` 15 tests. 33/33 framework + 738/738 lib tests green; 584/10 PF tests green when worktree `noctusai_seed` on PYTHONPATH (venv-resolution slip — surfaced to architect).
 
 ### Phase 3 — Batch C (polish + propagation)
 - [ ] **3.1** Frontend `<FakeModeBadge>` + `useEnvMode()`
