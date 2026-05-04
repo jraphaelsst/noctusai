@@ -182,9 +182,9 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 - [x] **1.4** `noctus.dev.scaffold_migration` MCP tool — Engineer C in `sh-yt-migration-scaffolder` worktree. New `mcp/noctusai/tools/noctus/dev/scaffold_migration.py` + 19 tests covering numbering / schema-default / schema-override / `with_table=` block / 6 error paths / 3 keeper-detector-style integration assertions vs the canonical `sql_templates` helpers. `products_dir=` injection seam added during build to keep tests hermetic without monkey-patching the module binding (lesson logged).
 
 ### Phase 2 — Batch B (structural lifts)
-- [x] **2.1** Generic worker — lifted `domain/chatbot/worker.py` shape to `domain/jobs/worker.py` (Engineer D, branch `sh-yt-jobs`, 2026-05-04). Async polling worker with `run_once` / `run_forever(stop_event=...)`. Chatbot worker left intact for chatbot consumers.
-- [x] **2.2** Jobs primitive — `domain/jobs/` (Engineer D, same branch). Job entity + JobStatus 5-state machine + RetryPolicy + JobRepository Protocol + FakeJobRepository + RealSupabaseJobRepository + `make_job_repository` factory + `DeadLetterError`. 73 new tests; full seed/lib backend suite 811/811 green.
-- [ ] **2.3** OAuth router — `security/oauth/` + seed-side `oauth_router(*providers)`
+- [x] **2.1** Generic worker — lifted `domain/chatbot/worker.py` shape to `domain/jobs/worker.py` (Engineer D, branch `sh-yt-jobs`). Async polling worker with `run_once` / `run_forever(stop_event=...)`. Chatbot worker left intact for chatbot consumers.
+- [x] **2.2** Jobs primitive — `domain/jobs/` (Engineer D, same branch). Job entity + JobStatus 5-state machine + RetryPolicy + JobRepository Protocol + FakeJobRepository + RealSupabaseJobRepository + `make_job_repository` factory + `DeadLetterError`. 73 new tests.
+- [x] **2.3** OAuth router — `security/oauth/` (Engineer E, branch `sh-yt-oauth`). OAuthProvider Protocol + GoogleProvider (lifted from google_calendar/oauth_adapter.py) + FakeOAuthProvider + `make_oauth_provider` factory + `oauth_router(*providers)` with authorize/callback/refresh/revoke endpoints. 39 new tests. `integrations/google_calendar/oauth_adapter.py` UNTOUCHED (parallel addition; future project migrates google_calendar to consume the generic provider).
 - [ ] **2.4** Health endpoints — `/_health` + `/_ready` baked into `create_product_app`
 
 ### Phase 3 — Batch C (polish + propagation)
