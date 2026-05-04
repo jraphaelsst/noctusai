@@ -537,9 +537,71 @@ At orchestrator-merge    → fast-forward push branch tip to main (§12)
 
 The two pushes are functionally distinct: the **branch-to-branch push** makes the work remotely visible (and durable across machine loss). The **fast-forward push to main** is the integration step.
 
----
+### 11.1 Master-tree branching adaptation
 
-## 12. Orchestrator vs working-agent role split
+**The shape.** When the user invokes a **master-tree project** (orchestrator project that derives N child projects, executable in parallel or serial — see `KB § PATTERNS/master-tree-parallel-batches.md`), the branching shape is hierarchical:
+
+- **Master-tree branch** = `<master-tree-project-slug>`. Branched from `origin/main`.
+- **Each child branch** = `<child-project-slug>`. Branched from the **master-tree branch**, NOT from origin/main.
+
+Children land back on the master-tree branch (FF or merge per §10.2). The master-tree branch eventually lands on origin/main when the whole tree closes. Branching mirrors the project hierarchy.
+
+**Recipe:**
+
+```bash
+# Master-tree project filed
+git checkout -b <master-tree-slug> origin/main
+# File projects/<master-tree-slug>/PROJECT.md
+git add projects/<master-tree-slug>/
+git commit -m "docs(projects): file <master-tree-slug> [<master-tree-slug> Phase 0]"
+git push -u origin <master-tree-slug>
+
+# Child A filed (derived from master)
+git checkout -b <child-a-slug> <master-tree-slug>   # branch from master, NOT origin/main
+# File projects/<master-tree-slug>/<child-a-slug>/PROJECT.md (or wherever the master-tree puts children)
+# OR file the child as a top-level project per master-tree-parallel-batches.md conventions
+git add <paths>
+git commit -m "docs(projects): file <child-a-slug> [<child-a-slug> Phase 0]"
+git push -u origin <child-a-slug>
+
+# Child B filed (also derived from master)
+git checkout -b <child-b-slug> <master-tree-slug>
+# ... same shape ...
+
+# Children execute their phases on their own branches (per §11)
+# Children land back on master:
+git checkout <master-tree-slug>
+git merge <child-a-slug>   # or git push origin <child-a-slug>:<master-tree-slug>
+# repeat for each child as it closes
+
+# Master closes → master-tree branch tip lands on origin/main
+git push origin <master-tree-slug>:main   # orchestrator's fast-forward push
+```
+
+**Why hierarchical (and not "everything from origin/main"):**
+
+1. **Children inherit the master's filing context.** When child A is branched from master, it sees the master-tree's PROJECT.md, the live-patterns-log, the absorption catalog — everything the master committed. Branching from origin/main would lose that.
+2. **Children land back as a unit.** When master merges to origin/main, it carries all its children's content (which are already merged into master). Origin/main sees one coherent integration of the whole tree, not N separate landings.
+3. **Cross-pollination respects the tree.** Per `KB § PATTERNS/master-tree-parallel-batches.md`, children share findings via the master root's scratchpad. Hierarchical branching ensures children see updates to the scratchpad as the master commits them.
+
+**Trigger phrases:**
+- "master-tree this <work>"
+- "create a master tree for <work>"
+- "spawn a master-tree project covering <X, Y, Z>"
+- "let's run X, Y, Z as a master-tree" (multiple children explicitly named)
+
+**Naming convention** (consistent with §5 + master-tree-parallel-batches §8):
+- Master: `<topic>-rollout` (e.g. `products-wiring-rollout`, `methodology-consolidation-rollout`).
+- Child: `<topic>-<child-scope>` (e.g. `personal-finance-wiring`, `erp-imobiliario-wiring`). Child slugs are independent of master slug; they don't repeat the master's prefix unless it's natural.
+
+**Branch-of-branch chain depth.** §10.3 warns against chains deeper than 2. Master-tree branching is exactly the 2-deep boundary case (origin/main → master → children). It works because each level has clear ownership (master = orchestrator; children = their own working agents). Going 3 deep — child-of-child — would violate the §10.3 warning AND the master-tree pattern itself (master-trees don't have grand-children; they have either children or nothing).
+
+**Anti-patterns:**
+
+- **Branching children from origin/main instead of master.** Children miss the master's context (filing, scratchpad, absorption catalog updates). They become orphans whose findings won't reach sister children.
+- **Master-tree without explicit children.** A master-tree branch with no children is just a regular project branch. Don't use master-tree branching for solo projects — use plain branch-per-project (§11).
+- **Renaming master mid-flight.** The master branch's name is the durable handle children depend on. Renaming forces every child to update its base. If the master needs renaming, do it at master close (when no children are open).
+- **Master close before all children close.** Master can't fast-forward to main while children are still in-flight on the master branch. Wait for all children to merge into master, THEN master → main.
 
 **The split.** Two roles, mapped to two perspectives:
 
@@ -642,8 +704,135 @@ git log --all --oneline -- <file-path>      # who touched this file, on which br
 
 Without this protocol, two agents touching the same file commit in parallel, then one of them pushes first and wins. The second agent either: (a) silently overwrites the first (their `git push` clobbers — bad), or (b) gets blocked by a non-FF rejection and has to recover (better, but reactive). The pre-work fetch + merge-after-collision protocol solves it **proactively**: the second agent KNOWS about the first agent's work BEFORE editing, builds on top of it, and the merge is automatic for non-conflicting changes (or methodology-driven for same-line conflicts, per §10 TBD).
 
-**Mental model:** `work1 + work2 = work1+2` is the desired outcome. Without merging, you get `work2` (second-write-wins). With merging, you get the union. The merging methodology (§10 TBD) covers the conflict-resolution case; this section covers the proactive coordination.
+**Mental model:** `work1 + work2 = work1+2` is the desired outcome. Without merging, you get `work2` (second-write-wins). With merging, you get the union. The merging methodology (§10) covers the conflict-resolution case; this section covers the proactive coordination.
 
 **Cost.** ~5 seconds of fetch + scan at agent startup. Mandatory for branched work; recommended for direct-to-main work touching shared files.
 
 **Companion to.** `feedback_parallel_agent_collision_protocol.md` (the after-the-fact "STOP, wait, continue" protocol when collisions DO happen). The pre-work fetch protocol is the proactive complement: catch them before they happen.
+
+---
+
+## 15. Exploratory branching — branch-and-compare and merge-upfront
+
+Two patterns for using branches as decision-making tools rather than just isolation tools. Triggered by user phrasing, not by detection. Both build on top of the standard branching mechanics in §§1-9.
+
+### 15.1 Branch-and-compare (parallel experimentation)
+
+**Trigger phrases.** "branch 2 things and compare", "let's try both A and B", "spike both approaches", "experiment with X vs Y", "A or B?", "what's cleaner — X or Y?", "let's see how each plays out."
+
+**The shape.** When the user wants to compare alternatives, each approach gets its own branch from `origin/main`. Both are implemented in isolation. Comparison happens after both ship. User picks winner (or asks for hybrid).
+
+```bash
+# Approach A
+git checkout -b <topic>-approach-a origin/main
+# implement A
+git add <paths>
+git commit -m "<topic> approach A: <description>"
+git push -u origin <topic>-approach-a
+
+# Approach B (back to clean baseline)
+git checkout -b <topic>-approach-b origin/main
+# implement B
+git add <paths>
+git commit -m "<topic> approach B: <description>"
+git push -u origin <topic>-approach-b
+
+# Comparison (orchestrator role)
+git diff origin/<topic>-approach-a..origin/<topic>-approach-b --stat
+git log origin/<topic>-approach-a --oneline
+git log origin/<topic>-approach-b --oneline
+# Run tests on each branch independently
+# Surface comparison to user
+```
+
+**Comparison criteria** (the orchestrator presents these):
+- **Diff size** — which approach touches fewer / more files? Smaller is often better for review, but not always for cleanliness.
+- **Test results** — both branches must pass the existing test baseline. If A passes and B fails, that's the comparison; not all tradeoffs are subjective.
+- **Methodology fit** — does one approach require more carve-outs (accept-with-rationale) than the other?
+- **Future maintenance** — which one is easier to extend? Read both implementations as if you were going to add a sibling feature next session.
+- **Readability** — same intent, but one approach reads more naturally?
+- **Performance / cost** — when measurable, run benchmarks on both.
+- **User experience** — when UI is involved, screenshot or describe both flows.
+
+**Folding the winner back to main.**
+
+After user picks winner (say, A):
+
+```bash
+# Orchestrator fast-forward push of winner to main
+git push origin <topic>-approach-a:main
+# Mark loser branch as abandoned (or delete it)
+git branch -m <topic>-approach-b <topic>-approach-b-abandoned
+git push origin <topic>-approach-b-abandoned
+git push origin --delete <topic>-approach-b
+```
+
+The loser branch should preserve its work as audit history (rename with `-abandoned` suffix; don't just delete). The reasoning that produced approach B is durable — capture in `feedback_*.md` if there's a learning, or in a §11 entry on the next related project.
+
+**When user asks for a hybrid.** "Take A's structure but B's API" → that's a NEW branch from origin/main (or from the chosen base) implementing the hybrid. The original A and B branches stay as audit references; the hybrid is the actual ship.
+
+**When to use this pattern:**
+- Multiple distinct approaches that conflict (can't easily merge into one branch).
+- Want to see both running before deciding.
+- Cost of running both is acceptable (small-to-medium scope work; not 5-day refactors).
+- Comparison criteria are clear (or being discovered through the comparison itself).
+
+**Anti-patterns:**
+- **Branching only one alternative.** Defeats the comparison. If you commit to seeing both, see both.
+- **Comparing while one is still in flight.** Wait for both to ship. Comparing half-done work biases to whichever is closer to done.
+- **Picking based on which one was implemented first.** Implementation order is not a comparison criterion; the implementation is.
+- **Deleting the loser branch immediately.** Lose the audit trail. Use `-abandoned` suffix.
+
+### 15.2 Branch-and-merge-upfront (synthesis)
+
+**Trigger phrases.** "merge them upfront", "what if we did both", "let's combine A and B", "hybrid", "union of approaches", "take the best of both."
+
+**The shape.** Both approaches go on a single branch as the union. Compared against `origin/main` baseline, not against alternatives. Shipped if the union holds.
+
+```bash
+git checkout -b <topic>-combined origin/main
+# implement A's contribution
+# implement B's contribution
+# verify the union is coherent — they don't fight each other; tests pass; surface area makes sense
+git add <paths>
+git commit -m "<topic> combined: <A summary> + <B summary>"
+git push -u origin <topic>-combined
+
+# Orchestrator review against origin/main baseline
+git diff origin/main..origin/<topic>-combined --stat
+# Tests pass? Methodology slips? KB pointers all resolve?
+# If clean, fast-forward push to main
+git push origin <topic>-combined:main
+```
+
+**When the union doesn't hold.** Sometimes the synthesis surfaces that A and B genuinely conflict (their integrations fight each other; combined surface is incoherent; tests interact in unexpected ways). When this happens:
+1. Document the conflict on the branch (what about A and B clashed).
+2. Surface to user: "merge-upfront didn't hold; here's why" with concrete file/line evidence.
+3. Either (a) drop the synthesis and go to branch-and-compare instead, or (b) re-design the integration so they don't fight.
+
+**When to use this pattern:**
+- Both approaches have merit AND don't fundamentally conflict.
+- The union is better than either alone.
+- Cheaper to combine than to run both separately.
+- Examples: combining two sets of methodology improvements, merging two feature subsets, layering a refactor over a new feature.
+
+**Anti-patterns:**
+- **Forcing synthesis when A and B genuinely conflict.** If you find yourself adding `if approach_a:` / `else_approach_b:` toggles, you're not synthesizing — you're parameterizing. Go back to branch-and-compare.
+- **Merging upfront without checking that A and B don't break each other.** Run the test suite as part of the synthesis commit, not as an afterthought.
+- **Treating the combined branch as "two commits in one."** Each contribution should be a clean, reviewable unit. If the synthesis is messy, split into two commits on the same branch (one per approach), then tests pass on the union.
+
+### 15.3 Choosing between the two patterns
+
+| Scenario | Pattern |
+|---|---|
+| Approaches are mutually exclusive (architectural choice — A or B but not both) | **Branch-and-compare** |
+| Approaches are independent improvements that can both ship | **Branch-and-merge-upfront** |
+| Implementation cost of running both is high (>1 session each) | **Branch-and-compare** with a shorter spike on each first |
+| Implementation cost is low and union has clear value | **Branch-and-merge-upfront** |
+| User explicitly says "compare" / "vs" / "or" | **Branch-and-compare** |
+| User explicitly says "both" / "hybrid" / "union" / "combine" | **Branch-and-merge-upfront** |
+| Ambiguous user phrasing | Surface the choice — "compare both, or combine?" — before branching |
+
+**Default when ambiguous: ask.** The two patterns produce very different artifacts; picking the wrong one means redoing the work or running unnecessary spikes. Cheap to ask once; expensive to commit to the wrong pattern.
+
+**Companion to.** `KB § 01-PHILOSOPHY.md § Estimate off evidence` (the orchestrator's review of branch-and-compare results IS the evidence that grounds the user's pick); §11 Branch-per-project (each branch follows the per-project workflow); §12 Orchestrator role (the orchestrator runs the comparison, not the working agent — fresh-eyes vantage point).

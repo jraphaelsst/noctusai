@@ -242,6 +242,25 @@ When the final batch closes:
 3. **Final cross-product retrospective.** Each child files `<slug>-lessons.md` at its own root. Master files `rollout-retrospective.md` summarizing batch-by-batch shape: which batches benefited most from parallelism, which were divergent, which surfaced the most absorption candidates, which had the most user-aggregated Qs.
 4. **Close-out commit + push.** Master's per-phase commits + children's per-phase commits stage and push at the literal last step (per `feedback_no_auto_commit`). This is the single push gate for the whole rollout.
 
+### 7.1 Branching shape
+
+Master-tree projects ship via **hierarchical branching** per `KB § PATTERNS/branching-and-merging.md § 11.1 Master-tree branching adaptation`:
+
+- **Master-tree branch** = `<master-tree-slug>` (e.g. `products-wiring-rollout`). Branched from `origin/main`.
+- **Each child branch** = `<child-slug>` (e.g. `personal-finance-wiring`). Branched from the **master-tree branch**, NOT from origin/main.
+- Children land back on master via FF or merge as each closes.
+- Master eventually lands on origin/main (orchestrator fast-forward push) when the whole tree closes.
+
+The hierarchical branching structure mirrors the hierarchical project structure: master-tree contains children at the project level AND at the branch level. Children inherit the master's filing context (PROJECT.md, scratchpad, absorption catalog updates) by virtue of branching from master.
+
+**Trigger phrases for master-tree branching:** "master-tree this <work>", "create a master tree for <work>", "spawn a master-tree project covering <X, Y, Z>", "let's run X, Y, Z as a master-tree."
+
+**Anti-patterns specific to master-tree branching:**
+- **Branching children from origin/main instead of master.** Orphans the children — they miss scratchpad updates, miss the master's PROJECT.md, miss the absorption catalog. Cross-pollination breaks.
+- **Master close before all children close.** Master can't FF to main while children are in-flight on the master branch. Wait for all children to merge into master, THEN master → main.
+- **Renaming the master mid-flight.** Children depend on the master branch's name as their base. Renaming forces every child to update. If renaming, do it at master close (no children open).
+- **Going 3-deep (child-of-child).** Master-trees have children or nothing — no grand-children. Per `KB § PATTERNS/branching-and-merging.md § 10.3` chains-deeper-than-2 anti-pattern.
+
 ---
 
 ## 8. Anti-patterns
