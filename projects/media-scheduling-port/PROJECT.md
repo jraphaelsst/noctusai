@@ -2,7 +2,7 @@
 
 - **Created:** 2026-05-03 (original) / 2026-05-04 (resumed in dedicated worktree)
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ → Phase 0.5 in re-execution (was lost in parallel-agent collision)
+- **Status:** Phase 0 ✅ + Phase 0.5 ✅ → Phase 1 ready (awaiting user "continue")
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · claude-opus-4-7
 - **Worktree:** `/Users/rapha/Documents/repository/NoctusAI/noctusai-worktrees/media-scheduling-port-resume/` (per worktree-per-engineer rule)
 - **Branch:** `media-scheduling-port-resume` (off `origin/main` at `062853b`)
@@ -133,17 +133,22 @@ products/media-scheduling/
 **Improvements:**
 - Future seed audits should default to listing-then-reading every sibling module alongside, not just the one being consumed — the recurrence rule fires inside seed too. (Surfaced lesson L2 in findings.md.)
 
-### Phase 0.5 — Seed-pattern backfill (in re-execution post-collision)
+### Phase 0.5 — Seed-pattern backfill ✅
 
-- [ ] **G1** — `integrations.whatsapp`: `WhatsAppClient` Protocol in `types.py` + `FakeWahaClient` (bi-directional) + `get_whatsapp_client()` factory + paired tests.
-- [ ] **G2** — `integrations.redis`: `make_fake_redis_client()` (wraps `fakeredis.FakeStrictRedis`) + paired tests + `fakeredis>=2.20.0` dep.
-- [ ] **G3** — `domain.chatbot.buffer`: `make_in_memory_buffer_client()` (re-exports redis fake) + paired tests.
-- [ ] **G4** — Hard-delete `noctusai_lib/domain/conversation/` + `tests/domain/conversation/` (only test-files referenced; production all on chatbot).
-- [ ] **CLAUDE.md** — add §1 universal rule bullet for the Fake+Real pattern (KB pattern doc + INDEX entry already in `origin/main`).
-- [ ] **Run tests** — `cd seed/lib/backend && pytest tests/integrations/whatsapp/test_fake_adapter.py tests/integrations/test_redis.py tests/domain/chatbot/test_in_memory_buffer.py`.
-- [ ] **Per-phase commit** — `phase(media-scheduling-port-resume): Phase 0.5 ✅ — seed Fake+Real backfill (G1-G4)`.
+- [x] **G1** — `integrations.whatsapp`: `WhatsAppClient` Protocol in `types.py` + `FakeWahaClient` (bi-directional) + `get_whatsapp_client()` factory + 18 tests.
+- [x] **G2** — `integrations.redis`: `make_fake_redis_client()` (wraps `fakeredis.FakeStrictRedis`) + 7 tests + `fakeredis>=2.20.0` dep.
+- [x] **G3** — `domain.chatbot.buffer`: `make_in_memory_buffer_client()` (re-exports redis fake) + 4 tests + `@runtime_checkable` retrofit on `RedisBufferClient` Protocol.
+- [x] **G4** — Hard-deleted `noctusai_lib/domain/conversation/` + `tests/domain/conversation/`.
+- [x] **CLAUDE.md** — §1 universal rule bullet for the Fake+Real pattern landed.
+- [x] **Tests** — 88 passing (28 new + 60 existing chatbot/whatsapp/redis regression).
+- [x] **Per-phase commit** — `2defcfe phase(media-scheduling-port-resume): Phase 0.5 ✅ — seed Fake+Real backfill (G1-G4) + project setup`.
 
-**Improvements:** *(captured live)*
+**Improvements:**
+- The existing seed `RedisBufferClient` Protocol lacked `@runtime_checkable`. Retrofitted as part of G3 to match `WhatsAppClient` / `CalendarAdapter` / `RoutingAdapter` consistency. **Worth a sweep**: any other seed Protocol classes lacking the decorator? Defer to a follow-up `seed-protocol-runtime-checkable-sweep` project.
+- `pre-commit` hook falls back to system `python3` when `$REPO_ROOT/venv/bin/python` is absent — and a fresh worktree has no `venv/` directory (the venv lives in the main worktree). Workaround: `PYTHON=/path/to/main-venv/python git commit ...`. **Better fix:** hook walks up to find the canonical noc venv, OR each worktree gets a venv-symlink at creation. Defer to a follow-up `worktree-venv-isolation` project. Logged via `noctus.dev.phase_learning_log` (methodology kind).
+- Editable-install of `noctusai-lib` from this worktree REPOINTED the shared venv's noctusai-lib at the worktree's seed/. Cross-worktree editable contamination is real; venv-per-worktree would eliminate it. Same follow-up project.
+
+*Phase proposal:* none filed (improvements bundle small enough to live as PROJECT.md + findings.md notes; the venv-isolation item is genuinely cross-cutting and deserves its own project at the methodology layer, not a per-phase proposal).
 
 ### Phase 1 — Scaffold `products/media-scheduling/`
 
@@ -271,3 +276,4 @@ git commit -m "phase(media-scheduling-port-resume): Phase 0.5 ✅ — seed Fake+
 |---|---|---|
 | 2026-05-03 | Initial plan drafted (original session, lost in collision) | claude-opus-4-7 |
 | 2026-05-04 | Re-created in dedicated worktree `noctusai-worktrees/media-scheduling-port-resume/` post-collision; Phase 0 results preserved; Phase 0.5 in re-execution; per-phase commit cadence adopted as collision learning; new Q5 added (real-data migration during Phase 2) | claude-opus-4-7 |
+| 2026-05-04 | Phase 0.5 ✅ — G1-G4 backfill landed (commit `2defcfe`, 88 tests green). Improvements: (a) retrofit @runtime_checkable on RedisBufferClient — defer follow-up sweep for any other lacking-decorator seed Protocols; (b) worktree-venv-isolation gap surfaced (hook fallback to system python3 in fresh worktree) — defer follow-up project. Phase learnings logged via `noctus.dev.phase_learning_log` (3 entries: technical / methodology / process). | claude-opus-4-7 |
