@@ -804,6 +804,49 @@ Doc-backed by `CLAUDE.md` rule "Apply proposals inline, then delete — every de
 
 ---
 
+## 11.1 Features — lightweight project variant (2026-05-03)
+
+**The shape.** Features are simpler than projects. Single `.md` file. No folder. No §1-§12 ceremony. No §3a seed-first analysis (or one-line response if relevant). For low-hanging fruit: quick wins, methodology tweaks, simple fixes, small improvements that don't earn the full project ceremony.
+
+**Three valid locations** (mirrors projects' scope-rule):
+
+- `features/<slug>.md` — cross-cutting / platform / not-yet-attached-to-a-product.
+- `products/<product>/features/<slug>.md` — single-product.
+- `core/features/<slug>.md` — core control-plane.
+
+**Slug convention:** same as projects — `<subject>-<intent>` lowercase-dash-separated, globally unique across both project and feature slugs.
+
+**Discriminator project vs feature:**
+
+- **≤2 sub-tasks AND ≤1-2 files touched AND no multi-phase plan → feature.** Examples: methodology tweak, doc clarification, single-helper extraction, one-line bugfix that earns documentation, small KB pattern addition.
+- **Otherwise → project.** Examples: any work that has §6 phases, any multi-product work, any work that needs a dedicated proposals/ folder.
+- **Borderline cases:** prefer feature. It's cheaper to promote a feature to a project (move the .md content into a new folder's PROJECT.md) than to demote a project to a feature.
+
+**Feature file shape** (all sections required unless noted):
+
+- **Header:** title, created date, owner, branch (if branched).
+- **Scope:** 1-3 paragraphs describing what changes.
+- **Why:** 1 paragraph rationale.
+- **Decisions:** any non-obvious design calls. Skip if the work is mechanical.
+- **Sub-tasks:** simple checklist `- [ ]`. Live-tick to `- [x]` as work progresses. Same shape as project §6.
+- **Improvements:** captured live during implementation per `§ 2.6 Active robustness review`. Filed inline as `applied: <change>` or `deferred → <destination>: <change>`.
+- **Phase enrichment-loop:** if the feature has multiple sub-task batches that benefit from learning capture, log to the SQLite tracker per `§ 2.11`. Single-batch features can skip.
+- **Closure:** how the feature closes — single commit or multiple, branch-to-main fast-forward or merge, file-deletion vs file-retention.
+
+**Branch-per-feature workflow** (per `KB § PATTERNS/branching-and-merging.md § 11`): features get the same branching treatment as projects. Branch first, file feature, implement, commit on branch, push branch, orchestrator-merges to main.
+
+**Promotion path: feature → project.** When a feature grows beyond its scope (mid-implementation, a finding triggers a deeper dive; or post-implementation, a follow-up requires multiple phases): promote. Create the project folder from `templates/PROJECT-TEMPLATE.md`, move the feature .md content into PROJECT.md (mapping: feature scope → §1+§4, feature decisions → §2+§3, feature sub-tasks → §6 Phase 1, anything new from the growth → §6 Phase 2+). Delete the feature .md. Update the §11 Change Log of the new project to log the promotion.
+
+**When NOT to file a feature:** truly trivial direct fixes (typo, broken link, dependency bump that's clearly safe, a single one-line revert). Those go straight to main without filing OR branching. The discriminator: "would I want a §6 sub-task list for this?" If yes → feature. If no → direct.
+
+**Anti-patterns:**
+
+- **Filing every change as a feature** to "follow methodology." The trivial-direct-fix carve-out exists precisely to avoid this; respect it.
+- **Filing as a feature when the work is project-scale.** If you're writing more than ~150 lines of feature.md, you probably want a project. Demoting in mid-flight is fine; over-engineering small work as a project is the failure to avoid.
+- **Skipping the feature.md and just branching.** The branch-first-then-file-then-implement order (`KB § PATTERNS/branching-and-merging.md § 13`) requires the feature.md to be filed before implementation starts. The .md is the brief; without it, the work is undescribed.
+
+---
+
 ## 12. Cross-references
 
 - `templates/PROJECT-TEMPLATE.md` — the canonical project shape.
