@@ -50,5 +50,10 @@ export type { ProductEnv } from './env';
 export { createProductSupabase } from './supabase';
 
 // Components
-export { ErrorBoundary, withErrorBoundary, SSOCallback, createAuthProvider } from './components/index';
-export type { SSOCallbackProps } from './components/index';
+export { ErrorBoundary, withErrorBoundary, SSOCallback, createAuthProvider, FakeModeBadge } from './components/index';
+export type { SSOCallbackProps, FakeModeBadgeProps, FakeModeBadgeVariant } from './components/index';
+
+// Env-mode hook (drives FakeModeBadge; exposed for products that want to
+// branch on backend-adapter mode without rendering the badge directly).
+export { useEnvMode } from './hooks/useEnvMode';
+export type { EnvMode, EnvModeResult, VendorMode } from './hooks/useEnvMode';

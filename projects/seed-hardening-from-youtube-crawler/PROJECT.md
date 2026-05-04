@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ready
+- **Status:** Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 in flight (3.1 ✅)
 - **Owner / stakeholders:** jraphaelsst · architect (Claude Opus 4.7)
 - **Related docs:** `KB § 03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/seed-fake-real-adapter.md` · `KB § PATTERNS/branching-and-merging.md` · `KB § PATTERNS/master-tree-parallel-batches.md` · sibling workspace at `~/Documents/repository/NoctusAI/noctusai-youtube-crawler/`
 - **Project slug:** `seed-hardening-from-youtube-crawler` (intent = `hardening`; lives at `projects/<slug>/` because the work is platform-wide seed/lib changes that propagate to every product)
@@ -197,7 +197,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 - [x] **2.4** Health endpoints — `/_health` + `/_ready` baked into `create_product_app` (Engineer F, branch `sh-yt-health`). New `seed/framework/backend/noctusai_seed/health.py` (HealthCheckHook Protocol + HealthEndpointConfig dataclass + `mount_health_endpoints` with idempotency guard); `app.py` adds `health_config=` kwonly param via libcst + always-mount call at end of factory; `__init__.py` re-exports the surface; PF `app/main.py` documents real-product opt-in with a `db_ping` readiness hook. 15 new tests; 33/33 framework + 738/738 lib green; PF 584/10 green when worktree `noctusai_seed` on PYTHONPATH (worktree-venv resolution gap — surfaced as Phase 2 architect-side cross-cutting finding).
 
 ### Phase 3 — Batch C (polish + propagation)
-- [ ] **3.1** Frontend `<FakeModeBadge>` + `useEnvMode()`
+- [x] **3.1** Frontend `<FakeModeBadge>` + `useEnvMode()` (Engineer G, branch `sh-yt-fakemode`). New `seed/lib/frontend/src/hooks/useEnvMode.ts` (parses `VITE_BACKEND_MODE` → `{mode: 'real'|'fake'|'mixed'|'unknown', vendors}` with malformed-input fallback + dev-only `console.warn`); `seed/lib/frontend/src/components/FakeModeBadge.tsx` (Tailwind chip with `auto` / `full` / `dot` / `none` variants, mixed-mode `title=` vendor map, no emoji, mirrors `LLMSpendBadge` shape); `seed/lib/frontend/src/components/FakeModeBadge.test.tsx` (15 tests covering hook + component, including malformed-env warn assertions); barrel updates re-export `FakeModeBadge` + `useEnvMode` + types from `src/index.ts`. New `vitest.config.ts` + `tests/setup.ts` + `test` / `test:watch` scripts (lib previously had no test infrastructure). 15/15 tests green via vitest run. **Architect-side:** worktree had zero node_modules — verification required symlinking canonical workspace's framework node_modules; surfaced two pre-existing gaps in findings (lib has no `build` script-able tsc due to peer-dep-missing errors; framework vitest config has stale `@noctusai/lib` alias path).
 - [ ] **3.2** `integrations/storage/` (Supabase Storage + Local + Fake)
 - [ ] **3.3** `integrations/quota/` (Redis + Fake)
 - [ ] **3.4** Scaffold polish: README slug placeholder, `.env.example` whitelist, `validate_product` enforcement, `available_ports` range reservation
