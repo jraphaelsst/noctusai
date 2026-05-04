@@ -234,16 +234,16 @@ Branched-project workflow per `KB § PATTERNS/branching-and-merging.md § 11`. P
 
 **Improvements:** added `repo_root` parameter for test override (mirrors `phase_learnings.get_db_path`'s env-override pattern, but as a function arg since the archive tool doesn't have a singleton storage path). **applied inline.** Local timezone import via `zoneinfo` instead of `pytz` (Python 3.9+ stdlib, no extra dependency). **applied inline.**
 
-### Phase 5 — Tests
+### Phase 5 — Tests ✅
 
-- [ ] Create `mcp/noctusai/tests/test_archive.py`.
-- [ ] Test cases: project-mode auto-detect, feature-mode auto-detect, ad-hoc-mode requires name, NN numbering correctness (1st of day = 01, 2nd of day = 02), date-folder lazy creation, idempotency guard refusing already-archived path, `git mv` preservation (history `--follow`-able), error cases (non-existent target, malformed paths).
-- [ ] Use `tmp_path` + `subprocess` mocking pattern from existing tests.
-- [ ] Run `cd mcp/noctusai && PYTHONPATH=../../seed/lib/backend .venv/bin/python -m pytest tests/test_archive.py -q` → green.
-- [ ] Run full suite → green (no regressions).
-- [ ] Stage + commit: `test(mcp): noctus.dev.archive — test coverage for all 3 modes + numbering + idempotency [archive-system Phase 5]`.
+- [x] Create `mcp/noctusai/tests/test_archive.py`.
+- [x] 27 test cases covering: mode auto-detect (5 cases), NN numbering (6 cases including gaps + skip-non-numbered), project archive (4 cases including same-day NN+1), feature archive (3 cases), ad-hoc archive (2 cases including require-name), idempotency guard (2 cases including archive-root-itself), error cases (2 — non-existent, invalid mode), git history preservation (1 — `--follow` works), MCP registration (2 — register exists, tool in server registry).
+- [x] `tmp_repo` fixture creates real git repo via `subprocess` (not mocking — real `git mv` calls).
+- [x] All 27 archive tests pass.
+- [x] Full MCP suite: 616 passed (was 589 pre-Phase-5 after merging-methodology shipped; +27 archive tests).
+- [x] Stage + commit: `test(mcp): noctus.dev.archive — test coverage for all 3 modes + numbering + idempotency [archive-system Phase 5]`.
 
-**Improvements:** _(captured live)_
+**Improvements:** test fixture creates a real git repo via `subprocess` (not mocking) — gives more realistic coverage of `git mv` behavior including history-preservation. **applied inline.** History-preservation test specifically commits a `PROJECT.md` update before archiving so `git log --follow` has multi-commit history to walk; without that step, `--follow` returns just 1 commit and the test passes vacuously. **applied inline.**
 
 ### Phase 6 — Project close (dogfood: archive itself!)
 
