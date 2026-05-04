@@ -42,6 +42,14 @@ business logic" namespace.
   `proportional_target`, `next_status`), and a `GoalRepository` Protocol
   seam for product-side persistence. Lifted 2026-05-03 per N=3
   MUST-FORMALIZE. See `KB § PATTERNS/metas-seed.md`.
+- `jobs/` — generic background-job primitive. `Job` frozen dataclass +
+  `JobStatus` state machine + pure-function transitions + `RetryPolicy`
+  exponential backoff + `JobRepository` Protocol+Fake+RealSupabase+factory
+  + async `Worker` (polling loop + dispatch). Lifted 2026-05-04 from
+  the chatbot-coupled `domain/chatbot/worker.py` shape into a
+  domain-agnostic surface. Consumers: youtube-crawler uploads,
+  scheduling tasks, AI batches, future long-running products. Per
+  `projects/seed-hardening-from-youtube-crawler/` Phase 2.1 + 2.2.
 
 **Future occupants:**
 - `gamification/` (when ERP Metas patterns extract)
