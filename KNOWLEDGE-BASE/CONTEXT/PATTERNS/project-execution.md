@@ -866,7 +866,7 @@ noctus.dev.archive(
 | Situation | Action |
 |---|---|
 | Project close (PROJECT.md folder) | **archive** via `noctus.dev.archive` (mode auto-detected as `project`) |
-| Feature close (single .md file) | **archive** via `noctus.dev.archive` (mode auto-detected as `feature`) |
+| Feature close (single .md file) | **STAYS in place** — features are durable callable utilities (concept refined 2026-05-03 per § 11.1). NOT auto-archived. Explicit `noctus.dev.archive(mode="feature")` still works if user explicitly asks to archive a specific feature. |
 | User says "archive X" | **archive** via `noctus.dev.archive` (mode by category or explicit `ad_hoc`) |
 | User says "delete X" / "remove X" | **delete** via `git rm -r` (explicit override; archive is the auto-default) |
 | Stash entries (`git stash drop`) | **delete** — stashes aren't deliverables; no archive |
@@ -978,9 +978,15 @@ A future agent picking up similar work runs `cat archive.md` and gets the journe
 
 ---
 
-## 11.1 Features — lightweight project variant (2026-05-03)
+## 11.1 Features — durable callable utilities (concept refined 2026-05-03)
 
-**The shape.** Features are simpler than projects. Single `.md` file. No folder. No §1-§12 ceremony. No §3a seed-first analysis (or one-line response if relevant). For low-hanging fruit: quick wins, methodology tweaks, simple fixes, small improvements that don't earn the full project ceremony.
+**The shape.** Features are simpler than projects in ceremony but **durable** in lifecycle. Single `.md` file. No folder. No §1-§12 ceremony. No §3a seed-first analysis (or one-line response if relevant). **Features are tools / utilities / patterns / methodology entries that get called or referenced later** — not throwaway temporary files. They live in `features/` permanently and are NOT auto-archived on close. (Concept refined 2026-05-03 by user directive: *"They're no quick temporary files, they are actually features that we can use later on as tools or utilities callable."*)
+
+What features are good for:
+- Methodology tweaks / rule additions (durable — future agents read them via the same KB lookup as any other rule).
+- Pattern-library entries (a callable shape: "use the X pattern" with the X pattern defined in a feature file).
+- Tool / utility documentation (an MCP tool's usage notes; a script's recipe).
+- Small standalone designs that don't warrant a project folder but DO need persistent presence.
 
 **Three valid locations** (mirrors projects' scope-rule):
 
@@ -1005,7 +1011,7 @@ A future agent picking up similar work runs `cat archive.md` and gets the journe
 - **Sub-tasks:** simple checklist `- [ ]`. Live-tick to `- [x]` as work progresses. Same shape as project §6.
 - **Improvements:** captured live during implementation per `§ 2.6 Active robustness review`. Filed inline as `applied: <change>` or `deferred → <destination>: <change>`.
 - **Phase enrichment-loop:** if the feature has multiple sub-task batches that benefit from learning capture, log to the SQLite tracker per `§ 2.11`. Single-batch features can skip.
-- **Closure:** how the feature closes — single commit or multiple, branch-to-main fast-forward or merge, **file-archive via `noctus.dev.archive` (default; lands at `archive/features/<today>/<NN>-<slug>.md`) OR file-deletion (explicit-override only — when user says "delete this feature")**. See § 11.2 for the archive system.
+- **Closure:** how the feature closes — single commit or multiple, branch-to-main fast-forward or merge. **The feature .md STAYS at its location** (`features/<slug>.md` or product-scoped path). Features are NOT auto-archived (concept refined 2026-05-03). Only explicit user "delete X" / "remove X" → `git rm` (deletion is the override; default = stays in place). Why: features are durable callable utilities, not temporary deliverables.
 
 **Branch-per-feature workflow** (per `KB § PATTERNS/branching-and-merging.md § 11`): features get the same branching treatment as projects. Branch first, file feature, implement, commit on branch, push branch, orchestrator-merges to main.
 

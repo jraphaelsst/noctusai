@@ -261,6 +261,55 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 
 ---
 
+## Branching-first orchestration — parallelize by default; serial only when chunks collide
+
+**The principle.** The dev methodology is **branching-first**. The orchestrator's default mental model on any incoming work: "can this be chunked into parallel branches?" If yes — dispatch subagents on separate branches in a single tool-use turn (true parallelism via `Task`). If no (chunks genuinely collide on files/lines OR have hard dependencies) — serial work, OR the master-tree-parallel-batches pattern for N≥2 same-shape children.
+
+**Sequential is the carve-out, not the default.** Most non-trivial work has multiple chunks; most chunks touch disjoint file sets. Wall-clock leverage from parallelism is real and large; leaving it on the table by default is a structural waste.
+
+**Why this is foundational, not just tactical:**
+
+1. **Wall-clock leverage compounds.** N independent chunks dispatched in one `Task` tool-use turn finish in roughly 1×T (worst-case slowest chunk), not N×T. Across a session with many projects, the gap is hours, not minutes.
+2. **Different vantage points are structural** (per `KB § PATTERNS/branching-and-merging.md § 12 Orchestrator role`). Each subagent has its own narrow context; the orchestrator collates at merge time. Parallelism multiplies this benefit — N subagents each contributing a fresh narrow vantage point converge at orchestrator-merge.
+3. **Branches isolate failure.** One chunk failing doesn't poison sister chunks. Serial execution means a mid-stream failure blocks everything downstream; parallel means each chunk's failure is local.
+4. **The merging methodology already handles convergence** (per `KB § PATTERNS/branching-and-merging.md § 10`). Branches queue at merge time per § 10.3 multi-branch convergence; same-line conflicts resolve per § 10.4. Parallelism doesn't introduce new failure modes — it reuses the merge methodology already shipped.
+
+**Chunk identification (the orchestrator's first move):**
+
+Before any work starts, the orchestrator asks:
+
+- **File-overlap analysis:** what files would each chunk touch? Disjoint sets → safe parallel. Overlapping sets → potential collision.
+- **Methodology-overlap analysis:** chunks editing the same KB doc / CLAUDE.md section collide on lines even if file sets differ at the directory level.
+- **Dependency analysis:** does chunk A need chunk B's output? Hard yes → serial. Soft no / parallel-feasible-with-coordination → parallel via the master-tree-parallel-batches pattern.
+- **Subagent vs orchestrator-direct:** is each chunk substantial enough to warrant a `Task` subagent? Tiny chunks may be cheaper to do directly (orchestrator-mode) sequentially.
+
+The output of chunk identification is one of:
+
+- **Parallel dispatch:** N independent chunks, branched + dispatched in a single `Task` tool-use turn.
+- **Master-tree parallel batches:** N≥2 same-shape children sharing methodology; orchestrator runs the batches per `KB § PATTERNS/master-tree-parallel-batches.md`.
+- **Serial:** dependencies make parallel infeasible; sequential is correct.
+- **Orchestrator-direct:** chunks are too small for delegation overhead; do directly.
+
+**The default is parallel; serial requires justification.** When the orchestrator chooses serial, the choice is logged (a learning to the SQLite tracker per `§ 2.11 Phase enrichment loop`) — "considered parallel; chose serial because <X>." This way the methodology sees the rejection rationale and the recurrence rule can fire if "chose serial because" repeats.
+
+**Anti-patterns:**
+
+- **Serial by default when parallel was feasible.** Leaves wall-clock leverage on the table without surfacing the choice. Always consider parallel first.
+- **Dispatching subagents in separate messages.** Per `Task` tool: parallel only happens when multiple `Agent` tool uses are in a SINGLE message. Two messages = serial. The mechanism is clear; respect it.
+- **Forcing parallelization when chunks genuinely depend.** If chunk B needs chunk A's output, parallelizing surfaces as merge conflicts or B-built-on-stale-A. Cheaper to serialize than to hand-merge later.
+- **Skipping chunk identification.** Dispatching subagents on overlapping file sets pre-emptively guarantees merge conflicts. Spend the 30 seconds to map file sets first.
+- **Treating multi-branch merge as a problem.** It's the methodology working. Per `§ 10.3`, branches queue at merge — auto-merge handles disjoint, manual resolution handles overlap. Both paths are documented.
+
+**Companion rules:**
+
+- `KB § PATTERNS/branching-and-merging.md § 11 Branch-per-project workflow` — the per-project branching mechanic this principle elevates.
+- `KB § PATTERNS/branching-and-merging.md § 12 Orchestrator vs working-agent role split` — the orchestrator role this principle defines as default-parallel.
+- `KB § PATTERNS/branching-and-merging.md § 13 Branch-creation triggers` — user-phrase triggers ("branch this") are explicit; this principle adds an implicit trigger (orchestrator's default mental model).
+- `KB § PATTERNS/master-tree-parallel-batches.md` — when N≥2 same-shape children, this is the parallel-batches pattern.
+- `KB § PATTERNS/branching-and-merging.md § 14 Pre-work fetch protocol` — collision detection BEFORE editing; what enables clean parallel chunks.
+
+---
+
 ## DRY
 
 Single authoritative source for every piece of logic. Three similar blocks → extract to shared.
