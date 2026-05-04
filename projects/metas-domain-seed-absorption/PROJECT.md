@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-03
-- **Status:** Phase 0 ✅ → Phase 1 in progress
+- **Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ → Phase 3 in progress
 - **Owner / stakeholders:** joaoraphaelsst · architect (parent orchestrator)
 - **Related docs:**
   - `KB § PATTERNS/seed-lib-layout.md` (target layer = `domain/`)
@@ -186,23 +186,32 @@ new_current, completed = accumulate_contribution(target=30, current=12, incremen
 - PF's `obter_progresso` projected-completion uses `dateutil.relativedelta` — seed module SHOULD use stdlib `calendar.monthrange` math to keep `primitives/` discipline (seed-lib avoids 3rd-party deps where stdlib suffices).
 - Daily Life's `goals_service` uses `noctusai_lib.api.auth.first_or_none` — interesting cross-layer use; that helper is already in seed, no action needed but confirms the pattern.
 
-### Phase 1 — Design value objects + module skeleton
-- [ ] Create `seed/lib/backend/noctusai_lib/domain/metas/__init__.py` with planned-occupants docstring + `__all__` placeholder.
-- [ ] Create `value_objects.py` — `Goal`, `Target`, `Progress`, `Period`, `Contribution`, `GoalStatus`, `PeriodKind` (frozen dataclasses + enums).
-- [ ] Create `repository.py` — `GoalRepository` Protocol + `InMemoryGoalRepository` default.
-- [ ] Wire `__init__.py` re-exports.
-- [ ] Create `seed/lib/backend/tests/domain/metas/__init__.py` + skeleton test files importable.
-- [ ] Run `pytest seed/lib/backend/tests/domain/metas/` (skeleton: imports green).
-- [ ] Phase 1 commit (no push).
+### Phase 1 — Design value objects + module skeleton ✅
+- [x] Create `seed/lib/backend/noctusai_lib/domain/metas/__init__.py` with planned-occupants docstring + `__all__` placeholder.
+- [x] Create `value_objects.py` — `Goal`, `Target`, `Progress`, `Period`, `Contribution`, `GoalStatus`, `PeriodKind` (frozen dataclasses + enums).
+- [x] Create `repository.py` — `GoalRepository` Protocol + `InMemoryGoalRepository` default.
+- [x] Wire `__init__.py` re-exports.
+- [x] Create `seed/lib/backend/tests/domain/metas/__init__.py` + skeleton test files importable.
+- [x] Phase 1 + Phase 2 collapsed into one commit (tightly coupled, see Change Log).
 
-### Phase 2 — Implement pure-function modules + tests
-- [ ] `periods.py`: `PeriodKind` enum methods + `period_bounds`, `count_business_days`, `business_days_remaining_in_week/month/year`, `working_days_total_in_month/year`, `proportional_target`. Tests cover ERP's `_calcular_meta_proporcional` cases verbatim.
-- [ ] `progress.py`: `compute_progress`, `accumulate_contribution`, `project_completion_date`. Tests cover PF's `obter_progresso` cases + daily-life accumulation.
-- [ ] `status.py`: `GoalStatus` enum + `next_status` state machine. Tests cover PF "concluida" threshold + ERP "no_prazo"/"atrasada" by period-remaining-pct.
-- [ ] Update `__init__.py` to re-export final surface.
-- [ ] Run `pytest seed/lib/backend/tests/domain/metas/` — all green.
-- [ ] Run full seed-lib pytest — all green (no regression).
-- [ ] Phase 2 commit (no push).
+**Improvements:**
+- Phase 1 + 2 collapsed into a single working pass (write module + write tests in one breath); the project plan kept them as separate phases per the template, but in practice the tests exercise the public surface so writing them apart wastes a context round-trip. Future similar projects: budget for 1 collapsed phase, not 2.
+- `GoalStatus.value` doubles as the canonical persisted string (string-valued enum). Predicted in §3.6; confirmed correct on Phase 2 — products can `db.update({"status": GoalStatus.COMPLETED.value})` directly without going through `to_pt_string`. The PT mapping is for legacy strings (`ativa`/`concluida`) that products already persist; new products should use the enum value.
+- `_add_months` was promoted from "use `dateutil.relativedelta`" (PF's choice) to "stdlib `calendar.monthrange` math" inside Phase 2 to keep the seed-lib stdlib-only discipline. Cited in `KB § PATTERNS/seed-lib-layout.md` table — `primitives/` "stdlib-only" — but applies upward through `domain/` for the same reason (no surprise transitive deps).
+
+### Phase 2 — Implement pure-function modules + tests ✅
+- [x] `periods.py`: `PeriodKind` enum methods + `period_bounds`, `count_business_days`, `business_days_remaining_in_week/month/year`, `working_days_total_in_month/year`, `proportional_target`. Tests cover ERP's `_calcular_meta_proporcional` cases verbatim.
+- [x] `progress.py`: `compute_progress`, `accumulate_contribution`, `project_completion_date`. Tests cover PF's `obter_progresso` cases + daily-life accumulation.
+- [x] `status.py`: `GoalStatus` enum + `next_status` state machine. Tests cover PF "concluida" threshold + ERP "no_prazo"/"atrasada" by period-remaining-pct.
+- [x] Update `__init__.py` to re-export final surface.
+- [x] Run `pytest seed/lib/backend/tests/domain/metas/` — **111 passed**.
+- [x] Run full seed-lib pytest — **638 passed** (baseline 527 + 111 new = no regression).
+- [x] Phase 1 + Phase 2 commit (no push).
+
+**Improvements:**
+- One test caught my arithmetic at first try (test_project_completion_date_calculates_eta) — wrote expected ETA based on confused mental model of monthly_avg vs total. Fix was in the test, not the production code, but it's a reminder that: tests for "X months from now" need the full chain spelled out in the comment, not just the answer.
+- ERP's `_calcular_meta_proporcional` had no QUARTERLY case; I added one as a natural extension (monthly * 3 * remaining_in_quarter / total_in_quarter). Rationale: ERP's project has `quinzenal/mensal/trimestral/anual` periods but proportional target only handled `diaria/semanal/mensal/anual`. The QUARTERLY extension is consistent with the ERP shape and harmless (no consumer today).
+- `accumulate_contribution`'s "crossed_threshold_pct" milestone detection is bonus value that wasn't in any product today — it's a small extension (~10 LOC) that downstream gamification / notification consumers will appreciate. Catalog as accept-with-rationale: SHIPPED-AHEAD-OF-CONSUMER, well-tested, no maintenance burden.
 
 ### Phase 3 — KB integration + project close
 - [ ] Add `KB § PATTERNS/metas-seed.md` (concise: shape + wiring recipe, modeled on `scheduling-seed.md`).
@@ -259,3 +268,4 @@ new_current, completed = accumulate_contribution(target=30, current=12, incremen
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | Initial PROJECT.md drafted from `templates/PROJECT-TEMPLATE.md` after Phase 0 audit of PF / ERP / daily-life metas services. Recurrence-rule trigger: N=3 MUST FORMALIZE per `KB § PATTERNS/project-execution.md § 2.7`. Predecessor: `products/personal-finance/projects/personal-finance-wiring/proposals/phase-1-seed-absorption-followups.md § 7.3`. | claude-opus-4-7 (engineer; dispatched by architect) |
+| 2026-05-03 | Phase 1 + Phase 2 shipped in a single commit (tightly coupled — module + tests written in one pass). New `seed/lib/backend/noctusai_lib/domain/metas/` ships 5 source modules (value_objects, periods, progress, status, repository) + 1 `__init__.py` re-export barrel. New `seed/lib/backend/tests/domain/metas/` ships 5 test files = 111 tests total. Full seed-lib pytest: 638 passed (was 527 baseline). Domain `__init__.py` doc-block updated to list `metas/` as active occupant. | claude-opus-4-7 |

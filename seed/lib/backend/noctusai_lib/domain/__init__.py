@@ -33,6 +33,15 @@ business logic" namespace.
   rls_subquery_policy). Pure string emission; no IO. Used in new
   migration files + the scaffold tool so the SECURITY DEFINER /
   search_path / RLS subquery conventions can't drift across products.
+- `metas/` — goals / targets / budgets domain (value-and-target tracking)
+  shared across PF (financial goals + budgets), ERP (sales targets +
+  proportional cascade) and Daily Life (habit check-ins). Pure-domain:
+  value objects (`Goal`, `Target`, `Progress`, `Period`, `Contribution`),
+  enums (`GoalStatus`, `PeriodKind`), pure-function helpers
+  (`compute_progress`, `accumulate_contribution`, `period_bounds`,
+  `proportional_target`, `next_status`), and a `GoalRepository` Protocol
+  seam for product-side persistence. Lifted 2026-05-03 per N=3
+  MUST-FORMALIZE. See `KB § PATTERNS/metas-seed.md`.
 
 **Future occupants:**
 - `gamification/` (when ERP Metas patterns extract)
