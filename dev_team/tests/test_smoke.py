@@ -131,9 +131,14 @@ def test_allowlists_have_11_roles():
 
 
 def test_load_charter_raises_when_missing():
-    """Until A engineer ships charter files, load_charter raises a
-    clear FileNotFoundError — NOT silently returns empty string."""
+    """load_charter raises a clear FileNotFoundError for a nonexistent role
+    — NOT silently returns empty string.
+
+    Updated by B2 engineer-A: the 12 expected charter files (1 shared + 11
+    role) now ship; this test now checks the failure mode for a name not
+    in the catalog rather than relying on "leader" being absent.
+    """
     from dev_team.agents.base import load_charter
 
     with pytest.raises(FileNotFoundError, match="charter not found"):
-        load_charter("leader")
+        load_charter("not_a_real_role")  # type: ignore[arg-type]
