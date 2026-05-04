@@ -169,7 +169,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 - Module is half-shipped per the `KB § PATTERNS/seed-fake-real-adapter.md` rule (Real-only, no Protocol, dry-run logs serve as fake). SMTP added today is the second `Real`-shaped consumer that makes the canonical lift cheaper. Filed as out-of-scope deferred (§4).
 
 - [ ] **1.2** `security/encrypted_tokens.py` (Fernet helper, ~90 LOC + tests)
-- [ ] **1.3** `integrations/youtube/` (Protocol+Fake+Real+factory, ~400 LOC + tests)
+- [x] **1.3** `integrations/youtube/` (Protocol+Fake+Real+factory, ~400 LOC + tests) — **2026-05-04** Engineer B in `sh-yt-youtube` worktree. 5 files under `noctusai_lib/integrations/youtube/` (`__init__.py` / `protocol.py` / `types.py` / `fake.py` / `real.py` / `factory.py`) + 1 test file `tests/test_youtube_integration.py` (34 tests). Encodes channel→uploads-playlist→playlistItems trick at the seed level; quota math documented in Protocol docstrings + asserted by Fake (1 unit `get_channel`, 2 units `list_channel_videos` page, 100 units `search`). 718/718 seed-lib tests green.
 - [ ] **1.4** `noctus.dev.scaffold_migration` MCP tool (~150 LOC + tests)
 
 ### Phase 2 — Batch B (structural lifts)
@@ -236,5 +236,6 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 | Date | Change | By |
 |---|---|---|
+| 2026-05-04 | Phase 1.3 — `integrations/youtube/` landed in seed (canonical Protocol+Fake+Real+factory). 6 source files + 1 test file (34 tests). 718/718 seed-lib tests green. Encodes channel→uploads-playlist→playlistItems quota-cheap path so consumers never re-derive it. Branch `sh-yt-youtube`, awaiting merge to integration branch. | engineer B (Claude Opus 4.7) |
 | 2026-05-04 | Phase 1.1 — SMTP backend landed in seed `integrations/email/digest.py` + 19 new tests; 35/35 email tests green; 684/684 seed-lib tests green. | architect (Claude Opus 4.7) |
 | 2026-05-04 | Phase 0 — Project filed; branch `seed-hardening-from-youtube-crawler` created from origin/main. | architect (Claude Opus 4.7) |

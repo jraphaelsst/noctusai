@@ -24,3 +24,23 @@ Append-in-the-moment file for slips / errors / lessons / surprises / interesting
 ## Surprises
 
 - **2026-05-04 (Phase 0 commit):** Pre-commit hook caught a §6-vs-§11 inconsistency in `projects/seed-shadow-purge-helper-lift/PROJECT.md` — Phase 5 header says ✅ but the last sub-task "Final-commit + branch-push (next)" stayed unticked even though commit `f46f76a` on origin/main IS that final commit. Fixed as a drive-by tick (one character) with note pointing at the landing commit. Lesson: phase-close discipline needs to tick the literal LAST sub-task AFTER the commit lands, not before — but agents flip the header pre-commit so the hook only catches it when something else triggers a check. Methodology suggestion (deferred): the post-commit hook (or a new one) could auto-tick "Final-commit + branch-push" sub-tasks when they appear in §6 of the project just committed.
+
+- **2026-05-04 (Phase 1.3, Engineer B):** Brief asked the test file at `seed/lib/backend/tests/test_youtube_integration.py` (top-level), but the existing convention places integration tests under `tests/integrations/<integration>/{test_fake_adapter.py,test_real_adapters.py}` (see `google_calendar`, `google_maps`, `whatsapp`). Followed the brief's literal path because it was explicit and the file is self-contained — but flagged here as a deferred follow-up: relocate to `tests/integrations/youtube/{test_fake.py,test_real.py}` for parity with siblings, or split into two files. Trivial mv + import path stays the same; not blocking.
+
+## Lessons
+
+- **2026-05-04 (Phase 1.3, Engineer B):** The Protocol docstring's quota math says "~2 units per page of 50 videos" for `list_channel_videos`. The actual cost on a fresh client is **3 units** (1 channels.list + 1 playlistItems.list + 1 videos.list); the "~2" assumes the caller has cached `uploads_playlist_id` from a prior `get_channel` call. Real client returns `quota_units_consumed=3` for the un-cached first call, `2` would require an in-client cache. Documented the asymmetry inline in `real.py` (`list_channel_videos`); cache enhancement is a future item. The Fake mirrors the API contract (charges 2/page) since it has no channels.list step inside `list_channel_videos` — the seed's documented `get_channel` (1) + per-page (2) is what tests assert against.
+
+## Knowledge pieces
+
+- **2026-05-04 (Phase 1.3):** YouTube Data API v3 quota costs (relevant subset):
+  - `channels.list` = 1 unit (any combination of `part`).
+  - `playlistItems.list` = 1 unit per page (max 50 items).
+  - `videos.list` = 1 unit per call regardless of how many comma-joined ids (up to 50 in batch).
+  - `search.list` = **100 units** per page (50 max items). 1% of daily quota per call.
+  - Default daily quota = 10,000 units → ~100 search calls OR ~5,000 channel-video pages.
+  - The auto-managed "uploads" playlist id appears on `channels.list?part=contentDetails` as `contentDetails.relatedPlaylists.uploads`.
+
+- **2026-05-04 (Phase 1.3):** ISO-8601 durations from YouTube (`contentDetails.duration`) only use the H/M/S subset of the spec (no D/W/M for video durations) → simple state-machine parser is enough; no `isodate` dep needed. Fallback to 0 on parse failure with WARN log keeps a malformed entry from poisoning a whole list.
+
+- **2026-05-04 (Phase 1.3):** YouTube emits `publishedAt` as RFC 3339 with a literal `Z` suffix. Python <3.11 chokes on `Z`; replace with `+00:00` before `datetime.fromisoformat`. Tested on Python 3.11 (works either way) but the replace stays for portability.
