@@ -28,12 +28,18 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
+@runtime_checkable
 class RedisBufferClient(Protocol):
     """The Redis surface the buffer uses. `redis.Redis` from `redis-py`
-    satisfies this naturally; tests use an in-memory `FakeRedis`."""
+    satisfies this naturally; tests use an in-memory `FakeRedis`.
+
+    `@runtime_checkable` so consumers can `isinstance(client, RedisBufferClient)`
+    in tests — matches the convention `WhatsAppClient`, `CalendarAdapter`,
+    `RoutingAdapter` follow per `KB § PATTERNS/seed-fake-real-adapter.md`.
+    """
 
     def rpush(self, name: str, *values: str) -> int: ...
 
@@ -68,6 +74,23 @@ class RedisBufferClient(Protocol):
     def zrem(self, name: str, *values: str) -> int: ...
 
     def zscore(self, name: str, value: str) -> float | None: ...
+
+
+def make_in_memory_buffer_client() -> RedisBufferClient:
+    """Return a Protocol-compatible in-memory buffer client (no network).
+
+    Thin wrapper around `noctusai_lib.integrations.redis.make_fake_redis_client()`
+    — re-exported here for the import-shortcut UX. Tests + dev paths can do
+    `from noctusai_lib.domain.chatbot import make_in_memory_buffer_client`
+    instead of remembering it lives in the redis integration.
+
+    Per `KB § PATTERNS/seed-fake-real-adapter.md` — every IO-touching seed
+    module ships a Fake. `domain.chatbot.buffer` is IO-touching via Redis,
+    so it gets one too.
+    """
+    from noctusai_lib.integrations.redis import make_fake_redis_client
+
+    return make_fake_redis_client()
 
 
 @dataclass(frozen=True)

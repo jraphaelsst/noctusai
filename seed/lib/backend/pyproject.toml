@@ -24,6 +24,12 @@ dependencies = [
     # but installed monolithically so every product can opt in without
     # touching requirements.txt.
     "redis>=5.0.0",
+    # In-memory Redis-compatible client — powers
+    # `noctusai_lib.integrations.redis.make_fake_redis_client` and
+    # `noctusai_lib.domain.chatbot.make_in_memory_buffer_client`. Required
+    # at install time so test/dev consumers don't need to add it
+    # individually. See `KB § PATTERNS/seed-fake-real-adapter.md`.
+    "fakeredis>=2.20.0",
     # Email digest rendering — Jinja templates platform-wide. Used by
     # noctusai_lib.email.digest.render() (formalized 2026-04-25 once 5
     # adopters surfaced; see KB § 04-SHARED-LIBRARY § email/).

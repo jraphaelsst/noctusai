@@ -34,3 +34,22 @@ def make_redis_client(redis_url: str, **kwargs: Any) -> "Redis":
 
     kwargs.setdefault("decode_responses", True)
     return Redis.from_url(redis_url, **kwargs)
+
+
+def make_fake_redis_client(**kwargs: Any) -> "Redis":
+    """In-memory Redis-compatible client for tests + dev (no network).
+
+    Wraps `fakeredis.FakeStrictRedis` with the same `decode_responses=True`
+    default as `make_redis_client`. The returned instance satisfies
+    `noctusai_lib.domain.chatbot.RedisBufferClient` Protocol naturally —
+    drop-in for `make_redis_client(redis_url)` in test/dev paths.
+
+    Per the gold-standard Fake+Real shape (`KB § PATTERNS/seed-fake-real-adapter.md`)
+    every IO-touching seed module ships a Fake. The redis module's Fake
+    delegates to `fakeredis` rather than hand-rolling because Redis's
+    surface area is large and `fakeredis` is the de-facto Python fake.
+    """
+    import fakeredis  # lazy — only test/dev paths import this
+
+    kwargs.setdefault("decode_responses", True)
+    return fakeredis.FakeStrictRedis(**kwargs)

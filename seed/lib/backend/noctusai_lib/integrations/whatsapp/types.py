@@ -10,6 +10,7 @@ rename pass.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,28 @@ class WhatsAppPayloadError(ValueError):
 class WhatsAppIgnoredEvent(ValueError):
     """Inbound payload is structurally valid but the event type / source
     is intentionally ignored (e.g. `session.status`, own-message echoes)."""
+
+
+@runtime_checkable
+class WhatsAppClient(Protocol):
+    """Send / download surface every WhatsApp connector implements.
+
+    Both `WahaClient` (real, httpx-backed) and `FakeWahaClient`
+    (in-memory deterministic) satisfy this Protocol naturally. Future
+    Twilio / WhatsApp Cloud-API connectors land against the same shape.
+
+    Per `KB § PATTERNS/seed-fake-real-adapter.md`: the Protocol is the
+    contract that the gold-standard pattern's `get_<name>_adapter(...)`
+    factory returns.
+    """
+
+    async def send_text(self, chat_id: str, text: str) -> dict[str, Any]: ...
+
+    def send_text_sync(self, chat_id: str, text: str) -> dict[str, Any]: ...
+
+    async def download_media(self, url: str) -> bytes: ...
+
+    def download_media_sync(self, url: str) -> bytes: ...
 
 
 # Legacy WAHA-prefixed aliases (kept for call-site portability).

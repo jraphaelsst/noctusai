@@ -29,6 +29,7 @@ from noctusai_lib.domain.chatbot.buffer import (
     ConversationBufferService,
     QueuedConversationMessage,
     RedisBufferClient,
+    make_in_memory_buffer_client,
 )
 from noctusai_lib.domain.chatbot.llm_dispatcher import (
     AuditWriter,
@@ -61,6 +62,7 @@ __all__ = [
     "ToolHandler",
     "ToolResult",
     "format_conversation_for_transcript",
+    "make_in_memory_buffer_client",
     "memory_to_chat_messages",
     "summarize_conversation",
 ]
