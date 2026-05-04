@@ -1,27 +1,24 @@
-"""ORM model for media_scheduling.authorized_users.
+"""`media_scheduling.authorized_users` row shape (minimal).
 
-WhatsApp-authorized phone numbers + optional captured Linked-Identity
-chat IDs. NOT platform SSO users — separate concept (see PROJECT.md §5).
+WhatsApp-authorized actor. Phase 4 reads `id`, `phone_number`, `role`, `active`,
+`name`, `email` for crew-assignment + tool-handler `find_authorized_user`.
 """
 from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, func
-
-from app.models import Base, SCHEMA
+from pydantic import BaseModel, ConfigDict
 
 
-class AuthorizedUser(Base):
-    __tablename__ = "authorized_users"
-    __table_args__ = {"schema": SCHEMA}
+class AuthorizedUser(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-    id = Column(BigInteger, primary_key=True)
-    name = Column(String(120), nullable=False)
-    role = Column(String(40), nullable=False)
-    phone_number = Column(String(32), nullable=False, unique=True)
-    email = Column(String(255), nullable=True)
-    linked_identity = Column(String(128), nullable=True)
-    active = Column(Boolean, nullable=False, default=True)
-    created_at: datetime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at: datetime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int
+    name: str
+    role: str
+    phone_number: str
+    email: str | None = None
+    linked_identity: str | None = None
+    active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

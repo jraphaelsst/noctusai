@@ -1,24 +1,25 @@
-"""ORM model for media_scheduling.oauth_credentials."""
+"""`media_scheduling.oauth_credentials` row shape.
+
+Phase 4's `OAuthCredentialResolver` reads these rows + writes refreshed
+access tokens back. Phase 3's `routers/oauth.py` (Engineer C) writes the
+initial token-exchange row.
+"""
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Column, DateTime, String, Text, UniqueConstraint, func
+from datetime import datetime
 
-from app.models import Base, SCHEMA
+from pydantic import BaseModel, ConfigDict
 
 
-class OAuthCredential(Base):
-    __tablename__ = "oauth_credentials"
-    __table_args__ = (
-        UniqueConstraint("provider", "account_email", name="uq_oauth_credentials_provider_email"),
-        {"schema": SCHEMA},
-    )
+class OAuthCredential(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-    id = Column(BigInteger, primary_key=True)
-    provider = Column(String(40), nullable=False)
-    account_email = Column(String(255), nullable=False)
-    refresh_token = Column(Text, nullable=False)
-    access_token = Column(Text, nullable=True)
-    access_token_expires_at = Column(DateTime(timezone=True), nullable=True)
-    scopes = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int
+    provider: str
+    account_email: str
+    refresh_token: str
+    access_token: str | None = None
+    access_token_expires_at: datetime | None = None
+    scopes: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

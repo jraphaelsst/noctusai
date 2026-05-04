@@ -1,25 +1,26 @@
-"""ORM model for media_scheduling.appointments."""
+"""`media_scheduling.appointments` row shape (minimal).
+
+Phase 4 reads `start_at`, `end_at`, `condominium_id`, `status` for
+existing-intervals fetch (SchedulingEngine input) + inserts on confirm.
+"""
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String, func
+from datetime import datetime
 
-from app.models import Base, SCHEMA
+from pydantic import BaseModel, ConfigDict
 
 
-class Appointment(Base):
-    __tablename__ = "appointments"
-    __table_args__ = {"schema": SCHEMA}
+class Appointment(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-    id = Column(BigInteger, primary_key=True)
-    appointment_request_id = Column(BigInteger, nullable=True)
-    google_calendar_event_id = Column(String(255), nullable=True)
-    start_at = Column(DateTime(timezone=True), nullable=False)
-    end_at = Column(DateTime(timezone=True), nullable=False)
-    property_id = Column(BigInteger, nullable=False)
-    condominium_id = Column(
-        BigInteger, ForeignKey(f"{SCHEMA}.condominiums.id"), nullable=False
-    )
-    route_group_id = Column(BigInteger, nullable=True)
-    status = Column(String(40), nullable=False, default="scheduled")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int
+    appointment_request_id: int | None = None
+    google_calendar_event_id: str | None = None
+    start_at: datetime
+    end_at: datetime
+    property_id: int
+    condominium_id: int
+    route_group_id: int | None = None
+    status: str = "scheduled"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

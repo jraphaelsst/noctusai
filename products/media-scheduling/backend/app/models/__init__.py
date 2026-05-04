@@ -1,37 +1,43 @@
-"""SQLAlchemy ORM models for media_scheduling product tables.
+"""Domain models for media_scheduling.
 
-These models are minimal — they exist primarily so:
-  - The seed `noctusai_lib.domain.ai.tool_audit.make_audit_writer(db, table_class)`
-    contract has a concrete `ToolCallAudit` class to instantiate per the
-    `KB § PATTERNS/llm-tool-audit.md` recipe.
-  - Future SQLAlchemy-using surfaces (audit retention sweep, conversation
-    summary backfill, etc.) have a typed shape to bind to.
+Hybrid layout (settled at the Phase 3 + Phase 4 merge — see §11 in
+projects/media-scheduling-port/PROJECT.md):
 
-Routers in Phase 3 currently use the Supabase admin client directly per the
-PROJECT.md §2 "DB — Supabase, not SQLAlchemy/Alembic" decision; the ORM
-models do NOT replace that — they coexist for the seed-pattern surfaces
-that require a typed table_class.
+- **Pydantic** for everything the Supabase-client services touch
+  (Engineer D pattern). The product is Supabase-client-native per
+  PROJECT.md §2 — these are value-objects that type-narrow row dicts
+  returned by Supabase.
 
-The actual schema lives in `migrations/002_initial_schema.sql` (mirrored
-via Supabase MCP). These models mirror that DDL but are NOT the source of
-truth — never run `Base.metadata.create_all(...)` against the live DB.
+- **SQLAlchemy ORM** for `ToolCallAudit` only — the seed
+  `noctusai_lib.domain.ai.tool_audit.make_audit_writer(db, table_class)`
+  contract requires a SQLAlchemy class. Engineer C also kept
+  `ConversationSummary` + `PendingChatIdentity` as ORM (speculative;
+  no current consumer; harmless coexistence with `Base/SCHEMA`).
+
+The actual schema lives in `migrations/00X_*.sql` (mirrored via Supabase
+MCP). Models mirror that DDL but are NOT the source of truth — never run
+`Base.metadata.create_all(...)` against the live DB.
 """
 from __future__ import annotations
 
 from sqlalchemy.orm import declarative_base
 
-# Single Base for all media_scheduling ORM models. The MetaData carries
-# `schema="media_scheduling"` so any future Table introspection or test
-# fixture knows which Postgres schema the rows land in.
+# SQLAlchemy bases — used only by the ORM-flavored models below.
 Base = declarative_base()
 SCHEMA = "media_scheduling"
 
-
+# Pydantic value objects (Supabase-client services consume these).
 from app.models.appointment import Appointment  # noqa: E402,F401
 from app.models.authorized_user import AuthorizedUser  # noqa: E402,F401
 from app.models.condominium import Condominium  # noqa: E402,F401
-from app.models.conversation_summary import ConversationSummary  # noqa: E402,F401
+from app.models.crew_skill import CrewSkill  # noqa: E402,F401
 from app.models.oauth_credential import OAuthCredential  # noqa: E402,F401
+from app.models.property import Property  # noqa: E402,F401
+from app.models.route_group import RouteGroup  # noqa: E402,F401
+from app.models.service_type import ServiceType  # noqa: E402,F401
+
+# SQLAlchemy ORM (audit-writer + speculative future ORM surfaces).
+from app.models.conversation_summary import ConversationSummary  # noqa: E402,F401
 from app.models.pending_chat_identity import PendingChatIdentity  # noqa: E402,F401
 from app.models.tool_call_audit import ToolCallAudit  # noqa: E402,F401
 
@@ -41,8 +47,12 @@ __all__ = [
     "Base",
     "Condominium",
     "ConversationSummary",
+    "CrewSkill",
     "OAuthCredential",
     "PendingChatIdentity",
+    "Property",
+    "RouteGroup",
     "SCHEMA",
+    "ServiceType",
     "ToolCallAudit",
 ]
