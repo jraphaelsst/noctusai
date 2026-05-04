@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ → Phase 1 ✅ → Phase 2 ready
+- **Status:** Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ready
 - **Owner / stakeholders:** jraphaelsst · architect (Claude Opus 4.7)
 - **Related docs:** `KB § 03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/seed-fake-real-adapter.md` · `KB § PATTERNS/branching-and-merging.md` · `KB § PATTERNS/master-tree-parallel-batches.md` · sibling workspace at `~/Documents/repository/NoctusAI/noctusai-youtube-crawler/`
 - **Project slug:** `seed-hardening-from-youtube-crawler` (intent = `hardening`; lives at `projects/<slug>/` because the work is platform-wide seed/lib changes that propagate to every product)
@@ -181,7 +181,16 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 - [x] **1.3** `integrations/youtube/` (Protocol+Fake+Real+factory) — Engineer B in `sh-yt-youtube` worktree. 6 files under `noctusai_lib/integrations/youtube/` + 34 tests. Encodes channel→uploads-playlist→playlistItems trick at the seed level; quota math documented in Protocol docstrings + asserted by Fake (1 unit `get_channel`, 2 units `list_channel_videos` page, 100 units `search`).
 - [x] **1.4** `noctus.dev.scaffold_migration` MCP tool — Engineer C in `sh-yt-migration-scaffolder` worktree. New `mcp/noctusai/tools/noctus/dev/scaffold_migration.py` + 19 tests covering numbering / schema-default / schema-override / `with_table=` block / 6 error paths / 3 keeper-detector-style integration assertions vs the canonical `sql_templates` helpers. `products_dir=` injection seam added during build to keep tests hermetic without monkey-patching the module binding (lesson logged).
 
-### Phase 2 — Batch B (structural lifts)
+### Phase 2 — Batch B (structural lifts) ✅
+
+**Phase 2 close summary:** All four Batch-B surfaces shipped in seed. 850/850 seed-lib backend + 33/33 framework backend tests green at integration tip. Three engineers ran in parallel (D paired 2.1+2.2; E on 2.3; F on 2.4); integration absorbed via `--no-ff` merges (a13bdc3...3acc958 → e757c21 → 98d1864 sequence on Phase 2 commits).
+
+**Improvements:**
+- **DEFERRED-WITH-DESTINATION** Worktree-venv editable-install gap (Engineer F surprise): when a worktree modifies seed packages, the venv's editable install points at the MAIN repo, so product pytests don't see worktree changes without `PYTHONPATH=<worktree>/seed/...`. Workaround used by Engineer F. Different from the pre-commit hook fix shipped in Phase 1 (that one was Python *interpreter* discovery; this is Python *module path*). Filed as future project: `worktree-bootstrap-venv-editable-installs` — needs design (shared venv vs per-worktree).
+- **ACCEPTED-WITH-RATIONALE** `JobStatus` FAILED→PENDING two-step FSM in Fake vs single-UPDATE shortcut in Real (Engineer D). Intentional design — Fake mirrors the FSM contract literally (so tests can introspect intermediate state); Real persists the audit trail via `retry_count` bump rather than two SQL writes. Documented inline in code + findings.md.
+- **DEFERRED** Future project: migrate `integrations/google_calendar/oauth_adapter.py` to consume `security/oauth/google_provider.GoogleProvider.refresh()` (Engineer E follow-up). Out of this project's scope; cataloged as `google-calendar-oauth-consume-generic-provider`.
+- **DEFERRED** OAuth router refresh-endpoint default-off encryption seam — `oauth_router` accepts an optional encryption key for refresh-token-at-rest; documentation for product-side wiring deferred to Phase 3 closeout.
+- **DEFERRED** `MockSupabaseClient` testing pattern (Engineer D) — `inserted_payloads` / `updated_payloads` / `set_rpc_data` covered Real-Supabase shape tests with zero monkey-patching. Worth promoting to `KB § PATTERNS/testing.md` as a canonical approach. Defer to Phase 3 close + memory three-way-sync.
 - [x] **2.1** Generic worker — lifted `domain/chatbot/worker.py` shape to `domain/jobs/worker.py` (Engineer D, branch `sh-yt-jobs`). Async polling worker with `run_once` / `run_forever(stop_event=...)`. Chatbot worker left intact for chatbot consumers.
 - [x] **2.2** Jobs primitive — `domain/jobs/` (Engineer D, same branch). Job entity + JobStatus 5-state machine + RetryPolicy + JobRepository Protocol + FakeJobRepository + RealSupabaseJobRepository + `make_job_repository` factory + `DeadLetterError`. 73 new tests.
 - [x] **2.3** OAuth router — `security/oauth/` (Engineer E, branch `sh-yt-oauth`). OAuthProvider Protocol + GoogleProvider (lifted from google_calendar/oauth_adapter.py) + FakeOAuthProvider + `make_oauth_provider` factory + `oauth_router(*providers)` with authorize/callback/refresh/revoke endpoints. 39 new tests. `integrations/google_calendar/oauth_adapter.py` UNTOUCHED (parallel addition).
@@ -245,6 +254,10 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 | Date | Change | By |
 |---|---|---|
+| 2026-05-04 | Phase 2 close ✅ — all 4 Batch-B surfaces merged (jobs primitive+worker, oauth router, health endpoints). 850/850 seed-lib + 33/33 framework tests green. Five Phase 2 findings triaged: worktree-venv editable-install gap deferred to its own project, FAILED→PENDING FSM accepted-with-rationale, google_calendar OAuth migration + refresh encryption + MockSupabaseClient pattern doc all deferred-with-destination. | architect (Claude Opus 4.7) |
+| 2026-05-04 | Phase 2.4 — Health endpoints baked into `create_product_app` (Engineer F, branch `sh-yt-health`). New `seed/framework/backend/noctusai_seed/health.py` + libcst-edited `app.py` adds `health_config=` kwonly param + `__init__.py` re-exports + PF `app/main.py` opt-in example + 15 tests. | Engineer F (Claude Opus 4.7) |
+| 2026-05-04 | Phase 2.3 — `security/oauth/` (Engineer E, branch `sh-yt-oauth`). OAuthProvider Protocol + GoogleProvider lifted from google_calendar/oauth_adapter + Fake + factory + `oauth_router(*providers)` (authorize/callback/refresh/revoke). 39 tests. google_calendar/oauth_adapter UNTOUCHED. | Engineer E (Claude Opus 4.7) |
+| 2026-05-04 | Phase 2.1+2.2 — `domain/jobs/` (Engineer D, branch `sh-yt-jobs`). Job entity + 5-state FSM + RetryPolicy + JobRepository Protocol + Fake + RealSupabase + factory + generic Worker (lifted shape from chatbot/worker.py). 73 tests. chatbot/worker.py UNTOUCHED. | Engineer D (Claude Opus 4.7) |
 | 2026-05-04 | Phase 1 close ✅ — all 4 Batch-A surfaces merged into integration branch (3acc958→3c7d305→64ebc1c→fe6988f); 738/738 seed-lib + 26/26 MCP-scaffold tests green. Triage applied: pre-commit worktree-venv fixed inline, `cryptography` promoted to explicit dep, 2 N=2 recurrences cataloged in accept-with-rationale, MCP test path-fragility deferred to its own project. | architect (Claude Opus 4.7) |
 | 2026-05-04 | Phase 1.4 — `noctus.dev.scaffold_migration` MCP tool landed in `mcp/noctusai/tools/noctus/dev/scaffold_migration.py` + 19 tests covering numbering / schema-default / schema-override / `with_table=` block / six error paths / three keeper-detector-style integration assertions vs the canonical helpers. Registered alphabetically in `__init__.py`. Engineer C, branch `sh-yt-migration-scaffolder`. | Engineer C (Claude Opus 4.7) |
 | 2026-05-04 | Phase 1.3 — `integrations/youtube/` landed in seed (canonical Protocol+Fake+Real+factory). 6 source files + 1 test file (34 tests). Encodes channel→uploads-playlist→playlistItems quota-cheap path so consumers never re-derive it. Engineer B, branch `sh-yt-youtube`. | Engineer B (Claude Opus 4.7) |
