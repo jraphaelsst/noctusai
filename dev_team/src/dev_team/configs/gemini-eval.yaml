@@ -1,0 +1,39 @@
+# gemini-eval.yaml — Google Gemini model evaluation template
+#
+# TODO — to activate this config:
+#   1. Uncomment the agent rows you want to swap (or all 11 for a full
+#      Gemini eval).
+#   2. Pin specific model IDs you want compared (e.g. `gemini-2.5-pro`
+#      for the high-leverage seats, `gemini-2.5-flash` for the
+#      implementation seats).
+#   3. Ensure `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) is set in `.env`
+#      before running:
+#        python -m dev_team eval "<task>" --configs default,gemini-eval
+#   4. Provider strings the loader recognizes today: `anthropic`,
+#      `openai`, `google`. Adapter wiring lives in (E engineer scope)
+#      `dev_team/src/dev_team/agents/base.py::_build_model_for_provider`.
+#
+# Rationale: Gemini 2.5 Pro is the natural cost-vs-quality crosscheck
+# for the Opus seats (long-context reasoning), and Gemini 2.5 Flash is
+# the natural crosscheck for the Sonnet seats (fast/cheap). Running this
+# eval alongside `default.yaml` tells us where Gemini wins outright,
+# where it's a wash, and where Anthropic should stay default.
+
+agents:
+  # leader: { provider: google, model: gemini-2.5-pro } # TODO
+  # product_manager: { provider: google, model: gemini-2.5-pro } # TODO
+  # ux_designer: { provider: google, model: gemini-2.5-flash } # TODO
+  # solution_architect: { provider: google, model: gemini-2.5-pro } # TODO
+  # backend_engineer: { provider: google, model: gemini-2.5-flash } # TODO
+  # frontend_engineer: { provider: google, model: gemini-2.5-flash } # TODO
+  # devops_engineer: { provider: google, model: gemini-2.5-flash } # TODO
+  # security_engineer: { provider: google, model: gemini-2.5-pro } # TODO
+  # qa_engineer: { provider: google, model: gemini-2.5-flash } # TODO
+  # code_reviewer: { provider: google, model: gemini-2.5-pro } # TODO
+  # technical_writer: { provider: google, model: gemini-2.5-flash } # TODO
+
+  # Placeholder so the YAML parses while every agent is commented out.
+  # Remove this line once you uncomment at least one real agent above.
+  _placeholder:
+    provider: anthropic
+    model: claude-sonnet-4-6

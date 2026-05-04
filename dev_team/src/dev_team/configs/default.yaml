@@ -1,0 +1,53 @@
+# default.yaml — dev_team v1 model assignment
+#
+# Rationale (per design-reference.md §9 + §8):
+#   - Opus on the high-leverage decision agents — Leader, PM, Architect,
+#     Security, Code Reviewer. These agents own the structure and the
+#     "is this safe / right" calls; quality compounds across the rest of
+#     the turn.
+#   - Sonnet on the implementation + prose agents — Backend, Frontend,
+#     DevOps, QA, UX, Tech Writer. Each does a bounded, well-scoped task
+#     with the Architect's spec already in hand; cost dominates over
+#     marginal quality gain.
+#
+# Model tiering drops average task cost ~40-60% vs all-Opus while
+# keeping the load-bearing seats on the strongest model.
+#
+# Provider-agnostic: every entry is `provider:` + `model:` so swapping
+# Anthropic → OpenAI/Google is a config edit (see codex-eval.yaml /
+# gemini-eval.yaml templates), never a code change.
+
+agents:
+  leader:
+    provider: anthropic
+    model: claude-opus-4-7
+  product_manager:
+    provider: anthropic
+    model: claude-opus-4-7
+  ux_designer:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  solution_architect:
+    provider: anthropic
+    model: claude-opus-4-7
+  backend_engineer:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  frontend_engineer:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  devops_engineer:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  security_engineer:
+    provider: anthropic
+    model: claude-opus-4-7
+  qa_engineer:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  code_reviewer:
+    provider: anthropic
+    model: claude-opus-4-7
+  technical_writer:
+    provider: anthropic
+    model: claude-sonnet-4-6
