@@ -133,6 +133,68 @@ class TestQueryBatches:
         assert len(rows) == 2
 
 
+class TestTokensTotal:
+    def test_log_with_tokens_persists(self, tmp_db):
+        log_batch(
+            orchestration_slug="o",
+            batch_label="1A",
+            engineer_count=2,
+            tokens_total=42000,
+            status="COMPLETED",
+        )
+        row = query_batches("o")[0]
+        assert row["tokens_total"] == 42000
+
+    def test_update_sets_tokens_on_close(self, tmp_db):
+        log_batch(orchestration_slug="o", batch_label="1A", engineer_count=2)
+        update_batch(
+            orchestration_slug="o",
+            batch_label="1A",
+            tokens_total=98765,
+            status="COMPLETED",
+        )
+        row = query_batches("o")[0]
+        assert row["tokens_total"] == 98765
+        assert row["status"] == "COMPLETED"
+
+    def test_cumulative_sums_tokens(self, tmp_db):
+        log_batch(
+            orchestration_slug="o",
+            batch_label="1A",
+            engineer_count=2,
+            tokens_total=10000,
+            status="COMPLETED",
+        )
+        log_batch(
+            orchestration_slug="o",
+            batch_label="1B",
+            engineer_count=3,
+            tokens_total=25000,
+            status="COMPLETED",
+        )
+        log_batch(
+            orchestration_slug="o",
+            batch_label="1C",
+            engineer_count=3,
+            tokens_total=15000,
+            status="IN_FLIGHT",  # excluded from cumulative
+        )
+        stats = cumulative_stats("o")
+        assert stats["tokens_total"] == 35000
+
+    def test_null_tokens_handled(self, tmp_db):
+        log_batch(
+            orchestration_slug="o",
+            batch_label="1A",
+            engineer_count=2,
+            status="COMPLETED",
+        )
+        row = query_batches("o")[0]
+        assert row["tokens_total"] is None
+        stats = cumulative_stats("o")
+        assert stats["tokens_total"] is None
+
+
 class TestCumulativeStats:
     def test_aggregates_completed_only(self, tmp_db):
         log_batch(

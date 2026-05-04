@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS batch_speed_gains (
     wall_clock_parallel_s REAL,
     estimated_serial_s REAL,
     speed_gain_pct REAL,
+    tokens_total INTEGER,
     notes TEXT,
     status TEXT NOT NULL DEFAULT 'IN_FLIGHT',
     recorded_at TEXT NOT NULL,
@@ -48,6 +49,14 @@ CREATE TABLE IF NOT EXISTS batch_speed_gains (
 CREATE INDEX IF NOT EXISTS idx_batch_speed_gains_orchestration
     ON batch_speed_gains(orchestration_slug);
 """
+
+# Idempotent migrations for evolving schemas. Each entry is a DDL statement
+# that should be no-op'd if the column already exists. SQLite raises
+# OperationalError("duplicate column name: ...") on re-add — we catch that
+# specific message; any other OperationalError surfaces.
+_MIGRATIONS = [
+    "ALTER TABLE batch_speed_gains ADD COLUMN tokens_total INTEGER",
+]
 
 _VALID_STATUSES = {"IN_FLIGHT", "COMPLETED", "ABORTED"}
 
@@ -66,6 +75,12 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA_SQL)
+    for ddl in _MIGRATIONS:
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
     return conn
 
 
@@ -85,6 +100,7 @@ def log_batch(
     engineer_count: int,
     wall_clock_parallel_s: float | None = None,
     estimated_serial_s: float | None = None,
+    tokens_total: int | None = None,
     notes: str | None = None,
     status: str = "IN_FLIGHT",
     created_by: str | None = None,
@@ -113,8 +129,8 @@ def log_batch(
             INSERT INTO batch_speed_gains
                 (orchestration_slug, batch_label, engineer_count,
                  wall_clock_parallel_s, estimated_serial_s, speed_gain_pct,
-                 notes, status, recorded_at, closed_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 tokens_total, notes, status, recorded_at, closed_at, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 orchestration_slug.strip(),
@@ -123,6 +139,7 @@ def log_batch(
                 wall_clock_parallel_s,
                 estimated_serial_s,
                 gain_pct,
+                int(tokens_total) if tokens_total is not None else None,
                 notes.strip() if notes else None,
                 status,
                 _now_iso(),
@@ -141,6 +158,7 @@ def update_batch(
     batch_label: str,
     wall_clock_parallel_s: float | None = None,
     estimated_serial_s: float | None = None,
+    tokens_total: int | None = None,
     notes: str | None = None,
     status: str | None = None,
     db_path: Path | None = None,
@@ -158,6 +176,9 @@ def update_batch(
     if estimated_serial_s is not None:
         sets.append("estimated_serial_s = ?")
         params.append(float(estimated_serial_s))
+    if tokens_total is not None:
+        sets.append("tokens_total = ?")
+        params.append(int(tokens_total))
     if notes is not None:
         sets.append("notes = ?")
         params.append(notes.strip())
@@ -235,7 +256,8 @@ def cumulative_stats(
                 COUNT(*) AS batch_count,
                 SUM(engineer_count) AS engineer_total,
                 SUM(wall_clock_parallel_s) AS parallel_total_s,
-                SUM(estimated_serial_s) AS serial_total_s
+                SUM(estimated_serial_s) AS serial_total_s,
+                SUM(tokens_total) AS tokens_total_sum
             FROM batch_speed_gains
             WHERE orchestration_slug = ? AND status = 'COMPLETED'
             """,
@@ -250,6 +272,7 @@ def cumulative_stats(
             "parallel_total_s": parallel_total,
             "serial_total_s": serial_total,
             "speed_gain_pct": _compute_gain_pct(parallel_total, serial_total),
+            "tokens_total": row["tokens_total_sum"],
         }
     finally:
         conn.close()
@@ -276,6 +299,7 @@ def register(server) -> None:
         engineer_count: int,
         wall_clock_parallel_s: float | None = None,
         estimated_serial_s: float | None = None,
+        tokens_total: int | None = None,
         notes: str | None = None,
         status: str = "IN_FLIGHT",
         created_by: str | None = None,
@@ -286,6 +310,7 @@ def register(server) -> None:
             engineer_count=engineer_count,
             wall_clock_parallel_s=wall_clock_parallel_s,
             estimated_serial_s=estimated_serial_s,
+            tokens_total=tokens_total,
             notes=notes,
             status=status,
             created_by=created_by,
@@ -304,6 +329,7 @@ def register(server) -> None:
         batch_label: str,
         wall_clock_parallel_s: float | None = None,
         estimated_serial_s: float | None = None,
+        tokens_total: int | None = None,
         notes: str | None = None,
         status: str | None = None,
     ) -> dict:
@@ -312,6 +338,7 @@ def register(server) -> None:
             batch_label=batch_label,
             wall_clock_parallel_s=wall_clock_parallel_s,
             estimated_serial_s=estimated_serial_s,
+            tokens_total=tokens_total,
             notes=notes,
             status=status,
         )
