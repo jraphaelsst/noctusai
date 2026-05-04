@@ -443,6 +443,24 @@ state change, not a removal.
 
 ---
 
+## Entries from `seed-hardening-from-youtube-crawler` (in progress 2026-05-04)
+
+### `TestSqlTemplatesIntegration` test class duplicated in `test_scaffold.py` and `test_scaffold_migration.py`
+
+- **What:** Both `mcp/noctusai/tests/test_scaffold.py` and `mcp/noctusai/tests/test_scaffold_migration.py` ship a `TestSqlTemplatesIntegration` class asserting that `set_search_path()` / `updated_at_function()` / `updated_at_trigger()` / `rls_subquery_policy()` outputs from `noctusai_lib.domain.sql_templates` appear verbatim (whitespace-normalized) in the scaffolded SQL.
+- **Why accept-with-rationale at N=2:** the third consumer's home is uncertain — Phase 2 (oauth router, jobs primitive) and Phase 3 (storage, quota) MAY add more SQL-emitting tools, in which case extracting now lands a helper at a destination that better fits N=3+. Extracting prematurely (e.g. into `mcp/noctusai/tests/_sql_templates_assertions.py`) before knowing whether the helper should live in `mcp/noctusai/tests/` or `seed/lib/backend/tests/` is an arbitrary choice. The 30-LOC duplication is cheap to carry; the wrong-home extraction is expensive to undo.
+- **Revisit trigger:** **N=3** — when Phase 2 or 3 adds a third SQL-emitting tool, the recurrence rule's "MUST formalize" arm fires; all three consumers' locations are known then.
+- **Recorded by:** `projects/seed-hardening-from-youtube-crawler/` Phase 1 close (2026-05-04, Engineer C surfaced; architect triaged).
+
+### `tests/test_youtube_integration.py` flat path (siblings live under `tests/integrations/<name>/`)
+
+- **What:** YouTube integration tests live at `seed/lib/backend/tests/test_youtube_integration.py` (top-level). Sibling integrations (`google_calendar`, `google_maps`, `whatsapp`) follow `tests/integrations/<name>/{test_fake_adapter.py, test_real_adapters.py}` (nested folder, split fake/real).
+- **Why accept-with-rationale:** the engineer brief specified the flat path explicitly; following the brief preserved zero-context dispatch correctness. The flat path is functionally equivalent (same module imports, same pytest collection). Relocating mid-flight adds merge friction with no behavioral benefit.
+- **Revisit trigger:** when a second integration is added under the seed-hardening umbrella (Phase 3 storage / quota), align all three at once via a single `git mv`. Cosmetic.
+- **Recorded by:** `projects/seed-hardening-from-youtube-crawler/` Phase 1 close (2026-05-04, Engineer B surfaced; architect triaged).
+
+---
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.

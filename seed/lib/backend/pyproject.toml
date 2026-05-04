@@ -39,6 +39,13 @@ dependencies = [
     # oauth_adapter}.
     "google-api-python-client>=2.100.0",
     "google-auth>=2.30.0",
+    # Symmetric crypto — Fernet-based at-rest token encryption used by
+    # noctusai_lib.security.encrypted_tokens (OAuth tokens, similar small
+    # secrets) AND HMAC primitives used by noctusai_lib.security.webhook_signatures.
+    # Pulled transitively by google-auth/PyJWT historically; promoted to explicit
+    # 2026-05-04 (seed-hardening Phase 1 close — Engineer A's bystander finding)
+    # so a future transitive drop doesn't quietly break both modules.
+    "cryptography>=42.0",
 ]
 
 [tool.setuptools.packages.find]

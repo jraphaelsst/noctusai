@@ -40,8 +40,20 @@ fi
 
 # ─── 2. KB auto-derived counts ──────────────────────────────────
 if [[ -x "$REPO_ROOT/scripts/update-kb-counts.py" ]]; then
-    PY="${PYTHON:-python3}"
-    if command -v "$PY" >/dev/null 2>&1; then
+    # Same venv-discovery shape as block 5 (worktree-aware).
+    if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
+        PY="$REPO_ROOT/venv/bin/python"
+    else
+        MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+        if [[ -n "$MAIN_REPO_GITDIR" ]]; then
+            MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
+            if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
+                PY="$MAIN_REPO_ROOT/venv/bin/python"
+            fi
+        fi
+        PY="${PY:-${PYTHON:-python3}}"
+    fi
+    if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
         echo "[pre-commit] Updating KB auto-derived counts..."
         "$PY" "$REPO_ROOT/scripts/update-kb-counts.py" 2>&1 | sed 's/^/[pre-commit] /'
 
@@ -86,12 +98,22 @@ fi
 STAGED_PROJECT_MD=$(git diff --cached --name-only 2>/dev/null | grep -E '(^|/)PROJECT\.md$' || true)
 if [[ -n "$STAGED_PROJECT_MD" ]]; then
     # Prefer the repo's venv Python (codebase uses Python 3.10+ syntax;
-    # system `python3` may be older on some hosts). Fall back to
-    # `${PYTHON:-python3}` only if the venv interpreter is missing.
+    # system `python3` may be older on some hosts). When running inside a
+    # `git worktree add`-created worktree, `$REPO_ROOT` is the worktree's
+    # path (no venv), so fall back to the MAIN repo's venv resolved via
+    # `--git-common-dir` (which returns the shared `.git/` of the source
+    # checkout). Final fallback: `${PYTHON:-python3}`.
     if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
         PY="$REPO_ROOT/venv/bin/python"
     else
-        PY="${PYTHON:-python3}"
+        MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+        if [[ -n "$MAIN_REPO_GITDIR" ]]; then
+            MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
+            if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
+                PY="$MAIN_REPO_ROOT/venv/bin/python"
+            fi
+        fi
+        PY="${PY:-${PYTHON:-python3}}"
     fi
     if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
         echo "[pre-commit] Checking §6 ↔ §11 phase-state consistency..."

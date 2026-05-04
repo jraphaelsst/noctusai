@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ → Phase 1 in progress
+- **Status:** Phase 0 ✅ → Phase 1 ✅ → Phase 2 ready
 - **Owner / stakeholders:** jraphaelsst · architect (Claude Opus 4.7)
 - **Related docs:** `KB § 03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/seed-fake-real-adapter.md` · `KB § PATTERNS/branching-and-merging.md` · `KB § PATTERNS/master-tree-parallel-batches.md` · sibling workspace at `~/Documents/repository/NoctusAI/noctusai-youtube-crawler/`
 - **Project slug:** `seed-hardening-from-youtube-crawler` (intent = `hardening`; lives at `projects/<slug>/` because the work is platform-wide seed/lib changes that propagate to every product)
@@ -159,7 +159,16 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 **Improvements:** none identified — Phase 0 is the project-creation gate; no code changed.
 
-### Phase 1 — Batch A (blocks youtube-crawler) ⏳
+### Phase 1 — Batch A (blocks youtube-crawler) ✅
+
+**Phase 1 close summary:** All four Batch-A surfaces shipped in seed before youtube-crawler ships. 738/738 seed-lib backend tests green at integration tip; 26/26 MCP scaffold-suite tests green. Three engineers ran in parallel via worktrees + single dispatch turn; integration branch absorbed each via `--no-ff` merges (3acc958 → 3c7d305 → 64ebc1c → fe6988f).
+
+**Phase 1 improvements (5 cross-cutting findings — triaged at close):**
+- **APPLIED INLINE** Pre-commit hook venv-discovery fixed for worktrees (`scripts/pre-commit` blocks 2 + 5): when `$REPO_ROOT/venv/bin/python` misses, now falls back to the main repo's venv via `git rev-parse --git-common-dir`. Hit by all 3 engineers; structural fix prevents recurrence on every future parallel-dispatch.
+- **APPLIED INLINE** `cryptography>=42.0` promoted to explicit dependency in `seed/lib/backend/pyproject.toml` (Engineer A bystander finding). Was transitive via google-auth/PyJWT; both `webhook_signatures.py` and new `encrypted_tokens.py` rely on it. Promotion prevents silent break on a future transitive drop.
+- **ACCEPTED-WITH-RATIONALE** `TestSqlTemplatesIntegration` test class duplicated in `test_scaffold.py` + `test_scaffold_migration.py` (N=2). Cataloged in `KB § PATTERNS/accept-with-rationale.md` — extraction destination depends on whether Phase 2/3 adds a third SQL-emitting tool; revisit at N=3.
+- **ACCEPTED-WITH-RATIONALE** `tests/test_youtube_integration.py` flat path (sibling integrations are nested under `tests/integrations/<name>/`). Cataloged. Cosmetic; aligns at next integration add.
+- **DEFERRED** MCP test path-fragility (8 pre-existing failures using `Path.relative_to(REPO_ROOT)` that break in worktrees). Out of scope for this project; filed as future project candidate `mcp-tests-worktree-aware-path-resolution`.
 
 **Phase 1.1 ✅** — SMTP backend alongside Resend in `integrations/email/digest.py` (2026-05-04, landed pre-project, folded in here).
 - [x] **1.1** `_resolve_smtp_config` + `_resolve_email_backend` + `_send_via_smtp` (sync stdlib smtplib, async via asyncio.to_thread). Three security modes: ssl / starttls / none. Resend wins by default when both configured (back-compat); explicit override via `email_backend` credential. 19 new tests, 35/35 email tests green, 684/684 seed-lib tests green.
@@ -236,6 +245,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 | Date | Change | By |
 |---|---|---|
+| 2026-05-04 | Phase 1 close ✅ — all 4 Batch-A surfaces merged into integration branch (3acc958→3c7d305→64ebc1c→fe6988f); 738/738 seed-lib + 26/26 MCP-scaffold tests green. Triage applied: pre-commit worktree-venv fixed inline, `cryptography` promoted to explicit dep, 2 N=2 recurrences cataloged in accept-with-rationale, MCP test path-fragility deferred to its own project. | architect (Claude Opus 4.7) |
 | 2026-05-04 | Phase 1.4 — `noctus.dev.scaffold_migration` MCP tool landed in `mcp/noctusai/tools/noctus/dev/scaffold_migration.py` + 19 tests covering numbering / schema-default / schema-override / `with_table=` block / six error paths / three keeper-detector-style integration assertions vs the canonical helpers. Registered alphabetically in `__init__.py`. Engineer C, branch `sh-yt-migration-scaffolder`. | Engineer C (Claude Opus 4.7) |
 | 2026-05-04 | Phase 1.3 — `integrations/youtube/` landed in seed (canonical Protocol+Fake+Real+factory). 6 source files + 1 test file (34 tests). Encodes channel→uploads-playlist→playlistItems quota-cheap path so consumers never re-derive it. Engineer B, branch `sh-yt-youtube`. | Engineer B (Claude Opus 4.7) |
 | 2026-05-04 | Phase 1.2 — Fernet helper `security/encrypted_tokens.py` (`generate_key` / `encrypt` / `decrypt` / `rotate_key` / `MultiKeyDecryptor`); 20 new tests. Engineer A, branch `sh-yt-encrypted-tokens`. | Engineer A (Claude Opus 4.7) |
