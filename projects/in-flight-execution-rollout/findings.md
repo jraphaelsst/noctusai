@@ -4,6 +4,19 @@ Curated knowledge artifact per `KB § 01-PHILOSOPHY.md § Knowledge tracking —
 
 ---
 
+## Speed-gain comparison (table format per `feedback_TEMP_methodology_validation_in_progress.md` rule #2)
+
+| Batch | Engineers | Wall-clock parallel | Estimated serial | Speed gain | Notes |
+|---|---|---|---|---|---|
+| 1A | 2 | ~527s (~9 min) | ~668s (~11 min) | ~21% | no-op + Phase 1 (PF wiring) — first parallel-test scale |
+| 1B | 3 | ~16 min | ~39 min | ~59% | full N=3 seed absorption (factory + AI-plumbing + metas) — real test_auth.py conflict resolved via union heuristic |
+| 1C | 3 | _running_ | _pending_ | _pending_ | wiring PF + ERP + Daily-Life to consume the metas seed |
+| **Cumulative** | **8** | **~25 min** | **~50 min** | **~50%** | (1A + 1B totals; 1C adds when complete) |
+
+**Trend:** speed-gain scales with engineer count (Amdahl-style). Going from N=2 to N=3 nearly tripled the gain. Methodology mechanics held at the conflict boundary (file-type union heuristic for tests).
+
+---
+
 ## Errors encountered
 
 _(none yet — Batch 1A dispatch pending)_
