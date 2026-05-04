@@ -19,6 +19,7 @@ from noctusai_lib.api.auth import (
     create_sso_token_factory,
     make_get_current_user_org,
     make_require_role,
+    require_credential_or_422,
     verify_sso_token_factory,
 )
 
@@ -436,3 +437,76 @@ class TestMakeGetCurrentUserOrg:
         dep = make_get_current_user_org(fake_get_current_user, capturing_resolver)
         await dep(authorization="Bearer xxx")
         assert captured["user"] is fake_user
+
+
+# ---------------------------------------------------------------------------
+# require_credential_or_422 — `ai-plumbing-seed-absorption` (2026-05-04)
+# ---------------------------------------------------------------------------
+#
+# Filed by `projects/ai-plumbing-seed-absorption/` to absorb the byte-
+# identical `_require_openai(org_id)` wrappers shipped today in PF + ERP
+# `routers/ai.py`. Tests cover: present credential → returns string; absent
+# credential + default detail; absent credential + custom detail; org_id=None
+# pass-through; resolver raise → bubble up unchanged.
+
+
+class TestRequireCredentialOr422:
+    """Cover the require_credential_or_422 helper — HTTP-layer credential gate."""
+
+    def test_present_credential_returns_value(self):
+        # Patch `resolve_credential` at the lazy-import site (the function in
+        # api.auth imports it lazily, so we patch the source module).
+        with patch(
+            "noctusai_lib.config.credentials.resolve_credential",
+            return_value="sk-real-key-xyz",
+        ):
+            value = require_credential_or_422("openai_api_key", "org-1")
+        assert value == "sk-real-key-xyz"
+
+    def test_absent_credential_raises_422_with_default_detail(self):
+        with patch(
+            "noctusai_lib.config.credentials.resolve_credential",
+            return_value=None,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                require_credential_or_422("openai_api_key", "org-1")
+        assert exc.value.status_code == 422
+        assert "openai_api_key" in exc.value.detail
+        assert "not configured" in exc.value.detail
+
+    def test_absent_credential_with_custom_detail(self):
+        custom = (
+            "OpenAI API Key não configurada. "
+            "Acesse Configurações > Chaves de API para configurar."
+        )
+        with patch(
+            "noctusai_lib.config.credentials.resolve_credential",
+            return_value=None,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                require_credential_or_422(
+                    "openai_api_key", "org-1", detail=custom
+                )
+        assert exc.value.status_code == 422
+        assert exc.value.detail == custom
+
+    def test_empty_string_credential_treated_as_absent(self):
+        """Empty-string is falsy — same handling as None."""
+        with patch(
+            "noctusai_lib.config.credentials.resolve_credential",
+            return_value="",
+        ):
+            with pytest.raises(HTTPException) as exc:
+                require_credential_or_422("openai_api_key", "org-1")
+        assert exc.value.status_code == 422
+
+    def test_org_id_none_passes_through_to_resolver(self):
+        """When org_id is None, the resolver is called with None — tier 1
+        is skipped at the resolver level (platform-tier 2 is the entry)."""
+        with patch(
+            "noctusai_lib.config.credentials.resolve_credential",
+            return_value="env-key",
+        ) as mock_resolve:
+            value = require_credential_or_422("openai_api_key")
+        mock_resolve.assert_called_once_with("openai_api_key", None)
+        assert value == "env-key"

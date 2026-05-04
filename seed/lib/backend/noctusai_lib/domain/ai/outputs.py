@@ -35,6 +35,7 @@ ALTER TABLE <schema>.ai_outputs ENABLE ROW LEVEL SECURITY;
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -141,3 +142,68 @@ def fetch_outputs_for(
         .execute()
     )
     return result.data or []
+
+
+def safe_persist_indicator(
+    db,
+    *,
+    schema: Optional[str],
+    ref_type: str,
+    ref_id: str,
+    out: dict,
+    logger: Optional[logging.Logger] = None,
+) -> dict:
+    """Build an `AIOutput` from an AI-service dict + persist it; on failure,
+    return the would-have-inserted payload with ``id=None`` and a
+    ``persist_error`` key so the caller can still surface the inference.
+
+    This is the seed-side absorption of the byte-identical
+    ``_persist_indicator`` wrappers shipped in PF + ERP routers.
+    Filed by `projects/ai-plumbing-seed-absorption/` (2026-05-04) at N=2
+    recurrence; see `KB § PATTERNS/project-execution.md § 2.7`.
+
+    Args:
+        db: any Supabase-like client (same contract as `persist_output`).
+        schema: target product schema (e.g. ``"erp"``, ``"personal-finance"``);
+            ``None`` is allowed for `public`-schema callers.
+        ref_type: the entity type the indicator references (e.g. ``"transacao"``,
+            ``"ativo"``, ``"cliente"``).
+        ref_id: the entity id (UUID-string).
+        out: the AI-service-produced dict. Required keys: ``kind``, ``label``.
+            Optional keys consumed: ``score``, ``chip``, ``explanation``,
+            ``confidence``, ``model_version``, ``prompt_version``. Extra keys
+            are ignored — callers may carry e.g. ``matched_categoria_id`` for
+            downstream merging without affecting persistence.
+        logger: optional logger; on persist failure a `WARNING` is emitted.
+            Pass the product's module logger to keep the warning scoped.
+
+    Returns:
+        On success — the persisted row dict (with ``id`` + DB-set timestamps).
+        On persist failure — ``{**output.to_insert_payload(), "id": None,
+        "persist_error": str(e)}`` so the caller can show the indicator
+        client-side without a 5xx (next persist run can retry).
+
+    Persist failure is intentionally non-fatal — the indicator just won't
+    show server-side until a successful run. The caller's HTTP response
+    stays 200; the warning surfaces the issue for ops.
+    """
+    output = AIOutput(
+        ref_type=ref_type,
+        ref_id=ref_id,
+        kind=out["kind"],
+        label=out["label"],
+        score=out.get("score"),
+        chip=out.get("chip"),
+        explanation=out.get("explanation"),
+        confidence=out.get("confidence"),
+        model_version=out.get("model_version"),
+        prompt_version=out.get("prompt_version"),
+    )
+    try:
+        return persist_output(db, schema=schema, output=output)
+    except Exception as e:
+        if logger is not None:
+            logger.warning(
+                "ai.persist_indicator failed for %s/%s: %s", ref_type, ref_id, e
+            )
+        return {**output.to_insert_payload(), "id": None, "persist_error": str(e)}

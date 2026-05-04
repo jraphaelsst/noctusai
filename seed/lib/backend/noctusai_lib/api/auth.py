@@ -311,6 +311,73 @@ def make_get_current_user_org(
 
 
 # ---------------------------------------------------------------------------
+# Credential-on-request guard — `ai-plumbing-seed-absorption` (2026-05-04)
+# ---------------------------------------------------------------------------
+#
+# Surfaced by `personal-finance-wiring` Phase 1 audit at N=2 recurrence:
+# PF + ERP each ship a local `_require_openai(org_id)` helper raising
+# HTTPException 422 when `resolve_credential("openai_api_key", org_id)`
+# returns falsy. The bodies are byte-identical modulo the Portuguese
+# detail string. Triage outcome per `KB § PATTERNS/project-execution.md
+# § 2.7 The recurrence rule`: formalize.
+#
+# The helper sits next to `make_require_role` because it shares the
+# HTTP-layer raise-on-violation shape — both translate a missing pre-
+# condition (role / credential) into a typed HTTP error.
+
+
+def require_credential_or_422(
+    key: str,
+    org_id: Optional[str] = None,
+    *,
+    detail: Optional[str] = None,
+) -> str:
+    """Resolve a credential through `noctusai_lib.config.credentials.resolve_credential`
+    and raise ``HTTPException(422)`` when the result is falsy.
+
+    Returns the resolved credential value, so callers may use the value
+    directly when convenient::
+
+        api_key = require_credential_or_422("openai_api_key", org_id)
+        client = OpenAI(api_key=api_key)
+
+    Or in raise-only form (when the value is consumed elsewhere)::
+
+        require_credential_or_422("openai_api_key", org_id, detail="…pt-br copy…")
+
+    Args:
+        key: lowercase credential key (matches `org_settings`/`platform_settings`
+            row + `key.upper()` env-var fallback). E.g. ``"openai_api_key"``,
+            ``"resend_api_key"``.
+        org_id: organization id for tier-1 (per-org override) lookup; ``None``
+            skips tier 1 and starts at platform-tier 2.
+        detail: optional override for the 422 detail string. Default is
+            ``f"Credential {key} not configured."``. Override with the
+            product's localized user-facing copy when needed.
+
+    Returns:
+        The resolved credential value (non-empty string).
+
+    Raises:
+        HTTPException(422): when no tier of the resolution chain has the value.
+    """
+    # Imported lazily to avoid a startup-time import cycle: `noctusai_lib.api.auth`
+    # is consumed by product `dependencies.py` at module load, while
+    # `noctusai_lib.config.credentials` reaches into `integrations.database`.
+    # Lazy import keeps the credential surface optional for products that
+    # don't use HTTP credential gating.
+    from noctusai_lib.config.credentials import resolve_credential
+
+    value = resolve_credential(key, org_id)
+    if not value:
+        raise HTTPException(
+            status_code=422,
+            detail=detail or f"Credential {key} not configured.",
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
 # SSO JWT primitives — Phase 4 promotion (2026-04-23)
 # ---------------------------------------------------------------------------
 #

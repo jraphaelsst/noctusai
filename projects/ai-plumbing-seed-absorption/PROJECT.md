@@ -168,15 +168,21 @@ _require_openai = lambda org_id: require_credential_or_422(
 
 **Improvements:** none identified at filing.
 
-### Phase 1 — Seed surface + tests
+### Phase 1 — Seed surface + tests ✅
 
-- [ ] Add `safe_persist_indicator` to `seed/lib/backend/noctusai_lib/domain/ai/outputs.py`
-- [ ] Re-export from `noctusai_lib.domain.ai.__init__.__all__`
-- [ ] Add `require_credential_or_422` to `seed/lib/backend/noctusai_lib/api/auth.py` (after `make_require_role`)
-- [ ] Write `seed/lib/backend/tests/domain/ai/test_safe_persist_indicator.py` (≥6 tests)
-- [ ] Add `TestRequireCredentialOr422` to `seed/lib/backend/tests/test_auth.py` (≥4 tests)
-- [ ] Run `cd seed/lib/backend && pytest tests/` — green
-- [ ] Commit Phase 1 → branch (no push)
+- [x] Add `safe_persist_indicator` to `seed/lib/backend/noctusai_lib/domain/ai/outputs.py`
+- [x] Re-export from `noctusai_lib.domain.ai.__init__.__all__`
+- [x] Add `require_credential_or_422` to `seed/lib/backend/noctusai_lib/api/auth.py` (after `make_require_role`)
+- [x] Write `seed/lib/backend/tests/domain/ai/test_safe_persist_indicator.py` (9 tests)
+- [x] Add `TestRequireCredentialOr422` to `seed/lib/backend/tests/test_auth.py` (5 tests)
+- [x] Run seed-lib pytest — green (541 passed)
+- [x] Commit Phase 1 → branch (no push)
+
+**Improvements:**
+- **Parallel-worktree venv shadow** — venv at `noctusai/venv` carries an editable install of `noctusai_lib` whose `MAPPING` resolves to whichever worktree last ran `pip install -e seed/lib/backend`. Running pytest from a sibling worktree silently picks the OTHER worktree's source tree → `ImportError` for new symbols (or worse: green-on-stale). Fixed defensively in `tests/conftest.py` — purges any meta-path finder whose `MAPPING["noctusai_lib"]` resolves outside the local `_LIB`. Generic; benefits every parallel orchestration. Worth surfacing to architect for `findings.md` under `in-flight-execution-rollout`.
+- **Lazy import of `resolve_credential` inside `require_credential_or_422`** — added because `noctusai_lib.config.credentials` reaches into `integrations.database.make_supabase_client` at import-time, which is a heavy dep for products that don't gate any HTTP route on a credential. Lazy import keeps `noctusai_lib.api.auth` cheap to import. Documented inline; no further action.
+- **`require_credential_or_422` lives in `api/auth.py`** — matches the `make_require_role` neighbor (HTTP-layer raise-on-violation). Revisit if N=2+ HTTP credential helpers ship; promote to `api/credentials.py` then.
+- **Test stub `_RecordingChain`** — duplicated from `test_ai_outputs.py::_StubChain` (slightly extended for `raise_on_execute`). N=2 same-shape stub. Catalog as accept-with-rationale (test-fixture recurrence; a shared `seed/lib/backend/tests/_stubs.py` module is the obvious extraction at N=3+).
 
 ### Phase 2 — Project close
 
@@ -223,3 +229,5 @@ _require_openai = lambda org_id: require_credential_or_422(
 | Date | Change | By |
 |---|---|---|
 | 2026-05-04 | Initial PROJECT.md drafted from predecessor proposal Files 2 + 3 | claude-opus-4-7 (engineer-2-of-3) |
+| 2026-05-04 | Phase 0 ✅ — committed `33a7716` (PROJECT.md filed) | claude-opus-4-7 |
+| 2026-05-04 | Phase 1 ✅ — `safe_persist_indicator` + `require_credential_or_422` shipped + 14 new tests; 541 total seed-lib tests passing. Fixed parallel-worktree venv shadow in `tests/conftest.py`. | claude-opus-4-7 |
