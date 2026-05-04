@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ filed → Phase 1 implementation
+- **Status:** Phase 0 ✅ → Phase 1 ✅ → Phase 2 (project close)
 - **Owner / stakeholders:** joaoraphaelsst (architect) · Engineer 1 of 3 (dispatched in parallel: this branch + `ai-plumbing-seed-absorption` + `metas-domain-seed-absorption`)
 - **Related docs:**
   - Predecessor proposal — `products/personal-finance/projects/personal-finance-wiring/proposals/phase-1-seed-absorption-followups.md` (File 1, lines 39-69)
@@ -133,10 +133,10 @@ def make_get_current_user_org(
 
 **Improvements:** none identified at filing time.
 
-### Phase 1 — Implement factory + tests
+### Phase 1 — Implement factory + tests ✅
 
-- [ ] Add `make_get_current_user_org(...)` to `seed/lib/backend/noctusai_lib/api/auth.py` after `make_require_role`
-- [ ] Append `TestMakeGetCurrentUserOrg` class to `seed/lib/backend/tests/test_auth.py` covering:
+- [x] Add `make_get_current_user_org(...)` to `seed/lib/backend/noctusai_lib/api/auth.py` after `make_require_role`
+- [x] Append `TestMakeGetCurrentUserOrg` class to `seed/lib/backend/tests/test_auth.py` covering:
   - `test_happy_path_returns_tuple` — `required=True`, org_id present → `(user, token, org_id)`
   - `test_required_true_raises_403_on_missing_org` — `required=True`, org_id None → HTTPException 403 with default detail
   - `test_required_false_returns_none_on_missing_org` — `required=False`, org_id None → `(user, token, None)`
@@ -144,10 +144,14 @@ def make_get_current_user_org(
   - `test_custom_missing_status_used` — `required=True`, `missing_status=400` → HTTPException 400
   - `test_custom_missing_detail_used` — `required=True`, custom detail string → HTTPException detail matches
   - `test_propagates_401_from_get_current_user` — get_current_user_fn raises 401 → resolver never runs, 401 surfaces
-- [ ] Run `cd seed/lib/backend && python -m pytest tests/test_auth.py -q` → expect all green (existing 31 tests + 7 new = 38)
-- [ ] Phase 1 commit: `feat(make-get-current-user-org-factory): Phase 1 — make_get_current_user_org factory + tests`
+  - `test_resolver_receives_user_object` — bonus: validates the resolver is called with the user object (not dict, not token), proving the injection contract
+- [x] Run pytest on test_auth.py → 29 passed (21 existing + 8 new); full seed lib suite → 535 passed (no regression)
+- [x] Phase 1 commit: `feat(make-get-current-user-org-factory): Phase 1 — make_get_current_user_org factory + tests`
 
-**Improvements:** captured live during steps; synthesized at phase close.
+**Improvements:**
+- **Worktree pytest invocation slip — venv editable-install pinned to a sister worktree.** Running `python -m pytest seed/lib/backend/tests/test_auth.py` failed because the venv's `__editable__.noctusai_lib-0.1.0.pth` finder mapping pointed to `media-scheduling-port-resume`'s worktree (the worktree that did the original `pip install -e`). `PYTHONPATH=...` env-var blocked by sandbox; conftest's `sys.path.insert(0, _LIB)` is bypassed because the editable finder is a meta-path finder (registered via `sys.meta_path.append`, runs BEFORE conftest's path-prepend). Workaround: tiny driver script (`/tmp/run_seed_tests.py`) that prepends MY worktree's lib path BEFORE `import pytest` and asserts `noctusai_lib.__file__` resolves to the right worktree. **Cross-worktree gap to surface for architect:** the editable-install pinning means tests in any new worktree need this driver — not portable. Possible fixes: (a) re-install editable per-worktree (mutates global venv → cross-worktree pollution); (b) ship `seed/lib/backend/conftest.py` that does `sys.path.insert(0, ...)` AND `sys.meta_path.remove(<editable-finder>)` (heavy-handed); (c) use a per-worktree venv (proper but venv-creation cost). Architect decision needed; documenting here for `findings.md` aggregation.
+- Factory's docstring is dense (~50 lines) — matches `make_require_role`'s shape but worth flagging as a candidate for trimming if the seed gets a docs-site that auto-generates from docstrings (currently none).
+- The `test_resolver_receives_user_object` test was added beyond the spec'd 7 cases — the injection contract felt under-tested without it. Single new test, ~10 lines, covers a slip surface (resolver receiving the wrong arg type would silently mis-resolve).
 
 ### Phase 2 — Project close
 
@@ -194,3 +198,4 @@ def make_get_current_user_org(
 | Date | Change | By |
 |---|---|---|
 | 2026-05-04 | Phase 0 — project filed; seed-first §3a confirms zero-product-touch design; factory shape locked to `(user, token, org_id|None)` 3-tuple matching `make_require_role` convention | Engineer 1 (claude-opus-4-7) |
+| 2026-05-04 | Phase 1 — `make_get_current_user_org` factory shipped at `seed/lib/backend/noctusai_lib/api/auth.py:231-308`; `TestMakeGetCurrentUserOrg` (8 tests) appended to `seed/lib/backend/tests/test_auth.py`; `pytest tests/test_auth.py -q` → 29 passed; full seed suite `pytest tests/ -q` → 535 passed (no regression). Worktree-pytest gap surfaced as Improvements item — `__editable__.noctusai_lib-0.1.0.pth` finder pinned to sister worktree; driver-script workaround used; architect decision needed | Engineer 1 (claude-opus-4-7) |

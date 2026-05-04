@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from noctusai_lib.api.auth import (
     SSOSessionCache,
     create_sso_token_factory,
+    make_get_current_user_org,
     make_require_role,
     verify_sso_token_factory,
 )
@@ -294,3 +295,144 @@ class TestMakeRequireRole:
         assert "platform_admin" in exc.value.detail
         assert "clinic_admin" in exc.value.detail
         assert "therapist" in exc.value.detail
+
+
+# ---------------------------------------------------------------------------
+# make_get_current_user_org — factory pattern matching make_require_role
+# ---------------------------------------------------------------------------
+#
+# Surfaced by personal-finance-wiring Phase 1 Verify-the-seed-ships-it test
+# (2026-05-04). PF's local get_current_user_org + ERP's get_org_id shared the
+# (user.user_metadata or {}).get("org_id") body — N=2 recurrence, formalized
+# as make_get_current_user_org. This test class mirrors TestMakeRequireRole's
+# shape (FakeUser dataclass + fake async get_current_user_fn + fake resolver).
+
+
+@dataclass
+class _FakeUserWithMetadata:
+    """Minimal user shape — exposes user_metadata so resolvers see it."""
+    id: str
+    user_metadata: dict
+
+
+class TestMakeGetCurrentUserOrg:
+    """Cover the make_get_current_user_org factory + the bound dep.
+
+    Coverage matrix:
+    - happy path: required=True, org present → (user, token, org_id)
+    - required=True, org missing → HTTPException(missing_status, missing_detail)
+    - required=False, org missing → (user, token, None)
+    - required=False, org present → (user, token, org_id)
+    - custom missing_status (e.g. 400 to match ERP's local shape)
+    - custom missing_detail
+    - 401 propagation: get_current_user_fn raises → resolver never runs
+    """
+
+    def _build(self, *, org_id="org-123", **factory_kwargs):
+        """Helper: returns (dep, fake_user) bound to the given org_id and
+        factory kwargs. Fake get_current_user_fn always succeeds with the
+        same user; tests vary org_id (set None to simulate missing org)."""
+        fake_user = _FakeUserWithMetadata(
+            id="u1",
+            user_metadata={"org_id": org_id} if org_id else {},
+        )
+
+        async def fake_get_current_user(authorization=None):
+            if not authorization:
+                raise HTTPException(status_code=401, detail="Token ausente")
+            return fake_user, "token-abc"
+
+        def fake_get_org_id(user):
+            return (user.user_metadata or {}).get("org_id")
+
+        dep = make_get_current_user_org(
+            fake_get_current_user,
+            fake_get_org_id,
+            **factory_kwargs,
+        )
+        return dep, fake_user
+
+    @pytest.mark.asyncio
+    async def test_happy_path_returns_tuple(self):
+        """required=True (default), org present → returns (user, token, org_id)."""
+        dep, fake_user = self._build(org_id="org-123")
+        user, token, org_id = await dep(authorization="Bearer xxx")
+        assert user is fake_user
+        assert token == "token-abc"
+        assert org_id == "org-123"
+
+    @pytest.mark.asyncio
+    async def test_required_true_raises_403_on_missing_org(self):
+        """required=True (default), org missing → HTTPException(403, default detail)."""
+        dep, _ = self._build(org_id=None)  # required=True default
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "Usuario sem organizacao associada"
+
+    @pytest.mark.asyncio
+    async def test_required_false_returns_none_on_missing_org(self):
+        """required=False, org missing → (user, token, None) — no exception."""
+        dep, fake_user = self._build(org_id=None, required=False)
+        user, token, org_id = await dep(authorization="Bearer xxx")
+        assert user is fake_user
+        assert token == "token-abc"
+        assert org_id is None
+
+    @pytest.mark.asyncio
+    async def test_required_false_returns_tuple_on_present_org(self):
+        """required=False, org present → still returns the org_id (not coerced to None)."""
+        dep, fake_user = self._build(org_id="org-456", required=False)
+        user, token, org_id = await dep(authorization="Bearer xxx")
+        assert user is fake_user
+        assert org_id == "org-456"
+
+    @pytest.mark.asyncio
+    async def test_custom_missing_status_used(self):
+        """required=True with missing_status=400 → ERP's local shape."""
+        dep, _ = self._build(org_id=None, required=True, missing_status=400)
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_custom_missing_detail_used(self):
+        """required=True with custom missing_detail → exception carries it verbatim."""
+        dep, _ = self._build(
+            org_id=None,
+            required=True,
+            missing_detail="Organizacao nao encontrada no perfil do usuario",
+        )
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert exc.value.detail == "Organizacao nao encontrada no perfil do usuario"
+
+    @pytest.mark.asyncio
+    async def test_propagates_401_from_get_current_user(self):
+        """If get_current_user_fn raises 401 (missing/invalid token), resolver
+        never runs — the 401 surfaces unchanged."""
+        dep, _ = self._build(org_id="org-123")  # org present, but auth fails first
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization=None)
+        assert exc.value.status_code == 401
+        assert "Token ausente" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_resolver_receives_user_object(self):
+        """The injected resolver is called with the user object returned by
+        get_current_user_fn — not a dict, not the token. Validates the
+        injection contract."""
+        captured = {}
+
+        fake_user = _FakeUserWithMetadata(id="u1", user_metadata={"org_id": "o1"})
+
+        async def fake_get_current_user(authorization=None):
+            return fake_user, "token-abc"
+
+        def capturing_resolver(user):
+            captured["user"] = user
+            return (user.user_metadata or {}).get("org_id")
+
+        dep = make_get_current_user_org(fake_get_current_user, capturing_resolver)
+        await dep(authorization="Bearer xxx")
+        assert captured["user"] is fake_user

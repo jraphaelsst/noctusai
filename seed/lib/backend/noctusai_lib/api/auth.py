@@ -228,6 +228,88 @@ def make_require_role(get_current_user_fn, get_user_role_fn):
     return require_role
 
 
+def make_get_current_user_org(
+    get_current_user_fn,
+    get_org_id_fn,
+    *,
+    required: bool = True,
+    missing_status: int = 403,
+    missing_detail: str = "Usuario sem organizacao associada",
+):
+    """Factory that creates a product-specific ``get_current_user_org`` dependency.
+
+    Mirrors the :func:`make_require_role` pattern: products bind it once at
+    module load with their already-wrapped ``get_current_user`` (which knows
+    the product's Supabase client) and a pure ``get_org_id`` resolver, then
+    use the resulting dep at every router site that needs ``(user, token, org_id)``.
+
+    Surfaced by the ``personal-finance-wiring`` Phase 1 Verify-the-seed-ships-it
+    test (2026-05-04). PF's ``dependencies.py:get_current_user_org`` and ERP's
+    ``dependencies.py:get_org_id`` shared the ``(user.user_metadata or {}).get(
+    "org_id")`` resolution body in different request-time wrappings — N=2
+    recurrence, formalized as this factory.
+
+    Parameters:
+        get_current_user_fn: The product's already-wrapped
+            ``get_current_user`` dependency (typically the return value
+            of :func:`make_get_current_user`). Must be an async callable
+            that takes ``authorization: Optional[str]`` and returns
+            ``(user, token)``.
+        get_org_id_fn: A sync callable ``(user) -> Optional[str]`` that
+            resolves the org_id for a user. Each product provides its own
+            (typically ``lambda u: (u.user_metadata or {}).get("org_id")``
+            or ERP's pre-existing ``get_org_id(user)`` resolver).
+        required: When True (default), raises ``HTTPException(missing_status,
+            missing_detail)`` if the resolved org_id is falsy. PF's shape.
+            When False, the dep returns ``(user, token, None)`` on missing
+            org_id — no exception. Tuple-with-None lets callers branch on
+            membership without re-running auth.
+        missing_status: HTTP status code raised when ``required=True`` and
+            org_id is missing. Defaults to 403 (PF). ERP's local ``get_org_id(
+            required=True)`` uses 400 — pass ``missing_status=400`` to mirror.
+        missing_detail: HTTP detail string raised with ``missing_status``.
+            Defaults to PF's "Usuario sem organizacao associada".
+
+    Returns:
+        An async dependency callable
+        ``get_current_user_org(authorization: Optional[str] = Header(None))``
+        that resolves ``(user, token, org_id|None)``.
+
+    Usage in a product's ``app/dependencies.py``::
+
+        from noctusai_lib.api.auth import make_get_current_user, make_get_current_user_org
+        from app.database import get_supabase_client
+
+        get_current_user = make_get_current_user(get_supabase_client)
+        get_current_user_org = make_get_current_user_org(
+            get_current_user,
+            lambda u: (u.user_metadata or {}).get("org_id"),
+            required=True,  # 403 on missing
+        )
+
+    And then in routers::
+
+        @router.get("/things")
+        async def list_things(
+            auth=Depends(get_current_user_org),
+        ):
+            user, token, org_id = auth
+            ...
+    """
+    async def get_current_user_org(authorization: Optional[str] = Header(None)):
+        user, token = await get_current_user_fn(authorization)
+        org_id = get_org_id_fn(user)
+        if not org_id:
+            if required:
+                raise HTTPException(
+                    status_code=missing_status,
+                    detail=missing_detail,
+                )
+            return user, token, None
+        return user, token, org_id
+    return get_current_user_org
+
+
 # ---------------------------------------------------------------------------
 # SSO JWT primitives — Phase 4 promotion (2026-04-23)
 # ---------------------------------------------------------------------------
