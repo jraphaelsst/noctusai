@@ -43,6 +43,7 @@ from noctusai_lib.testing._schema_cache import (
 )
 from noctusai_lib.testing.consent import bind_consent_module_to_mock
 from noctusai_lib.testing.assertions import assert_error_contains
+from noctusai_lib.testing.conftest_helpers import purge_shadowing_editable_finders
 
 __all__ = [
     "MockSupabaseResponse",
@@ -61,4 +62,5 @@ __all__ = [
     "set_cache_for_tests",
     "bind_consent_module_to_mock",
     "assert_error_contains",
+    "purge_shadowing_editable_finders",
 ]

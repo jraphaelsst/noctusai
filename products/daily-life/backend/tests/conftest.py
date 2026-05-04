@@ -17,28 +17,14 @@ from pathlib import Path
 _LIB = Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
-
-
-def _purge_shadowing_editable_finders() -> None:
-    """Drop meta-path finders whose ``noctusai_lib`` mapping points outside
-    this worktree. Mirrors the seed-side helper introduced in Batch 1B.
-    """
-    local_root = str(_LIB.resolve())
-    keep: list = []
-    for finder in sys.meta_path:
-        mapping = getattr(finder, "MAPPING", None)
-        if isinstance(mapping, dict) and "noctusai_lib" in mapping:
-            target = str(Path(mapping["noctusai_lib"]).resolve())
-            if not target.startswith(local_root):
-                continue
-        keep.append(finder)
-    sys.meta_path[:] = keep
-    for name in list(sys.modules):
-        if name == "noctusai_lib" or name.startswith("noctusai_lib."):
-            del sys.modules[name]
-
-
-_purge_shadowing_editable_finders()
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location(
+    "_bootstrap_conftest_helpers",
+    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_mod.purge_shadowing_editable_finders(_LIB)
 
 
 import pytest

@@ -45,38 +45,17 @@ Once reconciled, flip this to `validate_schema=True, schema="erp"`.
 """
 import sys
 from pathlib import Path
-
-
-def _purge_shadowing_editable_finders() -> None:
-    """If the host venv installed `noctusai_lib` editable from another
-    worktree, its meta-path finder will shadow our local seed/lib. Remove
-    finders whose `MAPPING` points outside this worktree's seed/lib root,
-    then drop any cached `noctusai_lib*` modules so they re-resolve.
-    """
-    # Walk up to the worktree root (parents[3] = backend/tests → backend → ERP → products → worktree)
-    worktree_root = Path(__file__).resolve().parents[4]
-    local_lib = worktree_root / "seed" / "lib" / "backend"
-    if not local_lib.exists():
-        return
-    local_target = str(local_lib.resolve())
-    # Make local seed/lib importable.
-    if local_target not in sys.path:
-        sys.path.insert(0, local_target)
-    keep: list = []
-    for finder in sys.meta_path:
-        mapping = getattr(finder, "MAPPING", None)
-        if isinstance(mapping, dict) and "noctusai_lib" in mapping:
-            target = str(Path(mapping["noctusai_lib"]).resolve())
-            if not target.startswith(local_target):
-                continue  # editable finder bound to a different worktree
-        keep.append(finder)
-    sys.meta_path[:] = keep
-    for name in list(sys.modules):
-        if name == "noctusai_lib" or name.startswith("noctusai_lib."):
-            del sys.modules[name]
-
-
-_purge_shadowing_editable_finders()
+_LIB = Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location(
+    "_bootstrap_conftest_helpers",
+    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_mod.purge_shadowing_editable_finders(_LIB)
 
 
 from datetime import date

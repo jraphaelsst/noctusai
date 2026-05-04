@@ -19,29 +19,11 @@ from pathlib import Path
 _LIB = Path(__file__).resolve().parents[1]
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
-
-
-def _purge_shadowing_editable_finders() -> None:
-    """If a parent venv installed `noctusai_lib` editable from another
-    worktree, its meta-path finder will shadow our local `_LIB`. Remove
-    only finders whose `MAPPING` points outside this worktree's lib root.
-    """
-    local_root = str(_LIB.resolve())
-    keep: list = []
-    for finder in sys.meta_path:
-        mapping = getattr(finder, "MAPPING", None)
-        if isinstance(mapping, dict) and "noctusai_lib" in mapping:
-            target = str(Path(mapping["noctusai_lib"]).resolve())
-            if not target.startswith(local_root):
-                # Editable finder pointing at a different worktree — drop it.
-                continue
-        keep.append(finder)
-    sys.meta_path[:] = keep
-    # Also drop any already-imported `noctusai_lib*` modules so they
-    # re-resolve through our local source tree.
-    for name in list(sys.modules):
-        if name == "noctusai_lib" or name.startswith("noctusai_lib."):
-            del sys.modules[name]
-
-
-_purge_shadowing_editable_finders()
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location(
+    "_bootstrap_conftest_helpers",
+    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_mod.purge_shadowing_editable_finders(_LIB)

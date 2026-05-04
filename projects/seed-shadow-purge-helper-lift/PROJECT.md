@@ -2,7 +2,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ — audit complete, divergence + bug documented; Phase 1+2+3+4+5 planned
+- **Status:** ALL PHASES ✅ — helper lifted, 4 conftests rewired, 665+584+235+1819 tests passing, KB pointer + bundled proposal filed. Bootstrap shape deviates from brief (`importlib.util` instead of plain import) — chicken-and-egg, documented in proposal.
 - **Owner / stakeholders:** joaoraphaelsst · architect-orchestrator (Batch 1C follow-up)
 - **Related docs:**
   - `projects/pf-metas-seed-wiring/proposals/claude-opus-4-7-20260504-end-of-project-bundle.md`
@@ -212,36 +212,48 @@ purge_shadowing_editable_finders(_LIB)
 
 **Improvements:** none identified — Phase 0 is pure audit + scaffold.
 
-### Phase 1 — Lift helper to seed-lib (libcst-authored)
-- [ ] Create `seed/lib/backend/noctusai_lib/testing/conftest_helpers.py` with the unified helper
-- [ ] Add `purge_shadowing_editable_finders` to `noctusai_lib/testing/__init__.py` exports + `__all__`
+### Phase 1 — Lift helper to seed-lib (libcst-authored) ✅
+- [x] Create `seed/lib/backend/noctusai_lib/testing/conftest_helpers.py` with the unified helper
+- [x] Add `purge_shadowing_editable_finders` to `noctusai_lib/testing/__init__.py` exports + `__all__`
 
-### Phase 2 — Tests for the helper
-- [ ] Create `seed/lib/backend/tests/test_conftest_helpers.py`
-- [ ] Test (a): class-MAPPING finder pointing outside local_root is removed
-- [ ] Test (b): module-MAPPING finder (pip PEP-660 shape) pointing outside local_root is removed
-- [ ] Test (c): finder pointing at a different worktree is purged
-- [ ] Test (d): finder pointing at the local worktree is preserved
-- [ ] Test (e): idempotency — calling twice is safe (no AttributeError, no double-removal)
+**Improvements:** none identified — straight lift + libcst export edit.
 
-### Phase 3 — Rewire 4 consumers to use the lifted helper (libcst)
-- [ ] Rewrite `seed/lib/backend/tests/conftest.py` (drop inline impl; import + call)
-- [ ] Rewrite `products/personal-finance/backend/tests/conftest.py`
-- [ ] Rewrite `products/erp-imobiliario/backend/tests/conftest.py`
-- [ ] Rewrite `products/daily-life/backend/tests/conftest.py`
-- [ ] Verify NONE of the 4 still has an inline `_purge_shadowing_editable_finders` definition
+### Phase 2 — Tests for the helper ✅
+- [x] Create `seed/lib/backend/tests/testing/test_conftest_helpers.py`
+- [x] Test (a): class-MAPPING finder pointing outside local_root is removed
+- [x] Test (b): module-MAPPING finder (pip PEP-660 shape) pointing outside local_root is removed
+- [x] Test (c): finder pointing at a different worktree is purged
+- [x] Test (d): finder pointing at the local worktree is preserved
+- [x] Test (e): idempotency — calling twice is safe (no AttributeError, no double-removal)
 
-### Phase 4 — Verify (pytest gates)
-- [ ] `seed/lib/backend/` pytest — pass (660+ tests still passing)
-- [ ] PF backend pytest — pass
-- [ ] ERP backend pytest (excl. realdb) — pass
-- [ ] Daily-Life backend pytest — pass
+**Improvements:**
+- The idempotency test had to compare meta_path snapshots (not absolute lengths) because the test session itself runs through a real pip-editable finder pointing at a sibling worktree — the helper's first call drops it. Documented in the test docstring.
 
-### Phase 5 — KB pointer + project close
-- [ ] Brief entry in `KB § PATTERNS/testing.md` referencing
-      `noctusai_lib.testing.purge_shadowing_editable_finders` for parallel-worktree-safe conftests
-- [ ] File bundled proposal at `projects/seed-shadow-purge-helper-lift/proposals/<bundle>.md`
-- [ ] Final-commit + branch-push
+### Phase 3 — Rewire 4 consumers to use the lifted helper (libcst) ✅
+- [x] Rewrite `seed/lib/backend/tests/conftest.py` (drop inline impl; replace with importlib.util bootstrap)
+- [x] Rewrite `products/personal-finance/backend/tests/conftest.py`
+- [x] Rewrite `products/erp-imobiliario/backend/tests/conftest.py`
+- [x] Rewrite `products/daily-life/backend/tests/conftest.py`
+- [x] Verify NONE of the 4 still has an inline `_purge_shadowing_editable_finders` definition
+
+**Improvements:**
+- **Brief deviation: bootstrap shape.** Brief said `from noctusai_lib.testing import purge_shadowing_editable_finders; purge_shadowing_editable_finders()`. Doesn't work — chicken-and-egg: `from noctusai_lib...` resolves THROUGH the shadowing finder before the purge can fire. Switched to `importlib.util.spec_from_file_location` direct file load (~7 lines per consumer instead of 1). Documented in proposal IMP-1 as future-collapse candidate via pytest plugin.
+- Two libcst passes were needed: 3 consumers had a standard `sys.path.insert` block (one transformer); ERP had its path bootstrap INSIDE the helper function (different transformer that synthesized the `_LIB` assignment).
+
+### Phase 4 — Verify (pytest gates) ✅
+- [x] `seed/lib/backend/` pytest — **665 passed** (incl. 5 new helper tests)
+- [x] PF backend pytest — **584 passed, 10 skipped**
+- [x] ERP backend pytest (excl. realdb) — **1819 passed, 29 deselected**
+- [x] Daily-Life backend pytest — **235 passed**
+
+**Improvements:** none identified — verification phase, no code authored.
+
+### Phase 5 — KB pointer + project close ✅
+- [x] Added entry in `KB § PATTERNS/testing.md § Parallel-worktree shadow purge` documenting helper + bootstrap pattern
+- [x] Filed bundled proposal at `projects/seed-shadow-purge-helper-lift/proposals/claude-opus-4-7-20260504-seed-shadow-purge-helper-lift-bundle.md`
+- [ ] Final-commit + branch-push (next)
+
+**Improvements:** none identified — project-close mechanics.
 
 ---
 
@@ -261,11 +273,11 @@ purge_shadowing_editable_finders(_LIB)
 
 ## 9. Success criteria
 
-- [ ] N=1 implementation in seed-lib; N=0 inline copies in any of the 4 consumers
-- [ ] 5 new tests passing in seed-lib
-- [ ] All 4 consumer test suites still green
-- [ ] Helper handles BOTH class-level and module-level MAPPING shapes
-- [ ] Brief KB entry in `KB § PATTERNS/testing.md`
+- [x] N=1 implementation in seed-lib; N=0 inline copies in any of the 4 consumers
+- [x] 5 new tests passing in seed-lib
+- [x] All 4 consumer test suites still green (665 + 584 + 235 + 1819)
+- [x] Helper handles BOTH class-level and module-level MAPPING shapes
+- [x] Brief KB entry in `KB § PATTERNS/testing.md`
 
 ---
 
@@ -280,3 +292,4 @@ Standard. Phase-by-phase; live-tick. Phase 0 commit on branch first; per-phase c
 | Date | Change | By |
 |---|---|---|
 | 2026-05-04 | Phase 0 — file PROJECT.md after audit; document N=4 recurrence + bug + 3-of-4 buggy / 1-of-4 fixed shape | claude-opus-4-7-1m (engineer) |
+| 2026-05-04 | Phase 1+2+3+4+5 ✅ — lifted helper to `noctusai_lib.testing.conftest_helpers`; 5 unit tests; 4 conftests rewired via libcst (bootstrap shape switched to `importlib.util` to break the chicken-and-egg the brief did not anticipate); KB pointer added; bundled proposal filed; all 4 test suites green (665 + 584 + 235 + 1819) | claude-opus-4-7-1m (engineer) |

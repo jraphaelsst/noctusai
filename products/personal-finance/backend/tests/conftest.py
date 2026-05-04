@@ -15,38 +15,14 @@ from pathlib import Path as _Path
 _LIB = _Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
 if str(_LIB) not in _sys.path:
     _sys.path.insert(0, str(_LIB))
-
-
-def _pf_purge_shadowing_editable_finders() -> None:
-    """Drop pip-editable `_EditableFinder` classes whose MAPPING['noctusai_lib']
-    points outside this worktree's seed/lib root.
-
-    The seed-lib conftest checks `getattr(finder, "MAPPING", None)` directly,
-    but pip's PEP-660 finder stores MAPPING on the FINDER MODULE (not the
-    class). We resolve via `sys.modules[finder.__module__].MAPPING`.
-    """
-    local_root = str(_LIB.resolve())
-    keep: list = []
-    for finder in _sys.meta_path:
-        # Class-level MAPPING (legacy / hypothetical):
-        mapping = getattr(finder, "MAPPING", None)
-        if mapping is None:
-            # Module-level MAPPING (pip's __editable___pkg_finder.py shape):
-            mod_name = getattr(finder, "__module__", None)
-            mod = _sys.modules.get(mod_name) if mod_name else None
-            mapping = getattr(mod, "MAPPING", None)
-        if isinstance(mapping, dict) and "noctusai_lib" in mapping:
-            target = str(_Path(mapping["noctusai_lib"]).resolve())
-            if not target.startswith(local_root):
-                continue
-        keep.append(finder)
-    _sys.meta_path[:] = keep
-    for name in list(_sys.modules):
-        if name == "noctusai_lib" or name.startswith("noctusai_lib."):
-            del _sys.modules[name]
-
-
-_pf_purge_shadowing_editable_finders()
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location(
+    "_bootstrap_conftest_helpers",
+    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_mod.purge_shadowing_editable_finders(_LIB)
 # ─────────────────────────────────────────────────────────────────────────
 
 import pytest

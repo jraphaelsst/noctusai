@@ -43,6 +43,48 @@ from tests.conftest import (
 
 Each product's `conftest.py` re-exports these from the shared seed test helpers. Don't re-implement mocks per product.
 
+### Parallel-worktree shadow purge — `purge_shadowing_editable_finders`
+
+When the host venv carries an editable-install of `noctusai_lib` pointing at one
+worktree's `seed/lib/backend`, sibling worktrees that try to run tests will
+resolve `noctusai_lib` through the install's pip PEP-660 finder — i.e. against
+the **wrong** source tree. The lifted helper at
+`noctusai_lib.testing.purge_shadowing_editable_finders` (in
+`noctusai_lib/testing/conftest_helpers.py`) drops shadowing finders whose
+`MAPPING['noctusai_lib']` points outside the local worktree's `seed/lib/backend`,
+and clears cached `noctusai_lib*` from `sys.modules` so re-imports resolve locally.
+
+Handles BOTH `MAPPING` shapes: class-level (legacy) and module-level (the actual
+real-world shape pip's `__editable___<pkg>_<version>_finder.py` uses — surfaced
+by PF Engineer A 2026-05-04, lifted to seed in `seed-shadow-purge-helper-lift`).
+
+**Bootstrap pattern (4 conftests use this verbatim):**
+```python
+import sys
+from pathlib import Path
+
+_LIB = Path(__file__).resolve().parents[N] / "seed" / "lib" / "backend"  # N varies
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+
+# Direct importlib.util load — bypasses sys.meta_path so the shadow-purge
+# bootstraps BEFORE any `from noctusai_lib...` resolves through the
+# (potentially shadowing) editable finder.
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location(
+    "_bootstrap_conftest_helpers",
+    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_mod.purge_shadowing_editable_finders(_LIB)
+```
+
+The bootstrap shape is unavoidable: the helper must run BEFORE the shadowing
+finder is given a chance to satisfy `from noctusai_lib...`. After the purge,
+normal `from noctusai_lib.testing import ...` lines resolve correctly to the
+local worktree.
+
 ### Schema validation (default-on since 2026-04-24)
 
 `MockSupabaseClient` now validates column references against the migration-file schema by default. Every `.eq("col", ...)` / `.in_("col", ...)` / `.select("c1,c2")` / `.insert({col: val})` consults the parsed schema from `products/*/backend/migrations/*.sql` and raises `MockSchemaError` when a column doesn't exist on the bound table.
