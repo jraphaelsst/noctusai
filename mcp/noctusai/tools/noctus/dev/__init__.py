@@ -35,6 +35,7 @@ def register_all(server) -> None:
     from . import refs
     from . import review
     from . import scaffold
+    from . import scaffold_migration
     from . import session_review
     from . import status
     from . import testing
@@ -63,6 +64,7 @@ def register_all(server) -> None:
     refs.register(server)
     review.register(server)
     scaffold.register(server)
+    scaffold_migration.register(server)
     session_review.register(server)
     status.register(server)
     testing.register(server)
