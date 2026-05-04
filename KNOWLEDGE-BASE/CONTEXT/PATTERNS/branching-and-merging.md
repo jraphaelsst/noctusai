@@ -465,6 +465,47 @@ When to squash: many micro-commits that don't represent meaningful units of work
 - **Abandoning silently.** A deleted branch with no §11 entry is lost work + lost reasoning. Document why before deleting.
 - **Treating divergence as failure.** Long-running branches diverge from main by design — the question is whether the divergence is being maintained (rebasing) or accumulating (rotting). Maintenance is the methodology.
 
+### 10.6 Recovery from bad merges
+
+Sometimes a merge goes wrong — the resolution was incorrect, the wrong commit was kept, important work got dropped, the merge introduced a regression that's now on main. Recovery is possible but the order of operations matters.
+
+**`git reflog` is your time machine.** Every operation that moves HEAD (commits, merges, rebases, resets, checkouts) is recorded in reflog with a hash + the action that produced it. Even "destroyed" commits live in reflog for ~90 days by default before garbage collection.
+
+```bash
+git reflog                      # see the last ~30 actions on HEAD
+git reflog --all                # see actions on all refs (branches, HEAD)
+```
+
+When something went wrong, **start with `git reflog` BEFORE any destructive operation**. Find the hash of the state you want to return to. Then choose the right recovery operation.
+
+**Recovery patterns by failure mode:**
+
+| Failure | Recovery |
+|---|---|
+| Just merged the wrong branch into main locally (not pushed yet) | `git reset --hard ORIG_HEAD` — `ORIG_HEAD` is git's auto-set "the state before the last merge/rebase." Pre-merge state restored. |
+| Merge resolved a conflict the wrong way (not pushed yet) | `git reset --hard <hash-from-reflog-pre-merge>` then redo the merge with the correct resolution. |
+| Pushed a bad merge to main (origin diverged from intent) | DO NOT `--force` push. Two safe options: (a) `git revert -m 1 <bad-merge-commit>` creates a NEW commit that undoes the bad merge — clean history shows "we merged X then reverted X"; (b) reset main locally to pre-bad-merge, cherry-pick correct work onto it, then negotiate with the team about a force-push window (last resort). Almost always (a). |
+| Rebase squashed a commit you wanted to keep | `git reflog` to find the pre-rebase HEAD; `git reset --hard <hash>` to restore; redo the rebase carefully. |
+| Lost work because of `--ours` / `--theirs` shortcut | `git reflog` for the pre-merge HEAD; check out that hash; cherry-pick the lost work onto the current branch. |
+| Force-pushed over someone else's work (catastrophic) | If they have local copies: they can re-push (but your force-push will fight again — first negotiate). If no local copies exist: the work is gone (reflog is per-clone, so their reflog has it but yours doesn't). **Prevention >> recovery here**. |
+
+**`git reset --hard ORIG_HEAD` deserves special mention.** Git auto-sets `ORIG_HEAD` to the pre-operation HEAD whenever you run `git merge`, `git rebase`, `git pull`, `git cherry-pick`. If the operation produced unwanted state, `git reset --hard ORIG_HEAD` is the canonical undo. It's safe — you can verify with `git log ORIG_HEAD..HEAD` what would be lost first.
+
+**When to ask for help (humans are the safety net for the methodology, just as `git merge` is the safety net for the rules).** The methodology has gaps; humans are the meta-safety-net. Ask the user / a senior teammate when:
+
+- The recovery operation involves `--force` push or `--force-with-lease` and you're not 100% certain you understand the impact on other clones.
+- The bad state has already been pushed to main and reverted on multiple clones; reconciling the multi-clone state is beyond your context.
+- `git reflog` shows operations you don't recognize (suggests another agent / process did something on your local repo without your knowledge).
+- The work that needs recovery is irreplaceable and the recovery path has any non-zero chance of making it worse.
+
+**Anti-patterns:**
+
+- **Trying recovery without `git reflog` first.** Operating blind. Reflog is the map; running operations without it is navigating without a compass.
+- **`--force` push to "fix" a bad merge.** Almost always wrong. Use `git revert -m 1 <merge-commit>` instead — preserves history, doesn't invalidate other clones.
+- **`git reset --hard` mid-merge to "start over".** That discards merge state including any work-in-progress resolution. Use `git merge --abort` instead.
+- **Ignoring a bad merge because "it's already on main, can't undo now."** It can be undone via revert (above). The longer it sits, the more downstream commits build on top, the more painful the revert. Catch it fast.
+- **Recovering silently.** A recovery commit deserves a clear message: what went wrong, what was recovered, how the original mistake will be prevented. Per `feedback_safety_nets_become_learnings.md` — failures captured become learnings; silent recovery destroys the learning.
+
 ---
 
 ## 11. Branch-per-project workflow

@@ -182,16 +182,18 @@ When a branch sits unmerged for a while:
 
 **Improvements:** integration-debt threshold table — wasn't planned as table form; emerged because there are 5 distinct signals each with their own action. **applied inline.** Squashing-for-cleanup section — wasn't in the original phase plan; surfaced because long-running branches often have micro-commit clutter, and the methodology should specify when to squash vs preserve. **applied inline.**
 
-### Phase 6 — Recovery from bad merges
+### Phase 6 — Recovery from bad merges ✅
 
 When a merge goes wrong:
 
-- [ ] Document `git reflog` discipline (always check before destructive commands).
-- [ ] Document `git reset --hard ORIG_HEAD` as the canonical undo.
-- [ ] Document when to ask for help (humans are the safety net for the methodology, just as `git merge` is the safety net for the rules).
-- [ ] Commit: `docs(kb): merging methodology §V — recovery from bad merges [merging-methodology Phase 6]`.
+- [x] Document `git reflog` discipline (always check before destructive commands). Landed.
+- [x] Document `git reset --hard ORIG_HEAD` as the canonical undo. Landed with the auto-set semantics.
+- [x] Document when to ask for help (humans are the safety net for the methodology). Landed with 4 trigger conditions.
+- [x] Bonus: failure-mode recovery table (just-merged-wrong / wrong-resolution / pushed-bad-merge / rebase-squashed-keeper / lost-work-from-shortcut / force-pushed-over-someone). Landed.
+- [x] Bonus: `git revert -m 1 <merge-commit>` for already-pushed bad merges — preserves history, avoids force-push. Landed.
+- [x] Commit: `docs(kb): merging methodology §10.6 — recovery from bad merges [merging-methodology Phase 6]`.
 
-**Improvements:** _(captured live during Phase 6)_
+**Improvements:** failure-mode recovery table — wasn't planned as table; emerged because there are distinct failure modes each with different recovery operations, and a table compresses lookup. **applied inline.** Pre-mention "humans are the meta-safety-net" — strengthens the safety-nets-become-learnings principle by extending it from `git merge` to humans-as-safety-net-for-methodology. **applied inline.** Final anti-pattern "recovering silently" — ties recovery back to the foundational principle (failures captured become learnings; silent recovery destroys the learning). **applied inline.**
 
 ### Phase 7 — Project close
 
