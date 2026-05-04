@@ -168,7 +168,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 - Pre-existing email-module tests use `monkeypatch.setattr(digest_module, "_post_to_resend", ...)` — patches our own internal function name (no-monkeypatch rule's anti-pattern). Module pre-dates the rule (2026-04-25). New SMTP tests patch at `smtplib.SMTP` / `SMTP_SSL` boundary directly (external-service carve-out), correct shape. Test-shape gap acknowledged not fixed in this scope; canonical Protocol+Fake+Real+factory refactor is a follow-up project of its own.
 - Module is half-shipped per the `KB § PATTERNS/seed-fake-real-adapter.md` rule (Real-only, no Protocol, dry-run logs serve as fake). SMTP added today is the second `Real`-shaped consumer that makes the canonical lift cheaper. Filed as out-of-scope deferred (§4).
 
-- [ ] **1.2** `security/encrypted_tokens.py` (Fernet helper, ~90 LOC + tests)
+- [x] **1.2** `security/encrypted_tokens.py` (Fernet helper) — landed on `sh-yt-encrypted-tokens` worktree. Module: `generate_key` / `encrypt` / `decrypt` / `rotate_key` + `MultiKeyDecryptor` class. 20 new tests green; full seed-lib suite 704/704 green (was 684 → +20).
 - [ ] **1.3** `integrations/youtube/` (Protocol+Fake+Real+factory, ~400 LOC + tests)
 - [ ] **1.4** `noctus.dev.scaffold_migration` MCP tool (~150 LOC + tests)
 
@@ -236,5 +236,6 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 | Date | Change | By |
 |---|---|---|
+| 2026-05-04 | Phase 1.2 — Fernet helper `security/encrypted_tokens.py` landed on worktree `sh-yt-encrypted-tokens` (Engineer A); 20 new tests; 704/704 seed-lib tests green. | engineer A (Claude Opus 4.7) |
 | 2026-05-04 | Phase 1.1 — SMTP backend landed in seed `integrations/email/digest.py` + 19 new tests; 35/35 email tests green; 684/684 seed-lib tests green. | architect (Claude Opus 4.7) |
 | 2026-05-04 | Phase 0 — Project filed; branch `seed-hardening-from-youtube-crawler` created from origin/main. | architect (Claude Opus 4.7) |
