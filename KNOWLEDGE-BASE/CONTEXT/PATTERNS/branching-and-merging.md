@@ -710,6 +710,37 @@ Without this protocol, two agents touching the same file commit in parallel, the
 
 **Companion to.** `feedback_parallel_agent_collision_protocol.md` (the after-the-fact "STOP, wait, continue" protocol when collisions DO happen). The pre-work fetch protocol is the proactive complement: catch them before they happen.
 
+### 14.1 Phase-state verification before dispatch
+
+**The rule (added 2026-05-04 from Batch 1A first-dispatch slip).** Before dispatching a subagent on an in-flight project, the orchestrator MUST verify the target's actual phase-state — not rely on the project's status header narrative alone.
+
+**Recipe:**
+
+```bash
+# Inside the target project's PROJECT.md:
+grep -c '^- \[x\]' projects/<slug>/PROJECT.md   # count of ticked sub-tasks
+grep -c '^- \[ \]' projects/<slug>/PROJECT.md   # count of unticked sub-tasks
+# OR more focused per-phase:
+sed -n '/^### Phase /,/^### Phase \|^---/p' projects/<slug>/PROJECT.md | grep '^- \['
+
+# Tail the §11 change log for the most recent close entry:
+awk '/^## 11\./,EOF' projects/<slug>/PROJECT.md | head -50
+```
+
+The status header (`Status: ⏳ Reactivated — execution in progress`) is **narrative**, often written in past tense referring to a past session, and can lag the actual state by sessions. **Phase-state in §6 (`- [x]` ticks + phase header icons) and the §11 change log are the source of truth.**
+
+**Why this matters:** dispatching a subagent on an already-closed project is a no-op cost (subagent's session burned for nothing) AND it muddies orchestrator-merge mechanics. Caught 2026-05-04 on Batch 1A: orchestrator dispatched session-review-baseline thinking Phases 2+ remained; subagent correctly identified all 4 phases had shipped in prior commits + reported back.
+
+**Cost:** ~30 seconds of verification per dispatch.
+
+**Anti-patterns:**
+
+- **Reading only the status header.** Narrative; can be stale.
+- **Reading only the first N lines of PROJECT.md.** Phase-state lives further in (§6); status header lives in metadata.
+- **Trusting the master plan's per-node status field.** Can also be stale if the master plan was assembled across sessions.
+
+**Companion** to: `KB § 01-PHILOSOPHY.md § Branching-first orchestration` (orchestrator's full-responsibilities list — phase-state verification is now part of step 1 "plan + chunk").
+
 ---
 
 ## 15. Exploratory branching — branch-and-compare and merge-upfront

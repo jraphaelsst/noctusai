@@ -302,9 +302,9 @@ The output of chunk identification is one of:
 - **Delegating the orchestration itself to a subagent.** Caught 2026-05-03 — the orchestrator dispatched a subagent to do the analysis + batching + planning for an in-flight portfolio, then waited passively. That collapses the head/worker distinction: the subagent only sees its brief, not the session-spanning conversation; the orchestrator's broad-context advantage IS the planning value. **Subagents are EXECUTORS of focused chunks; they are never PLANNERS of orchestration.** The head plans + dispatches; subagents execute the chunks the head defined. Hand-off rule: if you're tempted to dispatch ONE subagent to "figure out how to parallelize this," STOP — that's the orchestrator's job. Read the files yourself; compute the batches yourself; THEN dispatch N parallel executors with focused briefs.
 
 **The orchestrator's responsibilities — full list:**
-1. **Plan + chunk** the work (file-overlap analysis + dependency analysis).
+1. **Plan + chunk** the work (file-overlap analysis + dependency analysis). **Phase-state verification before dispatch** (per `KB § PATTERNS/branching-and-merging.md § 14.1`) — grep `- \[x\]` in target project's §6 + tail §11 change log; status header narrative is NOT sufficient.
 2. **Set up worktrees** per `KB § PATTERNS/branching-and-merging.md § 16` for parallel dispatch (mandatory when 2+ subagents concurrent).
-3. **Dispatch subagents** in single `Task` tool-use turn with focused briefs.
+3. **Dispatch subagents** in single `Task` tool-use turn with focused briefs (each brief includes the verified phase-state context from step 1).
 4. **Maintain findings.md** for the orchestration (per `Knowledge tracking — durable findings file` principle below + `KB § PATTERNS/branching-and-merging.md § 17`). Append slips / errors / lessons / surprises as subagent reports come in.
 5. **Aggregate + merge** subagent branches at orchestrator-merge time (per § 12 of branching-and-merging).
 6. **Close the orchestration** — synthesize findings.md into the durable knowledge artifact; archive the project per § 11.2.
