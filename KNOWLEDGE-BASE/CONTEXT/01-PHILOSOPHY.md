@@ -301,13 +301,51 @@ The output of chunk identification is one of:
 - **Treating multi-branch merge as a problem.** It's the methodology working. Per `§ 10.3`, branches queue at merge — auto-merge handles disjoint, manual resolution handles overlap. Both paths are documented.
 - **Delegating the orchestration itself to a subagent.** Caught 2026-05-03 — the orchestrator dispatched a subagent to do the analysis + batching + planning for an in-flight portfolio, then waited passively. That collapses the head/worker distinction: the subagent only sees its brief, not the session-spanning conversation; the orchestrator's broad-context advantage IS the planning value. **Subagents are EXECUTORS of focused chunks; they are never PLANNERS of orchestration.** The head plans + dispatches; subagents execute the chunks the head defined. Hand-off rule: if you're tempted to dispatch ONE subagent to "figure out how to parallelize this," STOP — that's the orchestrator's job. Read the files yourself; compute the batches yourself; THEN dispatch N parallel executors with focused briefs.
 
-**The orchestrator's responsibilities — full list:**
+### Roles: Architect (orchestrator) + Engineers / Teams of engineers (subagents)
+
+User directive 2026-05-04: *"the orchestrator is really the orchestrator. he plans like an architect, then dispatches for engineers or teams of engineers to build. ... the idea of doing this is to have you here more with me while other agents do the heavy lifting, so we can discuss more ideas more often."*
+
+The methodology already structurally separates orchestrator from working agents (per `KB § PATTERNS/branching-and-merging.md § 12`). This sub-section names the roles explicitly so the language reinforces the architectural pattern:
+
+- **The Architect** — that's the orchestrator. The CLI agent in the user's session-spanning conversation. Holds broad context. **Plans + dispatches + evaluates + stays available for user-facing ideation.** Does NOT write the code-level edits inside the dispatched chunks (carve-out: when work is too small for delegation, the architect implements directly in orchestrator-direct mode + still does the architect-style review pass via mode-switching).
+- **The Engineer / Team of engineers** — that's the subagent (or multiple subagents working in parallel). Holds narrow task context (their brief). **Builds the chunk the architect defined.** Reports back: shipped commits + findings + lessons + open follow-ups.
+
+**Industry analogy:** an architect designs the system + reviews integration; engineers build components per the design + report progress; the architect integrates + corrects. We don't reinvent — we adopt the role-language because it's the canonical shape.
+
+**Why this role split — the conversational dimension** (per user 2026-05-04). Beyond methodology purity (different vantage points, structural separation, parallelism), the role split has a **user-facing purpose**: keeping the architect (CLI agent) available for ideation, design conversation, methodology evolution, and judgment-call discussion WHILE engineers do the heavy lifting in their isolated worktrees. The architect's value to the user is conversational bandwidth — discussing ideas, refining methodology, making judgment calls together. Engineers absorb the implementation cost so the architect's session stays open for high-leverage user-facing thinking.
+
+**The methodology, in role-language:**
+
+- User says "branch this" → **Architect plans** the chunks.
+- Architect verifies phase-state (no dispatch on closed work).
+- Architect sets up worktrees for true parallelism.
+- Architect dispatches engineers (1, 2, or N — parallelism when good scenario; single engineer when not).
+- Engineers work in their isolated worktrees on focused briefs.
+- **Meanwhile**, architect stays in the user-facing conversation — discussing ideas, refining methodology, planning next chunks, doing orchestrator-direct work that doesn't warrant delegation.
+- Engineers report back with shipped commits + findings + open follow-ups.
+- Architect integrates the findings (appends to findings.md), reviews + merges branches, decides next chunks.
+- Cycle continues until the user-level deliverable is done.
+
+**Architect's responsibilities — full list:**
+
 1. **Plan + chunk** the work (file-overlap analysis + dependency analysis). **Phase-state verification before dispatch** (per `KB § PATTERNS/branching-and-merging.md § 14.1`) — grep `- \[x\]` in target project's §6 + tail §11 change log; status header narrative is NOT sufficient.
-2. **Set up worktrees** per `KB § PATTERNS/branching-and-merging.md § 16` for parallel dispatch (mandatory when 2+ subagents concurrent).
-3. **Dispatch subagents** in single `Task` tool-use turn with focused briefs (each brief includes the verified phase-state context from step 1).
-4. **Maintain findings.md** for the orchestration (per `Knowledge tracking — durable findings file` principle below + `KB § PATTERNS/branching-and-merging.md § 17`). Append slips / errors / lessons / surprises as subagent reports come in.
-5. **Aggregate + merge** subagent branches at orchestrator-merge time (per § 12 of branching-and-merging).
-6. **Close the orchestration** — synthesize findings.md into the durable knowledge artifact; archive the project per § 11.2.
+2. **Set up worktrees** per `KB § PATTERNS/branching-and-merging.md § 16` for parallel dispatch (mandatory when 2+ engineers concurrent).
+3. **Dispatch engineers** (subagents) in single `Task` tool-use turn with focused briefs (each brief includes the verified phase-state context from step 1). Single engineer when chunks are small / serial; team of engineers when work parallelizes cleanly.
+4. **Stay available for the user.** The user-facing conversation continues while engineers work; the architect is the one the user thinks-with. Don't get tunnel-vision into implementation; keep cycles for ideation + methodology refinement + judgment calls.
+5. **Maintain findings.md** for the orchestration (per `Knowledge tracking — durable findings file` principle below + `KB § PATTERNS/branching-and-merging.md § 17`). Append slips / errors / lessons / surprises as engineer reports come in.
+6. **Aggregate + merge** engineer branches at orchestrator-merge time (per § 12 of branching-and-merging).
+7. **Close the orchestration** — synthesize findings.md into the durable knowledge artifact; archive the project per § 11.2.
+
+**Engineer's responsibilities — full list:**
+
+1. **Read the brief.** It's narrow + focused; that's the point.
+2. **Verify the worktree state.** `cd <worktree-path>`; confirm branch via `git branch --show-current`; do NOT `git checkout` to a different branch.
+3. **Execute the chunk** per the brief — phase-by-phase if the chunk has phases; tests stay green; phase-enrichment-loop log per phase.
+4. **Surface findings.** In the report back to architect: errors / mistakes / lessons / surprises. The architect's findings.md feeds on these reports.
+5. **Push branch-to-branch only.** Engineers never push to main; architect merges.
+6. **Report back.** Structured report (commit hashes + phases shipped + findings + open follow-ups + confirmations).
+
+**Why the role-language matters even though the structure was already there:** language shapes thinking. When a future agent reads "orchestrator" + "subagent," the orchestrator role is technical jargon. When the same agent reads "architect" + "engineer," they intuit the pattern immediately + know what kind of work goes where. Same structure; different cognitive surface. Plus: the **conversational dimension** of the architect role is much more obvious in role-language than in framework-language — the architect-as-conversation-partner is clear; "the orchestrator-as-conversation-partner" reads like a contradiction.
 
 **Companion rules:**
 
