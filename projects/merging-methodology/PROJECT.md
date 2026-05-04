@@ -129,17 +129,19 @@ Three-way sync — KB (philosophy) + CLAUDE.md universal-rules + memory.
 
 **Improvements:** none identified — Phase 1 was a clean three-way sync of a single foundational principle. No mid-flight discoveries. The principle's own anti-patterns section absorbed the failure-modes I would have flagged.
 
-### Phase 2 — Non-fast-forward integration
+### Phase 2 — Non-fast-forward integration ✅
 
 When the fast-forward push fails (origin/main moved past your branch base):
 
-- [ ] Document the choice point: rebase your branch onto new origin/main vs. merge origin/main into your branch. Rules for when to use each.
-- [ ] Document the conflict-free path (auto-merge handles the divergence) — the common case.
-- [ ] Document the conflict path (handed off to Phase 4 conflict-resolution).
-- [ ] Tests / examples: walked through with the actual recent commits on this repo (`7ef0f16` → `db29d44` → `21d84a4` parallel-agent train as a real example).
-- [ ] Commit: `docs(kb): merging methodology §X — non-fast-forward integration [merging-methodology Phase 2]`.
+- [x] Document the choice point: rebase your branch onto new origin/main vs. merge origin/main into your branch. Rules for when to use each. Landed in §10.2 Option A (rebase) + Option B (merge).
+- [x] Document the conflict-free path (auto-merge handles the divergence) — the common case. Landed.
+- [x] Document the conflict path (handed off to §10.4). Landed via cross-reference.
+- [x] Tests / examples: walked through with the actual recent commits on this repo (`7ef0f16` → `db29d44` → `21d84a4` parallel-agent train as a real example). Landed in "Real example" subsection.
+- [x] Bonus: §10.1 "Build on `git merge`, don't replace it" added as opening to §10 — anchors all subsequent subsections to the safety-net-as-foundation principle.
+- [x] Bonus: decision flowchart added at end of §10.2 — quick reference for "non-FF rejection → which option?"
+- [x] Commit: `docs(kb): merging methodology §10.1-§10.2 — non-fast-forward integration [merging-methodology Phase 2]`.
 
-**Improvements:** _(captured live during Phase 2)_
+**Improvements:** added §10.1 (build on git merge) as bonus subsection — wasn't in the original phase plan but emerged as the natural opening to anchor all subsequent merge subsections to the safety-net-as-foundation principle. **applied inline.** Decision flowchart at end of §10.2 also wasn't planned — emerged from the "rebase vs merge" content as a quick-reference. **applied inline.**
 
 ### Phase 3 — Multi-branch convergence
 

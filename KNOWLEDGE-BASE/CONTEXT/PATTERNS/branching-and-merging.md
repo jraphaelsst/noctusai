@@ -199,20 +199,84 @@ If you find yourself cherry-picking another agent's commit onto your branch — 
 
 ---
 
-## 10. Merging methodology — TBD
+## 10. Merging methodology
 
-The companion methodology covering:
-- Non-fast-forward integration (when `origin/main` has moved past your branch base).
-- Multi-branch merge ordering (when N branches converge on main).
-- PR-shape review workflow (branch → PR → review → merge).
-- Conflict resolution discipline (which side wins; how to flag manual resolution; how to avoid losing work in 3-way merges).
-- Long-running branch maintenance (rebase cadence, integration debt, when to abandon).
+The companion methodology to branching. Covers what to do when `git push origin <branch>:main` fails as non-fast-forward (origin/main moved past your branch base), when N branches converge on main, when same-line conflicts need resolution, when a branch sits long enough to accumulate integration debt, and when a merge goes wrong.
 
-Tracked as a wish in agent memory: `wish_develop_merging_methodology.md`. Once developed, this section gets filled in (or split into a sibling KB doc `KB § PATTERNS/merging.md`) and the wish entry is deleted.
+**Why merging matters (the second-class problem branching alone doesn't solve).** Branching prevents **authorship-violation pushing** (you'd push another agent's commits along with yours because they sit in your unpushed range). Merging prevents **same-line content overwriting** (agent A writes line 50, agent B writes a different version of line 50 — without merging, second-write-wins silently destroys first-write). Both are real failure modes. Auto-merge handles non-conflicting changes (different files, different lines) — `work1 + work2 = work1+2` works automatically there. Same-line conflicts require resolution discipline, which is what this section codifies.
 
-**Why merging matters (the second-class problem branching alone doesn't solve).** Branching prevents **authorship-violation pushing** (you'd push another agent's commits along with yours because they sit in your unpushed range). Merging prevents **same-line content overwriting** (agent A writes line 50, agent B writes a different version of line 50 — without merging, second-write-wins silently destroys first-write). Both are real failure modes. Branching is the today-shipped half; merging is the wish. Auto-merge handles non-conflicting changes (different files, different lines) — `work1 + work2 = work1+2` works automatically there. Same-line conflicts require resolution discipline, which is what the merging methodology will codify.
+### 10.1 Build on `git merge`, don't replace it
 
-Until then: when fast-forward push fails (§4.2), STOP and surface to the user. Do not attempt manual merging without methodology support — it is the highest-risk git operation we run, and ad-hoc resolution is how merge bugs and lost commits happen.
+`git merge` is the **safety net** per `KB § 01-PHILOSOPHY.md § Safety nets capture failures`. The mechanical tool handles the auto-mergeable cases (different files, different lines, fast-forward chains) without methodology intervention. The methodology rides ON TOP of `git merge`, adding process discipline for the cases mechanics can't resolve alone:
+
+- **Ordering** — when 2+ branches both want to land, who goes first? Mechanics: silent first-write-wins. Methodology: §10.3.
+- **Same-line conflicts** — auto-merge can't resolve. Methodology: §10.4.
+- **Long-running branches** — auto-merge gets harder as divergence grows. Methodology: §10.5.
+- **Bad merges** — once a wrong merge lands, recovery is needed. Methodology: §10.6.
+
+**Anti-pattern: bespoke merge logic that bypasses `git merge`.** Don't build custom diff-and-apply scripts to avoid `git merge`'s 3-way machinery. The 3-way merge is correct; what we add is the discipline around when/how to invoke it. Bypassing the safety net = bypassing the methodology's foundation.
+
+### 10.2 Non-fast-forward integration
+
+When `git push origin <branch>:main` is rejected as non-FF, your branch base is no longer ancestral to `origin/main`. Someone else's commits landed in between. You have two options:
+
+**Option A — Rebase your branch onto new `origin/main`** (preferred for short-running branches with few commits):
+
+```bash
+git fetch origin
+git checkout <your-branch>
+git rebase origin/main
+# resolve any conflicts (§10.4)
+git push origin <your-branch>:main   # retry the FF push
+```
+
+`rebase` re-applies your branch's commits on top of new `origin/main`. History stays linear (no merge commit). Each of your commits gets a NEW hash (the rebase creates new commits with the same content but new parent pointers). The mental model: "move my work to sit on top of where main is now."
+
+When to use rebase:
+- Branch has ≤5 commits.
+- Linear history is preferred (no merge-commit clutter).
+- No other agent has your branch checked out (rebase rewrites history; if they have your old commits, they'll see divergence).
+- Your commits are clean and self-contained (each one applies independently onto the new base).
+
+**Option B — Merge `origin/main` into your branch** (preferred for long-running branches or when preserving history of integration points matters):
+
+```bash
+git fetch origin
+git checkout <your-branch>
+git merge origin/main
+# resolve any conflicts (§10.4)
+# git push origin <your-branch>:main  # this still fails — see caveat
+```
+
+`merge` creates a merge commit on your branch that reconciles your work with new `origin/main`. History shows the integration explicitly. **Caveat:** merging `origin/main` INTO your branch doesn't make the FF push to main work — the merge commit is on your branch, but `origin/main` still doesn't have your branch's commits. You'd need a normal merge from main's side, which means PR-shape review (§10.3) or letting the orchestrator merge via the merge button.
+
+When to use merge:
+- Branch has many commits or has been alive across multiple sessions.
+- Multiple agents may have your branch checked out (rebase would invalidate their copies).
+- Integration history matters (audit trail of "branch X integrated main at point Y").
+- You want the final main history to show "this work came in as a unit" (the merge commit is the boundary).
+
+**Conflict-free path (the common case).** If your branch and `origin/main` touched different files, OR same files but different lines, both rebase and merge auto-complete. No methodology intervention needed. `work1 + work2 = work1+2`. The safety net (`git merge`'s 3-way machinery) carried it.
+
+**Conflict path.** If same-line conflicts surface, see §10.4.
+
+**Real example (this repo, 2026-05-03).** Three parallel-agent commits sat in unpushed range while `phase-detector-and-enrichment-loop` shipped: `7ef0f16` (B0+B1), `db29d44` (B2), `21d84a4` (B3). All on local main, none on `origin/main`. When `phase-detector-and-enrichment-loop`'s branch tip was fast-forward-pushed to main, `origin/main` advanced. The parallel agent now has those 3 commits on their local main as **diverged from new origin/main**. Their next push triggers non-FF. They run `git fetch + git rebase origin/main` — git auto-merges (no file overlap with the methodology branch's content), drops the duplicates of my originals via patch-id, and the rebase completes clean. Then `git push origin main` succeeds.
+
+**Decision flowchart:**
+
+```
+git push origin <branch>:main → REJECTED (non-FF)
+          ↓
+  Branch ≤5 commits, no other agents have it checked out, linear history wanted?
+    YES → rebase (§10.2 Option A)
+    NO  → merge (§10.2 Option B) + open PR for the orchestrator-merge step
+          ↓
+  Conflicts during rebase/merge?
+    NO  → push succeeds, done.
+    YES → §10.4 Conflict resolution discipline.
+```
+
+**Anti-pattern: `--force` push to bypass non-FF.** Forbidden on main. `--force` rewrites remote history, invalidates everyone else's local clones, silently destroys their unpushed work. The non-FF rejection IS the safety net telling you "someone else has work here you don't"; bypassing it skips the integration step entirely.
 
 ---
 
