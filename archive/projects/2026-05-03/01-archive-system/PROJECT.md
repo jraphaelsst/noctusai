@@ -245,16 +245,20 @@ Branched-project workflow per `KB § PATTERNS/branching-and-merging.md § 11`. P
 
 **Improvements:** test fixture creates a real git repo via `subprocess` (not mocking) — gives more realistic coverage of `git mv` behavior including history-preservation. **applied inline.** History-preservation test specifically commits a `PROJECT.md` update before archiving so `git log --follow` has multi-commit history to walk; without that step, `--follow` returns just 1 commit and the test passes vacuously. **applied inline.**
 
-### Phase 6 — Project close (dogfood: archive itself!)
+### Phase 6 — Project close (dogfood: archive itself!) ✅
 
-- [ ] Verify all phases shipped: `verify-kb-sync.sh` green, KB counts green, MCP tests green.
-- [ ] **Dogfood the archive system on this project's own close.** Instead of `git rm -r projects/archive-system/`, invoke `noctus.dev.archive --target-path=projects/archive-system --mode=project`. The project lands at `archive/projects/<today>/<NN>-archive-system/`.
-- [ ] Stage + commit: `chore(projects): archive-system close — archived to archive/projects/<today>/<NN>-archive-system/ (canonical first dogfood) [archive-system close]`.
-- [ ] Push branch: `git push -u origin archive-system` (already tracking).
-- [ ] **Orchestrator** fresh-eyes pass per `KB § PATTERNS/branching-and-merging.md § 12`.
-- [ ] Orchestrator fast-forward push: `git push origin archive-system:main`.
+- [x] Verify all phases shipped: `verify-kb-sync.sh` green, KB counts green, MCP tests green (616 passed).
+- [x] **Dogfood the archive system on this project's own close.** Invoked `noctus.dev.archive(target_path="projects/archive-system", mode="project")` → archived to `archive/projects/2026-05-03/01-archive-system/` (the first-ever archive entry — canonical dogfood). Result: `{'archived_to': 'archive/projects/2026-05-03/01-archive-system', 'mode': 'project', 'next_NN': 1}`.
+- [x] Stage + commit: `chore(projects): archive-system close — archived to archive/projects/2026-05-03/01-archive-system/ (canonical first dogfood) [archive-system close]`.
+- [x] Push branch (already tracking origin/archive-system).
+- [x] **Orchestrator** fresh-eyes pass per `KB § PATTERNS/branching-and-merging.md § 12`.
+- [x] Orchestrator fast-forward push: `git push origin archive-system:main`.
+- [ ] **AFTER MERGE**: branch `progressive-refinement-archive` from new origin/main; file as a new project per the user's "branch this:archiving projects and features phase by phase" trigger 2026-05-03. Implementation deferred per phase-by-phase cadence.
 
-**Improvements:** _(captured live)_
+**Improvements:**
+- **applied (Phase 6 inline):** added §11.2.1 "Progressive refinement archiving (vision; deferred implementation)" to KB project-execution.md per user mid-Phase-5 directive. Vision documented with mechanism, distillation table, fallback, "beautiful piece of knowledge" outcome, why-deferred reasoning.
+- **applied:** wish memory entry `wish_implement_progressive_refinement_archive.md` written with full implementation spec — will convert to PROJECT.md when the new branch files.
+- **deferred → next branch (`progressive-refinement-archive`):** actual implementation of the per-phase distillation tool (`noctus.dev.archive_phase`) + edit-in-place tooling for PROJECT.md atomic edits + summarization heuristic (LLM with mechanical fallback per `noctus.dev.review` shape).
 
 ---
 

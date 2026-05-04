@@ -880,6 +880,102 @@ noctus.dev.archive(
 - **Custom NN numbering** (e.g. timestamps in the slug). The convention is `<NN>-<slug>`; the MCP tool computes NN; don't reinvent.
 - **Skipping the README in `archive/`.** The README anchors the convention; without it, future agents hitting an empty archive folder don't know the structure.
 
+### 11.2.1 Progressive refinement archiving — knowledge cards (2026-05-03; implementation deferred to its own project)
+
+> **Status.** Design vision documented; implementation deferred to project `progressive-refinement-archive` (filed 2026-05-03 per user "branch this" directive on the same day). The file-level archive (§ 11.2) ships TODAY as the foundation; progressive refinement is the next-layer enhancement.
+
+**The concept.** The archive shouldn't just be the original tech-checklist preserved verbatim. The archive should be the **distilled knowledge artifact** of the work — a beautiful piece of knowledge that captures *the learned lessons* of the project's journey. **Knowledge cards**, not preserved tech-files. Storage-optimized by design.
+
+User directives 2026-05-03 (combined):
+> *"the idea is not just simply throw away what doesnt have utility anymore, we're gonna use them to create beautiful pieces of knowledge that we acquire along the way throughout the projects executions."*
+>
+> *"we also must optimize storage. ... Like as if they little cards structured with just the essential and it contains all the knowledge from that project's journey."*
+>
+> *"you got what i meant by knowledge, its the 'learned lessons' along the way."*
+
+**The unifying insight: learnings ARE the knowledge unit.** The platform already has a per-phase **learnings store** — `mcp/noctusai/data/phase_learnings.db` (gitignored SQLite, populated by `noctus.dev.phase_learning_log` per § 2.11 Phase enrichment loop). Each phase logs ≥1 non-obvious learning at close. These learnings are the source of truth for project knowledge. The progressive-refinement-archive renders them as cards.
+
+**Mechanism (proposed for the future implementation):**
+
+1. **The card unit.** A learning logged via `noctus.dev.phase_learning_log` IS a card. Schema already includes: `project_slug`, `phase_number`, `phase_title`, `learning_kind` (methodology / technical / process / tool / other), `learning_text` (1-3 sentence non-obvious insight), `shipped_at`. That's the card.
+2. **Per-phase distillation = card render + breadcrumb swap.** When a phase closes, `noctus.dev.archive_phase`:
+   - Queries the learnings logged for `(project_slug, phase_number)`.
+   - Renders them as compact cards (~3-5 lines each) in a project-scoped `archive.md` file.
+   - Replaces the phase's sub-task block + Improvements block in PROJECT.md with a one-line breadcrumb:
+     ```markdown
+     ### Phase 1 — Detector regex precision ✅ → archive.md §1 · 2 cards (1 methodology, 1 technical) · commit 216cc1a
+     ```
+3. **Original PROJECT.md gets lean as work progresses.** By project close, original is scannable: header + design (§1-§5, stable) + breadcrumbs + change log. Companion `archive.md` is the knowledge product: cards aggregated phase-by-phase.
+4. **At project close**, both files travel via § 11.2 close-gate to `archive/projects/<today>/<NN>-<slug>/`. The lean PROJECT.md preserves design context; the rich archive.md preserves the journey's learnings.
+
+**What gets distilled vs. what stays in original PROJECT.md:**
+
+| Stays in PROJECT.md (stable design surface) | Removed → rendered as cards in archive.md |
+|---|---|
+| Header (status, dates, slug, branch) | §6 sub-task checklists (after phase close) |
+| §1 Context & Purpose | §6 Improvements blocks (after phase close) |
+| §2 Confirmed constraints | §7 answered questions (after answer recorded) |
+| §3 Design principles | (every phase contributes 1+ cards via SQLite) |
+| §3a Seed-first analysis |  |
+| §4 Scope |  |
+| §5 Architecture / Data Model |  |
+| §6 Phase headers + one-line breadcrumbs (NEW shape) |  |
+| §7 Open questions (only the still-open ones) |  |
+| §8 Dependencies |  |
+| §9 Success criteria |  |
+| §10 How to use |  |
+| §11 Change log (LIVE — never distilled; audit trail) |  |
+| §12 No-leftovers |  |
+
+**Storage optimization (the user's "card" framing):**
+
+Today's typical project archive footprint: 200-500 lines of PROJECT.md (sub-tasks + Improvements + change-log prose).
+
+Post-refinement: ~50-100 lines for PROJECT.md (lean) + ~100-200 lines for archive.md (cards). Net: similar size BUT the content is dense knowledge instead of process-checklist. The signal-to-noise ratio improves dramatically.
+
+For reading: a future agent searching "how did we resolve X?" greps cards (`grep -r "X" archive/projects/*/*/archive.md`) and finds 1-3 line answers, not 20-line sub-task lists.
+
+**Card format (proposed):**
+
+```markdown
+## Phase 1 — Detector regex precision
+
+### Card 1.1 [methodology]
+> No-workaround rule applies to detector regex precision, not just product code.
+> Surface fix idea ('fill block with justification') was the clue; structural fix
+> lives in the regex itself (strip code spans before matching).
+> _commit 216cc1a · learning id=17_
+
+### Card 1.2 [technical]
+> Stripping inline code spans before regex matching is the markdown-idiomatic way
+> to distinguish references from self-claims. Backticks already mean "code/identifier/
+> reference"; no new syntax needed.
+> _commit 216cc1a · learning id=18_
+```
+
+Compact. Searchable (kind tags, learning IDs, commit hashes). Browseable.
+
+**When per-phase distillation triggers:** at phase close, after the per-phase commit lands. The MCP tool reads SQLite for the phase's learnings, renders cards, edits PROJECT.md atomically with archive.md append.
+
+**Fallback (when an agent skipped per-phase distillation):** at PROJECT close, sweep — `noctus.dev.archive_phase --all-pending --project=<slug>` distills every closed-but-undistilled phase at once.
+
+**The "beautiful piece of knowledge" outcome:**
+
+After project close, browsing `archive/projects/<today>/<NN>-<slug>/`:
+- `PROJECT.md` — design + scope + final state. Quick scan.
+- `archive.md` — N cards (one per learning), structured by phase. Deep read.
+
+A future agent picking up similar work runs `cat archive.md` and gets the journey's lessons in compact form. The archive is now the **knowledge graph**, not the project debris.
+
+**Why this leverages existing infrastructure brilliantly:**
+
+- The cards already exist — they're the SQLite phase_learnings entries. No new authoring required.
+- Distillation = SQL query + render. No LLM summarization needed (learnings were authored intentionally at phase close).
+- Phase enrichment loop already enforces ≥1 learning per phase. So every phase contributes ≥1 card automatically.
+- Storage optimization is a side effect of card-shaped distillation.
+
+**Tracked at:** `projects/progressive-refinement-archive/PROJECT.md` (filed 2026-05-03 on its own branch per the "branch this" trigger). Implementation pending.
+
 ---
 
 ## 11.1 Features — lightweight project variant (2026-05-03)
