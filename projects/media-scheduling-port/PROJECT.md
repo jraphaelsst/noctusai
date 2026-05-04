@@ -2,7 +2,7 @@
 
 - **Created:** 2026-05-03 (original) / 2026-05-04 (resumed in dedicated worktree)
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ + Phase 0.5 ✅ + Phase 1 ✅ + Phase 2 ✅ → Phase 3 ready (Phase 5 merge incoming)
+- **Status:** Phase 0 ✅ + Phase 0.5 ✅ + Phase 1 ✅ + Phase 2 ✅ + Phase 5 ✅ → Phase 3 + Phase 4 ready (parallel-dispatch candidates per architect-engineer methodology)
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · claude-opus-4-7
 - **Worktree:** `/Users/rapha/Documents/repository/NoctusAI/noctusai-worktrees/media-scheduling-port-resume/` (per worktree-per-engineer rule)
 - **Branch:** `media-scheduling-port-resume` (off `origin/main` at `062853b`)
@@ -198,13 +198,21 @@ products/media-scheduling/
 - [ ] Calendar writer via seed `google_calendar`.
 - [ ] Travel-time fetch via seed `google_maps` (cached into `routes` table).
 
-### Phase 5 — Frontend: thin admin via `createProductApp()`
+### Phase 5 ✅ — Frontend: thin admin via `createProductApp()`
 
-- [ ] `pages/AuthorizedUsersPage.tsx` — CRUD on `authorized_users`.
-- [ ] `pages/AppointmentsPage.tsx` — list + filter.
-- [ ] `pages/OAuthStatusPage.tsx` — Google Calendar OAuth status + reconnect.
-- [ ] All hooks in dedicated files.
-- [ ] Wire `authProvider=seed_sso`.
+- [x] `pages/AuthorizedUsersPage.tsx` — CRUD on `authorized_users` (WhatsApp-authorized phones, NOT SSO users).
+- [x] `pages/AppointmentsPage.tsx` — list + filter (date range, status, condominium).
+- [x] `pages/OAuthStatusPage.tsx` — Google Calendar OAuth status + reconnect.
+- [x] All hooks in dedicated files (`useAuthorizedUsers.ts`, `useAppointments.ts`, `useOAuthStatus.ts`).
+- [x] Wired into `createProductApp({routes,...})` + `NAV_GROUPS` + `NAV_FALLBACK` (icons: `UserCheck`, `Calendar`, `Link2`).
+- [x] `npx vite build` green — 1772 modules transformed, all 3 lazy-loaded chunks emitted (AuthorizedUsersPage 10.33 kB, AppointmentsPage 7.29 kB, OAuthStatusPage 4.67 kB).
+- Note: `authProvider=seed_sso` already wired upstream by `createProductApp` defaults via `infra.appConfig` — no Phase-5 change needed; `useAuthStore()` gates queries on the user being signed in.
+
+**Improvements:**
+- API endpoint paths in hooks are placeholders (`/api/authorized-users`, `/api/appointments`, `/api/condominiums`, `/api/oauth/google/status`, `/oauth/google/init`) marked `// TODO Phase 3 — confirm endpoint path`. Phase 3 backend engineer must align to these OR the hooks get a follow-up sweep.
+- `seed/lib/frontend` had no `node_modules` — every product build failed at rollup-resolving `clsx` from `seed/lib/frontend/src/utils.ts`. Workaround: ran `npm install` in `seed/lib/frontend/` so peer deps (clsx / tailwind-merge / etc.) resolve. **Better fix (defer to Phase 7 / shared-library follow-up project):** the shared `vite.config.factory.ts` should add `clsx`, `tailwind-merge`, `class-variance-authority` to `FRAMEWORK_DEPS` (so they `dedupe` to product node_modules) — currently only react/react-dom/router/query/zustand/sonner/lucide/radix/supabase are listed. Same surface as the worktree-venv-isolation Phase 0.5 finding (a shared-config gap that hits every product).
+- `package.json` name field is the literal `"seed-frontend"` (carried over from scaffold); naming is global to all scaffolded products. Defer to Phase 7 cleanup or future `scaffold_product` improvement.
+- AppointmentsPage filter for "condominium" relies on `useCondominiumOptions()` hook (also TODO-Phase 3). Could be inlined as a free-text filter as a fallback if the dropdown endpoint isn't ready by Phase 6 verification.
 
 ### Phase 6 — Test port + green-bar verification
 
@@ -295,3 +303,4 @@ git commit -m "phase(media-scheduling-port-resume): Phase 0.5 ✅ — seed Fake+
 | 2026-05-04 | Phase 0.5 ✅ — G1-G4 backfill landed (commit `2defcfe`, 88 tests green). Improvements: (a) retrofit @runtime_checkable on RedisBufferClient — defer follow-up sweep for any other lacking-decorator seed Protocols; (b) worktree-venv-isolation gap surfaced (hook fallback to system python3 in fresh worktree) — defer follow-up project. Phase learnings logged via `noctus.dev.phase_learning_log` (3 entries: technical / methodology / process). | claude-opus-4-7 |
 | 2026-05-04 | Phase 1 ✅ — products/media-scheduling/ scaffolded (41 files, manually since MCP scaffold_product points at main worktree). backend/app/main.py + frontend/src/App.tsx confirmed using create_product_app() / createProductApp(). Improvements: scaffold.py extension filter misses .env.example (filed as `scaffold-tool-extension-coverage` follow-up), MCP scaffold_product needs per-call workspace override for multi-worktree environments (filed as `mcp-workspace-per-call-override` follow-up). LANDSCAPE.md + start.sh + vite.config.factory.ts wiring deferred to Phase 7 close (collision-risk on shared tracked files). | claude-opus-4-7 |
 | 2026-05-04 | Phase 2 ✅ — Schema port landed in dedicated worktree `media-scheduling-phase-2-schema` (Engineer A, parallel-dispatched alongside Phase 5 per architect-engineer methodology). 4 numbered migration files authored (`002_initial_schema.sql`, `003_rls.sql`, `004_indexes_and_fks.sql`, `005_seed_data.sql`); renumbered from spec's 001-004 because Phase 1's `scaffold_product` already shipped `001_seed.sql` (append-only migration discipline). 13 physical tables ported from source SQLAlchemy models; tool_call_audits via canonical seed template (with TEXT→JSONB upgrade); RLS = admin SSO via `noctus_role`/`media_scheduling_admin` JWT claim, worker writes via service_role. All 5 migrations mirrored via Supabase MCP `apply_migration` (`{"success":true}` × 5); `list_tables` confirms 15 tables in `media_scheduling` schema (13 domain + status_pagina + invitations) all RLS-enabled. Real-data migration deferred to follow-up project. Improvements block surfaces: filename-slip in spec (defer to PROJECT-TEMPLATE update); §5 mapping `Route → routes` should be `route_groups`; `001_seed.sql` was authored Phase 1 but never mirrored (scaffold_product methodology gap); MCP-first opportunity for `noctus.dev.scaffold_migration`. | Engineer A (subagent of claude-opus-4-7) |
+| 2026-05-04 | Phase 5 ✅ — Frontend thin admin landed in dedicated worktree `media-scheduling-phase-5-frontend` (Engineer B, parallel-dispatched alongside Phase 2). 3 pages + 3 hooks + App.tsx wiring. `npx vite build` green (1772 modules; AuthorizedUsersPage 10.33 kB / AppointmentsPage 7.29 kB / OAuthStatusPage 4.67 kB lazy chunks). Hooks use placeholder API paths flagged `// TODO Phase 3` — Phase 3 engineer must honor or surface mismatches: `/api/authorized-users`, `/api/appointments`, `/api/condominiums`, `/api/oauth/google/status`, `/oauth/google/init`. Improvements surfaced: (a) `vite.config.factory.ts` missing `clsx` / `tailwind-merge` / `class-variance-authority` in `FRAMEWORK_DEPS` — shared-config gap, same shape as worktree-venv-isolation; defer to Phase 7 / follow-up project; (b) scaffold-generated `package.json` name is literal `"seed-frontend"`; (c) `useCondominiumOptions()` depends on `/api/condominiums` (Phase 3); (d) authProvider=seed_sso ALREADY wired via `infra.appConfig` in `createProductApp` defaults — no manual wiring needed. | Engineer B (subagent of claude-opus-4-7) |
