@@ -194,17 +194,19 @@ Branched-project workflow per `KB § PATTERNS/branching-and-merging.md § 11`. P
 
 **Improvements:** _(captured live)_
 
-### Phase 2 — Methodology amendments (KB + CLAUDE)
+### Phase 2 — Methodology amendments (KB + CLAUDE) ✅
 
-- [ ] Amend `KB § PATTERNS/project-execution.md § 0 execution workflow`: replace "folder deletion" with "folder archive via `noctus.dev.archive`".
-- [ ] Amend `KB § PATTERNS/project-execution.md § 11 Clean-folder`: add archive-on-close rule + cross-reference to MCP tool. Add §11.2 "Archive system" subsection covering the structure (mirroring §5 of this doc).
-- [ ] Amend `KB § PATTERNS/project-execution.md § 11.1 Features` closure rule.
-- [ ] Amend `CLAUDE/projects.md` commit-per-phase bullet (replace "folder deletion" with "folder archive").
-- [ ] Amend `CLAUDE/projects.md` features bullet with closure-archive language.
-- [ ] `verify-kb-sync.sh` + `update-kb-counts.py --check` green.
-- [ ] Stage + commit: `docs(kb+claude): archive-on-close — close-gate replaces folder deletion with archive [archive-system Phase 2]`.
+- [x] Amend `KB § PATTERNS/project-execution.md § 0 execution workflow`: replaced "folder deletion" with "Folder ARCHIVE via `noctus.dev.archive`" + cross-reference to §11.2.
+- [x] Amend `KB § PATTERNS/project-execution.md § 11 Clean-folder` rule 4: now says "auto-ARCHIVED, not deleted" + explicit-deletion override clause.
+- [x] Add `KB § PATTERNS/project-execution.md § 11.2 Archive system` (NEW — full body covering folder structure, numbering, MCP tool spec, when-archive-applies table, anti-patterns).
+- [x] Amend `KB § PATTERNS/project-execution.md § 11.1 Features` closure rule: file-archive default, file-deletion explicit-override.
+- [x] Amend `CLAUDE/projects.md` commit-per-phase bullet: "after folder ARCHIVE via `noctus.dev.archive`".
+- [x] Amend `CLAUDE/projects.md` features bullet with closure-archive language.
+- [x] Add `CLAUDE/projects.md` new bullet "Archive-on-close — closed work moves to `archive/`, not deleted" pointing to §11.2.
+- [x] `verify-kb-sync.sh` + `update-kb-counts.py --check` green.
+- [x] Stage + commit: `docs(kb+claude): archive-on-close — close-gate replaces folder deletion with archive [archive-system Phase 2]`.
 
-**Improvements:** _(captured live)_
+**Improvements:** none identified — Phase 2 was clean three-doc amendment + new §11.2 section. Section ordering choice (§11.2 between §11 and §11.1) is intentional — clean-folder principle is the parent concept, archive system is its modern implementation, features section is the lightweight variant; reads naturally in this order.
 
 ### Phase 3 — Memory updates
 

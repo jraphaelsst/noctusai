@@ -68,7 +68,7 @@ CLOSE — at every phase end
 
 PROJECT CLOSE — at the last phase
 
-PROJECT-END VERIFICATION CHECKLIST — runs once before folder deletion (NEW 2026-04-28)
+PROJECT-END VERIFICATION CHECKLIST — runs once before folder archive (per § 11.2 archive-on-close)
   └─ 1. Cross-product frontend builds — green for every touched product:
           python mcp/noctusai/cli.py --build --changed                              (parallel; --changed scopes to git-changed products only)
   └─ 2. Backend pytest — green for every touched product:
@@ -87,10 +87,13 @@ PROJECT-END VERIFICATION CHECKLIST — runs once before folder deletion (NEW 202
   └─ 8. End-of-work summary in the user-facing reply: applied items + deferred destinations + verification line.
 
 CLOSE PROJECT (only after the verification checklist is fully green)
-  └─ Folder deletion — clean-folder rule. Empty `proposals/` ok (delete with the project).
+  └─ Folder ARCHIVE via `noctus.dev.archive` — clean-folder rule + archive-on-close (§ 11.2 NEW 2026-05-03).
+          Project lands at `archive/projects/<today>/<NN>-<slug>/` with PROJECT.md + proposals/ preserved
+          as-is. NOT `git rm -r` — the move uses `git mv` to preserve history. Explicit deletion is the
+          override: when the user says "delete X" / "remove X" (NOT "close X"), `git rm -r` is correct.
   └─ **Final commit + push (NEW 2026-05-03).** Stage everything still uncommitted (per-phase commits already
-          captured each phase; the close commit captures the methodology amendments + folder deletion + any
-          end-of-project polish). Subject: `feat(<area>): close <project-slug> — <one-line outcome>`. Then
+          captured each phase; the close commit captures the methodology amendments + folder archive + any
+          end-of-project polish). Subject: `chore(projects): close <project-slug> — archived to archive/projects/<today>/<NN>-<slug>/ [<slug> close]`. Then
           `git push`. Pushing is the literal last step of the project — it makes the work visible to other
           agents and pinned in remote history. Never push partway through; never push without an explicit
           project-close gate. If the user explicitly delegated the close (e.g. "commit and push the project"),
@@ -787,7 +790,7 @@ A 300-line project can be self-contained. A 900-line one can fail. The test is n
 1. **A delivered artifact that isn't a root-platform file → move it into a project folder.** If an audit, review, proposal-draft, or design doc was created at repo root by any agent (human or AI), its first-class home is `projects/<slug>/` (cross-product) or `products/<product>/projects/<slug>/` (single-product) or `core/projects/<slug>/` (control-plane). Create the project folder from `templates/PROJECT-TEMPLATE.md`, move the original file into it as a reference artifact (e.g., `CODEX-AUDIT-REFERENCE.md`, `DESIGN-NOTES.md`), and delete the root copy.
 2. **Reference artifacts inside project folders are first-class.** A project folder can hold PROJECT.md + improvements.md + proposals/ AND any number of `.md` (or other) reference files that support the work. Those references are quoted by §1 Context or §5 Architecture. They travel with the project — not at root.
 3. **`proposals/` folders stay clean (`.gitkeep` only) per § 4b of `proposals-and-improvements.md`** — the apply-inline-then-delete methodology; this is the same principle applied to proposal queues.
-4. **A completed project's folder is not auto-deleted.** The PROJECT.md + improvements.md are the durable record. The folder lives on; only ephemeral intermediates (proposals, scratch files that have been superseded) get cleaned up.
+4. **A completed project's folder is auto-ARCHIVED, not deleted** (changed 2026-05-03 — see § 11.2). On project close, `noctus.dev.archive` moves the folder to `archive/projects/<today>/<NN>-<slug>/` via `git mv` (preserves history). The PROJECT.md + improvements.md + proposals/ travel with the move. Explicit deletion is the override: when the user says "delete X" / "remove X" (NOT "close X"), `git rm -r` is correct.
 5. **Consolidate before scattering.** When multiple findings derive from a single source (e.g., one audit spawning multiple derivative work-streams), prefer a single umbrella project with phases grouping related findings over N separate project folders. Separate folders are justified only when the scopes are genuinely independent (different owners, different cadences, different risk profiles).
 
 ### Why
@@ -801,6 +804,81 @@ A `projects/` folder with 30 half-started one-finding projects is noisier than o
 3. Never leave the stray file "for later." It violates the principle and silently misleads the next agent who greps the repo.
 
 Doc-backed by `CLAUDE.md` rule "Apply proposals inline, then delete — every deliverable ends with a short summary" (the proposals case) and `KB § 01-PHILOSOPHY.md § No silent errors` (a stray file IS a silent signal that rot is accumulating).
+
+---
+
+## 11.2 Archive system — auto-archive on close (2026-05-03)
+
+**The shift.** On project/feature close, the deliverable is **archived**, not deleted. Closed work moves to a structured `archive/` folder at repo root, preserving content + chronological order + git history. Replaces the previous "delete on close" rule.
+
+**Why archive instead of delete:**
+- Closed work's content lives in git history either way, but archives are filesystem-browseable without `git log` archaeology.
+- Chronological ordering (`<YYYY-MM-DD>/<NN>-<slug>`) preserves within-day sequence + day-by-day shape.
+- Aligns with `KB § 01-PHILOSOPHY.md § Safety nets capture failures; failures become learnings; methodology evolves` — closing isn't erasure; it's preservation.
+
+### Folder structure
+
+```
+archive/
+├── README.md                         ← in-repo doc explaining the convention.
+├── projects/                         ← category: closed projects (folders).
+│   └── <YYYY-MM-DD>/                 ← per-day folder; created on first archive of that day.
+│       ├── 01-<project-slug>/
+│       │   ├── PROJECT.md
+│       │   └── proposals/            ← preserved as-is from project folder.
+│       ├── 02-<project-slug>/
+│       │   └── ...
+├── features/                         ← category: closed features (single .md files).
+│   └── <YYYY-MM-DD>/
+│       ├── 01-<feature-slug>.md
+│       └── ...
+└── <YYYY-MM-DD>_<HH-MM-SS>_<name>/   ← ad-hoc archive (no established category).
+```
+
+### Numbering
+
+Per-day, per-category. `<NN>-<slug>` zero-padded 2-digit, incrementing from `01`. Resets daily. The MCP tool `noctus.dev.archive` computes `NN = max(existing) + 1` automatically.
+
+### MCP tool — `noctus.dev.archive`
+
+Auto-detects category from path. Direct args (per the dev-umbrella convention):
+
+```python
+noctus.dev.archive(
+    target_path="projects/<slug>",      # or features/<slug>.md, or any path
+    mode=None,                          # "project" | "feature" | "ad_hoc" | None (auto-detect)
+    name=None,                          # ad-hoc only — descriptive name
+)
+# Returns: {"archived_to": "<archive/relative/path>", "mode": "project|feature|ad_hoc", "next_NN": int|None}
+```
+
+**Auto-detect rules:**
+- `target_path` ends in `PROJECT.md` OR is a directory containing `PROJECT.md` → `mode=project`.
+- `target_path` ends in `.md` AND lives under `features/` or `products/<x>/features/` or `core/features/` → `mode=feature`.
+- Else → `mode=ad_hoc` (requires explicit `name` param).
+
+**Idempotency guard:** refuses if target already lives under `archive/`. Don't archive an archive.
+
+**Implementation:** `subprocess.run(["git", "mv", src, dst])` for the move (preserves history). Date computed from local timezone (`America/Sao_Paulo`).
+
+### When archive applies
+
+| Situation | Action |
+|---|---|
+| Project close (PROJECT.md folder) | **archive** via `noctus.dev.archive` (mode auto-detected as `project`) |
+| Feature close (single .md file) | **archive** via `noctus.dev.archive` (mode auto-detected as `feature`) |
+| User says "archive X" | **archive** via `noctus.dev.archive` (mode by category or explicit `ad_hoc`) |
+| User says "delete X" / "remove X" | **delete** via `git rm -r` (explicit override; archive is the auto-default) |
+| Stash entries (`git stash drop`) | **delete** — stashes aren't deliverables; no archive |
+| Memory entries (wishes / TEMP entries on user-directed retire) | **delete** — memory is its own persistence layer; no archive |
+
+### Anti-patterns
+
+- **Archiving things the user said to delete.** "Delete" is unambiguous; respect it. Archive is the auto-default for closes, not a default for everything.
+- **Archive without `git mv`.** Plain `mv` loses history. Always `git mv` (or the MCP tool which uses it).
+- **Archiving an archive.** The idempotency guard refuses; respect it. If you genuinely need to re-organize archived content, that's a separate cleanup.
+- **Custom NN numbering** (e.g. timestamps in the slug). The convention is `<NN>-<slug>`; the MCP tool computes NN; don't reinvent.
+- **Skipping the README in `archive/`.** The README anchors the convention; without it, future agents hitting an empty archive folder don't know the structure.
 
 ---
 
@@ -831,7 +909,7 @@ Doc-backed by `CLAUDE.md` rule "Apply proposals inline, then delete — every de
 - **Sub-tasks:** simple checklist `- [ ]`. Live-tick to `- [x]` as work progresses. Same shape as project §6.
 - **Improvements:** captured live during implementation per `§ 2.6 Active robustness review`. Filed inline as `applied: <change>` or `deferred → <destination>: <change>`.
 - **Phase enrichment-loop:** if the feature has multiple sub-task batches that benefit from learning capture, log to the SQLite tracker per `§ 2.11`. Single-batch features can skip.
-- **Closure:** how the feature closes — single commit or multiple, branch-to-main fast-forward or merge, file-deletion vs file-retention.
+- **Closure:** how the feature closes — single commit or multiple, branch-to-main fast-forward or merge, **file-archive via `noctus.dev.archive` (default; lands at `archive/features/<today>/<NN>-<slug>.md`) OR file-deletion (explicit-override only — when user says "delete this feature")**. See § 11.2 for the archive system.
 
 **Branch-per-feature workflow** (per `KB § PATTERNS/branching-and-merging.md § 11`): features get the same branching treatment as projects. Branch first, file feature, implement, commit on branch, push branch, orchestrator-merges to main.
 
