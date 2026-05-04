@@ -227,23 +227,26 @@ class TestDeleteGoal:
 
 class TestCheckin:
     def test_checkin(self, client):
-        """POST /api/goals/{id}/checkin — the endpoint queries metas (verify),
-        inserts into checkins, then queries checkins (count) and updates metas.
-        Use sequential responses for metas and set checkins data.
+        """POST /api/goals/{id}/checkin — wired to seed accumulate_contribution.
+
+        Flow (post-seed-wiring):
+            1. SELECT meta_valor + valor_atual from metas (verify).
+            2. INSERT checkin row.
+            3. seed.accumulate_contribution(target, current, increment).
+            4. UPDATE metas SET valor_atual=transition.new_current.
         """
         client.mock_supabase.set_sequential_responses("metas", [
-            # First: verify goal exists (.select("id, tipo").eq().eq().execute())
-            MockSupabaseResponse(data=[{"id": "habit-1", "tipo": "habito"}]),
-            # Second: update valor_atual on metas (.update().eq().execute())
+            # 1) verify goal + read state for seed math.
+            MockSupabaseResponse(data=[{
+                "id": "habit-1",
+                "tipo": "habito",
+                "meta_valor": 30,
+                "valor_atual": 14,
+            }]),
+            # 4) update valor_atual on metas (.update().eq().execute()).
             MockSupabaseResponse(data=[SAMPLE_HABIT]),
         ])
-        # checkins table: used for .insert() and then .select() for count
-        client.mock_supabase.set_sequential_responses("checkins", [
-            # First: insert checkin
-            MockSupabaseResponse(data=[SAMPLE_CHECKIN]),
-            # Second: select checkins for count (called inside the update logic)
-            MockSupabaseResponse(data=[SAMPLE_CHECKIN]),
-        ])
+        client.mock_supabase.set_table_data("checkins", [SAMPLE_CHECKIN])
         resp = client.post("/api/goals/habit-1/checkin", json={
             "data": TODAY,
             "valor": 1.0,
@@ -254,6 +257,73 @@ class TestCheckin:
         assert body["data"]["meta_id"] == "habit-1"
         assert body["data"]["valor"] == 1.0
         assert body["data"]["nota"] == "Sessao matinal"
+
+        # Seed math: 14 + 1.0 = 15.0 — assert via the recorded update payload.
+        update_payloads = client.mock_supabase.table("metas").updated_payloads
+        assert update_payloads, "expected one update on metas"
+        assert update_payloads[-1]["valor_atual"] == 15.0
+
+    def test_checkin_with_null_target_habit(self, client):
+        """A pure check-yes/no habit has meta_valor=None — the seed treats
+        target=0 as the boundary case. Accumulation still records the new
+        valor_atual; no completion / milestone is fired.
+        """
+        client.mock_supabase.set_sequential_responses("metas", [
+            MockSupabaseResponse(data=[{
+                "id": "habit-1",
+                "tipo": "habito",
+                "meta_valor": None,
+                "valor_atual": 5,
+            }]),
+            MockSupabaseResponse(data=[SAMPLE_HABIT]),
+        ])
+        client.mock_supabase.set_table_data("checkins", [SAMPLE_CHECKIN])
+        resp = client.post("/api/goals/habit-1/checkin", json={
+            "data": TODAY,
+            "valor": 1.0,
+        })
+        assert resp.status_code == 200
+
+        # 5 + 1 = 6, target=0 → no milestone.
+        update_payloads = client.mock_supabase.table("metas").updated_payloads
+        assert update_payloads[-1]["valor_atual"] == 6.0
+
+    def test_checkin_milestone_crossing_logged(self, client, caplog):
+        """Crossing a 25/50/75/100 milestone fires a logger.info — wired today
+        as the audit-trail surface; future gamification + push-notification
+        consumers will pick this up. See metas-domain-seed-absorption proposal
+        § 2.3 (crossed_threshold_pct shipped ahead of consumer).
+        """
+        import logging
+
+        client.mock_supabase.set_sequential_responses("metas", [
+            # current=20, target=100 → crossing 25% with +5.
+            MockSupabaseResponse(data=[{
+                "id": "habit-1",
+                "tipo": "habito",
+                "meta_valor": 100,
+                "valor_atual": 20,
+            }]),
+            MockSupabaseResponse(data=[SAMPLE_HABIT]),
+        ])
+        client.mock_supabase.set_table_data("checkins", [SAMPLE_CHECKIN])
+
+        with caplog.at_level(logging.INFO, logger="app.services.goals_service"):
+            resp = client.post("/api/goals/habit-1/checkin", json={
+                "data": TODAY,
+                "valor": 5.0,
+            })
+        assert resp.status_code == 200
+
+        # 20 + 5 = 25 — exactly hits the 25% milestone.
+        update_payloads = client.mock_supabase.table("metas").updated_payloads
+        assert update_payloads[-1]["valor_atual"] == 25.0
+
+        milestone_logs = [r for r in caplog.records if "goal_milestone_crossed" in r.getMessage()]
+        assert len(milestone_logs) == 1, (
+            f"expected 1 milestone log; got {[r.getMessage() for r in caplog.records]}"
+        )
+        assert "pct=25" in milestone_logs[0].getMessage()
 
     def test_checkin_goal_not_found(self, client):
         client.mock_supabase.set_table_data("metas", [])
