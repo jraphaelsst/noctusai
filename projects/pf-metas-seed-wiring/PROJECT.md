@@ -188,6 +188,8 @@ Phase 1+2 collapsed into a single libcst codemod pass (consistent with Batch 1B 
 - [x] Synthesize `findings.md` (5 categories).
 - [x] Phase commit; push branch (push deferred to architect's FF-merge per orchestrator-merges-to-main rule).
 
+**Improvements:** none identified — phase-close mechanics only. (Block added retroactively 2026-05-04 by `seed-shadow-purge-helper-lift` engineer to satisfy hook self-check; original engineer omitted the block.)
+
 ---
 
 ## 7. Open questions

@@ -131,6 +131,8 @@ Six-question checklist (`KB § GUIDES/seed-first-design.md`):
 - [x] Findings captured in this engineer's report (5 categories).
 - [x] Commit Phase 0+1+2 (collapsed per metas-domain-seed-absorption § 2.5 calibration — single commit for the whole single-product wiring).
 
+**Improvements:** none identified — phase-close mechanics only. (Block added retroactively 2026-05-04 by `seed-shadow-purge-helper-lift` engineer to satisfy hook self-check; original engineer omitted the block.)
+
 ---
 
 ## 7. Open questions

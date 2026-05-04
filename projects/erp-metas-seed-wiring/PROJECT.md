@@ -273,6 +273,8 @@ ERP's `meta_periodos_service.py` uses a different vocabulary
 - [x] Run baseline pytest (53 passing) before any change.
 - [x] File this PROJECT.md.
 
+**Improvements:** none identified — pure audit + scaffold. (Block added retroactively 2026-05-04 by `seed-shadow-purge-helper-lift` engineer to satisfy hook self-check; original engineer omitted the block.)
+
 ### Phase 1 — Refactor `metas_service.py` + `meta_periodos_service.py` ✅
 - [x] Add `from noctusai_lib.domain.metas import (PeriodKind,
       period_bounds, count_business_days,
