@@ -2,7 +2,7 @@
 
 - **Created:** 2026-05-03 (original) / 2026-05-04 (resumed in dedicated worktree)
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ + Phase 0.5 ✅ + Phase 1 ✅ → Phase 2 ready (awaiting user "continue")
+- **Status:** Phase 0 ✅ + Phase 0.5 ✅ + Phase 1 ✅ + Phase 2 ✅ → Phase 3 ready (Phase 5 merge incoming)
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · claude-opus-4-7
 - **Worktree:** `/Users/rapha/Documents/repository/NoctusAI/noctusai-worktrees/media-scheduling-port-resume/` (per worktree-per-engineer rule)
 - **Branch:** `media-scheduling-port-resume` (off `origin/main` at `062853b`)
@@ -165,14 +165,22 @@ products/media-scheduling/
 
 *Phase proposal:* none filed (improvements small + cross-cutting; flagged as deferred-with-named-followup).
 
-### Phase 2 — Schema port (SQLAlchemy → Supabase numbered migrations)
+### Phase 2 ✅ — Schema port (SQLAlchemy → Supabase numbered migrations)
 
-- [ ] Author `001_initial_schema.sql` (11 tables in `media_scheduling`).
-- [ ] Author `002_rls.sql` (admin SSO + service-role for worker/webhook paths).
-- [ ] Author `003_indexes_and_fks.sql`.
-- [ ] Author `004_seed_data.sql` (service types + condominiums baseline).
-- [ ] Mirror via Supabase MCP `apply_migration`.
-- [ ] **Real-data migration consideration** — source DB has real WhatsApp ↔ OpenAI conversations. Migrate them as part of this phase OR file a follow-up project. Decision deferred until Phase 2 scope analysis.
+- [x] Author `002_initial_schema.sql` (13 physical tables — 11 domain-aggregates per §5 mapping, with `appointment_requests` + `appointment_request_services` split out as their own physical tables to preserve source's relational shape; tool_call_audits ported via canonical seed template at `noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template`).
+- [x] Author `003_rls.sql` (admin SSO via `noctus_role = 'platform_admin'` OR `media_scheduling_admin = true` JWT claim; worker/webhook paths use `service_role` and bypass RLS automatically — no `TO service_role` policies needed).
+- [x] Author `004_indexes_and_fks.sql` (FKs landed inline in 002 to avoid two-pass resolution; this file ships the secondary indexes the source SQLAlchemy models marked `index=True` plus the canonical seed-template indexes for tool_call_audits).
+- [x] Author `005_seed_data.sql` (4 service_types + 4 representative condominiums — names + lat/lon mirror source `scripts/seeds/mock_data.sql` so the seed scheduling/maps adapters' fixtures align).
+- [x] Mirror via Supabase MCP `apply_migration` — 5 successful applies (`001_seed` + `002_initial_schema` + `003_rls` + `004_indexes_and_fks` + `005_seed_data`). Confirmed via `list_tables`: 15 tables in `media_scheduling` (13 domain + status_pagina + invitations); all RLS-enabled; `condominiums.rows = 4`, `service_types.rows = 4`.
+- [x] **Real-data migration consideration** — DEFERRED to a future follow-up project (`media-scheduling-real-data-migration`). Phase 2 ships canonical seed data only; the real production WhatsApp ↔ OpenAI history + real condominium/property catalog port is a green-bar-after-Phase-6 task and out of scope here.
+
+**Improvements:**
+- **Migration filename slip — `001_seed.sql` already existed from Phase 1 scaffold.** The Phase 2 spec named files `001_..` through `004_..`; the engineer renumbered to `002..005` (append-only — never rewrite a committed migration). The slip is in the spec, not the execution. **Defer**: update PROJECT-TEMPLATE.md / `scaffold_product` doc so Phase-2 spec authors know the scaffold consumes `001_seed.sql`. Surface in findings.md L#-next; methodology candidate (NOT in this commit per the architect's collision-risk discipline).
+- **PROJECT.md §5 mapping says `Route` → `routes`; source SQLAlchemy `__tablename__` is `route_groups`.** Kept `route_groups` to preserve `appointments.route_group_id` FK target name. **Defer**: fix mapping table when Phase 7 closes the project (PROJECT.md edit). Cataloged here so it survives.
+- **`001_seed.sql` was authored in Phase 1 but never mirrored to live Supabase** — the schema didn't exist until Phase 2 mirrored 001 as the prerequisite for 002+. **Methodology improvement**: scaffold_product should optionally apply 001_seed.sql immediately so Phase 2 starts on a non-empty schema. Same defer-to-Phase-7 treatment.
+- **`appointment_request_services` policy uses inline JWT predicate, not the parent-table-subquery shape** the mailing reference uses (`list_id IN (SELECT id FROM lists WHERE …)`). Reason: the admin gate is uniform across the whole product (no per-row owner discrimination on this assoc table), so the parent-table subquery would add cost without gating anything new. **Triage**: accept-with-rationale; cataloged here.
+- **Canonical helpers in `noctusai_lib.domain.sql_templates` were used as REFERENCE shapes, not invoked at authoring time.** The DDL in 002 matches the helpers' output exactly but was hand-typed. **Future opportunity**: a `noctus.dev.scaffold_migration` MCP tool could generate a 002-shape file from `(schema, [(table, columns)])` using the helpers. Defer — surface in findings.md as a missed MCP-first opportunity.
+- **Source SQLAlchemy `ToolCallAudit` had `arguments_json` / `result_json` as TEXT.** Ported to JSONB per the seed template (better for query, matches `AuditRecord.arguments` writer semantics). One small data-shape divergence from source — surfaced here so the Phase 6 test port catches any consumer assuming TEXT. Triage: refactor (already applied — this IS the refactor), no follow-up needed.
 
 ### Phase 3 — Backend: WAHA webhook + buffer + worker via seed
 
@@ -286,3 +294,4 @@ git commit -m "phase(media-scheduling-port-resume): Phase 0.5 ✅ — seed Fake+
 | 2026-05-04 | Re-created in dedicated worktree `noctusai-worktrees/media-scheduling-port-resume/` post-collision; Phase 0 results preserved; Phase 0.5 in re-execution; per-phase commit cadence adopted as collision learning; new Q5 added (real-data migration during Phase 2) | claude-opus-4-7 |
 | 2026-05-04 | Phase 0.5 ✅ — G1-G4 backfill landed (commit `2defcfe`, 88 tests green). Improvements: (a) retrofit @runtime_checkable on RedisBufferClient — defer follow-up sweep for any other lacking-decorator seed Protocols; (b) worktree-venv-isolation gap surfaced (hook fallback to system python3 in fresh worktree) — defer follow-up project. Phase learnings logged via `noctus.dev.phase_learning_log` (3 entries: technical / methodology / process). | claude-opus-4-7 |
 | 2026-05-04 | Phase 1 ✅ — products/media-scheduling/ scaffolded (41 files, manually since MCP scaffold_product points at main worktree). backend/app/main.py + frontend/src/App.tsx confirmed using create_product_app() / createProductApp(). Improvements: scaffold.py extension filter misses .env.example (filed as `scaffold-tool-extension-coverage` follow-up), MCP scaffold_product needs per-call workspace override for multi-worktree environments (filed as `mcp-workspace-per-call-override` follow-up). LANDSCAPE.md + start.sh + vite.config.factory.ts wiring deferred to Phase 7 close (collision-risk on shared tracked files). | claude-opus-4-7 |
+| 2026-05-04 | Phase 2 ✅ — Schema port landed in dedicated worktree `media-scheduling-phase-2-schema` (Engineer A, parallel-dispatched alongside Phase 5 per architect-engineer methodology). 4 numbered migration files authored (`002_initial_schema.sql`, `003_rls.sql`, `004_indexes_and_fks.sql`, `005_seed_data.sql`); renumbered from spec's 001-004 because Phase 1's `scaffold_product` already shipped `001_seed.sql` (append-only migration discipline). 13 physical tables ported from source SQLAlchemy models; tool_call_audits via canonical seed template (with TEXT→JSONB upgrade); RLS = admin SSO via `noctus_role`/`media_scheduling_admin` JWT claim, worker writes via service_role. All 5 migrations mirrored via Supabase MCP `apply_migration` (`{"success":true}` × 5); `list_tables` confirms 15 tables in `media_scheduling` schema (13 domain + status_pagina + invitations) all RLS-enabled. Real-data migration deferred to follow-up project. Improvements block surfaces: filename-slip in spec (defer to PROJECT-TEMPLATE update); §5 mapping `Route → routes` should be `route_groups`; `001_seed.sql` was authored Phase 1 but never mirrored (scaffold_product methodology gap); MCP-first opportunity for `noctus.dev.scaffold_migration`. | Engineer A (subagent of claude-opus-4-7) |
