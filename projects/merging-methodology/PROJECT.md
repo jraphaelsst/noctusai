@@ -156,18 +156,19 @@ When N branches all want to land on main:
 
 **Improvements:** PR-shape review workflow added as bonus subsection — wasn't in the original phase plan but emerged as a natural extension of multi-branch convergence (PR is the institutional artifact for the queue + review pattern). **applied inline.** Also added explicit anti-pattern: "chained branches deeper than 2" — surfaced while drafting branch-of-branch content; the cascading-rebase failure mode is real. **applied inline.**
 
-### Phase 4 — Conflict resolution discipline
+### Phase 4 — Conflict resolution discipline ✅
 
 The hardest section. Same-line conflicts; manual resolution.
 
-- [ ] Document how to read a 3-way merge: ours / theirs / base, when to use which.
-- [ ] Document file-type-specific resolution heuristics: KB docs (concatenate sections), MCP tool registrations (alphabetic merge), migration files (NEVER conflict — sequence numbers prevent it; if conflict, both are wrong), test files (union), config (manual).
-- [ ] Document interactive merges: when to abort and re-strategize.
-- [ ] Document avoiding lost commits: always use `git merge` (default merge commit), never `git rebase --skip` without reading the diff first.
-- [ ] Recovery anti-patterns to avoid.
-- [ ] Commit: `docs(kb): merging methodology §Z — conflict resolution discipline [merging-methodology Phase 4]`.
+- [x] Document how to read a 3-way merge: ours / theirs / base, when to use which. Landed with the rebase-vs-merge inversion caveat.
+- [x] Document file-type-specific resolution heuristics: KB docs (concatenate), MCP tool registrations (alphabetic merge), migration files (NEVER conflict — renumber), test files (union mostly), production code (read base, no automatic heuristic), config (manual). Landed as a table.
+- [x] Document interactive merges: when to abort and re-strategize. Landed.
+- [x] Document avoiding lost commits: 3 specific anti-patterns (rebase --skip without reading, --ours/--theirs on multi-line, reset --hard mid-merge). Landed.
+- [x] Recovery anti-patterns to avoid. Landed inline.
+- [x] Bonus: worked example with KB-doc concat resolution. Landed.
+- [x] Commit: `docs(kb): merging methodology §10.4 — conflict resolution discipline [merging-methodology Phase 4]`.
 
-**Improvements:** _(captured live during Phase 4)_
+**Improvements:** added file-type heuristic table — wasn't planned as a table but emerged as the right shape for "different file types → different resolution defaults." **applied inline.** Also added the "read the base, not just ours and theirs" emphasis with the `git show :1:<file>` recipe — surfaced while writing because the base is invisible by default and ignoring it is the most common resolution mistake. **applied inline.** Worked example for KB-doc concat — the canonical pattern needed a concrete example; abstract rules without an example are too easy to misapply. **applied inline.**
 
 ### Phase 5 — Long-running branch maintenance
 

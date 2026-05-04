@@ -335,6 +335,87 @@ git rebase origin/main   # Y's commits replay on top of new main (which now incl
 
 For single-orchestrator-merge work (most projects in this repo), `git push origin <branch>:main` is the FF-merge action; the PR step is optional. The branch ref on remote is enough for the orchestrator's fresh-eyes pass.
 
+### 10.4 Conflict resolution discipline
+
+The hardest part of merging — and the part where most data loss happens. Auto-merge already covered the easy cases; this section is about same-line collisions where git asks "ours, theirs, or some combination?"
+
+**The 3-way merge concept.** When a conflict surfaces, git has three references:
+
+- **`base`** — the common ancestor of your branch and the branch you're merging in. The shared starting point.
+- **`ours`** — what your branch says the line(s) should be. Your changes since `base`.
+- **`theirs`** — what the other branch says. Their changes since `base`.
+
+A conflict means: `base → ours` and `base → theirs` both modified the same lines. Git can't pick automatically. The conflict marker shape:
+
+```
+<<<<<<< HEAD
+ours version
+=======
+theirs version
+>>>>>>> origin/main
+```
+
+(Substitute the branch names appropriately; for `git rebase`, `HEAD` is THEIRS-from-the-rebase-perspective and the incoming branch is OURS — confusingly inverted vs `git merge`. Always check `git status` to confirm which is which during a rebase.)
+
+**Read the base, not just ours and theirs.** The conflict markers show ours + theirs. The base is invisible by default. To see the original (base) version: `git show :1:<file>` (1=base, 2=ours, 3=theirs in git's 3-way index). Reading the base is critical when your version and theirs both look reasonable in isolation but were both meant as different evolutions of the same starting point.
+
+**File-type heuristics** — for our repo specifically, conflict resolution preferences by file type:
+
+| File type | Resolution heuristic | Notes |
+|---|---|---|
+| **KB docs** (`KNOWLEDGE-BASE/**/*.md`) | **Concatenate sections.** When both branches added new subsections to the same parent doc, keep both — they're additive almost always. When both edited the same paragraph, read the base and produce a unified version that respects both intents. | Methodology docs grow additively; conflicts here are usually false positives from concurrent additions, not real disagreements. |
+| **CLAUDE.md / CLAUDE/<topic>.md** | **Same as KB — additive.** Two new bullets both belong; merge by alphabetical or topical order, not first-write-wins. | Auto-loaded surface; budget discipline applies (`feedback_context_budget_discipline.md`) — if the merged file is too long, that's a separate concern, surface it in the project-close pass. |
+| **MCP tool registrations** (`mcp/noctusai/tools/**/__init__.py`) | **Alphabetical merge** — the `register(server)` calls are alphabetical by convention. Both new registrations belong; sort and dedupe. | Don't drop one to keep the other; both are real tools. |
+| **Migration files** (`products/<x>/backend/migrations/*.sql`) | **NEVER conflict — sequence numbers prevent it.** If conflict surfaces, both branches assigned the same sequence number, which is the bug. Re-number the later one and update its `down_revision` references. | Migration sequencing is a coordination concern, not a merge concern. The conflict is a symptom; the fix is the renumber. |
+| **Test files** (`tests/**`) | **Union most of the time.** Both new tests belong; both new assertions in the same test usually belong. Same-line conflicts in test setup are the same as production-code conflicts: read the base, find the unified version. | Tests grow additively; "we both added a test for the same case" isn't a conflict, it's a redundancy — pick the better one and delete the other. |
+| **Production code (Python / TypeScript)** | **Read the base. No automatic heuristic.** Same-line conflicts in production code are real disagreements about behavior. Resolve by understanding both intents and producing a version that satisfies both — or surface to user if intents conflict. | Don't pick "ours" because you wrote it; don't pick "theirs" to be polite. Pick what the base + the union of intents asks for. |
+| **Config (`.env.example`, `package.json`, `pyproject.toml`)** | **Manual review** — config conflicts often hide environmental assumptions. Read the base; understand each side's intent; produce a config that works for both. | The lock-files (`package-lock.json`, `yarn.lock`) are auto-regenerated; conflict-resolve by deleting the file and re-running `npm install` / `yarn install`. |
+
+**Avoiding lost commits during interactive merges.** When a `git merge` or `git rebase` enters interactive mode (conflicts present, prompting for resolution), the most common data-loss patterns are:
+
+1. **`git rebase --skip` without reading the diff.** Skip drops the current commit entirely. If you skip thinking it's a duplicate but it actually has unique changes, those changes are gone (recoverable via `git reflog` per §10.6, but you have to know to look). Always read the commit being skipped first: `git show HEAD` (during rebase, HEAD is the commit being applied).
+2. **`git checkout --ours <file>` or `--theirs <file>` on a multi-line conflict.** The `--ours` / `--theirs` shortcut takes the ENTIRE file from one side, discarding the other. Useful for binaries or for files where you genuinely want one version verbatim; data-loss disaster when the file has both your changes and theirs that should coexist. Only use these shortcuts on files where you've read both versions and confirmed one is fully replaceable.
+3. **`git reset --hard` mid-merge.** Discards all merge state including any work you did to start resolving. If you need to abort, use `git merge --abort` (resets to pre-merge state safely) or `git rebase --abort`.
+
+**When to abort.** Sometimes the merge or rebase reveals that the strategy was wrong (e.g. you tried to rebase a 50-commit branch and the conflicts are accumulating; a merge would have been cleaner). Abort, re-strategize:
+
+```bash
+git merge --abort        # if mid-merge
+git rebase --abort       # if mid-rebase
+# pre-merge state restored; pick the other strategy from §10.2.
+```
+
+**Worked example — same-line conflict on a KB doc.** Imagine two branches both edit `KB § PATTERNS/project-execution.md § 2.7 Recurrence rule`:
+
+- Branch X added: "**N=4+ → INVESTIGATE TIME-WINDOW** — 4 instances in the same week is a different signal from 4 instances over six months."
+- Branch Y added: "**N=2 → triage immediately**, do not defer. Deferral is silent debt."
+- Both inserted at line 42 of the section.
+
+Conflict surfaces:
+
+```
+<<<<<<< HEAD (ours = Branch Y)
+**N=2 → triage immediately**, do not defer. Deferral is silent debt.
+=======
+**N=4+ → INVESTIGATE TIME-WINDOW** — 4 instances in the same week is a different signal from 4 instances over six months.
+>>>>>>> origin/main (theirs = Branch X)
+```
+
+Resolution: KB-doc heuristic = concatenate. Both additions belong. Read base (no `N=4+` clause; no `triage immediately` emphasis). Produce union:
+
+```markdown
+**N=2 → triage immediately**, do not defer. Deferral is silent debt.
+**N=4+ → INVESTIGATE TIME-WINDOW** — 4 instances in the same week is a different signal from 4 instances over six months.
+```
+
+Both clauses now in the doc. The intent of both branches preserved. This is the canonical KB-doc conflict pattern.
+
+**Anti-patterns:**
+
+- **Picking "ours" by default.** Treats the conflict as a contest you have to win. Most KB / test / config conflicts are additive false-positives; "ours" loses real work.
+- **Resolving without reading the base.** Without the base, ours-vs-theirs is two competing claims. With the base, you see the evolution and can produce the unified path.
+- **Resolving silently and committing the merge without flagging it.** Per `feedback_no_silent_errors.md`, conflict resolutions should be visible in the commit message — quote the file + the resolution strategy ("KB-doc concat" / "test union" / "manual unified" / "preferred theirs after reading base"). Future-you (and other agents) can audit.
+
 ---
 
 ## 11. Branch-per-project workflow
