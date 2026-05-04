@@ -164,9 +164,47 @@ Same scope as original:
 
 ## My thoughts on the process
 
-> *Final reflections — written at project close.*
+> Final reflections, written at project close (2026-05-04).
 
-*(pending)*
+**What worked.**
+
+The architect-engineer split was the standout. When the user said "why don't you dispatch parallel agents?" and I switched modes, three things changed: the pace, the context budget, and the failure isolation. Five engineers (A/B/C/D/E) ran in their own worktrees, surfaced their own improvements, hit their own walls, came back with concrete deltas. I integrated and resolved at the merge gates. None of them needed the whole project's history; each got a self-contained brief. Wall-clock vs serial was probably 50%+ saved on Phases 2/3/4/5/6 — and arguably more important, my context budget stayed clean enough to do real architect work (the Phase 3+4 model-file merge resolution required holding the contract in my head, which I couldn't have done if I'd been deep in the schema-port myself).
+
+The collision protocol felt good in real use. When the parallel-agent stomp wiped Phase 0.5's seed code on day one, the rule said STOP — don't loop-fight. I did, the user confirmed, we redid in isolation. That moment was where the methodology proved itself: the rule was clear enough to trust, the user was happy with the discipline ("i loved this stop per collision protocol <3"), and the redo was straightforward because the durable artifacts (memory, KB pattern doc) had survived. The collision IS the case study for the worktree-per-engineer rule the user shipped while I was paused — methodology evolution in real time.
+
+The seed-fake-real-adapter pattern shipped as a durable byproduct. That wasn't the project's main goal, but the Phase 0 audit + the user's "use the gold-standard structure" directive surfaced it as a canonical platform pattern. The KB doc, CLAUDE.md §1 bullet, and 4 module backfills all landed in Phase 0.5. Future seed IO modules now have a template.
+
+**What was friction.**
+
+The worktree-aware tooling gap kept biting. Pre-commit hook scans phase-state across the resolved `noctusai_home` rather than the committing worktree — Engineer E got force-blocked by drift on a different agent's branch. MCP tools (scaffold, validate, review_session) all resolve paths against the main worktree, not the active one. Filed three follow-ups but the underlying mental model (each worktree is a peer, not a satellite of the main one) hasn't fully landed in the tooling yet.
+
+The frontend `vite.config.factory.ts` `FRAMEWORK_DEPS` gap surfaced twice (Engineer B in Phase 5, architect in Phase 7). Same shape: shared-config edits get deferred during active parallel work because of collision risk, and the workaround (`npm install` inside `seed/lib/frontend/`) accumulates technical debt. The right fix is one shared edit; the wrong fix is N per-product workarounds.
+
+The PROJECT.md change-log conflicts at every merge gate were noisy but expected. Each engineer flipped their phase + added their entry; merges produced predictable conflicts on §11. The KB-doc concat heuristic resolved them every time; the cost was a few minutes per merge. Worth it for the live-tick discipline.
+
+**What I'd do differently next time.**
+
+(1) **Write skeleton model files on master before dispatching backend engineers.** Engineers C and D both created `app/models/*.py` independently — C in SQLAlchemy, D in Pydantic — and I had to resolve at merge. Pre-staging an empty `app/models/` skeleton with file ownership would have prevented the collision.
+
+(2) **Establish the integration contract document at architect-time, not engineer-time.** I told Engineer D to "export `register_scheduling_tools(dispatcher)`" but didn't pin down the signature. They invented `(dispatcher, context_provider, tools)`. Engineer C's worker code passed only `dispatcher`. The graceful-degrade `try/except` saved us, but a pinned signature would have been cleaner.
+
+(3) **Commit per phase from day one.** The Phase 0.5 collision wiped uncommitted work because I was holding the project-end-only commit cadence. The redo adopted per-phase commits. Should have been per-phase from the start whenever ≥2 sessions are active.
+
+(4) **Read all sibling modules during seed audit, not just the consumed one.** The `domain.chatbot` ↔ `domain.conversation` DRY violation was visible only because I happened to read both `__init__.py` files in parallel. If I'd only read `chatbot/`, the duplication would have escaped Phase 0. Listing-then-reading every sibling alongside the target should be standard discipline.
+
+**What surprised me.**
+
+The recurrence rule fired *inside* the seed itself. The mental model from memory framed it as cross-product; finding `domain.conversation` as a stale fork of `domain.chatbot` proved the rule applies anywhere two instances of the same pattern exist — including inside seed. That sharpened the rule (now amended in `feedback_recurrence_rule.md`).
+
+The user's positive reaction to the collision protocol stop (`i loved this stop per collision protocol <3`) was a stronger signal than I expected. Methodology rules that *feel right* in real use have a different stickiness than rules that just *work*. The protocol's design (STOP + factual report + no loop-fight) preserves trust; future protocols benefit from being similarly explicit-about-stopping.
+
+The seed surfaces being already in place was the unsung hero. Phase 0 confirmed all 8 consumed seed modules were runtime-ready (gold standard for `google_calendar`/`google_maps`; near-ready for the rest). The `whatsapp-seed-absorption` project that ran before this one set up everything we needed to consume — without that prior work this port would have been 3× the scope. "Seed first" pays compound interest.
+
+**Net.**
+
+The port worked. The product is alive at `products/media-scheduling/`, 82 tests green, 8 phases shipped, 4 follow-up projects filed. More valuable than the product itself: the architect-engineer methodology proved out, the collision protocol field-tested, the seed-fake-real-adapter pattern shipped, and the worktree-per-engineer rule got its case study. The platform is meaningfully more shaped than it was 48 hours ago.
+
+
 
 ---
 

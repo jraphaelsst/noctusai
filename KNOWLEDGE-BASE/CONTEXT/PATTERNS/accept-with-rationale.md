@@ -403,6 +403,46 @@ state change, not a removal.
 
 ---
 
+## Entries from `media-scheduling-port-resume` (closed 2026-05-04)
+
+### LID-aware first-inbound auth stays product-side
+
+- **What:** `products/media-scheduling/backend/app/services/lid_auth.py::LidAuthService` (3-path WhatsApp `chat_id` → `authorized_user` resolution: direct LID match, PendingChatIdentity capture, anonymous-but-known-phone fallback).
+- **Why product-side and not seed:** the LID/JID semantics are WhatsApp-specific (chat_id format includes the device-identifier suffix) AND the resolution policy is real-estate domain logic (which authorized_user gets attached to a fresh inbound from an unknown phone). At N=1 product, the abstraction would be premature.
+- **Revisit trigger:** **N=2** — when a second WhatsApp-driven product needs the same shape, recurrence-rule fires and the resolver's pure parts move into `noctusai_lib.security.lid_auth` (or `noctusai_lib.integrations.whatsapp.identity`). The product-specific bits (which user-table to query) stay product-side via a Protocol seam.
+- **Recorded by:** `projects/media-scheduling-port/` Phase 3 + Phase 7 close (2026-05-04).
+
+### Dispatcher tool-registry mutation via `register_scheduling_tools(dispatcher)`
+
+- **What:** `products/media-scheduling/backend/app/services/scheduling_tools.py::register_scheduling_tools(dispatcher, context_provider, tools)` mutates the seed `LLMDispatcher` instance — sets `dispatcher.tool_payload` (OpenAI tools list), `dispatcher.tool_handler` (Callable), `dispatcher.tool_registry`. The seed's canonical pattern is per-call `tool_handler=` parameter.
+- **Why mutation, not the seed pattern:** at the worker's lifecycle, tools are registered ONCE at startup and reused for every dispatch — passing `tool_handler=` per-call would mean re-resolving the registry every time. Mutation matches the worker's lifecycle better; seed pattern fits short-lived call sites better.
+- **Revisit trigger:** **N=2** — when a second product needs persistent tool registration on a dispatcher, recurrence-rule fires and `noctusai_lib.domain.chatbot.tool_registry` ships (likely as `LLMDispatcher.with_tools(registry)` returning a wrapped dispatcher that owns the registry).
+- **Recorded by:** `projects/media-scheduling-port/` Phase 4 + Phase 7 close (2026-05-04).
+
+### Test self-patches for unconfigured-env paths annotated `# self-patch-ok`
+
+- **What:** `products/media-scheduling/backend/tests/routers/test_oauth_credentials.py:92-94` patches `app.config.settings.google_oauth_client_id` (and the two sibling secrets) to empty strings to simulate the unconfigured-env path the router returns 503 on.
+- **Why exempt from the no-self-patching rule:** the router's behavior under "no OAuth secrets configured" IS what we're testing. Pydantic settings' validators don't permit constructing an empty `Settings()` instance because the fields are required at boot — the only way to drive the unconfigured path is via post-boot patch. The annotation `# self-patch-ok: simulates the unconfigured-env path the router itself returns 503 on` makes the rationale visible at the call site.
+- **Revisit trigger:** when noc adopts a `make_test_settings(**overrides)` helper (would unblock test-time settings construction without monkeypatch), this entry retires.
+- **Recorded by:** `projects/media-scheduling-port/` Phase 7 close (2026-05-04).
+
+### `route_groups` table name (vs `routes` in PROJECT.md spec)
+
+- **What:** PROJECT.md §5 mapping listed `Route → routes`; the actual landed Supabase table is `media_scheduling.route_groups` (matching the source's SQLAlchemy `__tablename__`). Engineer A surfaced the drift; chose to keep source's name rather than rename mid-port.
+- **Why kept:** the source repo's data model uses `route_groups` (a logical grouping of cached origin/destination travel-time tuples). Renaming during port adds risk for marginal gain.
+- **Revisit trigger:** if a future routing-cache refactor (`noctusai_lib.domain.routing.PersistentTravelCache` or similar) ships and the table becomes a generic origin/destination cache, rename then.
+- **Recorded by:** `projects/media-scheduling-port/` Phase 2 (Engineer A) + Phase 7 close (2026-05-04).
+
+### Hybrid SQLAlchemy ORM + Pydantic models in `app/models/`
+
+- **What:** `products/media-scheduling/backend/app/models/` ships BOTH SQLAlchemy ORM (`ToolCallAudit`, `ConversationSummary`, `PendingChatIdentity`) AND Pydantic value objects (everything else: `Appointment`, `AuthorizedUser`, `Condominium`, `CrewSkill`, `OAuthCredential`, `Property`, `RouteGroup`, `ServiceType`).
+- **Why hybrid:** the seed `make_audit_writer(db, table_class)` contract requires a SQLAlchemy class (so `ToolCallAudit` stays ORM). The product's actual data layer is Supabase-client-native (Pydantic value-objects type-narrow row dicts). Engineer C and Engineer D each independently chose the right shape for their consumers; the merge resolution kept both.
+- **Why not pick one:** picking pure Pydantic breaks the seed audit contract (would require per-product audit-writer reimpl). Picking pure ORM forces every Supabase-client touchpoint through a sql-binding layer that adds no value.
+- **Revisit trigger:** if seed `make_audit_writer` changes signature to accept a Pydantic-style spec (e.g. `make_audit_writer(table_name, schema_class)`), ToolCallAudit can convert to Pydantic and the hybrid retires.
+- **Recorded by:** `projects/media-scheduling-port/` Phase 3+4 merge resolution + Phase 7 close (2026-05-04).
+
+---
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.

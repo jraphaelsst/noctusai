@@ -14,6 +14,7 @@
 | **Seed** | `products/seed/` | Minimal reference implementation proving the shared stack | 8004/8100 | `seed` |
 | **Daily Life** | `products/daily-life/` | Personal productivity hub: tasks, goals, habits, schedule, notes | 8005/8110 | `daily_life` |
 | **Mailing** | `products/mailing/` | Email marketing: contacts, lists, templates, campaigns, automations | 8006/8120 | `mailing` |
+| **Media Scheduling** | `products/media-scheduling/` | Real-estate media-crew scheduling via WhatsApp ↔ OpenAI ↔ Google Calendar (ported 2026-05-04 from sibling repo `whatsapp-google-scheduling/` via `projects/media-scheduling-port/`) | 8096/8130 | `media_scheduling` |
 
 > **AdConnect** (`products/adconnect/`) is a standalone scaffold, currently gitignored and not yet migrated into the monorepo structure. Not a live product. Excluded from the counts below.
 

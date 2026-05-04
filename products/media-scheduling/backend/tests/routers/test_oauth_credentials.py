@@ -89,9 +89,9 @@ def test_oauth_init_refuses_when_unconfigured(client, monkeypatch):
     """Without GOOGLE_OAUTH_* env, GET /oauth/google/init returns 503."""
     from app.config import settings
 
-    monkeypatch.setattr(settings, "google_oauth_client_id", "", raising=False)
-    monkeypatch.setattr(settings, "google_oauth_client_secret", "", raising=False)
-    monkeypatch.setattr(settings, "google_oauth_redirect_uri", "", raising=False)
+    monkeypatch.setattr(settings, "google_oauth_client_id", "", raising=False)  # self-patch-ok: simulates the unconfigured-env path the router itself returns 503 on
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "", raising=False)  # self-patch-ok: same
+    monkeypatch.setattr(settings, "google_oauth_redirect_uri", "", raising=False)  # self-patch-ok: same
 
     resp = client.raw().get("/oauth/google/init", follow_redirects=False)
     assert resp.status_code == 503

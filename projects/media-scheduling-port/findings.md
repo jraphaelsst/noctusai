@@ -150,6 +150,51 @@ User confirmed: "this system actually works, bro. no fake mocks approvals anymor
 
 ---
 
-## Synthesis (at project close)
+## Synthesis (at project close — 2026-05-04)
 
-*(filled at project close — distills the above into the curated artifact for future-agent consumption)*
+> Curated distillation. The 4 lessons (L1-L4), 5 interesting findings (F1-F5), and 8 knowledge pieces (K1-K8) above are the durable signal. This synthesis arranges them around the three highest-leverage takeaways for future agents.
+
+### Takeaway 1: The architect-engineer split is the right primitive for non-trivial projects with parallelism axes
+
+L4 + F4 + the live execution pattern across 5 engineers prove this. The rule (formalized 2026-05-04 mid-project) says: architect plans + dispatches + evaluates + stays-with-user; engineers execute in dedicated worktrees. The corollary that this project surfaced: **engineers MUST be self-contained at brief-time** — they don't see the conversation, don't see prior phases' implicit decisions, don't share a memory pool with the architect. The brief is the contract. Get the brief right and the engineer ships clean; get it wrong and you spend the savings on integration debugging.
+
+The five engineers ran with prompts of ~700-1000 words each. That's the tax. Wall-clock saved on Phases 2/3/4/5/6 vs serial: probably >50%. Architect context budget: stayed clean enough to handle the model-file merge resolution + Phase 7 close in a single session.
+
+**For future agents.** When a project has ≥2 file-disjoint chunks, dispatch parallel engineers. The brief template should pin: worktree path, branch name, integration contracts (signatures), exit criteria, do-not lists, report-back length cap. See `KB § PATTERNS/master-tree-parallel-batches.md` for the multi-product variant.
+
+### Takeaway 2: Methodology rules earn trust by being explicit-about-stopping
+
+F5 captures this. The collision protocol said STOP after the second revert + don't loop-fight + don't file a collision-report-project. When it fired in real use, the user's reaction wasn't "huh, OK" — it was *"i loved this stop per collision protocol <3"*. That's affective trust, not just functional trust. The rule felt good in real use because it removed ambiguity at the moment ambiguity costs the most.
+
+Sibling protocols (parallel-agent collision, the safety-nets-become-learnings rule, the worktree-per-engineer rule) all share this shape: explicit halt conditions + named next-actions + no loop-fight. The pattern: future protocols benefit from being similarly named-and-stopping rather than action-defaulting.
+
+**For future methodology authoring.** When writing a rule that fires under failure conditions, name the STOP condition precisely + name the named-next-action precisely + forbid the loop-fight default. The user's affective response to the rule is a signal — methodology that feels right is methodology that survives.
+
+### Takeaway 3: Seed-first investment compounds; verify-the-seed-ships-it before locking
+
+L1 + L2 + the Phase 0 audit prove this. Eight seed modules were runtime-ready by the time the port started; that's why the port was 8 phases instead of 24. The `whatsapp-seed-absorption` project that ran before this one was the leverage: it pre-shipped everything `media-scheduling` needed to consume. Seed work pays compound interest.
+
+The verify-the-seed-ships-it sub-rule sharpened during this project: it's not just "does the runtime adapter exist?" but "does it exist in the canonical Protocol+Fake+Real+factory shape?" Half-shipped (Protocol+Real or Protocol+Fake only) generates consumer-side forks. Phase 0.5 backfilled three modules to canonical shape; the gold-standard Fake+Real adapter pattern shipped to KB as the durable byproduct.
+
+The corollary surfacing during Phase 0: the recurrence rule fires *inside* the seed too. `domain.chatbot` ↔ `domain.conversation` was N=2 inside seed; only visible because the audit listed both `__init__.py` files. Future audits should default to listing-then-reading every sibling alongside the target.
+
+**For future agents.** Run Phase 0 against the canonical shape, not just against runtime existence. List sibling modules every time. When you find a gap, fix at seed (with the Fake+Real shape) before consuming downstream.
+
+### What didn't generalize
+
+The hybrid SQLAlchemy + Pydantic models pattern (forced by the seed audit-writer contract requiring SQLAlchemy + the product being Supabase-client-native) is product-specific. Don't copy it elsewhere unless the same tension exists.
+
+The LID-aware first-inbound capture is real-estate-WhatsApp-specific. If a second WhatsApp product ships, recurrence-rule fires and the abstraction belongs in seed. Until N=2, accept-with-rationale (entry filed).
+
+### Open follow-up projects filed at close
+
+- `worktree-aware-pre-commit-hook` — hook scans `noctusai_home` not the committing worktree
+- `mcp-review-session-worktree-aware` — same shape, MCP tool side
+- `mcp-workspace-per-call-override` — scaffold_product needs per-call workspace target
+- `vite-config-factory-framework-deps` — `FRAMEWORK_DEPS` missing `clsx`/`tailwind-merge`/`class-variance-authority`
+- `mcp-corpus-baseline-refresh` — corpus-tolerance tests need to absorb incremental product additions
+- `seed-protocol-runtime-checkable-sweep` — sweep all seed Protocols for missing `@runtime_checkable`
+- `worktree-venv-isolation` — each worktree should have its own venv (or symlink)
+- `media-scheduling-real-data-migration` — port the real production WhatsApp ↔ OpenAI conversations from source DB
+- `media-scheduling-travel-cache` — `route_groups` is route-plan, not generic origin/dest cache
+
