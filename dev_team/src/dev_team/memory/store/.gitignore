@@ -1,0 +1,5 @@
+# Runtime data — every file in this dir is local-only, except .gitkeep
+# and this .gitignore itself.
+*
+!.gitkeep
+!.gitignore
