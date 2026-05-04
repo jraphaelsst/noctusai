@@ -430,14 +430,14 @@ def test_memory_read_returns_value_or_none():
     from dev_team.tools.memory_tool import read_memory
 
     # Stub store returns None for missing keys; never crashes.
-    value = read_memory("project", "anything")
+    value = read_memory("state", "anything")
     assert value is None or isinstance(value, (dict, str, int, list))
 
 
 def test_memory_write_does_not_raise():
     from dev_team.tools.memory_tool import write_memory
 
-    write_memory("project", "test_key", {"foo": "bar"})
+    write_memory("state", "test_key", {"foo": "bar"})
 
 
 def test_memory_scope_validation():
