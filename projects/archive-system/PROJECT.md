@@ -219,18 +219,20 @@ Branched-project workflow per `KB § PATTERNS/branching-and-merging.md § 11`. P
 
 **Improvements:** apply-inline-then-delete entry didn't actually need amendment — re-read confirmed it's scoped to "filed proposals" (per-phase artifacts in `proposals/` folders), not the project-folder lifecycle. The two are distinct: proposals delete (apply-inline-then-delete); project folders archive (close-gate). Added cross-reference in `feedback_archive_system.md` to clarify the boundary. **applied — saved an unnecessary edit and clarified the lifecycle distinction by documenting it in the new memory entry rather than amending the old one.**
 
-### Phase 4 — MCP tool `noctus.dev.archive`
+### Phase 4 — MCP tool `noctus.dev.archive` ✅
 
-- [ ] Create `mcp/noctusai/tools/noctus/dev/archive.py` per §5.4 spec.
-- [ ] Register in `mcp/noctusai/tools/noctus/dev/__init__.py` (add to alphabetical lazy-import list + register call; bump module count).
-- [ ] Direct-args function signature: `target_path`, optional `mode`, optional `name` (ad-hoc only).
-- [ ] Auto-detect mode from target path.
-- [ ] Idempotency guard: refuse if target is already under `archive/`.
-- [ ] Use `subprocess.run(["git", "mv", ...])` for the actual move.
-- [ ] Compute NN by listing date folder + max+1.
-- [ ] Stage + commit: `feat(mcp): noctus.dev.archive tool — auto-numbered archive on close (project / feature / ad-hoc) [archive-system Phase 4]`.
+- [x] Create `mcp/noctusai/tools/noctus/dev/archive.py` per §5.4 spec.
+- [x] Register in `mcp/noctusai/tools/noctus/dev/__init__.py` (alphabetical lazy-import + register call; module count 25 → 26).
+- [x] Direct-args function signature: `target_path`, optional `mode`, optional `name` (ad-hoc only). Plus optional `repo_root` for tests.
+- [x] Auto-detect mode: PROJECT.md folder → project; .md under features/ → feature; else → ad_hoc.
+- [x] Idempotency guard: refuses if target already under `archive/`.
+- [x] `subprocess.run(["git", "mv", src, dst])` for the move (preserves history).
+- [x] Compute NN by listing date folder + max+1; works on empty / .gitkeep-only folders.
+- [x] Local timezone (`America/Sao_Paulo`) for date computation; matches seed scheduler convention.
+- [x] Smoke test: server builds with all 26 tools registered (64 total tool names; `noctus.dev.archive` + `noctus.dev.phase_learning_*` all present).
+- [x] Stage + commit: `feat(mcp): noctus.dev.archive tool — auto-numbered archive on close (project / feature / ad-hoc) [archive-system Phase 4]`.
 
-**Improvements:** _(captured live)_
+**Improvements:** added `repo_root` parameter for test override (mirrors `phase_learnings.get_db_path`'s env-override pattern, but as a function arg since the archive tool doesn't have a singleton storage path). **applied inline.** Local timezone import via `zoneinfo` instead of `pytz` (Python 3.9+ stdlib, no extra dependency). **applied inline.**
 
 ### Phase 5 — Tests
 

@@ -1,6 +1,6 @@
 """``noctus.dev.*`` tool umbrella — developer-experience MCP tools.
 
-All 25 modules in this package expose a top-level ``register(server)``
+All 26 modules in this package expose a top-level ``register(server)``
 function. ``register_all`` calls them in alphabetical order with lazy
 imports so the server's import-time stays light (``ai_brain`` pulls in
 OpenAI, ``testing`` shells out to pytest, etc. — only when the registrar
@@ -14,6 +14,7 @@ def register_all(server) -> None:
     """Register every dev-umbrella tool on the given FastMCP server."""
     from . import ai_brain
     from . import analyzers
+    from . import archive
     from . import build
     from . import catalog
     from . import compliance
@@ -40,6 +41,7 @@ def register_all(server) -> None:
 
     ai_brain.register(server)
     analyzers.register(server)
+    archive.register(server)
     build.register(server)
     catalog.register(server)
     compliance.register(server)
