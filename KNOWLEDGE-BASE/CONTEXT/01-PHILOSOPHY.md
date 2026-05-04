@@ -224,6 +224,43 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 
 ---
 
+## Safety nets capture failures; failures become learnings; methodology evolves
+
+**The principle.** Methodology is incomplete by design. Every methodology has gaps — cases it doesn't cover yet, edge conditions it didn't anticipate, environments it hasn't been stress-tested in. **Safety nets** are the mechanical layer underneath the methodology that keeps the system working when the methodology hits a gap. **Failures**, when caught by a safety net, are the methodology's evolution surface. Capture the learning, update the methodology, the gap closes. Future occurrences hit the updated methodology, not the gap.
+
+**Why this is foundational:** treating methodology as fixed leads to two failure modes: (a) the methodology calcifies and people work around it (silent erosion), or (b) the methodology fails and people panic because the rule didn't anticipate the case (false sense that the rule should have been complete). Treating methodology as evolving — with safety nets that catch failures and a discipline that turns failures into learnings — keeps both pathologies at bay.
+
+**The shape:**
+
+1. **Methodology hits a gap.** Some case the rule didn't cover — a non-fast-forward push fails, a regex matches false-positive, a parallel agent's WIP blocks a switch.
+2. **Safety net catches the work.** `git merge` for the merging gap. The drive-by-exception clause for hook false-positives. `git stash` for switch blockers. The mechanical layer keeps the system working while the methodology learns.
+3. **Capture the learning.** Per `§ 2.11 Phase enrichment loop` — log to the SQLite tracker if the gap surfaced during a phase. Per `§ 2.7 Recurrence rule` — if N=2+ instances surface, formalize. The learning is durable, not narrative.
+4. **Update the methodology.** Three-way sync: KB body, CLAUDE pointer, memory entry. The gap closes structurally, not in conversation memory.
+5. **Future occurrences hit the updated methodology, not the gap.** The methodology covers a new case. The cycle is the platform learning to handle a class of failures it couldn't before.
+
+**Examples** (each one a real instance):
+
+- **Merging methodology gap (in-flight 2026-05-03).** `git merge` is the safety net for the cases our methodology hasn't codified yet (non-FF integration, multi-branch convergence, conflict resolution). The merging methodology project (`projects/merging-methodology/`) is the learning loop closing.
+- **Detector regex precision (shipped 2026-05-03).** The `_shipped_phases_in_changelog` detector false-positive on cross-file references was a methodology gap. Workaround at the time was rephrasing prose; the structural fix (strip code spans) is the methodology evolving. Captured in `feedback_branching_methodology.md` companion + the regex fix itself.
+- **Pre-commit hook drive-by-exception (codified 2026-05-03).** When a hook blocks your commit on another agent's incomplete state and the fix is small + non-destructive, apply it inline. The drive-by carve-out IS the methodology evolution from the original "never touch parallel-agent files" absolute.
+
+**Companion rules:**
+
+- `§ 2.7 Recurrence rule` — when learnings become formalize-triggers (N=2 → triage; N=3+ → must formalize).
+- `§ 2.11 Phase enrichment loop` — where learnings get captured durably (SQLite tracker, log per phase, query before next).
+- `Triage at decision time` — what to do with a learning (formalize / refactor / accept-with-rationale).
+- `Three-way sync — KB ↔ CLAUDE ↔ memory move together` — how methodology updates land structurally, not just in agent memory.
+- `No silent errors` — a failure that's silently absorbed isn't a learning; it's debt. The safety net catching the failure must be visible (commit message, change log, memory entry).
+
+**Anti-patterns:**
+
+- **Bypassing the safety net to avoid surfacing the gap.** "I'll just `--force` push so I don't have to deal with it" — defeats the entire mechanism. The methodology never learns; the same failure recurs.
+- **Treating safety-net activations as failures of the rule.** Methodology gaps aren't bugs in the methodology; they're its evolution surface. The safety net activating IS the methodology working — it caught what the rule didn't yet cover.
+- **Capturing the failure but skipping the methodology update.** A learning that lives in a §11 prose entry but never makes it to the methodology doc is conversation-memory at best, lost at worst. The capture must triple-sync (KB + CLAUDE + memory) for the methodology to actually evolve.
+- **Repeating the same safety-net catch without ever formalizing.** N=2 should trigger triage; N=3 must formalize (per recurrence rule). If the same gap keeps catching the same fix, the methodology hasn't evolved — only the conversation has.
+
+---
+
 ## DRY
 
 Single authoritative source for every piece of logic. Three similar blocks → extract to shared.

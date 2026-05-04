@@ -116,22 +116,18 @@ Branched-project workflow per `KB § PATTERNS/branching-and-merging.md § 11`: p
 
 **Improvements:** none identified — filing pass was straightforward execution of the new "branch this → file → implement" trigger order.
 
-### Phase 1 — Foundational principle: Safety nets capture failures; failures become learnings; methodology evolves
+### Phase 1 — Foundational principle: Safety nets capture failures; failures become learnings; methodology evolves ✅
 
 Three-way sync — KB (philosophy) + CLAUDE.md universal-rules + memory.
 
-- [ ] Add new universal rule to `KB § 01-PHILOSOPHY.md` titled "Safety nets capture failures; failures become learnings; methodology evolves." Body covers:
-  - The premise: methodology is incomplete by design.
-  - The pattern: safety net catches → capture learning → update methodology → gap closes → future occurrences hit the updated methodology.
-  - Examples: `git merge` for our merging-methodology gap (in-flight); detector regex precision (shipped earlier today); pre-commit hook drive-by exception.
-  - Companion to existing rules: `§ 2.7 Recurrence rule` (when learnings become formalize-triggers), `§ 2.11 Phase enrichment loop` (where learnings get captured durably).
-- [ ] Add bullet to `CLAUDE.md §1` (universal rules — auto-loaded). Short body + KB pointer.
-- [ ] Add memory entry `feedback_safety_nets_become_learnings.md` with frontmatter + rule + Why + How to apply + companion rules.
-- [ ] Update `MEMORY.md` index.
-- [ ] Run `bash scripts/verify-kb-sync.sh` + `python scripts/update-kb-counts.py --check` — both green.
-- [ ] Commit: `docs(kb+claude+memory): foundational principle — safety nets capture failures; failures become learnings; methodology evolves [merging-methodology Phase 1]`.
+- [x] Add new universal rule to `KB § 01-PHILOSOPHY.md` titled "Safety nets capture failures; failures become learnings; methodology evolves." Inserted between "Estimate off evidence" and "DRY" — adjacent to the methodology-evolution mechanics (Triage, recurrence, three-way sync).
+- [x] Add bullet to `CLAUDE.md §1` (universal rules — auto-loaded). Inserted between "Triage at decision time" and "No silent errors" — coherent ordering: triage → safety-nets-evolve → no-silent-errors → three-way-sync.
+- [x] Add memory entry `feedback_safety_nets_become_learnings.md` with frontmatter + rule + Why + How to apply + 3 real instances + anti-patterns + companion rules.
+- [x] Update `MEMORY.md` index — new "### Foundational principles" section above "### Code quality / engineering."
+- [x] Run `bash scripts/verify-kb-sync.sh` + `python scripts/update-kb-counts.py --check` — both green.
+- [x] Commit: `docs(kb+claude+memory): foundational principle — safety nets capture failures; failures become learnings; methodology evolves [merging-methodology Phase 1]`.
 
-**Improvements:** _(captured live during Phase 1)_
+**Improvements:** none identified — Phase 1 was a clean three-way sync of a single foundational principle. No mid-flight discoveries. The principle's own anti-patterns section absorbed the failure-modes I would have flagged.
 
 ### Phase 2 — Non-fast-forward integration
 
