@@ -1,11 +1,14 @@
 """Unit tests for `noctusai_lib.email.digest` — Tier 2 Phase 4 (P3 pattern).
 
 Network-free. Uses `monkeypatch` to swap `_resolve_resend_config` and
-`_post_to_resend` so we never reach Resend.
+`_post_to_resend` so we never reach Resend; uses
+`monkeypatch.setattr(smtplib, ...)` (external-service carve-out) to keep
+the SMTP path off the wire.
 """
 from __future__ import annotations
 
 import asyncio
+import smtplib
 
 import pytest
 
@@ -140,6 +143,258 @@ class TestResolveResendConfig:
         assert cfg["api_key"] == "re_xxx"
         assert cfg["from_email"] == "noreply@noctus.app"
         assert cfg["from_name"] == "NoctusAI"
+
+
+# ---------------------------------------------------------------------------
+# SMTP backend (added 2026-05-04 — youtube-crawler seed-hardening Batch A)
+# ---------------------------------------------------------------------------
+
+
+def _patch_resolve_credential(monkeypatch, mapping: dict):
+    """Wire `resolve_credential` to a dict-backed lookup at both the
+    credentials-module home AND the digest-module's import-time binding.
+    Mirrors the existing TestResolveResendConfig pattern in this file.
+    """
+    def fake_resolve(name, org_id=None):
+        return mapping.get(name)
+
+    from noctusai_lib.config import credentials as creds
+    monkeypatch.setattr(creds, "resolve_credential", fake_resolve)
+    monkeypatch.setattr(digest_module, "resolve_credential", fake_resolve)
+
+
+class _FakeSmtpClient:
+    """Captures send_message calls + login args; mimics the smtplib
+    context-manager API. Shared by SMTP and SMTP_SSL test fakes."""
+
+    instances: list = []
+
+    def __init__(self, host, port, timeout=None):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.starttls_called = False
+        self.login_args: tuple | None = None
+        self.sent: list = []
+        _FakeSmtpClient.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def starttls(self):
+        self.starttls_called = True
+
+    def login(self, username, password):
+        self.login_args = (username, password)
+
+    def send_message(self, msg):
+        self.sent.append(msg)
+
+
+@pytest.fixture(autouse=False)
+def _reset_fake_smtp():
+    _FakeSmtpClient.instances = []
+    yield
+    _FakeSmtpClient.instances = []
+
+
+_SMTP_FULL = {
+    "smtp_host": "smtp.example.com",
+    "smtp_port": "587",
+    "smtp_username": "user@example.com",
+    "smtp_password": "secret",
+    "email_from": "noreply@product.com",
+    "email_from_name": "Product Bot",
+}
+
+
+class TestResolveSmtpConfig:
+    def test_no_creds_returns_none(self, monkeypatch):
+        _patch_resolve_credential(monkeypatch, {})
+        assert digest_module._resolve_smtp_config(org_id="org-1") is None
+
+    def test_missing_password_returns_none(self, monkeypatch):
+        cfg = dict(_SMTP_FULL)
+        cfg.pop("smtp_password")
+        _patch_resolve_credential(monkeypatch, cfg)
+        assert digest_module._resolve_smtp_config(org_id="org-1") is None
+
+    def test_full_config_resolves_with_starttls_default(self, monkeypatch):
+        _patch_resolve_credential(monkeypatch, _SMTP_FULL)
+        cfg = digest_module._resolve_smtp_config(org_id="org-1")
+        assert cfg is not None
+        assert cfg["host"] == "smtp.example.com"
+        assert cfg["port"] == 587
+        assert cfg["username"] == "user@example.com"
+        assert cfg["password"] == "secret"
+        assert cfg["security"] == "starttls"
+        assert cfg["from_email"] == "noreply@product.com"
+        assert cfg["from_name"] == "Product Bot"
+
+    def test_explicit_security_ssl(self, monkeypatch):
+        _patch_resolve_credential(monkeypatch, {**_SMTP_FULL, "smtp_security": "ssl"})
+        cfg = digest_module._resolve_smtp_config(org_id="org-1")
+        assert cfg["security"] == "ssl"
+
+    def test_invalid_security_falls_back_to_starttls(self, monkeypatch):
+        _patch_resolve_credential(monkeypatch, {**_SMTP_FULL, "smtp_security": "garbage"})
+        cfg = digest_module._resolve_smtp_config(org_id="org-1")
+        assert cfg["security"] == "starttls"
+
+    def test_non_integer_port_returns_none(self, monkeypatch):
+        _patch_resolve_credential(monkeypatch, {**_SMTP_FULL, "smtp_port": "not-a-number"})
+        assert digest_module._resolve_smtp_config(org_id="org-1") is None
+
+
+class TestResolveEmailBackend:
+    def test_neither_configured_returns_none(self, monkeypatch):
+        _patch_resolve_credential(monkeypatch, {})
+        backend, cfg = digest_module._resolve_email_backend(org_id="org-1")
+        assert backend is None
+        assert cfg is None
+
+    def test_resend_only_picks_resend(self, monkeypatch):
+        _patch_resolve_credential(monkeypatch, {"resend_api_key": "re_xxx"})
+        backend, cfg = digest_module._resolve_email_backend(org_id="org-1")
+        assert backend == "resend"
+        assert cfg["api_key"] == "re_xxx"
+
+    def test_smtp_only_picks_smtp(self, monkeypatch):
+        _patch_resolve_credential(monkeypatch, _SMTP_FULL)
+        backend, cfg = digest_module._resolve_email_backend(org_id="org-1")
+        assert backend == "smtp"
+        assert cfg["host"] == "smtp.example.com"
+
+    def test_both_configured_resend_wins_back_compat(self, monkeypatch):
+        _patch_resolve_credential(
+            monkeypatch, {**_SMTP_FULL, "resend_api_key": "re_xxx"},
+        )
+        backend, _ = digest_module._resolve_email_backend(org_id="org-1")
+        assert backend == "resend"
+
+    def test_explicit_smtp_override_wins_when_both_present(self, monkeypatch):
+        _patch_resolve_credential(
+            monkeypatch,
+            {**_SMTP_FULL, "resend_api_key": "re_xxx", "email_backend": "smtp"},
+        )
+        backend, _ = digest_module._resolve_email_backend(org_id="org-1")
+        assert backend == "smtp"
+
+    def test_explicit_resend_override(self, monkeypatch):
+        _patch_resolve_credential(
+            monkeypatch,
+            {**_SMTP_FULL, "resend_api_key": "re_xxx", "email_backend": "resend"},
+        )
+        backend, _ = digest_module._resolve_email_backend(org_id="org-1")
+        assert backend == "resend"
+
+    def test_explicit_smtp_override_ignored_when_smtp_unconfigured(self, monkeypatch):
+        # Override says smtp but only resend is configured → fall through to resend.
+        _patch_resolve_credential(
+            monkeypatch, {"resend_api_key": "re_xxx", "email_backend": "smtp"},
+        )
+        backend, _ = digest_module._resolve_email_backend(org_id="org-1")
+        assert backend == "resend"
+
+
+class TestSendDigestSmtp:
+    def test_starttls_path_calls_smtp_with_login_and_send(self, monkeypatch, _reset_fake_smtp):
+        _patch_resolve_credential(monkeypatch, _SMTP_FULL)
+        monkeypatch.setattr(smtplib, "SMTP", _FakeSmtpClient)
+
+        d = Digest(subject="YT batch ready", text="body", html="<p>body</p>")
+        result = _run(send_digest(d, recipient="a@b.com"))
+
+        assert result.sent is True
+        assert result.dry_run is False
+        assert result.external_id is None  # SMTP returns no message id
+        assert result.error is None
+        assert len(_FakeSmtpClient.instances) == 1
+        client = _FakeSmtpClient.instances[0]
+        assert client.host == "smtp.example.com"
+        assert client.port == 587
+        assert client.starttls_called is True
+        assert client.login_args == ("user@example.com", "secret")
+        assert len(client.sent) == 1
+        msg = client.sent[0]
+        assert msg["Subject"] == "YT batch ready"
+        assert msg["To"] == "a@b.com"
+        assert msg["From"] == "Product Bot <noreply@product.com>"
+
+    def test_ssl_path_uses_smtp_ssl_class_no_starttls(self, monkeypatch, _reset_fake_smtp):
+        _patch_resolve_credential(monkeypatch, {**_SMTP_FULL, "smtp_security": "ssl"})
+        monkeypatch.setattr(smtplib, "SMTP_SSL", _FakeSmtpClient)
+        # Make sure SMTP class is NOT used; raise if it is.
+        def _boom(*a, **k):
+            raise AssertionError("SMTP class should not be used in ssl mode")
+        monkeypatch.setattr(smtplib, "SMTP", _boom)
+
+        d = Digest(subject="S", text="t")
+        result = _run(send_digest(d, recipient="a@b.com"))
+
+        assert result.sent is True
+        assert len(_FakeSmtpClient.instances) == 1
+        client = _FakeSmtpClient.instances[0]
+        assert client.starttls_called is False  # never called in implicit-TLS mode
+        assert client.login_args == ("user@example.com", "secret")
+
+    def test_none_security_skips_starttls_and_no_ssl(self, monkeypatch, _reset_fake_smtp):
+        _patch_resolve_credential(monkeypatch, {**_SMTP_FULL, "smtp_security": "none"})
+        monkeypatch.setattr(smtplib, "SMTP", _FakeSmtpClient)
+
+        d = Digest(subject="S", text="t")
+        result = _run(send_digest(d, recipient="a@b.com"))
+
+        assert result.sent is True
+        client = _FakeSmtpClient.instances[0]
+        assert client.starttls_called is False
+
+    def test_smtp_failure_swallowed_into_error(self, monkeypatch, _reset_fake_smtp):
+        _patch_resolve_credential(monkeypatch, _SMTP_FULL)
+
+        class _BoomSmtp(_FakeSmtpClient):
+            def send_message(self, msg):
+                raise smtplib.SMTPException("relay refused")
+
+        monkeypatch.setattr(smtplib, "SMTP", _BoomSmtp)
+
+        d = Digest(subject="Hi", text="b")
+        result = _run(send_digest(d, recipient="a@b.com"))
+
+        assert result.sent is False
+        assert result.dry_run is False
+        assert result.error is not None
+        assert "relay refused" in result.error
+
+    def test_text_only_digest_sends_plain_mime(self, monkeypatch, _reset_fake_smtp):
+        _patch_resolve_credential(monkeypatch, _SMTP_FULL)
+        monkeypatch.setattr(smtplib, "SMTP", _FakeSmtpClient)
+
+        d = Digest(subject="Hi", text="just text, no html")
+        result = _run(send_digest(d, recipient="a@b.com"))
+
+        assert result.sent is True
+        msg = _FakeSmtpClient.instances[0].sent[0]
+        # MIMEText (not multipart) when html absent.
+        assert msg.get_content_type() == "text/plain"
+
+    def test_html_digest_sends_multipart_alternative(self, monkeypatch, _reset_fake_smtp):
+        _patch_resolve_credential(monkeypatch, _SMTP_FULL)
+        monkeypatch.setattr(smtplib, "SMTP", _FakeSmtpClient)
+
+        d = Digest(subject="Hi", text="t", html="<p>t</p>")
+        result = _run(send_digest(d, recipient="a@b.com"))
+
+        assert result.sent is True
+        msg = _FakeSmtpClient.instances[0].sent[0]
+        assert msg.get_content_type() == "multipart/alternative"
+        parts = msg.get_payload()
+        assert len(parts) == 2
+        assert parts[0].get_content_type() == "text/plain"
+        assert parts[1].get_content_type() == "text/html"
 
 
 # ---------------------------------------------------------------------------

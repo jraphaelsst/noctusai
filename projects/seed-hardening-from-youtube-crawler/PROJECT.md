@@ -159,8 +159,15 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 **Improvements:** none identified — Phase 0 is the project-creation gate; no code changed.
 
-### Phase 1 — Batch A (blocks youtube-crawler)
-- [x] **1.1** SMTP backend alongside Resend in `integrations/email/digest.py` (2026-05-04 — landed pre-project, folded in here)
+### Phase 1 — Batch A (blocks youtube-crawler) ⏳
+
+**Phase 1.1 ✅** — SMTP backend alongside Resend in `integrations/email/digest.py` (2026-05-04, landed pre-project, folded in here).
+- [x] **1.1** `_resolve_smtp_config` + `_resolve_email_backend` + `_send_via_smtp` (sync stdlib smtplib, async via asyncio.to_thread). Three security modes: ssl / starttls / none. Resend wins by default when both configured (back-compat); explicit override via `email_backend` credential. 19 new tests, 35/35 email tests green, 684/684 seed-lib tests green.
+
+**Improvements (Phase 1.1):**
+- Pre-existing email-module tests use `monkeypatch.setattr(digest_module, "_post_to_resend", ...)` — patches our own internal function name (no-monkeypatch rule's anti-pattern). Module pre-dates the rule (2026-04-25). New SMTP tests patch at `smtplib.SMTP` / `SMTP_SSL` boundary directly (external-service carve-out), correct shape. Test-shape gap acknowledged not fixed in this scope; canonical Protocol+Fake+Real+factory refactor is a follow-up project of its own.
+- Module is half-shipped per the `KB § PATTERNS/seed-fake-real-adapter.md` rule (Real-only, no Protocol, dry-run logs serve as fake). SMTP added today is the second `Real`-shaped consumer that makes the canonical lift cheaper. Filed as out-of-scope deferred (§4).
+
 - [ ] **1.2** `security/encrypted_tokens.py` (Fernet helper, ~90 LOC + tests)
 - [ ] **1.3** `integrations/youtube/` (Protocol+Fake+Real+factory, ~400 LOC + tests)
 - [ ] **1.4** `noctus.dev.scaffold_migration` MCP tool (~150 LOC + tests)

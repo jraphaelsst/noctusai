@@ -7,23 +7,39 @@ financial summary, Daily Life Friday review, Mailing campaign debrief).
 This module handles the cross-cutting concerns:
 
   - 3-tier credential chain via `noctusai_lib.credentials.resolve_credential`
-    (org → platform → env) for the Resend API key + `from` identity.
+    (org → platform → env) for the chosen backend's identity.
+  - Two send backends, picked per-org by which credentials resolve:
+      Resend (HTTP API) — default when `resend_api_key` is set.
+      SMTP   (stdlib `smtplib`) — engages when SMTP host/port/username/
+             password resolve. Useful for self-hosted or vendor-flexible
+             deploys where Resend isn't acceptable.
+    Explicit override via the `email_backend` credential ("resend" | "smtp")
+    when both backends are configured at once.
   - Structured `DigestSendResult` for callers (sent / dry-run / error +
-    optional external_id).
-  - Dry-run path when no key resolves — logs the rendered text + subject so
-    integration tests + dev environments don't need a real key.
+    optional external_id — Resend only; SMTP returns no message id).
+  - Dry-run path when neither backend resolves — logs the rendered text +
+    subject so integration tests + dev environments don't need real keys.
   - All send failures swallowed + returned as `DigestSendResult(error=...)`
-    so a Resend outage never crashes the calling endpoint.
+    so a backend outage never crashes the calling endpoint.
 
 Shipped 2026-04-25 by ai-expansion Tier 2 Phase 4 (P3 pattern). The metas
 digest service (`products/erp-imobiliario/backend/app/services/metas_digest_service.py`)
 is the reference adopter — it brings the metas-specific render functions
 and delegates the send through `send_digest()`.
+
+SMTP backend added 2026-05-04 (alongside Resend) — youtube-crawler
+seed-hardening Batch A. Module remains a flat-function shape; the
+canonical Protocol+Fake+Real+factory absorption is a planned follow-up
+under the seed-hardening umbrella.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import smtplib
 from dataclasses import dataclass
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -140,6 +156,86 @@ def _resolve_resend_config(org_id: Optional[str]) -> Optional[dict[str, str]]:
     }
 
 
+# SMTP security modes. `starttls` is the modern default (port 587 typical);
+# `ssl` is implicit-TLS / SMTPS (port 465); `none` is plain — only useful
+# for local test servers like aiosmtpd.
+_SMTP_SECURITY_MODES = ("starttls", "ssl", "none")
+_DEFAULT_SMTP_SECURITY = "starttls"
+_DEFAULT_SMTP_TIMEOUT = 15
+
+
+def _resolve_smtp_config(org_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """Look up SMTP identity using the 3-tier credential chain.
+
+    Returns None if any of host / port / username / password is missing
+    (caller falls through to the next backend or dry-run). Security mode
+    defaults to ``starttls``; override with credential ``smtp_security``
+    set to one of: ``"starttls"``, ``"ssl"``, ``"none"``.
+    """
+    host = resolve_credential("smtp_host", org_id)
+    port = resolve_credential("smtp_port", org_id)
+    username = resolve_credential("smtp_username", org_id)
+    password = resolve_credential("smtp_password", org_id)
+    if not (host and port and username and password):
+        return None
+
+    try:
+        port_int = int(port)
+    except (TypeError, ValueError):
+        logger.warning("[EMAIL SMTP] non-integer smtp_port %r — ignoring SMTP backend", port)
+        return None
+
+    security = (resolve_credential("smtp_security", org_id) or _DEFAULT_SMTP_SECURITY).lower()
+    if security not in _SMTP_SECURITY_MODES:
+        logger.warning(
+            "[EMAIL SMTP] invalid smtp_security %r (allowed: %s) — defaulting to starttls",
+            security, _SMTP_SECURITY_MODES,
+        )
+        security = _DEFAULT_SMTP_SECURITY
+
+    return {
+        "host": host,
+        "port": port_int,
+        "username": username,
+        "password": password,
+        "security": security,
+        "from_email": resolve_credential("email_from", org_id) or _DEFAULT_FROM_EMAIL,
+        "from_name": resolve_credential("email_from_name", org_id) or _DEFAULT_FROM_NAME,
+    }
+
+
+def _resolve_email_backend(
+    org_id: Optional[str],
+) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+    """Pick the email backend for this org.
+
+    Selection rules (first match wins):
+      1. Explicit override via ``email_backend`` credential — when set to
+         ``"resend"`` or ``"smtp"`` AND that backend's config resolves.
+      2. Resend config resolves → Resend (back-compat default).
+      3. SMTP config resolves → SMTP.
+      4. Otherwise → ``(None, None)``; caller treats as dry-run.
+
+    Returns ``(backend_name, config)``. Backend name is one of
+    ``"resend"``, ``"smtp"``, or ``None``.
+    """
+    explicit = (resolve_credential("email_backend", org_id) or "").lower() or None
+
+    resend_cfg = _resolve_resend_config(org_id)
+    smtp_cfg = _resolve_smtp_config(org_id)
+
+    if explicit == "smtp" and smtp_cfg:
+        return ("smtp", smtp_cfg)
+    if explicit == "resend" and resend_cfg:
+        return ("resend", resend_cfg)
+
+    if resend_cfg:
+        return ("resend", resend_cfg)
+    if smtp_cfg:
+        return ("smtp", smtp_cfg)
+    return (None, None)
+
+
 async def _post_to_resend(
     config: dict[str, str], to: str, digest: Digest,
 ) -> dict[str, Any]:
@@ -165,6 +261,47 @@ async def _post_to_resend(
         )
         resp.raise_for_status()
         return resp.json()
+
+
+def _build_mime_message(config: dict[str, Any], to: str, digest: Digest):
+    """Construct the MIME message that SMTP sends. Multipart when html
+    is present; plain text otherwise. From/To/Subject set on the envelope.
+    """
+    if digest.html:
+        msg: Any = MIMEMultipart("alternative")
+        msg.attach(MIMEText(digest.text, "plain", "utf-8"))
+        msg.attach(MIMEText(digest.html, "html", "utf-8"))
+    else:
+        msg = MIMEText(digest.text, "plain", "utf-8")
+    msg["From"] = f"{config['from_name']} <{config['from_email']}>"
+    msg["To"] = to
+    msg["Subject"] = digest.subject
+    return msg
+
+
+def _send_via_smtp_sync(config: dict[str, Any], to: str, digest: Digest) -> None:
+    """Sync SMTP send via stdlib smtplib. Called from a thread by the async
+    wrapper so the event loop doesn't block on network I/O. Raises on any
+    smtplib error; caller wraps.
+    """
+    msg = _build_mime_message(config, to, digest)
+    if config["security"] == "ssl":
+        smtp_cls: Any = smtplib.SMTP_SSL
+    else:
+        smtp_cls = smtplib.SMTP
+
+    with smtp_cls(config["host"], config["port"], timeout=_DEFAULT_SMTP_TIMEOUT) as smtp:
+        if config["security"] == "starttls":
+            smtp.starttls()
+        smtp.login(config["username"], config["password"])
+        smtp.send_message(msg)
+
+
+async def _send_via_smtp(config: dict[str, Any], to: str, digest: Digest) -> None:
+    """Async wrapper for stdlib smtplib (which is sync). Returns None — SMTP
+    has no message-id to surface back to the caller (unlike Resend's `id`).
+    """
+    await asyncio.to_thread(_send_via_smtp_sync, config, to, digest)
 
 
 def _result_to_dict(outcome: DigestSendResult, *, subject: str) -> dict[str, Any]:
@@ -268,27 +405,37 @@ async def send_digest(
     org_id: Optional[str] = None,
     log_prefix: str = "DIGEST",
 ) -> DigestSendResult:
-    """Send a pre-rendered digest via Resend, with built-in dry-run fallback.
+    """Send a pre-rendered digest via the org's configured backend, with
+    built-in dry-run fallback.
+
+    Backend selection:
+      - Resend if `resend_api_key` resolves (default).
+      - SMTP if `smtp_host` + `smtp_port` + `smtp_username` + `smtp_password`
+        all resolve and Resend doesn't.
+      - Either can be forced via the `email_backend` credential
+        (``"resend"`` | ``"smtp"``) when both are configured at once.
+      - Neither configured → dry-run (log only).
 
     Args:
         digest: the rendered subject + text + (optional) html.
         recipient: target email address.
-        org_id: passed to `resolve_credential` for per-org Resend keys.
+        org_id: passed to `resolve_credential` for per-org keys.
             None resolves through the platform → env tiers only.
         log_prefix: tag for log lines (e.g. "METAS DIGEST", "AUDIT DIGEST").
 
     Returns:
-        `DigestSendResult` — never raises.
+        `DigestSendResult` — never raises. SMTP path leaves
+        ``external_id`` as None since SMTP returns no message id.
     """
     if not recipient or "@" not in recipient:
         return DigestSendResult(
             sent=False, error=f"invalid recipient: {recipient!r}", subject=digest.subject,
         )
 
-    config = _resolve_resend_config(org_id)
-    if not config:
+    backend, config = _resolve_email_backend(org_id)
+    if not backend or not config:
         # Dry-run: log + return. Useful for dev + for products whose orgs
-        # haven't configured Resend yet.
+        # haven't configured any backend yet.
         logger.info(
             "[%s DRY-RUN] To=%s subject=%s",
             log_prefix, recipient, digest.subject,
@@ -299,17 +446,28 @@ async def send_digest(
         )
 
     try:
-        result = await _post_to_resend(config, recipient, digest)
-        external_id = result.get("id")
+        if backend == "resend":
+            result = await _post_to_resend(config, recipient, digest)
+            external_id = result.get("id")
+        elif backend == "smtp":
+            await _send_via_smtp(config, recipient, digest)
+            external_id = None
+        else:
+            return DigestSendResult(
+                sent=False,
+                error=f"unknown email backend: {backend!r}",
+                subject=digest.subject,
+            )
+
         logger.info(
-            "[%s] sent via Resend id=%s to=%s",
-            log_prefix, external_id, recipient,
+            "[%s] sent via %s id=%s to=%s",
+            log_prefix, backend, external_id, recipient,
         )
         return DigestSendResult(
             sent=True, external_id=external_id, subject=digest.subject,
         )
     except Exception as exc:
-        logger.error("[%s] send failed: %s", log_prefix, exc)
+        logger.error("[%s] %s send failed: %s", log_prefix, backend, exc)
         return DigestSendResult(
             sent=False, error=str(exc), subject=digest.subject,
         )
