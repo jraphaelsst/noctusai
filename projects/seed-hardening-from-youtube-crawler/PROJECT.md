@@ -170,7 +170,7 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 - [ ] **1.2** `security/encrypted_tokens.py` (Fernet helper, ~90 LOC + tests)
 - [ ] **1.3** `integrations/youtube/` (Protocol+Fake+Real+factory, ~400 LOC + tests)
-- [ ] **1.4** `noctus.dev.scaffold_migration` MCP tool (~150 LOC + tests)
+- [x] **1.4** `noctus.dev.scaffold_migration` MCP tool (Engineer C, branch `sh-yt-migration-scaffolder`, 19 tests green + 7 sibling scaffold tests still green; 26/26 in scaffold-suite)
 
 ### Phase 2 — Batch B (structural lifts)
 - [ ] **2.1** Generic worker — lift `domain/chatbot/worker.py` to `domain/jobs/worker.py`
@@ -236,5 +236,6 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 
 | Date | Change | By |
 |---|---|---|
+| 2026-05-04 | Phase 1.4 — `noctus.dev.scaffold_migration` MCP tool landed in `mcp/noctusai/tools/noctus/dev/scaffold_migration.py` + 19-test pytest module covering numbering / schema-default / schema-override / `with_table=` block / six error paths / three keeper-detector-style integration assertions vs the canonical helpers. Registered alphabetically in `__init__.py`. Engineer C (worktree `sh-yt-migration-scaffolder`). | Engineer C (Claude Opus 4.7 [1M]) |
 | 2026-05-04 | Phase 1.1 — SMTP backend landed in seed `integrations/email/digest.py` + 19 new tests; 35/35 email tests green; 684/684 seed-lib tests green. | architect (Claude Opus 4.7) |
 | 2026-05-04 | Phase 0 — Project filed; branch `seed-hardening-from-youtube-crawler` created from origin/main. | architect (Claude Opus 4.7) |
