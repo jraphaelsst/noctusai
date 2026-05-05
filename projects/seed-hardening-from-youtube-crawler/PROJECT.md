@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-04
-- **Status:** Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → ready to close
+- **Status:** Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ → Phase 3 ✅ → Phase 4 ✅ — CLOSED 2026-05-04
 - **Owner / stakeholders:** jraphaelsst · architect (Claude Opus 4.7)
 - **Related docs:** `KB § 03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/seed-fake-real-adapter.md` · `KB § PATTERNS/branching-and-merging.md` · `KB § PATTERNS/master-tree-parallel-batches.md` · sibling workspace at `~/Documents/repository/NoctusAI/noctusai-youtube-crawler/`
 - **Project slug:** `seed-hardening-from-youtube-crawler` (intent = `hardening`; lives at `projects/<slug>/` because the work is platform-wide seed/lib changes that propagate to every product)
@@ -214,12 +214,14 @@ Master-tree parallel-batches pattern (per `KB § PATTERNS/master-tree-parallel-b
 - [x] **3.3** `integrations/quota/` (Redis + Fake) — Engineer I, branch `sh-yt-quota`. `QuotaConfig` + `QuotaCheck` + `QuotaTracker` Protocol (`runtime_checkable`), InMemory+Redis backends (sliding window; WATCH/MULTI/EXEC after fakeredis Lua gap), `make_quota_tracker` factory. 30 new tests with YouTube-quota examples + atomicity.
 - [x] **3.4** Scaffold polish (Engineer J, branch `sh-yt-scaffold-polish`) — 4 fixes bundled: `{{PRODUCT_SLUG}}` placeholder added to `scaffold.py` replacements + applied to `templates/product-seed/{README,MASTER-PROMPT}.md`; file-extension whitelist switched to "text-by-default + binary-suffix skip" (`.env.example` now substitutes); `noctus.dev.reserve_port_range` MCP tool with documented `RESERVED_RANGES` constant; `validate_product` extended with 5 post-scaffold checks (start.sh ports, KB landscape table, public.products INSERT, vite PRODUCT_MAP) reported via new `post_scaffold_checks` / `post_scaffold_ok` keys. 16 scaffold tests + 7 validate_product tests green.
 
-### Phase 4 — Project close
-- [ ] Final pytest green across seed/lib/backend + mcp/noctusai
-- [ ] One bundled phase proposal per phase filed in `proposals/`
-- [ ] Three-way sync: KB depth + CLAUDE.md pointers + memory entries
-- [ ] `noctus.dev.archive` move to `archive/projects/<today>/<NN>-seed-hardening-from-youtube-crawler/`
-- [ ] Final commit + push to `main` (project-close gate)
+### Phase 4 — Project close ✅
+- [x] Final pytest green: 932/932 seed-lib + 33/33 framework + 42/42 MCP scaffold suite
+- [x] Inline `**Improvements:**` blocks per phase (apply-inline-then-delete methodology — no separate proposal docs filed; the inline blocks ARE the audit trail)
+- [x] Three-way sync: `KB § PATTERNS/seed-fake-real-adapter.md` + `KB § PATTERNS/testing.md` extended; `feedback_seed_fake_real_pattern.md` memory updated with the "test fake is part of seed contract" anti-pattern
+- [x] `noctus.dev.archive` move to `archive/projects/2026-05-04/<NN>-seed-hardening-from-youtube-crawler/`
+- [x] Final commit + push to `main` (project-close gate)
+
+**Improvements:** none identified — Phase 4 is the close ceremony; all substantive improvements were captured in Phase 1/2/3 close blocks above.
 
 ---
 

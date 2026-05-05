@@ -142,6 +142,16 @@ Fake gap → extend the Fake, don't shortcut to the Real. The Fake's job is to m
 
 The factory's job is one decision: real or fake. Push other configuration into the adapter constructors. Factory: `if not api_key: return Fake; return Real(api_key, **kwargs)`. Adapter: takes whatever rich config it needs. Don't conflate "build the adapter" with "decide which kind".
 
+### "The Real uses a primitive the Fake doesn't run"
+
+**The test fake is part of the seed contract.** If the production primitive doesn't run on the test fake, the seed module is half-shipped — consumers' tests will silently fail to exercise the Real's actual code path.
+
+Concrete: Engineer I's first draft of `RedisQuotaTracker` used a server-side Lua `EVAL` script for atomic check-and-consume — the textbook Redis pattern. Tests blew up on `fakeredis` 2.x because `fakeredis` ships Lua support behind an optional `lupa` runtime dep that's not installed. Pivot: WATCH/MULTI/EXEC + retry-on-WatchError (optimistic concurrency, native to both `redis-py` and `fakeredis`). Same atomicity guarantees, identical test coverage, no extra dep.
+
+The rule: when picking a primitive for a seed module, **first check the Fake supports it**. If the Fake can't run the primitive, either (a) extend the Fake (add the primitive to its supported surface), (b) pick a different primitive that runs on both, or (c) accept that you've half-shipped and document why. Never pick a primitive that "happens to work in production but not in tests" — that's the half-shipped trap dressed up.
+
+Surfaced 2026-05-04 by `seed-hardening-from-youtube-crawler` Phase 3.3 (Engineer I).
+
 ---
 
 ## Cross-references
