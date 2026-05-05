@@ -26,7 +26,7 @@ export default defineConfig({
     alias: [
       {
         find: "@noctusai/lib/query-client",
-        replacement: resolve(__dirname, "../lib/src/query-client.ts"),
+        replacement: resolve(__dirname, "../../lib/frontend/src/query-client.ts"),
       },
       // Stub the design-system at the test boundary — the real component set
       // pulls in lucide-react + radix-ui + the full UI deps, which aren't
@@ -37,7 +37,7 @@ export default defineConfig({
       },
       {
         find: "@noctusai/lib",
-        replacement: resolve(__dirname, "../lib/src/index.ts"),
+        replacement: resolve(__dirname, "../../lib/frontend/src/index.ts"),
       },
       { find: /^react$/, replacement: resolve(__dirname, "node_modules/react") },
       { find: /^react-dom$/, replacement: resolve(__dirname, "node_modules/react-dom") },

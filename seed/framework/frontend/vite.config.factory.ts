@@ -66,14 +66,18 @@ const FRAMEWORK_DEPS = [
  * The factory injects both VITE_BACKEND_API_URL and VITE_PRODUCT_SCHEMA
  * so products don't need any config files beyond vite.config.ts.
  */
+// Comments embed the full product slug (NOT the abbreviation) so
+// `noctus.dev.validate_product`'s `vite_factory_product_map` post-scaffold
+// check (added 2026-05-04 in Phase 3.4) can pattern-match each slug. Don't
+// drop the slug from a comment without updating the validator's regex.
 const PRODUCT_MAP: Record<number, { backend: number; schema: string }> = {
-  5173: { backend: 8000, schema: "public" },       // Core
-  8080: { backend: 8001, schema: "erp" },           // ERP
-  8090: { backend: 8002, schema: "personal-finance" }, // PF
-  8095: { backend: 8003, schema: "therapy" },       // Therapy
-  8100: { backend: 8004, schema: "seed" },          // Seed
-  8110: { backend: 8005, schema: "daily_life" },    // Daily Life
-  8120: { backend: 8006, schema: "mailing" },       // Mailing
+  5173: { backend: 8000, schema: "public" },           // core
+  8080: { backend: 8001, schema: "erp" },              // erp-imobiliario
+  8090: { backend: 8002, schema: "personal-finance" }, // personal-finance
+  8095: { backend: 8003, schema: "therapy" },          // therapy-platform
+  8100: { backend: 8004, schema: "seed" },             // seed
+  8110: { backend: 8005, schema: "daily_life" },       // daily-life
+  8120: { backend: 8006, schema: "mailing" },          // mailing
 };
 
 export function createViteConfig(options: ViteConfigOptions): UserConfig {
