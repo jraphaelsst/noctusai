@@ -2189,18 +2189,297 @@ def check_all_products() -> tuple[int, list]:
     return platform_score, all_issues
 
 
-def validate_one_product(slug: str) -> dict:
+def _check_post_scaffold(
+    slug: str,
+    *,
+    repo_root: Path | None = None,
+    products_dir: Path | None = None,
+) -> list[dict]:
+    """Enforce the items currently listed in `scaffold_product`'s `next_steps`.
+
+    Each returned dict has shape `{"check": str, "ok": bool, "error": str | None}`.
+    Added 2026-05-04 (sh-yt-scaffold-polish Phase 3.4) so `validate_product`
+    catches scaffolded-but-not-registered products. Mirrors the next_steps
+    list in `mcp/noctusai/tools/noctus/dev/scaffold.py::scaffold_product`.
+
+    Args:
+        repo_root: Override for the repository root (test seam). Defaults
+            to module-level :data:`REPO_ROOT`. Tests pass tmp_path-based
+            roots so they can fixture start.sh / KB / vite factory in
+            isolation.
+        products_dir: Override for the ``products/`` root (test seam).
+            Defaults to :data:`PRODUCTS_DIR`. Falls back to
+            ``repo_root/products`` when only `repo_root` is supplied.
+
+    Checks (5):
+      1. Backend port wired in start.sh under the product's `--app-dir`.
+      2. Frontend port wired in start.sh.
+      3. Slug listed in `KB § CONTEXT/02-LANDSCAPE.md` Products table.
+      4. INSERT INTO products row with the slug exists in any of the
+         product's migration files (or core's bootstrap insert).
+      5. Frontend port appears in `seed/framework/frontend/vite.config.factory.ts`
+         PRODUCT_MAP (the factory looks up by frontend port — the slug never
+         goes into PRODUCT_MAP, but the port does, with the slug as comment).
+    """
+    results: list[dict] = []
+
+    base_repo_root = repo_root if repo_root is not None else REPO_ROOT
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif repo_root is not None:
+        base_products_dir = repo_root / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
+
+    product_path = base_products_dir / slug
+
+    # 1+2 — start.sh checks
+    start_sh = base_repo_root / "start.sh"
+    if not start_sh.exists():
+        results.append({
+            "check": "start_sh_exists",
+            "ok": False,
+            "error": f"start.sh missing at {start_sh}",
+        })
+        # Without start.sh we can't run port checks meaningfully.
+        for c in ("backend_port_in_start_sh", "frontend_port_in_start_sh"):
+            results.append({"check": c, "ok": False, "error": "start.sh missing"})
+    else:
+        sh_content = start_sh.read_text()
+        # start.sh references products either via literal paths
+        # (`products/<slug>/backend`) or via shell vars assigned to
+        # `$ROOT_DIR/products/<slug>/backend`. Either form counts; we just
+        # need to confirm a `--port N` appears within a reasonable window.
+        backend_path = f"products/{slug}/backend"
+        frontend_path = f"products/{slug}/frontend"
+
+        def _has_port_near(needle: str) -> bool:
+            """True iff `needle` appears in start.sh AND any `--port N`
+            occurs within ±300 chars OR a shell variable assignment binds
+            `needle` and that variable is referenced near a `--port`.
+            """
+            # Direct: literal path AND nearby --port.
+            for m in re.finditer(re.escape(needle), sh_content):
+                idx = m.start()
+                window = sh_content[max(0, idx - 300): idx + 300]
+                if re.search(r"--port\s+\d+", window):
+                    return True
+            # Indirect: a `VAR=...products/<slug>/(backend|frontend)`
+            # assignment, then `$VAR` (or `"$VAR"`) referenced near --port.
+            assign_re = re.compile(
+                rf'(?P<var>[A-Z_][A-Z0-9_]*)="\$ROOT_DIR/{re.escape(needle)}"',
+            )
+            for m in assign_re.finditer(sh_content):
+                var = m.group("var")
+                # Find any usage of $var (with or without quotes) near --port.
+                usage_re = re.compile(rf'"?\${re.escape(var)}"?')
+                for u in usage_re.finditer(sh_content):
+                    idx = u.start()
+                    window = sh_content[max(0, idx - 300): idx + 300]
+                    if re.search(r"--port\s+\d+", window):
+                        return True
+            return False
+
+        if _has_port_near(backend_path):
+            results.append({
+                "check": "backend_port_in_start_sh",
+                "ok": True,
+                "error": None,
+            })
+        else:
+            results.append({
+                "check": "backend_port_in_start_sh",
+                "ok": False,
+                "error": (
+                    f"start.sh has no `--port N` near `{backend_path}` — "
+                    f"backend not wired into platform startup."
+                ),
+            })
+
+        if _has_port_near(frontend_path):
+            results.append({
+                "check": "frontend_port_in_start_sh",
+                "ok": True,
+                "error": None,
+            })
+        else:
+            results.append({
+                "check": "frontend_port_in_start_sh",
+                "ok": False,
+                "error": (
+                    f"start.sh has no `--port N` near `{frontend_path}` — "
+                    f"frontend not wired into platform startup."
+                ),
+            })
+
+    # 3 — KB § 02-LANDSCAPE.md product table
+    landscape = base_repo_root / "KNOWLEDGE-BASE" / "CONTEXT" / "02-LANDSCAPE.md"
+    if not landscape.exists():
+        results.append({
+            "check": "kb_landscape_table",
+            "ok": False,
+            "error": f"KB landscape file missing at {landscape}",
+        })
+    else:
+        ls_content = landscape.read_text()
+        if f"products/{slug}/" in ls_content or f"`products/{slug}/`" in ls_content:
+            results.append({
+                "check": "kb_landscape_table",
+                "ok": True,
+                "error": None,
+            })
+        else:
+            results.append({
+                "check": "kb_landscape_table",
+                "ok": False,
+                "error": (
+                    f"KB § CONTEXT/02-LANDSCAPE.md Products table missing row "
+                    f"for `products/{slug}/`."
+                ),
+            })
+
+    # 4 — products-table INSERT row exists somewhere
+    insert_pattern = re.compile(
+        rf"INSERT\s+INTO\s+(?:public\.)?products[^\n]*\n(?:[^\n]*\n){{0,15}}[^\n]*'{re.escape(slug)}'",
+        re.IGNORECASE,
+    )
+    found_insert = False
+    insert_paths_searched = []
+    for product_dir in base_products_dir.iterdir():
+        if not product_dir.is_dir() or product_dir.name.startswith("."):
+            continue
+        migrations = product_dir / "backend" / "migrations"
+        if not migrations.exists():
+            continue
+        for sql_file in migrations.glob("*.sql"):
+            try:
+                rel = str(sql_file.relative_to(base_repo_root))
+            except ValueError:
+                rel = str(sql_file)
+            insert_paths_searched.append(rel)
+            try:
+                if insert_pattern.search(sql_file.read_text()):
+                    found_insert = True
+                    break
+            except OSError:
+                continue
+        if found_insert:
+            break
+    if found_insert:
+        results.append({
+            "check": "products_table_insert",
+            "ok": True,
+            "error": None,
+        })
+    else:
+        results.append({
+            "check": "products_table_insert",
+            "ok": False,
+            "error": (
+                f"No `INSERT INTO (public.)?products` migration row found with "
+                f"slug '{slug}'. Searched {len(insert_paths_searched)} migration "
+                f"file(s) under products/*/backend/migrations/."
+            ),
+        })
+
+    # 5 — vite.config.factory.ts PRODUCT_MAP entry (keyed by frontend port).
+    # We look for a comment line with the slug in PRODUCT_MAP — products land
+    # there with their slug as a `// SlugName` trailing comment.
+    factory_path = base_repo_root / "seed" / "framework" / "frontend" / "vite.config.factory.ts"
+    if not factory_path.exists():
+        results.append({
+            "check": "vite_factory_product_map",
+            "ok": False,
+            "error": f"seed factory missing at {factory_path}",
+        })
+    else:
+        fc = factory_path.read_text()
+        # Look for the slug (or a CamelCased / Title variant) within the
+        # PRODUCT_MAP block. Block delimited by `PRODUCT_MAP` declaration up
+        # to its closing `};`.
+        map_match = re.search(
+            r"PRODUCT_MAP[^=]*=\s*\{(?P<body>.*?)\};",
+            fc,
+            re.DOTALL,
+        )
+        if map_match is None:
+            results.append({
+                "check": "vite_factory_product_map",
+                "ok": False,
+                "error": "Could not locate PRODUCT_MAP literal in factory.",
+            })
+        else:
+            body = map_match.group("body")
+            # The slug may appear verbatim or with hyphens replaced; allow both.
+            slug_variants = {
+                slug,
+                slug.replace("-", " ").title(),
+                slug.replace("-", "_"),
+                slug.replace("-", ""),
+            }
+            if any(v.lower() in body.lower() for v in slug_variants):
+                results.append({
+                    "check": "vite_factory_product_map",
+                    "ok": True,
+                    "error": None,
+                })
+            else:
+                results.append({
+                    "check": "vite_factory_product_map",
+                    "ok": False,
+                    "error": (
+                        f"PRODUCT_MAP in vite.config.factory.ts has no entry "
+                        f"referencing '{slug}'. Add the frontend port row."
+                    ),
+                })
+
+    return results
+
+
+def validate_one_product(
+    slug: str,
+    *,
+    repo_root: Path | None = None,
+    products_dir: Path | None = None,
+) -> dict:
     """Score one product against seed-compliance + path-reference rules.
 
     Migrated from `mcp/noctusai/server.py::_validate_one` during the FastMCP
     switch (mcp-server-fastmcp-switch Commit A) — was homeless dispatch-side
     logic; now lives next to the underlying detectors.
+
+    Phase 3.4 (sh-yt-scaffold-polish, 2026-05-04) extended this with the
+    `post_scaffold_checks` key: 5 binary registration checks mirroring
+    `scaffold_product`'s next_steps. Existing `score`/`issues` shape preserved.
+    Aggregate `post_scaffold_ok` is True only when every check passes.
+
+    Args:
+        repo_root, products_dir: Test seams forwarded to
+            :func:`_check_post_scaffold`. The seed-compliance + path-reference
+            checks still resolve from module-level :data:`PRODUCTS_DIR`
+            (their refactor is not in scope for Phase 3.4); when callers
+            supply `products_dir`, only the post-scaffold checks honor it.
     """
-    path = PRODUCTS_DIR / slug
+    base_products_dir = products_dir if products_dir is not None else (
+        repo_root / "products" if repo_root is not None else PRODUCTS_DIR
+    )
+    path = base_products_dir / slug
     issues = check_seed_compliance(path) + check_path_references(path)
     penalties = {"critical": 25, "high": 10, "warning": 3}
     score = max(0, 100 - sum(penalties.get(i["severity"], 5) for i in issues))
-    return {"product": slug, "score": score, "issues": issues}
+
+    post_scaffold = _check_post_scaffold(
+        slug, repo_root=repo_root, products_dir=products_dir,
+    )
+    post_ok = all(c["ok"] for c in post_scaffold)
+
+    return {
+        "product": slug,
+        "score": score,
+        "issues": issues,
+        "post_scaffold_checks": post_scaffold,
+        "post_scaffold_ok": post_ok,
+    }
 
 
 def register(server) -> None:
