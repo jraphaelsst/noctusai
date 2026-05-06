@@ -104,6 +104,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - First-time setup → `KB § GUIDES/setup.md`
 - Creating a new product → `KB § GUIDES/new-product.md`
 - Seed-first design checklist → `KB § GUIDES/seed-first-design.md`
+- Putting a workspace product online for testing (the "deploy" drill) → `KB § GUIDES/deploy-workspace-online.md`
 
 ### Integrations (KB depth — vendor references)
 - Vista CRM REST API (auth, endpoints, error model, adapter contract, per-tenant calibration gap) → `KB § INTEGRATIONS/vista.md`
@@ -131,6 +132,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 | Writing a migration | `CLAUDE/backend.md` + `KB § PATTERNS/database-rls.md` + `KB § backend/04-DATABASE.md` |
 | Adding a shared component | `KB § 04-SHARED-LIBRARY.md` (check first — it might exist) |
 | Creating a new product | `KB § GUIDES/new-product.md` + `KB § 03-SEED-ARCHITECTURE.md` |
+| User says "put X online" / "bring it up" / "deploy for testing" / "let me test it" / "spin up the stack" | `KB § GUIDES/deploy-workspace-online.md` (the drill: verify docker artifacts → fill `.env` → `docker compose up` → verify) |
 | Starting a new project | `CLAUDE/projects.md` first; copy `templates/PROJECT-TEMPLATE.md` per `KB § PATTERNS/project-execution.md §1` |
 | Writing tests | `KB § PATTERNS/testing.md` |
 | Adding a `try/except` (production code) | `KB § PATTERNS/logging.md` (level guide, no-`# silent-ok` rule) |

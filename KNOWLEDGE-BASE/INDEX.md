@@ -53,7 +53,8 @@ KNOWLEDGE-BASE/
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
 │   │   ├── new-product.md
-│   │   └── seed-first-design.md
+│   │   ├── seed-first-design.md
+│   │   └── deploy-workspace-online.md  ← "put X online" drill: verify docker artifacts → fill .env → docker compose up → verify; trigger phrases
 │   ├── INTEGRATIONS/       ← per-vendor integration references (auth, endpoints, error model, adapter contract)
 │   │   └── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
 │   ├── backend/            ← per-product backend details
@@ -128,6 +129,7 @@ KNOWLEDGE-BASE/
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
+| Putting a workspace product online for testing — the "deploy" drill (verify docker artifacts → fill `.env` → `docker compose up` → verify); trigger phrases the agent should recognise | `CONTEXT/GUIDES/deploy-workspace-online.md` |
 | Vista CRM REST API (auth, query convention, response envelope, error hierarchy, endpoint inventory, adapter contract, per-tenant calibration gap) | `CONTEXT/INTEGRATIONS/vista.md` |
 | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |
 | ERP backend | `CONTEXT/backend/02-ERP.md` |
