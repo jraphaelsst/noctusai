@@ -1,0 +1,61 @@
+# VCS
+.git
+.gitignore
+.githooks
+
+# Workspace state (not part of any image)
+.noctusai-state
+.noctusai-workspace
+.promotions
+PROMOTIONS.md
+projects
+sandbox
+
+# Symlinked surfaces — Docker can't follow these and they belong on the
+# host workspace, not inside the image. The Dockerfile pulls real seed/
+# content via the `noc` additional build context.
+seed
+CLAUDE
+CLAUDE.md
+KNOWLEDGE-BASE
+mcp
+templates
+.claude
+
+# Python build artifacts
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/.venv
+**/venv
+**/env
+
+# Node build artifacts
+**/node_modules
+**/dist
+**/.vite
+**/.eslintcache
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode
+*.swp
+*.swo
+
+# Runtime data (mounted as volumes, not baked into the image)
+tmp
+logs
+*.log
+
+# Secrets — must never enter an image
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key

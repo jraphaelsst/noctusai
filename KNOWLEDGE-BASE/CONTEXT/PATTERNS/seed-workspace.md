@@ -96,8 +96,67 @@ Bootstrap applies `chmod -h a-w` to each symlink entry in the workspace.
     ├── .git/                           # LOCAL — own git repo
     ├── .gitignore
     ├── .githooks/pre-commit            # LOCAL — Rule 1 + Rule 2
-    └── README.md                       # LOCAL — conventions
+    ├── README.md                       # LOCAL — conventions
+    │
+    ├── Dockerfile                      # LOCAL — backend image (placeholders patched at scaffold time)
+    ├── Dockerfile.frontend             # LOCAL — frontend image (multi-stage: build + nginx)
+    ├── docker-compose.yml              # LOCAL — full stack: app + frontend + redis + waha + tunnel
+    ├── .dockerignore                   # LOCAL — excludes .git, symlinks, secrets, build artifacts
+    └── .env.example                    # LOCAL — env template (NOCTUSAI_HOME + Supabase + LLM + WAHA)
 ```
+
+---
+
+## Why the inherited surface is not trimmed
+
+> **One-line rule:** Seed workspaces inherit noc whole. Trim none of the 8 surfaces.
+
+A natural instinct when scaffolding a new product is to *narrow* the inherited surface — strip the KB pages for products this workspace doesn't ship, drop memory entries about decisions in unrelated products, prune CLAUDE/ topical files that don't apply. **Resist that instinct.** The architecture is already designed to make trimming unnecessary, and trimming actively breaks methodology guarantees.
+
+### The cost model the inheritance is built on
+
+Auto-load weight is already minimal *by design*:
+
+- **`CLAUDE.md` is a router.** Per its own §0: "What this file is NOT … rule body container." Sub-200-line surface, every line is a pointer.
+- **`CLAUDE/<topic>.md` files are on-demand.** Loaded by agent discipline when §3 of `CLAUDE.md` says to (per "When to read what"). No topic = no load.
+- **`KNOWLEDGE-BASE/` is on-demand depth.** A KB page enters context only when an agent opens it. Files never read = zero cost. The full KB symlink and a trimmed KB symlink have *identical* runtime weight for any given conversation.
+- **`MEMORY.md` is an index.** One line per entry, ≤150 chars. Entry bodies live in their own files and load only on topic match (per `auto memory § How to access memories`).
+- **`seed/` and `noctusai_lib/` are code.** Not auto-loaded into the agent's context — read by tooling (pytest, imports), not by reading-discipline budget.
+
+The *one* surface where inheritance does add weight is **memory entry bodies** — and even there the budget is small (entries are short, focused, and load only when the agent's question matches the description).
+
+### What trimming actually breaks
+
+| Trim target | What breaks |
+|---|---|
+| KB pages for "other" products (`KB § backend/02-ERP.md`, etc.) | **Seed-first analysis** (`KB § GUIDES/seed-first-design.md`). §3a question 5 asks *"does the seam already exist in seed?"* — answering needs visibility into how other products solved it. Trim PF/ERP/Mailing → blind to absorbable patterns. |
+| Per-product memory entries | **Triage-at-decision-time** (`KB § PATTERNS/accept-with-rationale.md`). The accept catalog accumulates *across* products by design; trimming a product's entries hides the precedent that informs the next decision. |
+| Unrelated KB pattern docs (`PATTERNS/whatsapp-chatbot-seed.md` if not used here) | **Pointer integrity.** KB pages cross-reference each other (`PATTERNS/seed-fake-real-adapter.md` references `03-SEED-ARCHITECTURE.md`, etc.). Pruned pages leave dangling pointers that `scripts/verify-kb-sync.sh` flags. |
+| Other products' code (`products/<other-slug>/`) | **Recurrence-rule scans.** `noctus.dev.scan_cross_product_helpers` + `scan_within_product_helpers` + `scan_service_line_recurrence` walk *every* product to detect N≥2/N≥3 patterns. Trim → blind to the very duplications the rule exists to catch. The whole DRY recurrence rule (`KB § PATTERNS/project-execution.md § 2.7`) becomes silent. |
+| `CLAUDE/projects.md` / `CLAUDE/platform.md` | **Three-way sync.** Methodology rules live across three layers (KB + CLAUDE/topical + memory); pruning a topical file orphans the rules pointing into it. |
+| Archived projects (`archive/projects/<date>/`) | **Phase-enrichment loop and historical rationale.** "Why did we decide X?" answers often live in archived `PROJECT.md` §11 change logs and `findings.md` files. Pruning makes the rationale unreachable; future seed-first analyses re-derive instead of inherit. |
+
+### What IS legitimately product-specific (and gets *added*, not subtracted)
+
+- `products/<slug>/MASTER-PROMPT.md` — the right place to surface "for this product, the relevant seed surfaces are X / Y / Z and the relevant patterns are A / B." This *focuses* attention without *removing* options. The agent still has the full surface; the MASTER-PROMPT just biases the on-demand reads.
+- `products/<slug>/README.md` — product-specific developer setup.
+- `products/<slug>/projects/<slug>/PROJECT.md` and `findings.md` — the project layer.
+- The product's own backend/frontend code under `products/<slug>/`.
+
+### Mental model
+
+The seed workspace is **`noc + this product`**, not **`subset(noc) + this product`**. The "essentials" the user wants for a new product are not a subset of noc — they ARE noc, plus the product layer added on top. The cost concern that motivates trimming (auto-load weight, cognitive surface) is a real concern that's already solved by the *router + on-demand* split, not by pruning.
+
+### How to apply
+
+- When scaffolding a sibling workspace, accept the full 8-surface symlink set as-is. The bootstrap script intentionally takes no `--exclude` flags.
+- When working on a single product, your *focus* mechanism is `MASTER-PROMPT.md` plus selective `Read`/`grep` discipline — not pre-emptive pruning.
+- If an agent or human asks "should we trim X out of this workspace?", the answer is no, and the answer to "why?" is one of the four breakage rows above. Cite the specific row.
+- Drive-by reduction during a project (e.g. "we don't need this KB page, let's delete it") is forbidden under the same rule that forbids `--no-verify` on commits: bypassing a safety mechanism to make a friction go away. Surface the friction; don't remove the safety.
+
+### Anti-pattern history (lessons that drove this rule)
+
+- *(Recorded 2026-05-06.)* Asked at YouTube-Crawler scaffold time: "shouldn't the KB and all docs be trimmed to fit only the new product?" Investigation showed the auto-load surface was already minimal (router-shaped), KB depth was on-demand (zero unread cost), and trimming would break four methodology guarantees with no offsetting benefit. The rule was formalized here so the next agent encountering the instinct gets the answer without re-deriving it.
 
 ---
 
@@ -199,9 +258,40 @@ What bootstrap does (in order):
 10. Creates `PROMOTIONS.md` index stub.
 11. Copies pre-commit hook into `.githooks/pre-commit`.
 12. Renders README from `templates/seed-workspace-README.md` (substitutes `{{WORKSPACE_NAME}}`, `{{NOCTUSAI_HOME}}`, `{{CREATED_AT}}`).
-13. `git init` + `git config core.hooksPath .githooks`.
+13. Drops docker artifacts from `templates/seed-workspace-docker/`: `Dockerfile`, `Dockerfile.frontend`, `docker-compose.yml`, `.dockerignore`, `.env.example` — all carrying `{{PRODUCT_SLUG}}` / `{{PRODUCT_NAME}}` / `{{BACKEND_PORT}}` / `{{FRONTEND_PORT}}` placeholders. Substitution happens later when the user runs `noctus.dev.scaffold_product` (see "Docker scaffolding" below).
+14. `git init` + `git config core.hooksPath .githooks`.
 
-**Idempotent** — re-running on an existing workspace refreshes symlinks + chmod + marker without touching local content (`projects/`, `sandbox/`, `products/`, `.promotions/`, git history).
+**Idempotent** — re-running on an existing workspace refreshes symlinks + chmod + marker without touching local content (`projects/`, `sandbox/`, `products/`, `.promotions/`, git history). Docker artifacts are skipped on re-run if already present.
+
+---
+
+## Docker scaffolding
+
+Every seed workspace ships docker artifacts at the workspace root so the user can put a freshly scaffolded product **online to test it before absorbing functionality** — the explicit reason this convention exists. Two-step flow mirrors the bootstrap → scaffold split:
+
+1. **Bootstrap** drops the unsubstituted templates (`Dockerfile`, `Dockerfile.frontend`, `docker-compose.yml`, `.dockerignore`, `.env.example`) carrying `{{PRODUCT_SLUG}}` / `{{PRODUCT_NAME}}` / `{{BACKEND_PORT}}` / `{{FRONTEND_PORT}}` placeholders. Source: `templates/seed-workspace-docker/`.
+
+2. **`noctus.dev.scaffold_product`** detects it's running in a workspace (any caller whose `base_products_dir.parent` contains the docker files at root) and patches the placeholders in place via `_patch_workspace_docker_files`. Idempotent: files already-substituted (no placeholders left) are skipped without error. The result lands in the scaffold tool's response under the `docker_patch` key with `{patched: [files], skipped: [files]}`.
+
+After scaffold:
+```bash
+cp .env.example .env       # then fill in NOCTUSAI_HOME + Supabase + LLM keys
+docker compose up           # full stack online
+docker compose --profile minimal up   # backend + redis only
+docker compose --profile tunnel up    # adds cloudflared for OAuth callback testing
+```
+
+### Why this lives at workspace-root, not per-product
+
+Workspaces are N=1-product by design (the bootstrap → scaffold flow expects one product per testing-ground; multi-product workspaces are a future shape). Putting docker at the workspace root means the user runs `docker compose up` once, with `cwd=workspace`, and gets the full stack — backend + frontend + redis + waha + optional tunnel — not a per-product fan-out. The product-side image build copies only `products/<slug>/backend|frontend/`, so the workspace-root docker layout doesn't leak into the product itself when promoted to noc.
+
+### Why Docker uses an "additional context" for noc
+
+The workspace's `seed/` is a symlink into noc. Docker COPY does **not** follow directory symlinks at build time. Solution: the docker-compose `app` and `frontend` services declare an `additional_contexts: noc: ${NOCTUSAI_HOME}` block, and the Dockerfiles use `COPY --from=noc seed/...` to pull the real seed packages into the image. Set `NOCTUSAI_HOME` in `.env` (the bootstrap's `.env` already has the pointer; the docker-compose `.env` is what the build reads).
+
+### Anti-pattern history (the gap that drove this)
+
+- 2026-05-06 — A workspace was bootstrapped + scaffold_product ran successfully, but the user couldn't put the product online without authoring docker-compose by hand. The convention was missing from the seeding system entirely. Surfaced by user during youtube-crawler workspace recreation; closed by adding the `templates/seed-workspace-docker/` template set + bootstrap step + scaffold patch step.
 
 ---
 

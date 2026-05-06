@@ -1,0 +1,104 @@
+# {{PRODUCT_NAME}} — full-stack docker-compose for the testing-ground workspace.
+#
+# Services
+#   app          FastAPI backend (port {{BACKEND_PORT}})
+#   frontend     React/Vite static bundle served by nginx (port {{FRONTEND_PORT}})
+#   redis        Cache + queue (port 6379, internal)
+#   waha         WhatsApp HTTP API (port 3000) — optional, for real WAHA testing
+#   tunnel       Cloudflare tunnel — optional (profile `tunnel`)
+#
+# Profiles
+#   default      app + frontend + redis + waha (full stack online for testing)
+#   tunnel       adds the cloudflared tunnel exposing app to the internet
+#   minimal      app + redis only (skip waha + frontend for backend-only smoke)
+#
+# Build context
+#   The Dockerfiles use additional context `noc` to pull the seed packages
+#   from the noc repo. Set NOCTUSAI_HOME in .env so the compose file can
+#   reach the noc repo.
+#
+# Quick start
+#   cp .env.example .env       # edit secrets
+#   docker compose up          # full stack
+#   docker compose --profile minimal up  # backend + redis only
+
+services:
+  # ─── {{PRODUCT_NAME}} backend ───────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        noc: ${NOCTUSAI_HOME}
+    image: {{PRODUCT_SLUG}}-app:dev
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      WAHA_BASE_URL: ${WAHA_BASE_URL:-http://waha:3000}
+    ports:
+      - "{{BACKEND_PORT}}:{{BACKEND_PORT}}"
+    volumes:
+      # Bind product code for hot reload — uvicorn --reload picks up changes
+      - ./products/{{PRODUCT_SLUG}}/backend/app:/app/products/{{PRODUCT_SLUG}}/backend/app
+      - ./tmp/uploads:/app/tmp/uploads
+    depends_on:
+      redis:
+        condition: service_started
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0 --port {{BACKEND_PORT}} --reload
+      --app-dir products/{{PRODUCT_SLUG}}/backend
+
+  # ─── {{PRODUCT_NAME}} frontend ──────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      additional_contexts:
+        noc: ${NOCTUSAI_HOME}
+    image: {{PRODUCT_SLUG}}-frontend:dev
+    ports:
+      - "{{FRONTEND_PORT}}:{{FRONTEND_PORT}}"
+    depends_on:
+      app:
+        condition: service_started
+
+  # ─── Redis (cache + queue) ──────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  # ─── WAHA (WhatsApp HTTP API) ───────────────────────────────────────
+  # Default-on; remove or move under a profile if your product doesn't
+  # use WhatsApp. Consumed via noctusai_lib.integrations.whatsapp factory;
+  # FakeWahaClient fallback when WAHA_BASE_URL is empty.
+  waha:
+    image: devlikeapro/waha:latest
+    platform: linux/amd64
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+    ports:
+      - "3000:3000"
+    volumes:
+      - waha_sessions:/app/.sessions
+
+  # ─── Cloudflare tunnel (optional) ───────────────────────────────────
+  # Useful for OAuth callback testing — most providers won't redirect to
+  # localhost. Run with: docker compose --profile tunnel up
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://app:{{BACKEND_PORT}}
+    depends_on:
+      app:
+        condition: service_started
+    profiles:
+      - tunnel
+
+volumes:
+  redis_data:
+  waha_sessions:

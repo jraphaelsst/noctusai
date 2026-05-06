@@ -253,6 +253,28 @@ else
   echo "    WARN: $HOOK_SRC missing — pre-commit hook NOT installed"
 fi
 
+# ----- docker artifacts -----
+# Containers live at the workspace root so the user can boot the product
+# online (`docker compose up`) right after `noctus.dev.scaffold_product`.
+# These templates carry {{PRODUCT_SLUG}}/{{PRODUCT_NAME}}/{{BACKEND_PORT}}/
+# {{FRONTEND_PORT}} placeholders; scaffold_product substitutes them in
+# place after creating the product. Source of truth: KB §
+# PATTERNS/seed-workspace.md § "Docker scaffolding".
+DOCKER_SRC="$NOC_HOME/templates/seed-workspace-docker"
+if [[ -d "$DOCKER_SRC" ]]; then
+  echo "==> Installing docker templates (Dockerfile, Dockerfile.frontend,"
+  echo "    docker-compose.yml, .dockerignore, .env.example)"
+  for f in Dockerfile Dockerfile.frontend docker-compose.yml .dockerignore .env.example; do
+    if [[ -f "$DOCKER_SRC/$f" && ! -f "$TARGET/$f" ]]; then
+      cp "$DOCKER_SRC/$f" "$TARGET/$f"
+    elif [[ -f "$TARGET/$f" ]]; then
+      echo "    skip: $f already exists"
+    fi
+  done
+else
+  echo "    WARN: $DOCKER_SRC missing — docker templates NOT installed"
+fi
+
 # ----- README -----
 README_SRC="$NOC_HOME/templates/seed-workspace-README.md"
 README_DST="$TARGET/README.md"

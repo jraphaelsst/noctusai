@@ -27,21 +27,21 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 28 | 12 | 26 | 0 | 38 | 423 |
+| Core | 28 | 12 | 26 | 0 | 38 | 425 |
 | ERP | 59 | 52 | 68 | 66 | 110 | 1,646 |
 | PF | 15 | 17 | 24 | 16 | 44 | 453 |
 | Therapy | 40 | 44 | 66 | 29 | 75 | 976 |
 | Seed | 0 | 0 | 8 | 0 | 3 | 31 |
 | Daily Life | 7 | 7 | 12 | 7 | 15 | 228 |
-| Mailing | 10 | 10 | 22 | 9 | 16 | 191 |
-| **Total** | **159** | **142** | **226** | **127** | **301** | **3,948** |
+| Mailing | 10 | 10 | 22 | 9 | 16 | 185 |
+| **Total** | **159** | **142** | **226** | **127** | **301** | **3,944** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (7):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed`.
-- **Tables: 276** distributed across the schemas.
+- **Tables: 278** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

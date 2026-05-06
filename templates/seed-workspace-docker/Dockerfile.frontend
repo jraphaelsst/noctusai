@@ -1,0 +1,27 @@
+FROM node:20-slim AS build
+
+WORKDIR /app
+
+# Seed frontend factory + lib packages — pulled from the noc additional
+# build context so the relative `../../../seed/framework/frontend/` import
+# in vite.config.ts resolves at build time.
+COPY --from=noc seed ./seed
+
+# Product frontend
+COPY products/{{PRODUCT_SLUG}}/frontend/package.json ./products/{{PRODUCT_SLUG}}/frontend/package.json
+COPY products/{{PRODUCT_SLUG}}/frontend/package-lock.json* ./products/{{PRODUCT_SLUG}}/frontend/
+WORKDIR /app/products/{{PRODUCT_SLUG}}/frontend
+RUN npm install --no-audit --no-fund
+
+COPY products/{{PRODUCT_SLUG}}/frontend ./
+RUN npx vite build
+
+# ─── Runtime stage: nginx serves the built static bundle ─────────────────
+FROM nginx:alpine
+COPY --from=build /app/products/{{PRODUCT_SLUG}}/frontend/dist /usr/share/nginx/html
+EXPOSE {{FRONTEND_PORT}}
+
+# Override default nginx :80 to match the docker-compose port mapping.
+RUN sed -i 's/listen       80;/listen       {{FRONTEND_PORT}};/' /etc/nginx/conf.d/default.conf
+
+CMD ["nginx", "-g", "daemon off;"]
