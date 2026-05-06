@@ -17,6 +17,7 @@ from app.config import settings
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
+from noctusai_lib.api.product_urls import resolve_product_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -184,10 +185,28 @@ async def get_me(authorization: Optional[str] = Header(None)):
     # Get all products (for the marketplace view)
     all_products = db.table("products").select("*").eq("ativo", True).order("nome").execute()
 
+    # Resolve url_base through the seed-side resolver so each product's
+    # frontend URL adapts to the deploy environment (env-driven) without
+    # rewriting public.products rows. Empty / missing resolution surfaces
+    # as a logged warning; the row keeps its DB url_base as the dashboard
+    # tile's last-resort destination — the dashboard must render even when
+    # one product's URL config is gappy.
     products_with_access = []
     for product in (all_products.data or []):
+        try:
+            resolved_url = resolve_product_url(
+                product["slug"],
+                db_url_base=product.get("url_base"),
+            )
+        except ValueError as exc:
+            logger.warning(
+                "url_base resolution failed for product slug=%s: %s",
+                product.get("slug"), exc,
+            )
+            resolved_url = product.get("url_base") or ""
         products_with_access.append({
             **product,
+            "url_base": resolved_url,
             "has_access": product["id"] in licensed_product_ids,
         })
 

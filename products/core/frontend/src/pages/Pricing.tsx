@@ -7,16 +7,16 @@ import { Header, useTheme } from "@noctusai/lib/design-system";
 
 interface Plan {
   id: string;
-  name: string;
+  nome: string;
   slug: string;
-  description: string | null;
+  descricao: string | null;
   price_monthly: number;
   price_yearly: number;
   max_users: number;
   max_products: number;
   features: Record<string, any>;
   is_custom: boolean;
-  is_active: boolean;
+  ativo: boolean;
 }
 
 export function Pricing() {
@@ -183,9 +183,9 @@ export function Pricing() {
                 </div>
               )}
               <div className="mb-4">
-                <h3 className="text-lg font-semibold text-foreground">{plan.name}</h3>
-                {plan.description && (
-                  <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
+                <h3 className="text-lg font-semibold text-foreground">{plan.nome}</h3>
+                {plan.descricao && (
+                  <p className="mt-1 text-sm text-muted-foreground">{plan.descricao}</p>
                 )}
               </div>
 

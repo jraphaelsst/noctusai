@@ -1,7 +1,7 @@
 """
 Pytest configuration and shared fixtures for AdConnect backend tests.
 
-The seed product uses the framework (noctusai_seed), so patches target
+AdConnect uses the seed framework (noctusai_seed), so patches target
 the framework's database module rather than product-level modules.
 """
 import pytest

@@ -5,8 +5,8 @@
 > optimizations, update the Change Log.
 
 - **Created:** 2026-05-03
-- **Last updated:** 2026-05-03
-- **Status:** Reactivated — execution in progress. (Filing-only directive lifted by user 2026-05-03 with "ram through this project".)
+- **Last updated:** 2026-05-04
+- **Status:** ✅ DONE — all 5 phases shipped 2026-05-03 (`cli.py --review-session` live; AST-first + narrow-read detectors green; KB pointers + memory entry filed). Closed 2026-05-04.
 - **Owner / stakeholders:** Raphael · zero-context execution agent
 - **Related docs:**
   - **Supersedes (concept origin):** `archive/projects/narrow-read-compliance-detector/PROJECT.md` — original 2026-05-02 stub filed as "infeasible today" because no agent-runtime telemetry surface was known. Phase 3 here un-archives that work as Detector #2.

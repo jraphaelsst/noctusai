@@ -4,6 +4,7 @@ Core send engine — the heart of the Mailing product.
 Handles: recipient resolution, send_log creation, template rendering,
 Resend Batch API calls, and status tracking.
 """
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -14,6 +15,18 @@ import httpx
 logger = logging.getLogger(__name__)
 
 VARIABLE_PATTERN = re.compile(r"\{\{(\w+)\}\}")
+
+
+async def _aexec(query):
+    """Run a Supabase query's blocking `.execute()` on a worker thread.
+
+    The supabase-py client is synchronous; calling `.execute()` from an
+    async context can hang the event loop on a network or DNS failure
+    (see scheduler missed-run warnings). Using `asyncio.to_thread` keeps
+    the loop responsive — other scheduled jobs continue to fire even
+    when one DB call is wedged.
+    """
+    return await asyncio.to_thread(query.execute)
 
 
 class SendService:
@@ -74,11 +87,12 @@ class SendService:
 
         Called by the scheduler every 30 seconds.
         """
-        result = (self.db.table("send_logs").select("*, contacts(nome, empresa, email)")
-                  .eq("status", "queued")
-                  .order("created_at")
-                  .limit(batch_size)
-                  .execute())
+        result = await _aexec(
+            self.db.table("send_logs").select("*, contacts(nome, empresa, email)")
+            .eq("status", "queued")
+            .order("created_at")
+            .limit(batch_size)
+        )
 
         logs = result.data or []
         if not logs:
@@ -102,12 +116,14 @@ class SendService:
         api_key = self.settings.resend_api_key
         if not api_key:
             logger.info("No RESEND_API_KEY — logging %d emails (dry run)", len(logs))
-            self._mark_sent(logs, dry_run=True)
+            await self._mark_sent(logs, dry_run=True)
             await self._finalize_campaign_if_done(campaign_id)
             return len(logs)
 
         # Resolve campaign template
-        campaign = self.db.table("campaigns").select("*, templates(*)").eq("id", campaign_id).execute()
+        campaign = await _aexec(
+            self.db.table("campaigns").select("*, templates(*)").eq("id", campaign_id)
+        )
         if not campaign.data:
             return 0
         campaign = campaign.data[0]
@@ -154,19 +170,19 @@ class SendService:
 
             if resp.status_code == 200:
                 batch_data = resp.json().get("data", [])
-                self._mark_sent(logs, batch_data=batch_data)
+                await self._mark_sent(logs, batch_data=batch_data)
                 logger.info("Sent batch of %d emails for campaign %s", len(logs), campaign_id)
                 await self._finalize_campaign_if_done(campaign_id)
                 return len(logs)
             else:
                 logger.error("Resend batch API error: %s %s", resp.status_code, resp.text)
-                self._mark_failed(logs, f"Resend API {resp.status_code}")
+                await self._mark_failed(logs, f"Resend API {resp.status_code}")
                 await self._finalize_campaign_if_done(campaign_id)
                 return 0
 
         except Exception as e:
             logger.error("Resend batch send error: %s", e)
-            self._mark_failed(logs, str(e))
+            await self._mark_failed(logs, str(e))
             await self._finalize_campaign_if_done(campaign_id)
             return 0
 
@@ -176,40 +192,50 @@ class SendService:
             return str(variables.get(key, f"{{{{{key}}}}}"))
         return VARIABLE_PATTERN.sub(replacer, text)
 
-    def _mark_sent(self, logs: list, batch_data: list = None, dry_run: bool = False):
+    async def _mark_sent(self, logs: list, batch_data: list = None, dry_run: bool = False):
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         for i, log in enumerate(logs):
             update = {"status": "sent", "sent_at": now}
             if batch_data and i < len(batch_data):
                 update["resend_message_id"] = batch_data[i].get("id")
-            self.db.table("send_logs").update(update).eq("id", log["id"]).execute()
+            await _aexec(self.db.table("send_logs").update(update).eq("id", log["id"]))
 
         # Update campaign total_sent
         if logs:
             campaign_id = logs[0].get("campaign_id")
             if campaign_id:
-                campaign = self.db.table("campaigns").select("total_sent").eq("id", campaign_id).execute()
+                campaign = await _aexec(
+                    self.db.table("campaigns").select("total_sent").eq("id", campaign_id)
+                )
                 if campaign.data:
                     current = campaign.data[0].get("total_sent", 0)
-                    self.db.table("campaigns").update({
-                        "total_sent": current + len(logs)
-                    }).eq("id", campaign_id).execute()
+                    await _aexec(
+                        self.db.table("campaigns").update({
+                            "total_sent": current + len(logs)
+                        }).eq("id", campaign_id)
+                    )
 
-    def _mark_failed(self, logs: list, error: str):
+    async def _mark_failed(self, logs: list, error: str):
         for log in logs:
-            self.db.table("send_logs").update({
-                "status": "failed", "error_message": error
-            }).eq("id", log["id"]).execute()
+            await _aexec(
+                self.db.table("send_logs").update({
+                    "status": "failed", "error_message": error
+                }).eq("id", log["id"])
+            )
         if logs:
             campaign_id = logs[0].get("campaign_id")
             if campaign_id:
-                campaign = self.db.table("campaigns").select("total_failed").eq("id", campaign_id).execute()
+                campaign = await _aexec(
+                    self.db.table("campaigns").select("total_failed").eq("id", campaign_id)
+                )
                 if campaign.data:
                     current = campaign.data[0].get("total_failed", 0)
-                    self.db.table("campaigns").update({
-                        "total_failed": current + len(logs)
-                    }).eq("id", campaign_id).execute()
+                    await _aexec(
+                        self.db.table("campaigns").update({
+                            "total_failed": current + len(logs)
+                        }).eq("id", campaign_id)
+                    )
 
     async def _finalize_campaign_if_done(self, campaign_id: str) -> None:
         """If no rows remain in 'queued' for this campaign, atomically flip status
@@ -223,21 +249,23 @@ class SendService:
         if not campaign_id:
             return
 
-        remaining = (self.db.table("send_logs")
-                     .select("id", count="exact")
-                     .eq("campaign_id", campaign_id)
-                     .eq("status", "queued")
-                     .limit(1)
-                     .execute())
+        remaining = await _aexec(
+            self.db.table("send_logs")
+            .select("id", count="exact")
+            .eq("campaign_id", campaign_id)
+            .eq("status", "queued")
+            .limit(1)
+        )
         if (remaining.count or 0) > 0:
             return
 
-        flipped = (self.db.table("campaigns")
-                   .update({"status": "enviada",
-                            "completed_at": datetime.now(timezone.utc).isoformat()})
-                   .eq("id", campaign_id)
-                   .neq("status", "enviada")
-                   .execute())
+        flipped = await _aexec(
+            self.db.table("campaigns")
+            .update({"status": "enviada",
+                     "completed_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", campaign_id)
+            .neq("status", "enviada")
+        )
         if not flipped.data:
             return
 

@@ -3,23 +3,23 @@ import { api } from '../../lib/api';
 
 interface Plan {
   id: string;
-  name: string;
+  nome: string;
   slug: string;
-  description: string | null;
+  descricao: string | null;
   price_monthly: number;
   price_yearly: number;
   max_users: number;
   max_products: number;
   features: Record<string, any>;
   is_custom: boolean;
-  is_active: boolean;
+  ativo: boolean;
   created_at: string;
 }
 
 const EMPTY_FORM = {
-  name: '',
+  nome: '',
   slug: '',
-  description: '',
+  descricao: '',
   price_monthly: 0,
   price_yearly: 0,
   max_users: -1,
@@ -56,9 +56,9 @@ export function AdminPlans() {
   function openEdit(plan: Plan) {
     setEditingId(plan.id);
     setFormData({
-      name: plan.name,
+      nome: plan.nome,
       slug: plan.slug,
-      description: plan.description || '',
+      descricao: plan.descricao || '',
       price_monthly: plan.price_monthly,
       price_yearly: plan.price_yearly,
       max_users: plan.max_users,
@@ -130,14 +130,14 @@ export function AdminPlans() {
         {plans.map(plan => (
           <div key={plan.id} className={`bg-card rounded-lg border shadow-sm p-6 ${plan.is_custom ? 'border-warning' : 'border-border'}`}>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-semibold text-foreground">{plan.name}</h3>
+              <h3 className="text-lg font-semibold text-foreground">{plan.nome}</h3>
               {plan.is_custom && (
                 <span className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium bg-warning/10 text-warning">
                   Custom
                 </span>
               )}
             </div>
-            <p className="text-sm text-muted-foreground mb-4">{plan.description || 'Sem descricao'}</p>
+            <p className="text-sm text-muted-foreground mb-4">{plan.descricao || 'Sem descricao'}</p>
             <div className="mb-4">
               <span className="text-2xl font-bold text-foreground">{formatPrice(plan.price_monthly)}</span>
               <span className="text-sm text-muted-foreground">/mes</span>
@@ -179,8 +179,8 @@ export function AdminPlans() {
                 <label className="block text-sm font-medium text-foreground mb-1">Nome</label>
                 <input
                   type="text"
-                  value={formData.name}
-                  onChange={e => setFormData({ ...formData, name: e.target.value })}
+                  value={formData.nome}
+                  onChange={e => setFormData({ ...formData, nome: e.target.value })}
                   placeholder="Ex: Pro"
                   required
                   className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -203,8 +203,8 @@ export function AdminPlans() {
                 <label className="block text-sm font-medium text-foreground mb-1">Descricao</label>
                 <input
                   type="text"
-                  value={formData.description}
-                  onChange={e => setFormData({ ...formData, description: e.target.value })}
+                  value={formData.descricao}
+                  onChange={e => setFormData({ ...formData, descricao: e.target.value })}
                   placeholder="Descricao do plano"
                   className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />

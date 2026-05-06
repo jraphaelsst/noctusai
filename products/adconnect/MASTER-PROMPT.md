@@ -1,73 +1,60 @@
-# AdConnect — MASTER-PROMPT
-
-> Authoritative development guide for the seed reference product.
+# AdConnect -- Master Prompt
 
 ## Purpose
 
-Minimal reference implementation proving the NoctusAI seed framework works end-to-end. The simplest possible product — just the spine, no domain logic. When the seed breaks, the framework broke. When creating a new product, the seed is the pattern to follow.
+B2B marketplace connecting a brand to its distributor network. Distributors log in, browse the brand's catalog at preferential prices, build a cart, place orders, file sellout reports, and earn cashback on qualifying sellout. The brand-side admin manages catalog, distributors, reward rules, and reviews sellout/financial state.
 
 ## Architecture
 
-**Born from the seed framework.** This product has ZERO domain code. Everything comes from the framework.
+- Schema: `adconnect`
+- Backend port: 8007 | Frontend port: 8130
+- Tenant key: `org_id`
+- Auth: TBD by implementation project — current scaffold ships custom JWT for distributor self-registration; the production auth model (single-org SSO vs. distributor-as-external-org) is one of the questions the implementation project resolves.
+- Backend path: `products/adconnect/backend/app/`
+- Frontend path: `products/adconnect/frontend/src/`
 
-### Backend (19 lines in main.py)
+## Key Domains
 
-```
-products/seed/backend/app/
-  main.py              → create_product_app("AdConnect", "adconnect", settings)
-  config.py            → SeedSettings(ProductSettings) — no extra fields
-  database.py          → create_database_module(settings, "adconnect")
-  dependencies.py      → create_dependencies(db)
-  rate_limit.py        → create_product_limiter(settings)
-  routers/             → EMPTY — framework provides health, team, notifications
-```
+### Catalog and ordering
+- **products** -- brand catalog browsing with category, search, sort, in-stock filtering. Today reads from `app/data/products.json`.
+- **cart** -- per-distributor cart, line-level quantity edits, totals. Today in-memory in `store.users` / `store.orders`.
+- **orders** -- order placement (cart → order), order history, status lifecycle.
 
-### Frontend (App.tsx uses framework factories)
+### Rewards and sellout
+- **sellout** -- distributors file sellout reports (the input that proves resale to end-customer). Today reads `app/data/sellout-reports.json`.
+- **rewards** -- cashback rules + accrual ledger; reward rules live in `app/data/reward-rules.json`. The accrual logic is a candidate for `noctusai_lib.domain.rewards` extraction once it stabilises (recurrence rule will fire on N=2 if mailing/PF use a similar engine).
 
-```
-products/seed/frontend/src/
-  App.tsx              → createProductApp() + createProductLayout()
-  vite.config.ts       → createViteConfig({ port: 8130 }) — 3 lines
-  pages/               → Dashboard (stack status), Equipe (team), Landing, Login, etc.
-  hooks/               → useNotificacoes (from seed lib)
-  components/          → NotificationBell, ErrorBoundary, AuthProvider (from seed lib)
-  NO Layout.tsx        → framework provides it via createProductLayout()
-```
+### Brand-side operations
+- **financial** -- invoices, payment terms, ledger of charges/payments. Today reads `app/data/invoices.json`.
+- **distributors** -- distributor account list and detail; brand admin views and manages.
+- **admin** -- brand-side administration surface.
 
-### Database
+### Auth
+- **auth** -- login + registration for distributors. Custom JWT scaffolded; password hashing in `app/security.py`; current state seeds in-memory users via `_seed_users()`.
 
-Schema: `seed` — only `status_pagina` (feature flags) and `invitations` (team invites). Zero domain tables.
+## Current state — pre-implementation
 
-## What the framework provides automatically
+The backend routers and JSON-backed store are **scaffolded mock state from an early absorption**. They demonstrate the intended shape of the domain but are not production. Specifically:
 
-- `/api/health` — health check
-- `/api/team` — team management (invite, accept, list, cancel, remove)
-- `/api/notificacoes` — notification proxy to core
-- CORS, Sentry, exception handlers, middleware, rate limiting, logging
-- Sidebar, Header, AppShell, page status filtering, SSO context, trial/license warnings
-- TooltipProvider, QueryClientProvider, AuthProvider, ErrorBoundary, Suspense
+- All 9 routers route through `app/data/store.py` (JSON files loaded once at process start, mutations held in process memory — lost on restart).
+- Migration `001_adconnect.sql` creates only the framework tables (`status_pagina`, `invitations`); **zero domain tables exist in Supabase yet**.
+- The frontend has no domain pages — only the seed-provided Dashboard, Equipe, Login, Landing, etc. No catalog UI, cart UI, order history UI, rewards UI, sellout UI.
+- Tests cover only the framework (health, team) — no domain test coverage.
 
-## Template Auto-Sync
-
-The seed is the source for `templates/product-seed/`. Post-commit hook runs `scripts/sync-seed-template.sh`:
-1. Copies seed → template
-2. Replaces values with `{{PLACEHOLDERS}}`
-3. Template always in sync
-
-Do NOT edit `templates/product-seed/` directly.
+The implementation project replaces the mock routers with Supabase-backed services, adds RLS, ships the domain frontend, and lands tests. **See `products/adconnect/projects/<slug>/PROJECT.md` once filed for the full scope and phase plan.**
 
 ## Rules
 
-- Keep the seed minimal — zero domain logic
-- Any new framework feature must work in the seed first
-- Changes to the seed propagate to the template automatically
-- 6 tests must always pass
+- The seed framework is non-negotiable — all domain routers stay attached through `create_product_app()`'s `routers=[...]` seam (already correct in `main.py`). Never re-wire CORS, exception handlers, or middleware locally.
+- Mock JSON state is throwaway — the implementation project is responsible for deriving DB schema FROM the mock shapes (don't ossify the mock shapes; treat them as informative, not authoritative).
+- Recurrence on rewards/sellout/financial primitives must absorb to `noctusai_lib.domain.*` per the recurrence rule if mailing/PF/ERP grow similar engines.
+- LGPD-first applies to distributor data (CNPJ, addresses, financial state) — the implementation project owns the data-class flagging.
 
 ## Testing
 
 ```bash
-cd products/seed/backend && pytest  # 6 tests
-cd products/seed/frontend && npx vite build  # must build clean
+cd products/adconnect/backend && pytest
+cd products/adconnect/frontend && npx vite build
 ```
 
 ## Dependencies

@@ -24,9 +24,9 @@ interface OnboardingStatus {
 
 interface Plan {
   id: string;
-  name: string;
+  nome: string;
   slug: string;
-  description: string;
+  descricao: string;
   price_monthly: number;
 }
 
@@ -347,9 +347,9 @@ export function Onboarding() {
                       }`}
                       onClick={() => setSelectedPlan(plan.id)}
                     >
-                      <h3 className="font-semibold text-foreground">{plan.name}</h3>
+                      <h3 className="font-semibold text-foreground">{plan.nome}</h3>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {plan.description || 'Plano ' + plan.name}
+                        {plan.descricao || 'Plano ' + plan.nome}
                       </p>
                       <div className="mt-3">
                         <span className="text-lg font-bold text-foreground">

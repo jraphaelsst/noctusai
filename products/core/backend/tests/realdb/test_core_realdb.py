@@ -182,6 +182,108 @@ class TestAuditLogInsertAndFilter:
         assert creates[0]["action"] == "create"
 
 
+class TestLicenseProvisioningTrigger:
+    """Verify the on_license_change trigger fires successfully end-to-end.
+
+    Regression guard for the 2026-04-09 → 2026-05-05 outage where the trigger
+    referenced products.name (column is `nome`). PL/pgSQL parses function
+    bodies lazily, so the bad column was only surfaced on the first license
+    INSERT after deploy. This test seeds a real noctus_user (so the trigger's
+    INSERT...SELECT into notifications has rows to scan), then asserts the
+    notification was created — proving the COALESCE subquery resolved.
+    """
+
+    def test_grant_fires_notification_with_product_nome(self, admin_db, test_org, cleanup):
+        # Seed a noctus_user in the org — required so the trigger's
+        # INSERT INTO notifications SELECT ... FROM noctus_users WHERE org_id = ...
+        # has at least one row, which forces the COALESCE subquery to evaluate.
+        user_id = str(uuid.uuid4())
+        admin_db.table("noctus_users").insert({
+            "id": user_id,
+            "email": f"trigger-{user_id[:8]}@realdb.test",
+            "nome": "Trigger Test User",
+            "org_id": test_org["id"],
+            "role": "user",
+        }).execute()
+        cleanup.append(("noctus_users", user_id))
+
+        product_nome = f"Trigger Product {uuid.uuid4().hex[:6]}"
+        product = admin_db.table("products").insert({
+            "nome": product_nome,
+            "slug": f"trigger-prod-{uuid.uuid4().hex[:8]}",
+            "url_base": "http://localhost:9999",
+        }).execute().data[0]
+        cleanup.append(("products", product["id"]))
+
+        # The trigger fires on this insert. If the PL/pgSQL body has a bad
+        # column ref (e.g. `name` instead of `nome`), the API call raises.
+        lic = admin_db.table("licenses").insert({
+            "org_id": test_org["id"],
+            "product_id": product["id"],
+            "status": "active",
+        }).execute().data[0]
+        cleanup.append(("licenses", lic["id"]))
+
+        # Verify the trigger composed a notification using products.nome.
+        notifs = admin_db.table("notifications") \
+            .select("title, message, metadata") \
+            .eq("user_id", user_id) \
+            .eq("org_id", test_org["id"]) \
+            .eq("type", "system") \
+            .execute().data
+
+        granted = [n for n in notifs if (n.get("metadata") or {}).get("license_id") == lic["id"]]
+        assert len(granted) == 1, f"expected 1 grant notification for license {lic['id']}, got {len(granted)}: {notifs}"
+        assert product_nome in granted[0]["message"], \
+            f"notification message {granted[0]['message']!r} should include product nome {product_nome!r}"
+        # Cleanup the notification (cascade may have left it)
+        for n in granted:
+            try:
+                admin_db.table("notifications").delete().eq("user_id", user_id).execute()
+                break
+            except Exception:
+                pass
+
+    def test_revoke_does_not_raise(self, admin_db, test_org, cleanup):
+        """Revoke path goes through deprovision_product — separate codepath."""
+        user_id = str(uuid.uuid4())
+        admin_db.table("noctus_users").insert({
+            "id": user_id,
+            "email": f"revoke-{user_id[:8]}@realdb.test",
+            "nome": "Revoke Test User",
+            "org_id": test_org["id"],
+            "role": "user",
+        }).execute()
+        cleanup.append(("noctus_users", user_id))
+
+        product = admin_db.table("products").insert({
+            "nome": "Revoke Trigger Product",
+            "slug": f"revoke-prod-{uuid.uuid4().hex[:8]}",
+            "url_base": "http://localhost:9999",
+        }).execute().data[0]
+        cleanup.append(("products", product["id"]))
+
+        lic = admin_db.table("licenses").insert({
+            "org_id": test_org["id"],
+            "product_id": product["id"],
+            "status": "active",
+        }).execute().data[0]
+        cleanup.append(("licenses", lic["id"]))
+
+        # The UPDATE → revoked branch invokes deprovision_product(v_org_id, v_slug).
+        admin_db.table("licenses") \
+            .update({"status": "revoked"}) \
+            .eq("id", lic["id"]) \
+            .execute()
+        # Best assert is "no exception raised" — the API call would have raised
+        # if the trigger errored. Re-read to confirm state.
+        after = admin_db.table("licenses") \
+            .select("status").eq("id", lic["id"]).single().execute().data
+        assert after["status"] == "revoked"
+
+        admin_db.table("notifications").delete().eq("user_id", user_id).execute()
+
+
 class TestPostgRESTErrors:
     """.single() on 0 rows raises a real APIError (PGRST116)."""
 

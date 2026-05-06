@@ -10,6 +10,7 @@ seed-side primitive (`noctusai_lib.api.scheduler`).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -34,55 +35,67 @@ async def send_loop_job():
         logger.error("Send loop error: %s", e)
 
 
+def _scheduled_campaigns_sync():
+    db = get_admin_client()
+    now = datetime.now(timezone.utc).isoformat()
+    result = (db.table("campaigns").select("id, org_id")
+              .eq("status", "agendada")
+              .lte("scheduled_at", now)
+              .execute())
+
+    campaigns = result.data or []
+    if not campaigns:
+        return
+
+    svc = SendService(db, settings)
+    for campaign in campaigns:
+        cid = campaign["id"]
+        org_id = campaign["org_id"]
+        db.table("campaigns").update({
+            "status": "enviando",
+            "started_at": now,
+        }).eq("id", cid).execute()
+        queued = svc.queue_campaign_sends(cid, org_id)
+        logger.info("Scheduled campaign %s started — %d sends queued", cid, queued)
+
+
 async def scheduled_campaigns_job():
-    """Check for campaigns with scheduled_at <= now and trigger sending."""
+    """Check for campaigns with scheduled_at <= now and trigger sending.
+
+    Body runs in a worker thread so a hung Supabase call (network blip,
+    DNS failure, dropped keep-alive) does not freeze the asyncio loop and
+    starve the other scheduled jobs.
+    """
     try:
-        db = get_admin_client()
-        now = datetime.now(timezone.utc).isoformat()
-        result = (db.table("campaigns").select("id, org_id")
-                  .eq("status", "agendada")
-                  .lte("scheduled_at", now)
-                  .execute())
-
-        campaigns = result.data or []
-        if not campaigns:
-            return
-
-        svc = SendService(db, settings)
-        for campaign in campaigns:
-            cid = campaign["id"]
-            org_id = campaign["org_id"]
-            db.table("campaigns").update({
-                "status": "enviando",
-                "started_at": now,
-            }).eq("id", cid).execute()
-            queued = svc.queue_campaign_sends(cid, org_id)
-            logger.info("Scheduled campaign %s started — %d sends queued", cid, queued)
-
+        await asyncio.to_thread(_scheduled_campaigns_sync)
     except Exception as e:
         logger.error("Scheduled campaigns job error: %s", e)
+
+
+def _automation_processor_sync():
+    db = get_admin_client()
+    now = datetime.now(timezone.utc).isoformat()
+    result = (db.table("automation_enrollments").select("*")
+              .eq("status", "active")
+              .lte("next_action_at", now)
+              .limit(50)
+              .execute())
+
+    enrollments = result.data or []
+    if enrollments:
+        logger.info("Automation processor: %d enrollments to process", len(enrollments))
+        # TODO: implement step execution when automation_service is built
 
 
 async def automation_processor_job():
     """Process automation enrollments with next_action_at <= now.
 
+    Body runs in a worker thread (see `scheduled_campaigns_job`).
     Placeholder — full automation step execution will be implemented
     when the automation service is complete.
     """
     try:
-        db = get_admin_client()
-        now = datetime.now(timezone.utc).isoformat()
-        result = (db.table("automation_enrollments").select("*")
-                  .eq("status", "active")
-                  .lte("next_action_at", now)
-                  .limit(50)
-                  .execute())
-
-        enrollments = result.data or []
-        if enrollments:
-            logger.info("Automation processor: %d enrollments to process", len(enrollments))
-            # TODO: implement step execution when automation_service is built
-
+        await asyncio.to_thread(_automation_processor_sync)
     except Exception as e:
         logger.error("Automation processor error: %s", e)
 

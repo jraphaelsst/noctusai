@@ -114,7 +114,7 @@ def start_subscription(
     if not price_id:
         raise HTTPException(
             status_code=422,
-            detail=f"Plano '{plan.data['name']}' nao possui preco Stripe configurado para ciclo {billing_cycle}.",
+            detail=f"Plano '{plan.data['nome']}' nao possui preco Stripe configurado para ciclo {billing_cycle}.",
         )
 
     # Customer

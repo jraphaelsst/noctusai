@@ -1,6 +1,8 @@
 """Unit tests for SendService."""
 from unittest.mock import MagicMock
 
+import pytest
+
 from noctusai_lib.testing import MockSupabaseClient, MockSupabaseResponse
 
 from app.services.send_service import SendService
@@ -119,7 +121,8 @@ class TestRender:
 # ---------------------------------------------------------------------------
 
 class TestMarkSent:
-    def test_updates_status_to_sent(self):
+    @pytest.mark.asyncio
+    async def test_updates_status_to_sent(self):
         db = MockSupabaseClient()
         db.set_table_data("send_logs", [{"id": "sl1"}])
         db.set_table_data("campaigns", [{"id": "c1", "total_sent": 0}])
@@ -128,9 +131,10 @@ class TestMarkSent:
         logs = [{"id": "sl1", "campaign_id": "c1"}]
 
         # Should not raise
-        svc._mark_sent(logs)
+        await svc._mark_sent(logs)
 
-    def test_mark_sent_with_batch_data(self):
+    @pytest.mark.asyncio
+    async def test_mark_sent_with_batch_data(self):
         db = MockSupabaseClient()
         db.set_table_data("send_logs", [{"id": "sl1"}])
         db.set_table_data("campaigns", [{"id": "c1", "total_sent": 5}])
@@ -139,13 +143,14 @@ class TestMarkSent:
         logs = [{"id": "sl1", "campaign_id": "c1"}]
         batch_data = [{"id": "resend-msg-123"}]
 
-        svc._mark_sent(logs, batch_data=batch_data)
+        await svc._mark_sent(logs, batch_data=batch_data)
 
-    def test_mark_sent_empty_logs(self):
+    @pytest.mark.asyncio
+    async def test_mark_sent_empty_logs(self):
         db = MockSupabaseClient()
         svc = SendService(db, _make_settings())
         # Should not raise on empty list
-        svc._mark_sent([])
+        await svc._mark_sent([])
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +158,8 @@ class TestMarkSent:
 # ---------------------------------------------------------------------------
 
 class TestMarkFailed:
-    def test_updates_status_to_failed_with_error(self):
+    @pytest.mark.asyncio
+    async def test_updates_status_to_failed_with_error(self):
         db = MockSupabaseClient()
         db.set_table_data("send_logs", [{"id": "sl1"}])
         db.set_table_data("campaigns", [{"id": "c1", "total_failed": 0}])
@@ -161,14 +167,16 @@ class TestMarkFailed:
         svc = SendService(db, _make_settings())
         logs = [{"id": "sl1", "campaign_id": "c1"}]
 
-        svc._mark_failed(logs, "Connection timeout")
+        await svc._mark_failed(logs, "Connection timeout")
 
-    def test_mark_failed_empty_logs(self):
+    @pytest.mark.asyncio
+    async def test_mark_failed_empty_logs(self):
         db = MockSupabaseClient()
         svc = SendService(db, _make_settings())
-        svc._mark_failed([], "some error")
+        await svc._mark_failed([], "some error")
 
-    def test_mark_failed_multiple_logs(self):
+    @pytest.mark.asyncio
+    async def test_mark_failed_multiple_logs(self):
         db = MockSupabaseClient()
         db.set_table_data("send_logs", [{"id": "sl1"}, {"id": "sl2"}])
         db.set_table_data("campaigns", [{"id": "c1", "total_failed": 3}])
@@ -178,7 +186,7 @@ class TestMarkFailed:
             {"id": "sl1", "campaign_id": "c1"},
             {"id": "sl2", "campaign_id": "c1"},
         ]
-        svc._mark_failed(logs, "API rate limit")
+        await svc._mark_failed(logs, "API rate limit")
 
 
 # ---------------------------------------------------------------------------

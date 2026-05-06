@@ -88,16 +88,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_licenses_one_active_per_org_product
 -------------------------------------------------
 CREATE TABLE IF NOT EXISTS plans (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
+    nome TEXT NOT NULL,
     slug TEXT UNIQUE NOT NULL,
-    description TEXT,
+    descricao TEXT,
     price_monthly NUMERIC NOT NULL DEFAULT 0,
     price_yearly NUMERIC NOT NULL DEFAULT 0,
     max_users INT NOT NULL DEFAULT -1,
     max_products INT NOT NULL DEFAULT -1,
     features JSONB NOT NULL DEFAULT '{}',
     is_custom BOOLEAN NOT NULL DEFAULT false,
-    is_active BOOLEAN NOT NULL DEFAULT true,
+    ativo BOOLEAN NOT NULL DEFAULT true,
     stripe_price_id_monthly TEXT,
     stripe_price_id_yearly TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -460,7 +460,7 @@ CREATE POLICY "invitations_service" ON invitations
 -------------------------------------------------
 
 -- Default plans
-INSERT INTO plans (name, slug, description, price_monthly, price_yearly, max_users, max_products, is_active)
+INSERT INTO plans (nome, slug, descricao, price_monthly, price_yearly, max_users, max_products, ativo)
 VALUES
     ('Free', 'free', 'Plano gratuito com recursos básicos', 0, 0, 3, 1, true),
     ('Pro', 'pro', 'Plano profissional para equipes', 99, 990, 15, 5, true),
@@ -579,7 +579,7 @@ BEGIN
     INSERT INTO public.notifications (user_id, org_id, type, title, message, metadata)
     SELECT nu.id, v_org_id, 'system',
       'Novo produto disponível',
-      'Sua organização agora tem acesso ao ' || COALESCE((SELECT name FROM public.products WHERE id = NEW.product_id), v_slug) || '!',
+      'Sua organização agora tem acesso ao ' || COALESCE((SELECT nome FROM public.products WHERE id = NEW.product_id), v_slug) || '!',
       jsonb_build_object('product', v_slug, 'license_id', NEW.id, 'action', 'granted')
     FROM public.noctus_users nu WHERE nu.org_id = v_org_id;
   ELSIF TG_OP = 'UPDATE' AND OLD.status = 'active' AND NEW.status = 'revoked' THEN

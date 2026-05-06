@@ -37,43 +37,62 @@ A project lives in root `projects/` when its scope is:
 
 If the project is scoped to a single product, move it under that product. If it is scoped to `core/` (auth, SSO, billing, orgs, entitlements), move it under `core/projects/`.
 
-## Current root-level projects (snapshot 2026-05-03)
+## Current root-level projects (snapshot 2026-05-04)
 
-> Recently closed + deleted (2026-05-03): `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1 close; Phases 2-5 deferred per §7 Q6 reactivation triggers — see git history for the original PROJECT.md), `scheduling-engine-seed` (lib landed at `noctusai_lib.domain.scheduling`; KB doc at `KB § PATTERNS/scheduling-seed.md`; therapy-scheduling-pilot scaffolded as second-consumer follow-up), `mcp-server-fastmcp-switch` (Phase 4 vendor ports + Phase 5 verification — commits `dc5de6a` + `cf87f1d`; carry-forward of `mcp-server-expansion` Phase 4+5 now satisfied), `mcp-tool-name-deprecation` (single-session ram-through closing all 3 phases — 53 dotted dev tools, 0 flat `noctusai_<x>` remain, 261 consumer references migrated; commits `2d2ec68` + `a7a2d03` + `46baf38`; KB convention doc at `KB § PATTERNS/mcp-tool-conventions.md` Backward-compat aliases section marked HISTORICAL retired 2026-05-03). Carry-forward projects remaining: `whatsapp-seed-absorption` Phase 5 (llm-tool-call-audit Phase 4). Folder removed in working tree pending commit: `repo-state-consolidation` (deletions staged 2026-05-03).
+> **Sweep this session (2026-05-04):** archived 6 projects to `archive/projects/2026-05-04/` —
+> `metas-domain-seed-absorption` (NN 03; 27/27 ✅ closed 2026-05-03),
+> `daily-life-goals-seed-wiring` (NN 04; 13/13 ✅),
+> `erp-metas-seed-wiring` (NN 05; 25/25 ✅),
+> `session-review-baseline` (NN 06; 5 phases ✅; harness live at `cli.py --review-session`),
+> `dev-observability-bot-future-direction` (NN 07; design preserved in archive),
+> `user-context-bot-future-direction` (NN 08; design preserved in archive).
+>
+> **Earlier closes (2026-05-03 + 2026-05-04 prior to this sweep):** `methodology-extraction`, `llm-tool-call-audit`, `mcp-server-expansion`, `vista-api-mcp` (Phase 1; Phases 2-5 deferred per §7 Q6 reactivation triggers), `scheduling-engine-seed` (lib at `noctusai_lib.domain.scheduling`; KB at `KB § PATTERNS/scheduling-seed.md`), `mcp-server-fastmcp-switch` (commits `dc5de6a` + `cf87f1d`), `mcp-tool-name-deprecation` (53 dotted dev tools; 0 flat `noctusai_<x>` remain), `whatsapp-seed-absorption`, `products-wiring-rollout`, `agno-dev-team-future-direction`, `erp-schema-drift-deep-audit`, `repo-state-consolidation`, `make-get-current-user-org-factory`, `media-scheduling-port`. See `git log` + `archive/projects/` for full history.
+
+### 🟢 DONE — awaits orchestrator FF-merge to main (HIGH-LEVERAGE ACTIONABLE)
+
+These projects are committed but on local branches; archive after the FF-merge lands.
+
+| Slug | Branch | What's pending |
+|---|---|---|
+| `pf-metas-seed-wiring` | `pf-metas-seed-wiring` | Phase 0+1+2(collapsed)+3 ✅; branch awaits orchestrator fast-forward into `main` per [orchestrator-merges-to-main role](feedback_orchestrator_role.md). 16/19 sub-tasks (3 unchecked are §3a N/A litmus). |
+| `seed-shadow-purge-helper-lift` | committed onto `findings-close-batch-1d` | Phases 1–5 ✅; helper lifted, 4 conftests rewired, 665+584+235+1819 tests green; final-commit + branch-push step un-ticked at line 254. |
 
 ### ⏳ Active in-flight (work underway; next step well-defined)
 
 | Slug | Title | Next concrete step |
 |---|---|---|
-| `absorbed-projects-batch` | Cross-cutting absorption batch coordinator | Tier 1.c → execute `scheduling-engine-seed` Phase 0; Tier 1.d → execute `whatsapp-seed-absorption` Phase 0 |
-| `erp-schema-drift-deep-audit` | ERP-side schema-drift remediation | Phase 1 ✅ (profiles.org_id security fix); Phase 2 (11-table audit) awaits user §7 sign-off on org-scoping model |
-| `main-core-migrations-batch` | Core migrations batch coordinator | Phase 0 ✅; Tier 1 staleness audit pending (note: `repo-state-consolidation` folder retired in working tree — see top footnote; coordinator may need its blocker text updated by the project's owner agent) |
+| `agno-dev-team-rollout` | Agno-based dev-team agent rollout | B0 + B1 ✅; engineer dispatch (8 parallel) imminent for B2. Most active root project. |
+| `absorbed-projects-batch` | Cross-cutting absorption batch coordinator | Tier 1 in progress (22/65); Tier 2 ✅; Tier 4 confirmed deferred. |
+| `main-core-migrations-batch` | Core migrations batch coordinator | Phase 0+1+2.a+3.a ✅ (Phase 1 Path B subsumed; Phase 2.a child re-scoped + filed standalone); Phase 3.a child §-progress in progress (19/57). |
+| `in-flight-execution-rollout` | In-flight execution batch dispatcher | Phase 0 ✅ (filed); Phases 1+ orchestrator-driven (batch dispatch + sync-gates). Activates only when batches dispatch. |
 
-### 🟡 Phase-0-ready (scaffolded; awaits focused-session pickup)
+### 🟡 Filed + ready for execution (scaffolded; awaits focused-session pickup)
 
 | Slug | Title | Blocker |
 |---|---|---|
-| `whatsapp-seed-absorption` | WhatsApp framework absorption + idempotency-keys | none — Phase 0 ready |
-| `imobi-scheduling-bot-creation` | Imobi scheduling bot creation | downstream of `scheduling-engine-seed` + `whatsapp-seed-absorption` |
-| `session-review-baseline` | Session-axis review (JSONL transcript detector) | filed-only per user directive; awaits explicit reactivation |
-| `send-message-consolidation` | N=2 `send_message` collision (ERP + therapy WhatsApp) → seed-lib `send_text` consolidation | blocked on `whatsapp-seed-absorption` Phase 1 (lib must exist) |
-| `products-wiring-rollout` | Cross-product wiring sweep coordinator (PF + ERP in **parallel batches**; therapy = input/pilot) | scaffolded 2026-05-03 + restructured same day to parallel-batch model (`KB § PATTERNS/master-tree-parallel-batches.md`); §7 closed; B0 dispatch in flight |
+| `ai-plumbing-seed-absorption` | AI plumbing absorption into seed | Phase 0 ✅ (12/15); Phase 1 ready — closest to a pickup-and-finish. |
+| `strict-mode-migration` | TypeScript strict mode across all frontends | Phase 0 ✅ (3 findings inlined); Phases 1–4 ready for a separate agent / future session. |
+| `imobi-scheduling-bot-creation` | Imobi scheduling bot creation | Design captured (15 phases planned, 0/73); Phase 0 awaits user trigger + slug confirmation. |
 
-### 🔵 Concept-stage / interrogation pending
+### 🔵 Awaits user input (cheap to unblock — minutes from you)
 
 | Slug | Title | Gate |
 |---|---|---|
-| `project-history-ledger` | Long-term project ledger (audit trail across closed projects) | §7 user interrogation pending before Phase 0 |
-| `adconnect-migration` | AdConnect B2B marketplace migration into seed framework | Product description only; no PROJECT.md phase structure yet |
+| `erp-org-scoping-completion` | ERP org-scoping model completion | Phase 0 ✅ (audit landed); Phase 1+ awaits user §7 design-decision sign-off. |
+| `project-history-ledger` | Long-term project ledger (audit trail across closed projects) | §1, §2, §5 (sketch), §7 populated; §6 intentionally empty — interrogation pending. |
 
-### ⚪ Future-direction / deferred (design only — no execution scheduled)
+### 🅿️ Parked on dependency
+
+| Slug | Title | Gate |
+|---|---|---|
+| `send-message-consolidation` | N=2 `send_message` collision → seed-lib `send_text` consolidation | gated on `whatsapp-seed-absorption` Phase 1 (canonical `noctusai_lib.integrations.whatsapp.send_text()` must exist). 1/24. |
+
+### 📦 Filed product migration (no execution scheduled; substantive plan exists)
 
 | Slug | Title | Status |
 |---|---|---|
-| `agno-dev-team-future-direction` | Agno-based dev-team agent system | Deferred; design preserved |
-| `dev-observability-bot-future-direction` | Dev observability bot | Deferred; design preserved |
-| `user-context-bot-future-direction` | User context bot | Deferred; design preserved |
-| `strict-mode-migration` | TypeScript strict mode across all frontends | Deferred to v2.4 stabilization |
+| `adconnect-migration` | AdConnect B2B marketplace migration into seed framework | Full domain spec (99 sub-tasks); 1/99 done; not yet a phase-structured PROJECT.md. |
 
 ## Product-scoped projects (not here)
 

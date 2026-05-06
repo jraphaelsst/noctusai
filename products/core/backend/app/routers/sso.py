@@ -41,6 +41,7 @@ router = APIRouter(prefix="/api/sso", tags=["SSO"])
 # product gets the same cache with the same concurrency semantics.
 
 from noctusai_lib.api.auth import SSOSessionCache
+from noctusai_lib.api.product_urls import resolve_product_url
 
 _CACHE_TTL = 300  # 5 min — above 60s Supabase rate limit, tight on staleness
 
@@ -191,8 +192,15 @@ async def launch_product(product_slug: str, authorization: Optional[str] = Heade
         org_role=org_role,
     )
 
-    # Redirect to product with token
-    redirect_url = f"{product.data['url_base']}/sso?token={sso_token}"
+    # Redirect to product with token. Resolved through the seed-side
+    # `resolve_product_url` so a deploy can override the DB-stored
+    # localhost URL via PRODUCT_URL_<UPPER_SLUG> or PRODUCT_URL_PATTERN
+    # without rewriting public.products rows on every environment.
+    url_base = resolve_product_url(
+        product_slug,
+        db_url_base=product.data.get("url_base"),
+    )
+    redirect_url = f"{url_base}/sso?token={sso_token}"
     return RedirectResponse(url=redirect_url, status_code=302)
 
 

@@ -46,6 +46,15 @@ Exactly one trigger flavor per call. `cron` is a cron expression string
 **Replace-existing semantics.** All `add_job(..., replace_existing=True)`
 so re-import / hot-reload is idempotent.
 
+**Misfire policy.** Every job is registered with `misfire_grace_time=30,
+coalesce=True, max_instances=1`. Transient blips (laptop sleep, DNS
+hiccup, blocked event loop) up to 30s no longer flood logs with
+"Run time of job ... was missed" warnings; stacked-up missed runs
+collapse into a single replay; one job instance never overlaps itself.
+Jobs that legitimately need different semantics (e.g. concurrent send
+batches, no coalescing) should not use this primitive — author a
+dedicated APScheduler instance instead.
+
 **CI safety.** The FastAPI `TestClient` skips lifespan unless invoked as a
 context manager, which existing product test suites don't do. So
 `start_scheduler()` doesn't fire during pytest. The
@@ -120,6 +129,9 @@ def register(
         trigger=trigger,
         id=name,
         replace_existing=True,
+        misfire_grace_time=30,
+        coalesce=True,
+        max_instances=1,
     )
 
 

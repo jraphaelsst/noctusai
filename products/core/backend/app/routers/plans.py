@@ -7,31 +7,7 @@ POST   /api/plans          — Create plan (admin only)
 PATCH  /api/plans/{id}     — Update plan (admin only)
 DELETE /api/plans/{id}     — Soft delete plan (admin only)
 
--- Supabase SQL to create the plans table:
---
--- CREATE TABLE plans (
---   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
---   name text NOT NULL,
---   slug text UNIQUE NOT NULL,
---   description text,
---   price_monthly numeric NOT NULL DEFAULT 0,
---   price_yearly numeric NOT NULL DEFAULT 0,
---   max_users int NOT NULL DEFAULT -1,
---   max_products int NOT NULL DEFAULT -1,
---   features jsonb NOT NULL DEFAULT '{}',
---   is_custom boolean NOT NULL DEFAULT false,
---   is_active boolean NOT NULL DEFAULT true,
---   stripe_price_id_monthly text,
---   stripe_price_id_yearly text,
---   created_at timestamptz NOT NULL DEFAULT now(),
---   updated_at timestamptz NOT NULL DEFAULT now()
--- );
---
--- ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
--- CREATE POLICY "plans_read" ON plans FOR SELECT TO authenticated USING (true);
--- CREATE POLICY "plans_admin_write" ON plans FOR ALL USING (
---   auth.uid() IN (SELECT id FROM noctus_users WHERE role = 'admin')
--- );
+Schema is defined in products/core/backend/migrations/001_noctusai_core.sql.
 """
 import logging
 from typing import Optional
@@ -46,9 +22,9 @@ router = APIRouter(prefix="/api/plans", tags=["Plans"])
 
 
 class PlanCreate(BaseModel):
-    name: str = Field(..., max_length=100)
+    nome: str = Field(..., max_length=100)
     slug: str = Field(..., max_length=50)
-    description: Optional[str] = None
+    descricao: Optional[str] = None
     price_monthly: float = Field(default=0, ge=0)
     price_yearly: float = Field(default=0, ge=0)
     max_users: int = Field(default=-1)
@@ -60,8 +36,8 @@ class PlanCreate(BaseModel):
 
 
 class PlanUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=100)
-    description: Optional[str] = None
+    nome: Optional[str] = Field(default=None, max_length=100)
+    descricao: Optional[str] = None
     price_monthly: Optional[float] = Field(default=None, ge=0)
     price_yearly: Optional[float] = Field(default=None, ge=0)
     max_users: Optional[int] = None
@@ -78,7 +54,7 @@ async def listar_plans(authorization: Optional[str] = Header(None)):
     await get_current_user(authorization)
     db = get_admin_client()
 
-    result = db.table("plans").select("*").eq("is_active", True).order("price_monthly").execute()
+    result = db.table("plans").select("*").eq("ativo", True).order("price_monthly").execute()
     return {"data": result.data or []}
 
 
@@ -106,13 +82,13 @@ async def criar_plan(body: PlanCreate, authorization: Optional[str] = Header(Non
         raise HTTPException(status_code=409, detail="Já existe um plano com este slug")
 
     data = body.model_dump(exclude_none=True)
-    data["is_active"] = True
+    data["ativo"] = True
 
     result = db.table("plans").insert(data).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao criar plano")
 
-    logger.info(f"Plan created: {body.name}")
+    logger.info(f"Plan created: {body.nome}")
     return {"data": result.data[0]}
 
 
@@ -140,7 +116,7 @@ async def deletar_plan(plan_id: str, authorization: Optional[str] = Header(None)
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("plans").update({"is_active": False}).eq("id", plan_id).execute()
+    result = db.table("plans").update({"ativo": False}).eq("id", plan_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Plano não encontrado")
 

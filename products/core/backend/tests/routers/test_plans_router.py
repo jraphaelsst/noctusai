@@ -18,8 +18,8 @@ class TestListPlans:
     def test_list_plans_success(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("plans", [
-            {"id": "plan-1", "name": "Free", "slug": "free", "price_monthly": 0},
-            {"id": "plan-2", "name": "Pro", "slug": "pro", "price_monthly": 99},
+            {"id": "plan-1", "nome": "Free", "slug": "free", "price_monthly": 0},
+            {"id": "plan-2", "nome": "Pro", "slug": "pro", "price_monthly": 99},
         ])
 
         resp = client.get("/api/plans")
@@ -50,7 +50,7 @@ class TestGetPlan:
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("plans", {
             "id": "plan-1",
-            "name": "Pro",
+            "nome": "Pro",
             "slug": "pro",
             "price_monthly": 99,
         })
@@ -58,7 +58,7 @@ class TestGetPlan:
         resp = client.get("/api/plans/plan-1")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["name"] == "Pro"
+        assert data["nome"] == "Pro"
 
     def test_get_plan_not_found(self, client):
         mock_sb = client.mock_supabase
@@ -82,39 +82,39 @@ class TestCreatePlan:
             [
                 {
                     "id": "new-plan",
-                    "name": "Enterprise",
+                    "nome": "Enterprise",
                     "slug": "enterprise",
                     "price_monthly": 299,
-                    "is_active": True,
+                    "ativo": True,
                 }
             ],
         ])
 
         resp = admin_client.post("/api/plans", json={
-            "name": "Enterprise",
+            "nome": "Enterprise",
             "slug": "enterprise",
             "price_monthly": 299,
         })
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["name"] == "Enterprise"
+        assert data["nome"] == "Enterprise"
 
     def test_create_plan_forbidden_for_non_admin(self, client):
         resp = client.post("/api/plans", json={
-            "name": "Enterprise",
+            "nome": "Enterprise",
             "slug": "enterprise",
         })
         assert resp.status_code == 403
 
     def test_create_plan_missing_required_fields(self, admin_client):
         resp = admin_client.post("/api/plans", json={
-            "name": "Incomplete",
+            "nome": "Incomplete",
         })
         assert resp.status_code == 422
 
     def test_create_plan_negative_price(self, admin_client):
         resp = admin_client.post("/api/plans", json={
-            "name": "Bad Plan",
+            "nome": "Bad Plan",
             "slug": "bad",
             "price_monthly": -10,
         })
@@ -122,7 +122,7 @@ class TestCreatePlan:
 
     def test_create_plan_unauthenticated(self, unauth_client):
         resp = unauth_client.post("/api/plans", json={
-            "name": "Test",
+            "nome": "Test",
             "slug": "test",
         })
         assert resp.status_code == 401
@@ -136,19 +136,19 @@ class TestUpdatePlan:
     def test_update_plan_as_admin(self, admin_client):
         mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("plans", [
-            {"id": "plan-1", "name": "Pro Updated", "price_monthly": 149},
+            {"id": "plan-1", "nome": "Pro Updated", "price_monthly": 149},
         ])
 
         resp = admin_client.patch("/api/plans/plan-1", json={
-            "name": "Pro Updated",
+            "nome": "Pro Updated",
             "price_monthly": 149,
         })
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["name"] == "Pro Updated"
+        assert data["nome"] == "Pro Updated"
 
     def test_update_plan_forbidden_for_non_admin(self, client):
-        resp = client.patch("/api/plans/plan-1", json={"name": "Updated"})
+        resp = client.patch("/api/plans/plan-1", json={"nome": "Updated"})
         assert resp.status_code == 403
 
     def test_update_plan_empty_body(self, admin_client):
@@ -160,7 +160,7 @@ class TestUpdatePlan:
         mock_sb.set_table_data("plans", [])
 
         resp = admin_client.patch("/api/plans/nonexistent", json={
-            "name": "Updated",
+            "nome": "Updated",
         })
         assert resp.status_code == 404
 
@@ -179,13 +179,13 @@ class TestDeletePlan:
     def test_delete_plan_as_admin(self, admin_client):
         mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("plans", [
-            {"id": "plan-1", "is_active": False},
+            {"id": "plan-1", "ativo": False},
         ])
 
         resp = admin_client.delete("/api/plans/plan-1")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["is_active"] is False
+        assert data["ativo"] is False
 
     def test_delete_plan_forbidden_for_non_admin(self, client):
         resp = client.delete("/api/plans/plan-1")

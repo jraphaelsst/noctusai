@@ -32,9 +32,29 @@ def admin_db():
     return create_client(url, key)
 
 
+_ORG_NO_ACTION_DEPENDENTS = (
+    # Tables that reference organizations.id with ON DELETE NO ACTION.
+    # Listed in safe-deletion order (children of dependents first when
+    # such ordering matters). Must match the FK map in 001_noctusai_core.sql.
+    "ai_feedback",
+    "api_keys",
+    "audit_logs",
+    "invitations",
+    "product_usage",
+    "roles",
+    "subscriptions",
+)
+
+
 @pytest.fixture(scope="session")
 def test_org(admin_db):
-    """Create a test organization, yield it, then delete on teardown."""
+    """Create a test organization, yield it, then delete on teardown.
+
+    Teardown clears every NO-ACTION FK dependent first (audit_logs, roles,
+    subscriptions, …) so the final DELETE on organizations doesn't trip
+    23503. CASCADE dependents (licenses, noctus_users, notifications,
+    org_settings, webhook_endpoints) clear themselves.
+    """
     slug = f"test-realdb-{uuid.uuid4().hex[:8]}"
     org = admin_db.table("organizations").insert({
         "nome": f"RealDB Test {slug}",
@@ -43,6 +63,13 @@ def test_org(admin_db):
         "category": "test",
     }).execute().data[0]
     yield org
+    for tbl in _ORG_NO_ACTION_DEPENDENTS:
+        try:
+            admin_db.table(tbl).delete().eq("org_id", org["id"]).execute()
+        except Exception:
+            # Stale schema or missing table — keep going so the org delete
+            # still runs against everything that does exist.
+            pass
     admin_db.table("organizations").delete().eq("id", org["id"]).execute()
 
 
