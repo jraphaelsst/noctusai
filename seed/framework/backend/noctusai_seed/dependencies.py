@@ -16,13 +16,89 @@ Usage::
     async def get_something(auth=Depends(deps.require_auth)):
         user, token = auth
         ...
+
+**Deprecated:** ``ProductDependencies.get_org_id`` /
+``get_user_role`` / ``get_user_client`` MUST NOT be wired through
+``Depends(...)``. Their positional ``user`` / ``token`` arguments lack
+``Depends()`` / ``Header()`` / ``Query()`` annotations, so FastAPI
+treats them as required query parameters — every authed request that
+uses such a dep returns 422 with ``loc: ['query', 'user']``. Migrate
+to :func:`noctusai_lib.api.auth.make_get_current_user_org` (returns a
+factory dep that takes only ``authorization: Header(None)`` and
+yields ``(user, token, org_id)`` — closure-bound resolver).
+
+See ``KB § PATTERNS/backend.md § Auth — canonical pattern`` for the
+canonical wiring + the why-it-fails explanation. The plain-call API
+(``deps.get_org_id(user)``) is fine for imperative call sites; only
+the ``Depends(...)`` shape is broken.
 """
+import inspect
 import logging
+import warnings
 from typing import Optional
 from fastapi import Header, HTTPException
 from noctusai_lib.api.auth import resolve_sso_role
 
 logger = logging.getLogger(__name__)
+
+
+_AUTH_DEPRECATION_MSG = (
+    "{qualname} is deprecated as a FastAPI Depends() target. Its "
+    "positional argument has no Depends()/Header()/Query() annotation, "
+    "so FastAPI treats it as a required query parameter and every "
+    "authed request returns 422. Migrate to "
+    "noctusai_lib.api.auth.make_get_current_user_org (factory returning "
+    "a dep that yields (user, token, org_id)). See "
+    "KB § PATTERNS/backend.md § Auth — canonical pattern."
+)
+
+
+def _warn_if_fastapi_caller(qualname: str) -> None:
+    """Emit the migration warning only when the caller looks like
+    FastAPI's dependency-injection machinery.
+
+    Imperative callers (``deps.get_org_id(user)`` from a route body or
+    a service helper) are NOT broken — the call shape is correct, only
+    the ``Depends(...)``-wired shape fails. To honor design principle
+    3 in PROJECT.md (warn at the broken shape only), we walk the call
+    stack and look for ``fastapi.dependencies`` / ``fastapi.routing``
+    frames. If they aren't present, the call is imperative — silent.
+
+    Caveat: FastAPI rejects requests with 422 BEFORE actually invoking
+    these deps when the missing-query-param introspection fires. So in
+    practice this warning rarely surfaces at runtime — its job is
+    diagnostic, not preventative. The keeper-detector (planned in a
+    follow-up project) is the real third defense layer.
+
+    Detection: we narrow to ``fastapi.dependencies.utils`` (the module
+    that owns ``solve_dependencies`` / ``run_endpoint_function``'s
+    dep-graph machinery) AND require the IMMEDIATE caller frame to be
+    in that module — i.e., the direct ``await call(**values)`` site,
+    not just "FastAPI is somewhere in the stack." Rationale: a route
+    body that runs ``deps.get_org_id(user)`` imperatively also has
+    FastAPI frames in its stack (the request handler runs under
+    ``fastapi.routing``); filtering only on "FastAPI in stack" would
+    fire on every legitimate imperative use. The immediate-frame
+    constraint isolates the dep-injection call shape.
+    """
+    frame = inspect.currentframe()
+    # Caller of _warn_if_fastapi_caller is the deprecated method
+    # itself; the frame above that is our actual caller.
+    if frame is None:  # pragma: no cover — defensive
+        return
+    method_frame = frame.f_back
+    if method_frame is None:  # pragma: no cover — defensive
+        return
+    caller_frame = method_frame.f_back
+    if caller_frame is None:
+        return
+    caller_mod = caller_frame.f_globals.get("__name__", "")
+    if caller_mod == "fastapi.dependencies.utils":
+        warnings.warn(
+            _AUTH_DEPRECATION_MSG.format(qualname=qualname),
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
 
 class ProductDependencies:
@@ -49,7 +125,15 @@ class ProductDependencies:
 
     @staticmethod
     def get_user_role(user) -> str:
-        """Resolve user role. SSO admins get 'platform_admin', others get metadata role."""
+        """Resolve user role. SSO admins get 'platform_admin', others get metadata role.
+
+        .. deprecated::
+            Do NOT wire via ``Depends(get_user_role)``: the positional
+            ``user`` arg becomes a required query parameter. The
+            imperative call ``deps.get_user_role(user)`` is fine. See
+            ``KB § PATTERNS/backend.md § Auth — canonical pattern``.
+        """
+        _warn_if_fastapi_caller("ProductDependencies.get_user_role")
         sso = resolve_sso_role(user)
         if sso:
             return sso
@@ -57,14 +141,32 @@ class ProductDependencies:
 
     @staticmethod
     def get_org_id(user) -> str:
-        """Extract org_id from user metadata. Raises 403 if missing."""
+        """Extract org_id from user metadata. Raises 403 if missing.
+
+        .. deprecated::
+            Do NOT wire via ``Depends(get_org_id)``: the positional
+            ``user`` arg becomes a required query parameter. Migrate to
+            :func:`noctusai_lib.api.auth.make_get_current_user_org`. The
+            imperative call ``deps.get_org_id(user)`` is fine. See
+            ``KB § PATTERNS/backend.md § Auth — canonical pattern``.
+        """
+        _warn_if_fastapi_caller("ProductDependencies.get_org_id")
         org_id = (user.user_metadata or {}).get("org_id")
         if not org_id:
             raise HTTPException(status_code=403, detail="Usuario sem organizacao associada")
         return org_id
 
     def get_user_client(self, token: str):
-        """Get a Supabase client authenticated as the user (respects RLS)."""
+        """Get a Supabase client authenticated as the user (respects RLS).
+
+        .. deprecated::
+            Do NOT wire via ``Depends(get_user_client)``: the positional
+            ``token`` arg becomes a required query parameter. Build the
+            client imperatively from the ``token`` returned by
+            :func:`noctusai_lib.api.auth.make_get_current_user_org`. See
+            ``KB § PATTERNS/backend.md § Auth — canonical pattern``.
+        """
+        _warn_if_fastapi_caller("ProductDependencies.get_user_client")
         return self._db.get_client(token)
 
     def get_admin_client(self):

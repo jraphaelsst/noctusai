@@ -130,6 +130,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 | Starting / executing / closing a project; handling a phase; touching `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/project-execution.md` |
 | Cross-cutting platform work (MCP toolkit, MCP server design, LGPD data, root hygiene, KB depth) | `CLAUDE/platform.md` + relevant KB pattern |
 | Writing a migration | `CLAUDE/backend.md` + `KB § PATTERNS/database-rls.md` + `KB § backend/04-DATABASE.md` |
+| Wiring auth on a new product / route (`Depends(get_current_user_org)` shape; the `make_get_current_user_org` factory) | `KB § PATTERNS/backend.md § Auth — canonical pattern` |
 | Adding a shared component | `KB § 04-SHARED-LIBRARY.md` (check first — it might exist) |
 | Creating a new product | `KB § GUIDES/new-product.md` + `KB § 03-SEED-ARCHITECTURE.md` |
 | User says "put X online" / "bring it up" / "deploy for testing" / "let me test it" / "spin up the stack" | `KB § GUIDES/deploy-workspace-online.md` (the drill: verify docker artifacts → fill `.env` → `docker compose up` → verify) |

@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-06
 - **Last updated:** 2026-05-06
-- **Status:** Design locked → Phase 1 ready
+- **Status:** All phases ✅ — engineer-side close complete; architect FF-merge pending
 - **Owner / stakeholders:** rapha (user) · architect-agent
 - **Related docs:**
   - `KB § PATTERNS/backend.md` (target for canonical pattern doc)
@@ -136,38 +136,34 @@ Three layers of defense; failure becomes structurally impossible.
 
 ## 6. Implementation phases
 
-### Phase 1 — Wire the factory in YouTube Crawler
+### Phase 1 — Wire the factory in YouTube Crawler ✅
 
-- [ ] In `products/youtube-crawler/backend/app/dependencies.py`, import + bind `make_get_current_user_org`. Export `get_current_user_org` as a module-level dep.
-- [ ] Refactor `app/routers/upload_router.py` to use `auth = Depends(get_current_user_org)` instead of imperative `_resolve_auth(authorization)`. Delete `_resolve_auth` helper.
-- [ ] Refactor `app/routers/settings_router.py` similarly. Replace per-route `Depends(get_org_id)` + `Depends(get_user_client)` with the single `Depends(get_current_user_org)` tuple.
-- [ ] Run `pytest` — must stay 94/94 green. The status-code assertions in `test_upload_router.py` should now pass for the right reason (401 from missing auth header, not 422 from missing query param).
-- [ ] Update `noctusai-youtube-crawler/findings.md § Phase 2` with a "→ project seed-auth-deps-hardening filed; YouTube Crawler now uses the factory" pointer.
+- [x] In `products/youtube-crawler/backend/app/dependencies.py`, import + bind `make_get_current_user_org`. Export `get_current_user_org` as a module-level dep.
+- [x] Refactor `app/routers/upload_router.py` to use `auth = Depends(get_current_user_org)` instead of imperative `_resolve_auth(authorization)`. Delete `_resolve_auth` helper.
+- [x] Refactor `app/routers/settings_router.py` similarly. Replace per-route `Depends(get_org_id)` + `Depends(get_user_client)` with the single `Depends(get_current_user_org)` tuple.
+- [x] Run `pytest` — must stay 94/94 green. (94 passed, 2 warnings in 0.30s — unrelated pre-existing warnings.)
+- [x] Update `noctusai-youtube-crawler/findings.md § Phase 2` with a "→ project seed-auth-deps-hardening filed; YouTube Crawler now uses the factory" pointer.
 
-### Phase 2 — Deprecate the broken seed export
+### Phase 2 — Deprecate the broken seed export ✅
 
-- [ ] In `seed/framework/backend/noctusai_seed/dependencies.py`, wrap `ProductDependencies.get_org_id`, `get_user_role`, `get_user_client` so first call emits `DeprecationWarning` with a message including (a) the bug shape ("declared positional `user` becomes a query param when wrapped in Depends()"), (b) the migration recipe ("use `make_get_current_user_org` from `noctusai_lib.api.auth`"), and (c) a link to the KB pattern doc.
-- [ ] Verify the existing seed-product tests still pass (`cd products/seed/backend && pytest` if the product exists).
-- [ ] Verify all noc-resident product tests still pass (the warning is a runtime warning, not an error; products that import these as plain functions keep working).
+- [x] In `seed/framework/backend/noctusai_seed/dependencies.py`, wrap `ProductDependencies.get_org_id`, `get_user_role`, `get_user_client` so first call emits `DeprecationWarning` with a message including (a) the bug shape, (b) the migration recipe, (c) the KB pattern pointer. Implemented as a frame-aware `_warn_if_fastapi_caller(qualname)` helper that fires ONLY when `fastapi.dependencies.utils` is the immediate caller — honors §3 design principle 3 ("warn on the broken shape only, not imperative use").
+- [x] Verify the existing seed-product tests still pass — `cd products/seed/backend && pytest` → 31/31.
+- [x] Verify all noc-resident product tests still pass — `cd seed/framework/backend && pytest` → 37/37 (+4 from new `test_dependencies_deprecation.py`); workspace YouTube Crawler → 112/112. Imperative call sites (seed team router → `deps.get_user_role(user)`) no longer fire the warning, confirmed by absence of DeprecationWarning lines in the workspace test summary.
 
-### Phase 3 — Document the canonical pattern
+### Phase 3 — Document the canonical pattern ✅
 
-- [ ] Add `KB § PATTERNS/backend.md § Auth — canonical pattern` section. Cover:
-  - The factory shape + how to wire it (copy-paste code block).
-  - **Why the closure-bound resolver works** (FastAPI introspects the *returned* function's signature, not the resolver's).
-  - **Why the old `Depends(get_org_id)` shape failed** (positional `user` arg → required query param).
-  - Pointer to the deprecation warning.
-- [ ] Update `CLAUDE.md` §2 Map to include "Auth pattern" → KB pointer.
-- [ ] Add `memory/feedback_auth_factory_pattern.md` + MEMORY.md index line.
-- [ ] Run `bash scripts/verify-kb-sync.sh` — must pass.
+- [x] Add `KB § PATTERNS/backend.md § Auth — canonical pattern` section. Replaced the legacy 4-line `## Auth` section with a full canonical-pattern doc covering: factory wiring (code block), why-it-chains-correctly (closure-bound resolver), why-old-shape-failed (positional args become query params), OAuth-callback carve-out, late-binding-rule, anti-patterns checklist, migration history.
+- [x] Updated `CLAUDE.md` §3 (When to read what) with a row "Wiring auth on a new product / route → KB § PATTERNS/backend.md § Auth — canonical pattern". §2 Map already covers `KB § PATTERNS/backend.md` so no further entry needed.
+- [x] Added `memory/feedback_auth_factory_pattern.md` + MEMORY.md index line under § Code quality / engineering.
+- [x] Ran `bash scripts/verify-kb-sync.sh` → ✓ KB sync OK.
 
-### Phase 4 — Verify + close
+### Phase 4 — Verify + close ✅
 
-- [ ] Run end-to-end: `cd products/youtube-crawler/backend && pytest` (workspace) AND `cd mcp/noctusai && pytest tests/` (toolkit).
-- [ ] Frontend: `cd products/youtube-crawler/frontend && npx vite build` (no API contract change → should stay green).
-- [ ] Architect review: read the engineer's `findings.md`, decide whether to flip prior-phase improvements to FORMALIZED in `KB § PATTERNS/accept-with-rationale.md`.
-- [ ] Phase proposal at `projects/seed-auth-deps-hardening/proposals/<datestamp>-end-of-project-bundle.md`.
-- [ ] Auto-archive on close via `noctus.dev.archive`.
+- [x] Run end-to-end: `cd products/youtube-crawler/backend && pytest` (workspace) → **112/112** in 0.40s. `cd mcp/noctusai && pytest tests/` → 738 passed / 4 failed (all 4 pre-existing platform issues: dev-team missing E2E, openai version drift across products, ERP monkey-patching, seed-version stamp drift — none caused by this project; see proposal §"Verification snapshot").
+- [x] Frontend: `cd products/youtube-crawler/frontend && npx vite build` → ✓ built in 3.07s. No API contract change.
+- [ ] Architect review: read the engineer's `findings.md`, decide whether to flip prior-phase improvements to FORMALIZED in `KB § PATTERNS/accept-with-rationale.md`. *(Architect-side step.)*
+- [x] Phase proposal at `projects/seed-auth-deps-hardening/proposals/2026-05-06-end-of-project-bundle.md`.
+- [ ] Auto-archive on close via `noctus.dev.archive`. *(Architect-side step at FF-merge time.)*
 
 ---
 
@@ -208,3 +204,7 @@ Three layers of defense; failure becomes structurally impossible.
 | Date | Change | By |
 |---|---|---|
 | 2026-05-06 | Project filed from template after architect-side scoping | architect-agent |
+| 2026-05-06 | Phase 1 ✅ — factory wired in workspace YouTube Crawler. Both routers refactored to `Depends(get_current_user_org)`; `_resolve_auth` deleted; OAuth callback switched to admin client (was silently broken too). Late-binding lambdas added in `app.dependencies` so test patches on `_db.get_*` reach call sites. Tests: 94/94 green. Drive-by: discovered the OAuth-callback `Depends(get_user_client)` was its own broken instance — fixed inline. | engineer-agent |
+| 2026-05-06 | Phase 2 ✅ — frame-aware deprecation warning landed in `seed/framework/.../dependencies.py`. Initial design naively warned on every call → false-positives for the seed's own `team_router` imperative uses. Tightened to `_warn_if_fastapi_caller(qualname)` that walks one frame up and fires ONLY when caller's `__name__ == "fastapi.dependencies.utils"`. New regression suite at `tests/test_dependencies_deprecation.py` (4 tests covering imperative-silent / fastapi-warn / non-fastapi-silent / top-level-no-op). All test suites green: seed/framework 37/37, seed/product 31/31, workspace 112/112. | engineer-agent |
+| 2026-05-06 | Phase 3 ✅ — three-way sync. Replaced `KB § PATTERNS/backend.md § Auth` with full canonical-pattern doc (factory wiring + why-it-works + anti-patterns + migration history); added §3 row to CLAUDE.md ("Wiring auth on a new product / route → KB pointer"); created `memory/feedback_auth_factory_pattern.md` + MEMORY.md index line. `bash scripts/verify-kb-sync.sh` → green. | engineer-agent |
+| 2026-05-06 | Phase 4 ✅ — verification + close. Workspace 112/112, seed/framework 37/37, seed/product 31/31, frontend build green, MCP 738/4-failed (all 4 pre-existing platform issues not caused by this project). End-of-project bundle filed at `proposals/2026-05-06-end-of-project-bundle.md` covering applied work + 5 deferred follow-ups (cross-product rollout, seed team_router migration, keeper-detector, shadcn UI absorption, ProductDependencies eventual deletion). Architect-side review + auto-archive pending FF-merge. | engineer-agent |
