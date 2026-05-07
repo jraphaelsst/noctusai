@@ -13,7 +13,7 @@ Minimal reference implementation proving the NoctusAI seed framework works end-t
 ### Backend (19 lines in main.py)
 
 ```
-products/{{PRODUCT_SLUG}}/backend/app/
+products/seed/backend/app/
   main.py              → create_product_app("{{PRODUCT_NAME}}", "{{SCHEMA_NAME}}", settings)
   config.py            → SeedSettings(ProductSettings) — no extra fields
   database.py          → create_database_module(settings, "{{SCHEMA_NAME}}")
@@ -25,7 +25,7 @@ products/{{PRODUCT_SLUG}}/backend/app/
 ### Frontend (App.tsx uses framework factories)
 
 ```
-products/{{PRODUCT_SLUG}}/frontend/src/
+products/seed/frontend/src/
   App.tsx              → createProductApp() + createProductLayout()
   vite.config.ts       → createViteConfig({ port: {{FRONTEND_PORT}} }) — 3 lines
   pages/               → Dashboard (stack status), Equipe (team), Landing, Login, etc.
@@ -68,8 +68,8 @@ Do NOT edit `templates/product-seed/` directly.
 ## Testing
 
 ```bash
-cd products/{{PRODUCT_SLUG}}/backend && pytest  # 6 tests
-cd products/{{PRODUCT_SLUG}}/frontend && npx vite build  # must build clean
+cd products/seed/backend && pytest  # 6 tests
+cd products/seed/frontend && npx vite build  # must build clean
 ```
 
 ## Dependencies
