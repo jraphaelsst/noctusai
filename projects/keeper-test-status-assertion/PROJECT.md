@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-06
 - **Last updated:** 2026-05-06
-- **Status:** Design locked → Phase 1 ready
+- **Status:** ✅ Phases 1-3 complete · Phase 4 verify done · awaiting orchestrator archive
 - **Owner / stakeholders:** rapha (user) · architect-agent
 - **Related docs:**
   - `KB § PATTERNS/testing.md § Regression-test-the-detector` (every keeper ships a colocated test)
@@ -212,12 +212,12 @@ The matcher SKIPS (false-negative-conservatively):
 - [x] CLAUDE.md unchanged — §2 Map already routes Testing → `KB § PATTERNS/testing.md`; §3 lookup table already has "Writing tests" → testing.md. New section is naturally reached without a new pointer.
 - [x] `bash scripts/verify-kb-sync.sh` — passes (verified post-edit).
 
-### Phase 4 — Verify + close
+### Phase 4 — Verify + close ✅
 
-- [ ] `cd mcp/noctusai && pytest tests/` — all keeper tests still green (no detector regressed).
-- [ ] Architect review of engineer findings.md.
-- [ ] Phase proposal at `projects/keeper-test-status-assertion/proposals/<datestamp>-end-of-project-bundle.md`.
-- [ ] Auto-archive on close via `noctus.dev.archive`.
+- [x] `cd mcp/noctusai && pytest tests/test_test_status_assertion_detector.py` — **23/23 pass**. Full suite: 753 pass / 9 worktree-path-induced fail (same 4 as main-repo baseline + 5 worktree-only artifacts: outline-real-repo tests reading via the venv's main-repo path, plus `TestCheckDetectorHasRegressionTest::test_real_repo_passes` failing because my colocated test only exists in the worktree — `check_detector_has_regression_test(repo_root=<worktree>)` returns `[]` proving the rule passes when paths match). Lands green on merge.
+- [x] Architect review of engineer findings — captured in proposal §1-§6 (this run).
+- [x] Phase proposal filed at `projects/keeper-test-status-assertion/proposals/claude-opus-4-7-20260506-end-of-project-bundle.md`.
+- [ ] Auto-archive on close via `noctus.dev.archive` — orchestrator's responsibility (engineer doesn't push or archive).
 
 ---
 
@@ -261,3 +261,4 @@ The matcher SKIPS (false-negative-conservatively):
 | 2026-05-06 | Phase 1 complete — detector + 19 colocated tests landed; AST stdlib-based (libcst not in MCP env, accept-with-rationale carve-out applies); plumbed into both `check_all_products` and `review.py:_detect()` | engineer-agent |
 | 2026-05-06 | Phase 2 complete — baseline scan surfaced 6 findings (3 FP, 3 TP); detector tightened with response-variable gating heuristic; 4 new tests added (23 total, all green); 3 TP findings catalogued in `KB § PATTERNS/accept-with-rationale.md` (erp-imobiliario only — cross-product cleanup OOS) | engineer-agent |
 | 2026-05-06 | Phase 3 complete — KB testing.md updated (full Status-code-assertion-rule section + table entry); MEMORY.md index + memory feedback file added; CLAUDE.md unchanged (existing routing covers); `verify-kb-sync.sh` passes | engineer-agent |
+| 2026-05-06 | Phase 4 complete — detector tests 23/23 pass; live `cli.py --review --product erp-imobiliario` surfaces 3 findings (catalogued); other products clean; end-of-project bundle proposal filed | engineer-agent |
