@@ -136,13 +136,13 @@ Three layers of defense; failure becomes structurally impossible.
 
 ## 6. Implementation phases
 
-### Phase 1 — Wire the factory in YouTube Crawler
+### Phase 1 — Wire the factory in YouTube Crawler ✅
 
-- [ ] In `products/youtube-crawler/backend/app/dependencies.py`, import + bind `make_get_current_user_org`. Export `get_current_user_org` as a module-level dep.
-- [ ] Refactor `app/routers/upload_router.py` to use `auth = Depends(get_current_user_org)` instead of imperative `_resolve_auth(authorization)`. Delete `_resolve_auth` helper.
-- [ ] Refactor `app/routers/settings_router.py` similarly. Replace per-route `Depends(get_org_id)` + `Depends(get_user_client)` with the single `Depends(get_current_user_org)` tuple.
-- [ ] Run `pytest` — must stay 94/94 green. The status-code assertions in `test_upload_router.py` should now pass for the right reason (401 from missing auth header, not 422 from missing query param).
-- [ ] Update `noctusai-youtube-crawler/findings.md § Phase 2` with a "→ project seed-auth-deps-hardening filed; YouTube Crawler now uses the factory" pointer.
+- [x] In `products/youtube-crawler/backend/app/dependencies.py`, import + bind `make_get_current_user_org`. Export `get_current_user_org` as a module-level dep.
+- [x] Refactor `app/routers/upload_router.py` to use `auth = Depends(get_current_user_org)` instead of imperative `_resolve_auth(authorization)`. Delete `_resolve_auth` helper.
+- [x] Refactor `app/routers/settings_router.py` similarly. Replace per-route `Depends(get_org_id)` + `Depends(get_user_client)` with the single `Depends(get_current_user_org)` tuple.
+- [x] Run `pytest` — must stay 94/94 green. (94 passed, 2 warnings in 0.30s — unrelated pre-existing warnings.)
+- [x] Update `noctusai-youtube-crawler/findings.md § Phase 2` with a "→ project seed-auth-deps-hardening filed; YouTube Crawler now uses the factory" pointer.
 
 ### Phase 2 — Deprecate the broken seed export
 
@@ -208,3 +208,4 @@ Three layers of defense; failure becomes structurally impossible.
 | Date | Change | By |
 |---|---|---|
 | 2026-05-06 | Project filed from template after architect-side scoping | architect-agent |
+| 2026-05-06 | Phase 1 ✅ — factory wired in workspace YouTube Crawler. Both routers refactored to `Depends(get_current_user_org)`; `_resolve_auth` deleted; OAuth callback switched to admin client (was silently broken too). Late-binding lambdas added in `app.dependencies` so test patches on `_db.get_*` reach call sites. Tests: 94/94 green. Drive-by: discovered the OAuth-callback `Depends(get_user_client)` was its own broken instance — fixed inline. | engineer-agent |
