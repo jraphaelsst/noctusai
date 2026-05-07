@@ -1903,6 +1903,205 @@ def check_clean_folder_violations(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_test_status_assertion` — every pytest test method that asserts on
+# response BODY (`.text`, `.json()`, `.content`) must also assert on response
+# STATUS CODE (`.status_code`) in the same method. Defends against the
+# YouTube Crawler Phase 1 "false-green" slip where a substring-on-`.text`
+# assertion matched the wrong of two error entries (broken `Depends(get_org_id)`
+# chain) and the test went green even though the endpoint was unusable.
+# Project: keeper-test-status-assertion. Per KB § PATTERNS/testing.md
+# § Status-code-assertion rule.
+# ---------------------------------------------------------------------------
+
+
+# Attribute names that, when accessed on a response variable, indicate the
+# test is asserting on the response body. Match by attribute name, not
+# variable name (the test author's variable name doesn't matter).
+_RESPONSE_BODY_ATTRS: frozenset[str] = frozenset({"text", "content"})
+# Method names that, when called on a response variable, indicate body access.
+_RESPONSE_BODY_METHODS: frozenset[str] = frozenset({"json"})
+# The status-code attribute. Any comparison op against this (==, in, !=, <, >)
+# satisfies the rule.
+_STATUS_CODE_ATTR: str = "status_code"
+
+
+def _attr_chain_endpoints(node: ast.AST) -> set[str]:
+    """Return the set of attribute names accessed anywhere in `node`.
+
+    For `resp.text` / `resp.text.lower()` / `r.json()["x"]` / `r.content[:10]`
+    we walk the expression and collect every `Attribute.attr` and any
+    `Call(func=Attribute(attr=...))`. Used to detect body-text shape on the
+    right side of `assert <substr> in <expr>` regardless of post-processing
+    chains (`.lower()`, `.strip()`, `.split(...)`, slicing, etc.).
+    """
+    seen: set[str] = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Attribute):
+            seen.add(n.attr)
+    return seen
+
+
+def _is_body_text_assertion(node: ast.Assert) -> bool:
+    """True iff this assert reads response BODY.
+
+    Catches:
+      - ``assert "x" in resp.text``
+      - ``assert "x" in resp.text.lower()``
+      - ``assert "x" in resp.json()["error"]``
+      - ``assert resp.text == "..."``
+      - ``assert "..." == resp.json()["msg"]``
+      - ``assert resp.content``  (truthy check on body)
+
+    Conservative: false negatives over false positives. We only walk the
+    assertion's TEST expression — `assert X, "msg"` doesn't get its msg
+    inspected (that's not an assertion target).
+    """
+    test = node.test
+    # Recursively scan for any Attribute whose name is in the body set,
+    # OR any Call to a method in _RESPONSE_BODY_METHODS.
+    for sub in ast.walk(test):
+        if isinstance(sub, ast.Attribute) and sub.attr in _RESPONSE_BODY_ATTRS:
+            return True
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
+            if sub.func.attr in _RESPONSE_BODY_METHODS:
+                return True
+    return False
+
+
+def _is_status_code_assertion(node: ast.Assert) -> bool:
+    """True iff this assert reads ``.status_code`` on something.
+
+    Catches every comparison shape:
+      - ``assert resp.status_code == 200``
+      - ``assert resp.status_code in (401, 403)``
+      - ``assert resp.status_code != 500``
+      - ``assert 400 <= resp.status_code < 500``
+      - ``assert resp.status_code``  (truthy — rare but counted)
+    """
+    for sub in ast.walk(node.test):
+        if isinstance(sub, ast.Attribute) and sub.attr == _STATUS_CODE_ATTR:
+            return True
+    return False
+
+
+def _iter_test_methods(tree: ast.Module):
+    """Yield every ``def test_*`` function — module-level or class-nested.
+
+    Only synchronous + async function defs whose name starts with ``test_``
+    are returned. Helper functions (any other name) are not scanned per
+    PROJECT.md § 3 design principle 1 (method-scope detection).
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("test_"):
+                yield node
+
+
+def _walk_test_files_in_dir(tests_dir: Path):
+    """Yield every ``test_*.py`` / ``*_test.py`` file under tests_dir.
+
+    Excludes vendored / cache / build directories (same exclusion list as
+    `_walk_test_files`). conftest.py is included — it contains fixtures
+    that may inadvertently mask response semantics, but no `test_*` methods
+    so the detector skips them naturally.
+    """
+    excluded_parts: set[str] = {
+        "__pycache__", "node_modules", ".venv", "venv", "dist", "build",
+        ".git", ".pytest_cache", ".mypy_cache",
+    }
+    if not tests_dir.exists():
+        return
+    for path in tests_dir.rglob("*.py"):
+        if any(part in excluded_parts for part in path.parts):
+            continue
+        # Match pytest's default test-file discovery pattern.
+        if path.name.startswith("test_") or path.name.endswith("_test.py"):
+            yield path
+
+
+def check_test_status_assertion(product_path: Path) -> list[dict]:
+    """Flag pytest test methods that assert on response BODY without a
+    sibling assertion on response STATUS CODE in the same method.
+
+    The slip this defends against (YouTube Crawler Phase 1):
+
+        def test_recipient_without_channel_rejected(self, client):
+            resp = client.post("/api/settings/recipients", json={"name": "x"})
+            assert "at least one of" in resp.text.lower()
+            # ↑ went green because 422 contained TWO error entries; the
+            #   substring matched the schema-validation entry but the
+            #   endpoint was actually unusable due to a broken
+            #   Depends(get_org_id) chain demanding ?user= / ?token=.
+
+    The structural fix: any test asserting on body text/JSON/content also
+    pins the status code in the same method. Without that pin, a 422 / 500
+    / 401 / 403 false-green is structurally possible.
+
+    Conservative: false negatives over false positives. We do NOT walk into
+    helper functions (test author's `_assert_ok(resp)` may handle status
+    code there — we trust that and don't flag the test). We do NOT track
+    response-variable identity — both assertions must merely exist in the
+    same method body.
+
+    Per KB § PATTERNS/testing.md § Status-code-assertion rule.
+    """
+    issues: list[dict] = []
+    name = product_path.name
+    tests_dir = product_path / "backend" / "tests"
+    if not tests_dir.exists():
+        return issues
+
+    for py_file in _walk_test_files_in_dir(tests_dir):
+        try:
+            source = py_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", py_file, exc)
+            continue
+        try:
+            tree = ast.parse(source, filename=str(py_file))
+        except SyntaxError as exc:
+            logger.debug("compliance: cannot parse %s (%s)", py_file, exc)
+            continue
+
+        try:
+            rel = str(py_file.relative_to(product_path))
+        except ValueError:
+            rel = str(py_file)
+
+        for fn in _iter_test_methods(tree):
+            has_body = False
+            has_status = False
+            first_body_line = 0
+            for sub in ast.walk(fn):
+                if isinstance(sub, ast.Assert):
+                    if not has_body and _is_body_text_assertion(sub):
+                        has_body = True
+                        first_body_line = sub.lineno
+                    if not has_status and _is_status_code_assertion(sub):
+                        has_status = True
+                if has_body and has_status:
+                    break
+            if has_body and not has_status:
+                issues.append({
+                    "product": name,
+                    "file": rel,
+                    "method": fn.name,
+                    "line": first_body_line,
+                    "issue": (
+                        f"{rel}:{first_body_line} `{fn.name}` asserts on "
+                        f"response body (`.text` / `.json()` / `.content`) "
+                        f"without a sibling `assert <resp>.status_code == "
+                        f"...` in the same method. Body-only assertions can "
+                        f"go green for the wrong reason — see KB § "
+                        f"PATTERNS/testing.md § Status-code-assertion rule "
+                        f"(YouTube Crawler Phase 1 false-green case study)."
+                    ),
+                    "severity": "warning",
+                })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -2169,6 +2368,7 @@ def check_all_products() -> tuple[int, list]:
             + check_frontend_config_paths(d)
             + check_mock_schema_validation(d)
             + check_ai_feature_completeness(d)
+            + check_test_status_assertion(d)
         )
         all_issues.extend(issues)
         penalties = {"critical": 25, "high": 10, "warning": 3}

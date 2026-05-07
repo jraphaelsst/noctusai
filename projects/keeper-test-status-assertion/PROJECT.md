@@ -190,13 +190,13 @@ The matcher SKIPS (false-negative-conservatively):
 
 ## 6. Implementation phases
 
-### Phase 1 — Build the detector + tests
+### Phase 1 — Build the detector + tests ✅
 
-- [ ] Add `check_test_status_assertion` (location chosen by engineer; default `compliance.py`; if size > 150 lines, sibling `test_quality.py`).
-- [ ] libcst-based walker; supports `.text`, `.json()`, `.content`; status-code attribute match.
-- [ ] Plumb into `check_all_products(...)` so findings surface via `noctus.dev.review`.
-- [ ] Colocated `tests/test_test_status_assertion_detector.py` with ≥6 cases (§4).
-- [ ] Run `cd mcp/noctusai && pytest tests/test_test_status_assertion_detector.py -v` — all green.
+- [x] Add `check_test_status_assertion` (location chosen by engineer; default `compliance.py`; if size > 150 lines, sibling `test_quality.py`). → Landed in `compliance.py` (~200 lines including helpers + module-level docstrings; under 150-LOC threshold for the function itself; placement chosen so `_detector_function_names()` self-parse picks it up).
+- [x] ~~libcst-based~~ AST-based walker (stdlib `ast` per accept-with-rationale carve-out at top of `compliance.py` — `libcst` not installed in MCP toolkit env, and existing detectors all use `ast`); supports `.text`, `.json()`, `.content`; status-code attribute match (any comparison op).
+- [x] Plumb into `check_all_products(...)` and `review.py:_detect()` (TWO registration points — both updated) so findings surface via `noctus.dev.review`.
+- [x] Colocated `tests/test_test_status_assertion_detector.py` with **19 cases** (≥6 required; expanded coverage for class-nested, async, variable-name agnosticism, edge cases).
+- [x] Run `cd mcp/noctusai && pytest tests/test_test_status_assertion_detector.py -v` — **all 19 green**.
 
 ### Phase 2 — Baseline against live noc tree
 
@@ -256,3 +256,4 @@ The matcher SKIPS (false-negative-conservatively):
 | Date | Change | By |
 |---|---|---|
 | 2026-05-06 | Project filed from template after architect-side scoping | architect-agent |
+| 2026-05-06 | Phase 1 complete — detector + 19 colocated tests landed; AST stdlib-based (libcst not in MCP env, accept-with-rationale carve-out applies); plumbed into both `check_all_products` and `review.py:_detect()` | engineer-agent |
