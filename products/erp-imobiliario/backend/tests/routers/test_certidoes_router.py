@@ -111,6 +111,7 @@ class TestListarConsultas:
     def test_paginacao_retorna_total(self, client):
         client._mock_supabase.set_table_data("certidao_consultas", [SAMPLE_CONSULTA])
         resp = client.get("/api/certidoes/consultas")
+        assert resp.status_code == 200
         assert "pagination" in resp.json()
         assert "total" in resp.json()["pagination"]
 

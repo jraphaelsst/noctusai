@@ -463,34 +463,12 @@ state change, not a removal.
 
 ## Entries from `keeper-test-status-assertion` (closed 2026-05-06)
 
-> Baseline scan of the new `check_test_status_assertion` keeper detector
-> turned up 3 pre-existing tests in `erp-imobiliario` that assert on
-> response BODY without pinning STATUS CODE. Cross-product cleanup is
-> OOS per PROJECT.md § 4 — these are catalogued so the detector runs
-> clean from day one. Each is a real true-positive (the slip-shape the
-> detector defends against); follow-up cleanup belongs to a per-product
-> project.
-
-### `erp-imobiliario/test_certidoes_router.py::test_paginacao_retorna_total` — body without status_code
-
-- **What:** Test at line 114 asserts `"pagination" in resp.json()` + `"total" in resp.json()["pagination"]` without a sibling `assert resp.status_code == 200`. Sibling tests in the same class (`test_paginacao_params`, `test_page_invalida`) DO pin status code — only this one slipped.
-- **Why accept-with-rationale:** the endpoint genuinely works (other tests in the class confirm 200 path). The body assertion is load-bearing for the response shape; a 422 would not have a `"pagination"` key. The slip is structural (no status pin), not a runtime bug — fixing now is a one-line append, but cross-product cleanup is OOS per the project scope.
-- **Revisit trigger:** next time `erp-imobiliario` test maintenance runs, append `assert resp.status_code == 200` and remove this entry.
-- **Recorded by:** `projects/keeper-test-status-assertion/` Phase 2 (2026-05-06).
-
-### `erp-imobiliario/test_agenda_router.py::TestExcluirEvento::test_delete_message` — body without status_code
-
-- **What:** Test at line 233 asserts `"sucesso" in resp.json()["message"].lower()` without a status_code pin. The sibling `test_delete_success` pins both — this companion test only checks message content.
-- **Why accept-with-rationale:** the test pair (success + message content) is intentionally split across two methods — `test_delete_success` covers status, `test_delete_message` covers wording. Fixing this requires either merging the pair OR adding a status pin to `test_delete_message`. Both are valid; cleanup is OOS for this project.
-- **Revisit trigger:** when erp-imobiliario test maintenance runs, OR when the message-localization changes (the test will need to update either way).
-- **Recorded by:** `projects/keeper-test-status-assertion/` Phase 2 (2026-05-06).
-
-### `erp-imobiliario/test_marketing_router.py::test_delete_message` — body without status_code
-
-- **What:** Test at line 168 asserts `"sucesso" in resp.json()["message"].lower()` without a status_code pin — identical shape to the `test_agenda_router` sibling above. Same split-pair pattern.
-- **Why accept-with-rationale:** same rationale as the agenda counterpart; the split is intentional and fixing belongs to a per-product cleanup project.
-- **Revisit trigger:** same trigger as the agenda counterpart; both should be fixed in the same erp-imobiliario maintenance pass.
-- **Recorded by:** `projects/keeper-test-status-assertion/` Phase 2 (2026-05-06).
+> ~~3 erp-imobiliario tests catalogued for cross-product cleanup OOS.~~
+> **RESOLVED 2026-05-06** — drive-by fix applied during YouTube Crawler
+> Phase 3 close: each of the 3 tests received a 1-line
+> `assert resp.status_code == 200` insert at the call site. Detector
+> now runs clean across the entire repo (`noctus.dev.review` returns
+> zero `test_status_assertion` findings). Entries removed.
 
 ---
 

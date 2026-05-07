@@ -165,6 +165,7 @@ class TestExcluirCampanha:
         })
         client._mock_supabase.set_table_data("envios_email", [])
         resp = client.delete("/api/marketing/campanhas/c1")
+        assert resp.status_code == 200
         assert "sucesso" in resp.json()["message"].lower()
 
     def test_delete_not_found(self, client):

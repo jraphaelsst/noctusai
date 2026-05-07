@@ -230,6 +230,7 @@ class TestExcluirEvento:
     def test_delete_message(self, client):
         client._mock_supabase.set_table_data("eventos", [{"id": "e1"}])
         resp = client.delete("/api/agenda/e1")
+        assert resp.status_code == 200
         assert "sucesso" in resp.json()["message"].lower()
 
     def test_delete_not_found(self, client):

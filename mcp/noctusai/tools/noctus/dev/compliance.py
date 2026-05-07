@@ -2,6 +2,26 @@
 
 Validates that products follow the seed framework pattern.
 All checks are deterministic, fast, zero AI.
+
+──────────────────────────────────────────────────────────────────────
+ADDING A NEW DETECTOR — read this first.
+──────────────────────────────────────────────────────────────────────
+1. Add the `check_<name>(product_path: Path) -> list[dict]` function
+   in this file (NOT a sibling module). The meta-detector
+   `check_detector_has_regression_test` self-parses
+   `compliance.py` via `Path(__file__)` to enumerate detectors;
+   placing the function in a sibling silently drops it from the
+   meta-check + leads to "regression test missing" false negatives.
+2. Plumb it into BOTH:
+     - `check_all_products()` here
+     - `tools/noctus/dev/review.py::_detect()`
+   Updating only one is a silent drop — `noctus.dev.review` will not
+   surface the findings. (Knowledge contributed by
+   `keeper-test-status-assertion` Phase 1 retro, 2026-05-06.)
+3. Ship a colocated `Test<CamelCase>` regression suite in
+   `mcp/noctusai/tests/` per `KB § PATTERNS/testing.md
+   § Regression-test-the-detector`.
+──────────────────────────────────────────────────────────────────────
 """
 # accept-with-rationale: "MCP detectors keep raw `import ast`" in
 # KB § PATTERNS/accept-with-rationale.md — compliance walks
