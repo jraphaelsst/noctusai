@@ -210,6 +210,7 @@ Regression tests pin behavior that **broke once and might break again**. Without
 | `check_frontend_config_paths` | `TestRegexMatching` etc. | `mcp/noctusai/tests/test_frontend_config_paths.py` |
 | `check_seed_version_propagation` | (functions, override) | `mcp/noctusai/tests/test_seed_version_propagation.py` |
 | `check_detector_has_regression_test` | `TestCheckDetectorHasRegressionTest` | `mcp/noctusai/tests/test_compliance.py` |
+| `check_test_status_assertion` | `TestCheckTestStatusAssertion` | `mcp/noctusai/tests/test_test_status_assertion_detector.py` |
 
 **Adding a new detector?** The recipe (and the order matters):
 
@@ -220,6 +221,75 @@ Regression tests pin behavior that **broke once and might break again**. Without
 5. Run `mcp/noctusai/cli.py --validate` and confirm the detector contributes `[]` to a clean tree.
 
 If you need to land the detector before the test (rare — usually because the detector emerged from a real-world incident), still write the test in the same commit. The CI gate fails otherwise.
+
+---
+
+## Status-code-assertion rule — pin the code, not just the body
+
+**The rule.** Every pytest test method that asserts on response BODY (`<resp>.text`, `<resp>.json()`, `<resp>.content`) MUST also assert on response STATUS CODE (`<resp>.status_code <op> <val>`) **in the same method body**. Body-only assertions can go green for the wrong reason.
+
+**Why — the YouTube Crawler Phase 1 case study.** A router test shipped with this shape:
+
+```python
+def test_recipient_without_channel_rejected(self, client):
+    resp = client.post("/api/settings/recipients", json={"name": "x"})
+    assert "at least one of" in resp.text.lower()
+```
+
+The test went green. The endpoint was unusable. What actually happened: the request hit a broken `Depends(get_org_id)` chain demanding `?user=` and `?token=` query params; the response was 422 with TWO error entries — (a) the seed's broken auth dep, and (b) the schema-validation `"at least one of"` error. The substring assertion matched (b). The test passed. The endpoint was structurally broken for any authed traffic.
+
+The substring matched. The status code was `422` (not the expected `422` for the right reason — for the WRONG reason). Without `assert resp.status_code == 422` next to the body assertion, the test author had no signal that the endpoint was answering for the wrong reason. The status-code pin would have caught it (the dep-chain failure changes which path the request takes; the right-reason path returns 422-with-one-error-entry, not 422-with-two).
+
+**The structural fix.** A keeper detector — `check_test_status_assertion` (`mcp/noctusai/tools/noctus/dev/compliance.py`) — flags any test method asserting on response body without a sibling status-code check. Severity `warning`. Surfaces via `noctus.dev.review` and `noctus.dev.validate`.
+
+**What the detector catches:**
+
+```python
+# FLAGGED — body-only assertion, no status_code pin
+def test_x(client):
+    resp = client.get("/api/x")
+    assert "ok" in resp.text  # ← could be 500, 403, 422 — we don't know
+
+# FLAGGED — JSON body assertion alone
+def test_y(client):
+    resp = client.get("/api/y")
+    assert resp.json()["name"] == "x"  # ← 200? 201? schema-error 422?
+
+# FLAGGED — content (binary body) assertion alone
+def test_z(client):
+    resp = client.get("/api/img/1")
+    assert b"PNG" in resp.content  # ← could be a 500 HTML error page
+```
+
+**What the detector accepts:**
+
+```python
+# OK — body + status code, both load-bearing
+def test_x(client):
+    resp = client.get("/api/x")
+    assert resp.status_code == 200
+    assert "ok" in resp.text
+
+# OK — any comparison op against status_code satisfies
+def test_y(client):
+    resp = client.get("/api/y")
+    assert resp.status_code in (401, 403)
+    assert "unauthorized" in resp.text.lower()
+
+# OK — inequality also counts
+def test_z(client):
+    resp = client.get("/api/z")
+    assert resp.status_code != 500
+    assert "data" in resp.json()
+```
+
+**Conservative gating — false negatives over false positives.** The detector binds a "response variable" set at method scope: only names assigned from `client.<verb>(...)` (or `await client.<verb>(...)`) on the right side of an assignment count as response vars. Body-attr matches against names NOT in that set are silently skipped. Drops false positives on domain-object attributes that happen to share the name (`digest.text`, `result.content` on a tool-result object, etc.) at the cost of missing tests that use helper-returned responses (`resp = _do_request(client, "/x")`). The latter is an intentional miss — extending the helper to assert status_code internally is a valid pattern, and we'd rather skip than noise.
+
+**Method-scope only.** Helper functions (any name not starting with `test_`) are NOT scanned. A `def _assert_payload(resp)` helper that's missing a status_code check internally won't fire the detector — the tests that CALL it will, but only if they don't pin status code at the call site.
+
+**Cross-product cleanup is per-product.** Pre-existing slips at detector-introduction time were catalogued in `KB § PATTERNS/accept-with-rationale.md` (each entry: file / line / why-accept / revisit-trigger) so the platform-wide scan runs clean. Cleanup belongs to per-product test-maintenance follow-ups.
+
+**Frontend (Vitest) coverage:** OOS today — a follow-up `keeper-test-status-assertion-frontend` project will ship a ts-morph-based variant once the Python detector beds in.
 
 ---
 

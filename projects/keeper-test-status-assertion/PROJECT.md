@@ -205,11 +205,12 @@ The matcher SKIPS (false-negative-conservatively):
 - [x] **Final pass:** 3 true-positive findings, all in `erp-imobiliario` — appended to `KB § PATTERNS/accept-with-rationale.md` under a new "Entries from `keeper-test-status-assertion`" section. Each entry: what / why-accept / revisit-trigger / recorded-by.
 - [x] No clean run via `noctus.dev.review` for `erp-imobiliario` until those 3 land in cleanup follow-ups; **all other 11 products run clean** for this detector.
 
-### Phase 3 — Document + sync
+### Phase 3 — Document + sync ✅
 
-- [ ] Append a "Status-code-assertion rule" section to `KB § PATTERNS/testing.md` explaining (a) the rule, (b) why (Phase-1 false-green case study), (c) link to the detector.
-- [ ] Add `memory/feedback_status_code_assertion_rule.md` + MEMORY.md index line.
-- [ ] Run `bash scripts/verify-kb-sync.sh` — must pass.
+- [x] Appended "Status-code-assertion rule" section to `KB § PATTERNS/testing.md` (rule + why + worked examples + conservative-gating note + cross-product cleanup pointer + frontend OOS) AND added the new detector to the worked-examples table under Regression-test-the-detector.
+- [x] Added `memory/feedback_status_code_assertion_rule.md` + MEMORY.md index line under "Testing / detectors".
+- [x] CLAUDE.md unchanged — §2 Map already routes Testing → `KB § PATTERNS/testing.md`; §3 lookup table already has "Writing tests" → testing.md. New section is naturally reached without a new pointer.
+- [x] `bash scripts/verify-kb-sync.sh` — passes (verified post-edit).
 
 ### Phase 4 — Verify + close
 
@@ -259,3 +260,4 @@ The matcher SKIPS (false-negative-conservatively):
 | 2026-05-06 | Project filed from template after architect-side scoping | architect-agent |
 | 2026-05-06 | Phase 1 complete — detector + 19 colocated tests landed; AST stdlib-based (libcst not in MCP env, accept-with-rationale carve-out applies); plumbed into both `check_all_products` and `review.py:_detect()` | engineer-agent |
 | 2026-05-06 | Phase 2 complete — baseline scan surfaced 6 findings (3 FP, 3 TP); detector tightened with response-variable gating heuristic; 4 new tests added (23 total, all green); 3 TP findings catalogued in `KB § PATTERNS/accept-with-rationale.md` (erp-imobiliario only — cross-product cleanup OOS) | engineer-agent |
+| 2026-05-06 | Phase 3 complete — KB testing.md updated (full Status-code-assertion-rule section + table entry); MEMORY.md index + memory feedback file added; CLAUDE.md unchanged (existing routing covers); `verify-kb-sync.sh` passes | engineer-agent |
