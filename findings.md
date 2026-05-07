@@ -125,3 +125,85 @@ knowledge pieces. Append in-the-moment; synthesise at project close.
   also needs opaque-string fixtures, lift the helper to
   `noctusai_lib.testing` rather than the auth seam — keeps the
   seam's contract pure.
+
+---
+
+## Phase 2 — Deprecate the broken seed export (2026-05-06)
+
+### Errors
+- **First-pass `_warn_depends_misuse` violated §3 design principle 3.**
+  Initial implementation fired on every imperative call, surfacing
+  `DeprecationWarning` from the seed's own `team_router` calls to
+  `deps.get_user_role(user)` (line 199 of `noctusai_seed/routers.py`).
+  Those calls are the SAFE shape — only `Depends(get_user_role)` is
+  broken. PROJECT.md §3 explicitly said warn at the broken shape, not
+  the call. Caught by inspecting the workspace test summary (5
+  DeprecationWarning lines for legitimate seed-internal calls).
+  Fixed by switching to a frame-aware helper.
+- **Frame-walking helper "FastAPI in stack" was too loose.** Second
+  iteration walked the entire frame chain looking for any
+  `fastapi.*` module. False-positive: every imperative call inside a
+  route body has FastAPI frames in its stack (the request handler
+  runs under `fastapi.routing`). Tightened to "immediate caller's
+  module is `fastapi.dependencies.utils`" — narrow but accurate; the
+  only frame matching that constraint is the dep-injection solver
+  calling `await call(**values)` directly.
+
+### Mistakes / slips
+- **Initial test wrote `_warn_if_fastapi_caller` as the entry point**
+  for the synthetic FastAPI module, then asserted the warning fired.
+  Failed because the helper's frame-walking logic assumes it's called
+  from a deprecated METHOD (`get_org_id` / `get_user_role` /
+  `get_user_client`), so `f.f_back` = method, `f.f_back.f_back` =
+  caller. Calling the helper directly from the synthetic module
+  skipped the method frame, putting the synthetic frame in the
+  "method" position. Refactored test to invoke
+  `ProductDependencies.get_org_id(user)` from the synthetic module —
+  honest reproduction of the FastAPI-injection call shape.
+
+### Lessons
+- **Frame-inspection-based detection is fragile but sometimes the
+  only honest tool.** PEP-8-clean alternatives (warn-at-import,
+  warn-on-every-call) either over-fire or unde-fire. The frame check
+  honors the design principle exactly. The fragility tax: any FastAPI
+  internal restructuring that renames `fastapi.dependencies.utils`
+  silently disables the warning. Mitigated by the regression test
+  suite — if upstream renames the module, the
+  `test_fastapi_dependency_call_emits_warning` test catches it.
+- **The "warn on broken shape only" principle is structurally
+  unreachable for THIS specific bug.** FastAPI rejects requests with
+  422 BEFORE invoking these deps when the missing-query-param
+  introspection fires. So the warning at call time NEVER fires in
+  production for the bug-shape callers — they fail at request
+  rejection, not at function call. The warning is diagnostic, not
+  preventative; the keeper-detector (a follow-up project) is the
+  real third defense layer. Documented this in the helper's
+  docstring + `_warn_if_fastapi_caller`'s "Caveat:" section so
+  future maintainers don't try to "fix" the (necessarily) limited
+  surface.
+
+### Interesting findings
+- **The seed's own team_router uses the broken-shape methods
+  imperatively** (`routers.py:112`, `:199`). Per the recurrence rule
+  (N=2 if you count the workspace product before this project + the
+  seed itself = N=2 within-noc), this is a candidate for an
+  absorption pass — the team_router could itself migrate to the
+  factory pattern. Out of scope here (PROJECT.md §4 explicitly
+  excludes cross-product rollout AND seed-internal cleanup); filed
+  as a follow-up via the architect's eventual post-merge sweep.
+  Catalog entry deferred to the project-close proposal bundle.
+
+### Knowledge pieces
+- **`stacklevel=3` for the warning correctly points at the
+  Depends-wiring line in user code.** The frame chain at warning
+  time: stacklevel=1 = `warnings.warn` itself, =2 = the deprecated
+  method (`get_org_id`), =3 = the caller (FastAPI's solver). Not
+  user code in this case (FastAPI is the "caller"), but the warning
+  still includes the migration recipe in its message body so the
+  user can grep for it. If we wanted to print the user's
+  `Depends(get_org_id)` line specifically, we'd need to pass the
+  registration-time AST location through — out of scope.
+- **`types.ModuleType("fastapi.dependencies.utils")` is enough to
+  fool frame-name detection.** `frame.f_globals["__name__"]` is the
+  module-dict's `__name__` key, set by `ModuleType.__init__`. Useful
+  for testing frame-walking detectors without real FastAPI code.

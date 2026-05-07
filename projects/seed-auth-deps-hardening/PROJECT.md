@@ -144,11 +144,11 @@ Three layers of defense; failure becomes structurally impossible.
 - [x] Run `pytest` — must stay 94/94 green. (94 passed, 2 warnings in 0.30s — unrelated pre-existing warnings.)
 - [x] Update `noctusai-youtube-crawler/findings.md § Phase 2` with a "→ project seed-auth-deps-hardening filed; YouTube Crawler now uses the factory" pointer.
 
-### Phase 2 — Deprecate the broken seed export
+### Phase 2 — Deprecate the broken seed export ✅
 
-- [ ] In `seed/framework/backend/noctusai_seed/dependencies.py`, wrap `ProductDependencies.get_org_id`, `get_user_role`, `get_user_client` so first call emits `DeprecationWarning` with a message including (a) the bug shape ("declared positional `user` becomes a query param when wrapped in Depends()"), (b) the migration recipe ("use `make_get_current_user_org` from `noctusai_lib.api.auth`"), and (c) a link to the KB pattern doc.
-- [ ] Verify the existing seed-product tests still pass (`cd products/seed/backend && pytest` if the product exists).
-- [ ] Verify all noc-resident product tests still pass (the warning is a runtime warning, not an error; products that import these as plain functions keep working).
+- [x] In `seed/framework/backend/noctusai_seed/dependencies.py`, wrap `ProductDependencies.get_org_id`, `get_user_role`, `get_user_client` so first call emits `DeprecationWarning` with a message including (a) the bug shape, (b) the migration recipe, (c) the KB pattern pointer. Implemented as a frame-aware `_warn_if_fastapi_caller(qualname)` helper that fires ONLY when `fastapi.dependencies.utils` is the immediate caller — honors §3 design principle 3 ("warn on the broken shape only, not imperative use").
+- [x] Verify the existing seed-product tests still pass — `cd products/seed/backend && pytest` → 31/31.
+- [x] Verify all noc-resident product tests still pass — `cd seed/framework/backend && pytest` → 37/37 (+4 from new `test_dependencies_deprecation.py`); workspace YouTube Crawler → 112/112. Imperative call sites (seed team router → `deps.get_user_role(user)`) no longer fire the warning, confirmed by absence of DeprecationWarning lines in the workspace test summary.
 
 ### Phase 3 — Document the canonical pattern
 
@@ -209,3 +209,4 @@ Three layers of defense; failure becomes structurally impossible.
 |---|---|---|
 | 2026-05-06 | Project filed from template after architect-side scoping | architect-agent |
 | 2026-05-06 | Phase 1 ✅ — factory wired in workspace YouTube Crawler. Both routers refactored to `Depends(get_current_user_org)`; `_resolve_auth` deleted; OAuth callback switched to admin client (was silently broken too). Late-binding lambdas added in `app.dependencies` so test patches on `_db.get_*` reach call sites. Tests: 94/94 green. Drive-by: discovered the OAuth-callback `Depends(get_user_client)` was its own broken instance — fixed inline. | engineer-agent |
+| 2026-05-06 | Phase 2 ✅ — frame-aware deprecation warning landed in `seed/framework/.../dependencies.py`. Initial design naively warned on every call → false-positives for the seed's own `team_router` imperative uses. Tightened to `_warn_if_fastapi_caller(qualname)` that walks one frame up and fires ONLY when caller's `__name__ == "fastapi.dependencies.utils"`. New regression suite at `tests/test_dependencies_deprecation.py` (4 tests covering imperative-silent / fastapi-warn / non-fastapi-silent / top-level-no-op). All test suites green: seed/framework 37/37, seed/product 31/31, workspace 112/112. | engineer-agent |
