@@ -260,3 +260,67 @@ knowledge pieces. Append in-the-moment; synthesise at project close.
   has a distinct shape and audience: KB is for the reader who's
   already on the topic, CLAUDE.md is for the reader who needs to
   know which topic to read, memory is for the harness's auto-load.
+
+---
+
+## Phase 4 — Verify + close (2026-05-06)
+
+### Errors
+*(none — verification phase)*
+
+### Mistakes / slips
+*(none)*
+
+### Lessons
+- **The MCP toolkit's compliance / analyzer tests are platform-wide
+  audits, not per-project gates.** They surface platform debt
+  (openai version drift, dev-team missing E2E, seed-version stamp
+  drift, ERP monkey-patching) regardless of the current project's
+  scope. Engineer-side: confirm the failures are pre-existing by
+  inspecting the issue list for any reference to your edited files
+  / your new code; if none, they're noise. Document in the
+  end-of-project proposal so the architect doesn't have to re-run
+  to triage.
+- **The seed-version-stamp pre-commit hook is one commit behind by
+  design.** It runs BEFORE the commit being made → it stamps the
+  PREVIOUS HEAD into the static-version files. Net effect: the
+  stamp lags by one commit, becoming current after the next
+  commit. Not a bug; an artifact of the pre-commit-hook
+  ordering. Documented in the architect-handoff section of the
+  proposal so the FF-merge process knows to expect it.
+
+### Interesting findings
+- **Workspace test count grew from 94 → 112 mid-project as parallel
+  agents landed new test files.** The dispatch brief said "94/94
+  must stay green"; the actual landing is "all collected tests must
+  stay green." The right verification semantics is "no
+  regressions," not "exact count match." Logged as an architect-
+  feedback opportunity: dispatch briefs that anchor on test counts
+  may be brittle when the workspace is shared across parallel
+  agents.
+
+### Knowledge pieces
+- **End-of-project proposal bundle SHAPE** (synthesized from
+  templates + practice on this project):
+  1. Applied inline — list of changes with location + why,
+     organized so an architect-eyes review takes <5 minutes.
+  2. Deferred — destinations named: each deferred item gets a
+     LETTER (A, B, C…), a status statement, and a destination
+     (specific follow-up project name OR "logged here" for catalog
+     entries). Letters make cross-references easy in retros.
+  3. Verification snapshot: a small table with rows per suite +
+     pass/fail + an inline note for any non-green item. Architect
+     can scan without re-running.
+  4. Notes for architect FF-merge: anything the architect needs
+     to know about the worktree state, the noc-main worktree
+     state, parallel branches, or seed-stamp lag. Reduces the
+     surface for surprises during the merge.
+- **The frame-aware deprecation warning is a *narrow but accurate*
+  detector.** Pattern generalizes: when you need to warn about a
+  specific call shape but not all calls of a function, walk the
+  caller's frame and gate on `__name__`. Useful for: (a)
+  framework-vs-imperative call distinguishing, (b) test-only
+  warnings (gate on `pytest` in the frame), (c) deprecated
+  per-context behavior. The fragility tax is the upstream-rename
+  risk — mitigated by a regression test that drives the synthetic
+  call shape.
