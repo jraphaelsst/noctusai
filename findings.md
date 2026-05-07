@@ -207,3 +207,56 @@ knowledge pieces. Append in-the-moment; synthesise at project close.
   fool frame-name detection.** `frame.f_globals["__name__"]` is the
   module-dict's `__name__` key, set by `ModuleType.__init__`. Useful
   for testing frame-walking detectors without real FastAPI code.
+
+---
+
+## Phase 3 — Document the canonical pattern (2026-05-06)
+
+### Errors
+*(none)*
+
+### Mistakes / slips
+- **Almost added a §2 Map row in CLAUDE.md** before realizing §2 already
+  covers `KB § PATTERNS/backend.md` and §3's table is the right place
+  for the trigger phrase ("Wiring auth on a new product / route"). §2
+  is a permanent map; §3 is the situational lookup. Auth-wiring is a
+  situational read, not a permanent destination — §3 wins.
+
+### Lessons
+- **Replacing a section in KB > appending a new one** when the topic
+  already has a heading. The legacy `## Auth` section was 4 lines
+  and out of date; replacing it with the full canonical pattern doc
+  keeps the reader on a single landmark instead of forcing a
+  cross-reference jump. Same readability principle as "split
+  files when they exceed cohesion" — but inverted: merge fragments
+  when they belong together.
+
+### Interesting findings
+- **Memory `feedback_*.md` files use a frontmatter contract**
+  (`name`, `description`, `type`, `originSessionId`) that the harness
+  parses for retrieval. Empirical: matching the existing entries'
+  shape (e.g. `feedback_fastapi_dep_factory.md`) keeps the index
+  lookup working. The system reminder showed memory files are
+  surfaced into auto-loaded context based on this metadata.
+- **`bash scripts/verify-kb-sync.sh`** validates three things:
+  CLAUDE.md/CLAUDE-* pointers resolve to real KB files, every KB
+  doc is in `KNOWLEDGE-BASE/INDEX.md`, AND the index's "Layout tree"
+  reflects the actual filesystem. The pre-commit hook runs this
+  automatically; manual run as belt-and-suspenders before the
+  Phase 3 commit.
+
+### Knowledge pieces
+- **The "anti-patterns" subsection is a load-bearing piece of any
+  KB pattern doc.** A future agent grepping for `Depends(get_org_id)`
+  will land on the canonical pattern doc and see the explicit ❌
+  list before they re-introduce the bug. Without that subsection,
+  the doc tells the reader what to do but leaves the trap visible
+  only to readers who read top-to-bottom. Anti-patterns + migration-
+  history are the "memorable corners" of the doc; the code block
+  is the working core.
+- **Three-way sync ≠ three identical edits.** KB carries the body;
+  CLAUDE.md carries the pointer / trigger phrase; memory carries
+  the at-a-glance summary + frontmatter for retrieval. Each layer
+  has a distinct shape and audience: KB is for the reader who's
+  already on the topic, CLAUDE.md is for the reader who needs to
+  know which topic to read, memory is for the harness's auto-load.

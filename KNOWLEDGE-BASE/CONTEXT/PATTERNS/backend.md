@@ -14,11 +14,138 @@ routers/ → services/ → schemas/ + dependencies.py, database.py
 - **dependencies.py** wires `get_current_user`, `get_db`, `get_admin_client`, etc.
 - **database.py** creates the DatabaseModule via the seed factory.
 
-## Auth
+## Auth — canonical pattern
 
-- `await get_current_user(authorization)` → `(user, token)`.
-- Core admin only: `get_current_admin()`.
-- Always pass `authorization: Optional[str] = Header(None)` on protected routes.
+The canonical wiring is **`Depends(get_current_user_org)`** built once
+per product via the factory `make_get_current_user_org` in
+`noctusai_lib.api.auth`. Returns `(user, token, org_id)` to the route
+body; only `authorization: Header(None)` is FastAPI-visible in the dep
+signature, so the chain Just Works.
+
+### Wire it once in `app/dependencies.py`
+
+```python
+from noctusai_seed import create_database_module, create_dependencies
+from noctusai_lib.api.auth import (
+    make_get_current_user,
+    make_get_current_user_org,
+)
+
+_db = create_database_module(settings, schema="<product_schema>")
+_deps = create_dependencies(_db)
+
+# Late-binding lambda — re-resolves on every request so test patches
+# on `_db.get_client` reach the closure (vs capturing the bound
+# method at module load).
+get_current_user = make_get_current_user(lambda: _db.get_client())
+
+get_current_user_org = make_get_current_user_org(
+    get_current_user,
+    lambda u: (u.user_metadata or {}).get("org_id"),
+    required=True,           # raise 403 if org_id missing; pass False for tuple-with-None
+    # missing_status=400,    # ERP-imobiliario uses 400 instead of 403
+    # missing_detail="...",  # override the Portuguese default if needed
+)
+
+# Late-binding wrappers for imperative call sites (NOT for Depends):
+def get_user_client(token: str):
+    return _db.get_client(token)
+
+
+def get_admin_client():
+    return _db.get_admin_client()
+```
+
+### Use it in routers
+
+```python
+from fastapi import APIRouter, Depends
+from app.dependencies import get_current_user_org, get_user_client
+
+router = APIRouter(prefix="/api/things")
+
+@router.get("/")
+async def list_things(auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
+    db = get_user_client(token)              # imperative — fine
+    return db.table("things").eq("org_id", org_id).execute().data
+```
+
+### Why this chains correctly
+
+`make_get_current_user_org` returns an async function whose **only**
+signature parameter is `authorization: Optional[str] = Header(None)`.
+The `get_org_id_fn` resolver is closure-bound — invisible to FastAPI's
+introspection. Result: FastAPI sees a single `Header()` param, treats
+it correctly, runs the dep at request time, and the dep awaits
+`get_current_user(authorization)` + resolves the org_id internally.
+
+### Why `Depends(get_org_id)` / `Depends(get_user_client)` is broken
+
+The seed framework's `ProductDependencies` exports these as plain
+functions:
+
+```python
+# seed/framework/.../dependencies.py
+class ProductDependencies:
+    @staticmethod
+    def get_org_id(user) -> str: ...                # positional `user`
+    def get_user_client(self, token: str): ...      # positional `token`
+```
+
+When wired through `Depends(...)`, FastAPI introspects the function's
+signature. Any parameter without `Depends()` / `Header()` / `Query()` /
+`Body()` AND not of a routing-relevant type becomes a **required query
+parameter**. Result: every authed request returns 422 with
+`loc: ['query', 'user']` or `loc: ['query', 'token']`. The
+401/403 paths inside these methods never run.
+
+These methods now emit a `DeprecationWarning` when called by FastAPI's
+dep-injection machinery (frame check on `fastapi.dependencies.utils`).
+Imperative use (`deps.get_org_id(user)` from a service or route body)
+remains silent and continues to work — only the `Depends(...)`-wired
+shape is broken.
+
+### OAuth-callback shape (no JWT context)
+
+OAuth redirect endpoints carry no Authorization header, so the
+factory dep doesn't apply. Use `get_admin_client()` (RLS bypass) and
+bind the tenant via the opaque `state` token (`f"{org_id}:{nonce}"`)
+parsed in the callback body. RLS bypass is bounded by state-token
+validity, not blanket trust.
+
+### Late-binding rule
+
+Pass `lambda: _db.get_client()` to `make_get_current_user`, NOT
+`_db.get_client` (the bound method). The bound-method reference is
+captured at module load → the conftest's later
+`patch.object(_db, "get_client", ...)` doesn't reach it. The lambda
+re-resolves on every request, so both production and test paths see
+the right client.
+
+### Anti-patterns
+
+- ❌ `Depends(get_org_id)` / `Depends(get_user_client)` /
+  `Depends(get_user_role)` — broken (positional args become query
+  params); fires a `DeprecationWarning`.
+- ❌ Imperative `_resolve_auth(authorization)` helpers per product —
+  N=2+ recurrence, the factory IS the absorption.
+- ❌ Capturing `_db.get_client` (bound method) at module load and
+  passing it to the factory — breaks test patching.
+- ❌ Annotating `-> None` on FastAPI routes with
+  `status_code=204` — `fastapi==0.115` trips an assertion. Always
+  pass `response_model=None` explicitly on 204 routes (see "204
+  response model gotcha" below).
+
+### Migration history
+
+- 2026-05-04: `make_get_current_user_org` shipped to
+  `noctusai_lib.api.auth` (predecessor project
+  `make-get-current-user-org-factory`).
+- 2026-05-06: `seed-auth-deps-hardening` Phase 1 wired the workspace
+  YouTube Crawler product end-to-end; Phase 2 added the
+  frame-aware deprecation warning. Cross-product rollout (PF /
+  Therapy / ERP / etc.) deferred to a follow-up project.
 
 ## SSO
 

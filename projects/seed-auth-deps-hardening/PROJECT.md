@@ -150,16 +150,12 @@ Three layers of defense; failure becomes structurally impossible.
 - [x] Verify the existing seed-product tests still pass — `cd products/seed/backend && pytest` → 31/31.
 - [x] Verify all noc-resident product tests still pass — `cd seed/framework/backend && pytest` → 37/37 (+4 from new `test_dependencies_deprecation.py`); workspace YouTube Crawler → 112/112. Imperative call sites (seed team router → `deps.get_user_role(user)`) no longer fire the warning, confirmed by absence of DeprecationWarning lines in the workspace test summary.
 
-### Phase 3 — Document the canonical pattern
+### Phase 3 — Document the canonical pattern ✅
 
-- [ ] Add `KB § PATTERNS/backend.md § Auth — canonical pattern` section. Cover:
-  - The factory shape + how to wire it (copy-paste code block).
-  - **Why the closure-bound resolver works** (FastAPI introspects the *returned* function's signature, not the resolver's).
-  - **Why the old `Depends(get_org_id)` shape failed** (positional `user` arg → required query param).
-  - Pointer to the deprecation warning.
-- [ ] Update `CLAUDE.md` §2 Map to include "Auth pattern" → KB pointer.
-- [ ] Add `memory/feedback_auth_factory_pattern.md` + MEMORY.md index line.
-- [ ] Run `bash scripts/verify-kb-sync.sh` — must pass.
+- [x] Add `KB § PATTERNS/backend.md § Auth — canonical pattern` section. Replaced the legacy 4-line `## Auth` section with a full canonical-pattern doc covering: factory wiring (code block), why-it-chains-correctly (closure-bound resolver), why-old-shape-failed (positional args become query params), OAuth-callback carve-out, late-binding-rule, anti-patterns checklist, migration history.
+- [x] Updated `CLAUDE.md` §3 (When to read what) with a row "Wiring auth on a new product / route → KB § PATTERNS/backend.md § Auth — canonical pattern". §2 Map already covers `KB § PATTERNS/backend.md` so no further entry needed.
+- [x] Added `memory/feedback_auth_factory_pattern.md` + MEMORY.md index line under § Code quality / engineering.
+- [x] Ran `bash scripts/verify-kb-sync.sh` → ✓ KB sync OK.
 
 ### Phase 4 — Verify + close
 
@@ -210,3 +206,4 @@ Three layers of defense; failure becomes structurally impossible.
 | 2026-05-06 | Project filed from template after architect-side scoping | architect-agent |
 | 2026-05-06 | Phase 1 ✅ — factory wired in workspace YouTube Crawler. Both routers refactored to `Depends(get_current_user_org)`; `_resolve_auth` deleted; OAuth callback switched to admin client (was silently broken too). Late-binding lambdas added in `app.dependencies` so test patches on `_db.get_*` reach call sites. Tests: 94/94 green. Drive-by: discovered the OAuth-callback `Depends(get_user_client)` was its own broken instance — fixed inline. | engineer-agent |
 | 2026-05-06 | Phase 2 ✅ — frame-aware deprecation warning landed in `seed/framework/.../dependencies.py`. Initial design naively warned on every call → false-positives for the seed's own `team_router` imperative uses. Tightened to `_warn_if_fastapi_caller(qualname)` that walks one frame up and fires ONLY when caller's `__name__ == "fastapi.dependencies.utils"`. New regression suite at `tests/test_dependencies_deprecation.py` (4 tests covering imperative-silent / fastapi-warn / non-fastapi-silent / top-level-no-op). All test suites green: seed/framework 37/37, seed/product 31/31, workspace 112/112. | engineer-agent |
+| 2026-05-06 | Phase 3 ✅ — three-way sync. Replaced `KB § PATTERNS/backend.md § Auth` with full canonical-pattern doc (factory wiring + why-it-works + anti-patterns + migration history); added §3 row to CLAUDE.md ("Wiring auth on a new product / route → KB pointer"); created `memory/feedback_auth_factory_pattern.md` + MEMORY.md index line. `bash scripts/verify-kb-sync.sh` → green. | engineer-agent |
