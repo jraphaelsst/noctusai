@@ -1925,24 +1925,89 @@ _RESPONSE_BODY_METHODS: frozenset[str] = frozenset({"json"})
 _STATUS_CODE_ATTR: str = "status_code"
 
 
-def _attr_chain_endpoints(node: ast.AST) -> set[str]:
-    """Return the set of attribute names accessed anywhere in `node`.
+# HTTP method names — any of these called as `<var>.method(...)` (or
+# `await <var>.method(...)`) on the right-hand side of an assignment binds
+# `<var name on left>` to a "response variable" for the rest of the method.
+# Used to gate body-attr matches so non-response objects (`digest.text`,
+# `result.content`) don't false-positive.
+_HTTP_METHOD_NAMES: frozenset[str] = frozenset({
+    "get", "post", "put", "patch", "delete", "head", "options",
+    "request",  # generic httpx/TestClient `client.request("GET", ...)`
+})
 
-    For `resp.text` / `resp.text.lower()` / `r.json()["x"]` / `r.content[:10]`
-    we walk the expression and collect every `Attribute.attr` and any
-    `Call(func=Attribute(attr=...))`. Used to detect body-text shape on the
-    right side of `assert <substr> in <expr>` regardless of post-processing
-    chains (`.lower()`, `.strip()`, `.split(...)`, slicing, etc.).
+
+def _collect_response_vars(fn: ast.AST) -> set[str]:
+    """Walk a test method body and collect names that were assigned from
+    an HTTP-client call.
+
+    Examples that bind:
+      - ``resp = client.get("/x")``
+      - ``resp = await client.post("/x", json={})``
+      - ``response = self.client.delete("/x/1")``
+      - ``r = test_client.request("GET", "/x")``
+
+    Examples that DO NOT bind (intentional false-negative bias):
+      - ``digest = audit_digest_service.build_digest(...)`` — non-HTTP call
+      - ``result = handler(...)`` — non-HTTP call
+      - ``resp = some_helper(client)`` — opaque helper return
+
+    Conservative on purpose: a body-attr match against a name NOT in this
+    set is silently skipped, dropping false positives like `digest.text` /
+    `result.content`. Cost: a test that uses a helper-returned response
+    won't be flagged. PROJECT.md § 3 design principle 3 accepts that miss.
     """
-    seen: set[str] = set()
-    for n in ast.walk(node):
-        if isinstance(n, ast.Attribute):
-            seen.add(n.attr)
-    return seen
+    response_vars: set[str] = set()
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Assign):
+            continue
+        # Only single-target assignments — `resp = client.get(...)`.
+        # Tuple-unpack / chained assignments left as future work.
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        target_name = node.targets[0].id
+        # Unwrap `await client.get(...)`.
+        value = node.value
+        if isinstance(value, ast.Await):
+            value = value.value
+        if not isinstance(value, ast.Call):
+            continue
+        # Inspect the call's func — must be an Attribute access whose
+        # method name is one of the HTTP verbs.
+        func = value.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr not in _HTTP_METHOD_NAMES:
+            continue
+        response_vars.add(target_name)
+    return response_vars
 
 
-def _is_body_text_assertion(node: ast.Assert) -> bool:
-    """True iff this assert reads response BODY.
+def _expr_root_name(node: ast.AST) -> str | None:
+    """For an attribute / subscript / call chain, walk down to the root
+    Name node and return its identifier.
+
+    ``resp.text.lower()`` → ``"resp"``
+    ``resp.json()["x"]`` → ``"resp"``
+    ``self.client.get(...).text`` → ``None`` (root is `self`, but the
+    walker only treats top-level local Names as response candidates).
+    ``some_func().text`` → ``None``
+    """
+    cur = node
+    while True:
+        if isinstance(cur, ast.Name):
+            return cur.id
+        if isinstance(cur, ast.Attribute):
+            cur = cur.value
+        elif isinstance(cur, ast.Subscript):
+            cur = cur.value
+        elif isinstance(cur, ast.Call):
+            cur = cur.func
+        else:
+            return None
+
+
+def _is_body_text_assertion(node: ast.Assert, response_vars: set[str]) -> bool:
+    """True iff this assert reads response BODY on a known response var.
 
     Catches:
       - ``assert "x" in resp.text``
@@ -1952,19 +2017,25 @@ def _is_body_text_assertion(node: ast.Assert) -> bool:
       - ``assert "..." == resp.json()["msg"]``
       - ``assert resp.content``  (truthy check on body)
 
-    Conservative: false negatives over false positives. We only walk the
-    assertion's TEST expression — `assert X, "msg"` doesn't get its msg
-    inspected (that's not an assertion target).
+    Gated by `response_vars` (names assigned from `client.<verb>(...)` in
+    the same method): only flags when the body-attr access's root Name is
+    in the response set. Drops false positives like `digest.text` /
+    `result.content` on non-HTTP objects.
+
+    Conservative: when the root expression isn't a simple local Name (e.g.
+    `self.client.get(...).text` — fluent style), we silently skip.
     """
     test = node.test
-    # Recursively scan for any Attribute whose name is in the body set,
-    # OR any Call to a method in _RESPONSE_BODY_METHODS.
     for sub in ast.walk(test):
         if isinstance(sub, ast.Attribute) and sub.attr in _RESPONSE_BODY_ATTRS:
-            return True
+            root = _expr_root_name(sub.value)
+            if root is not None and root in response_vars:
+                return True
         if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
             if sub.func.attr in _RESPONSE_BODY_METHODS:
-                return True
+                root = _expr_root_name(sub.func.value)
+                if root is not None and root in response_vars:
+                    return True
     return False
 
 
@@ -1977,6 +2048,10 @@ def _is_status_code_assertion(node: ast.Assert) -> bool:
       - ``assert resp.status_code != 500``
       - ``assert 400 <= resp.status_code < 500``
       - ``assert resp.status_code``  (truthy — rare but counted)
+
+    Note: status_code attr name is specific enough to HTTP responses that
+    we don't gate it on response_vars (a non-response object asserting
+    `.status_code` is exotic and we'd rather count it than miss).
     """
     for sub in ast.walk(node.test):
         if isinstance(sub, ast.Attribute) and sub.attr == _STATUS_CODE_ATTR:
@@ -2069,12 +2144,18 @@ def check_test_status_assertion(product_path: Path) -> list[dict]:
             rel = str(py_file)
 
         for fn in _iter_test_methods(tree):
+            response_vars = _collect_response_vars(fn)
+            if not response_vars:
+                # No HTTP-client call assigned to a local name — skip.
+                # Tests using helper-returned responses miss intentionally
+                # (PROJECT.md § 3 design principle 3 — conservative).
+                continue
             has_body = False
             has_status = False
             first_body_line = 0
             for sub in ast.walk(fn):
                 if isinstance(sub, ast.Assert):
-                    if not has_body and _is_body_text_assertion(sub):
+                    if not has_body and _is_body_text_assertion(sub, response_vars):
                         has_body = True
                         first_body_line = sub.lineno
                     if not has_status and _is_status_code_assertion(sub):

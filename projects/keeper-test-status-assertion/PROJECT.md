@@ -198,11 +198,12 @@ The matcher SKIPS (false-negative-conservatively):
 - [x] Colocated `tests/test_test_status_assertion_detector.py` with **19 cases** (≥6 required; expanded coverage for class-nested, async, variable-name agnosticism, edge cases).
 - [x] Run `cd mcp/noctusai && pytest tests/test_test_status_assertion_detector.py -v` — **all 19 green**.
 
-### Phase 2 — Baseline against live noc tree
+### Phase 2 — Baseline against live noc tree ✅
 
-- [ ] Run `python mcp/noctusai/cli.py --review --product youtube-crawler` (and one other product e.g. `personal-finance`) to generate live findings against existing tests.
-- [ ] For each finding: append a one-line accept-with-rationale entry to `KB § PATTERNS/accept-with-rationale.md` (cross-product cleanup is OOS — these go to catalog so the detector runs clean).
-- [ ] Confirm `noctus.dev.review` returns clean for the products covered.
+- [x] Ran detector against every product in worktree (no `youtube-crawler` exists in this branch — scanned all 12 products instead). **First pass:** 6 findings across 3 products (core, erp-imobiliario, media-scheduling).
+- [x] **3 false positives surfaced** — `digest.text` (core/test_audit_digest_service.py) and `result.content` x2 (media-scheduling/test_tools_registry.py) were domain-object attributes being treated as response body. Tightened the detector with a **response-variable gating heuristic**: body-attr matches only count when the access's root Name was assigned from a `client.<verb>(...)` (or `await client.<verb>(...)`) call in the same method. Added 4 new colocated tests covering the gating (digest.text excluded, result.content excluded, await-client recognized, helper-returned response intentionally skipped). All 23 tests still green.
+- [x] **Final pass:** 3 true-positive findings, all in `erp-imobiliario` — appended to `KB § PATTERNS/accept-with-rationale.md` under a new "Entries from `keeper-test-status-assertion`" section. Each entry: what / why-accept / revisit-trigger / recorded-by.
+- [x] No clean run via `noctus.dev.review` for `erp-imobiliario` until those 3 land in cleanup follow-ups; **all other 11 products run clean** for this detector.
 
 ### Phase 3 — Document + sync
 
@@ -257,3 +258,4 @@ The matcher SKIPS (false-negative-conservatively):
 |---|---|---|
 | 2026-05-06 | Project filed from template after architect-side scoping | architect-agent |
 | 2026-05-06 | Phase 1 complete — detector + 19 colocated tests landed; AST stdlib-based (libcst not in MCP env, accept-with-rationale carve-out applies); plumbed into both `check_all_products` and `review.py:_detect()` | engineer-agent |
+| 2026-05-06 | Phase 2 complete — baseline scan surfaced 6 findings (3 FP, 3 TP); detector tightened with response-variable gating heuristic; 4 new tests added (23 total, all green); 3 TP findings catalogued in `KB § PATTERNS/accept-with-rationale.md` (erp-imobiliario only — cross-product cleanup OOS) | engineer-agent |

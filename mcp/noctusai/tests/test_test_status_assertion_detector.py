@@ -331,6 +331,79 @@ class TestCheckTestStatusAssertion:
         flagged = {f["method"] for f in findings}
         assert flagged == {"test_a", "test_c"}
 
+    # -----------------------------------------------------------------
+    # Response-variable gating (false-positive defense)
+    # -----------------------------------------------------------------
+
+    def test_non_response_text_attribute_not_flagged(self, tmp_path: Path):
+        """`digest.text` (domain-object attribute, NOT response) → no finding.
+
+        Prevents the Phase 2 baseline false positive on
+        `core/test_audit_digest_service.py` where `digest.text` (a domain
+        object's attribute) was being matched as response body. Gating:
+        the body-attr's root must be a name that was assigned from a
+        `client.<verb>(...)` call in the same method.
+        """
+        source = (
+            "def test_builds_digest():\n"
+            "    digest = build_digest_obj()\n"
+            "    assert 'Narrativa' in digest.text\n"
+            "    assert 'Narrativa' in digest.html\n"
+        )
+        _mk_test_file(tmp_path, "test_digest.py", source)
+        findings = check_test_status_assertion(tmp_path)
+        assert findings == [], f"Expected zero findings (digest.text is not a response), got: {findings}"
+
+    def test_non_response_content_attribute_not_flagged(self, tmp_path: Path):
+        """`result.content` from a tool-handler call → no finding.
+
+        Prevents the Phase 2 baseline false positive on
+        `media-scheduling/test_tools_registry.py` where `result.content`
+        (a `ToolResult` object's attribute) was being matched as response
+        body. Same gating: root must be HTTP-call-assigned.
+        """
+        source = (
+            "def test_dispatch_runs_handler():\n"
+            "    handler = dispatcher.tool_handler\n"
+            "    result = handler(ToolCall(call_id='x', name='add'))\n"
+            "    assert json.loads(result.content) == {'sum': 5}\n"
+        )
+        _mk_test_file(tmp_path, "test_tools.py", source)
+        findings = check_test_status_assertion(tmp_path)
+        assert findings == [], f"Expected zero findings (result.content is not a response), got: {findings}"
+
+    def test_await_client_call_recognized(self, tmp_path: Path):
+        """`resp = await client.post(...)` binds `resp` as a response var."""
+        source = (
+            "import pytest\n"
+            "\n"
+            "@pytest.mark.asyncio\n"
+            "async def test_async_post(client):\n"
+            "    resp = await client.post('/x', json={})\n"
+            "    assert 'oops' in resp.text\n"
+        )
+        _mk_test_file(tmp_path, "test_await.py", source)
+        findings = check_test_status_assertion(tmp_path)
+        assert len(findings) == 1
+        assert findings[0]["method"] == "test_async_post"
+
+    def test_helper_returned_response_intentionally_skipped(self, tmp_path: Path):
+        """`resp = some_helper(client)` (non-HTTP-method call) → not flagged.
+
+        Per PROJECT.md § 3 design principle 3 (conservative, false
+        negatives over false positives): helper-returned responses are an
+        intentional miss. The test author who uses helpers can extend
+        the helper to assert status_code internally.
+        """
+        source = (
+            "def test_uses_helper_returned_resp(client):\n"
+            "    resp = _do_request(client, '/x')\n"
+            "    assert 'oops' in resp.text\n"
+        )
+        _mk_test_file(tmp_path, "test_helper_return.py", source)
+        findings = check_test_status_assertion(tmp_path)
+        assert findings == [], f"Expected zero findings, got: {findings}"
+
     def test_finding_shape(self, tmp_path: Path):
         """Findings carry product, file, method, line, issue, severity."""
         source = (
