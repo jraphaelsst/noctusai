@@ -951,6 +951,61 @@ Worktrees not auto-cleaned. Lingering worktrees consume disk space + clutter `gi
 
 User directive 2026-05-04: *"a git worktree, then we develop our own based on the git worktree work, yea?"* — start with vanilla `git worktree`; build NoctusAI-specific tooling on top once we've validated the workflow. Follow-up project (TBD): `noctus.dev.dispatch_parallel(briefs)` — orchestrator passes N subagent briefs; tool sets up worktrees, dispatches subagents, monitors, collects findings. Out of scope today; tracked when the gap surfaces N=2+.
 
+### 16.7 Worktree-base mismatch — the `Agent` tool's `isolation: "worktree"` gap (NEW 2026-05-10)
+
+**The mechanical truth.** When the orchestrator dispatches a subagent via the `Agent` tool with `isolation: "worktree"`, the harness creates the worktree from `main` (or `origin/main` — whichever the harness defaults to), **NOT from the orchestrator's current branch tip.** If the orchestrator is mid-project on a feature branch with N unmerged commits, the engineer's worktree starts from a state that lacks those commits — the project's in-flight work is invisible to the engineer.
+
+**How it surfaced.** AdConnect MVP Implementation (2026-05-10), 8 engineer dispatches in 4 waves on branch `adconnect-mvp-implementation`. Confirmed across 6+ engineers: dispatched worktrees opened to a state several commits behind the orchestrator. Engineers E, G, H self-recovered via `git reset --hard <orchestrator-tip-sha>`. Engineer F correctly STOPPED rather than fabricate. Engineer D's stale-base attempt regressed `001_<product>.sql` from 841 lines back to 79 — caught at merge time, rejected.
+
+**Why this is a structural gap, not a one-off.** The `isolation: "worktree"` parameter is harness-controlled; we cannot change its base-resolution behavior. The fix has to live in OUR dispatch layer — the brief composition. Every engineer brief MUST carry a worktree-base verification preamble that names the orchestrator's HEAD SHA + the recovery directive.
+
+**The orchestrator-side fix — brief preamble (mandatory clause).**
+
+Every engineer dispatch brief MUST include this preamble verbatim, with the orchestrator's CURRENT branch + HEAD SHA filled in:
+
+> ## Worktree base verification (FIRST — before any work)
+>
+> Your worktree was created via `Agent` tool's `isolation: "worktree"`, which initializes from `main`, NOT from the orchestrator's branch. The orchestrator is mid-project on branch `<orchestrator-branch>` at commit `<orchestrator-tip-sha>`. Your worktree may be missing in-flight commits.
+>
+> **Run these checks first:**
+> 1. `git rev-parse HEAD` — record your worktree's starting SHA.
+> 2. `git log --oneline -5` — confirm the most recent commits.
+> 3. If your starting SHA ≠ `<orchestrator-tip-sha>`: `git fetch origin && git reset --hard <orchestrator-tip-sha>` (or `git reset --hard origin/<orchestrator-branch>` if the orchestrator pushed first). Verify with `git log --oneline -3`.
+> 4. If you cannot match the orchestrator-tip SHA (it doesn't exist in your worktree because the orchestrator hasn't pushed), **STOP and report back** — do NOT fabricate a base. The orchestrator will push the branch and re-dispatch.
+>
+> Only then proceed with the work below.
+
+**The engineer-side recovery recipe.** When an engineer detects the mismatch:
+
+```bash
+# 1. Verify the orchestrator's tip SHA exists locally:
+git cat-file -e <orchestrator-tip-sha> 2>/dev/null && echo "exists" || echo "missing"
+
+# 2a. If exists locally: hard-reset.
+git reset --hard <orchestrator-tip-sha>
+
+# 2b. If missing locally: fetch the orchestrator's branch first.
+git fetch origin <orchestrator-branch>
+git reset --hard origin/<orchestrator-branch>
+
+# 3. Verify alignment.
+git log --oneline -3
+git status  # should be clean
+```
+
+**Pre-dispatch directive — push the branch FIRST (companion).** When dispatching engineers, the orchestrator SHOULD push the branch BEFORE composing briefs, so engineers can recover via `git fetch origin <branch> && git reset --hard origin/<branch>` regardless of whether the orchestrator's local commits are visible to the engineer's worktree. *Trade-off:* pushing exposes in-flight work to the remote earlier, but the recovery path becomes mechanical rather than dependent on the harness's local-commit propagation. Adopt the push-first variant for branches with 2+ engineer dispatches.
+
+**Anti-patterns:**
+- **Brief omits the preamble.** Engineer's worktree silently starts from `main`; engineer's edits land on a stale base; merge collapses or regresses orchestrator's work (Engineer D 001 regression — 841 → 79 lines, caught only at merge review).
+- **Brief hard-codes the wrong SHA.** Engineer resets to a stale tip; same shape as omitting. Always read `git rev-parse HEAD` AT brief-composition time.
+- **Engineer fabricates a base when the SHA isn't reachable.** Silent error; the brief's STOP-and-report directive prevents this. Caught Engineer F correctly stopping.
+- **Skipping the preamble for "small" tasks.** Even one-file edits land on stale base if the worktree opens behind. The preamble is cheap (10 lines, ~50 words). Always include.
+- **Push-first variant skipped for 2+ dispatches.** The orchestrator's local-only branch tip may not be reachable from the engineer's worktree even via fetch (depends on harness behavior). When dispatching 2+ engineers, push first.
+
+**Companion to** `§ 17.6 Engineer-brief Write-authorization` (both clauses live in the same dispatch-brief preamble; both override default behaviors that would otherwise silently fail). Both are **architect-side** structural fixes for **engineer-side** harness defaults.
+
+**Three-way-synced 2026-05-10**: KB §16.7 (this section) + `CLAUDE/projects.md` rule pointer + `feedback_worktree_base_verification.md` memory entry.
+
 ---
 
 ## 17. Knowledge tracking during orchestration
@@ -1036,3 +1091,13 @@ If the orchestrator chooses to skip findings.md (trivial work), log a learning t
 - **Engineer files findings inline in their report instead of authoring findings.md.** Findings exist but aren't on the durable surface — they evaporate when the report is summarized away. (Engineer B of Batch 1C did this correctly as a fallback, but the file is the durable contract.)
 
 **Companion to** `KB § 01-PHILOSOPHY.md § Knowledge tracking — durable findings file for any non-trivial work` (foundational principle that this section specializes for orchestration).
+
+**Sibling clause: worktree-base verification (§16.7).** Briefs that dispatch with `isolation: "worktree"` MUST also carry the §16.7 worktree-base verification preamble (orchestrator-tip SHA + reset directive + STOP-and-report fallback). Both clauses live together at the top of the brief — the engineer encounters them BEFORE any task-specific content, so the harness defaults are overridden before they can fire. Combined preamble template:
+
+> ## Worktree base verification (FIRST — before any work)
+>
+> {{KB §16.7 preamble — orchestrator-branch + orchestrator-tip-sha filled in}}
+>
+> ## Explicit Write authorization
+>
+> {{KB §17.6 clause — naming the .md paths the engineer is REQUIRED to create}}

@@ -99,6 +99,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - WhatsApp connector + chatbot framework (`noctusai_lib.integrations.whatsapp` + `noctusai_lib.domain.chatbot` + `noctusai_lib.integrations.{google_calendar,google_maps}` — WAHA parser/sender/router + Redis-backed buffer/worker/LLM-dispatcher + Calendar/Maps adapters; wiring recipe) → `KB § PATTERNS/whatsapp-chatbot-seed.md`
 - Master-tree parallel batches (multi-product orchestrator: same-shape phases across N children execute as synchronized batches; live cross-pollination via shared scratchpad; sync-gates pre/mid/post; divergent-batch carve-out) → `KB § PATTERNS/master-tree-parallel-batches.md`
 - agno multi-agent dev team (engine at `dev_team/` + product at `products/dev-team/`; MCP exposure `noctus.team.*` — run/status/route/metrics/agent_metrics/configure; 11 specialists + 3 sub-teams; per-turn telemetry; "switch flip" UX gated by `ANTHROPIC_API_KEY`) → `KB § PATTERNS/dev-team.md`
+- Containerization (multi-layer Docker: per-product `docker-compose.yml` + root `include:` orchestrator + shared `noctus-net` + per-product `<slug>-net` isolation; canonical pattern at `products/seed/`; `./start.sh` Docker-default with `tunnel <slug>` cloudflare quick-tunnel for OAuth/webhook/demo online testing; `native` legacy preserved) → `KB § PATTERNS/containerization.md`
 
 ### Guides
 - First-time setup → `KB § GUIDES/setup.md`
