@@ -49,7 +49,8 @@ KNOWLEDGE-BASE/
 │   │   ├── whatsapp-chatbot-seed.md ← noctusai_lib.{integrations.whatsapp,domain.chatbot,integrations.{google_calendar,google_maps}} — connector + framework + adapters wiring recipe
 │   │   ├── master-tree-parallel-batches.md ← multi-product orchestrator running same-shape phases as synchronized batches; live cross-pollination via shared scratchpad; divergent-batch carve-out
 │   │   ├── branching-and-merging.md   ← end-to-end git workflow: branching (when, how, push semantics, mental model, naming, anti-patterns) + merging (non-FF integration, multi-branch convergence, conflict resolution discipline, long-running branch maintenance, recovery from bad merges)
-│   │   └── dev-team.md                ← agno multi-agent dev team (engine at dev_team/ + product at products/dev-team/); MCP exposure noctus.team.*; charter / tools / memory / telemetry / configs surfaces; "switch flip" UX
+│   │   ├── dev-team.md                ← agno multi-agent dev team (engine at dev_team/ + product at products/dev-team/); MCP exposure noctus.team.*; charter / tools / memory / telemetry / configs surfaces; "switch flip" UX
+│   │   └── seed-absorption.md         ← noctus.seed.* MCP tools (scan_repetition / list_capabilities / audit_drift) + 4 absorption strategies (delete dead code / move to seed + re-export / factory / template + runtime substitution) + per-candidate loop + safety rules
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
 │   │   ├── new-product.md
@@ -126,6 +127,7 @@ KNOWLEDGE-BASE/
 | Master-tree parallel batches (multi-product orchestrator: same-shape phases across N children execute as synchronized batches; live patterns log + absorption catalog as shared scratchpad; sync-gates pre/mid/post; divergent-batch carve-out; agent collaboration mechanics) | `CONTEXT/PATTERNS/master-tree-parallel-batches.md` |
 | Branching and merging methodology — end-to-end git workflow (when to branch, how to branch from `origin/main`, push semantics — branch-to-branch + branch-tip-to-main fast-forward, naming convention, mental-model upgrade, anti-patterns; non-FF integration, multi-branch convergence, conflict resolution discipline, long-running branch maintenance, recovery from bad merges) | `CONTEXT/PATTERNS/branching-and-merging.md` |
 | Seed Fake+Real adapter pattern — canonical shape (Protocol + Fake + Real + factory) for IO-touching seed modules; gold-standard reference modules; exemption test for pure-logic/pure-crypto modules; backfill audit trail | `CONTEXT/PATTERNS/seed-fake-real-adapter.md` |
+| Seed absorption methodology + tools (`noctus.seed.scan_repetition` / `list_capabilities` / `audit_drift`); four absorption strategies (delete dead code / move-and-re-export / factory / template + runtime substitution); per-candidate loop (scan → evaluate → self-audit → absorb → re-scan → build-verify); safety rules; relation to DRY recurrence rule + delete_product symmetry | `CONTEXT/PATTERNS/seed-absorption.md` |
 | First clone + starting servers | `CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |

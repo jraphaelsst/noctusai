@@ -23,7 +23,11 @@ class Store:
         self.sellout_reports: list[dict[str, Any]] = _load("sellout-reports.json")
         self.invoices: list[dict[str, Any]] = _load("invoices.json")
         self.orders: list[dict[str, Any]] = []
-        self.users: list[dict[str, Any]] = []
+        # Phase 1 of adconnect-mvp-implementation removed the in-memory
+        # `users` list — auth is now SSO-backed via noctusai_seed +
+        # adconnect.distributor_memberships. Routers no longer touch this
+        # store for identity. The remaining lists are slated for removal
+        # as Phases 2-6 swap each domain router to its DB-backed shape.
 
 
 store = Store()

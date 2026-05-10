@@ -1,7 +1,7 @@
 # 02 — Platform Landscape
 
 > Quick orientation for any agent or developer entering this codebase.
-> **Counts last verified:** 2026-04-18 (via `find` on the actual file tree).
+> **Counts last verified:** 2026-04-18 (via `find` on the actual file tree). **Products table last verified:** 2026-05-10.
 
 ## Products
 
@@ -14,9 +14,12 @@
 | **Seed** | `products/seed/` | Minimal reference implementation proving the shared stack | 8004/8100 | `seed` |
 | **Daily Life** | `products/daily-life/` | Personal productivity hub: tasks, goals, habits, schedule, notes | 8005/8110 | `daily_life` |
 | **Mailing** | `products/mailing/` | Email marketing: contacts, lists, templates, campaigns, automations | 8006/8120 | `mailing` |
-| **Media Scheduling** | `products/media-scheduling/` | Real-estate media-crew scheduling via WhatsApp ↔ OpenAI ↔ Google Calendar (ported 2026-05-04 from sibling repo `whatsapp-google-scheduling/` via `projects/media-scheduling-port/`) | 8096/8130 | `media_scheduling` |
+| **AdConnect** | `products/adconnect/` | B2B ad-inventory marketplace (custom JWT auth; MVP in flight on `adconnect-mvp-implementation`) | 8007/8130 | `adconnect` |
+| **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
+| **YouTube Crawler** | `products/youtube-crawler/` | YouTube Data API v3 + Drive + WAHA + SMTP — quota-aware uploads with Fernet-encrypted refresh tokens (scaffolded 2026-05-05) | 8010/8150 | `youtube_crawler` |
+| **Media Scheduling** | `products/media-scheduling/` | Real-estate media-crew scheduling via WhatsApp ↔ OpenAI ↔ Google Calendar (ported 2026-05-04 from sibling repo `whatsapp-google-scheduling/` via `projects/media-scheduling-port/`) | 8096/8140 | `media_scheduling` |
 
-> **AdConnect** (`products/adconnect/`) is a standalone scaffold, currently gitignored and not yet migrated into the monorepo structure. Not a live product. Excluded from the counts below.
+> **Port allocation table** of record: `RESERVED_RANGES` in `mcp/noctusai/tools/noctus/dev/scaffold.py`. The `noctus.dev.reserve_port_range` MCP tool consults that list when scaffolding new products; this table mirrors it.
 
 Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITECTURE.md` and the patterns under `PATTERNS/`.
 
@@ -41,7 +44,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 
 <!-- kb-counts:start:database -->
 - **Schemas (7):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed`.
-- **Tables: 278** distributed across the schemas.
+- **Tables: 293** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

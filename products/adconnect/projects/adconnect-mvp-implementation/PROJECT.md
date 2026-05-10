@@ -278,7 +278,7 @@ Before locking each consumption decision, the next agent runs `noctus.seed.list_
 | Stripe billing | `products/core/backend/app/routers/billing.py` + `services/stripe_service.py` | Phase 5 |
 | Email (Resend) | `seed/lib/backend/noctusai_lib/integrations/email/digest.py` | Phase 3+ (notifications) |
 | Webhook signatures | `seed/lib/backend/noctusai_lib/security/webhook_signatures.py` | Phase 5 (Stripe webhook handler) |
-| SSO | `seed/lib/backend/noctusai_lib/security/oauth/` | Phase 1 (auth) |
+| SSO | `seed/lib/backend/noctusai_lib/api/auth.py` (`make_get_current_user`, `make_get_current_user_org`, `make_require_role`, `resolve_sso_role`) | Phase 1 (auth) ✅ |
 | LGPD flag tooling | `noctus.dev.lgpd_flag` MCP tool | Phase 1+ (every PII write) |
 | Invitations table | `adconnect.invitations` (per migration `001_adconnect.sql`) | Phase 1 (distributor onboarding) |
 
@@ -296,44 +296,52 @@ Phases are **suggestive, not strict.** Reorder, split, merge, or discover new ph
 
 ---
 
-### Phase 0 — Audit and locked design decisions
+### Phase 0 — Audit and locked design decisions ✅
 
 Goal: produce a concrete "this is what we're building" document the rest of the phases can reference without further interrogation.
 
-- [ ] Run `noctus.seed.audit_drift` to know which AdConnect files have drifted from `templates/product-seed/` canonical. Capture the report in `findings.md` under "knowledge-pieces" — informs Phase 7 frontend (drift list shows what's been customized).
-- [ ] Run `noctus.seed.list_capabilities` to know what `noctusai_seed` + `noctusai_lib` provide. Capture the seed-export inventory in `findings.md` so Phase 1-5 don't reinvent.
-- [ ] Read ERP migrations: `products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql` + `015_invitations.sql` + any sub-entity migrations. Document how ERP expresses sub-entities under the brand org.
-- [ ] Read Therapy migrations: `products/therapy-platform/backend/migrations/001_therapy_platform.sql`. Same audit.
-- [ ] Read core's identity model: `products/core/backend/migrations/001_noctusai_core.sql` lines around `org_role`, `noctus_users`, `noctus_orgs`. Confirm the canonical hierarchy column names.
-- [ ] Read every JSON mock in `products/adconnect/backend/app/data/*.json`. For each, decide: (a) production schema mirrors mock 1:1 / (b) production schema diverges from mock and document the divergence in `findings.md`. Bias toward divergence — mocks were absorption-stage guesses.
-- [ ] Decide auth model. Two options the user left for Phase 0:
+- [x] Run `noctus.seed.audit_drift` to know which AdConnect files have drifted from `templates/product-seed/` canonical. Capture the report in `findings.md` under "knowledge-pieces" — informs Phase 7 frontend (drift list shows what's been customized). *(Tool name in MCP server is `noctus.dev.diff_against_seed`; ran — only port drift, expected.)*
+- [x] Run `noctus.seed.list_capabilities` to know what `noctusai_seed` + `noctusai_lib` provide. Capture the seed-export inventory in `findings.md` so Phase 1-5 don't reinvent. *(No MCP tool with that name; inventory built by reading `seed/lib/backend/noctusai_lib/` + `seed/framework/backend/noctusai_seed/` directly.)*
+- [x] Read ERP migrations: `products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql` + `015_invitations.sql` + any sub-entity migrations. Document how ERP expresses sub-entities under the brand org.
+- [x] Read Therapy migrations: `products/therapy-platform/backend/migrations/001_therapy_platform.sql`. Same audit.
+- [x] Read core's identity model: `products/core/backend/migrations/001_noctusai_core.sql` lines around `org_role`, `noctus_users`, `noctus_orgs`. Confirm the canonical hierarchy column names.
+- [x] Read every JSON mock in `products/adconnect/backend/app/data/*.json`. For each, decide: (a) production schema mirrors mock 1:1 / (b) production schema diverges from mock and document the divergence in `findings.md`. Bias toward divergence — mocks were absorption-stage guesses.
+- [x] Decide auth model. Two options the user left for Phase 0:
   - **Option A — distributor-as-noc-user.** Distributor users live in `noc.noctus_users` with their `org_id` pointing at the brand's org; their distributor membership lives in `adconnect.distributor_memberships`. Single SSO surface. Custom JWT in `auth.py` and `security.py` is removed; AdConnect inherits the seed's auth.
   - **Option B — distributor-as-external-org.** Each distributor is its own `org_id` in noc; users belong to the distributor's org; the brand has a separate org with cross-org-read permissions. Heavier setup, cleaner if distributors ever become multi-brand customers.
 
-  Recommendation: **Option A** for V1 (matches user's "I'll probably change that in the future"). Lock the decision in `findings.md` and note the migration path to Option B if it ever needs to flip.
-- [ ] Document the locked decisions in `findings.md` AND update §5 of this PROJECT.md if any decision changes the planned architecture.
-- [ ] Confirm Stripe entry point: `products/core/backend/app/services/stripe_service.py` + `app/routers/billing.py` are the canonical surface AdConnect inherits. Read both and confirm they expose what Phase 5 needs (checkout session, customer portal, webhook handler).
-- [ ] Confirm email entry point: `noctusai_lib.integrations.email.digest.send_to_one` for transactional notifications. Read `seed/lib/backend/noctusai_lib/integrations/email/digest.py` and confirm shape.
-- [ ] Run `noctus.dev.lgpd_list` to see existing LGPD flags in the platform. Identify which flag types apply to distributor data (CNPJ, addresses, payment data). Phase 1+ uses these flag types.
+  Recommendation: **Option A** for V1 (matches user's "I'll probably change that in the future"). Lock the decision in `findings.md` and note the migration path to Option B if it ever needs to flip. *(Locked: Option A.)*
+- [x] Document the locked decisions in `findings.md` AND update §5 of this PROJECT.md if any decision changes the planned architecture.
+- [x] Confirm Stripe entry point: `products/core/backend/app/services/stripe_service.py` + `app/routers/billing.py` are the canonical surface AdConnect inherits. Read both and confirm they expose what Phase 5 needs (checkout session, customer portal, webhook handler).
+- [x] Confirm email entry point: `noctusai_lib.integrations.email.digest.send_to_one` for transactional notifications. Read `seed/lib/backend/noctusai_lib/integrations/email/digest.py` and confirm shape.
+- [x] Run `noctus.dev.lgpd_list` to see existing LGPD flags in the platform. Identify which flag types apply to distributor data (CNPJ, addresses, payment data). Phase 1+ uses these flag types.
 
 **Exit criteria:** `findings.md` documents (1) full seed inventory, (2) ERP/Therapy hierarchy pattern, (3) auth-model lock-in, (4) every mock JSON's mirror/divergence decision, (5) Stripe + email + LGPD entry points confirmed. §5 of this PROJECT.md is updated if any audit finding changes the architecture.
 
 **Tests required:** N/A (audit-only phase). Run the existing 2 tests (`pytest products/adconnect/backend/tests/`) to confirm baseline green before Phase 1.
 
+**Improvements:**
+- PROJECT.md §5.5 SSO path corrected (`noctusai_lib/api/auth.py`, not `security/oauth/`); folded inline.
+- PROJECT.md §6 Phase 1 step 7 LGPD signature corrected to real `(code_path, concern, reason, mitigation)`; folded inline.
+- `noctus.seed.audit_drift / list_capabilities / scan_repetition` tool names referenced in PROJECT.md don't exist in the MCP server — closest analogues used (`noctus.dev.diff_against_seed`, `noctus.dev.scan_within_product_helpers`). Methodology learning: align PROJECT.md drafts with actual MCP names by running `claude mcp list` first; logged for three-way sync.
+- N=2 sub-entity recurrence (therapy.clinics + adconnect.distributors) — triage outcome accept-with-rationale; flips to formalize on N=3+. Catalog entry deferred until merge to main.
+
 ---
 
-### Phase 1 — Identity foundation (migration + RLS + auth swap)
+### Phase 1 — Identity foundation (migration + RLS + auth swap) ✅
 
 Goal: distributors and distributor users exist as DB entities; SSO works for distributor users; the custom-JWT scaffold is replaced (or finalized — Phase 0 decides).
 
-- [ ] Author `migrations/002_adconnect_identity.sql` — creates `adconnect.distributors`, `adconnect.distributor_memberships`. Use `noctusai_lib.domain.sql_templates` helpers. Apply via `mcp__claude_ai_Supabase__apply_migration`.
-- [ ] RLS policies on both tables: distributor users see only their distributor's row; brand owner/admin sees all distributors in the brand's org. Mirror the canonical pattern from Phase 0 audit.
-- [ ] Replace `app/routers/auth.py` per Phase 0 lock-in (Option A: SSO inherit; Option B: custom JWT finalized with proper user table). Either path: REMOVE the in-memory `_seed_users()` from `app/routers/auth.py`.
-- [ ] If Option A: REMOVE `app/security.py` (password hashing no longer needed) and `app/auth_deps.py` (replaced by seed's auth dep).
-- [ ] Update `app/data/store.py` to remove the `users` field (it was the in-memory auth backing).
-- [ ] Add invitation flow for distributor users: brand admin invites a user to a distributor via the existing `adconnect.invitations` table; user accepts; `distributor_memberships` row is created.
-- [ ] Pydantic schemas in `app/schemas/identity.py`: `DistributorIn / DistributorOut / MembershipIn / MembershipOut`.
-- [ ] LGPD flagging: every write to `adconnect.distributors` calls `noctus.dev.lgpd_flag(table="adconnect.distributors", fields=["cnpj", "endereco_*", "contato_*"], reason="Distributor PII at registration")`.
+- [x] Author `migrations/002_adconnect_identity.sql` — creates `adconnect.distributors`, `adconnect.distributor_memberships`. Use `noctusai_lib.domain.sql_templates` helpers. Apply via `mcp__claude_ai_Supabase__apply_migration`. *(File authored. Application deferred to orchestrator — no Supabase credentials in worktree.)*
+- [x] RLS policies on both tables: distributor users see only their distributor's row; brand owner/admin sees all distributors in the brand's org. Mirror the canonical pattern from Phase 0 audit. *(Membership-table subquery shape used — supports many-distributors-per-user per §7 #6.)*
+- [x] Replace `app/routers/auth.py` per Phase 0 lock-in (Option A: SSO inherit; Option B: custom JWT finalized with proper user table). Either path: REMOVE the in-memory `_seed_users()` from `app/routers/auth.py`. *(Option A locked. New router: GET /me + POST /accept-distributor-invite.)*
+- [x] If Option A: REMOVE `app/security.py` (password hashing no longer needed) and `app/auth_deps.py` (replaced by seed's auth dep). *(`security.py` removed. `auth_deps.py` REWRITTEN as a thin delegation shim re-exporting `get_current_user` + `require_role` from the seed's `make_get_current_user` / `make_require_role` factories — outright removal would break 7 mock-backed routers awaiting Phase 2-6 swap. See `findings.md → mistakes-slips`. Slated for full removal at Phase 6 close.)*
+- [x] Update `app/data/store.py` to remove the `users` field (it was the in-memory auth backing).
+- [x] Add invitation flow for distributor users: brand admin invites a user to a distributor via the existing `adconnect.invitations` table; user accepts; `distributor_memberships` row is created. *(Lives in `app/routers/auth.py` — `POST /api/auth/accept-distributor-invite`.)*
+- [x] Pydantic schemas in `app/schemas/identity.py`: `DistributorIn / DistributorOut / MembershipIn / MembershipOut`. *(Plus `AcceptDistributorInviteIn` + literal-typed status/tier/role enums.)*
+- [x] LGPD flagging: every write to `adconnect.distributors` calls `noctus.dev.lgpd_flag(table="adconnect.distributors", fields=["cnpj", "endereco_*", "contato_*"], reason="Distributor PII at registration")`. *(Real tool signature is `code_path` + `concern` + `reason` — flagged via that surface; entry recorded in `LGPD-WARNINGS.md`. See `findings.md → knowledge-pieces → LGPD flag types`.)*
+
+**Drive-by fix in scope:** `app/main.py` was setting `router.prefix = "/auth"` AFTER route registration; FastAPI 0.115's `include_router` ignores post-construction prefix mutation, so all 9 domain routers were colliding at the bare paths their routes declared (`/me`, `/dist-001`, `/dashboard`, etc.). Fixed by wrapping each domain router under a fresh `APIRouter(prefix="/api/<domain>", tags=[...])` parent at include time. All domain routers now mount under their intended `/api/<domain>` paths.
 
 **Tests required:**
 - `tests/routers/test_auth_router.py` — login flow + invitation acceptance.
@@ -460,7 +468,7 @@ Goal: enough brand-side admin endpoints to operate AdConnect via API without UI.
 
 ---
 
-### Phase 7 — Frontend distributor pages
+### Phase 7 — Frontend distributor pages ⏳ (skeleton)
 
 Goal: distributor uses AdConnect entirely via the web UI.
 
@@ -573,3 +581,6 @@ What does "done" look like? Measurable, verifiable.
 | Date | Change | By |
 |---|---|---|
 | 2026-05-05 | Initial project drafted from `templates/PROJECT-TEMPLATE.md` after interrogation of João Raphael (8 questions answered). Standardization pre-work landed: migration `001_seed.sql` → `001_adconnect.sql` with `adconnect` schema; `README.md` + `MASTER-PROMPT.md` rewritten; `conftest.py` docstring drive-by; testing-ground MCP tool `noctus.dev.create_testing_ground` added + memory rule for user-phrasing → tool routing. The parallel agent's `noctus.seed.*` MCP branch (audit_drift, list_capabilities, scan_repetition) shipped during this same session and is referenced in Phase 0 + Phase 8. | Claude Opus 4.7 (1M ctx) |
+| 2026-05-10 | Phase 0 ✅ + Phase 1 ✅ — identity foundation, migration 002 authored, auth swapped to seed (Option A), LGPD flags wired, 3 test files added (auth router 8 tests, distributors router 6 tests, realdb identity 3 tests; 45/45 mock tests green). Drive-by fix: `main.py` router-prefix bug (FastAPI 0.115 ignores post-construction `router.prefix` mutation; wrapped each domain router under explicit prefixed parent). | Engineer A (subagent) |
+| 2026-05-10 | Phase 7 frontend SKELETON ⏳ — 9 pages + 5 hooks + types + routing wired into `App.tsx`, `vite build` clean (9.17s), no API integration yet. Drive-by: `seed/framework/frontend/vite.config.factory.ts` patched to add `clsx`+`tailwind-merge` to `FRAMEWORK_DEPS` and AdConnect entry to `PRODUCT_MAP` (collision-flagged with parallel branch `f1a3935`). | Engineer B (subagent) |
+| 2026-05-10 | Migration consolidation: 7 numbered files (001 + Engineer A's 002 + my 003-007 drafts) collapsed into single `001_adconnect.sql` (16 tables in topological order). Three-way sync of "single 001 migration per product" convention: KB § PATTERNS/database-rls.md § Single 001 migration convention + CLAUDE/backend.md rule + `feedback_single_001_migration.md` memory pointer. NF-e service skeleton (`app/services/nfe_service.py`) + 10 passing tests landed in parallel. | Orchestrator |

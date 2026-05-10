@@ -64,6 +64,24 @@ Numbered SQL files in `products/<name>/backend/migrations/001_*.sql`, `002_*.sql
 - Seed data, if any, goes in a separate `00X_seed_*.sql` file.
 - **Next number wins:** pick the next unused number in the product's `migrations/` directory (e.g. `016_metas_domain.sql` after `015_invitations.sql`).
 
+### Single 001 migration convention (fresh-start optimization)
+
+> **One-line rule:** every product ships a single `001_<product>.sql` that builds the full schema from scratch. Additive patches for live DBs land as `002+`, but the 001 stays in lock-step.
+
+The replay-log invariant is that **applying `001_<product>.sql` alone to a fresh DB produces the same final shape as applying 001 + every patch in order.** Two reasons:
+
+1. **Fresh-environment cost.** A new dev / CI / sandbox spin-up runs one file, not N. The 80-line "001 framework + 8 numbered patches" pattern AdConnect briefly carried in May 2026 turned a 30-second bootstrap into a 5-minute audit of which files apply in what order.
+2. **Single-file diff for review.** When the schema evolves (Phase 2 catalog → Phase 3 orders → Phase 4 rewards), every change goes into one file. PR review reads the schema in topological order: framework → identity → catalog → orders → rewards → financial. No cross-file flip-back to understand FK targets.
+
+**How to evolve the 001:**
+- *Greenfield product*: scaffold drops a single `001_<product>.sql` with framework tables only. Each MVP-implementation phase **edits 001 in-place** to add tables/RLS/columns. No `002_*.sql` is created during initial implementation.
+- *Live DB past 001*: ship the additive change as `002_<patch>.sql` (idempotent, applies cleanly on top of an existing 001-deployed DB) AND mirror the change into `001_<product>.sql` (so a fresh DB still bootstraps with one file). Both files commit together.
+- *Topological ordering inside 001*: schema → grants → trigger functions → tables in dependency order (parents before children). Defer FKs that would require forward references via `ALTER TABLE ... ADD CONSTRAINT` at the bottom of the file.
+
+**Why not just bigger 001s without patches?** Because Supabase's migration log records what was applied — if you're past 001 and want to add a column, you can't re-apply 001 without dropping the schema. The 002 patch records the delta in the live-DB log; the 001 mirror keeps fresh-start clean.
+
+**Anti-pattern (don't):** N numbered files for a greenfield product where 001 has only framework tables and 002-007 are domain phases. Collapse them into a single 001 before merge to main. AdConnect's May 2026 collapse from 7 files → 1 is the reference fix.
+
 ### Authoring helpers — `noctusai_lib.domain.sql_templates`
 
 For new migrations and the product-scaffold tool, use the helpers in `noctusai_lib.domain.sql_templates` to emit the canonical shapes for the conventions that recur across products. The detector `scan_migration_patterns` flags drift; the helpers prevent it.
