@@ -51,8 +51,18 @@ from typing import Iterable, Optional
 logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT  # noqa: E402  (path constant)
+
+# Shared tokenizer helper — N=2 absorption with `noctus.dev.history_record`
+# (`project-history-ledger` Phase 1, 2026-05-10). The encoder + fallback
+# cascade live in `mcp/noctusai/tools/_tokens.py`; this module wraps with
+# the per-file aggregation logic.
+from tools._tokens import (  # noqa: E402
+    DEFAULT_TIKTOKEN_ENCODING,
+    get_default_encoder as _try_tiktoken_encoding,
+    count_tokens_in_text as _shared_count_tokens_in_text,
+)
+
 DEFAULT_EXTENSIONS: tuple[str, ...] = (".md",)
-DEFAULT_TIKTOKEN_ENCODING = "cl100k_base"
 
 # Skip the same vendored / generated dirs the rest of the toolkit skips.
 SKIP_DIRS = {
@@ -108,46 +118,21 @@ class TokenCountResult:
 
 
 # ---------------------------------------------------------------------------
-# Tokenizer cascade
+# Tokenizer cascade — delegates to the shared helper at
+# `mcp/noctusai/tools/_tokens.py`. Re-exported as module-level names so
+# existing consumers / tests that import `count_tokens_in_text` keep
+# working without rewiring.
 # ---------------------------------------------------------------------------
-
-
-def _try_tiktoken_encoding(encoding_name: str = DEFAULT_TIKTOKEN_ENCODING):
-    """Return a tiktoken encoder if available; None otherwise."""
-    try:
-        import tiktoken  # type: ignore
-
-        try:
-            return tiktoken.get_encoding(encoding_name)
-        except Exception as e:
-            logger.debug("tiktoken.get_encoding(%r) failed: %s", encoding_name, e)
-            return None
-    except ImportError:
-        return None
 
 
 def count_tokens_in_text(text: str, encoder=None) -> tuple[int, str]:
     """Count tokens in `text`. Returns `(tokens, tokenizer_used)`.
 
     `encoder` may be a pre-loaded tiktoken Encoding (for batch reuse).
-    If None, the function tries tiktoken once and caches None on miss.
+    Delegates to the shared `tools._tokens.count_tokens_in_text` helper —
+    the encoder + fallback cascade live in one place across MCP tools.
     """
-    if encoder is not None:
-        try:
-            return len(encoder.encode(text)), f"tiktoken-{encoder.name}"
-        except Exception as e:
-            logger.debug("tiktoken encode failed, falling back: %s", e)
-
-    enc = _try_tiktoken_encoding()
-    if enc is not None:
-        try:
-            return len(enc.encode(text)), f"tiktoken-{enc.name}"
-        except Exception as e:
-            logger.debug("tiktoken encode failed, falling back: %s", e)
-
-    # Fallback — chars/4 (English markdown rule of thumb)
-    chars = len(text)
-    return max(1, chars // 4) if chars else 0, "approximate-chars-per-4"
+    return _shared_count_tokens_in_text(text, encoder=encoder)
 
 
 # ---------------------------------------------------------------------------
