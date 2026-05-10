@@ -94,6 +94,34 @@ print(rls_subquery_policy(
 
 Existing migration files (the replay log) are NOT rewritten; they stay authoritative per the MCP-migrations-mirror-the-file rule. The helpers exist for migrations being authored fresh + the scaffold tool that bootstraps new product schemas.
 
+### Authoring-ergonomic wrappers — `noctusai_lib.sql` (2026-05-10)
+
+Sits on top of `noctusai_lib.domain.sql_templates` — same canonical strings, more ergonomic API for direct authoring + the scaffold tool. Drift would surface in tests at BOTH layers simultaneously (delegation, not fork).
+
+| Helper | Returns | Notes |
+|---|---|---|
+| `prelude(schema)` | Comment-block header (RLS isolation + cross-product safety rationale) + `SET search_path = '<schema>', public;` line + trailing newline | Use at the top of every new migration |
+| `updated_at_function(schema, *, function_name="set_updated_at")` | `CREATE OR REPLACE FUNCTION` block | Threads `function_name=` for ERP's legacy `update_updated_at_column` shape |
+| `updated_at_trigger(table, *, schema=None, function_name=..., trigger_name=..., include_function=True)` | Function + trigger pair (or trigger-only when `include_function=False`) | `include_function=False` is the composition lever for multi-table migrations |
+
+```python
+from noctusai_lib.sql import prelude, updated_at_trigger
+
+migration = f"""
+{prelude(schema="my_product")}
+
+CREATE TABLE my_product.posts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- ...
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+{updated_at_trigger("posts", schema="my_product")}
+"""
+```
+
+The MCP `noctus.dev.scaffold_migration` tool emits both helpers automatically — pass `with_updated_at=["posts", "comments"]` for multi-table cases. Existing migrations stay verbatim (cosmetic-only absorption; no churn).
+
 ## MCP + file sync (hard rule)
 
 When you apply DDL via the Supabase MCP (`apply_migration` or `execute_sql`), the same SQL **must** live as a numbered migration file. Both get committed together. Drift between what's on the hosted DB and what's in the repo breaks fresh clones.

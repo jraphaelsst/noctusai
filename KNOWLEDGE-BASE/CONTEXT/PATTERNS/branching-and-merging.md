@@ -1036,3 +1036,40 @@ If the orchestrator chooses to skip findings.md (trivial work), log a learning t
 - **Engineer files findings inline in their report instead of authoring findings.md.** Findings exist but aren't on the durable surface — they evaporate when the report is summarized away. (Engineer B of Batch 1C did this correctly as a fallback, but the file is the durable contract.)
 
 **Companion to** `KB § 01-PHILOSOPHY.md § Knowledge tracking — durable findings file for any non-trivial work` (foundational principle that this section specializes for orchestration).
+
+### 17.7 Read-bodies-before-dispatch — the absorption-brief discipline (NEW 2026-05-10)
+
+**The slip pattern.** Three engineers in the 2026-05-10 parallel dispatch (`seed-test-suites-absorption`, `seed-migration-prelude`, `seed-digest-base-class`) independently surfaced the same root cause: scan-tool output (`scan_cross_product_helpers`, `scan_recurrence`, `scan_block_patterns`, `scan_migration_patterns`) flags **NAMES + SHAPES + LINES**, not BODIES. The architect dispatched absorption briefs based on scan signals alone:
+
+- **Engineer 2 (migration-prelude):** brief asked to author `noctusai_lib.sql.{prelude, updated_at_trigger}`, but `noctusai_lib.domain.sql_templates` (Wave A 2026-05-01) already shipped the canonical strings. Engineer pivoted to delegation wrappers.
+- **Engineer 3 (digest-base):** audit flagged `_empty_output` recurring in 3 products as part of the digest cluster, but `grep -rn` showed **none of the 5 digest services define it** — actual locations were `ai_service.py` (LLM error-fallback, different cluster). Same audit said N=5 narrative services, but daily-life's `daily_brief_service` was coincidence (in-app badge, not email digest).
+- **Engineer 1 (test-suites):** audit said `TestRemoveMember` recurs in 7 products, but only 4 are byte-identical — core/daily-life/erp-imobiliario have rich admin-flow variants using `admin_client`, NOT duplicates.
+
+**The rule.** Before drafting an absorption-project dispatch brief, the architect MUST:
+
+1. Run the scanner that produced the signal
+2. **Read the bodies** of every flagged location (the helper functions / test classes / migration blocks themselves, not just their names)
+3. Grep `seed/lib/backend/noctusai_lib/` for the pattern's likely module — confirm whether prior absorption already exists
+4. **Add a "Bodies-read confirmation" paragraph** to the dispatch brief stating which locations the architect personally read + the conclusion (genuinely shared / coincidentally-named / already absorbed)
+
+**The cost of skipping:**
+- Best case: engineer detects during scope audit and pivots (~30 min orientation cost — engineer 2)
+- Middle case: engineer catches a phantom signal during execution and skips it (deeper trust hit — engineer 3 caught `_empty_output` before adding it as abstract method)
+- Worst case (silent): engineer ships a fork that drifts from prior absorption, OR a phantom abstract method nobody overrides
+
+**Anti-shape:** dispatching "absorb pattern X" with only scan-tool output → unbounded engineer time auditing what architect should have audited.
+
+**Right shape:** architect grep + scan + body-read first; brief explicitly references prior absorption + confirms genuine vs coincidental shared shape.
+
+### 17.8 Worktree venv + editable-install seed-lib resolution (NEW 2026-05-10)
+
+**Surfaced by:** `seed-migration-prelude` engineer.
+
+**The mechanic:** noc's MCP venv (`mcp/noctusai/.venv/`) installs `noctusai_lib` as editable, registered via a `MetaPathFinder` mapping that points at the **main repo's** `seed/lib/backend/`, NOT at any worktree's. `meta_path` finders run before `sys.path` is consulted for matching modules, so `sys.path.insert(0, worktree/seed/lib/backend)` is a no-op for `noctusai_lib` resolution within an active venv.
+
+**Three correct workarounds:**
+- **Per-invocation:** `PYTHONPATH=<worktree>/seed/lib/backend pytest …` — PYTHONPATH is consulted before the meta-path finder's mapping
+- **Worktree-local venv:** `pip install -e <worktree>/seed/lib/backend` re-points the editable install to the worktree path
+- **Alternative venv:** use `dev_team/.venv` editable-installed against the worktree (engineer 3's recovery)
+
+**The rule.** Dispatch briefs whose scope touches `seed/lib/backend/` MUST include a "Worktree-venv guidance" paragraph specifying one of the three workarounds. Without it, engineer either gets `ModuleNotFoundError` (best case — surfaces immediately) or — worse — passes tests against the main repo's older surface (silent failure masking real test gaps).

@@ -594,6 +594,46 @@ assert notifs[0]["metadata"]["feature_key"] == "therapy.session_summary"
 
 **When to add `core_db` (or any other dependency) as an optional kwarg to a pipeline function.** Default to `None` and lazily resolve via `get_core_client()` when the function actually needs it (the resolve-helper pattern). Production paths keep working without code changes; tests inject the same mock so write side-effects land in a place the test can read. This is **dependency injection**, not patching — the production call site never holds onto the mock; the kwarg defaults to None and the runtime resolves to the real client. Reference: `_resolve_core_db(core_db)` in `products/therapy-platform/backend/app/services/ai_pipeline.py`.
 
+### Framework-test inheritance suites (2026-05-10)
+
+`noctusai_lib.testing.framework_test_suites` exposes 8 base classes that products inherit instead of copy-pasting framework-test code. Before 2026-05-10, every product carried ~30 LOC of identical assertion classes (`TestHealthCheck`, `TestRemoveMember`, `TestAuthBoundary`, etc.) testing seed-framework code; when the framework changed, all 7 adopters needed updating in lockstep.
+
+**Available suites** (8 total, 31 inherited tests):
+
+| Suite | Tests | Covers |
+|---|---|---|
+| `HealthCheckSuite` | 1 | `/api/health` shape (`status` / `product` / `version`) |
+| `TeamRouterListMembersSuite` | 2 | `GET /api/team/membros` listing |
+| `TeamRouterInviteSuite` | 1 | `POST /api/team/convites` |
+| `TeamRouterRemoveMemberSuite` | 2 | `DELETE /api/team/membros/{id}` |
+| `FrameworkEndpointsSuite` | 10 | All `standard_routers` endpoints exist + respond |
+| `TeamFlowSuite` | 2 | Integration: invite → accept → list |
+| `NotificationFlowSuite` | 4 | Notification proxy + count endpoints |
+| `AuthBoundarySuite` | 9 | Integration: unauth'd → 401 across product endpoints |
+
+**Adopter shape:**
+```python
+# products/<x>/backend/tests/routers/test_health.py
+from noctusai_lib.testing import HealthCheckSuite
+
+class TestHealthCheck(HealthCheckSuite):
+    expected_product_name = "<X>"
+    # rest is inherited
+```
+
+Pytest collects `test_*` methods on any `Test*` class regardless of base. Class attrs on the subclass shadow base defaults at lookup time. The `client` fixture is consumed by name from each adopter's `conftest.py` — suites in `noctusai_lib` don't redefine it.
+
+**Adopters (6 products, 14 test files refactored):** adconnect, daily-life, mailing, media-scheduling, seed, youtube-crawler. Net: −848 LOC product test code, +316 LOC seed-lib.
+
+**The N=4 byte-identical lesson.** The audit flagged `TestRemoveMember` recurring in 7 products — but reading bodies showed only 4 are byte-identical (adconnect / media-scheduling / seed / youtube-crawler). Core / daily-life / erp-imobiliario have **divergent rich tests** using `admin_client` to exercise real business logic (self-removal rejection, role-promotion guards). Those stayed untouched — they're independent test artifacts that share a label, NOT duplicates waiting to be unified. **Content-diff before deciding "this is a duplicate."**
+
+**Anti-patterns:**
+- Hand-writing `TestHealthCheck` inline instead of inheriting `HealthCheckSuite` — seed framework changes will silently miss your tests
+- Overriding more than `expected_*` class attrs — if you need to override a test method, the suite's contract is wrong; surface as a finding
+- Treating scan-tool helper-name signals as absorption commands — content-diff first, then decide
+
+→ Source: `seed/lib/backend/noctusai_lib/testing/framework_test_suites.py`
+
 ### Per-product frontend hook tests (seed-scoped factory, 2026-04-27)
 
 Every product frontend at `products/<X>/frontend/` ships with a 3-line `vitest.config.ts` that delegates to **`createProductVitestConfig`** at `seed/framework/frontend/vitest.config.factory.ts` — the seed-scoped factory absorbing the canonical config. This is the same skeleton/organ pattern as `createViteConfig` (sibling factory at `vite.config.factory.ts`); changes to the canonical shape land once in seed and propagate to every product at install time. Adopters: erp, mailing, daily-life, personal-finance, therapy-platform, core, adconnect. Seed reference product (`products/seed/`) is intentionally NOT in this list — it's a scaffolding template, not a consumer.
