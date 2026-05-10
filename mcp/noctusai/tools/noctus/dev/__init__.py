@@ -23,6 +23,7 @@ def register_all(server) -> None:
     from . import context
     from . import cost_evaluation
     from . import diff
+    from . import history
     from . import improvements
     from . import lgpd
     from . import master_prompts
@@ -55,6 +56,7 @@ def register_all(server) -> None:
     context.register(server)
     cost_evaluation.register(server)
     diff.register(server)
+    history.register(server)
     improvements.register(server)
     lgpd.register(server)
     master_prompts.register(server)
