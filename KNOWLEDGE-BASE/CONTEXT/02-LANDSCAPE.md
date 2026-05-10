@@ -31,10 +31,10 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | ERP | 59 | 52 | 68 | 66 | 110 | 1,646 |
 | PF | 15 | 17 | 24 | 16 | 44 | 453 |
 | Therapy | 40 | 44 | 66 | 29 | 75 | 976 |
-| Seed | 2 | 1 | 9 | 1 | 5 | 41 |
-| Daily Life | 7 | 7 | 12 | 7 | 15 | 228 |
-| Mailing | 10 | 10 | 22 | 9 | 16 | 185 |
-| **Total** | **161** | **143** | **227** | **128** | **303** | **3,954** |
+| Seed | 2 | 1 | 9 | 1 | 5 | 10 |
+| Daily Life | 7 | 7 | 12 | 7 | 15 | 226 |
+| Mailing | 10 | 10 | 22 | 9 | 16 | 184 |
+| **Total** | **161** | **143** | **227** | **128** | **303** | **3,920** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
