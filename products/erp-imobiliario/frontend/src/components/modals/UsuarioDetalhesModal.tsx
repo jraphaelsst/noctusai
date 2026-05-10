@@ -5,7 +5,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@noctusai/seed/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,11 +15,11 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+} from "@noctusai/seed/components/ui/alert-dialog";
+import { Button } from "@noctusai/seed/components/ui/button";
+import { Input } from "@noctusai/seed/components/ui/input";
+import { Label } from "@noctusai/seed/components/ui/label";
+import { Avatar, AvatarFallback, AvatarImage } from "@noctusai/seed/components/ui/avatar";
 import { User, Mail, Phone, Calendar, Edit2, X, Save, Key, Shield, Trash2 } from "lucide-react";
 import { Profile } from "@/types";
 import { formatDate } from "@/lib/utils";

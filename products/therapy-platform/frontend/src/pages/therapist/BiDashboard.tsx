@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Loader2, BarChart3, Users, CalendarDays, DollarSign, Star, XCircle } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+} from '@noctusai/seed/components/ui/select';
 import { formatCurrency } from '@/lib/utils';
 import { useBiResumo, useBiSessoes, useBiReceita, useBiCancelamentos } from '@/hooks/useBi';
 

@@ -1,7 +1,7 @@
 import { Star, Flag, Eye, EyeOff } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { useAdminReviews, useDismissReviewFlag, useHideReview } from '@/hooks/useAdmin';
 
 interface FlaggedReview {

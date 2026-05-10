@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card } from '@/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Card } from '@noctusai/seed/components/ui/card';
 import { Plus, ExternalLink, Archive, Trash2 } from 'lucide-react';
 import { useClientes, useToggleArquivarCliente, useDeleteCliente } from '@/hooks/useClientes';
 import { useFunilFiltrosStore } from '@/store/funilFiltrosStore';
@@ -22,7 +22,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@noctusai/seed/components/ui/alert-dialog';
 
 export default function Clientes() {
   const navigate = useNavigate();

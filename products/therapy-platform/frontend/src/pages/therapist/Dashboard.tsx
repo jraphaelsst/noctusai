@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
 import { Users, CalendarDays, DollarSign, MessageSquare } from "lucide-react";
 
 const metrics = [

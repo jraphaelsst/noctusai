@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { Loader2, BookOpen, Plus, Trash2, Eye, EyeOff } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Textarea } from '@noctusai/seed/components/ui/textarea';
+import { Switch } from '@noctusai/seed/components/ui/switch';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import { formatDate } from '@/lib/utils';
 import {
   useJournalEntries, useCreateJournalEntry, useUpdateJournalEntry, useDeleteJournalEntry,

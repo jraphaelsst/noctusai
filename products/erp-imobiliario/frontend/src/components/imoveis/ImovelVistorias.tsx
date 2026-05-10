@@ -1,5 +1,5 @@
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { useVistorias } from '@/hooks/useVistorias';
 import { TipoVistoria, StatusVistoria } from '@/types/locacoes';
 import { formatDate } from '@/lib/utils';

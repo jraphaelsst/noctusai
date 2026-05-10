@@ -2,14 +2,14 @@ import { useState, useMemo } from 'react';
 import {
   Search, CheckCircle, XCircle, Eye, Building2, Star,
 } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import { useAdminClinics, useApproveEntity, useRejectEntity } from '@/hooks/useAdmin';
 import { useNavigate } from 'react-router-dom';
 import type { Clinica } from '@/types';

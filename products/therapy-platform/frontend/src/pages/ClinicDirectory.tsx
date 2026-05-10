@@ -1,5 +1,5 @@
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@noctusai/seed/components/ui/card";
+import { Input } from "@noctusai/seed/components/ui/input";
 import { Search, Building2 } from "lucide-react";
 
 export default function ClinicDirectory() {

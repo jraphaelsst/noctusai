@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Loader2, Receipt, Download } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useInvoices } from '@/hooks/useInvoices';
 

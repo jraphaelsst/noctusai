@@ -1,10 +1,10 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Badge } from "@noctusai/seed/components/ui/badge";
+import { Progress } from "@noctusai/seed/components/ui/progress";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button } from "@noctusai/seed/components/ui/button";
+import { Input } from "@noctusai/seed/components/ui/input";
+import { Label } from "@noctusai/seed/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn, formatDate } from "@/lib/utils";
 import { Meta, CategoriaMeta } from "@/types";
@@ -15,7 +15,7 @@ import { useState, memo, useMemo } from "react";
 import { useUpdateMeta } from "@/hooks/useMetas";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useConcluirMetaAgrupada } from "@/hooks/useConcluirMetaAgrupada";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@noctusai/seed/components/ui/tooltip";
 import { Info, ArrowRight, ArrowLeft } from "lucide-react";
 import { categoriaLabels as categoriaMetaLabels, getDisplayCategoria } from "@/lib/categorias";
 

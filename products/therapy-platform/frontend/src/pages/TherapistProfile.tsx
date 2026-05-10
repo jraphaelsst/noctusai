@@ -1,9 +1,9 @@
 import { useParams } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@noctusai/seed/components/ui/tabs";
+import { Avatar, AvatarFallback } from "@noctusai/seed/components/ui/avatar";
+import { Badge } from "@noctusai/seed/components/ui/badge";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { CalendarDays, Star, MapPin } from "lucide-react";
 import { BookingFlow } from "@/components/calendar/BookingFlow";
 

@@ -5,8 +5,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
+} from '@noctusai/seed/components/ui/dialog';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { Loader2 } from 'lucide-react';
 
 export type ConsentActor = 'patient' | 'therapist_attesting';

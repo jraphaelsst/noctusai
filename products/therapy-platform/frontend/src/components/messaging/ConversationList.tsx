@@ -1,11 +1,11 @@
 import { useState, useMemo } from 'react';
 import { Search, Plus, BellOff, HeadphonesIcon } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Avatar, AvatarFallback } from '@noctusai/seed/components/ui/avatar';
+import { ScrollArea } from '@noctusai/seed/components/ui/scroll-area';
+import { Tabs, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { NewConversation } from './NewConversation';
 import type { Conversation, ConversationFilter } from '@/types/messaging';

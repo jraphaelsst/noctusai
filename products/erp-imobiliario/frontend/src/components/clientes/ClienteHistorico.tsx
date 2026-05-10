@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { useAtividades } from '@/hooks/useAtividades';
 import { usePropostas } from '@/hooks/usePropostas';
 import { TIPOS_ATIVIDADE } from '@/lib/etapasConfig';

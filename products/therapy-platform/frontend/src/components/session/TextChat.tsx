@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { ScrollArea } from '@noctusai/seed/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 
 interface ChatMessage {

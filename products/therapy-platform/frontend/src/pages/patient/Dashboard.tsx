@@ -1,5 +1,5 @@
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@noctusai/seed/components/ui/card";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { CalendarDays, Users, TrendingUp, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 

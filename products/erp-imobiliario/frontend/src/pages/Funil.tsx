@@ -8,7 +8,7 @@ import { useFunilFiltrosStore } from '@/store/funilFiltrosStore';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { ClienteCard } from '@/components/clientes/ClienteCard';
 import { EtapaFunil } from '@/types/clientes';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton } from '@noctusai/seed/components/ui/skeleton';
 
 export default function Funil() {
   const [novoClienteOpen, setNovoClienteOpen] = useState(false);

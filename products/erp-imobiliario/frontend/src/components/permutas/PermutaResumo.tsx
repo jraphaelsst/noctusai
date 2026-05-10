@@ -1,6 +1,6 @@
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Label } from '@/components/ui/label';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Label } from '@noctusai/seed/components/ui/label';
 import { PerfilPermuta } from '@/hooks/usePermutas';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { DollarSign, MapPin, Home, Car } from 'lucide-react';

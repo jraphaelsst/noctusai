@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@noctusai/seed/components/ui/card';
 import { PageLoadingSkeleton } from '@/components/ui/page-skeleton';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { toast } from 'sonner';
 import { Settings, Key, Eye, EyeOff, Save, Trash2, Pencil, X, Plug, Loader2 } from 'lucide-react';
 import { supabase, api } from '@noctusai/seed/infra';

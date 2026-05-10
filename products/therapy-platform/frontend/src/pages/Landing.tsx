@@ -1,6 +1,6 @@
 import { PublicLayout } from '@/components/layout/PublicLayout';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
 import {
   Heart, Users, Calendar, Brain, Shield, Building2,
   Search, Video, FileText, BarChart3, DollarSign,

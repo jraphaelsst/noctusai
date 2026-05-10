@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useCliente } from '@/hooks/useClientes';
 import { useImovel } from '@/hooks/useImoveis';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton } from '@noctusai/seed/components/ui/skeleton';
 
 type EntityType = 'cliente' | 'imovel' | 'proposta' | 'contrato' | 'locacao' | 'vistoria';
 

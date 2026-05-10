@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNegociacoes } from '@/hooks/useNegociacoes';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@noctusai/seed/components/ui/select';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { NEGOCIACAO_STATUS_CONFIG } from '@/lib/constants';
 import { FileText, TrendingUp, Clock, CheckCircle2 } from 'lucide-react';

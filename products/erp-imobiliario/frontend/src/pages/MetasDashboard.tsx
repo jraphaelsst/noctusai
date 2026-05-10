@@ -8,10 +8,10 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMetaMilestoneToast } from '@/hooks/useMetaMilestoneToast';
 import { MetaMilestoneBurst } from '@/components/MetaMilestoneBurst';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@noctusai/seed/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@noctusai/seed/components/ui/tooltip';
 import { Info, Trophy, Target, Users, Award, TrendingUp } from 'lucide-react';
 import {
   useEquipes, usePeriodos, useCascadeResumo, useRankings, useMetasConfig,

@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Match } from '@/hooks/useMatches';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Progress } from '@noctusai/seed/components/ui/progress';
 import { formatCurrency } from '@/lib/utils';
 import { HomeIcon, ArrowLeftRight, FileText } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@noctusai/seed/components/ui/dialog';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Textarea } from '@noctusai/seed/components/ui/textarea';
 import { supabase, useAuthStore } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 

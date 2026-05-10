@@ -1,11 +1,11 @@
 import { useState, useMemo } from 'react';
 import { Calendar, Clock, ChevronLeft, ChevronRight, Repeat, Check } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@noctusai/seed/components/ui/select';
+import { Switch } from '@noctusai/seed/components/ui/switch';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Input } from '@noctusai/seed/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useBookableSlots } from '@/hooks/useAvailability';
 import { useCreateAppointment } from '@/hooks/useAppointments';

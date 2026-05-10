@@ -9,16 +9,16 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Badge } from '@/components/ui/badge';
+} from '@noctusai/seed/components/ui/dialog';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { WeekView } from '@/components/calendar/WeekView';
 import { MonthView } from '@/components/calendar/MonthView';

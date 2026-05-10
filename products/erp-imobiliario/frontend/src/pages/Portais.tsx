@@ -5,12 +5,12 @@ import {
   useTogglePortal,
   usePortalFeedUrl,
 } from '@/hooks/usePortais';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
 import { CardGridSkeleton, TableSkeleton } from '@/components/ui/page-skeleton';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/input';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Switch } from '@noctusai/seed/components/ui/switch';
+import { Input } from '@noctusai/seed/components/ui/input';
 import {
   Table,
   TableBody,
@@ -25,7 +25,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@noctusai/seed/components/ui/select';
 import {
   Globe,
   Copy,

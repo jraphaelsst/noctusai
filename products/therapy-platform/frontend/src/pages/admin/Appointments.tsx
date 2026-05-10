@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react';
 import { CalendarDays, Search } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
 import { useAdminAppointments } from '@/hooks/useAdmin';
 
 type StatusFilter = 'todos' | 'waiting' | 'in_progress' | 'completed' | 'cancelled' | 'no_show';

@@ -10,16 +10,16 @@ import {
   XCircle,
   MoreHorizontal,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@noctusai/seed/components/ui/tabs';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from '@noctusai/seed/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import {
   useRecurringSchedules,

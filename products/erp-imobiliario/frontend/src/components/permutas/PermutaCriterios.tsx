@@ -1,6 +1,6 @@
-import { Card } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { PerfilPermuta } from '@/hooks/usePermutas';
 import { formatCurrency } from '@/lib/utils';
 

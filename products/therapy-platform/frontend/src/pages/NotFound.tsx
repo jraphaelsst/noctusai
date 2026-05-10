@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui/button';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { Home, ArrowLeft } from 'lucide-react';
 

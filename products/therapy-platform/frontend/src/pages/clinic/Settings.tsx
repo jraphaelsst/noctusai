@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Settings as SettingsIcon, Save, Building2, Landmark, Percent, Palette } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Separator } from '@noctusai/seed/components/ui/separator';
 import { useClinicBranding, useUpdateClinicBranding } from '@/hooks/useSettings';
 import { toast } from 'sonner';
 

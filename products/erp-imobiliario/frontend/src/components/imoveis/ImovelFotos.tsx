@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Dialog, DialogContent } from '@noctusai/seed/components/ui/dialog';
 import { Imovel } from '@/hooks/useImoveis';
 import { ImageIcon, ExternalLink } from 'lucide-react';
 

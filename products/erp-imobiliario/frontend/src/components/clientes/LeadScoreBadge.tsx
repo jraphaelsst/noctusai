@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@noctusai/seed/components/ui/popover';
 import { useLeadScore } from '@/hooks/useAI';
 import { Cliente } from '@/types/clientes';
 import { Brain, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';

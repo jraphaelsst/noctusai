@@ -2,14 +2,14 @@ import { useState } from 'react';
 import {
   Users, Plus, Settings as SettingsIcon, Power, Star,
 } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Avatar, AvatarFallback } from '@noctusai/seed/components/ui/avatar';
+import { Input } from '@noctusai/seed/components/ui/input';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import { useAuthStore, api } from '@noctusai/seed/infra';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';

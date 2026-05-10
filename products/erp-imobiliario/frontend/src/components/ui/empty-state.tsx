@@ -1,6 +1,6 @@
 import { type LucideIcon } from 'lucide-react';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
 
 interface EmptyStateProps {
   icon: LucideIcon;

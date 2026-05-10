@@ -1,5 +1,5 @@
-import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Skeleton } from '@noctusai/seed/components/ui/skeleton';
+import { Card, CardContent, CardHeader } from '@noctusai/seed/components/ui/card';
 
 /** Detail page skeleton — breadcrumb + header card + tabs */
 export function DetailPageSkeleton() {

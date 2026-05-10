@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Star, Pencil, Trash2, Plus } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+} from '@noctusai/seed/components/ui/dialog';
+import { Input } from '@noctusai/seed/components/ui/input';
 import {
   usePatientReviews,
   useDeleteReview,

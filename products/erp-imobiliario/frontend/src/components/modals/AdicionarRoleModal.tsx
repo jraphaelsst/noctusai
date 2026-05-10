@@ -5,15 +5,15 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
+} from '@noctusai/seed/components/ui/dialog';
+import { Button } from '@noctusai/seed/components/ui/button';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@noctusai/seed/components/ui/select';
 import { supabase } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 import { UserPlus } from 'lucide-react';

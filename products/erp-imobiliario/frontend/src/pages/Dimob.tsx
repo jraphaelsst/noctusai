@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { api } from '@noctusai/seed/infra';
 import { useDimobPreview } from '@/hooks/useDimob';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -19,7 +19,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@noctusai/seed/components/ui/select';
 import {
   FileText,
   Download,

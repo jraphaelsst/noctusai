@@ -1,8 +1,8 @@
 import { Star, Flag, TrendingUp } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Separator } from '@noctusai/seed/components/ui/separator';
 import { useAuthStore, api } from '@noctusai/seed/infra';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';

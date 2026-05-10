@@ -2,15 +2,15 @@ import { useState, useMemo } from 'react';
 import {
   Search, CheckCircle, XCircle, Eye, Users, Star,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
+import { Avatar, AvatarFallback } from '@noctusai/seed/components/ui/avatar';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import { useAdminTherapists, useApproveEntity, useRejectEntity } from '@/hooks/useAdmin';
 import { useNavigate } from 'react-router-dom';
 import type { Terapeuta } from '@/types';

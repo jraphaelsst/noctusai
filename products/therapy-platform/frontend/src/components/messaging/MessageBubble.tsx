@@ -6,7 +6,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from '@noctusai/seed/components/ui/dropdown-menu';
 import { AttachmentPreview } from './AttachmentPreview';
 import type { Message } from '@/types/messaging';
 

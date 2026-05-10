@@ -4,12 +4,12 @@
 import { useState } from 'react';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription,
-} from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+} from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import { Archive, CheckCircle2, AlertTriangle, Download, Lock } from 'lucide-react';
 import {
   useFecharPeriodo, useFechamentos, usePeriodos,

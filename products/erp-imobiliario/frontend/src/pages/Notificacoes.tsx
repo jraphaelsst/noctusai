@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Button } from "@noctusai/seed/components/ui/button";
+import { Badge } from "@noctusai/seed/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@noctusai/seed/components/ui/tabs";
+import { Switch } from "@noctusai/seed/components/ui/switch";
+import { Label } from "@noctusai/seed/components/ui/label";
+import { ScrollArea } from "@noctusai/seed/components/ui/scroll-area";
 import {
   useNotificacoes,
   useContagemNaoLidas,

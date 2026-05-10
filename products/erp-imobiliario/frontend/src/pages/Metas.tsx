@@ -4,21 +4,21 @@ import { ChevronDown, Loader2, CheckSquare, Trash2 } from "lucide-react";
 import { MetaDetalhesModal } from "@/components/modals/MetaDetalhesModal";
 import { NovaMetaModal } from "@/components/modals/NovaMetaModal";
 import { toast } from "sonner";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Card, CardContent } from "@noctusai/seed/components/ui/card";
+import { Skeleton } from "@noctusai/seed/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@noctusai/seed/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@noctusai/seed/components/ui/collapsible";
 import { useMetas, useDeleteMeta } from "@/hooks/useMetas";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Meta, TipoMeta } from "@/types";
 import { useFiltrosStore } from "@/store/filtrosStore";
-import { Button } from "@/components/ui/button";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { FiltrosMetas } from "@/components/filtros/FiltrosMetas";
 import { MetasDraggableSection } from "@/components/metas/MetasDraggableSection";
 import { useMetasOrdem } from "@/hooks/useMetasOrdem";
 import { ConfiguracoesMetasModal } from "@/components/modals/ConfiguracoesMetasModal";
 import { sortMetasByCategoria } from "@/lib/categorias";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@noctusai/seed/components/ui/alert-dialog";
 
 const tipoMetaLabels: Record<TipoMeta, string> = {
   diaria: "Metas Diárias",

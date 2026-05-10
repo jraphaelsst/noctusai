@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Badge } from "@noctusai/seed/components/ui/badge";
 import { Calendar as CalendarIcon, Filter, User, X } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -8,13 +8,13 @@ import { useActionLogs } from "@/hooks/useActionLog";
 import { formatDate } from "@/lib/utils";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useUserRole } from "@/hooks/useUserRole";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
+import { Label } from "@noctusai/seed/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@noctusai/seed/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@noctusai/seed/components/ui/popover";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@noctusai/seed/components/ui/skeleton";
 import { ACAO_LABELS } from "@/lib/constants";
 
 const entidadeLabels: Record<string, string> = {

@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Settings as SettingsIcon, Save, X, Pencil } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Switch } from '@noctusai/seed/components/ui/switch';
+import { Separator } from '@noctusai/seed/components/ui/separator';
 import { usePlatformSettings, useUpdatePlatformSetting } from '@/hooks/useSettings';
 
 interface SettingRow {
