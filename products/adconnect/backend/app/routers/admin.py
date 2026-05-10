@@ -266,14 +266,25 @@ def update_reward_rule(
 
 
 @router.delete(
-    "/reward-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT
+    "/reward-rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
 )
 def delete_reward_rule(
     rule_id: str = Path(...),
     user: dict[str, Any] = Depends(require_role("admin", "owner")),
-) -> None:
+):
     """Soft-delete: flip ativa=false. Hard-delete is V2-deferred (audit trail
-    matters more than space in V1)."""
+    matters more than space in V1).
+
+    Note: explicit ``response_model=None`` and the omitted ``-> None`` return
+    annotation are required because ``from __future__ import annotations``
+    (line 28) defers evaluation, so FastAPI 0.115's
+    ``get_typed_return_annotation`` resolves the string ``"None"`` to the
+    *class* ``NoneType`` (truthy) instead of the *value* ``None`` (falsy).
+    The truthy class triggers the 204-must-not-have-body assertion at
+    ``fastapi/routing.py:506``. Setting ``response_model=None`` short-circuits
+    the placeholder resolution. See findings.md → §interesting-findings."""
     db = _db()
     res = (
         db.table(admin_service.REGRAS_TABLE)
