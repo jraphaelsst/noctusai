@@ -32,6 +32,7 @@ include:
   - products/adconnect/docker-compose.yml
   - products/dev-team/docker-compose.yml
   - products/media-scheduling/docker-compose.yml
+  - products/imobi-scheduling/docker-compose.yml
   # END_PRODUCTS_INCLUDE
 
 services:

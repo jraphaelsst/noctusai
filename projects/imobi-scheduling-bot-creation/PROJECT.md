@@ -7,7 +7,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-10
-- **Status:** ⏳ **EXECUTING** — Phase 0 design decisions stamped by orchestrator 2026-05-10 (defaults accepted under user signal "resolve the 5 blocked ones"); Phase 0 (audit) + Phase 1 (scaffold) dispatched.
+- **Status:** ⏳ **EXECUTING** — Phase 0 (audit) ✅ + Phase 1 (scaffold) ✅ complete. Product scaffolded at `products/imobi-scheduling/` (backend port 8011, frontend 8160, schema `imobi_scheduling`); 41/41 smoke tests green. Phases 2+ await follow-up dispatch.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Related docs:** `KB § GUIDES/new-product.md` (canonical product creation guide), `KB § 02-LANDSCAPE.md` (existing products + ports), `projects/whatsapp-seed-absorption/PROJECT.md` (this product is its **first consumer**), `projects/llm-tool-call-audit/PROJECT.md` (this product is its **first consumer**), `projects/scheduling-engine-seed/PROJECT.md` (this product is its **first consumer**), `projects/mcp-server-expansion/PROJECT.md` (this product is the **first MCP business-logic-tool client**), templates at `templates/PROJECT-TEMPLATE.md` + `templates/product-seed/`.
 - **Project slug:** `imobi-scheduling-bot-creation` — cross-cutting "not-yet-a-product" project per `KB § PATTERNS/project-execution.md §1` (the work itself creates the product; lives at root `projects/<slug>/` until the product exists, then promotes to `products/<product-slug>/projects/`).
@@ -197,17 +197,18 @@ OPENAI_MODEL=gpt-4o-mini
 ### Phase 0 — Audit + decisions
 
 - [x] Confirm target product slug (Q1). ✅ **`imobi-scheduling`** (orchestrator-stamped 2026-05-10).
-- [ ] Confirm port allocation (Q2 — pick a number under `KB § 05-INFRASTRUCTURE.md` rules). **Engineer picks next available; logs in §11.**
-- [x] Decide frontend yes/no (Q3). ✅ **DEFER frontend** (WhatsApp-only v1; admin UI in a follow-up project) — orchestrator-stamped 2026-05-10.
+- [x] Confirm port allocation (Q2 — pick a number under `KB § 05-INFRASTRUCTURE.md` rules). ✅ **backend 8011 / frontend 8160** (engineer pick via `noctus.dev.available_ports`; rationale in §11).
+- [x] Decide frontend yes/no (Q3). ✅ **DEFER frontend** (WhatsApp-only v1; admin UI in a follow-up project) — orchestrator-stamped 2026-05-10. Scaffold ships a placeholder frontend by default (always-on at tool level); accepted-with-rationale, see §11.
 - [x] Decide RLS shape (single-agency vs. multi-tenant). ✅ **single-agency v1** (multi-tenant is a refactor when a second agency arrives) — orchestrator-stamped 2026-05-10.
 - [x] Confirm dependency order: Phase 1 (scaffold) waits on **none**. Phases 5+ depend on the seed projects landing — **all 4 substrate seed projects shipped** (whatsapp + chatbot + llm-tool-audit + scheduling-engine + Calendar/Maps). Phases 5-8 are unblocked. ✅ orchestrator-stamped 2026-05-10.
-- [ ] Read sibling repo `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/` end-to-end for any product-domain detail not yet captured (validation evidence). After this read, sibling repo is **read-only reference for the duration of this project**; no leftovers post-completion. **Engineer's audit deliverable.**
+- [x] Read sibling repo `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/` end-to-end for any product-domain detail not yet captured (validation evidence). ✅ Audit notes in `findings.md` §4 (sibling-repo domain detail). Sibling repo is now **read-only reference for the duration of this project**; no leftovers post-completion.
 
-### Phase 1 — Scaffold the product
+### Phase 1 — Scaffold the product ✅
 
-- [ ] Run `python mcp/noctusai/cli.py noctus.dev.scaffold_product --slug=<slug>` (or equivalent).
-- [ ] Verify `products/<slug>/{backend, frontend?, README.md, MASTER-PROMPT.md}` exists and is shape-compliant per `KB § GUIDES/new-product.md`.
-- [ ] Initial commit boundary.
+- [x] Run `noctus.dev.scaffold_product` MCP tool (name=Imobi Scheduling, slug=imobi-scheduling, schema=imobi_scheduling, backend=8011, frontend=8160, color=#10b981, icon=CalendarClock). Emitted: 58 files at `products/imobi-scheduling/`, seed-row migration at `products/core/backend/migrations/028_seed_imobi_scheduling_product.sql`, registration in `start.sh` + root `docker-compose.yml`.
+- [x] Verify `products/imobi-scheduling/{backend, frontend, README.md, MASTER-PROMPT.md, docker-compose.yml}` exists and is shape-compliant per `KB § GUIDES/new-product.md`. Backend has `app/{main,config,database,dependencies,middleware,logging_config,rate_limit,responses}.py` + `routers/` + `schemas/` + `services/` + `migrations/` + `tests/` (41/41 green: health=14, example_router=5, webhook_router=5, team_router=14, e2e=3).
+- [x] Smoke test green: `pytest tests/ -q` → 41 passed.
+- [x] Initial commit boundary (this engineer commit). Phases 2+ build on this.
 
 ### Phase 2 — Backend foundation
 
@@ -369,6 +370,7 @@ python mcp/noctusai/cli.py --review
 |---|---|---|
 | 2026-05-03 | Initial project drafted; user confirmed bot becomes a noc product implemented fresh on our patterns; consumes the absorption-batch seed projects; sibling-folder deletion safe-after-completion is part of success criteria. | claude-opus-4-7 |
 | 2026-05-10 | **Phase 0 design decisions stamped by orchestrator** under user signal "resolve the 5 blocked ones". Defaults accepted: Q1 slug `imobi-scheduling`; Q3 frontend deferred (WhatsApp-only v1); Q4 single-agency RLS; Q5 standalone product. Q2 port allocation deferred to engineer's Phase 0 audit (registry pick, no user decision needed). All 4 substrate seed projects confirmed shipped — Phases 5-8 dependency unblocked. Phase 0 (sibling audit) + Phase 1 (scaffold) dispatched. | claude-opus-4-7 |
+| 2026-05-10 | **Phase 0 (audit) + Phase 1 (scaffold) closed by engineer.** Port allocation Q2: backend `8011` / frontend `8160` (picked via `noctus.dev.available_ports` — next contiguous slot after `youtube-crawler` on 8010/8150; rationale: lowest free pair in each band per registry of record `RESERVED_RANGES`). Scaffold via `noctus.dev.scaffold_product`: 58 files at `products/imobi-scheduling/`, seed-row migration `028_seed_imobi_scheduling_product.sql`, `start.sh` + root `docker-compose.yml` registration. 41/41 smoke tests green. **Q3 frontend-deferred carve-out logged as accept-with-rationale:** scaffold tool always emits a frontend skeleton; the v1 frontend folder is a placeholder (no admin UI built, no route wiring beyond seed defaults); future "v1 admin UI" follow-up project will either populate it or formally delete. **Surfaced as MCP-toolkit gap:** the scaffold tool has no `--backend-only` opt-out flag — every product gets a frontend even when product semantics don't need one (recurrence candidate: this is N=2 with `youtube-crawler` which also has a near-empty frontend; flag for `noctus.dev.scaffold_product` enhancement). **Critical worktree finding (P0):** scaffold tool path-resolved to canonical noc root (`/Users/.../noctusai/`), not the isolated worktree filesystem (`.claude/worktrees/agent-.../`). Workaround applied: copied output into worktree + mirrored `start.sh` + root `docker-compose.yml` edits. Methodology gap — MCP scaffold tools use `REPO_ROOT` from `settings`, bypassing worktree isolation. See `findings.md` §1+§5 for full slip detail. | engineer-subagent |
 
 ---
 
