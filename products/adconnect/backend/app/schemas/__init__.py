@@ -66,3 +66,34 @@ from app.schemas.orders import (  # noqa: F401
     OrderStatus,
     OrderStatusTransitionIn,
 )
+
+# Financial (Phase 5)
+from app.schemas.financial import (  # noqa: F401
+    CancelRequest,
+    FaturaIn,
+    FaturaListOut,
+    FaturaOut,
+    FaturaStatus,
+    IssueRequest,
+    NFeStatus,
+    WebhookEvent,
+)
+
+# Admin (Phase 6 — brand-admin V1)
+from app.schemas.admin import (  # noqa: F401
+    AdminDistributorCreateIn,
+    AdminDistributorListOut,
+    AdminDistributorPatchIn,
+    AdminInvoiceFilters,
+    AdminInvoiceListOut,
+    AdminSelloutQueueOut,
+    DashboardCounts,
+    DashboardMetricsOut,
+    DistributorMetrics,
+    DistributorWithMetricsOut,
+    InvoiceStatus,
+    RewardRuleIn,
+    RewardRuleListOut,
+    RewardRuleOut,
+    RewardRuleType,
+)

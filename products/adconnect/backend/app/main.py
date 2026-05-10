@@ -46,6 +46,7 @@ _domain_routers = [
     (rewards.router, "/rewards", ["rewards"]),
     (sellout.router, "/sellout", ["sellout"]),
     (financial.router, "/financial", ["financial"]),
+    # admin.router carries its own constructor-time prefix="/admin" (Phase 6).
     (admin.router, "/admin", ["admin"]),
 ]
 

@@ -88,12 +88,13 @@ async def get_current_user(
 ) -> dict[str, Any]:
     """Yield a dict-shaped user record compatible with the legacy callers.
 
-    Downstream routers (orders, rewards, financial, sellout, distributors)
-    currently read `user["role"]`, `user["sub"]`, `user["distributorId"]`.
-    This wrapper preserves that surface while sourcing the underlying user
-    via the seed's SSO-aware get_current_user. Once those routers are
-    swapped to the Supabase-backed shape (Phases 2-6), they can move to
-    `noctusai_lib.api.auth.make_get_current_user_org` directly.
+    Downstream routers (orders, rewards, financial, sellout, distributors,
+    admin) currently read `user["role"]`, `user["sub"]`, `user["distributorId"]`,
+    `user["org_id"]`. This wrapper preserves that surface while sourcing
+    the underlying user via the seed's SSO-aware get_current_user. Once
+    those routers are swapped to the Supabase-backed shape (Phases 2-6),
+    they can move to `noctusai_lib.api.auth.make_get_current_user_org`
+    directly.
     """
     user, _token = await _seed_get_current_user(authorization)
     metadata = getattr(user, "user_metadata", None) or {}
@@ -105,6 +106,10 @@ async def get_current_user(
         # SSO callback chose to mirror it. Routers that need authoritative
         # membership look up `adconnect.distributor_memberships` directly.
         "distributorId": metadata.get("distributor_id"),
+        # Brand-org id — admin endpoints (Phase 6) scope by this. Sourced
+        # from the SSO-synced user_metadata; absent metadata → caller falls
+        # back to the product-default org.
+        "org_id": metadata.get("org_id"),
         "_user": user,
     }
 
@@ -128,6 +133,7 @@ def require_role(*allowed_roles: str):
             "email": getattr(user, "email", None),
             "role": role,
             "distributorId": metadata.get("distributor_id"),
+            "org_id": metadata.get("org_id"),
             "_user": user,
         }
 

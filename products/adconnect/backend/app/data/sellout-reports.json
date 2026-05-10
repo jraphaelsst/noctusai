@@ -1,7 +1,0 @@
-[
-  { "id": "so-1", "distributorId": "dist-001", "month": "Fevereiro 2026", "fileName": "sellout_fev2026.xlsx", "uploadDate": "2026-02-20", "status": "Pendente", "items": 34, "totalUnits": 1280 },
-  { "id": "so-2", "distributorId": "dist-001", "month": "Janeiro 2026", "fileName": "sellout_jan2026.xlsx", "uploadDate": "2026-02-05", "status": "Aprovado", "items": 42, "totalUnits": 1560 },
-  { "id": "so-3", "distributorId": "dist-001", "month": "Dezembro 2025", "fileName": "sellout_dez2025.xlsx", "uploadDate": "2026-01-08", "status": "Aprovado", "items": 38, "totalUnits": 1890 },
-  { "id": "so-4", "distributorId": "dist-001", "month": "Novembro 2025", "fileName": "sellout_nov2025.xlsx", "uploadDate": "2025-12-03", "status": "Aprovado", "items": 40, "totalUnits": 1420 },
-  { "id": "so-5", "distributorId": "dist-001", "month": "Outubro 2025", "fileName": "sellout_out2025.xlsx", "uploadDate": "2025-11-06", "status": "Rejeitado", "items": 29, "totalUnits": 980 }
-]

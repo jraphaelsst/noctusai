@@ -10,6 +10,7 @@ import pytest
 
 from app.services.nfe_service import (
     FakeNFeProvider,
+    FocusNFeProvider,
     NFeCancelRequest,
     NFeIssueRequest,
     NFeItem,
@@ -104,9 +105,17 @@ class TestFactoryDispatch:
         provider = make_nfe_provider("fake")
         assert isinstance(provider, FakeNFeProvider)
 
-    def test_focusnfe_not_implemented_yet(self):
-        with pytest.raises(NotImplementedError, match="FocusNFeProvider"):
-            make_nfe_provider("focusnfe")
+    def test_focusnfe_returns_real_provider(self):
+        # Phase 5: Real adapter shipped; factory now returns a configured
+        # FocusNFeProvider (rather than raising NotImplementedError).
+        provider = make_nfe_provider(
+            "focusnfe", api_key="test-key", ambiente="homologacao"
+        )
+        assert isinstance(provider, FocusNFeProvider)
+
+    def test_focusnfe_invalid_ambiente_raises(self):
+        with pytest.raises(ValueError, match="ambiente"):
+            make_nfe_provider("focusnfe", api_key="x", ambiente="bogus")
 
     def test_unknown_provider_raises(self):
         with pytest.raises(ValueError, match="Unknown NFe provider"):
