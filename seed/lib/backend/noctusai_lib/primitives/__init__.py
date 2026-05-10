@@ -30,6 +30,12 @@ know about our domain, it goes here.
   `current_day_ref()`, `frozen_time(dt)` context manager. Single
   source of truth for "current wallclock" / "current period
   reference" so production + tests agree across UTC midnight.
+- `tasks.py` — `schedule_coro(coro, *, logger=None, name=None)` +
+  `NoRunningLoopError`. Canonical fire-and-forget helper that
+  schedules a coroutine on the running loop and logs exceptions
+  via `add_done_callback`. Lifted from N=3 product callsites
+  (core/billing, erp-imobiliario/certidoes, erp-imobiliario/jobs)
+  that each hand-rolled the same shape with no exception logging.
 
 See `KB § PATTERNS/seed-lib-layout.md` for the full layer model.
 """
