@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
+    "@noctusai/lib": "file:../../../seed/lib/frontend",
+    "@noctusai/seed": "file:../../../seed/framework/frontend",
     "@radix-ui/react-alert-dialog": "^1.1.14",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-checkbox": "^1.3.2",
