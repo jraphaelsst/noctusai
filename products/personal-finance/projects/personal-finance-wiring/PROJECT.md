@@ -471,7 +471,7 @@ Apply the gifts from sister projects and fix the absorption-search recurrences �
 - [x] **Fix `recorrentes.py:106-108` PF-9.** Replaced `delete().execute()` + `if not result.data: 404` with explicit pre-check on `recorrentes` — aligns with `ativos_service` / `orcamentos_service.excluir` shape.
 - [x] **Cross-product symmetry**: ERP audit findings captured in `findings.md` (Category 4 — Interesting findings). N=2+ instances of the `delete().execute()` + `if not result.data: 404` anti-pattern surfaced in `erp-imobiliario`: `meta_periodos_service.deletar_periodo` (line 82-84) and `regras_pontuacao_service.deletar_regra` (line 121-123). Orchestrator to route to ERP sister engineer.
 - [x] Router tests for the 3 fixed endpoints — 404-on-bad-id + 200-on-valid-id + state-mutation assertion (balance reversal verified for transacoes; row-removal verified for orcamento_itens + recorrentes). All assertions paired with `.status_code` checks per status-code-assertion rule.
-- [ ] Manual browser QA: delete a transacao with bad id (manually craft URL), confirm proper 404; delete a real transacao, confirm balance updates. — *deferred to integration-pass, no browser available in this engineer's worktree.*
+- [x] Manual browser QA — **deferred to integration-pass (no browser in worktree).** Destination: project's §7 integration round at user-driven QA pass. Ticked as deferred-with-destination per "no silent errors" rule.
 - [x] Run `pytest` — green (587 passed, 3 baseline-only failures unchanged); run keeper review (0 issues, 0 proposals).
 - [x] **Improvements** captured in `findings.md` + phase-end proposal: documented in §11 below.
 
