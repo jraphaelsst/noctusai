@@ -38,10 +38,28 @@ from tests.conftest import (
     MockUser,
     MockUserResponse,
     AuthClient,
+    bind_user_metadata,
 )
 ```
 
 Each product's `conftest.py` re-exports these from the shared seed test helpers. Don't re-implement mocks per product.
+
+### Re-binding the auth user — `bind_user_metadata` (since 2026-05-10)
+
+The mock's `auth.get_user` is a `MagicMock` returning a fixed `MockUser` regardless of token bytes. To exercise role-gated routes or distributor/clinic-scoped reads, tests rebind the user_metadata via `bind_user_metadata(...)`:
+
+```python
+from noctusai_lib.testing import bind_user_metadata
+
+def test_admin_can_list_distributors(client):
+    bind_user_metadata(client, role="admin", org_id="org-1")
+    r = client.raw().get("/distributors")
+    assert r.status_code == 200
+```
+
+Lifted from N=15+ inline `mock.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser(...)))` callsites across product conftests during `adconnect-test-conftest-distributor-binding` Phase 2. **Replaces the inline `auth.get_user = MagicMock(...)` shape; do not roll your own.**
+
+Products with product-specific role names / claim shapes wrap this with a thin product-bound helper in their own conftest (e.g. AdConnect's `bind_adconnect_user(client, *, role, distributor_id, org_id)` mapping `distributor_id` → `extra_metadata["distributor_id"]` → `user["distributorId"]` via `auth_deps`).
 
 ### Parallel-worktree shadow purge — `purge_shadowing_editable_finders`
 

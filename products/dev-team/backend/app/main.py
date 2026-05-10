@@ -23,5 +23,5 @@ app = create_product_app(
         configs.router,
     ],
     version="0.1.0",
-    standard_routers=["health"],
+    standard_routers=["health", "notificacoes"],
 )

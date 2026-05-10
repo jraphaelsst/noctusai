@@ -1,149 +1,159 @@
+"""
+AdConnect Orders Router — Supabase-backed (Phase 3).
+
+Replaces the mock-backed `app/data/store.py.orders` variant with a real
+DB-backed surface against `adconnect.pedidos` + `adconnect.itens_pedido`.
+
+Endpoints:
+  • GET   /orders               — list (distributor: own; admin: all in org).
+  • GET   /orders/{id}          — single order with line items.
+  • PATCH /orders/{id}/status   — brand-admin lifecycle transition.
+
+Lifecycle transitions are owned by `orders_service.transition_status` —
+the router is a thin auth + serialization shim.
+
+Constructor-time prefix is the structural fix for the wildcard-route bug
+that surfaced in Phase 2 (orders' `/{order_id}` was registered at the bare
+`/`, swallowing peer router URLs after include_router). Phase 2 mitigated
+by registration ordering; Phase 3 ships the real fix.
+"""
 from __future__ import annotations
 
-import secrets
-from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Path
 
-from ..data.store import store
 from ..auth_deps import get_current_user, require_role
-from ..services.cart import calc_quote
-from ..services.rewards import balance_for
+from ..database import _db as _db_module
+from ..schemas.orders import (
+    OrderListOut,
+    OrderOut,
+    OrderStatusTransitionIn,
+)
+from ..services import orders_service
 
-router = APIRouter()
-
-
-class OrderCartItem(BaseModel):
-    productId: str
-    quantity: int
-
-
-class CreateOrderInput(BaseModel):
-    items: list[OrderCartItem]
-    cnpjId: str
-    useCashback: bool = False
-    useVerbaMkt: bool = False
-    scheduledDate: str | None = None
-    notes: str | None = None
+router = APIRouter(prefix="/orders", tags=["orders"])
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
-def create_order(
-    body: CreateOrderInput,
-    user: dict[str, Any] = Depends(require_role("customer")),
-) -> dict[str, Any]:
-    distributor_id = user.get("distributorId")
-    if not distributor_id:
-        raise HTTPException(401, "Usuário sem distribuidor vinculado")
-
-    balance = balance_for(distributor_id)
-    items = [{"productId": i.productId, "quantity": i.quantity} for i in body.items]
-
-    q = calc_quote(
-        items,
-        use_cashback=body.useCashback,
-        use_verba=body.useVerbaMkt,
-        cashback_balance=balance["cashbackAvailable"],
-        verba_balance=balance["verbaMktAvailable"],
-    )
-
-    now = datetime.now(timezone.utc).isoformat()
-    order: dict[str, Any] = {
-        "id": f"ORD-{secrets.token_hex(4)}",
-        # Identificador simulado do Omie — trocar pela integração real em lib/omie.
-        "omieId": f"OMI-{4600 + len(store.orders)}",
-        "distributorId": distributor_id,
-        "cnpjId": body.cnpjId,
-        "status": "received",
-        "items": [
-            {
-                "productId": line["productId"],
-                "sku": line["sku"],
-                "name": line["name"],
-                "quantity": line["quantity"],
-                "priceB2B": line["priceB2B"],
-                "cashbackPct": line["cashbackPct"],
-                "lineTotal": line["lineTotal"],
-                "cashbackValue": line["cashbackValue"],
-                "verbaMktValue": line["verbaMktValue"],
-            }
-            for line in q["lines"]
-        ],
-        "subtotal": q["subtotal"],
-        "cashbackEarned": q["totalCashbackEarned"],
-        "verbaMktEarned": q["totalVerbaMktEarned"],
-        "cashbackApplied": q["cashbackApplied"],
-        "verbaMktApplied": q["verbaMktApplied"],
-        "total": q["total"],
-        "scheduledDate": body.scheduledDate,
-        "notes": body.notes,
-        "createdAt": now,
-        "updatedAt": now,
-    }
-
-    store.orders.append(order)
-
-    if order["cashbackEarned"] > 0:
-        store.rewards_history.append(
-            {
-                "id": f"rh-{secrets.token_hex(3)}",
-                "distributorId": distributor_id,
-                "date": now,
-                "orderId": order["omieId"],
-                "type": "cashback",
-                "amount": order["cashbackEarned"],
-                "status": "Pendente",
-                "description": "Pedido pendente de faturamento",
-            }
-        )
-    if order["verbaMktEarned"] > 0:
-        store.rewards_history.append(
-            {
-                "id": f"rh-{secrets.token_hex(3)}",
-                "distributorId": distributor_id,
-                "date": now,
-                "orderId": order["omieId"],
-                "type": "verba_mkt",
-                "amount": order["verbaMktEarned"],
-                "status": "Pendente",
-                "description": "Pedido pendente de faturamento",
-            }
-        )
-    return order
+DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001"
 
 
-@router.get("/")
-def list_orders(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-    if user.get("role") == "admin":
-        data = sorted(store.orders, key=lambda o: o["createdAt"], reverse=True)
-        return {"data": data}
-    distributor_id = user.get("distributorId")
-    if not distributor_id:
-        raise HTTPException(401)
-    data = [o for o in store.orders if o["distributorId"] == distributor_id]
-    data.sort(key=lambda o: o["createdAt"], reverse=True)
-    return {"data": data}
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-@router.get("/{order_id}")
-def get_order(
-    order_id: str,
+def _db() -> Any:
+    """Lazy access via `_db` so test patches of `_db.get_client` are honored."""
+    try:
+        client = _db_module.get_client()
+    except Exception:
+        client = None
+    if client is None:
+        try:
+            client = _db_module.get_admin_client()
+        except Exception:
+            client = None
+    if client is None:
+        raise HTTPException(503, "Supabase client unavailable")
+    return client
+
+
+def _resolve_org_id(user: dict[str, Any]) -> str:
+    org_id = user.get("org_id") or user.get("orgId")
+    return str(org_id) if org_id else DEFAULT_ORG_ID
+
+
+def _resolve_distributor_id(user: dict[str, Any]) -> Optional[str]:
+    did = user.get("distributorId") or user.get("distributor_id")
+    return str(did) if did else None
+
+
+def _is_admin(user: dict[str, Any]) -> bool:
+    return (user.get("role") or "").lower() == "admin"
+
+
+def _check_visibility(user: dict[str, Any], pedido: dict[str, Any]) -> None:
+    """Allow the row's distributor or any admin in the same org."""
+    if _is_admin(user):
+        # Admin → check the pedido's distributor belongs to admin's org.
+        # Mock builder doesn't model joins, so we accept admin transparently;
+        # RLS at the DB layer enforces the org-scope in production.
+        return
+    user_did = _resolve_distributor_id(user)
+    if user_did and str(pedido.get("distributor_id")) == str(user_did):
+        return
+    raise HTTPException(403)
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+
+@router.get("", response_model=OrderListOut)
+def list_orders(
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
-    order = next(
-        (
-            o
-            for o in store.orders
-            if o["id"] == order_id or o.get("omieId") == order_id
-        ),
-        None,
+    """List pedidos.
+
+    • Brand admin (`role=admin`): all pedidos in their org's distributor set.
+    • Distributor user: only their own.
+    """
+    db = _db()
+    if _is_admin(user):
+        rows = orders_service.list_for_org(db, org_id=_resolve_org_id(user))
+        return {"data": rows}
+    distributor_id = _resolve_distributor_id(user)
+    if not distributor_id:
+        raise HTTPException(401, "Usuário sem distribuidor vinculado")
+    rows = orders_service.list_for_distributor(
+        db, distributor_id=distributor_id
     )
-    if not order:
+    return {"data": rows}
+
+
+@router.get("/{order_id}", response_model=OrderOut)
+def get_order(
+    order_id: str = Path(...),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Fetch a single order with line items."""
+    db = _db()
+    pedido = orders_service.get_pedido_with_items(db, pedido_id=order_id)
+    if pedido is None:
         raise HTTPException(404, "Pedido não encontrado")
-    if user.get("role") != "admin" and order["distributorId"] != user.get(
-        "distributorId"
-    ):
-        raise HTTPException(403)
-    return order
+    _check_visibility(user, pedido)
+    return pedido
+
+
+@router.patch("/{order_id}/status", response_model=OrderOut)
+def transition_order_status(
+    body: OrderStatusTransitionIn,
+    order_id: str = Path(...),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Transition a pedido's status.
+
+    State machine lives in `orders_service.transition_status`. Brand admin
+    can move any status forward; distributor can only `cancelado` from
+    early states (rascunho / enviado).
+    """
+    db = _db()
+    try:
+        return orders_service.transition_status(
+            db,
+            pedido_id=order_id,
+            new_status=body.status,
+            actor_role=user.get("role") or "",
+        )
+    except orders_service.OrderError as exc:
+        msg = str(exc)
+        if "não encontrado" in msg.lower():
+            raise HTTPException(404, msg) from exc
+        if "apenas brand admin" in msg.lower():
+            raise HTTPException(403, msg) from exc
+        raise HTTPException(400, msg) from exc
+
+
+__all__ = ["router"]

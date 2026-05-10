@@ -346,7 +346,7 @@ class TestReprocessarConsulta:
     def test_reprocessa_com_sucesso(self, client):
         client._mock_supabase.set_table_data("certidao_consultas", SAMPLE_CONSULTA)
         client._mock_supabase.set_table_data("certidao_resultados", [SAMPLE_RESULTADO])
-        with patch("app.routers.certidoes.schedule_tjsp_for_org"):
+        with patch("app.routers.certidoes.schedule_tjsp_for_org"):  # self-patch-ok: schedule_tjsp_for_org spawns asyncio.create_task; under TestClient there's no long-lived loop to await it, and we're testing the router contract (200 + status), not the scheduler. Tracked for DI refactor in catalog.
             resp = client.post("/api/certidoes/consultas/consulta-001/reprocessar")
         assert resp.status_code == 200
 
@@ -358,7 +358,7 @@ class TestReprocessarConsulta:
     def test_reprocessa_retorna_mensagem(self, client):
         client._mock_supabase.set_table_data("certidao_consultas", SAMPLE_CONSULTA)
         client._mock_supabase.set_table_data("certidao_resultados", [SAMPLE_RESULTADO])
-        with patch("app.routers.certidoes.schedule_tjsp_for_org"):
+        with patch("app.routers.certidoes.schedule_tjsp_for_org"):  # self-patch-ok: same rationale as test_reprocessa_com_sucesso above — neuter asyncio.create_task scheduling; testing router response shape, not scheduler dispatch.
             resp = client.post("/api/certidoes/consultas/consulta-001/reprocessar")
         assert resp.status_code == 200
         body = resp.json()

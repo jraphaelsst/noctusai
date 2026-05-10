@@ -1,113 +1,228 @@
+"""
+Sellout router — DB-backed (replaces the mock-backed JSON variant).
+
+Three submission endpoints (per PROJECT.md §6 Phase 4):
+  - POST /api/sellout                — estruturado mode
+  - POST /api/sellout/upload-nfe     — NF-e XML upload
+  - POST /api/sellout/upload-attachment  — freeform attachment
+  - GET  /api/sellout                — list reports (own / all-by-org)
+  - PATCH /api/sellout/{id}/review   — brand admin review
+
+Auth uses the existing custom-JWT shim in `app.auth_deps` until Phase 1
+swaps to seed SSO. RLS-style scoping is enforced in service code: a
+distributor user only ever sees their own rows; admin sees everything in
+their org. The `org_id` defaults to `"adconnect-default"` until the
+identity foundation lands a real org_id on the JWT.
+"""
 from __future__ import annotations
 
-import secrets
-from datetime import datetime, timezone
-from typing import Any
+import json
+import logging
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Path,
+    UploadFile,
+    status,
+)
 
-from ..data.store import store
 from ..auth_deps import get_current_user, require_role
+from ..database import _db
+from ..schemas.sellout import (
+    SelloutEstruturadoIn,
+    SelloutListOut,
+    SelloutOut,
+    SelloutReviewIn,
+)
+from ..services import sellout_service
+from ..services.rewards_service import accrue_for_sellout_approval
 
-router = APIRouter()
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/sellout", tags=["sellout"])
+
+DEFAULT_ORG_ID = "adconnect-default"
+SELLOUT_TABLE = sellout_service.SELLOUT_TABLE
 
 
-def _reports_for(distributor_id: str) -> list[dict[str, Any]]:
-    return [r for r in store.sellout_reports if r["distributorId"] == distributor_id]
+def _db_for_user() -> Any:
+    """Return a Supabase client for read/write. Phase 1 will swap this to a
+    user-token-bound client; in the interim we use the admin client because
+    custom-JWT auth doesn't carry a Supabase session.
+
+    Lazy attribute access on `_db` so test patches of `_db.get_client` /
+    `_db.get_admin_client` are honored — module-level binds (the legacy
+    `from ..database import get_supabase_client` path) freeze the method
+    at import time and bypass the patch."""
+    try:
+        client = _db.get_client()
+    except Exception:
+        client = None
+    if client is None:
+        try:
+            client = _db.get_admin_client()
+        except Exception:
+            client = None
+    if client is None:
+        raise HTTPException(503, "Supabase client unavailable")
+    return client
 
 
-@router.get("/reports")
-def list_reports(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-    did = user.get("distributorId")
-    if not did:
-        raise HTTPException(401)
-    rows = sorted(_reports_for(did), key=lambda r: r["uploadDate"], reverse=True)
+def _user_distributor(user: dict[str, Any]) -> Optional[str]:
+    return user.get("distributorId") or user.get("distributor_id")
+
+
+def _user_org(user: dict[str, Any]) -> str:
+    return user.get("orgId") or user.get("org_id") or DEFAULT_ORG_ID
+
+
+@router.post("/submit", response_model=SelloutOut, status_code=status.HTTP_201_CREATED)
+async def submit_estruturado(
+    body: SelloutEstruturadoIn,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    distributor_id = body.distributor_id or _user_distributor(user)
+    if not distributor_id:
+        raise HTTPException(400, "distributor_id obrigatório")
+    db = _db_for_user()
+    try:
+        row = await sellout_service.submit_estruturado(
+            db,
+            org_id=_user_org(user),
+            distributor_id=distributor_id,
+            submitted_by=user.get("sub"),
+            valor_total=body.valor_total,
+            quantidade_itens=body.quantidade_itens,
+            periodo=body.periodo,
+            cnpj_cliente_final=body.cnpj_cliente_final,
+            descricao_resumida=body.descricao_resumida,
+            items_json=body.items_json,
+            observacoes=body.observacoes,
+        )
+    except sellout_service.SubmissionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return row
+
+
+@router.post(
+    "/upload-nfe",
+    response_model=SelloutOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_nfe(
+    file: UploadFile = File(...),
+    distributor_id: str = Form(...),
+    periodo: Optional[str] = Form(None),
+    observacoes: Optional[str] = Form(None),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    xml_bytes = await file.read()
+    db = _db_for_user()
+    try:
+        row = await sellout_service.submit_nfe(
+            db,
+            org_id=_user_org(user),
+            distributor_id=distributor_id,
+            submitted_by=user.get("sub"),
+            xml_bytes=xml_bytes,
+            filename=file.filename or "sellout.xml",
+            periodo=periodo,
+            observacoes=observacoes,
+        )
+    except sellout_service.SubmissionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return row
+
+
+@router.post(
+    "/upload-attachment",
+    response_model=SelloutOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_attachment(
+    file: UploadFile = File(...),
+    distributor_id: str = Form(...),
+    periodo: Optional[str] = Form(None),
+    observacoes: Optional[str] = Form(None),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    file_bytes = await file.read()
+    db = _db_for_user()
+    try:
+        row = await sellout_service.submit_attachment(
+            db,
+            org_id=_user_org(user),
+            distributor_id=distributor_id,
+            submitted_by=user.get("sub"),
+            file_bytes=file_bytes,
+            filename=file.filename or "sellout.bin",
+            content_type=file.content_type or "application/octet-stream",
+            periodo=periodo,
+            observacoes=observacoes,
+        )
+    except sellout_service.SubmissionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return row
+
+
+@router.get("/list", response_model=SelloutListOut)
+def list_reports(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    db = _db_for_user()
+    distributor_id = _user_distributor(user)
+    role = user.get("role")
+    builder = db.table(SELLOUT_TABLE).select("*")
+    if role == "admin":
+        builder = builder.eq("org_id", _user_org(user))
+    elif distributor_id:
+        builder = builder.eq("distributor_id", distributor_id)
+    else:
+        raise HTTPException(403, "Sem distribuidor associado")
+    res = builder.execute()
+    rows = list(res.data or [])
     return {"data": rows}
 
 
-@router.get("/summary")
-def summary(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-    did = user.get("distributorId")
-    if not did:
-        raise HTTPException(401)
-    rows = _reports_for(did)
-    total = len(rows)
-    approved = sum(1 for r in rows if r["status"] == "Aprovado")
-    pending = sum(1 for r in rows if r["status"] == "Pendente")
-    rejected = sum(1 for r in rows if r["status"] == "Rejeitado")
-    rate = 0 if total == 0 else round(approved / total * 100)
-    return {
-        "total": total,
-        "approved": approved,
-        "pending": pending,
-        "rejected": rejected,
-        "complianceRate": rate,
-    }
-
-
-@router.post("/upload", status_code=status.HTTP_201_CREATED)
-async def upload_report(
-    file: UploadFile = File(...),
-    month: str = Form(...),
-    items: int = Form(0),
-    totalUnits: int = Form(0),
-    user: dict[str, Any] = Depends(get_current_user),
+@router.patch("/{report_id}/review", response_model=SelloutOut)
+async def review_report(
+    body: SelloutReviewIn,
+    report_id: str = Path(...),
+    user: dict[str, Any] = Depends(require_role("admin")),
 ) -> dict[str, Any]:
-    did = user.get("distributorId")
-    if not did:
-        raise HTTPException(401)
+    db = _db_for_user()
+    try:
+        row = await sellout_service.review(
+            db,
+            relatorio_id=report_id,
+            status=body.status,
+            review_notes=body.review_notes,
+            reviewed_by=user.get("sub"),
+            org_id=_user_org(user),
+        )
+    except sellout_service.SubmissionError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
-    # Em produção os bytes do arquivo iriam para object storage (S3/Supabase).
-    await file.read()
-
-    report = {
-        "id": f"so-{secrets.token_hex(3)}",
-        "distributorId": did,
-        "month": month,
-        "fileName": file.filename or "sellout.xlsx",
-        "uploadDate": datetime.now(timezone.utc).isoformat(),
-        "status": "Pendente",
-        "items": items,
-        "totalUnits": totalUnits,
-    }
-    store.sellout_reports.append(report)
-    return report
-
-
-class StatusInput(BaseModel):
-    status: str
-
-
-@router.patch("/reports/{report_id}/status")
-def set_report_status(
-    report_id: str,
-    body: StatusInput,
-    _: dict[str, Any] = Depends(require_role("admin")),
-) -> dict[str, Any]:
-    r = next((x for x in store.sellout_reports if x["id"] == report_id), None)
-    if not r:
-        raise HTTPException(404, "Relatório não encontrado")
-    if body.status not in ("Aprovado", "Pendente", "Rejeitado"):
-        raise HTTPException(400, "Status inválido")
-    r["status"] = body.status
-    return r
+    # Reward accrual on approval — fire-and-don't-fail-the-review.
+    if body.status == "aprovado":
+        try:
+            accrued = accrue_for_sellout_approval(
+                db, relatorio_id=report_id, relatorio_row=row
+            )
+            logger.info(
+                "sellout.review: %d accruals booked for relatorio %s",
+                len(accrued),
+                report_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "sellout.review: accrual hook failed for %s (%s)", report_id, exc
+            )
+    return row
 
 
-@router.delete("/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
-def delete_report(
-    report_id: str,
-    user: dict[str, Any] = Depends(get_current_user),
-) -> None:
-    did = user.get("distributorId")
-    if not did:
-        raise HTTPException(401)
-    idx = next(
-        (i for i, x in enumerate(store.sellout_reports) if x["id"] == report_id),
-        -1,
-    )
-    if idx < 0:
-        raise HTTPException(404)
-    if store.sellout_reports[idx]["distributorId"] != did:
-        raise HTTPException(403)
-    store.sellout_reports.pop(idx)
+__all__ = ["router"]
