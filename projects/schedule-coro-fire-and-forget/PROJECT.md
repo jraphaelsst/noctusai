@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-10
 - **Last updated:** 2026-05-10
-- **Status:** Phase 0 ✅ + Phase 1 ✅ → Phase 2 ready
+- **Status:** Phase 0-3 ✅ → Phase 4 (close) ready
 - **Owner / stakeholders:** USER (joaoraphaelsst@gmail.com) · architect · engineer
 - **Related docs:** `KB § PATTERNS/seed-lib-layout.md`, `KB § PATTERNS/logging.md`, memory `feedback_recurrence_rule.md`, memory `feedback_no_silent_errors.md`
 - **Project slug:** `schedule-coro-fire-and-forget` — at `projects/schedule-coro-fire-and-forget/` (cross-cutting; touches seed-lib + 3 products' backends).
@@ -174,18 +174,28 @@ _tjsp_scheduled_tasks[org_id] = task
 - The bare-coroutine close-on-error path (`coro.close()` before raising NoRunningLoopError) prevents a confusing `RuntimeWarning: coroutine was never awaited` on top of the real error. Caught while writing `test_no_running_loop_raises_typed_error`.
 - Tests use the `asyncio.run(driver())` pattern (matching `test_jobs.py`) instead of `pytest.mark.asyncio` to keep the seed test surface stable across the Python 3.10 / pytest-asyncio gap. Generalizable convention for primitives that need a running loop.
 
-### Phase 2 — Refactor core/billing.py
+### Phase 2 — Refactor core/billing.py ✅
 
-- [ ] AST-edit `products/core/backend/app/routers/billing.py:199-205` to use `schedule_coro`.
-- [ ] Drop the local `try/except RuntimeError` block (helper handles it).
-- [ ] Run `cd products/core/backend && pytest tests/routers/test_billing*.py -v` — must stay green.
+- [x] Edit `products/core/backend/app/routers/billing.py:199-205` to use `schedule_coro`. Imports `NoRunningLoopError` for the typed-error branch (keeps the existing log line that reports "no running asyncio loop" with the exact same warning text).
+- [x] Bare `import asyncio` inside `_dispatch_webhook` removed (no longer needed).
+- [x] Hoisted `org_id = None` to function-top so the outer `except` block can reference it (the original code had a latent NameError if exception fired before `org_id` was assigned). Drive-by hardening — no behavior change in the happy path.
+- [x] `pytest tests/routers/test_billing*.py -v` → 13/13 green.
 
-### Phase 3 — Refactor erp-imobiliario callsites
+**Improvements:**
+- The outer try/except in `_dispatch_webhook` catches `Exception` and logs at WARN — this is the OUTER safety net for unexpected resolution failures (e.g. DB hiccup looking up `org_id`). I left it intact (didn't merge with the new helper) because its scope is different — the helper's done-callback handles failures of the SCHEDULED COROUTINE; the outer try handles synchronous resolution failures BEFORE scheduling. Two distinct failure surfaces; keeping them separate is correct.
+- Drive-by: `org_id = None` at function-top prevents a latent NameError if `event_data.get("object", {})` itself were to raise. Acceptable hardening for a webhook receiver.
 
-- [ ] AST-edit `certidoes_service.py:1099` to use `schedule_coro` (preserve task-tracking dict assignment).
-- [ ] AST-edit `job_service.py:121` to use `schedule_coro`.
-- [ ] Update affected tests where they patch `asyncio.create_task` — switch to patching the new helper, OR remove the patch and rely on real-task-with-mock-coroutine pattern (pref).
-- [ ] Run `cd products/erp-imobiliario/backend && pytest` — no NEW failures vs baseline.
+### Phase 3 — Refactor erp-imobiliario callsites ✅
+
+- [x] `certidoes_service.py:1099` now uses `schedule_coro(...) ` with `name=f"tjsp_{org_id}"`. Per-org task-tracking dict (`_tjsp_scheduled_tasks[org_id] = task`) preserved.
+- [x] `job_service.py:121` now uses `schedule_coro(_run_job(job), logger=logger, name=f"job_{job.id}")` (was `asyncio.ensure_future(_run_job(job))`).
+- [x] `tests/services/test_certidoes_service.py` — three tests that patched `app.services.certidoes_service.asyncio.create_task` updated to patch `app.services.certidoes_service.schedule_coro` (the seed helper's import binding at the consumer module). Added a kwargs assertion verifying `name='tjsp_org-001'` flows through.
+- [x] `cd products/erp-imobiliario/backend && pytest` (full suite) → **1819 passed, 29 skipped, 0 failed, 0 errored** in 104s.
+
+**Improvements:**
+- The certidoes test's `patch("...asyncio.create_task")` originally was a slight monkey-patch-our-own-stdlib-reexport pattern. Replaced by patching the consumer-side `schedule_coro` import binding — same shape (collaborator mocked at consumer-side import name), but now the test exercises the wiring decision (whether `schedule_tjsp_for_org` chooses to schedule), not stdlib internals. Generalizable: when a refactor changes the collaborator, the test patch path tracks the new collaborator name automatically — that's a feature of patching at the consumer's import binding.
+- `job_service.py` originally used `asyncio.ensure_future` (older API; accepts more flavors than `create_task` at the cost of dispatch). The seed helper uses `loop.create_task` exclusively (coroutine-only). Behavior parity confirmed by the existing `test_submit_returns_job` and `test_submit_cleanup_old_jobs` which exercise the real run-to-completion path — both pass.
+- The outer-suite RuntimeWarning `coroutine '_delayed_tjsp_process' was never awaited` is pre-existing (the test patches the dispatch and doesn't run the coroutine). Not introduced by my change.
 
 ### Phase 4 — Project close
 
@@ -233,3 +243,5 @@ Follows the standard execution workflow. Per-phase commits locally; final push a
 | 2026-05-10 | Initial draft after Phase 0 audit + N-recount on this branch (N=3 prod code) | engineer (claude-opus-4-7) |
 | 2026-05-10 | Phase 0 ✅ — audit + decision lock (`primitives/tasks.py`); cross-product + service-line MCP scans returned zero additional fire-and-forget findings (short-line / hand-rolled patterns evade them) | engineer |
 | 2026-05-10 | Phase 1 ✅ — `schedule_coro` + `NoRunningLoopError` shipped; 8/8 tests green; primitives `__init__.py` docstring inventory updated. Used `logger.error(..., exc_info=exc)` (not `logger.exception`) inside done-callback because the latter requires active `sys.exc_info` which isn't set inside Task callbacks | engineer |
+| 2026-05-10 | Phase 2 ✅ — `core/billing.py` refactored to use `schedule_coro` + typed `NoRunningLoopError`. Outer try/except retained (handles SYNC arg-resolve failures, distinct from helper's done-callback which handles ASYNC coroutine failures). 13/13 billing tests green | engineer |
+| 2026-05-10 | Phase 3 ✅ — `certidoes_service.py:1099` (`asyncio.create_task` → `schedule_coro`) + `job_service.py:121` (`asyncio.ensure_future` → `schedule_coro`) refactored. `test_certidoes_service.py` 3 tests updated to patch at consumer-side import binding (`schedule_coro` not `asyncio.create_task`). Full erp-imobiliario suite 1819 passed / 29 skipped / 0 failed in 104s | engineer |
