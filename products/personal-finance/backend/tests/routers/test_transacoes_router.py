@@ -196,11 +196,45 @@ class TestAtualizarTransacao:
 
 class TestExcluirTransacao:
     def test_deletes_transaction(self, client):
+        client._mock_supabase.set_table_data("transacoes", [SAMPLE_TRANSACAO])
+        client._mock_supabase.set_table_data("contas", [{"id": "conta-001", "saldo": 1000.00}])
+        client._mock_supabase.set_table_data("orcamento_itens", [])
+        client._mock_supabase.set_table_data("orcamentos", [])
+        client._mock_supabase.set_table_data("resumos_mensais", [])
         response = client.delete("/api/transacoes/trans-001")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
         assert "excluida" in data["message"]
+
+    def test_returns_404_when_not_found(self, client):
+        client._mock_supabase.set_table_data("transacoes", [])
+        response = client.delete("/api/transacoes/nonexistent")
+        assert response.status_code == 404
+        body = response.json()
+        # Standardized error envelope from noctusai_lib.primitives.exceptions
+        assert body["error"]["code"] == "NOT_FOUND"
+        assert "Transacao" in body["error"]["message"] or "Transação" in body["error"]["message"]
+
+    def test_balance_reversal_runs_on_valid_delete(self, client):
+        # Verify side effects fire on the happy path (balance update on the
+        # source account is the canonical state-mutation for delete).
+        client._mock_supabase.set_table_data("transacoes", [SAMPLE_TRANSACAO])
+        client._mock_supabase.set_table_data("contas", [{"id": "conta-001", "saldo": 1000.00}])
+        client._mock_supabase.set_table_data("orcamento_itens", [])
+        client._mock_supabase.set_table_data("orcamentos", [])
+        client._mock_supabase.set_table_data("resumos_mensais", [])
+        response = client.delete("/api/transacoes/trans-001")
+        assert response.status_code == 200
+        # SAMPLE_TRANSACAO is a despesa of 150 — reversal credits the account
+        # back to 1150 via an update on `contas`.
+        contas_builder = client._mock_supabase.table("contas")
+        # `updated_payloads` is appended on every update; the reversal call
+        # writes {"saldo": 1150.00}.
+        assert any(
+            isinstance(p, dict) and p.get("saldo") == 1150.00
+            for p in contas_builder.updated_payloads
+        )
 
     def test_requires_auth(self, client):
         response = client._tc.delete("/api/transacoes/trans-001")
