@@ -16,14 +16,36 @@ Schema validation (opt-in, from `MockSupabaseClient(validate_schema=True)`):
   consult the migration-file-derived schema cache and raise `MockSchemaError`
   if a referenced column does not exist on the bound table. Closes the
   compliance-audit silent-fail class (`projects/mock-supabase-schema-validation`).
+
+Write-to-read propagation (added 2026-05-10):
+  INSERT/UPDATE/DELETE on a `MockRequestBuilder` mutate the table's shared
+  in-memory rows so subsequent SELECT calls on the same builder reflect the
+  write — closes the gap surfaced N=4 in AdConnect MVP. The rules:
+    - INSERT appends response rows (with auto-id) to the shared list.
+    - UPDATE evaluates accumulated filter predicates and `dict.update`s each
+      matching row in place. Returns the mutated rows in `response.data`.
+    - DELETE evaluates accumulated filter predicates and removes each
+      matching row in place. Returns the deleted rows in `response.data`.
+    - When `set_sequential_responses(...)` is configured for the table, the
+      queue dictates the response AND propagation is suppressed (lets tests
+      simulate insert failures without implicit data seeding).
+    - Filter ops with simple equality/membership/comparison semantics are
+      evaluated literally. Other ops (PostgREST expressions like `or_`,
+      `match`, `like`, `ilike`, `contains`, `text_search`, `fts`, `filter`)
+      fall back to "match all rows" — see `_PREDICATE_EVALUATORS`. Empty
+      predicate list = match-all (mirrors real PostgREST).
+  Project: `projects/mock-supabase-write-propagation/`.
 """
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional
+import logging
+from typing import Any, Iterable, Mapping, Optional
 from unittest.mock import MagicMock
 
 from noctusai_lib.testing._schema_cache import get_schema_map
 from noctusai_lib.testing.schema_errors import MockSchemaError, MockUnknownTableError
+
+logger = logging.getLogger(__name__)
 
 
 class MockSupabaseResponse:
@@ -169,6 +191,111 @@ def _validate_payload_keys(
 
 
 # ---------------------------------------------------------------------------
+# Predicate evaluation (used by UPDATE / DELETE filtering)
+# ---------------------------------------------------------------------------
+
+
+def _eval_eq(row: dict, col: str, value: Any) -> bool:
+    return row.get(col) == value
+
+
+def _eval_neq(row: dict, col: str, value: Any) -> bool:
+    return row.get(col) != value
+
+
+def _eval_in(row: dict, col: str, value: Any) -> bool:
+    try:
+        return row.get(col) in value
+    except TypeError:
+        return False
+
+
+def _eval_gt(row: dict, col: str, value: Any) -> bool:
+    cell = row.get(col)
+    if cell is None or value is None:
+        return False
+    try:
+        return cell > value
+    except TypeError:
+        return False
+
+
+def _eval_lt(row: dict, col: str, value: Any) -> bool:
+    cell = row.get(col)
+    if cell is None or value is None:
+        return False
+    try:
+        return cell < value
+    except TypeError:
+        return False
+
+
+def _eval_gte(row: dict, col: str, value: Any) -> bool:
+    cell = row.get(col)
+    if cell is None or value is None:
+        return False
+    try:
+        return cell >= value
+    except TypeError:
+        return False
+
+
+def _eval_lte(row: dict, col: str, value: Any) -> bool:
+    cell = row.get(col)
+    if cell is None or value is None:
+        return False
+    try:
+        return cell <= value
+    except TypeError:
+        return False
+
+
+def _eval_is(row: dict, col: str, value: Any) -> bool:
+    return row.get(col) is value
+
+
+# Map op → evaluator. Ops not in this map are recorded but evaluate as
+# "match all" (with a debug log) so unsupported PostgREST expressions don't
+# silently mismatch.
+_PREDICATE_EVALUATORS = {
+    "eq": _eval_eq,
+    "neq": _eval_neq,
+    "in_": _eval_in,
+    "gt": _eval_gt,
+    "lt": _eval_lt,
+    "gte": _eval_gte,
+    "lte": _eval_lte,
+    "is_": _eval_is,
+}
+
+
+def _row_matches_predicates(
+    row: dict, predicates: list[tuple[str, str, Any]]
+) -> bool:
+    """Evaluate every predicate against `row`; AND-conjoin. Empty list
+    returns True (match-all, matches PostgREST).
+    """
+    if not predicates:
+        return True
+    for op, col, value in predicates:
+        evaluator = _PREDICATE_EVALUATORS.get(op)
+        if evaluator is None:
+            # Unsupported op — match-all fallback. Logged at debug so tests
+            # opting in via log capture can see the fallback firing.
+            logger.debug(
+                "MockSupabase: predicate op %r on column %r evaluates as "
+                "match-all (no literal evaluator). Predicates: %r",
+                op,
+                col,
+                predicates,
+            )
+            continue
+        if not evaluator(row, col, value):
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Base mixin with shared execute logic
 # ---------------------------------------------------------------------------
 
@@ -217,12 +344,20 @@ class _FilterMixin:
     methods consult the schema cache and raise `MockSchemaError` on unknowns.
     `_strict_unknown_tables` flips unknown-table behavior from WARN+skip to
     raise (Tier 1.5 G4).
+
+    Filter calls also append a `(op, col, value)` tuple to `_predicates` so
+    the UPDATE/DELETE execute path can evaluate which rows match. Ops with
+    simple literal semantics (`eq`, `neq`, `in_`, `gt`, `lt`, `gte`, `lte`,
+    `is_`) are evaluated literally; complex PostgREST expressions
+    (`like`, `ilike`, `contains`, `or_`, `match`, `text_search`, `fts`,
+    `filter`) accumulate as predicates but evaluate as match-all (debug log).
     """
 
     _validate_schema: bool = False
     _strict_unknown_tables: bool = False
     _schema: Optional[str] = None
     _table: Optional[str] = None
+    _predicates: list  # populated by __init__ on concrete builders
 
     def _check_col(self, col: str, op: str) -> None:
         if self._validate_schema:
@@ -231,68 +366,100 @@ class _FilterMixin:
                 strict_unknown_tables=self._strict_unknown_tables,
             )
 
-    def eq(self, col, *a, **k):
+    def _record(self, op: str, col: str, value: Any) -> None:
+        """Append (op, col, value) to the predicate list. Filter methods
+        accept extra positional / keyword args (postgrest SDK compat) but
+        only the first value is used for predicate evaluation.
+        """
+        # `_predicates` is set on every concrete builder __init__; the
+        # `getattr` guard tolerates a future builder that forgets to wire it.
+        preds = getattr(self, "_predicates", None)
+        if preds is None:
+            preds = []
+            self._predicates = preds
+        preds.append((op, col, value))
+
+    def eq(self, col, value=None, *a, **k):
         self._check_col(col, "eq")
+        self._record("eq", col, value)
         return self
 
-    def neq(self, col, *a, **k):
+    def neq(self, col, value=None, *a, **k):
         self._check_col(col, "neq")
+        self._record("neq", col, value)
         return self
 
-    def in_(self, col, *a, **k):
+    def in_(self, col, value=None, *a, **k):
         self._check_col(col, "in_")
+        self._record("in_", col, value)
         return self
 
-    def gt(self, col, *a, **k):
+    def gt(self, col, value=None, *a, **k):
         self._check_col(col, "gt")
+        self._record("gt", col, value)
         return self
 
-    def lt(self, col, *a, **k):
+    def lt(self, col, value=None, *a, **k):
         self._check_col(col, "lt")
+        self._record("lt", col, value)
         return self
 
-    def gte(self, col, *a, **k):
+    def gte(self, col, value=None, *a, **k):
         self._check_col(col, "gte")
+        self._record("gte", col, value)
         return self
 
-    def lte(self, col, *a, **k):
+    def lte(self, col, value=None, *a, **k):
         self._check_col(col, "lte")
+        self._record("lte", col, value)
         return self
 
-    def ilike(self, col, *a, **k):
+    def ilike(self, col, value=None, *a, **k):
         self._check_col(col, "ilike")
+        self._record("ilike", col, value)
         return self
 
-    def like(self, col, *a, **k):
+    def like(self, col, value=None, *a, **k):
         self._check_col(col, "like")
+        self._record("like", col, value)
         return self
 
-    def is_(self, col, *a, **k):
+    def is_(self, col, value=None, *a, **k):
         self._check_col(col, "is_")
+        self._record("is_", col, value)
         return self
 
-    def contains(self, col, *a, **k):
+    def contains(self, col, value=None, *a, **k):
         self._check_col(col, "contains")
+        self._record("contains", col, value)
         return self
 
-    def contained_by(self, col, *a, **k):
+    def contained_by(self, col, value=None, *a, **k):
         self._check_col(col, "contained_by")
+        self._record("contained_by", col, value)
         return self
 
-    def overlaps(self, col, *a, **k):
+    def overlaps(self, col, value=None, *a, **k):
         self._check_col(col, "overlaps")
+        self._record("overlaps", col, value)
         return self
 
-    def fts(self, col, *a, **k):
+    def fts(self, col, value=None, *a, **k):
         self._check_col(col, "fts")
+        self._record("fts", col, value)
         return self
 
-    def text_search(self, col, *a, **k):
+    def text_search(self, col, value=None, *a, **k):
         self._check_col(col, "text_search")
+        self._record("text_search", col, value)
         return self
 
     def filter(self, col, *a, **k):
         self._check_col(col, "filter")
+        # `filter("col", "op", "value")` — record the value if provided,
+        # else None. Evaluation falls back to match-all anyway.
+        value = a[1] if len(a) > 1 else None
+        self._record("filter", col, value)
         return self
 
     def match(self, query, *a, **k):
@@ -302,12 +469,21 @@ class _FilterMixin:
                     self._schema, self._table, str(key), operation="match",
                     strict_unknown_tables=self._strict_unknown_tables,
                 )
+        # `match({col: val, ...})` is logically AND of `eq` per key. Record
+        # each pair as a literal `eq` predicate so UPDATE/DELETE filter
+        # correctly.
+        if isinstance(query, Mapping):
+            for k_, v_ in query.items():
+                self._record("eq", str(k_), v_)
         return self
 
     def or_(self, *a, **k):
-        # PostgREST expression like "status.eq.active,tier.gte.3" — skip
-        # validation (Q4-style: don't false-positive on complex expressions;
-        # adding a PostgREST-expression parser is out of scope per project §4).
+        # PostgREST expression like "status.eq.active,tier.gte.3" — adding a
+        # parser is out of scope per project §4. Record as a synthetic
+        # match-all predicate (op="or_") so the predicate list reflects the
+        # call, but evaluation falls back to match-all (debug log).
+        expr = a[0] if a else None
+        self._record("or_", "<or_expression>", expr)
         return self
 
     @property
@@ -320,7 +496,13 @@ class _FilterMixin:
 # ---------------------------------------------------------------------------
 
 class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
-    """Mirrors SyncSelectRequestBuilder."""
+    """Mirrors SyncSelectRequestBuilder.
+
+    Holds a reference to the table's shared row list so reads see writes
+    that mutated the shared list. The reference is captured once at __init__
+    (the shared list is mutated in place by INSERT/UPDATE/DELETE; SELECT
+    reads through the same reference).
+    """
 
     def __init__(
         self,
@@ -334,7 +516,10 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         table: Optional[str] = None,
         strict_unknown_tables: bool = False,
     ):
-        self._data = data or []
+        # Preserve the original semantics: `data or []` → empty list when
+        # None or empty. Note: we trust callers to pass in the shared list
+        # reference so reads see writes.
+        self._data = data if data is not None else []
         self._single_mode = False
         self._count = count
         self._response_queue = response_queue
@@ -343,6 +528,7 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         self._schema = schema
         self._table = table
         self._strict_unknown_tables = strict_unknown_tables
+        self._predicates: list[tuple[str, str, Any]] = []
 
     def order(self, col, *a, **k):
         self._check_col(col, "order")
@@ -374,7 +560,19 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
 # ---------------------------------------------------------------------------
 
 class MockFilterBuilder(_FilterMixin, _MockExecuteMixin):
-    """Mirrors SyncFilterRequestBuilder."""
+    """Mirrors SyncFilterRequestBuilder.
+
+    Returned by `update(...)` / `delete()` / `upsert(...)` chains. Holds a
+    reference to the table's shared row list and (for update/delete) a
+    `_mutation_kind` flag plus optional `_update_payload`. On `execute()`:
+
+      - If a response-queue is set, the queue dictates the response and
+        propagation is suppressed.
+      - Otherwise the accumulated `_predicates` are evaluated against the
+        shared list. Matching rows are mutated in place (UPDATE) or
+        removed (DELETE). The mutated/deleted rows are returned in
+        `response.data`.
+    """
 
     def __init__(
         self,
@@ -386,8 +584,10 @@ class MockFilterBuilder(_FilterMixin, _MockExecuteMixin):
         schema: Optional[str] = None,
         table: Optional[str] = None,
         strict_unknown_tables: bool = False,
+        mutation_kind: Optional[str] = None,  # "update" | "delete" | None
+        update_payload: Optional[Mapping] = None,
     ):
-        self._data = data or []
+        self._data = data if data is not None else []
         self._single_mode = False
         self._count = None
         self._response_queue = response_queue
@@ -396,8 +596,59 @@ class MockFilterBuilder(_FilterMixin, _MockExecuteMixin):
         self._schema = schema
         self._table = table
         self._strict_unknown_tables = strict_unknown_tables
+        self._predicates: list[tuple[str, str, Any]] = []
+        self._mutation_kind = mutation_kind
+        self._update_payload = update_payload
+
+    def _apply_mutation(self) -> list[dict]:
+        """Evaluate predicates against the shared list and apply the mutation.
+
+        Returns the list of affected rows (mutated for UPDATE, removed for
+        DELETE) which becomes `response.data`. Empty predicate list means
+        match-all (PostgREST semantics). Non-dict rows are skipped (defensive).
+        """
+        if not isinstance(self._data, list):
+            return []
+        affected: list[dict] = []
+        survivors: list[dict] = []
+        for row in self._data:
+            if not isinstance(row, dict):
+                survivors.append(row)
+                continue
+            if _row_matches_predicates(row, self._predicates):
+                affected.append(row)
+            else:
+                survivors.append(row)
+
+        if self._mutation_kind == "update":
+            payload = self._update_payload or {}
+            for row in affected:
+                row.update(payload)
+            # Affected rows are still in self._data via the original list
+            # (we didn't remove them — only computed `affected` for the
+            # response). The mutation is in place.
+            return list(affected)
+
+        if self._mutation_kind == "delete":
+            # Replace contents in place so the shared reference stays
+            # stable. Slice-assignment mutates the same list object that
+            # downstream SELECT builders hold.
+            self._data[:] = survivors
+            return list(affected)
+
+        return list(affected)
 
     def execute(self):
+        # Response queue wins — suppress propagation.
+        if self._response_queue is not None:
+            return self._do_execute()
+        # Apply mutation against the shared list, then return the result.
+        if self._mutation_kind in ("update", "delete"):
+            affected = self._apply_mutation()
+            if self._single_mode:
+                affected = affected[0] if affected else None
+                self._single_mode = False
+            return MockSupabaseResponse(data=affected, count=self._count)
         return self._do_execute()
 
 
@@ -406,7 +657,14 @@ class MockFilterBuilder(_FilterMixin, _MockExecuteMixin):
 # ---------------------------------------------------------------------------
 
 class MockQueryBuilder(_MockExecuteMixin):
-    """Mirrors SyncQueryRequestBuilder."""
+    """Mirrors SyncQueryRequestBuilder.
+
+    Returned by `insert(...)`. The propagation step (appending response
+    rows to the shared list) already happened in `MockRequestBuilder.insert`
+    by the time this builder is constructed — `_data` here is the
+    response-side rows (with auto-id), not the shared table list. This
+    keeps the response shape (`result.data[0]['id']`) intact.
+    """
 
     def __init__(
         self,
@@ -419,7 +677,7 @@ class MockQueryBuilder(_MockExecuteMixin):
         table: Optional[str] = None,
         strict_unknown_tables: bool = False,
     ):
-        self._data = data or []
+        self._data = data if data is not None else []
         self._single_mode = False
         self._count = None
         self._response_queue = response_queue
@@ -445,6 +703,13 @@ class MockRequestBuilder:
     issues the insert. Use `db.table("notifications").inserted_payloads`
     to read back what was inserted during the run. List-payloads are
     flattened (each row appended individually).
+
+    Write-to-read propagation (2026-05-10): `self._data` is a stable list
+    reference shared with every downstream builder created by `select`,
+    `insert`, `update`, `delete`, `upsert`. INSERT extends this list with
+    response rows; UPDATE mutates matching rows in place via `dict.update`;
+    DELETE replaces contents via slice assignment. SELECT readers see all
+    three because they hold the same list reference.
     """
 
     def __init__(
@@ -463,15 +728,28 @@ class MockRequestBuilder:
         # insert-side pattern. The list collects every dict passed to
         # `update(...)`, in call order.
         self.updated_payloads: list = []
-        self._data = data or []
-        if isinstance(self._data, dict):
-            self._data = [self._data]
+        # Materialize the seed data as a fresh mutable list. Callers that
+        # passed a dict (single row), a tuple, or shared a list with
+        # another builder all get a stable, owned-by-this-builder list
+        # — write propagation mutates this exact reference.
+        if data is None:
+            self._data = []
+        elif isinstance(data, dict):
+            self._data = [data]
+        elif isinstance(data, list):
+            self._data = list(data)
+        else:
+            self._data = list(data) if isinstance(data, Iterable) else [data]
         self._response_queue = None
         self._response_idx = None
         self._validate_schema = validate_schema
         self._schema = schema
         self._table = table
         self._strict_unknown_tables = strict_unknown_tables
+        # Running counter for auto-id generation. Incremented per row
+        # appended via insert; survives across calls so successive inserts
+        # get distinct ids (mock-<table>-1, mock-<table>-2, ...).
+        self._auto_id_seq = 0
 
     def set_responses(self, responses):
         """Configure sequential responses for this table."""
@@ -493,6 +771,10 @@ class MockRequestBuilder:
                 strict_unknown_tables=self._strict_unknown_tables,
             )
         count = k.get("count")
+        # Pass the SHARED LIST REFERENCE so mutations (already-applied or
+        # subsequent inside the same chain — though that's atypical) are
+        # visible. The select builder reads through the reference at
+        # execute() time.
         return MockSelectBuilder(
             self._data,
             count=len(self._data) if count == "exact" else None,
@@ -562,9 +844,16 @@ class MockRequestBuilder:
                 continue
             response_row = dict(row)
             if not response_row.get("id"):
+                self._auto_id_seq += 1
                 table_label = self._table or "row"
-                response_row["id"] = f"mock-{table_label}-{len(self.inserted_payloads)}"
+                response_row["id"] = f"mock-{table_label}-{self._auto_id_seq}"
             response_rows.append(response_row)
+
+        # Write-propagation: extend the shared list with the response rows
+        # so subsequent SELECT sees them. Suppressed when a response queue
+        # is set (queue dictates response, propagation would be surprising).
+        if self._response_queue is None:
+            self._data.extend(response_rows)
 
         return MockQueryBuilder(
             response_rows,
@@ -585,10 +874,29 @@ class MockRequestBuilder:
             self.updated_payloads.extend(data)
         elif data is not None:
             self.updated_payloads.append(data)
+        # The filter builder receives the SHARED LIST REFERENCE plus the
+        # update payload. On execute() it evaluates predicates and mutates
+        # matching rows in place via dict.update.
+        update_payload: Optional[Mapping]
+        if isinstance(data, Mapping):
+            update_payload = data
+        elif isinstance(data, list) and data and isinstance(data[0], Mapping):
+            # PostgREST list-update is rare; merge keys (last wins) for our
+            # propagation step. Tests reading updated_payloads still see
+            # the raw list.
+            merged: dict = {}
+            for item in data:
+                if isinstance(item, Mapping):
+                    merged.update(item)
+            update_payload = merged
+        else:
+            update_payload = None
         return MockFilterBuilder(
             self._data,
             response_queue=self._response_queue,
             response_idx=self._response_idx,
+            mutation_kind="update",
+            update_payload=update_payload,
             **self._builder_kwargs(),
         )
 
@@ -598,6 +906,11 @@ class MockRequestBuilder:
                 self._schema, self._table, data, operation="upsert",
                 strict_unknown_tables=self._strict_unknown_tables,
             )
+        # Upsert propagation is deferred to a follow-up project (needs
+        # conflict-target tracking via `on_conflict`). For now, the call
+        # returns a filter builder with the shared list but no mutation
+        # kind — execute() falls through to _do_execute which returns the
+        # current data. Documented in §4 of PROJECT.md.
         return MockFilterBuilder(
             self._data,
             response_queue=self._response_queue,
@@ -610,6 +923,7 @@ class MockRequestBuilder:
             self._data,
             response_queue=self._response_queue,
             response_idx=self._response_idx,
+            mutation_kind="delete",
             **self._builder_kwargs(),
         )
 

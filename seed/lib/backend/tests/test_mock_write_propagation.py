@@ -149,7 +149,8 @@ def test_update_returns_mutated_rows_in_response():
         .execute()
     )
 
-    assert response.status_code is None or response.status_code  # noqa: just illustrating no status_code field
+    assert isinstance(response, MockSupabaseResponse)
+    assert response.error is None
     assert len(response.data) == 1
     assert response.data[0]["id"] == "a1"
     assert response.data[0]["status"] == "done"
