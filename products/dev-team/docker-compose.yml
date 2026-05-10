@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/dev-team/backend/Dockerfile
     container_name: noctus-dev-team-backend
-    image: noctus-dev-team-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-dev-team-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -33,7 +33,7 @@ services:
       context: ../..
       dockerfile: products/dev-team/frontend/Dockerfile
     container_name: noctus-dev-team-frontend
-    image: noctus-dev-team-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-dev-team-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8123:8123"
     depends_on:

@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/daily-life/backend/Dockerfile
     container_name: noctus-daily-life-backend
-    image: noctus-daily-life-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-daily-life-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -33,7 +33,7 @@ services:
       context: ../..
       dockerfile: products/daily-life/frontend/Dockerfile
     container_name: noctus-daily-life-frontend
-    image: noctus-daily-life-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-daily-life-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8110:8110"
     depends_on:

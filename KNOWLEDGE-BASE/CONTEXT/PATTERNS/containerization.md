@@ -752,10 +752,14 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
    ~30 minutes on free GH runners — current job builds core + seed
    only. Future: matrix strategy with one job per product, or move
    to a self-hosted runner with disk + cache reuse.
-10. **No image registry strategy.** Local builds only today. For
-    deploy, images need to land in a registry (GHCR, ECR, etc.).
-    Decision needed: monorepo registry with prefix, or per-product
-    registries. <- human decision: per-product registries.
+10. ✅ **Image registry strategy — per-product registries (2026-05-10).**
+    Decision locked: per-product registries (rationale at §11a). Every
+    per-product `docker-compose.yml` `image:` line now points at
+    `ghcr.io/jraphaelsst/noctus-<slug>-<role>:${NOCTUS_IMAGE_TAG:-dev}`
+    so local builds keep working (`:dev` fallback) and CI can set
+    `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` for immutable tags.
+    See **§11a · Image registry strategy** for the full pattern + manual
+    push recipe. T9 (Wave 3) will land the automated push workflow.
 11. **Backend image is fat (600-900MB).** A second pass with
     multi-stage (build deps in one stage, runtime-only in another)
     could shave 200-400MB. Standard pattern; deferred for later. <- please do it
@@ -792,6 +796,128 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
 - **Don't hand-edit per-product Dockerfiles when fixing a pattern.**
   Update `products/seed/` first, propagate (or re-run the generator
   once the scaffolder is wired).
+
+---
+
+## 11a · Image registry strategy
+
+**Per-product registries** — locked 2026-05-10 (T5 of
+`projects/containerization-backlog-closure/`). Each product gets its
+own GHCR namespace; the platform does **not** ship a single monorepo
+registry with a `noctus-<slug>` prefix.
+
+### Rationale
+
+- **Per-product access control.** A read/write PAT scoped to one
+  product's package can be handed to a per-product deploy pipeline
+  without granting blast-radius on the rest of the fleet.
+- **Per-product image lifecycle.** Older immutable tags can be pruned
+  per product without affecting siblings (e.g. ERP keeps 30 days of
+  SHA tags, mailing keeps 7 days — independent retention policies).
+- **Per-product publication cadence.** When a product ships at a
+  different rhythm (e.g. core every PR, daily-life weekly), the
+  registry view stays clean — no interleaved cross-product noise.
+- **Per-product ownership.** Aligns with the product-folder boundary
+  used everywhere else in the repo (`products/<slug>/{backend,frontend}`,
+  per-product `docker-compose.yml`, per-product start.sh registration).
+  Same boundary, same registry slot.
+
+### Tag pattern
+
+```
+ghcr.io/jraphaelsst/noctus-<slug>-<role>:<tag>
+```
+
+Where:
+- `<slug>` is the product slug (matches `products/<slug>/` dir name).
+- `<role>` is `backend` or `frontend`.
+- `<tag>` is one of:
+  - `dev` — local development build. Default fallback when
+    `NOCTUS_IMAGE_TAG` is unset. Local `docker compose build` produces
+    images at this tag.
+  - `<git-sha>` — 7-char short SHA, immutable per commit. CI builds
+    set `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` to produce
+    these. Deploys reference these for reproducibility.
+  - `latest` — the most recent CI build on `main`. Moves on every push
+    to main. Convenience tag for "pull whatever just shipped"; never
+    use in production deploys (race-prone).
+  - `<semver>` — tagged releases (e.g. `v1.4.2`). Future; reserved for
+    when products start cutting versioned releases.
+
+### How the compose plumbing works
+
+Every per-product `docker-compose.yml` carries:
+
+```yaml
+services:
+  <slug>-backend:
+    image: ghcr.io/jraphaelsst/noctus-<slug>-backend:${NOCTUS_IMAGE_TAG:-dev}
+  <slug>-frontend:
+    image: ghcr.io/jraphaelsst/noctus-<slug>-frontend:${NOCTUS_IMAGE_TAG:-dev}
+```
+
+`${NOCTUS_IMAGE_TAG:-dev}` is shell-style interpolation that Docker
+Compose evaluates natively at compose-parse time. Three modes:
+
+1. **Local build (no env).** `docker compose build` produces images
+   tagged `ghcr.io/jraphaelsst/noctus-<slug>-<role>:dev`. The registry
+   path is just a canonical image name on the local Docker daemon —
+   no push, no registry contact. This is exactly the old `:dev` flow,
+   just with a longer name.
+2. **CI build (per-commit).** Pipeline exports
+   `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` before
+   `docker compose build`. Images get tagged with the short SHA;
+   `docker push` lands them at GHCR; deploys reference the exact SHA.
+3. **Manual override.** Anyone can `NOCTUS_IMAGE_TAG=test123 docker compose up`
+   to swap which tag the compose pulls/builds — useful for testing a
+   pre-built image without rebuilding locally.
+
+### Manual push recipe
+
+When you need to push a single image by hand (one-off deploys, debug,
+pre-CI sanity):
+
+```bash
+# 1. Build locally (defaults to :dev tag)
+cd products/core && docker compose build
+
+# 2. Authenticate to GHCR
+#    Use a fine-scoped PAT with write:packages (and read:packages).
+echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
+# 3. Push the dev tag
+docker push ghcr.io/jraphaelsst/noctus-core-backend:dev
+
+# 4. (Optional) re-tag for a specific SHA and push that too
+docker tag ghcr.io/jraphaelsst/noctus-core-backend:dev \
+           ghcr.io/jraphaelsst/noctus-core-backend:$(git rev-parse --short HEAD)
+docker push ghcr.io/jraphaelsst/noctus-core-backend:$(git rev-parse --short HEAD)
+```
+
+`GHCR_USERNAME` + `GHCR_TOKEN` are declared (commented) in the root
+`.env.example`. Local devs typically leave them unset.
+
+### Container names are unchanged
+
+`container_name: noctus-<slug>-<role>` (no registry path) stays the
+same — that's the friendly local-docker name used by `docker ps`,
+inter-service DNS within the compose network, and start.sh's
+healthcheck logic. Only `image:` carries the registry path.
+
+### What still has to happen
+
+- **T9 (Wave 3) — automated push workflow.** A GitHub Actions workflow
+  that on every `main` push:
+    - builds all per-product images,
+    - tags them `${short-sha}` + `latest`,
+    - logs in to GHCR via `GITHUB_TOKEN`,
+    - pushes both tags per product.
+  Pairs with §11 #15 (image scanning via trivy/grype) once the images
+  are in the registry.
+- **Per-product retention policies.** Once images start landing in
+  GHCR, configure per-package retention (e.g. keep last 30 SHA tags,
+  always keep `latest` + `dev`). Done in the GHCR UI; future
+  improvement to script via the API.
 
 ---
 
