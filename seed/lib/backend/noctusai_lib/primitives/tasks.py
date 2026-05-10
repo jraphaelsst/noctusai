@@ -41,6 +41,24 @@ don't pollute prod logs with stack traces.
 The done-callback ALWAYS calls `logger.exception(...)` for non-cancel
 exceptions, even when the caller didn't supply a logger (the module
 falls back to its own logger).
+
+**Failure surfaces — two distinct, do not merge.** Fire-and-forget code
+has TWO failure paths that a single try/except cannot cover:
+
+1. **Sync resolve-args failures** — happen BEFORE scheduling, e.g. a DB
+   lookup to resolve a foreign id raises. These surface synchronously
+   to the caller of `schedule_coro`'s caller; handle them in the
+   caller's try/except around the resolve-args block.
+2. **Async coroutine-raise failures** — happen AFTER scheduling, when
+   the wrapped coroutine itself raises during execution. These surface
+   asynchronously via `Task.add_done_callback`. `schedule_coro` handles
+   this surface — every exception flows through `logger.error(...,
+   exc_info=exc)` with full traceback.
+
+When refactoring a hand-rolled fire-and-forget block to use
+`schedule_coro`, do NOT merge the two outer handlers — the helper only
+covers surface (2). Surface (1) still needs the caller's sync try/except.
+The `core/billing.py` refactor preserved both surfaces deliberately.
 """
 from __future__ import annotations
 

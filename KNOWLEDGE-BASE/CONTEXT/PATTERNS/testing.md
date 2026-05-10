@@ -363,6 +363,8 @@ with patch.object(noctusai_lib.llm, "chat_completion", AsyncMock(return_value=FA
 
 **Why it works.** The boundary belongs to an external library — patching it is the standard mock pattern, allowed by the rule. Our orchestration logic, our error handling, our consent guards — all execute. The test now actually verifies the chain, not just the call order.
 
+**Patch at the consumer-side import binding, never at the producer-side definition.** The mock target is the consumer module's local symbol — `patch("app.services.X.schedule_coro")` (consumer's `from noctusai_lib.primitives.tasks import schedule_coro` binding), NOT `patch("noctusai_lib.primitives.tasks.schedule_coro")` (producer-side definition). The consumer-side path tracks refactors automatically: rename the seed helper or move it to a different layer, the consumer's import re-binds, and the patch path stays accurate. The producer-side path silently no-ops the moment the consumer's import shape changes — a recurring slip class. *Formalized 2026-05-10 from `projects/schedule-coro-fire-and-forget/` Phase 3 proposal item #3.*
+
 **When NOT to use boundary mocks.** When the inner helper does enough work that running it would require seeding more data than the test scope allows. Then Pattern 3.
 
 ### Pattern 3: Seed real data via `MockSupabaseClient`

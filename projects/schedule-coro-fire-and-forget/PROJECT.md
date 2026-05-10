@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-10
 - **Last updated:** 2026-05-10
-- **Status:** Phase 0-3 ✅ → Phase 4 (close) ready
+- **Status:** Phase 0-4 ✅ — project closed
 - **Owner / stakeholders:** USER (joaoraphaelsst@gmail.com) · architect · engineer
 - **Related docs:** `KB § PATTERNS/seed-lib-layout.md`, `KB § PATTERNS/logging.md`, memory `feedback_recurrence_rule.md`, memory `feedback_no_silent_errors.md`
 - **Project slug:** `schedule-coro-fire-and-forget` — at `projects/schedule-coro-fire-and-forget/` (cross-cutting; touches seed-lib + 3 products' backends).
@@ -197,14 +197,19 @@ _tjsp_scheduled_tasks[org_id] = task
 - `job_service.py` originally used `asyncio.ensure_future` (older API; accepts more flavors than `create_task` at the cost of dispatch). The seed helper uses `loop.create_task` exclusively (coroutine-only). Behavior parity confirmed by the existing `test_submit_returns_job` and `test_submit_cleanup_old_jobs` which exercise the real run-to-completion path — both pass.
 - The outer-suite RuntimeWarning `coroutine '_delayed_tjsp_process' was never awaited` is pre-existing (the test patches the dispatch and doesn't run the coroutine). Not introduced by my change.
 
-### Phase 4 — Project close
+### Phase 4 — Project close ✅
 
-- [ ] Final §11 update + flip phases to ✅.
-- [ ] One bundled proposal at `projects/schedule-coro-fire-and-forget/proposals/`.
-- [ ] Phase-learning logs via `noctus.dev.phase_learning_log`.
-- [ ] Three-way sync if methodology gaps surfaced (KB / CLAUDE / memory).
-- [ ] Archive via `noctus.dev.archive`.
-- [ ] Final commit + push to branch (NEVER to main).
+- [x] Final §11 update + flip phases to ✅.
+- [x] One bundled proposal at `projects/schedule-coro-fire-and-forget/proposals/claude-opus-4-7-20260510-end-of-project-bundle.md`. 5 items triaged.
+- [x] Phase-learning logs via `noctus.dev.phase_learning_log` — 4 entries (Phase 0 methodology, Phase 1 technical, Phase 2 technical, Phase 3 technical).
+- [x] Inline application of bundle items 2, 3, 5 (per architect's "applicable now → apply now" rule):
+  - Item 2: `seed/lib/backend/noctusai_lib/domain/jobs/worker.py` docstring example updated to use `schedule_coro`.
+  - Item 3: `KB § PATTERNS/testing.md` Pattern 2 amended with "patch at consumer-side import binding" rule (single paragraph, cross-referenced to this project).
+  - Item 5: `seed/lib/backend/noctusai_lib/primitives/tasks.py` module docstring grew a "Failure surfaces" section documenting the two-failure-paths pattern.
+- [x] Items 1 (AdConnect MVP merge sweep) + 4 (MCP tool for seed-lib decision tree) deferred-with-destination — both have explicit triggers + application steps in the bundle.
+- [x] No memory / CLAUDE three-way sync needed — testing.md amendment is a sub-rule of an existing pattern, not a new behavioral rule. Phase 3 learning (consumer-side patch binding) is now in KB; testing.md is the right home; no new CLAUDE.md bullet warranted (already covered by existing "No monkey-patching" + "Mocking conventions" bullets).
+- [ ] Final commit + push at gate (next).
+- [ ] Archive via `noctus.dev.archive` — orchestrator's responsibility per the orchestrator-vs-engineer split (engineer ships branch tip; orchestrator does fresh-eyes review + archive + main fast-forward).
 
 ---
 
@@ -245,3 +250,4 @@ Follows the standard execution workflow. Per-phase commits locally; final push a
 | 2026-05-10 | Phase 1 ✅ — `schedule_coro` + `NoRunningLoopError` shipped; 8/8 tests green; primitives `__init__.py` docstring inventory updated. Used `logger.error(..., exc_info=exc)` (not `logger.exception`) inside done-callback because the latter requires active `sys.exc_info` which isn't set inside Task callbacks | engineer |
 | 2026-05-10 | Phase 2 ✅ — `core/billing.py` refactored to use `schedule_coro` + typed `NoRunningLoopError`. Outer try/except retained (handles SYNC arg-resolve failures, distinct from helper's done-callback which handles ASYNC coroutine failures). 13/13 billing tests green | engineer |
 | 2026-05-10 | Phase 3 ✅ — `certidoes_service.py:1099` (`asyncio.create_task` → `schedule_coro`) + `job_service.py:121` (`asyncio.ensure_future` → `schedule_coro`) refactored. `test_certidoes_service.py` 3 tests updated to patch at consumer-side import binding (`schedule_coro` not `asyncio.create_task`). Full erp-imobiliario suite 1819 passed / 29 skipped / 0 failed in 104s | engineer |
+| 2026-05-10 | Phase 4 ✅ — bundled proposal filed (5 items); items 2, 3, 5 applied inline (seed worker docstring + KB testing.md pattern + tasks.py docstring "Failure surfaces" section); items 1 + 4 deferred-with-destination. Pre-existing core/test_test_accounts_router test failure documented as baseline (unrelated `MockSchemaError: plans has no column 'is_active'`) | engineer |
