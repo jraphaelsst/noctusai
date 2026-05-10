@@ -145,5 +145,12 @@ class OrcamentosService:
         return row
 
     async def excluir_item(self, item_id: str) -> bool:
+        # Explicit pre-check — orcamento_itens is RLS-scoped via parent
+        # orcamento (no org_id column), so an id-only check is sufficient
+        # under PostgREST. 404 BEFORE the delete to avoid silent no-ops
+        # on bad ids (PF-3 fix).
+        check = self.db.table("orcamento_itens").select("id").eq("id", item_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=404, detail="Item de orçamento não encontrado")
         self.db.table("orcamento_itens").delete().eq("id", item_id).execute()
         return True

@@ -1,6 +1,7 @@
 """Transactions service — CRUD, filtering, categorization."""
 import logging
 from typing import Dict, List, Optional
+from fastapi import HTTPException
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -118,23 +119,27 @@ class TransacoesService:
         return row
 
     async def excluir(self, transacao_id: str) -> bool:
-        # Fetch transaction to reverse balance
+        # Explicit pre-check — single() returns None for empty results
+        # (mirrors Postgrest .single() shape). 404 BEFORE the delete so we
+        # never reach the side-effect path on a bad id (PF-3 fix).
         transacao = self.db.table("transacoes").select("*").eq("id", transacao_id).eq("org_id", self.org_id).single().execute()
-        if transacao.data:
-            t = transacao.data
-            reverse_tipo = "receita" if t["tipo"] == "despesa" else "despesa"
-            if t["tipo"] == "transferencia":
-                reverse_tipo = "receita"
-            await self._atualizar_saldo_conta(t["conta_id"], float(t["valor"]), reverse_tipo)
-            if t.get("conta_destino_id") and t["tipo"] == "transferencia":
-                await self._atualizar_saldo_conta(t["conta_destino_id"], float(t["valor"]), "despesa")
+        if not transacao.data:
+            raise HTTPException(status_code=404, detail="Transacao nao encontrada")
+
+        t = transacao.data
+        # Reverse balance before delete (idempotent if delete fails, since
+        # we'd retry on the same row).
+        reverse_tipo = "receita" if t["tipo"] == "despesa" else "despesa"
+        if t["tipo"] == "transferencia":
+            reverse_tipo = "receita"
+        await self._atualizar_saldo_conta(t["conta_id"], float(t["valor"]), reverse_tipo)
+        if t.get("conta_destino_id") and t["tipo"] == "transferencia":
+            await self._atualizar_saldo_conta(t["conta_destino_id"], float(t["valor"]), "despesa")
 
         self.db.table("transacoes").delete().eq("id", transacao_id).eq("org_id", self.org_id).execute()
 
-        if transacao.data:
-            t = transacao.data
-            await self._sincronizar_orcamento(t.get("categoria_id"), t.get("data"))
-            await self._invalidar_cache_mensal(t.get("data"))
+        await self._sincronizar_orcamento(t.get("categoria_id"), t.get("data"))
+        await self._invalidar_cache_mensal(t.get("data"))
 
         return True
 

@@ -214,10 +214,27 @@ class TestAtualizarItem:
 
 class TestExcluirItem:
     def test_deletes_item(self, client):
+        client._mock_supabase.set_table_data("orcamento_itens", [SAMPLE_ORCAMENTO_ITEM])
         response = client.delete("/api/orcamentos/itens/item-001")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
+
+    def test_returns_404_when_not_found(self, client):
+        client._mock_supabase.set_table_data("orcamento_itens", [])
+        response = client.delete("/api/orcamentos/itens/nonexistent")
+        assert response.status_code == 404
+        body = response.json()
+        assert body["error"]["code"] == "NOT_FOUND"
+        assert "Item" in body["error"]["message"] or "item" in body["error"]["message"]
+
+    def test_actually_removes_row_from_shared_list(self, client):
+        client._mock_supabase.set_table_data("orcamento_itens", [SAMPLE_ORCAMENTO_ITEM])
+        response = client.delete("/api/orcamentos/itens/item-001")
+        assert response.status_code == 200
+        # MockFilterBuilder mutates the shared list in place on .delete().
+        builder = client._mock_supabase.table("orcamento_itens")
+        assert all(row.get("id") != "item-001" for row in builder._data)
 
     def test_requires_auth(self, client):
         response = client._tc.delete("/api/orcamentos/itens/item-001")
