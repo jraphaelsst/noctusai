@@ -3,6 +3,7 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
+from noctusai_lib.api.crud_safety import delete_or_404
 from app.dependencies import get_current_user_org, get_user_client, first_or_none
 from app.responses import success_response, ok_response
 from app.schemas.recorrentes import RecorrenteCreate, RecorrenteUpdate
@@ -103,12 +104,11 @@ async def atualizar_recorrente(recorrente_id: str, body: RecorrenteUpdate, autho
 async def excluir_recorrente(recorrente_id: str, authorization: Optional[str] = Header(None)):
     user, token, org_id = await get_current_user_org(authorization)
     db = get_user_client(token)
-    # Explicit pre-check — `delete().execute().data` is unreliable as a 404
-    # proxy under some PostgREST configurations (returns [] even when a row
-    # was deleted, unless RETURNING is configured). Pre-check pattern aligns
-    # with ativos_service / orcamentos_service.excluir shape (PF-9 fix).
-    check = db.table("recorrentes").select("id").eq("id", recorrente_id).eq("org_id", org_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Recorrente nao encontrado")
-    db.table("recorrentes").delete().eq("id", recorrente_id).eq("org_id", org_id).execute()
+    delete_or_404(
+        db,
+        "recorrentes",
+        ("id", recorrente_id),
+        ("org_id", org_id),
+        message="Recorrente nao encontrado",
+    )
     return ok_response("Recorrente excluido com sucesso")

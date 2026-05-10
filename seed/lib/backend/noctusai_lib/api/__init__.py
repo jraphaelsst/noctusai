@@ -19,6 +19,7 @@ contributes to a product's HTTP layer".
 - `middleware.py` — correlation-ID middleware, request logger
 - `rate_limit.py` — slowapi configuration helpers
 - `app_factory.py` — `create_product_app(...)` companion shim
+- `crud_safety.py` — `delete_with_existence_check` + `delete_or_404` (replaces the unreliable `.delete()` + `if not result.data` 404 shape)
 
 (`roles.py` was originally planned here, but it's pure constants +
 predicates — no FastAPI, no IO. Moved to `primitives/roles.py` during
