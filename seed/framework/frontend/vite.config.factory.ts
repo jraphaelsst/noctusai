@@ -59,6 +59,8 @@ const FRAMEWORK_DEPS = [
   "@radix-ui/react-hover-card",
   "@radix-ui/react-collapsible",
   "@supabase/supabase-js",
+  "clsx",
+  "tailwind-merge",
 ];
 
 /**
@@ -78,6 +80,7 @@ const PRODUCT_MAP: Record<number, { backend: number; schema: string }> = {
   8100: { backend: 8004, schema: "seed" },             // seed
   8110: { backend: 8005, schema: "daily_life" },       // daily-life
   8120: { backend: 8006, schema: "mailing" },          // mailing
+  8130: { backend: 8007, schema: "adconnect" },        // adconnect
 };
 
 export function createViteConfig(options: ViteConfigOptions): UserConfig {

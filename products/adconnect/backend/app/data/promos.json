@@ -1,5 +1,0 @@
-[
-  { "id": "promo-1", "sku": "ACC-PATCH-1", "product": "Patch Cord 1m", "type": "exception", "label": "Fora do programa Smart", "cashbackPct": 0, "mktBudgetPct": 0, "validFrom": "—", "validTo": "—", "active": true },
-  { "id": "promo-2", "sku": "CAB-C6-305", "product": "Cabo Cat.6 305m", "type": "promo", "label": "Promo Fev/26 +2% CB", "cashbackPct": 2.0, "mktBudgetPct": 0, "validFrom": "2026-02-01", "validTo": "2026-02-28", "active": true },
-  { "id": "promo-3", "sku": "FIB-SM-1K", "product": "Fibra SM 1km", "type": "promo", "label": "Lançamento Fibra", "cashbackPct": 1.5, "mktBudgetPct": 1.0, "validFrom": "2026-02-15", "validTo": "2026-03-15", "active": false }
-]

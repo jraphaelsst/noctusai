@@ -1,4 +1,1 @@
-@import "@noctusai/lib/design-system/tokens.css";
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "@noctusai/seed/index.css";
