@@ -194,7 +194,7 @@ OPENAI_MODEL=gpt-4o-mini
 
 **Massive work. ~14 phases. Phase-by-phase by default.**
 
-### Phase 0 — Audit + decisions
+### Phase 0 — Audit + decisions ✅
 
 - [x] Confirm target product slug (Q1). ✅ **`imobi-scheduling`** (orchestrator-stamped 2026-05-10).
 - [x] Confirm port allocation (Q2 — pick a number under `KB § 05-INFRASTRUCTURE.md` rules). ✅ **backend 8011 / frontend 8160** (engineer pick via `noctus.dev.available_ports`; rationale in §11).
@@ -203,12 +203,20 @@ OPENAI_MODEL=gpt-4o-mini
 - [x] Confirm dependency order: Phase 1 (scaffold) waits on **none**. Phases 5+ depend on the seed projects landing — **all 4 substrate seed projects shipped** (whatsapp + chatbot + llm-tool-audit + scheduling-engine + Calendar/Maps). Phases 5-8 are unblocked. ✅ orchestrator-stamped 2026-05-10.
 - [x] Read sibling repo `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/` end-to-end for any product-domain detail not yet captured (validation evidence). ✅ Audit notes in `findings.md` §4 (sibling-repo domain detail). Sibling repo is now **read-only reference for the duration of this project**; no leftovers post-completion.
 
+**Improvements:** none identified — Phase 0 is design-only decision phase; no code touched. All orchestrator-stamped defaults accepted by engineer audit.
+
 ### Phase 1 — Scaffold the product ✅
 
 - [x] Run `noctus.dev.scaffold_product` MCP tool (name=Imobi Scheduling, slug=imobi-scheduling, schema=imobi_scheduling, backend=8011, frontend=8160, color=#10b981, icon=CalendarClock). Emitted: 58 files at `products/imobi-scheduling/`, seed-row migration at `products/core/backend/migrations/028_seed_imobi_scheduling_product.sql`, registration in `start.sh` + root `docker-compose.yml`.
 - [x] Verify `products/imobi-scheduling/{backend, frontend, README.md, MASTER-PROMPT.md, docker-compose.yml}` exists and is shape-compliant per `KB § GUIDES/new-product.md`. Backend has `app/{main,config,database,dependencies,middleware,logging_config,rate_limit,responses}.py` + `routers/` + `schemas/` + `services/` + `migrations/` + `tests/` (41/41 green: health=14, example_router=5, webhook_router=5, team_router=14, e2e=3).
 - [x] Smoke test green: `pytest tests/ -q` → 41 passed.
 - [x] Initial commit boundary (this engineer commit). Phases 2+ build on this.
+
+**Improvements:**
+- **P0 — MCP scaffold tool bypasses worktree isolation.** `noctus.dev.scaffold_product` wrote to canonical noc root (main worktree) instead of the engineer's worktree. Engineer worked around via `cp -r` + hand-mirror of `start.sh` / root `docker-compose.yml`. Follow-up project filed (`projects/mcp-worktree-path-resolution/`).
+- **N=2 frontend-deferred recurrence** (imobi + youtube-crawler). Scaffold tool has no `--backend-only` opt-out — future MCP enhancement: `backend_only=True` flag.
+- **LLM-rewrite returned None** at scaffold for README + MASTER-PROMPT. Product ships seed-template prose. Phase 12 prose authoring handles re-run.
+- **Open question (decide before close)**: `media-scheduling/` (prior 2026-05-04 code-port) vs `imobi-scheduling/` (fresh implementation). Architect-decision needed.
 
 ### Phase 2 — Backend foundation
 
