@@ -294,3 +294,95 @@ class TestMcpRegistration:
         s = build_server()
         manager = s._tool_manager
         assert "noctus.dev.archive" in manager._tools
+
+
+# ---------------------------------------------------------------------------
+# worktree_path — caller-aware path resolution.
+# ---------------------------------------------------------------------------
+
+
+class TestWorktreeAwarePathResolution:
+    """`archive` honors `worktree_path` — files archive into the caller's
+    worktree, not the MCP server's startup workspace.
+
+    Filed by ``projects/mcp-worktree-path-resolution/``.
+    """
+
+    def _make_fake_worktree_repo(self, tmp_path: Path) -> Path:
+        """Build a worktree-shaped repo: real git init + .noctusai-workspace
+        marker. Real git is required because archive() runs `git mv`.
+        """
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(wt), check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(wt), check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=str(wt), check=True)
+        (wt / ".noctusai-workspace").write_text(
+            "workspace_kind=primary\nworkspace_name=wt\n", encoding="utf-8",
+        )
+        (wt / "archive" / "projects").mkdir(parents=True)
+        (wt / "archive" / "features").mkdir(parents=True)
+        (wt / "archive" / "projects" / ".gitkeep").touch()
+        (wt / "archive" / "features" / ".gitkeep").touch()
+        (wt / "projects").mkdir()
+        subprocess.run(["git", "add", "-A"], cwd=str(wt), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(wt), check=True)
+        return wt
+
+    def test_archive_lands_in_worktree(self, tmp_path):
+        wt = self._make_fake_worktree_repo(tmp_path)
+        # Plant a project inside the worktree.
+        proj = wt / "projects" / "demo"
+        proj.mkdir()
+        (proj / "PROJECT.md").write_text("# demo\n")
+        subprocess.run(["git", "add", "-A"], cwd=str(wt), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "demo"], cwd=str(wt), check=True)
+
+        result = archive(
+            target_path=str(proj),
+            mode="project",
+            worktree_path=wt,
+        )
+        # archived_to is relative to the worktree root.
+        archived = wt / result["archived_to"]
+        assert archived.exists(), (
+            f"archive with worktree_path={wt} must land at {archived}, "
+            f"got result={result}"
+        )
+
+    def test_invalid_worktree_path_raises(self, tmp_path):
+        bad = tmp_path / "not-wt"
+        bad.mkdir()
+        with pytest.raises(ValueError):
+            archive(
+                target_path=str(bad),
+                mode="ad_hoc",
+                name="x",
+                worktree_path=bad,
+            )
+
+    def test_explicit_repo_root_overrides_worktree_path(self, tmp_path):
+        """`repo_root` (test seam) wins over `worktree_path`."""
+        wt = self._make_fake_worktree_repo(tmp_path)
+        # Build a second repo as the "sink"; archive must land here, not wt.
+        sink = tmp_path / "sink"
+        sink.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(sink), check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(sink), check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=str(sink), check=True)
+        (sink / "archive" / "projects").mkdir(parents=True)
+        (sink / "projects").mkdir()
+        proj = sink / "projects" / "demo"
+        proj.mkdir()
+        (proj / "PROJECT.md").write_text("# demo\n")
+        subprocess.run(["git", "add", "-A"], cwd=str(sink), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(sink), check=True)
+
+        result = archive(
+            target_path=str(proj),
+            mode="project",
+            repo_root=sink,  # should win
+            worktree_path=wt,
+        )
+        archived = sink / result["archived_to"]
+        assert archived.exists()

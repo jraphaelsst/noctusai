@@ -185,6 +185,75 @@ def get_default_workspace_context() -> WorkspaceContext:
     return get_workspace_context()
 
 
+def resolve_caller_root(worktree_path: str | Path | None = None) -> Path:
+    """Resolve the filesystem root a write-tool should target for the CALLER.
+
+    The MCP server is a single long-running stdio process: it boots with
+    one fixed CWD (typically the noc main worktree) and ``os.getcwd()``
+    inside any tool returns the SERVER's CWD, not the caller's. The MCP
+    protocol does not transmit caller-CWD per-call. Therefore write tools
+    that need to land their output in a caller-specific worktree MUST
+    accept an explicit ``worktree_path`` argument; auto-detection from
+    server-side state is fundamentally impossible.
+
+    Args:
+        worktree_path: Caller-supplied path. Engineers calling from inside
+            a ``git worktree add`` pass their worktree root (e.g.
+            ``/Users/.../.claude/worktrees/agent-abc/``). Architects calling
+            from main noc pass ``None`` (or omit) — the helper resolves to
+            the canonical noc home.
+
+    Returns:
+        The Path to use as the root for all filesystem writes. Equal to
+        ``get_noctusai_home()`` when ``worktree_path is None``; otherwise
+        the validated worktree root.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        git worktree root (must be a directory containing a ``.git`` entry
+        AND a ``.noctusai-workspace`` marker). No silent fallback —
+        misuse should surface loudly, not silently write to noc.
+
+    Background:
+        Filed by ``projects/mcp-worktree-path-resolution/`` (2026-05-10).
+        Surfaced by ``imobi-scheduling-bot-creation`` Phase 0+1 close —
+        ``noctus.dev.scaffold_product`` wrote 58+ files to the noc main
+        worktree from inside Engineer E's isolated worktree because
+        ``REPO_ROOT`` was bound at server startup.
+    """
+    if worktree_path is None:
+        return get_noctusai_home()
+
+    root = Path(worktree_path).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError(
+            f"resolve_caller_root: worktree_path is not a directory: {root}. "
+            "Pass the engineer's worktree root (e.g. "
+            "'/Users/.../.claude/worktrees/agent-<hex>/') or omit to land "
+            "in noc main."
+        )
+
+    git_entry = root / ".git"
+    if not git_entry.exists():
+        raise ValueError(
+            f"resolve_caller_root: worktree_path missing .git entry: {root}. "
+            "Expected a git worktree root (the .git is typically a file "
+            "pointing to the gitdir of the worktree). Pass the worktree "
+            "root, not a subdirectory or unrelated path."
+        )
+
+    marker = root / MARKER_FILENAME
+    if not marker.is_file():
+        raise ValueError(
+            f"resolve_caller_root: worktree_path missing {MARKER_FILENAME} marker: {root}. "
+            "Worktrees scaffolded via the canonical recipe ship the marker. "
+            "If this is a genuine worktree without the marker, create one "
+            "via bootstrap-seed-workspace.sh or copy the marker manually."
+        )
+
+    return root
+
+
 __all__ = [
     "MARKER_FILENAME",
     "WORKSPACE_STATE_DIRNAME",
@@ -195,4 +264,5 @@ __all__ = [
     "get_noctusai_home",
     "get_workspace_state_dir",
     "get_default_workspace_context",
+    "resolve_caller_root",
 ]

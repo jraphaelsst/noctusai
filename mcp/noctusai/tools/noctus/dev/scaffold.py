@@ -42,7 +42,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from workspace import get_noctusai_home, get_workspace_root
+from workspace import get_noctusai_home, get_workspace_root, resolve_caller_root
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +395,14 @@ def _run_llm_rewrites(
 # scaffold_product from a template lands in template's products/, not
 # noc's). The seed template lives only in noc — fetched via get_noctusai_home().
 # See mcp/noctusai/workspace.py + KB § PATTERNS/seed-workspace.md.
+#
+# These module-level constants resolve at import time to the MCP SERVER's
+# startup workspace (typically noc main). For caller-aware resolution (a
+# worktree-isolated engineer asking the tool to land its writes in the
+# engineer's worktree, NOT main), pass `worktree_path` to `scaffold_product`
+# / `delete_product` and the tool routes via `resolve_caller_root`. See
+# `projects/mcp-worktree-path-resolution/` for the surfacing slip and the
+# fix design.
 REPO_ROOT = get_workspace_root()
 PRODUCTS_DIR = REPO_ROOT / "products"
 TEMPLATE_DIR = get_noctusai_home() / "templates" / "product-seed"
@@ -459,6 +467,7 @@ def scaffold_product(
     *,
     brief: dict | None = None,
     llm_provider: str = "anthropic",
+    worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
     template_dir: Path | None = None,
 ) -> dict:
@@ -473,15 +482,41 @@ def scaffold_product(
     Returns {created: bool, path: str, files: int, seed_row_migration: str}.
 
     Args:
+        worktree_path: **Caller-aware path resolution.** When set, the tool
+            writes ALL filesystem outputs (the product folder, root compose
+            include, start.sh patch, docker artifacts) under the given
+            worktree root instead of the MCP server's startup workspace.
+            Engineers calling from inside a ``git worktree add`` MUST pass
+            their worktree root (e.g.
+            ``/Users/.../.claude/worktrees/agent-<hex>/``). Architects
+            calling from main noc omit / pass ``None`` — output lands in
+            noc as before. The MCP stdio process model does not propagate
+            caller CWD; this arg is the protocol-supported substitute. See
+            ``projects/mcp-worktree-path-resolution/`` for the surfacing
+            slip and the fix design.
         products_dir: Override for the ``products/`` root (test seam).
-            Defaults to module-level :data:`PRODUCTS_DIR`. Tests pass
-            tmp_path-based dirs; production callers leave it as None.
+            Defaults to ``<worktree_path or server-startup-workspace>/products``.
+            Tests pass tmp_path-based dirs; production callers leave it as None.
         template_dir: Override for the seed template root (test seam).
             Defaults to :data:`TEMPLATE_DIR` (noc's
             ``templates/product-seed/``). Tests targeting an in-worktree
             template variant pass an explicit path.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract). No
+        silent fallback — misuse surfaces.
     """
-    base_products_dir = products_dir if products_dir is not None else PRODUCTS_DIR
+    # Resolve caller's worktree root if provided; otherwise fall back to
+    # the server-startup workspace's products/ dir. NEVER silently swallow
+    # a bad worktree_path — the whole point of this arg is to surface
+    # worktree-bypass slips loudly (per no-silent-errors rule).
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif worktree_path is not None:
+        base_products_dir = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
     base_template_dir = template_dir if template_dir is not None else TEMPLATE_DIR
     target = base_products_dir / slug
     if target.exists():
@@ -663,6 +698,7 @@ def delete_product(
     slug: str,
     *,
     remove_directory: bool = False,
+    worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
 ) -> dict:
     """Cascading delete — inverse of :func:`scaffold_product`.
@@ -698,7 +734,15 @@ def delete_product(
         ``{"deactivate_migration": {...}, "start_sh_unregistration": {...},
             "directory_removal": {...}, "next_steps": [...]}``
     """
-    base_products_dir = products_dir if products_dir is not None else PRODUCTS_DIR
+    # Mirror scaffold_product's resolution order: explicit `products_dir`
+    # test seam wins; otherwise route via `worktree_path` (caller-aware);
+    # otherwise fall back to the server-startup workspace.
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif worktree_path is not None:
+        base_products_dir = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
     repo_root = base_products_dir.parent
 
     deactivate_migration = _emit_products_deactivate_migration(
@@ -1155,15 +1199,21 @@ def _sql_text_or_null(value: str | None) -> str:
     return _sql_text(value)
 
 
-def _scan_start_sh_ports() -> tuple[set[int], set[int]]:
+def _scan_start_sh_ports(repo_root: Path | None = None) -> tuple[set[int], set[int]]:
     """Parse start.sh for `--port <N>` occurrences. Returns (backend, frontend).
 
     Heuristic: ports < 8100 (and != 5173) → backend; everything else → frontend.
     Kept tolerant — start.sh missing returns empty sets, never raises.
+
+    Args:
+        repo_root: Override (test seam, also wired by ``list_available_ports``
+            when called with a caller-aware ``worktree_path``). Defaults to
+            module-level :data:`REPO_ROOT`.
     """
     used_backend: set[int] = set()
     used_frontend: set[int] = set()
-    start_sh = REPO_ROOT / "start.sh"
+    base_root = repo_root if repo_root is not None else REPO_ROOT
+    start_sh = base_root / "start.sh"
     if not start_sh.exists():
         return used_backend, used_frontend
     content = start_sh.read_text()
@@ -1268,18 +1318,24 @@ def _patch_workspace_docker_files(
     return {"patched": patched, "skipped": skipped}
 
 
-def list_available_ports() -> dict:
+def list_available_ports(worktree_path: str | Path | None = None) -> dict:
     """Find the next available backend and frontend ports.
 
     The set of "used" ports unions the static :data:`RESERVED_RANGES` table
     with whatever `start.sh` actually wires (defensive — methodology says the
     table IS the source of truth, but products land in start.sh first when
     docs lag).
+
+    Args:
+        worktree_path: Caller-aware path resolution — read start.sh from
+            the caller's worktree, not the server's startup workspace. Omit
+            for the noc-main default. See ``resolve_caller_root``.
     """
     used_backend: set[int] = {p for p, _ in RESERVED_RANGES if p < 8080 and p != 5173}
     used_frontend: set[int] = {p for p, _ in RESERVED_RANGES if p == 5173 or p >= 8080}
 
-    sh_backend, sh_frontend = _scan_start_sh_ports()
+    scan_root = resolve_caller_root(worktree_path) if worktree_path is not None else REPO_ROOT
+    sh_backend, sh_frontend = _scan_start_sh_ports(scan_root)
     used_backend |= sh_backend
     used_frontend |= sh_frontend
 
@@ -1518,7 +1574,12 @@ def register(server) -> None:
             "the seed's narrative DNA, emits the dashboard seed-row migration, "
             "and registers the product in start.sh. Pass brief=None to enter "
             "the skip path (mechanical substitution skipped; LLM rewrite "
-            "uses name+slug only; surfaced loudly in next_steps)."
+            "uses name+slug only; surfaced loudly in next_steps). "
+            "When called from inside a git worktree, pass `worktree_path` "
+            "(the worktree's absolute root) so writes land in the worktree, "
+            "NOT the MCP server's startup workspace — required because the "
+            "MCP stdio process model does not propagate caller CWD. See "
+            "KB § PATTERNS/mcp-tool-conventions.md."
         ),
     )
     def _scaffold(
@@ -1532,6 +1593,7 @@ def register(server) -> None:
         description: str | None = None,
         brief: dict | None = None,
         llm_provider: str = "anthropic",
+        worktree_path: str | None = None,
     ) -> dict:
         return scaffold_product(
             name,
@@ -1544,6 +1606,7 @@ def register(server) -> None:
             description=description,
             brief=brief,
             llm_provider=llm_provider,
+            worktree_path=worktree_path,
         )
 
     @server.tool(
@@ -1555,14 +1618,20 @@ def register(server) -> None:
             "products/<slug>/ when remove_directory=True (default off for "
             "safety). Apply the emitted migration via Supabase MCP. "
             "RESERVED_RANGES is left intact — deleted ports stay reserved "
-            "as historical record."
+            "as historical record. Pass `worktree_path` when called from "
+            "inside a git worktree (mirror of scaffold_product)."
         ),
     )
     def _delete(
         slug: str,
         remove_directory: bool = False,
+        worktree_path: str | None = None,
     ) -> dict:
-        return delete_product(slug, remove_directory=remove_directory)
+        return delete_product(
+            slug,
+            remove_directory=remove_directory,
+            worktree_path=worktree_path,
+        )
 
     @server.tool(
         name="noctus.dev.create_testing_ground",
@@ -1586,10 +1655,14 @@ def register(server) -> None:
 
     @server.tool(
         name="noctus.dev.available_ports",
-        description="Find next available backend and frontend ports",
+        description=(
+            "Find next available backend and frontend ports. Pass "
+            "`worktree_path` to scan the caller's worktree's start.sh "
+            "instead of the MCP server's startup workspace."
+        ),
     )
-    def _available_ports() -> dict:
-        return list_available_ports()
+    def _available_ports(worktree_path: str | None = None) -> dict:
+        return list_available_ports(worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.reserve_port_range",

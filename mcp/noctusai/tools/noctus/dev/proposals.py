@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from noctusai_lib.primitives.timeutil import now_utc
-from workspace import get_noctusai_home, get_workspace_root
+from workspace import get_noctusai_home, get_workspace_root, resolve_caller_root
 
 # Workspace-aware: projects/products live under the workspace's own root
 # (so file_proposal from a template lands in template's projects, not
@@ -46,19 +46,45 @@ PRODUCTS_DIR = REPO_ROOT / "products"
 TEMPLATE_PATH = get_noctusai_home() / "templates" / "PROPOSAL-TEMPLATE.md"
 
 
-def _find_project_dir(slug: str) -> Optional[Path]:
+def _resolve_dirs(worktree_path: str | Path | None) -> tuple[Path, Path]:
+    """Resolve (projects_dir, products_dir) for the active call.
+
+    When ``worktree_path`` is None, returns the module-level defaults
+    (server-startup workspace). When set, returns the caller's worktree's
+    ``projects/`` and ``products/`` — caller-aware path resolution per
+    ``projects/mcp-worktree-path-resolution/``.
+    """
+    if worktree_path is None:
+        return PROJECTS_DIR, PRODUCTS_DIR
+    root = resolve_caller_root(worktree_path)
+    return root / "projects", root / "products"
+
+
+def _find_project_dir(
+    slug: str,
+    *,
+    projects_dir: Path | None = None,
+    products_dir: Path | None = None,
+) -> Optional[Path]:
     """Locate the project folder for ``slug`` across both valid locations.
 
     Returns the absolute path to the folder if found, else None. Callers that
     need a definitive path for *new* projects should fall back to
     ``PROJECTS_DIR / slug`` — root is the default home for projects whose
     scope hasn't been decided.
+
+    Args:
+        projects_dir / products_dir: Override defaults (caller-aware path
+            resolution). Both default to the module-level constants
+            (server-startup workspace).
     """
-    root_candidate = PROJECTS_DIR / slug
+    base_projects = projects_dir if projects_dir is not None else PROJECTS_DIR
+    base_products = products_dir if products_dir is not None else PRODUCTS_DIR
+    root_candidate = base_projects / slug
     if root_candidate.is_dir():
         return root_candidate
-    if PRODUCTS_DIR.is_dir():
-        for product in sorted(PRODUCTS_DIR.iterdir()):
+    if base_products.is_dir():
+        for product in sorted(base_products.iterdir()):
             if not product.is_dir():
                 continue
             candidate = product / "projects" / slug
@@ -67,24 +93,35 @@ def _find_project_dir(slug: str) -> Optional[Path]:
     return None
 
 
-def _project_proposals_dir(slug: str) -> Path:
+def _project_proposals_dir(
+    slug: str,
+    *,
+    projects_dir: Path | None = None,
+    products_dir: Path | None = None,
+) -> Path:
     """Return the ``proposals/`` folder for ``slug``, searching both valid
     project locations. Falls back to root ``projects/<slug>/proposals/`` when
     the project folder does not yet exist — new projects default to root
     unless the caller has already created the folder under a product."""
-    found = _find_project_dir(slug)
+    base_projects = projects_dir if projects_dir is not None else PROJECTS_DIR
+    found = _find_project_dir(
+        slug, projects_dir=base_projects, products_dir=products_dir,
+    )
     if found is not None:
         return found / "proposals"
-    return PROJECTS_DIR / slug / "proposals"
+    return base_projects / slug / "proposals"
 
 
-def _product_proposals_dir(product_slug: str) -> Path:
+def _product_proposals_dir(
+    product_slug: str, *, products_dir: Path | None = None,
+) -> Path:
     """Return the ``proposals/`` folder for a product (keeper/compliance proposals).
 
     Keeper proposals are always product-scoped — the detector tells us which
     product the issue belongs to, and the proposal lands next to that product.
     """
-    return PRODUCTS_DIR / product_slug / "proposals"
+    base_products = products_dir if products_dir is not None else PRODUCTS_DIR
+    return base_products / product_slug / "proposals"
 
 
 def _slug(title):
@@ -114,19 +151,30 @@ def _extract_key_entity(title):
     return match.group(1).lower() if match else _slug(title)[:30]
 
 
-def _proposal_exists(title, product: Optional[str] = None):
+def _proposal_exists(
+    title,
+    product: Optional[str] = None,
+    *,
+    products_dir: Path | None = None,
+):
     """Check whether a proposal with a similar title already exists.
 
     When ``product`` is given, searches ``products/<product>/proposals/``.
     Otherwise searches all ``products/*/proposals/`` roots.
+
+    Args:
+        products_dir: Override (caller-aware). Defaults to module-level
+            :data:`PRODUCTS_DIR`.
     """
     slug = _slug(title)
     key = _extract_key_entity(title)
 
+    base_products = products_dir if products_dir is not None else PRODUCTS_DIR
+
     if product:
-        dirs = [_product_proposals_dir(product)]
+        dirs = [_product_proposals_dir(product, products_dir=base_products)]
     else:
-        dirs = sorted(PRODUCTS_DIR.glob("*/proposals")) if PRODUCTS_DIR.exists() else []
+        dirs = sorted(base_products.glob("*/proposals")) if base_products.exists() else []
 
     for d in dirs:
         if not d.exists():
@@ -371,6 +419,7 @@ def file_proposal(
     project: Optional[str] = None,
     product: Optional[str] = None,
     subdir: Optional[str] = None,
+    worktree_path: str | Path | None = None,
 ) -> dict:
     """Write a fully-rendered proposal markdown to disk.
 
@@ -397,23 +446,34 @@ def file_proposal(
             for evaluation sub-folders.
         subdir: Subdirectory under the product proposals dir (e.g.
             ``evaluations/<ts>``). Only valid when ``product`` is set.
+        worktree_path: **Caller-aware path resolution.** When set, the
+            proposal lands under the given worktree's ``projects/`` or
+            ``products/`` tree instead of the MCP server's startup
+            workspace. Engineers in a git worktree pass their worktree
+            root; architects on main noc omit. See ``resolve_caller_root``.
     """
     if project and product:
         raise ValueError("Pass only one of `project` / `product` — not both.")
     if subdir and not product:
         raise ValueError("`subdir` requires `product` to be set.")
 
+    projects_dir, products_dir = _resolve_dirs(worktree_path)
+
     if project:
         slug = _project_slug(project)
-        target_dir = _project_proposals_dir(slug)
+        target_dir = _project_proposals_dir(
+            slug, projects_dir=projects_dir, products_dir=products_dir,
+        )
         target_dir.mkdir(parents=True, exist_ok=True)
     elif product:
-        base = _product_proposals_dir(product)
+        base = _product_proposals_dir(product, products_dir=products_dir)
         target_dir = base / subdir if subdir else base
         target_dir.mkdir(parents=True, exist_ok=True)
         # Dedup only applies to the flat product proposals namespace.
         # Evaluation folders and project folders may carry near-duplicate titles.
-        if not subdir and _proposal_exists(title, product=product):
+        if not subdir and _proposal_exists(
+            title, product=product, products_dir=products_dir,
+        ):
             return {"created": False, "reason": "duplicate", "file": None}
     else:
         raise ValueError(
@@ -591,7 +651,9 @@ def register(server) -> None:
             "(ONE bundled proposal per phase). For keeper/compliance proposals pass "
             "`product=<slug>` — the file lands in `products/<product>/proposals/`. "
             "Agents typically call `noctus.dev.proposal_template`, fill it, then submit "
-            "via this tool. Dedups by title slug + key entity."
+            "via this tool. Dedups by title slug + key entity. Pass `worktree_path` "
+            "when calling from inside a git worktree so the proposal lands in the "
+            "worktree, not the MCP server's startup workspace."
         ),
     )
     def _file_proposal(
@@ -601,6 +663,7 @@ def register(server) -> None:
         project: str | None = None,
         product: str | None = None,
         subdir: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
         return file_proposal(
             title=title,
@@ -609,6 +672,7 @@ def register(server) -> None:
             project=project,
             product=product,
             subdir=subdir,
+            worktree_path=worktree_path,
         )
 
     @server.tool(

@@ -1130,3 +1130,155 @@ class TestWorkspaceDockerPatch:
         for f in tmp_path.iterdir():
             if f.is_file():
                 assert f.read_text() == snapshot[f.name], f"{f.name} changed on second patch"
+
+
+class TestWorktreeAwarePathResolution:
+    """Regression — `scaffold_product` accepts an explicit `worktree_path`
+    so MCP write tools route caller-aware paths, NOT the server's startup
+    workspace.
+
+    Filed by ``projects/mcp-worktree-path-resolution/`` (2026-05-10) —
+    surfacing slip in ``imobi-scheduling-bot-creation`` Phase 0+1 close
+    where ``scaffold_product`` wrote 58+ files to the noc main worktree
+    from inside Engineer E's isolated worktree.
+    """
+
+    def _make_fake_worktree(self, root: Path) -> Path:
+        """Build a directory shaped like a real worktree root: .git file
+        + .noctusai-workspace marker + a copy of the seed template at
+        ``templates/product-seed`` (so we don't depend on tmp -> noc
+        symlinks).
+        """
+        root.mkdir(parents=True, exist_ok=True)
+        (root / ".git").write_text(
+            "gitdir: /tmp/fake/.git/worktrees/agent-test\n", encoding="utf-8"
+        )
+        (root / ".noctusai-workspace").write_text(
+            "workspace_kind=primary\n"
+            "workspace_name=fake-worktree\n"
+            f"noctusai_home={root}\n"
+            "bootstrap_version=1\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def test_worktree_path_lands_writes_in_worktree_not_noc(self, tmp_path):
+        """Core regression: when `worktree_path` is given, the new product
+        folder lands UNDER the worktree, NOT under noc's PRODUCTS_DIR.
+        """
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        slug = "wt-test-product"
+
+        result = scaffold_product(
+            "Worktree Test",
+            slug,
+            "wt_test",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            worktree_path=wt,
+            template_dir=WORKTREE_TEMPLATE,
+        )
+
+        assert result["created"] is True, result
+        # MUST land in the worktree, NOT noc.
+        assert (wt / "products" / slug / "backend" / "app" / "main.py").exists(), (
+            "scaffold_product with worktree_path=<wt> must place the new "
+            f"product under {wt}/products/, got result={result}"
+        )
+
+    def test_worktree_path_none_keeps_default_behavior(self, tmp_path):
+        """When `worktree_path` is None (architect on main noc), the
+        explicit `products_dir` seam still wins — back-compat for tests
+        and direct callers.
+        """
+        result = scaffold_product(
+            "Default Path",
+            "default-path-temp",
+            "default_path",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            worktree_path=None,
+            products_dir=tmp_path,  # explicit seam — wins over both worktree + module-default
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True, result
+        assert (tmp_path / "default-path-temp" / "backend").exists()
+
+    def test_invalid_worktree_path_raises_no_silent_fallback(self, tmp_path):
+        """The whole point of this arg is to surface worktree-bypass slips.
+        Silent fallback would defeat that — an invalid worktree_path MUST
+        raise ValueError, not quietly write to noc.
+        """
+        bad = tmp_path / "not-a-worktree"
+        bad.mkdir()
+        # No .git, no marker — bad shape.
+        with pytest.raises(ValueError, match=r"missing \.git|not a directory"):
+            scaffold_product(
+                "Bad Path",
+                "bad-path-temp",
+                "bad_path",
+                8099,
+                8199,
+                "Zap",
+                brief={},
+                worktree_path=bad,
+                template_dir=WORKTREE_TEMPLATE,
+            )
+
+    def test_explicit_products_dir_overrides_worktree_path(self, tmp_path):
+        """Test-seam priority — explicit `products_dir` wins over
+        `worktree_path` resolution. Keeps existing tests stable while
+        the new arg surfaces in production.
+        """
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        sink = tmp_path / "sink"
+        result = scaffold_product(
+            "Sink Test",
+            "sink-test-temp",
+            "sink_test",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            worktree_path=wt,
+            products_dir=sink,  # SHOULD win
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True, result
+        assert (sink / "sink-test-temp" / "backend").exists()
+        # Worktree's products/ should be UNTOUCHED.
+        assert not (wt / "products" / "sink-test-temp").exists()
+
+    def test_delete_product_honors_worktree_path(self, tmp_path):
+        """`delete_product` mirrors `scaffold_product`'s resolution order."""
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        slug = "delete-wt-test"
+        # First, scaffold into the worktree.
+        scaffold_product(
+            "Delete WT",
+            slug,
+            "delete_wt",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            worktree_path=wt,
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        target = wt / "products" / slug
+        assert target.exists()
+
+        # Now delete with remove_directory=True.
+        result = delete_product(
+            slug,
+            remove_directory=True,
+            worktree_path=wt,
+        )
+        # The product folder under the worktree should be gone.
+        assert not target.exists(), f"delete_product did not remove {target}"
+        # Result should reference the worktree's directory removal.
+        assert "directory_removal" in result

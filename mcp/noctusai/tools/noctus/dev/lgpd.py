@@ -30,7 +30,23 @@ from pathlib import Path
 from typing import Optional
 
 from settings import REPO_ROOT  # noqa: E402  (path constant)
+from workspace import resolve_caller_root
+
 WARNINGS_FILE = REPO_ROOT / "LGPD-WARNINGS.md"
+
+
+def _resolve_warnings_file(worktree_path: str | Path | None) -> tuple[Path, Path]:
+    """Resolve (warnings_file, repo_root) for the active call.
+
+    When ``worktree_path`` is None, returns the module-level defaults
+    (server-startup workspace). When set, returns the caller's worktree's
+    ``LGPD-WARNINGS.md`` — caller-aware path resolution per
+    ``projects/mcp-worktree-path-resolution/``.
+    """
+    if worktree_path is None:
+        return WARNINGS_FILE, REPO_ROOT
+    root = resolve_caller_root(worktree_path)
+    return root / "LGPD-WARNINGS.md", root
 
 _ENTRY_RE = re.compile(
     r"^- \[(?P<checked>[ x])\] \*\*(?P<concern>[^*]+)\*\* at `(?P<path>[^`]+)`",
@@ -111,6 +127,7 @@ def flag(
     concern: str,
     reason: str,
     mitigation: Optional[str] = None,
+    worktree_path: str | Path | None = None,
 ) -> dict:
     """Record a new LGPD concern (or refresh an existing one's last_seen).
 
@@ -123,6 +140,11 @@ def flag(
         mitigation: Optional suggested fix. If omitted, the entry gets a
                     `TBD — review before resolving` placeholder that future
                     reviewers fill in.
+        worktree_path: **Caller-aware path resolution.** When set, the
+            ``LGPD-WARNINGS.md`` lands at the caller's worktree root, not
+            the MCP server's startup workspace. Engineers in a git worktree
+            pass their worktree root; architects on main noc omit. See
+            ``resolve_caller_root``.
 
     Returns:
         A dict with the full entry, the warnings-file path, and a
@@ -131,8 +153,10 @@ def flag(
     if not concern or not reason or not code_path:
         return {"error": "concern, reason, and code_path are required"}
 
-    WARNINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    existing = WARNINGS_FILE.read_text(encoding="utf-8") if WARNINGS_FILE.exists() else ""
+    warnings_file, repo_root = _resolve_warnings_file(worktree_path)
+
+    warnings_file.parent.mkdir(parents=True, exist_ok=True)
+    existing = warnings_file.read_text(encoding="utf-8") if warnings_file.exists() else ""
 
     # Split existing content: header (up to and including the last blank line
     # before the first entry) + entry blocks.
@@ -182,16 +206,16 @@ def flag(
     if not header.endswith("\n\n"):
         header = header.rstrip("\n") + "\n\n"
 
-    WARNINGS_FILE.write_text(header + "\n".join(b.rstrip() for b in refreshed_entries) + "\n", encoding="utf-8")
+    warnings_file.write_text(header + "\n".join(b.rstrip() for b in refreshed_entries) + "\n", encoding="utf-8")
 
     notification = (
         f"⚠️  LGPD concern flagged: **{concern}** at `{code_path}`. "
-        f"Recorded in `{WARNINGS_FILE.name}`. This does NOT block; "
+        f"Recorded in `{warnings_file.name}`. This does NOT block; "
         f"review the file before the feature is called done."
     )
     return {
         "notification": notification,
-        "warnings_file": str(WARNINGS_FILE.relative_to(REPO_ROOT)),
+        "warnings_file": str(warnings_file.relative_to(repo_root)),
         "concern": concern,
         "code_path": code_path,
         "reason": reason,
@@ -201,12 +225,17 @@ def flag(
     }
 
 
-def list_warnings() -> dict:
-    """Return the current state of `LGPD-WARNINGS.md` as structured data."""
-    if not WARNINGS_FILE.exists():
-        return {"file": str(WARNINGS_FILE.relative_to(REPO_ROOT)), "entries": []}
+def list_warnings(worktree_path: str | Path | None = None) -> dict:
+    """Return the current state of `LGPD-WARNINGS.md` as structured data.
 
-    content = WARNINGS_FILE.read_text(encoding="utf-8")
+    Args:
+        worktree_path: Caller-aware path resolution; see :func:`flag`.
+    """
+    warnings_file, repo_root = _resolve_warnings_file(worktree_path)
+    if not warnings_file.exists():
+        return {"file": str(warnings_file.relative_to(repo_root)), "entries": []}
+
+    content = warnings_file.read_text(encoding="utf-8")
     entries: list[dict] = []
     for m in _ENTRY_RE.finditer(content):
         entries.append({
@@ -215,7 +244,7 @@ def list_warnings() -> dict:
             "resolved": m.group("checked") == "x",
         })
     return {
-        "file": str(WARNINGS_FILE.relative_to(REPO_ROOT)),
+        "file": str(warnings_file.relative_to(repo_root)),
         "entries": entries,
         "unresolved_count": sum(1 for e in entries if not e["resolved"]),
         "resolved_count": sum(1 for e in entries if e["resolved"]),
@@ -230,7 +259,9 @@ def register(server) -> None:
             "data-touching code raises an LGPD question (retention unclear, 3rd-party "
             "egress, cache of patient text, cross-product leak, …). DOES NOT BLOCK — "
             "appends a checklist item and notifies the user. Returns a user-facing "
-            "notification string the caller should surface."
+            "notification string the caller should surface. Pass `worktree_path` "
+            "when calling from inside a git worktree so the LGPD log lands in the "
+            "worktree, not the MCP server's startup workspace."
         ),
     )
     def _lgpd_flag(
@@ -238,17 +269,22 @@ def register(server) -> None:
         concern: str,
         reason: str,
         mitigation: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
         return flag(
             code_path=code_path,
             concern=concern,
             reason=reason,
             mitigation=mitigation,
+            worktree_path=worktree_path,
         )
 
     @server.tool(
         name="noctus.dev.lgpd_list",
-        description="List all LGPD concerns from `LGPD-WARNINGS.md` (unresolved + resolved).",
+        description=(
+            "List all LGPD concerns from `LGPD-WARNINGS.md` (unresolved + resolved). "
+            "Pass `worktree_path` to read the caller's worktree log."
+        ),
     )
-    def _lgpd_list() -> dict:
-        return list_warnings()
+    def _lgpd_list(worktree_path: str | None = None) -> dict:
+        return list_warnings(worktree_path=worktree_path)

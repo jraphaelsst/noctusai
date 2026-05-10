@@ -68,6 +68,7 @@ from pydantic import BaseModel, Field, ConfigDict
 # REPO_ROOT comes from settings per the centralization rule
 # (`feedback_mcp_path_constants_from_settings.md`).
 from settings import REPO_ROOT
+from workspace import resolve_caller_root
 
 # Shared tokenizer cascade — N=2 absorption with cost_evaluation.
 from tools._tokens import (
@@ -332,6 +333,7 @@ def history_record(
     phases: list[dict] | None = None,
     repo_root: Path | None = None,
     ledger_path: Path | None = None,
+    worktree_path: str | Path | None = None,
 ) -> dict:
     """Append a single NDJSON line to ``project-history/ledger.ndjson``.
 
@@ -357,6 +359,13 @@ def history_record(
         repo_root: override (tests).
         ledger_path: override (tests) — defaults to
             ``<repo_root>/project-history/ledger.ndjson``.
+        worktree_path: **Caller-aware path resolution.** When set, the
+            ledger lands at ``<worktree>/project-history/ledger.ndjson``
+            instead of the MCP server's startup workspace. Engineers in a
+            git worktree pass their worktree root; architects on main noc
+            omit. Mutually-priority: explicit ``repo_root`` wins, else
+            ``worktree_path``, else module-level ``REPO_ROOT``. See
+            ``resolve_caller_root``.
 
     Returns:
         ``{"ledger_path": str, "line_count": int, "record": <dict>}``
@@ -376,7 +385,14 @@ def history_record(
             f"invalid scope: {scope!r}, must be one of {sorted(_VALID_SCOPES)}"
         )
 
-    root = repo_root or REPO_ROOT
+    # Resolution order: explicit `repo_root` test seam wins; otherwise
+    # `worktree_path` (caller-aware); otherwise module-level REPO_ROOT.
+    if repo_root is not None:
+        root = repo_root
+    elif worktree_path is not None:
+        root = resolve_caller_root(worktree_path)
+    else:
+        root = REPO_ROOT
     project_dir = _resolve_project_path(project_path, root)
     slug = _derive_slug(project_dir)
 
@@ -528,6 +544,7 @@ def register(server) -> None:
         dates_created: str | None = None,
         dates_closed: str | None = None,
         phases: list[dict] | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
         return history_record(
             project_path=project_path,
@@ -539,6 +556,7 @@ def register(server) -> None:
             dates_created=dates_created,
             dates_closed=dates_closed,
             phases=phases,
+            worktree_path=worktree_path,
         )
 
 
