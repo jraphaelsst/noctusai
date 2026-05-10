@@ -201,6 +201,22 @@ class TestExcluirRecorrente:
         data = response.json()
         assert data["ok"] is True
 
+    def test_returns_404_when_not_found(self, client):
+        client._mock_supabase.set_table_data("recorrentes", [])
+        response = client.delete("/api/recorrentes/nonexistent")
+        assert response.status_code == 404
+        body = response.json()
+        assert body["error"]["code"] == "NOT_FOUND"
+        assert "Recorrente" in body["error"]["message"]
+
+    def test_actually_removes_row_from_shared_list(self, client):
+        client._mock_supabase.set_table_data("recorrentes", [SAMPLE_RECORRENTE])
+        response = client.delete("/api/recorrentes/rec-001")
+        assert response.status_code == 200
+        # MockFilterBuilder mutates the shared list in place on .delete().
+        builder = client._mock_supabase.table("recorrentes")
+        assert all(row.get("id") != "rec-001" for row in builder._data)
+
     def test_requires_auth(self, client):
         response = client._tc.delete("/api/recorrentes/rec-001")
         assert response.status_code == 401
