@@ -32,6 +32,11 @@ services:
     build:
       context: ../..
       dockerfile: products/mailing/frontend/Dockerfile
+      # VITE_* build-arg contract — see KB § PATTERNS/containerization.md
+      # § VITE_* build-arg contract. Every VITE_* in code must be both ARG
+      # (in Dockerfile) and args: (here), sourced from `.env` via ${...}.
+      args:
+        VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-mailing-frontend
     image: ghcr.io/jraphaelsst/noctus-mailing-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:

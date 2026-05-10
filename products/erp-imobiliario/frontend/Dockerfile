@@ -9,6 +9,18 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+# ─── VITE_* build-arg contract ──────────────────────────────────────────
+# Every `import.meta.env.VITE_*` referenced in product or seed code must be
+# declared as ARG here AND as args: in the compose `frontend:` service,
+# sourced from `.env` via ${VITE_FOO} interpolation. See
+# KB § PATTERNS/containerization.md § VITE_* build-arg contract.
+# Note: `VITE_BACKEND_API_URL` + `VITE_PRODUCT_SCHEMA` are factory-injected
+# via `define:` in vite.config.factory.ts (no build-arg needed for those).
+ARG VITE_CORE_API_URL=
+ENV VITE_CORE_API_URL=${VITE_CORE_API_URL}
+ARG VITE_CORE_URL=
+ENV VITE_CORE_URL=${VITE_CORE_URL}
+
 # Layer 1: seed frontend packages (factory + lib aliases) + install
 # their deps so jiti/tailwind can resolve transitive packages like
 # tailwindcss-animate when product code imports the seed factory.

@@ -722,13 +722,15 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
 
 ### 🟡 Now — small lifts, high value
 
-5. **No build-arg for `VITE_*` env vars.** Vite reads `.env` at
-   build time (`envDir: repoRoot` in `vite.config.factory`), but
-   `.env` is excluded from build context (correctly — it has secrets).
-   Today, products that need build-time `VITE_*` vars must define
-   them via `args:` block in compose. Add a documented contract:
-   "every `VITE_*` referenced in code must be declared as a
-   build-arg in the product's compose."
+5. ✅ **`VITE_*` build-arg contract codified (2026-05-10).** Every
+   `import.meta.env.VITE_*` referenced in code is now declared as
+   both an `ARG` in the product's frontend Dockerfile build stage
+   AND an `args:` key in the compose `frontend:` service, sourced
+   from `.env` via `${VITE_FOO:-}` interpolation. Per-product audit
+   done; seed canonical + templates carry the pattern; 9 of 10
+   product compose+Dockerfile pairs updated (youtube-crawler has
+   no Docker artifacts — surfaced as a separate gap). Full contract:
+   `KB § PATTERNS/containerization.md § VITE_* build-arg contract`.
 6. **`@noctusai/seed` is missing from product `package.json`
    `dependencies`.** It's resolved purely by Vite alias — works at
    build time, but `npm install` doesn't know about it. If anyone
@@ -918,6 +920,147 @@ healthcheck logic. Only `image:` carries the registry path.
   GHCR, configure per-package retention (e.g. keep last 30 SHA tags,
   always keep `latest` + `dev`). Done in the GHCR UI; future
   improvement to script via the API.
+
+## 11b · `VITE_*` build-arg contract
+
+### Rule
+
+> Every `import.meta.env.VITE_*` referenced in product or seed code MUST
+> be declared as both:
+>
+> 1. **`ARG VITE_FOO=`** (followed by `ENV VITE_FOO=${VITE_FOO}`) in
+>    the product's `frontend/Dockerfile` build stage, AND
+> 2. **`VITE_FOO: ${VITE_FOO:-}`** in the compose `frontend:` service's
+>    `build.args:` block, sourced from the repo-root `.env`.
+>
+> **Carve-out:** `VITE_BACKEND_API_URL` and `VITE_PRODUCT_SCHEMA` are
+> factory-injected at compile time via `define:` in
+> `seed/framework/frontend/vite.config.factory.ts`. They are substituted
+> into the Vite bundle regardless of `process.env`, so they do not need
+> the ARG/args bridge. All other `VITE_*` vars come from `.env` and DO
+> need the bridge.
+
+### Why
+
+Vite reads `.env` at build time via `envDir: repoRoot` in the seed
+factory. But `.env` itself is excluded from the Docker build context
+(`.dockerignore` carves it out — it carries runtime secrets that
+should never bake into images). Without the build-arg bridge, the
+Vite build inside the container sees an empty environment and every
+`import.meta.env.VITE_FOO` silently resolves to `undefined`.
+
+Build-args are the documented bridge:
+- `docker compose` reads the repo-root `.env` natively for `${...}`
+  interpolation in compose files (this is a compose feature, not
+  Docker's — it does NOT bake `.env` into the image).
+- The `args:` block hands those values to `docker build` as
+  `--build-arg` flags.
+- `ARG VITE_FOO=` in the Dockerfile declares them as build-time
+  variables; `ENV VITE_FOO=${VITE_FOO}` promotes them to the
+  `process.env` that Vite reads during `npm run build`.
+- The image carries `VITE_*` baked into the static JS bundle (which is
+  the intended outcome — they're public values).
+
+### Public-by-design reminder
+
+`VITE_*` vars are **public** by Vite's design — they ship to the
+browser bundle as plain strings. Only put PUBLIC config here:
+
+- URLs (`VITE_CORE_URL`, `VITE_SUPABASE_URL`)
+- Anon / publishable keys (`VITE_SUPABASE_PUBLISHABLE_KEY`)
+- Feature flags
+
+Server-side secrets (service-role keys, signing keys, OAuth client
+secrets) stay in **non-`VITE_*`** env vars and are loaded at runtime
+by the backend via `env_file:`. Never bridge a non-`VITE_*` secret
+through `args:` — anything that lands in the Vite bundle is world-
+readable in the browser DevTools.
+
+### Per-product flow
+
+1. **Audit.** Grep product (+ seed) source for `import.meta.env.VITE_*`:
+   ```bash
+   grep -rho 'import\.meta\.env\.VITE_[A-Z_]*' products/<slug>/frontend/src \
+     | sed 's/import\.meta\.env\.//' | sort -u
+   ```
+2. **Subtract the factory-injected carve-out** (`VITE_BACKEND_API_URL`,
+   `VITE_PRODUCT_SCHEMA`).
+3. **For each remaining var:**
+   - Add `ARG VITE_FOO=` + `ENV VITE_FOO=${VITE_FOO}` to
+     `products/<slug>/frontend/Dockerfile` (in a block before the
+     `Layer 1: seed frontend packages` copy).
+   - Add `VITE_FOO: ${VITE_FOO:-}` to the `frontend:` service's
+     `build.args:` block in `products/<slug>/docker-compose.yml`.
+4. **Declare the var in `.env.example`** so collaborators see what to
+   fill in. Real values go in `.env` (git-ignored).
+5. **Validate:** `docker compose -f products/<slug>/docker-compose.yml config --quiet`.
+6. **Smoke-build:** `docker build --build-arg VITE_FOO=test -f products/<slug>/frontend/Dockerfile -t smoke:fe .`.
+
+### Example (canonical seed)
+
+**`products/seed/frontend/Dockerfile`**:
+```dockerfile
+FROM node:20-alpine AS build
+WORKDIR /app
+
+# VITE_* build-arg contract
+ARG VITE_CORE_URL=
+ENV VITE_CORE_URL=${VITE_CORE_URL}
+
+# Layer 1: seed frontend packages
+COPY seed/framework/frontend ./seed/framework/frontend
+# … rest of the build
+```
+
+**`products/seed/docker-compose.yml`** (frontend service):
+```yaml
+seed-frontend:
+  build:
+    context: ../..
+    dockerfile: products/seed/frontend/Dockerfile
+    args:
+      VITE_CORE_URL: ${VITE_CORE_URL:-}
+  # … rest of the service
+```
+
+**`.env`** (repo root):
+```
+VITE_CORE_URL=https://core.noctus.ai
+```
+
+### Scaffolder behavior
+
+`templates/product-seed/frontend/Dockerfile` + `docker-compose.yml`
+carry the canonical block (with `VITE_CORE_URL` as the seed example).
+A newly-scaffolded product inherits the contract out of the box.
+When a product adds a new `VITE_FOO` usage, the engineer who adds
+the `import.meta.env.VITE_FOO` reference is also responsible for
+adding the ARG + args + `.env.example` triple (or filing a single-file
+project to extend the seed if the var is shared across products).
+
+### Why `${VITE_FOO:-}` and not `${VITE_FOO}`
+
+The `:-` fallback yields an empty string when the env var is unset,
+which keeps `docker compose config` validation green even when the
+user hasn't filled `.env` yet (CI scenarios, fresh clones, smoke
+tests). Without the fallback, validation hard-fails with "WARN…
+not set" output. The empty-string default matches Vite's existing
+behavior (`import.meta.env.VITE_FOO || "default"` patterns in code
+already handle missing values gracefully).
+
+### Anti-patterns
+
+- **Don't `COPY .env` into Dockerfile.** `.env` carries runtime
+  secrets and must stay out of the image.
+- **Don't add `ENV` without `ARG`.** `ENV VITE_FOO=${VITE_FOO}`
+  alone doesn't read anything from the build environment;
+  `ARG VITE_FOO=` declares the build-time variable that becomes
+  `${VITE_FOO}`.
+- **Don't put secrets in `VITE_*`.** They're public. The bundle is
+  world-readable.
+- **Don't skip the `.env.example` update.** Out-of-band declaration
+  surfaces what the product needs; collaborators shouldn't have to
+  grep code to discover required env vars.
 
 ---
 
