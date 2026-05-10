@@ -1,56 +1,61 @@
 /**
- * useRewards — Phase 7 SKELETON hook for the rewards ledger.
+ * useRewards — React Query hooks for the rewards ledger + redemption.
  *
- * TODO(adconnect-phase-7): wire to GET /api/rewards (ledger query, scoped to
- *   the distributor) and POST /api/rewards/redeem (redemption event). The
- *   ledger row shape mirrors `Reward` in @/types — backed by
- *   `adconnect.recompensas_acumuladas` per PROJECT.md §5.2.
+ * Phase 7 PROPER: wired to Engineer D's endpoints — GET /api/rewards/ledger
+ * (distributor's accrual ledger), GET /api/rewards/rules (active reward
+ * rules in the brand's org), POST /api/rewards/redeem (redemption request).
  */
-import type { Reward } from "@/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, useAuthStore } from "@noctusai/seed/infra";
+import { toast } from "sonner";
+import type { Reward, RewardRule } from "@/types";
 
-const MOCK_REWARDS: Reward[] = [];
+export function useRewards() {
+  const { user } = useAuthStore();
 
-export interface UseRewardsResult {
-  data: Reward[];
-  totalAccrued: number;
-  totalAvailable: number;
-  isLoading: boolean;
-  error: Error | null;
-}
-
-export function useRewards(): UseRewardsResult {
-  // TODO(adconnect-phase-7): wire to /api/rewards
-  const totalAccrued = MOCK_REWARDS.reduce((sum, r) => sum + r.amount, 0);
-  const totalAvailable = MOCK_REWARDS.filter((r) => r.status === "liberado").reduce(
-    (sum, r) => sum + r.amount,
-    0
-  );
-  return {
-    data: MOCK_REWARDS,
-    totalAccrued,
-    totalAvailable,
-    isLoading: false,
-    error: null,
-  };
-}
-
-export interface RedeemRewardsInput {
-  reward_ids: string[];
-  apply_to_pedido_id?: string;
-}
-
-export interface UseRedeemRewardsResult {
-  redeem: (input: RedeemRewardsInput) => void;
-  isPending: boolean;
-}
-
-export function useRedeemRewards(): UseRedeemRewardsResult {
-  // TODO(adconnect-phase-7): wire to POST /api/rewards/redeem
-  return {
-    redeem: (input) => {
-      // eslint-disable-next-line no-console
-      console.log("[skeleton] redeemRewards", input);
+  return useQuery({
+    queryKey: ["adconnect", "rewards", "ledger"],
+    queryFn: async () => {
+      const result = await api.get("/api/rewards/ledger");
+      return (result.data || []) as Reward[];
     },
-    isPending: false,
-  };
+    enabled: !!user,
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useRewardRules() {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["adconnect", "rewards", "rules"],
+    queryFn: async () => {
+      const result = await api.get("/api/rewards/rules");
+      return (result.data || []) as RewardRule[];
+    },
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useRedeemRewards() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: {
+      valor_total: number;
+      metodo: "credito_em_pedido" | "credito_em_fatura" | "reembolso_pix" | "outro";
+      observacoes?: string;
+    }) => {
+      const result = await api.post("/api/rewards/redeem", data);
+      return result.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "rewards", "ledger"] });
+      toast.success("Resgate solicitado");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao solicitar resgate", { description: error.message });
+    },
+  });
 }

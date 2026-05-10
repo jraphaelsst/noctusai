@@ -182,3 +182,20 @@ export interface RewardRedemption {
   applied_to_pedido_id?: string;
   redeemed_at: string;
 }
+
+export interface RewardRule {
+  id: string;
+  org_id: string;
+  nome: string;
+  descricao?: string;
+  tipo: "cashback_percentual" | "cashback_fixo" | "pontos";
+  valor: number;
+  aplicavel_categorias?: string[];
+  aplicavel_produtos?: string[];
+  aplicavel_distribuidores?: string[];
+  valor_minimo_pedido?: number;
+  quantidade_minima?: number;
+  valido_de?: string;
+  valido_ate?: string;
+  ativa: boolean;
+}

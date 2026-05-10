@@ -1,64 +1,75 @@
 /**
- * useOrders — Phase 7 SKELETON hook for order history + detail.
+ * useOrders — React Query hooks for order history + status transitions.
  *
- * TODO(adconnect-phase-7): wire to GET /api/orders (history) and
- *   GET /api/orders/{id} (detail). Add useMutation for status transitions
- *   (only the brand-admin endpoints, not distributor-side — distributor only
- *   places + cancels). Mirror the useCarteira pattern in
- *   products/personal-finance/frontend/src/hooks/useCarteira.ts.
+ * Phase 7 PROPER: wired against the order endpoints. `usePlaceOrder` is the
+ * direct-place mutation (cart-less); the cart→order flow goes through
+ * `useCartMutations.checkout` which invalidates the orders cache too.
  */
-import type { Order } from "@/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, useAuthStore } from "@noctusai/seed/infra";
+import { toast } from "sonner";
+import type { Order, OrderStatus } from "@/types";
 
-const MOCK_ORDERS: Order[] = [];
+export function useOrders() {
+  const { user } = useAuthStore();
 
-export interface UseOrdersResult {
-  data: Order[];
-  isLoading: boolean;
-  error: Error | null;
-}
-
-export function useOrders(): UseOrdersResult {
-  // TODO(adconnect-phase-7): wire to /api/orders
-  return {
-    data: MOCK_ORDERS,
-    isLoading: false,
-    error: null,
-  };
-}
-
-export interface UseOrderResult {
-  data: Order | null;
-  isLoading: boolean;
-  error: Error | null;
-}
-
-export function useOrder(id?: string): UseOrderResult {
-  // TODO(adconnect-phase-7): wire to /api/orders/{id}
-  const order = id ? MOCK_ORDERS.find((o) => o.id === id) ?? null : null;
-  return {
-    data: order,
-    isLoading: false,
-    error: null,
-  };
-}
-
-export interface PlaceOrderInput {
-  cart_id: string;
-  notes?: string;
-}
-
-export interface UsePlaceOrderResult {
-  placeOrder: (input: PlaceOrderInput) => void;
-  isPending: boolean;
-}
-
-export function usePlaceOrder(): UsePlaceOrderResult {
-  // TODO(adconnect-phase-7): wire to POST /api/orders (or POST /api/cart/checkout).
-  return {
-    placeOrder: (input) => {
-      // eslint-disable-next-line no-console
-      console.log("[skeleton] placeOrder", input);
+  return useQuery({
+    queryKey: ["adconnect", "orders"],
+    queryFn: async () => {
+      const result = await api.get("/api/orders");
+      return (result.data || []) as Order[];
     },
-    isPending: false,
-  };
+    enabled: !!user,
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useOrder(id?: string) {
+  return useQuery({
+    queryKey: ["adconnect", "order", id],
+    queryFn: async () => {
+      if (!id) return null;
+      const result = await api.get(`/api/orders/${id}`);
+      return result.data as Order;
+    },
+    enabled: !!id,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function usePlaceOrder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { items: Array<{ product_id: string; quantidade: number }>; observacoes?: string }) => {
+      const result = await api.post("/api/orders", data);
+      return result.data as Order;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "orders"] });
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "cart"] });
+      toast.success("Pedido criado");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao criar pedido", { description: error.message });
+    },
+  });
+}
+
+export function useTransitionOrderStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: OrderStatus }) => {
+      const result = await api.patch(`/api/orders/${id}/status`, { status });
+      return result.data as Order;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "orders"] });
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "order", data?.id] });
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar pedido", { description: error.message });
+    },
+  });
 }

@@ -1,64 +1,88 @@
 /**
- * useCart — Phase 7 SKELETON hook for distributor cart.
+ * useCart — React Query hooks for the distributor cart.
  *
- * TODO(adconnect-phase-7): wire to GET /api/cart, POST /api/cart/items,
- *   PATCH /api/cart/items/{id}, DELETE /api/cart/items/{id}, POST /api/cart/checkout.
- *   Use useMutation for write ops with cache invalidation on the "cart"
- *   query key, mirroring the useCreateAtivo pattern in
- *   products/personal-finance/frontend/src/hooks/useAtivos.ts.
+ * Phase 7 PROPER: wired to backend endpoints (Engineer E ships these in
+ * Wave 3 — endpoints may not be live at consumption time but the contract
+ * is locked in `app/schemas/orders.py`). The mutation hook invalidates
+ * cart + order queries on success so list views refresh.
  */
-import type { Cart } from "@/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, useAuthStore } from "@noctusai/seed/infra";
+import { toast } from "sonner";
+import type { Cart, CartItem } from "@/types";
 
-const MOCK_CART: Cart = {
-  id: "cart-skeleton",
-  distributor_id: "dist-skeleton",
-  status: "ativo",
-  items: [],
-  subtotal: 0,
-  total: 0,
-  updated_at: new Date().toISOString(),
-};
+export function useCart() {
+  const { user } = useAuthStore();
 
-export interface UseCartResult {
-  data: Cart | null;
-  isLoading: boolean;
-  error: Error | null;
+  return useQuery({
+    queryKey: ["adconnect", "cart"],
+    queryFn: async () => {
+      const result = await api.get("/api/cart");
+      return (result.data || null) as Cart | null;
+    },
+    enabled: !!user,
+    staleTime: 30 * 1000,
+  });
 }
 
-export function useCart(): UseCartResult {
-  // TODO(adconnect-phase-7): wire to /api/cart
-  return {
-    data: MOCK_CART,
-    isLoading: false,
-    error: null,
-  };
-}
+export function useCartMutations() {
+  const queryClient = useQueryClient();
 
-export interface UseCartMutationsResult {
-  addItem: (productId: string, quantity: number) => void;
-  updateItem: (itemId: string, quantity: number) => void;
-  removeItem: (itemId: string) => void;
-  checkout: () => void;
-}
+  const addItem = useMutation({
+    mutationFn: async (data: { product_id: string; quantidade: number }) => {
+      const result = await api.post("/api/cart/items", data);
+      return result.data as CartItem;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "cart"] });
+      toast.success("Item adicionado ao carrinho");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao adicionar item", { description: error.message });
+    },
+  });
 
-export function useCartMutations(): UseCartMutationsResult {
-  // TODO(adconnect-phase-7): replace with useMutation hooks on /api/cart endpoints.
-  return {
-    addItem: (productId, quantity) => {
-      // eslint-disable-next-line no-console
-      console.log("[skeleton] addItem", { productId, quantity });
+  const updateItem = useMutation({
+    mutationFn: async ({ id, quantidade }: { id: string; quantidade: number }) => {
+      const result = await api.patch(`/api/cart/items/${id}`, { quantidade });
+      return result.data as CartItem;
     },
-    updateItem: (itemId, quantity) => {
-      // eslint-disable-next-line no-console
-      console.log("[skeleton] updateItem", { itemId, quantity });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "cart"] });
     },
-    removeItem: (itemId) => {
-      // eslint-disable-next-line no-console
-      console.log("[skeleton] removeItem", { itemId });
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar quantidade", { description: error.message });
     },
-    checkout: () => {
-      // eslint-disable-next-line no-console
-      console.log("[skeleton] checkout");
+  });
+
+  const removeItem = useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/api/cart/items/${id}`);
+      return id;
     },
-  };
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "cart"] });
+      toast.success("Item removido do carrinho");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao remover item", { description: error.message });
+    },
+  });
+
+  const checkout = useMutation({
+    mutationFn: async (data: { observacoes?: string }) => {
+      const result = await api.post("/api/cart/checkout", data ?? {});
+      return result.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "cart"] });
+      queryClient.invalidateQueries({ queryKey: ["adconnect", "orders"] });
+      toast.success("Pedido realizado com sucesso");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao finalizar pedido", { description: error.message });
+    },
+  });
+
+  return { addItem, updateItem, removeItem, checkout };
 }
