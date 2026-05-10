@@ -46,6 +46,7 @@ from noctusai_lib.security.webhook_signatures import (
 
 from app.config import settings
 from app.database import get_supabase_client
+from app.rate_limit import limiter
 from app.services.lid_auth import LidAuthService
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
 
 
 @router.post("/waha")
+@limiter.limit(settings.webhook_rate_limit)
 async def receive_waha_message(
     request: Request,
     verified: VerifiedWebhook = webhook_endpoint(

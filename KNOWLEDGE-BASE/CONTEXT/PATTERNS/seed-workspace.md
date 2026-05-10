@@ -102,7 +102,9 @@ Bootstrap applies `chmod -h a-w` to each symlink entry in the workspace.
     ├── Dockerfile.frontend             # LOCAL — frontend image (multi-stage: build + nginx)
     ├── docker-compose.yml              # LOCAL — full stack: app + frontend + redis + waha + tunnel
     ├── .dockerignore                   # LOCAL — excludes .git, symlinks, secrets, build artifacts
-    └── .env.example                    # LOCAL — env template (NOCTUSAI_HOME + Supabase + LLM + WAHA)
+    ├── .env.example                    # LOCAL — env template (NOCTUSAI_HOME + Supabase + LLM + WAHA)
+    ├── start.sh                        # LOCAL — full-stack up + health-poll + URL summary (chmod +x)
+    └── stop.sh                         # LOCAL — graceful / --volumes / --prune (chmod +x)
 ```
 
 ---
@@ -258,7 +260,7 @@ What bootstrap does (in order):
 10. Creates `PROMOTIONS.md` index stub.
 11. Copies pre-commit hook into `.githooks/pre-commit`.
 12. Renders README from `templates/seed-workspace-README.md` (substitutes `{{WORKSPACE_NAME}}`, `{{NOCTUSAI_HOME}}`, `{{CREATED_AT}}`).
-13. Drops docker artifacts from `templates/seed-workspace-docker/`: `Dockerfile`, `Dockerfile.frontend`, `docker-compose.yml`, `.dockerignore`, `.env.example` — all carrying `{{PRODUCT_SLUG}}` / `{{PRODUCT_NAME}}` / `{{BACKEND_PORT}}` / `{{FRONTEND_PORT}}` placeholders. Substitution happens later when the user runs `noctus.dev.scaffold_product` (see "Docker scaffolding" below).
+13. Drops docker artifacts from `templates/seed-workspace-docker/`: `Dockerfile`, `Dockerfile.frontend`, `docker-compose.yml`, `.dockerignore`, `.env.example`, `start.sh`, `stop.sh` — all carrying `{{PRODUCT_SLUG}}` / `{{PRODUCT_NAME}}` / `{{BACKEND_PORT}}` / `{{FRONTEND_PORT}}` placeholders. `start.sh` + `stop.sh` are `chmod +x` at copy-time. Substitution happens later when the user runs `noctus.dev.scaffold_product` (see "Docker scaffolding" below).
 14. `git init` + `git config core.hooksPath .githooks`.
 
 **Idempotent** — re-running on an existing workspace refreshes symlinks + chmod + marker without touching local content (`projects/`, `sandbox/`, `products/`, `.promotions/`, git history). Docker artifacts are skipped on re-run if already present.
@@ -269,17 +271,22 @@ What bootstrap does (in order):
 
 Every seed workspace ships docker artifacts at the workspace root so the user can put a freshly scaffolded product **online to test it before absorbing functionality** — the explicit reason this convention exists. Two-step flow mirrors the bootstrap → scaffold split:
 
-1. **Bootstrap** drops the unsubstituted templates (`Dockerfile`, `Dockerfile.frontend`, `docker-compose.yml`, `.dockerignore`, `.env.example`) carrying `{{PRODUCT_SLUG}}` / `{{PRODUCT_NAME}}` / `{{BACKEND_PORT}}` / `{{FRONTEND_PORT}}` placeholders. Source: `templates/seed-workspace-docker/`.
+1. **Bootstrap** drops the unsubstituted templates (`Dockerfile`, `Dockerfile.frontend`, `docker-compose.yml`, `.dockerignore`, `.env.example`, `start.sh`, `stop.sh`) carrying `{{PRODUCT_SLUG}}` / `{{PRODUCT_NAME}}` / `{{BACKEND_PORT}}` / `{{FRONTEND_PORT}}` placeholders. `start.sh` + `stop.sh` are `chmod +x` at copy-time so the inherited copy is runnable as soon as the placeholders are patched. Source: `templates/seed-workspace-docker/`.
 
-2. **`noctus.dev.scaffold_product`** detects it's running in a workspace (any caller whose `base_products_dir.parent` contains the docker files at root) and patches the placeholders in place via `_patch_workspace_docker_files`. Idempotent: files already-substituted (no placeholders left) are skipped without error. The result lands in the scaffold tool's response under the `docker_patch` key with `{patched: [files], skipped: [files]}`.
+2. **`noctus.dev.scaffold_product`** detects it's running in a workspace (any caller whose `base_products_dir.parent` contains the docker files at root) and patches the placeholders in place via `_patch_workspace_docker_files`. Idempotent: files already-substituted (no placeholders left) are skipped without error. The patcher re-stamps `start.sh` + `stop.sh` with the executable bit (`mode | 0o111`) since `Path.write_text` doesn't preserve mode reliably across filesystems (Windows + WSL extracts in particular can clear it). The result lands in the scaffold tool's response under the `docker_patch` key with `{patched: [files], skipped: [files]}`.
 
 After scaffold:
 ```bash
 cp .env.example .env       # then fill in NOCTUSAI_HOME + Supabase + LLM keys
-docker compose up           # full stack online
-docker compose --profile minimal up   # backend + redis only
-docker compose --profile tunnel up    # adds cloudflared for OAuth callback testing
+./start.sh                 # full stack online (default profile)
+./start.sh minimal         # backend + redis only
+./start.sh tunnel          # adds cloudflared for OAuth callback testing
+./stop.sh                  # graceful: down, keep volumes + images
+./stop.sh --volumes        # + wipe DB / redis state
+./stop.sh --prune          # + remove dangling images
 ```
+
+`start.sh` and `stop.sh` are **inherited surface** like Dockerfile etc.: source of truth is the template, never patch the workspace copy in place.
 
 ### Why this lives at workspace-root, not per-product
 
@@ -292,6 +299,7 @@ The workspace's `seed/` is a symlink into noc. Docker COPY does **not** follow d
 ### Anti-pattern history (the gap that drove this)
 
 - 2026-05-06 — A workspace was bootstrapped + scaffold_product ran successfully, but the user couldn't put the product online without authoring docker-compose by hand. The convention was missing from the seeding system entirely. Surfaced by user during youtube-crawler workspace recreation; closed by adding the `templates/seed-workspace-docker/` template set + bootstrap step + scaffold patch step.
+- 2026-05-07 — Docker artifacts shipped, but the user still had to type `docker compose up -d --build` + remember the WAHA dashboard URL + manually `docker compose down` to stop. No script convention. Surfaced when the user asked *"how can I put the youtube platform online? You have a pre-defined workflow that we did yesterday, don't you?"* Closed by adding `start.sh` + `stop.sh` to the same template set, wiring them into bootstrap + scaffold_product, and adding a noc-side `./stop.sh` companion that reads the `BEGIN/END_PRODUCTS_REGISTRY` block out of `start.sh` (one-writer / two-reader registry).
 
 ---
 

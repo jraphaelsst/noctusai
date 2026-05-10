@@ -26,6 +26,10 @@ class Settings(ProductSettings):
     stripe_webhook_secret: str = ""
     app_base_url: str = "http://localhost:5173"
 
+    # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
+    # Webhook-compliance pin #4 — see KB § PATTERNS/webhook-signatures.md.
+    webhook_rate_limit: str = "60/minute"
+
     # Email (optional — Resend)
     resend_api_key: Optional[str] = None
 

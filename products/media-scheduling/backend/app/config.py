@@ -30,6 +30,10 @@ class SeedSettings(ProductSettings):
     # (logs WARNING; accepts unsigned payloads).
     waha_webhook_secret: str = ""
 
+    # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
+    # Webhook-compliance pin #4 — see KB § PATTERNS/webhook-signatures.md.
+    webhook_rate_limit: str = "60/minute"
+
     # WAHA outbound sender. Empty → seed `get_whatsapp_client()` returns
     # `FakeWahaClient` (records sent_messages in-memory, useful for tests).
     waha_base_url: str = ""

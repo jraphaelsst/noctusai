@@ -1052,6 +1052,12 @@ class TestWorkspaceDockerPatch:
         (workspace / ".env.example").write_text(
             "# {{PRODUCT_NAME}}\nVITE_API_URL=http://localhost:{{BACKEND_PORT}}\n"
         )
+        (workspace / "start.sh").write_text(
+            "#!/usr/bin/env bash\n# {{PRODUCT_NAME}} ({{PRODUCT_SLUG}})\nPORT={{BACKEND_PORT}}\n"
+        )
+        (workspace / "stop.sh").write_text(
+            "#!/usr/bin/env bash\n# {{PRODUCT_NAME}} ({{PRODUCT_SLUG}})\n"
+        )
 
     def test_substitutes_all_four_placeholders(self, tmp_path):
         self._seed_docker_files(tmp_path)
@@ -1067,14 +1073,20 @@ class TestWorkspaceDockerPatch:
             "Dockerfile",
             "Dockerfile.frontend",
             "docker-compose.yml",
+            "start.sh",
+            "stop.sh",
         ]
-        for fname in ("Dockerfile", "Dockerfile.frontend", "docker-compose.yml", ".env.example"):
+        for fname in ("Dockerfile", "Dockerfile.frontend", "docker-compose.yml", ".env.example", "start.sh", "stop.sh"):
             content = (tmp_path / fname).read_text()
             assert "{{" not in content, f"{fname} still has placeholders"
         assert "8042" in (tmp_path / "Dockerfile").read_text()
         assert "8142" in (tmp_path / "Dockerfile.frontend").read_text()
         assert "my-product" in (tmp_path / "docker-compose.yml").read_text()
         assert "My Product" in (tmp_path / "docker-compose.yml").read_text()
+        # start.sh / stop.sh land executable (mode | 0o111).
+        for fname in ("start.sh", "stop.sh"):
+            mode = (tmp_path / fname).stat().st_mode
+            assert mode & 0o111, f"{fname} should be executable after patch"
 
     def test_no_op_when_files_missing(self, tmp_path):
         # In-noc scaffold: workspace-root docker files don't exist. Function
@@ -1101,7 +1113,7 @@ class TestWorkspaceDockerPatch:
             backend_port=8042,
             frontend_port=8142,
         )
-        assert len(first["patched"]) == 4
+        assert len(first["patched"]) == 6
 
         snapshot = {
             f.name: f.read_text() for f in tmp_path.iterdir() if f.is_file()

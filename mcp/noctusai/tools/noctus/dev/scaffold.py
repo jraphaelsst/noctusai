@@ -1079,6 +1079,8 @@ def _patch_workspace_docker_files(
         "Dockerfile.frontend",
         "docker-compose.yml",
         ".env.example",
+        "start.sh",
+        "stop.sh",
     ]
     replacements = {
         "{{PRODUCT_NAME}}": name,
@@ -1115,6 +1117,17 @@ def _patch_workspace_docker_files(
         except OSError as exc:
             skipped.append(f"{fname} (write failed: {exc})")
             continue
+
+        # start.sh / stop.sh must remain executable. write_text preserves
+        # the file's existing mode on macOS / linux; bootstrap dropped them
+        # +x. Re-stamp defensively so a non-+x copy (e.g., from a tarball
+        # extract on Windows + WSL) still produces a runnable script.
+        if fname in {"start.sh", "stop.sh"}:
+            try:
+                mode = path.stat().st_mode
+                path.chmod(mode | 0o111)
+            except OSError as exc:
+                skipped.append(f"{fname} chmod (non-fatal: {exc})")
 
         patched.append(fname)
 

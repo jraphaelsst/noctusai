@@ -263,10 +263,15 @@ fi
 DOCKER_SRC="$NOC_HOME/templates/seed-workspace-docker"
 if [[ -d "$DOCKER_SRC" ]]; then
   echo "==> Installing docker templates (Dockerfile, Dockerfile.frontend,"
-  echo "    docker-compose.yml, .dockerignore, .env.example)"
-  for f in Dockerfile Dockerfile.frontend docker-compose.yml .dockerignore .env.example; do
+  echo "    docker-compose.yml, .dockerignore, .env.example, start.sh, stop.sh)"
+  for f in Dockerfile Dockerfile.frontend docker-compose.yml .dockerignore .env.example start.sh stop.sh; do
     if [[ -f "$DOCKER_SRC/$f" && ! -f "$TARGET/$f" ]]; then
       cp "$DOCKER_SRC/$f" "$TARGET/$f"
+      # start.sh + stop.sh need executable bit; cp does not preserve mode
+      # reliably across filesystems.
+      if [[ "$f" == "start.sh" || "$f" == "stop.sh" ]]; then
+        chmod +x "$TARGET/$f"
+      fi
     elif [[ -f "$TARGET/$f" ]]; then
       echo "    skip: $f already exists"
     fi

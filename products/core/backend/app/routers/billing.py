@@ -37,8 +37,10 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_org_id
+from app.rate_limit import limiter
 from app.services import billing_service, stripe_service
 
 logger = logging.getLogger(__name__)
@@ -111,11 +113,18 @@ _HANDLED_EVENTS = {
 
 
 @router.post("/webhook")
+@limiter.limit(settings.webhook_rate_limit)
 async def stripe_webhook(request: Request):
     """Receive and process Stripe webhook events.
 
     This endpoint does NOT require authentication.  Instead it verifies the
     Stripe-Signature header to ensure the payload was sent by Stripe.
+
+    Stripe SDK is the carve-out from the canonical
+    ``noctusai_lib.security.webhook_signatures.webhook_endpoint`` pattern
+    (Stripe ships its own verifier; don't wrap it). The remaining 4 pins
+    still apply — including this rate-limit decorator. See
+    ``KB § PATTERNS/webhook-signatures.md``.
     """
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")

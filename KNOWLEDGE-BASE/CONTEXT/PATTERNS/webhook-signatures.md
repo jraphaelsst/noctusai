@@ -138,18 +138,58 @@ patterns 1–3 (and isn't Stripe), open a discussion before rolling your
 own — the surface area should grow only when a real new pattern shows
 up.
 
+---
+
+## The 5-pin compliance contract (formalized 2026-05-09)
+
+**Every webhook receiver MUST satisfy all 5 pins.** The seed ships a
+canonical reference at `products/seed/backend/app/routers/webhook_router.py`
++ `tests/routers/test_webhook_router.py` that demonstrates all 5; new
+products inherit it via `scaffold_product` and rename per vendor.
+
+| Pin | Rule | Why | Anti-shape |
+|---|---|---|---|
+| **1** | Use `webhook_endpoint(...)` from `noctusai_lib.security.webhook_signatures` (or Stripe SDK for pattern 4) | One decorator replaces hand-rolled HMAC dance; verification BEFORE any DB work | Hand-rolled `hmac.compare_digest` in the handler body |
+| **2** | Per-request `ResolvedSecret` resolver (lambda reads `settings.<vendor>_webhook_secret` at request time) | Honors test-time monkeypatches on `settings`; avoids the import-time-capture trap | `static_secret_resolver(settings.foo_secret)` at module load |
+| **3** | `bypass_when_unset=` flag explicitly set (True for early-dev, False for production-strict) | Boots cleanly before secret is configured; bypass logs a WARNING — never silent | Flag omitted (default False is technically compliant but easy to miss) |
+| **4** | `@limiter.limit(settings.webhook_rate_limit)` decorator | DDOS guard on a public endpoint — every receiver is unauth so rate-limit is the only throttle | No limiter; only the FastAPI default trust |
+| **5** | Status-code-pinned tests (`assert resp.status_code == N`) | The keeper detector `check_test_status_assertion` enforces this; substring body checks miss 4xx slips | Asserting only on `resp.json()` / `resp.text` |
+
+**Test shape — copy from the seed reference:**
+
+```python
+def test_valid_signature_returns_200(self, client, monkeypatch):
+    monkeypatch.setattr(settings, "<vendor>_webhook_secret", SECRET)
+    body = b'<canonical-event>'
+    resp = client.raw().post("/api/webhooks/<vendor>",
+        content=body,
+        headers={..., "content-type": "application/json"})
+    assert resp.status_code == 200
+
+def test_tampered_body_returns_401(...): ...
+def test_missing_signature_headers_returns_401(...): ...
+def test_unset_secret_bypasses_with_warning(self, client, monkeypatch, caplog):
+    # caplog at WARNING level on logger="noctusai_lib.security.webhook_signatures"
+    ...
+    assert resp.status_code == 200
+    assert any("bypass" in r.message.lower() for r in caplog.records)
+```
+
+**Stripe carve-out (pattern 4).** Pins 1+2+3 don't apply (Stripe SDK
+owns secret resolution); pins 4+5 still apply. The Stripe receiver in
+`core/billing.py` was missing pin 4 until 2026-05-09 — fixed inline.
+
+---
+
 ## Current adopters
 
-- ✅ `core` — Stripe billing webhooks (pattern 4)
-- ✅ `erp-imobiliario` — WAHA (pattern 2 via `app/webhook_utils`),
-  Meta Lead Ads (pattern 1), digital-signature providers (pattern 1).
-  `webhook_utils.py` re-exports from `noctusai_lib.security` — new
-  ERP code should import from `noctusai_lib` directly.
-- ✅ `mailing` — Resend (pattern 3) — verification added 2026-05-02
-  alongside this doc; previously a TODO.
+- ✅ `core` — Stripe billing webhooks (pattern 4) — pins 4+5 enforced 2026-05-09
+- ✅ `erp-imobiliario` — WAHA (pattern 2), Meta Lead Ads (pattern 1) — all 5 pins from launch
+- ✅ `mailing` — Resend (pattern 3) — all 5 pins from 2026-05-02
+- ✅ `media-scheduling` — WAHA (pattern 2) — all 5 pins after 2026-05-09 audit (pins 4+5 added)
 - ✅ `whatsapp-google-scheduling` (sibling repo) — WAHA (pattern 2)
-  via vendored copy of `noctusai_lib.security.webhook_signatures` until
-  it's installable as a published package.
+  via vendored copy until published-package shape lands.
 
-When a new product comes online, append it here. Make divergence
-visible.
+When a new product comes online, the inherited seed skeleton already
+satisfies all 5 pins — replace `_resolve_example_secret` + the endpoint
+body, keep the rest. Append to this list to make divergence visible.
