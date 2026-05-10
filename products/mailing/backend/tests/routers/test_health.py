@@ -1,13 +1,17 @@
-"""Tests for Mailing Product — framework endpoints + domain routes exist."""
+"""Tests for Mailing Product — framework endpoints + domain routes exist.
+
+`TestHealthCheck` inherits from `noctusai_lib.testing.HealthCheckSuite`
+(lifted from N=4 byte-identical copies; see `seed/lib/backend/noctusai_lib/
+testing/framework_test_suites.py`). The framework-team / framework-
+notificacoes probes stay here as they are absorbed by the e2e
+`AuthBoundarySuite` only when products adopt that suite — mailing keeps a
+custom auth-boundary covering its mailing-specific endpoints.
+"""
+from noctusai_lib.testing import HealthCheckSuite
 
 
-class TestHealthCheck:
-    def test_health_returns_ok(self, client):
-        resp = client.raw().get("/api/health")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "ok"
-        assert data["product"] == "Mailing"
+class TestHealthCheck(HealthCheckSuite):
+    expected_product_name = "Mailing"
 
     def test_framework_team_exists(self, client):
         resp = client.raw().get("/api/team")

@@ -1,19 +1,11 @@
-"""Tests for the health check endpoint."""
+"""Tests for the health check endpoint — provided by seed framework.
+
+Inherits from `noctusai_lib.testing.HealthCheckSuite` (lifted from N=4
+byte-identical copies; see `seed/lib/backend/noctusai_lib/testing/
+framework_test_suites.py`).
+"""
+from noctusai_lib.testing import HealthCheckSuite
 
 
-class TestHealthCheck:
-    """GET /api/health"""
-
-    def test_health_returns_ok(self, client):
-        resp = client.get("/api/health")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "ok"
-        assert data["product"] == "Daily Life"
-
-    def test_health_returns_version(self, client):
-        resp = client.get("/api/health")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "version" in data
-        assert data["version"] == "0.1.0"
+class TestHealthCheck(HealthCheckSuite):
+    expected_product_name = "Daily Life"
