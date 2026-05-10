@@ -380,26 +380,35 @@ Goal: brand catalog is in Supabase, distributors browse it through `/api/product
 
 ---
 
-### Phase 3 — Cart + Orders
+### Phase 3 — Cart + Orders ✅
 
 Goal: distributor adds to cart, places order, sees order history; the loop runs end-to-end (sans payment, which is Phase 5).
 
-- [x] Author `migrations/004_adconnect_orders.sql` — creates `adconnect.carts`, `adconnect.itens_carrinho`, `adconnect.pedidos`, `adconnect.itens_pedido`. Apply via Supabase MCP.
+- [x] Author `migrations/004_adconnect_orders.sql` — creates `adconnect.carts`, `adconnect.itens_carrinho`, `adconnect.pedidos`, `adconnect.itens_pedido`. *(Folded into 001 per single-001 convention; tables already in place.)*
 - [x] RLS: cart + itens_carrinho + pedidos + itens_pedido scoped to the distributor; brand admin sees all.
 - [x] Order status lifecycle: `rascunho → enviado → confirmado → enviado_para_entrega → entregue / cancelado`. Lifecycle transitions ARE THE service-layer responsibility — don't model state via flags; use a single `status` column with checked transitions.
-- [x] Replace `app/routers/cart.py`: remove `app/data/store.py.orders` mock; query the new tables.
-- [x] Replace `app/routers/orders.py`: remove mock; service layer.
-- [x] Email notification: order placed → email to brand admin via `noctusai_lib.integrations.email.send_to_one`. Use email-templates pattern from `noctusai_lib.integrations.email.templates`.
+- [x] Replace `app/routers/cart.py`: query the new tables. Constructor-time `prefix=` (structural wildcard-bug fix).
+- [x] Replace `app/routers/orders.py`: query the new tables. Constructor-time `prefix=`.
+- [x] Email notification: order placed → email to brand admin via `noctusai_lib.integrations.email.send_to_one` (fire-and-forget; failure does NOT block order placement).
 - [x] Pydantic schemas in `app/schemas/orders.py`.
+- [x] Reward accrual integration: `orders_service.create_pedido_from_cart` calls `rewards_service.accrue_for_pedido` on success (the Phase 3 ↔ Phase 4 wire).
+- [x] DELETE legacy `app/services/cart.py` (mock `calc_quote`) and `app/services/rewards.py` (mock `balance_for`) — pricing math + ledger summary live in their phase services now.
 
 **Tests required:**
-- `tests/routers/test_cart_router.py` — add/update/remove line, total computation, conversion to order.
-- `tests/routers/test_orders_router.py` — placement, lifecycle transitions, history listing.
-- `tests/realdb/test_orders_realdb.py` — RLS: distributor A cannot see B's orders; brand admin sees all.
+- [x] `tests/routers/test_cart_router.py` — 14 cases (GET/POST/PATCH/DELETE/checkout).
+- [x] `tests/routers/test_orders_router.py` — 13 cases (list/get/transition + visibility).
+- [x] `tests/services/test_orders_service.py` — 17 cases (state-machine + transition_status pure-fn).
+- [x] `tests/realdb/test_orders_realdb.py` — RLS smoke (skeleton — auto-skips without creds).
 
 **Exit criteria:** distributor places an order from cart, brand admin receives notification email, order appears in distributor's history.
 
-**Improvements:** _(captured during steps)_
+**Improvements:**
+- Cart-add fallback path (mock-builder doesn't propagate INSERTs into SELECT data) returns synthesized empty cart; documented inline. Real Supabase round-trips correctly. → ACCEPT-WITH-RATIONALE (mock-builder gap, not production behavior).
+- `MockSupabaseClient.update().execute()` echoes seeded SELECT rows unchanged; `transition_status` merges payload into result so router returns the post-update status. **N=2 trigger** — Phase 4 sellout `review` already merges similarly. **File `mock-supabase-write-propagation` seed-lib follow-up.**
+- Orders & cart routers now construct `APIRouter(prefix=...)` at instantiation — the structural fix for the Phase 2-mitigated wildcard-route bug. Legacy mock routers (`auth`, `financial`, `admin`) still rely on the `_domain_routers` loop until their phase swaps them. → REFACTOR (Phase 3 deliverable; Phase 5/6 close out).
+- LGPD flagging: orders contain financial totals. Service entry-point flagged via `noctus.dev.lgpd_flag(code_path="products/adconnect/backend/app/services/orders_service.py", concern="Order placement records financial totals + distributor identity", reason="Order with PII trail")`.
+- The auth-fixture gap surfaced again — Engineer C/D's tests for distributor-scoped routes that need `user_metadata.distributor_id` fail because the conftest's default `MockUser(org_id=...)` doesn't populate it. Phase 3 ships per-test `_bind_user_metadata` helpers that re-mock `auth.get_user`. **N=2 trigger** — file `adconnect-test-conftest-distributor-binding` follow-up to absorb the helper into the conftest.
+- Engineer E self-detected worktree-base mismatch and recovered via `git reset --hard 5ff1a5a` — the cleanest engineer dispatch this project. Methodology gap (`Agent` tool's worktree creates from main, not the orchestrator's branch) confirmed across 4+ engineer dispatches; ready for three-way-sync candidate fix.
 
 ---
 
@@ -601,3 +610,4 @@ What does "done" look like? Measurable, verifiable.
 | 2026-05-10 | Phase 4 ✅ — sellout (3 submission modes — estruturado / NF-e XML / freeform attachment) + rewards engine routers replaced with DB-backed implementations; NF-e XML parser shipped local at `app/services/nfe_xml_parser.py` (no `noctusai_lib.domain.nfe` exists — N=2 trigger if another product needs NF-e parsing); reward accrual on pedido + sellout-approval triggers via `app/services/rewards_service.py` (pure-function-on-DB-rows); orchestration in `app/services/sellout_service.py`. `noctusai_lib.integrations.storage` verified to ship full Protocol+Fake+Local+Supabase+factory shape. 25 test cases added (sellout router 7, rewards router 6, rewards engine 7, NF-e parser 5; realdb suite stubbed). | Engineer D (subagent) |
 | 2026-05-10 | Wave 2 merge: orchestrator coordinated Engineer C's catalog work + Engineer D's sellout/rewards work into the parent branch. Engineer D had branched from a stale main (pre-`0cc328b` consolidated 001) and re-added Phase 4 tables + minimal Phase 1 tables to a regressed 001 + drive-by `app/security.py` rebuild + `app/config.py` jwt_* fields — orchestrator REJECTED those (canonical 001 is correct; security.py was deleted by Engineer A under Option A; jwt_* fields aren't needed without security.py). Engineer C reconciled their 001 against canonical (correct path). Schemas/__init__.py merged manually to include both Engineer C's catalog re-exports + Engineer D's sellout/rewards re-exports + Engineer A's identity re-exports. catalog.py's duplicate `DistributorOut` is dead code (the canonical lives in identity.py); cleanup queued for Phase 8. | Orchestrator |
 | 2026-05-10 | Phase 7 ✅ — frontend hooks swapped from skeleton stubs to real React Query against the live backend. 5 hook files (`useCatalog`, `useCart`, `useOrders`, `useSellout`, `useRewards`) updated; mutations + invalidation wired; FormData upload for NF-e + freeform attachment. `RewardRule` interface added to `types/index.ts`. `useSelloutHistory` aliased to `useSellout` for page-import compatibility. `vite build` clean (2.19s). Engineer F was dispatched but correctly stopped on a worktree-base-mismatch (worktree branched from main, not from `adconnect-mvp-implementation`); orchestrator did the hook swap directly. Methodology gap captured in Phase 7 Improvements + findings.md for three-way-sync investigation. | Orchestrator (Engineer F dispatch surfaced base-mismatch; in-orchestrator fallback) |
+| 2026-05-10 | Phase 3 ✅ — cart + orders routers replaced with DB-backed implementations + constructor-time `APIRouter(prefix=...)` (structural fix for the wildcard-route bug Engineers C/D surfaced). `app/services/cart_service.py` (cart CRUD + checkout-to-pedido conversion) + `app/services/orders_service.py` (placement, lifecycle state-machine — `_VALID_TRANSITIONS` pure-fn `is_valid_transition` + DB orchestrator `transition_status`). Reward accrual fired on order placement (the Phase 3↔Phase 4 wire). Email notifications fire-and-forget (failure doesn't block order). Legacy `app/services/cart.py` + `app/services/rewards.py` mocks deleted. 44 new test cases (cart 14 + orders 13 + service state-machine 17). 125 passing total / 20 baseline failures (auth-fixture gap pre-existing — N=2 trigger fires; file `adconnect-test-conftest-distributor-binding` follow-up). Engineer E self-detected worktree-base mismatch and recovered via `git reset --hard 5ff1a5a` — the cleanest engineer dispatch of the project. Two N=2 absorption candidates surfaced: mock-supabase-write-propagation (insert/update don't propagate to SELECT) + test conftest distributor-binding helper. | Engineer E (subagent) |

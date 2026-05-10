@@ -51,3 +51,18 @@ from app.schemas.rewards import (  # noqa: F401
     RewardRulesListOut,
     RewardType,
 )
+
+# Orders / cart (Phase 3)
+from app.schemas.orders import (  # noqa: F401
+    CartItemIn,
+    CartItemOut,
+    CartItemUpdateIn,
+    CartOut,
+    CartStatus,
+    OrderCheckoutIn,
+    OrderItemOut,
+    OrderListOut,
+    OrderOut,
+    OrderStatus,
+    OrderStatusTransitionIn,
+)
