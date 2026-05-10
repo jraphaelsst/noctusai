@@ -1,14 +1,49 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
 import { Users, Building2, CalendarDays, DollarSign } from "lucide-react";
+import { useAdminDashboard } from "@/hooks/useAdmin";
 
-const metrics = [
-  { label: "Terapeutas Pendentes", value: "0", icon: Users, color: "text-orange-500" },
-  { label: "Clinicas Pendentes", value: "0", icon: Building2, color: "text-blue-500" },
-  { label: "Sessoes Hoje", value: "0", icon: CalendarDays, color: "text-green-500" },
-  { label: "Receita Total", value: "R$ 0,00", icon: DollarSign, color: "text-primary" },
-];
+interface AdminDashboardMetrics {
+  pending_therapists?: number;
+  pending_clinics?: number;
+  sessions_today?: number;
+  total_revenue?: number;
+  platform_fees?: number;
+}
+
+const currencyBRL = (value: number) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 
 export default function AdminDashboard() {
+  const { data, isLoading } = useAdminDashboard();
+  const metrics = (data ?? {}) as AdminDashboardMetrics;
+
+  const cards = [
+    {
+      label: "Terapeutas Pendentes",
+      value: isLoading ? "…" : String(metrics.pending_therapists ?? 0),
+      icon: Users,
+      color: "text-orange-500",
+    },
+    {
+      label: "Clinicas Pendentes",
+      value: isLoading ? "…" : String(metrics.pending_clinics ?? 0),
+      icon: Building2,
+      color: "text-blue-500",
+    },
+    {
+      label: "Sessoes Hoje",
+      value: isLoading ? "…" : String(metrics.sessions_today ?? 0),
+      icon: CalendarDays,
+      color: "text-green-500",
+    },
+    {
+      label: "Receita Total",
+      value: isLoading ? "…" : currencyBRL(metrics.total_revenue ?? 0),
+      icon: DollarSign,
+      color: "text-primary",
+    },
+  ];
+
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div>
@@ -17,7 +52,7 @@ export default function AdminDashboard() {
       </div>
 
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-        {metrics.map((m) => (
+        {cards.map((m) => (
           <Card key={m.label}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">{m.label}</CardTitle>
