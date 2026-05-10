@@ -65,7 +65,9 @@ class ProjectSummary:
     subtasks_total: int
     subtasks_done: int
     phase_count: int
+    phases_shipped: int
     seed_first_section: bool
+    icon_demoted: bool  # true when ✅ → ⏳ subtask-sanity demotion fired
     flags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -83,7 +85,9 @@ class ProjectSummary:
             "last_updated": self.last_updated,
             "subtask_progress": progress,
             "phase_count": self.phase_count,
+            "phases_shipped": self.phases_shipped,
             "seed_first_section": self.seed_first_section,
+            "icon_demoted": self.icon_demoted,
             "flags": self.flags,
         }
 
@@ -93,17 +97,87 @@ _STATUS_RE = re.compile(
     re.MULTILINE,
 )
 _PHASE_HEADER_RE = re.compile(r'^### Phase\s+(\d+)\b', re.MULTILINE)
+_PHASE_SPLIT_RE = re.compile(r'(?=^### Phase\s+\d+\b)', re.MULTILINE)
 _SUBTASK_RE = re.compile(r'^[ \t]*-\s*\[([ x])\]\s', re.MULTILINE)
 _SEED_FIRST_RE = re.compile(r'^## 3a\.', re.MULTILINE)
 _DATE_RE = re.compile(r'\b(\d{4}-\d{2}-\d{2})\b')
 
+# Subtask-completion threshold below which a leftmost-✅ status icon is
+# treated as a false positive and demoted to ⏳. 0.75 leaves room for the
+# §3a-N/A-litmus carve-out (3 of 19 unticked = 84% still reads as shipped)
+# while catching 21/72-shape false positives. See KB §11.3.
+_SHIPPED_SUBTASK_THRESHOLD = 0.75
 
-def _detect_status_icon(status_text: str) -> str:
-    """Pick the dominant icon from the §status line."""
+
+def _detect_status_icon(
+    status_text: str,
+    subtasks_done: int = 0,
+    subtasks_total: int = 0,
+) -> tuple[str, bool]:
+    """Pick the dominant project-level status icon.
+
+    Returns `(icon, demoted)` — `demoted` is True iff a leftmost-✅ was
+    overridden by the subtask-sanity check.
+
+    The previous detector iterated a fixed tuple `("✅", "⏳", ...)` and
+    returned the first match in `status_text`, so `✅` always beat `⏳` —
+    every executing project mentions its done phases as "Phase X ✅" inside
+    the status prose, producing systematic false positives in the shipped
+    bucket. The fix runs two complementary checks:
+
+    1. **Leftmost icon wins.** Convention is `**Status:** <icon> <description>`,
+       so position carries the signal — pick the icon with the smallest
+       index in `status_text`.
+    2. **Subtask-sanity demotion.** When the leftmost icon is `✅` but
+       subtask completion is below `_SHIPPED_SUBTASK_THRESHOLD`, demote to
+       `⏳`. Catches "Phase 1 ✅ — Phase 2 pending" / "Tier 2 ✅ ..." shapes
+       that read as shipped textually but are clearly mid-execution.
+    3. **No-icon fallback.** Older projects predate the icon convention —
+       infer from subtask state (all-done → ✅, partial → ⏳, none → none).
+
+    See KB § CONTEXT/PATTERNS/project-execution.md §11.3 for the heuristic
+    rationale + slip-history.
+    """
+    icon_positions: dict[str, int] = {}
     for icon in ("✅", "⏳", "❌", "🅿️", "📋"):
-        if icon in status_text:
-            return icon
-    return "none"
+        idx = status_text.find(icon)
+        if idx >= 0:
+            icon_positions[icon] = idx
+
+    if not icon_positions:
+        if subtasks_total == 0:
+            return ("none", False)
+        if subtasks_done == subtasks_total:
+            return ("✅", False)
+        if subtasks_done > 0:
+            return ("⏳", False)
+        return ("none", False)
+
+    leftmost = min(icon_positions.items(), key=lambda kv: kv[1])[0]
+
+    if leftmost == "✅" and subtasks_total > 0:
+        completion = subtasks_done / subtasks_total
+        if completion < _SHIPPED_SUBTASK_THRESHOLD:
+            return ("⏳", True)
+
+    return (leftmost, False)
+
+
+def _count_shipped_phases(content: str) -> int:
+    """Count `### Phase N` blocks whose header line OR first inner status
+    line carries `✅`. Used alongside the top-level icon so callers can see
+    phase-level shipping independently of the overall status bucket.
+    """
+    shipped = 0
+    for chunk in _PHASE_SPLIT_RE.split(content):
+        if not chunk.startswith("### Phase"):
+            continue
+        # Look at the header line + the next ~3 non-empty lines (catches
+        # `**Status:** ✅` immediately under the header).
+        head = "\n".join(chunk.splitlines()[:5])
+        if "✅" in head:
+            shipped += 1
+    return shipped
 
 
 def _location_label(relative_path: str) -> str:
@@ -130,16 +204,21 @@ def _summarize_one(project_md: Path, root: Path, flags_per_project: dict) -> Pro
     # Status: first `- **Status:**` line in the doc.
     m = _STATUS_RE.search(content)
     status_text = m.group(1).strip() if m else ""
-    status_icon = _detect_status_icon(status_text)
 
     # Sub-tasks: across all phase blocks (whole §6 essentially).
     subtasks = _SUBTASK_RE.findall(content)
     subtasks_total = len(subtasks)
     subtasks_done = sum(1 for s in subtasks if s == "x")
 
-    # Phase count.
+    # Status icon needs subtask context for the sanity-check demotion.
+    status_icon, icon_demoted = _detect_status_icon(
+        status_text, subtasks_done, subtasks_total
+    )
+
+    # Phase count + phases visibly shipped.
     phases = _PHASE_HEADER_RE.findall(content)
     phase_count = len(phases)
+    phases_shipped = _count_shipped_phases(content)
 
     # §3a present?
     seed_first = bool(_SEED_FIRST_RE.search(content))
@@ -164,7 +243,9 @@ def _summarize_one(project_md: Path, root: Path, flags_per_project: dict) -> Pro
         subtasks_total=subtasks_total,
         subtasks_done=subtasks_done,
         phase_count=phase_count,
+        phases_shipped=phases_shipped,
         seed_first_section=seed_first,
+        icon_demoted=icon_demoted,
         flags=flags_per_project.get(relative, []),
     )
 
@@ -229,10 +310,12 @@ def register(server) -> None:
         name="noctus.dev.status",
         description=(
             "Cross-project state digest. Walks every PROJECT.md across `projects/`, "
-            "`products/*/projects/`, `core/projects/` and returns status icon, "
-            "sub-task progress, last-updated date, §3a presence, and any "
-            "phase-state-detector flags. Sorted by bucket "
-            "(executing → ready → parked → blocked → shipped)."
+            "`products/*/projects/`, `core/projects/` and returns status icon "
+            "(leftmost-in-status_text with subtask-sanity demotion, see KB §11.3), "
+            "sub-task progress, phase count + visibly-shipped-phase count, "
+            "last-updated date, §3a presence, `icon_demoted` boolean (true when a "
+            "false-positive ✅ was demoted to ⏳), and phase-state-detector flags. "
+            "Sorted by bucket (executing → ready → parked → blocked → shipped)."
         ),
     )
     def _status() -> dict:

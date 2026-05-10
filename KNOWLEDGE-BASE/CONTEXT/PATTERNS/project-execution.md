@@ -991,6 +991,63 @@ A future agent picking up similar work runs `cat archive.md` and gets the journe
 
 ---
 
+## 11.3 Status-bucket detection — leftmost-icon + subtask-sanity (2026-05-10)
+
+**Why this section exists.** `noctus.dev.status` is the canonical "what's left of value / what's ready to archive" tool. It walks every `PROJECT.md`, extracts the `**Status:**` prose, and assigns each project to a bucket (`executing` / `ready` / `parked` / `blocked` / `shipped` / `pending`). The bucket drives downstream decisions — which projects to dispatch engineers on, which to archive. **A misclassification here cascades into wrong archival / wrong "what's done" reports / wasted dispatches.**
+
+**The slip (2026-05-10).** The initial detector iterated a fixed tuple `("✅", "⏳", "❌", "🅿️", "📋")` and returned the first match in `status_text`:
+
+```python
+# BUG — first-match-in-fixed-tuple, position-independent.
+def _detect_status_icon(status_text: str) -> str:
+    for icon in ("✅", "⏳", "❌", "🅿️", "📋"):
+        if icon in status_text:
+            return icon
+    return "none"
+```
+
+But every executing project's status text mentions its done phases inline — `"⏳ EXECUTING (Phase 0 ✅, Phase 1 ✅, Phase 2 in flight)"`, `"Tier 2 ✅, Tier 1 in progress"`, `"Phase 1 ✅ — Phase 2 pending"`. The `✅` tested first, so the bucket flipped to `shipped (audit history)` on every multi-phase mid-flight project. Audit on 2026-05-10 found **6 of 8 "shipped" projects were actually mid-flight** (`absorbed-projects-batch` 22/65, `main-core-migrations-batch` 19/57, `in-flight-execution-rollout` filed-only, `therapy-platform-wiring` 19/92, `personal-finance-wiring` 21/72, `strict-mode-migration` Phase 0 only).
+
+### The fix — three rules, in order
+
+1. **Leftmost icon wins** — Convention is `**Status:** <icon> <description>`, so position carries the signal. Pick the icon with the smallest index in `status_text`, not whichever the iteration order happens to test first.
+
+2. **Subtask-sanity demotion** — When the leftmost icon is `✅` but subtask completion is below `_SHIPPED_SUBTASK_THRESHOLD` (0.75), demote to `⏳`. Catches "Phase 1 ✅ — seed-seam audits complete" / "Done — Tier 2 ✅" shapes that *lead with* a ✅ but are clearly mid-execution. The 0.75 cutoff allows the §3a-N/A-litmus carve-out (16/19 = 84% still reads as shipped) while catching 21/72 = 29% false positives.
+
+3. **No-icon fallback** — Older projects predate the icon convention. Infer from subtask state: all-done → `✅`, partial → `⏳`, none → `none`.
+
+### Exposed fields
+
+The tool returns three signals that together make the classification debuggable:
+
+- `status_icon` — the bucket-driving icon, after demotion.
+- `icon_demoted` — `true` iff a leftmost-`✅` was demoted to `⏳` by rule 2. Future callers can surface this in dashboards so the false-positive shape is visible if it recurs.
+- `phases_shipped` — count of `### Phase N` blocks whose header line or first inner lines carry `✅`. Independent of the top-level icon — lets callers see "5 of 7 phases shipped, project still ⏳" without re-parsing.
+
+### How callers should consume the bucket
+
+| Bucket | Meaning | Action |
+|---|---|---|
+| `shipped (audit history)` | All phases ✅ AND subtask completion ≥ 0.75 | Archive candidate (verify orchestrator-FF-to-main per CLAUDE.md §1) |
+| `executing` | Leftmost ⏳ OR demoted-from-✅ | Active work — orchestrate next phase, don't archive |
+| `ready / design-locked` | Leftmost 📋 | Phase 0 audit landed, awaits engineer pickup |
+| `parked` | Leftmost 🅿️ | Gated on something — read `status_text` for the gate |
+| `blocked` | Leftmost ❌ | Hard stop — read `status_text` for the cause |
+| `pending` | No icon, no subtasks ticked | Filed but not started, or concept-only |
+
+### Regression test
+
+The slip surfaced because the detector had only happy-path tests (`test_classifies_status_icons` used a clean `"- **Status:** ⏳ executing"` line with no inline phase markers — exactly the case the bug DIDN'T fire on). The fix ships with four new regression tests in `mcp/noctusai/tests/test_status.py`:
+
+- `test_leftmost_icon_wins_over_phase_marker` — the original false-positive shape.
+- `test_low_completion_demotes_leftmost_shipped_icon` — `personal-finance-wiring`-shape.
+- `test_high_completion_keeps_shipped_icon` — `pf-metas-seed-wiring`-shape (§3a N/A carve-out).
+- `test_no_icon_falls_back_to_subtask_state` — older-format projects.
+
+**General lesson** (recurrence-rule-worthy if it fires again): when a detector reads a free-form text field, **don't iterate a fixed enumeration** — iterate by *position* in the input, then validate with an independent signal (sub-task count, phase audit, git state). The fixed-tuple-first-match shape is the same anti-pattern as `if A in text or B in text or ...` without precedence.
+
+---
+
 ## 11.1 Features — durable callable utilities (concept refined 2026-05-03)
 
 **The shape.** Features are simpler than projects in ceremony but **durable** in lifecycle. Single `.md` file. No folder. No §1-§12 ceremony. No §3a seed-first analysis (or one-line response if relevant). **Features are tools / utilities / patterns / methodology entries that get called or referenced later** — not throwaway temporary files. They live in `features/` permanently and are NOT auto-archived on close. (Concept refined 2026-05-03 by user directive: *"They're no quick temporary files, they are actually features that we can use later on as tools or utilities callable."*)
