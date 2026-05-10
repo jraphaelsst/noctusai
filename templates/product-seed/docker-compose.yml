@@ -47,6 +47,18 @@ services:
     build:
       context: ../..
       dockerfile: products/seed/frontend/Dockerfile
+      # VITE_* build-arg contract — every `import.meta.env.VITE_*`
+      # referenced in code MUST be declared (a) as ARG in the frontend
+      # Dockerfile build stage and (b) as a key in this `args:` block,
+      # sourced from the repo-root `.env` via ${VITE_FOO} interpolation.
+      # `.env` is in .dockerignore (it has secrets); build-args bridge it
+      # into the Vite build process. Public-by-design: VITE_* ships to
+      # the browser bundle — only put PUBLIC config here. Carve-out:
+      # `VITE_BACKEND_API_URL` + `VITE_PRODUCT_SCHEMA` are factory-injected
+      # via `define:` in vite.config.factory.ts (no build-arg needed for
+      # those two). See KB § PATTERNS/containerization.md § VITE_* build-arg contract.
+      args:
+        VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-seed-frontend
     image: noctus-seed-frontend:dev
     ports:

@@ -15,6 +15,25 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+# ─── VITE_* build-arg contract ──────────────────────────────────────────
+# Every `import.meta.env.VITE_*` referenced in product or seed code must be
+# declared as ARG here AND as args: in the compose `frontend:` service,
+# sourced from `.env` via ${VITE_FOO} interpolation. `.env` itself stays
+# in .dockerignore (it has runtime secrets); build-args are the documented
+# bridge. See KB § PATTERNS/containerization.md § VITE_* build-arg contract.
+#
+# Note: `VITE_BACKEND_API_URL` + `VITE_PRODUCT_SCHEMA` are factory-injected
+# at compile time via `define:` in vite.config.factory.ts — no build-arg
+# needed for those two. All other VITE_* vars come from `.env` and require
+# the ARG → ENV bridge below.
+#
+# Public-by-design reminder: VITE_* vars ship to the browser bundle. Only
+# put PUBLIC config here (URLs, public/anon keys, feature flags). Server
+# secrets (service-role keys, signing keys) stay in non-VITE env vars and
+# are read by the backend at runtime via env_file.
+ARG VITE_CORE_URL=
+ENV VITE_CORE_URL=${VITE_CORE_URL}
+
 # ─── Layer 1: seed frontend packages (factory + lib aliases) ────────────
 # Copied first so changes to product code don't bust the seed cache layer.
 # Install their deps too so jiti/tailwind can resolve transitive packages

@@ -32,6 +32,12 @@ services:
     build:
       context: ../..
       dockerfile: products/erp-imobiliario/frontend/Dockerfile
+      # VITE_* build-arg contract — see KB § PATTERNS/containerization.md
+      # § VITE_* build-arg contract. Every VITE_* in code must be both ARG
+      # (in Dockerfile) and args: (here), sourced from `.env` via ${...}.
+      args:
+        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
+        VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-erp-imobiliario-frontend
     image: noctus-erp-imobiliario-frontend:dev
     ports:
