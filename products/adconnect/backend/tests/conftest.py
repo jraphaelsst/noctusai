@@ -46,6 +46,7 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
     MockUserResponse,
     AuthClient,
     bind_consent_module_to_mock,
+    bind_user_metadata,
 )
 
 
@@ -80,53 +81,35 @@ def bind_adconnect_user(
     email: str = "u@dist.com",
     extra: Optional[dict[str, Any]] = None,
 ) -> MockUserResponse:
-    """Re-bind the mock's `auth.get_user` to a user_metadata-rich MockUser.
+    """Re-bind the mock's `auth.get_user` to an AdConnect-shaped MockUser.
 
-    Replaces the byte-identical `_bind_user_metadata` helper that was
-    copy-pasted into 3 router test files (cart/orders/financial) and
-    structurally repeated in 3 more (admin/rewards/sellout).
+    Thin wrapper over `noctusai_lib.testing.bind_user_metadata` (Phase 2
+    seed-lib primitive) that maps AdConnect's product-specific vocabulary:
 
-    AdConnect's `auth_deps.get_current_user` reads:
-      - `user_metadata.role` → drives `require_role(...)`.
-      - `user_metadata.distributor_id` → exposed to routers as `user["distributorId"]`.
-      - `user_metadata.org_id` → exposed as `user["org_id"]`; admin routes filter by it.
+      - ``role`` (``customer`` / ``admin`` / ``owner``) → ``user_metadata.role``.
+      - ``distributor_id`` → ``user_metadata.extra["distributor_id"]``;
+        AdConnect's `auth_deps.get_current_user` surfaces it as
+        ``user["distributorId"]`` (camelCase JS-style).
+      - ``org_id`` defaults to `ORG_ID_BRAND` (the canonical test brand).
 
-    Args:
-      client_or_mock: either an `AuthClient` (the standard fixture yield)
-        or a raw `MockSupabaseClient`. Both shapes resolved transparently.
-      role: AdConnect product-native role — typically "admin" / "customer" /
-        "owner". Maps to `user_metadata["role"]`.
-      distributor_id: when set, populates `user_metadata["distributor_id"]`.
-        Auth_deps surfaces it as `user["distributorId"]`. Distributor-scoped
-        routes 403 when this is None.
-      org_id: brand-org UUID. Defaults to `ORG_ID_BRAND` (the canonical
-        AdConnect test brand). Pass `OTHER_ORG_ID` to exercise cross-org
-        isolation.
-      user_id / email / extra: passthrough to `MockUser`.
+    Distributor-scoped routes 403 when ``distributor_id`` is None.
+    Pass `OTHER_ORG_ID` to exercise cross-org isolation.
 
-    Returns the underlying `MockUserResponse` (in case a test wants to
-    extract `.user` for assertions).
+    Returns the underlying `MockUserResponse` (test code can access `.user`).
     """
-    mock_sb = (
-        client_or_mock.mock_supabase
-        if hasattr(client_or_mock, "mock_supabase")
-        else client_or_mock
-    )
     metadata: dict[str, Any] = {}
     if distributor_id is not None:
         metadata["distributor_id"] = distributor_id
     if extra:
         metadata.update(extra)
-    user = MockUser(
-        id=user_id or f"user-{distributor_id or 'admin'}",
-        email=email,
+    return bind_user_metadata(
+        client_or_mock,
         role=role,
         org_id=org_id,
+        user_id=user_id or f"user-{distributor_id or 'admin'}",
+        email=email,
         extra_metadata=metadata or None,
     )
-    response = MockUserResponse(user)
-    mock_sb.auth.get_user = MagicMock(return_value=response)
-    return response
 
 
 # ---------------------------------------------------------------------------

@@ -6,10 +6,28 @@ MockUser is parameterized to support all product role patterns:
 - ERP: org_id
 - Therapy: role + optional clinic_id
 - PF: org_id
+- AdConnect: role + org_id + extra_metadata (distributor_id)
+
+Helpers:
+- ``bind_user_metadata(mock_sb_or_client, *, user=None, **mock_user_kwargs)``
+  re-binds ``mock_sb.auth.get_user`` to a freshly-built ``MockUser``.
+  Generic primitive lifted from the AdConnect-specific ``bind_adconnect_user``
+  during ``adconnect-test-conftest-distributor-binding`` Phase 2 — N≥3
+  recurrence across 7+ product conftests of the inline shape::
+
+      mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser(...)))
+
+  Products that need product-specific defaults (role-name vocabulary,
+  claim-name mapping) wrap this in their own conftest, e.g.::
+
+      def bind_adconnect_user(client, *, role="customer", distributor_id=None, ...):
+          extra = {"distributor_id": distributor_id} if distributor_id else None
+          return bind_user_metadata(client, role=role, org_id=ORG_ID_BRAND, extra_metadata=extra)
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
+from unittest.mock import MagicMock
 
 
 class MockUser:
@@ -103,3 +121,67 @@ class AuthClient:
     def raw(self):
         """Return the underlying TestClient without auth headers."""
         return self._tc
+
+
+def bind_user_metadata(
+    mock_sb_or_client: Any,
+    *,
+    user: Optional[MockUser] = None,
+    role: Optional[str] = None,
+    org_id: Optional[str] = None,
+    clinic_id: Optional[str] = None,
+    noctus_role: Optional[str] = None,
+    org_role: Optional[str] = None,
+    user_id: Optional[str] = None,
+    email: str = "test@example.com",
+    extra_metadata: Optional[dict[str, Any]] = None,
+) -> MockUserResponse:
+    """Re-bind ``mock_sb.auth.get_user`` to return a fresh ``MockUser``.
+
+    Generic primitive lifted from the AdConnect-specific ``bind_adconnect_user``
+    helper (`adconnect-test-conftest-distributor-binding` Phase 2) so other
+    products can collapse the inline pattern::
+
+        mock_sb.auth.get_user = MagicMock(
+            return_value=MockUserResponse(MockUser(role=..., org_id=..., ...))
+        )
+
+    Args:
+      mock_sb_or_client: a ``MockSupabaseClient`` directly OR an
+        ``AuthClient``/object exposing ``.mock_supabase``. Both shapes
+        resolved transparently — saves callers an unwrap step.
+      user: pre-built ``MockUser``. If passed, all other ``MockUser``-shaping
+        kwargs are ignored. Use this when you need fine-grained control
+        (e.g. building user from a fixture factory).
+      role / org_id / clinic_id / noctus_role / org_role / user_id /
+        email / extra_metadata: passthrough to ``MockUser`` constructor.
+
+    Returns the underlying ``MockUserResponse`` (in case the caller wants
+    to access ``.user``).
+    """
+    mock_sb = (
+        mock_sb_or_client.mock_supabase
+        if hasattr(mock_sb_or_client, "mock_supabase")
+        else mock_sb_or_client
+    )
+    if user is None:
+        kwargs: dict[str, Any] = {"email": email}
+        if user_id is not None:
+            kwargs["id"] = user_id
+        if role is not None:
+            kwargs["role"] = role
+        if org_id is not None:
+            kwargs["org_id"] = org_id
+        if clinic_id is not None:
+            kwargs["clinic_id"] = clinic_id
+        if noctus_role is not None:
+            kwargs["noctus_role"] = noctus_role
+        if org_role is not None:
+            kwargs["org_role"] = org_role
+        if extra_metadata is not None:
+            kwargs["extra_metadata"] = extra_metadata
+        user = MockUser(**kwargs)
+
+    response = MockUserResponse(user)
+    mock_sb.auth.get_user = MagicMock(return_value=response)
+    return response
