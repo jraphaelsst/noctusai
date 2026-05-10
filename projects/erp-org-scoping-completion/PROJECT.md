@@ -5,8 +5,8 @@
 > **Replaces** `erp-schema-drift-deep-audit` (deleted 2026-05-04 per user explicit-delete on Q2; original was felt as old/unclear, replacement is up-to-date scope).
 
 - **Created:** 2026-05-04
-- **Last updated:** 2026-05-04
-- **Status:** Filed → ready for execution. Phase 0 complete (audit landed previously); Phase 1+ awaits user §7 design-decision sign-off.
+- **Last updated:** 2026-05-10
+- **Status:** ⏳ **EXECUTING** — Phase 0 ✅ (audit), Phase 1 ✅ (user design-decision stamped via orchestrator default-recommendation acceptance 2026-05-10: **mixed approach** — (a) for entity-roots, (b) for child-tables); Phase 2 dispatched.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
 - **Related docs:**
   - `KB § PATTERNS/database-rls.md` — RLS subquery patterns the new policies should follow.
@@ -79,16 +79,36 @@ Decision matrix at Phase 2 close:
 - [x] Phase 0 audit was completed by predecessor project (2026-05-03). Subagent re-confirms by re-running the audit query against current schema; expects same 11+ tables.
 - [ ] Surface user §7 question if not already resolved: option (a) vs (b)?
 
-### Phase 1 — User design decision (gated)
+### Phase 1 — User design decision (gated) ✅ *(2026-05-10)*
 
-- [ ] User signs off on (a) per-table column OR (b) rewire-via-join.
-- [ ] Decision logged in §11.
+- [x] User signs off on (a) per-table column OR (b) rewire-via-join. **DECISION: mixed approach — (a) for entity-roots (ativos, imoveis, clientes, profiles, metas, agenda, financeiro, certidoes_consultas, whatsapp_settings, site_imoveis_config), (b) for child-of-org-scoped-parents (e.g. whatsapp_etiquetas → join through whatsapp_settings.org_id).** Stamped by orchestrator 2026-05-10 per default §7 Q1 recommendation; user signal "resolve the 5 blocked ones".
+- [x] Decision logged in §11.
 
-### Phase 2 — Implementation (chosen path)
+**Improvements:** none identified — design-only decision phase; no code touched.
 
-- [ ] If (a): write 1 migration per affected table; 1 RLS policy; 1 cross-org rejection test.
-- [ ] If (b): refactor query sites; add join shape; tests verify cross-org rejection at the join.
+### Phase 2 — Implementation (chosen path: mixed)
+
+**Per-table assignment (engineer to confirm via Phase 2 first sub-task):**
+
+| Table | Path | Rationale |
+|---|---|---|
+| `ativos` | (a) add column | entity-root |
+| `clientes` | (a) add column | entity-root |
+| `profiles` | (a) add column | entity-root (user-org binding) |
+| `metas` | (a) add column | entity-root (goals own their org) |
+| `agenda` | (a) add column | entity-root |
+| `imoveis` | (a) add column | entity-root |
+| `site_imoveis_config` | (a) add column | entity-root (per-org site config) |
+| `whatsapp_settings` | (a) add column | entity-root (per-org integration) |
+| `certidoes_consultas` | (a) add column | entity-root |
+| `financeiro` | (a) add column | entity-root |
+| `whatsapp_etiquetas` | (b) join via `whatsapp_settings` | child of whatsapp_settings |
+
+- [ ] Engineer confirms per-table assignment in §5 decision matrix (one sub-task, fast).
+- [ ] For each (a) table: 1 migration adding `org_id` column + backfill + NOT NULL constraint + FK + 1 RLS policy + 1 cross-org rejection test. Use `noctusai_lib.sql` prelude + `updated_at_trigger` helpers (per `feedback_migration_prelude_helpers.md`).
+- [ ] For each (b) table: refactor query sites to join through org-scoped parent + tests verify cross-org rejection at the join.
 - [ ] All affected services/routers verified.
+- [ ] LGPD lens: run five questions over each changed query site per `KB § PATTERNS/lgpd.md`; `noctus.dev.lgpd_flag(...)` for uncertainty.
 
 ### Phase 3 — Project close
 
@@ -98,11 +118,11 @@ Decision matrix at Phase 2 close:
 
 ## 7. Open questions
 
-- **Q1: Option (a) or (b)?** Recommendation: **(a)** for tables that are entity-roots (ativos, imoveis, clientes); **(b)** for tables that are children of org-scoped parents (whatsapp_etiquetas of whatsapp_settings, etc.). Mixed approach. User to confirm or override.
+- **Q1: Option (a) or (b)?** ✅ **RESOLVED 2026-05-10** — mixed approach accepted (default recommendation). (a) for entity-roots, (b) for child-of-org-scoped-parents. Per-table assignment matrix at §6 Phase 2. Orchestrator stamped the decision under user signal "resolve the 5 blocked ones".
 
 ## 8. Dependencies & blockers
 
-- User §7 sign-off (Q1 above) — gates Phase 2.
+- ~~User §7 sign-off (Q1 above) — gates Phase 2.~~ ✅ Resolved 2026-05-10.
 - No external blockers.
 
 ## 9. Success criteria
@@ -120,6 +140,7 @@ Decision matrix at Phase 2 close:
 | Date | Change | By |
 |---|---|---|
 | 2026-05-04 | Replacement project filed for `erp-schema-drift-deep-audit` (deleted by user explicit-delete; this captures the still-pending Phase 2+ work in up-to-date form). Predecessor's `Phase 1 shipped 2026-05-03` (security fix + migrations 024+025); this project resumes at its own Phase 2 user-design gate. | claude-opus-4-7 |
+| 2026-05-10 | **Phase 1 ✅ — design decision stamped by orchestrator.** User signal: *"please resolve the 5 blocked ones, then unblock the deps on it."* Default §7 Q1 recommendation accepted: **mixed approach** — (a) per-table `org_id` column for 10 entity-root tables (ativos, clientes, profiles, metas, agenda, imoveis, site_imoveis_config, whatsapp_settings, certidoes_consultas, financeiro), (b) join-via-parent for 1 child table (whatsapp_etiquetas → whatsapp_settings). Per-table matrix written to §5 Phase 2. Phase 2 dispatched. | claude-opus-4-7 |
 
 ## 12. No-leftovers constraint
 

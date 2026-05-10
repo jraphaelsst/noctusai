@@ -5,8 +5,8 @@
 > **Write for a zero-context reader.** §1 inlines the situation; §10 commands are copy-paste ready.
 
 - **Created:** 2026-05-03
-- **Last updated:** 2026-05-03
-- **Status:** 🅿️ **PARKED — awaiting user reactivation.** Two pilot deferrals bundled here as a single follow-up; reactivate when ready to put the scheduling pilot in front of real therapists.
+- **Last updated:** 2026-05-10
+- **Status:** ⏳ **EXECUTING (Phase 0+1+2 dispatched 2026-05-10)** — orchestrator-reactivated under user signal "resolve the 5 blocked ones, then unblock the deps on it". Phase 0 (state audit) + Phase 1 (KB OAuth runbook) + Phase 2 (route + nav wiring) are engineer-doable now. **Phase 3 (live OAuth + booking QA) STILL BLOCKED on user** — needs Google Cloud Console OAuth client creation + `THERAPY_GOOGLE_CLIENT_ID` + `THERAPY_GOOGLE_CLIENT_SECRET` env vars. Engineer surfaces a copy-paste runbook in Phase 1; user runs through it after Phase 2 ships.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `therapy-scheduling-pilot-rollout` — single-product (therapy) scope; lives at `products/therapy-platform/projects/<slug>/`. Intent `rollout` per `KB § PATTERNS/project-execution.md §8` (the pilot code is shipped; this project lands the production-readiness pieces).
 - **Related docs:**
@@ -195,3 +195,4 @@ cd products/therapy-platform/frontend && npx vite build
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | **Project scaffolded** at `therapy-scheduling-pilot` close — bundles two deferrals (manual GCal QA setup + frontend routing/nav additions) into one follow-up per user instruction. Status: PARKED, awaits reactivation when therapist-facing rollout is wanted. Pilot's three improvements (`update_event` to seed Protocol, `updated_payloads` to MockSupabaseClient, in-place reschedule refactor) were applied inline before this scaffold and are validated by 34 pilot tests + 32 seed calendar tests + 7 mock-tracking tests, all green. | Claude Opus 4.7 |
+| 2026-05-10 | **Reactivated by orchestrator** under user signal "resolve the 5 blocked ones, then unblock the deps on it". Engineer dispatched with the audit + runbook + route-and-nav scope as one brief — all agent-doable. The downstream live-QA round stays explicitly blocked on user (needs Google Cloud Console OAuth client + redirect URI + scopes + env-var population — no agent can do this); engineer's runbook deliverable lets user complete it in a few minutes after the engineer's branch lands. Status flipped from PARKED to EXECUTING. | claude-opus-4-7 |

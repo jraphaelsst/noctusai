@@ -1211,3 +1211,135 @@ Per the recurrence rule, **N=3+ MUST formalize**. The brief-clause approach has 
 - **Alternative venv:** use `dev_team/.venv` editable-installed against the worktree (engineer 3's recovery)
 
 **The rule.** Dispatch briefs whose scope touches `seed/lib/backend/` MUST include a "Worktree-venv guidance" paragraph specifying one of the three workarounds. Without it, engineer either gets `ModuleNotFoundError` (best case — surfaces immediately) or — worse — passes tests against the main repo's older surface (silent failure masking real test gaps).
+
+---
+
+## 18. Wave-based dispatch + pause-on-dependency + scoped-team economics (NEW 2026-05-10)
+
+The branching-first rule (§16-§17) covers *how* parallel engineers run; this section codifies *how the orchestrator sizes, sequences, and reshapes the team layout when work surfaces dependencies mid-flight.* Three rules; all three were articulated by the user during the containerization-backlog closure orchestration.
+
+### 18.1 — Pause-on-dependency: dispatch-to-unblock, resume
+
+**The shape.** An engineer mid-flight discovers their chunk needs something built first — a missing helper, an unmade decision, a primitive that doesn't yet exist, a downstream contract that hasn't been authored. The engineer **surfaces the gap, does not absorb it**. The orchestrator:
+
+1. **Pauses** the discovering chunk (engineer hands back what they've done, captures state).
+2. **Dispatches a focused dependency team** scoped exactly to the missing piece.
+3. **Resumes the original chunk** once the dependency lands and is merged.
+
+The dispatched dependency team is itself a normal engineer dispatch (briefed, scoped, isolated worktree). The architect decides team boundaries; engineers stay within their scope.
+
+**Why engineers don't absorb dependencies into their own scope.**
+- Brief sprawl: the engineer's brief no longer matches what they shipped — quality calibration breaks down.
+- Hidden context loss: the engineer who builds the dependency may not be the right one (different expertise needed).
+- Merge conflicts: a single engineer doing two unrelated chunks blocks both behind a serial commit.
+- Methodology drift: the "engineer is an executor of focused chunks" rule from §1 weakens silently.
+
+**Engineer-side protocol when a gap is discovered:**
+
+```
+1. STOP work on the in-flight task.
+2. Report to orchestrator with: (a) what's missing, (b) why my current chunk depends on it,
+   (c) a suggested team boundary (one engineer? same brief? new brief shape?).
+3. Wait for orchestrator decision. Do NOT silently expand scope.
+4. Resume when orchestrator signals the dependency has landed + merged.
+```
+
+**Architect-side protocol when receiving a pause-signal:**
+
+```
+1. Verify the gap is genuine (read the bodies, run the scanner — §17.7 discipline).
+2. Decide team boundary: same engineer (rare — only if it's a 5-min lift), new focused engineer,
+   or escalate (the gap reveals a larger missing piece that warrants its own project).
+3. Dispatch the dependency team with a focused brief.
+4. When dependency lands, dispatch the paused engineer's continuation as a fresh brief
+   (with the now-existing dependency as a "given") OR signal resume-in-place if the engineer's
+   worktree is still warm.
+5. Log the pause-and-resume event in `findings.md` under "Knowledge pieces (durable patterns)".
+```
+
+**The pause-signal in a brief.** Every engineer dispatch brief should include a clause empowering the engineer to surface gaps:
+
+> ## Surface dependencies, don't absorb them
+>
+> If during execution you discover this chunk depends on something that doesn't yet exist (a helper, a decision, a primitive, a contract): STOP work on the dependent piece, report to the orchestrator with (a) what's missing, (b) why your chunk depends on it, (c) a suggested team boundary. Do NOT silently expand your scope to build the dependency yourself. The orchestrator decides team boundaries.
+
+**Anti-patterns.**
+- **Engineer absorbs the dependency into their own brief.** Brief sprawl + hidden context loss + merge conflict risk + methodology drift.
+- **Architect ignores the pause signal and tells the engineer to "just do it."** The engineer is now the wrong person for the dependency, and the original chunk's quality calibration is broken.
+- **Architect dispatches the dependency team but forgets to resume the paused engineer.** Silent-error shape — the paused chunk evaporates. Log resume-signals in findings.md so the loop closes.
+
+### 18.2 — Scoped-and-focused beats broad-brief: tokens trade for wall-clock, never quality
+
+**The principle.** When the orchestrator decides team count, the default direction is **split rather than combine**. A 200-LoC focused brief produces better work than a 2000-LoC broad brief, even though it costs more tokens (more dispatches, more setup, more context-loading per engineer).
+
+**Token cost is explicitly acceptable.** Quality is the constraint, not budget. The user-stated formulation:
+
+> *"I don't mind spending a bit more dispatching scoped and focused teams for more speed WITHOUT LOSING QUALITY."*
+
+**Why focused beats broad:**
+- **Context fits.** A scoped brief lets the engineer hold every file they touch in working memory.
+- **Verification is tractable.** Fewer files = clearer "did this work?" gate (pytest + build + lint pass on a small surface is provable; on a sprawling surface it requires careful audit).
+- **Merge surface stays small.** Parallel dispatches conflict less when each engineer touches a tight file set.
+- **Recovery is cheap.** If a focused brief fails, re-dispatch costs one engineer's setup; if a broad brief fails, recovery costs days.
+
+**How the orchestrator splits.** The cuts follow the dependency graph + the file-surface:
+- **File-surface separator:** group chunks that touch the same file into one brief; split chunks that don't.
+- **Dependency separator:** chunks that depend on each other can be sequenced (one brief, ordered sub-tasks) or split across waves; chunks that don't depend can run parallel.
+- **Concern separator:** different mental models = different briefs (a Dockerfile-shape brief and a CI-workflow brief don't share much; even if both touch "containerization", give them to separate engineers).
+
+**Calibration heuristic.** When in doubt about combining two related chunks into one brief: **split**. The cost of an extra dispatch is bounded (one engineer's setup time + tokens); the cost of a sprawling brief that misses a deliverable is unbounded (the gap doesn't show up until later, recovery is expensive).
+
+**Anti-patterns.**
+- **"While I'm at it..." absorption.** Engineer's brief grows to cover an adjacent concern because "it's right there." Brief drifts from acceptance criteria; quality calibration breaks.
+- **Combining concerns because dispatch is "expensive".** Token cost is not the constraint; quality is. The user has explicitly authorized higher token spend in exchange for higher quality.
+- **One mega-engineer for the whole project.** Defeats the purpose of orchestration — at that point the orchestrator IS the engineer, with no parallelism leverage.
+
+### 18.3 — Wave-based execution: group by dependency depth, gate Wave N+1 on Wave N merge
+
+**The shape.** The orchestrator decomposes the work into a **dependency-depth-ordered DAG**:
+- Wave 1 = all chunks that depend on nothing in the current batch.
+- Wave 2 = all chunks that depend only on Wave 1 outputs.
+- Wave N = all chunks that depend only on chunks in waves 1..N-1.
+
+Within a wave, all chunks dispatch in parallel (single Task turn, multiple Agent tool calls). Wave N+1 dispatches **only after every chunk in Wave N has merged** (not just engineer-reported — actually FF-merged into the orchestrator's branch).
+
+**Why the merge-gate, not the report-gate.** Engineer report ≠ merged code. A report says "I shipped X"; the merge says "X is now the base for Wave N+1's worktree." If Wave N+1 dispatches against pre-merge state, those engineers see stale base (the §16.7 problem multiplied across all of Wave N+1).
+
+**The wave-1 dispatch checklist:**
+```
+[ ] Dependency DAG sketched (per-chunk: what files? what other chunks does this depend on?)
+[ ] Wave 1 set identified (chunks with no in-batch dependencies)
+[ ] File-collision audit (any two Wave 1 chunks touching the same file? split or sequence)
+[ ] Per-engineer brief drafted (focused, with §16.7 preamble + §17.6 + §18.1 surface-gap clause)
+[ ] Single Task turn with N Agent tool calls (true parallelism)
+[ ] findings.md scaffolded at project root
+```
+
+**The between-waves protocol:**
+```
+[ ] All Wave N engineers reported back
+[ ] Architect reads each engineer's findings (return-as-text per §17.6.1)
+[ ] Architect transcribes findings into project's findings.md
+[ ] Architect FF-merges each engineer's branch into orchestrator branch
+[ ] Architect runs verification (pytest + docker compose config + builds) on merged state
+[ ] If any Wave N chunk surfaced a pause-on-dependency signal: dispatch dependency engineer
+    BEFORE Wave N+1 (the dependency becomes part of Wave N's effective close)
+[ ] Wave N+1 dispatched
+```
+
+**Why the architect verifies between waves.** Catching regressions at wave boundary is cheap (one wave's work to bisect); catching them at project close is expensive (N waves to bisect). The wave boundary is the natural quality gate.
+
+**Anti-patterns.**
+- **Dispatching all waves at once.** Wave 2 engineers see pre-merge base — same regression shape as the §16.7 "worktree from main" problem multiplied.
+- **Skipping the between-wave verification.** Regressions land in the orchestrator branch; the next wave sees them as "the way things are" and adapts to the broken state.
+- **Treating engineer-report as the gate.** Reports are a status signal, not a quality gate. The merge + verification is the gate.
+- **Forcing parallel when chunks are truly serial.** Two chunks where B depends on A's output are not parallel even if they "feel" related. Sequence them across waves.
+
+**Sibling rules** — this section composes with:
+- §16 (worktree-per-engineer mechanics) — wave-1 engineers each get their own worktree.
+- §16.7 (worktree-base verification preamble) — every wave's briefs carry it.
+- §17 (findings.md per project) — orchestration findings live there.
+- §17.6 + §17.6.1 (engineer-brief Write authorization + return-as-text fallback) — wave briefs carry both clauses.
+- §17.7 (read-bodies-before-dispatch) — wave planning includes the body-read audit.
+
+**Three-way-synced 2026-05-10**: this section (§18) + `CLAUDE.md` branching-first orchestration bullet (pointer extension) + `feedback_wave_dispatch_and_pause_on_dependency.md` memory entry.

@@ -8,14 +8,13 @@
 > questions** so when re-activated, the next agent inherits the full
 > reasoning instead of a blank slate.
 >
-> **Status: Concept — interrogation pending. Do NOT start work
-> without explicit user reactivation.** §6 is intentionally empty.
-> The §7 questions are the unblock list; do not pretend they're
-> resolved.
+> **Status: ⏳ EXECUTING — design questions resolved 2026-05-10.**
+> §7 Q1-Q4 stamped by orchestrator (defaults accepted under user
+> signal "resolve the 5 blocked ones"); §6 drafted. Phase 0 dispatched.
 
 - **Created:** 2026-05-02
-- **Last updated:** 2026-05-02
-- **Status:** Concept — interrogation pending. §1, §2, §5 (sketch), §7 populated; §6 intentionally empty.
+- **Last updated:** 2026-05-10
+- **Status:** ⏳ EXECUTING — §7 Q1-Q4 ✅ resolved (orchestrator defaults stamped); §6 drafted 2026-05-10; Phase 0 dispatched.
 - **Owner / stakeholders:** Raphael · future zero-context execution agent
 - **Related docs:** `CLAUDE.md`; `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`; `templates/PROJECT-TEMPLATE.md`; **interlocks with** `projects/methodology-extraction/PROJECT.md` Phase 5 (which currently uses rough token estimates — this project's token-tracking tool would let Phase 5 measure precisely); **interlocks with** `projects/methodology-mirror-and-workspaces/PROJECT.md` (which would feed measured per-workspace token cost into the ledger if and when it ships).
 - **Project slug:** `project-history-ledger` — cross-product / platform-infra scope, lives at root `projects/`.
@@ -238,15 +237,56 @@ numbers.
 
 ## 6. Implementation phases
 
-**Intentionally empty.** §7 must resolve first. The next agent's
-first move on reactivation is to interrogate per §7, then draft §6.
+**Drafted 2026-05-10 after §7 Q1-Q4 resolution** (orchestrator-stamped defaults under user signal "resolve the 5 blocked ones"). Each phase ≤ ½ session.
+
+### Phase 0 — Scaffold + tokenizer
+
+- [ ] Create `project-history/` directory at repo root (per Q1=B).
+- [ ] Create `project-history/README.md` (1-page convention doc — points back to this PROJECT.md, explains NDJSON format + columns).
+- [ ] Create `project-history/ledger.ndjson` (empty marker; gitignore-tracked-as-existing).
+- [ ] Create `project-history/PROJECT-HISTORY.md` (placeholder header — rendering filled in Phase 3).
+- [ ] Pick tokenizer: **`tiktoken`** for static counting (Anthropic-compatible cl100k_base encoding). Install via `pip install tiktoken` to `mcp/noctusai/.venv/`.
+- [ ] Smoke-test tokenizer: count tokens of one archived `PROJECT.md` file; confirm sane number.
+
+### Phase 1 — Schema + writer
+
+- [ ] `mcp/noctusai/tools/noctus/dev/history.py` — MCP tool `noctus.dev.history_record(project_path, status_at_close, summary_md, review_md, outcome_signals)` that:
+  - Reads the PROJECT.md + improvements.md + proposals/*.md from `project_path`.
+  - Static-tokenizes each (per Q3=I).
+  - Walks `git log` for the project's commits (best-effort via folder-name grep in commit messages) → counts code-delta tokens.
+  - Writes a single NDJSON record (per Q2=c) with the Q4 standard field set: slug, scope, status_at_close, dates {created, closed}, phases [{name, status, tokens?}], short_summary, short_review, token_count {…}, outcome_signals.
+  - Appends to `project-history/ledger.ndjson`.
+- [ ] Pydantic record schema for type-safety (sibling of `mcp/noctusai/tools/noctus/dev/archive.py`).
+- [ ] Unit tests at `mcp/noctusai/tests/test_history.py` — record-shape, idempotency on re-run, append-not-overwrite, tokenizer-call-counted.
+
+### Phase 2 — Close-workflow integration
+
+- [ ] Amend `noctus.dev.archive` to **optionally** call `noctus.dev.history_record` first (when invoked with `mode="project"`, default-on; can opt-out with flag). Order: stamp ledger → then git-mv to archive/.
+- [ ] Update `KB § PATTERNS/project-execution.md § 11.2` to mention the ledger-stamp side-effect.
+- [ ] Update `feedback_archive_system.md` memory entry to mention the ledger.
+
+### Phase 3 — Renderer
+
+- [ ] Script `scripts/render-project-history.py` — reads `ledger.ndjson`, emits Markdown table to `project-history/PROJECT-HISTORY.md` sorted by closed_at DESC. Idempotent.
+- [ ] Add to pre-commit hook (alongside `update-kb-counts.py`) — regenerate on commit if ledger.ndjson changed.
+
+### Phase 4 — Backfill from archive/ (optional)
+
+- [ ] Walk `archive/projects/*/*/PROJECT.md` and stamp ledger records for past archives (`status_at_close="historical"` flag).
+- [ ] Spot-check rendered PROJECT-HISTORY.md against `git log` for completeness.
+
+### Phase 5 — Close
+
+- [ ] Tests green; render verified; archive system updated.
+- [ ] `noctus.dev.archive` this very project (which stamps its own ledger entry — meta!).
 
 ---
 
-## 7. Open questions (the unblock list)
+## 7. Open questions — ✅ Q1-Q4 resolved 2026-05-10 (orchestrator-stamped defaults)
 
-Each question paired with a recommendation. The user explicitly
-deferred answering — do NOT pretend they're resolved.
+**User signal:** *"please resolve the 5 blocked ones, then unblock the deps on it"* — orchestrator stamped each recommendation as the resolution. User can override later by amending §6.
+
+Each question paired with a recommendation, now marked with its resolution.
 
 1. **Where does the canonical ledger live on disk?**
    - **(A)** repo root: `PROJECT-HISTORY.md` (human view) + `.project-history.json` (data)
@@ -412,3 +452,4 @@ When this project ships, the user can:
 | Date | Change | By |
 |---|---|---|
 | 2026-05-02 | **Project filed.** User directive: *"also lets add a historical change log globally. This must contain a short-phrased summary of closed and deleted projects, the steps in a short review, and its token count. So for that, we're gonna have to add a token tracking mechanism to our methodology, so projects and steps get their counts. The idea of this is to have documented a historical timeline of the project's evolution."* + *"this change log project has to be filed as a project. We're gonna come back here to refine and work on it."* + *"for future ai training that im thinking of, so we can predict cost-efficiency and already proven solutions x cost"*. Filed at root `projects/project-history-ledger/` (cross-product / platform-infra scope). §1-§5 + §7 + §10 populated; §6 intentionally empty pending §7 resolution + user reactivation. **Interlock noted with `methodology-extraction` Phase 5** — that phase needs precise per-turn token counts and currently uses rough estimators; this project's token tool would replace them. | Claude Opus 4.7 |
+| 2026-05-10 | **§7 Q1-Q4 resolved (orchestrator-stamped defaults)** under user signal "resolve the 5 blocked ones". **Decisions**: Q1=B (dedicated `project-history/` dir at repo root), Q2=c (NDJSON append-only), Q3=I (static tokens via tiktoken; dynamic deferred), Q4=standard fields (slug + scope + status_at_close + dates + phases + summary + review + token_count + outcome_signals). §6 drafted: Phase 0 (scaffold + tokenizer) → Phase 1 (schema + writer) → Phase 2 (close-workflow integration) → Phase 3 (renderer) → Phase 4 (backfill, optional) → Phase 5 (close). Phase 0 dispatched. | claude-opus-4-7 |

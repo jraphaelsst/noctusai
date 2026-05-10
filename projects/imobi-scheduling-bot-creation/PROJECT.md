@@ -6,12 +6,12 @@
 > **Write for a zero-context reader.** Inline context in §1, quote the user in §2, name files with paths in §5, pair every §7 Open Question with an evidence-backed recommendation, make §10 commands copy-paste ready.
 
 - **Created:** 2026-05-03
-- **Last updated:** 2026-05-03
-- **Status:** Design captured → Phase 0 ready (audit + slug confirmation must precede any scaffold)
+- **Last updated:** 2026-05-10
+- **Status:** ⏳ **EXECUTING** — Phase 0 design decisions stamped by orchestrator 2026-05-10 (defaults accepted under user signal "resolve the 5 blocked ones"); Phase 0 (audit) + Phase 1 (scaffold) dispatched.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Related docs:** `KB § GUIDES/new-product.md` (canonical product creation guide), `KB § 02-LANDSCAPE.md` (existing products + ports), `projects/whatsapp-seed-absorption/PROJECT.md` (this product is its **first consumer**), `projects/llm-tool-call-audit/PROJECT.md` (this product is its **first consumer**), `projects/scheduling-engine-seed/PROJECT.md` (this product is its **first consumer**), `projects/mcp-server-expansion/PROJECT.md` (this product is the **first MCP business-logic-tool client**), templates at `templates/PROJECT-TEMPLATE.md` + `templates/product-seed/`.
 - **Project slug:** `imobi-scheduling-bot-creation` — cross-cutting "not-yet-a-product" project per `KB § PATTERNS/project-execution.md §1` (the work itself creates the product; lives at root `projects/<slug>/` until the product exists, then promotes to `products/<product-slug>/projects/`).
-- **Target product slug:** `imobi-scheduling` (proposed; **OPEN QUESTION #1** — user confirms or renames before Phase 1).
+- **Target product slug:** `imobi-scheduling` ✅ confirmed 2026-05-10 (orchestrator-stamped default).
 
 ---
 
@@ -196,12 +196,12 @@ OPENAI_MODEL=gpt-4o-mini
 
 ### Phase 0 — Audit + decisions
 
-- [ ] Confirm target product slug (Q1).
-- [ ] Confirm port allocation (Q2 — pick a number under `KB § 05-INFRASTRUCTURE.md` rules).
-- [ ] Decide frontend yes/no (Q3).
-- [ ] Decide RLS shape (single-agency vs. multi-tenant).
-- [ ] Confirm dependency order: which absorption-batch seed projects must complete before which phase here. **Recommended:** Phase 1 (scaffold) waits on **none**. Phases 5+ depend on the seed projects landing.
-- [ ] Read sibling repo end-to-end for any product-domain detail not yet captured (validation evidence). After this read, sibling repo is **read-only reference for the duration of this project**; no leftovers post-completion.
+- [x] Confirm target product slug (Q1). ✅ **`imobi-scheduling`** (orchestrator-stamped 2026-05-10).
+- [ ] Confirm port allocation (Q2 — pick a number under `KB § 05-INFRASTRUCTURE.md` rules). **Engineer picks next available; logs in §11.**
+- [x] Decide frontend yes/no (Q3). ✅ **DEFER frontend** (WhatsApp-only v1; admin UI in a follow-up project) — orchestrator-stamped 2026-05-10.
+- [x] Decide RLS shape (single-agency vs. multi-tenant). ✅ **single-agency v1** (multi-tenant is a refactor when a second agency arrives) — orchestrator-stamped 2026-05-10.
+- [x] Confirm dependency order: Phase 1 (scaffold) waits on **none**. Phases 5+ depend on the seed projects landing — **all 4 substrate seed projects shipped** (whatsapp + chatbot + llm-tool-audit + scheduling-engine + Calendar/Maps). Phases 5-8 are unblocked. ✅ orchestrator-stamped 2026-05-10.
+- [ ] Read sibling repo `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/` end-to-end for any product-domain detail not yet captured (validation evidence). After this read, sibling repo is **read-only reference for the duration of this project**; no leftovers post-completion. **Engineer's audit deliverable.**
 
 ### Phase 1 — Scaffold the product
 
@@ -308,13 +308,13 @@ OPENAI_MODEL=gpt-4o-mini
 
 ---
 
-## 7. Open questions
+## 7. Open questions — ✅ Q1-Q5 resolved 2026-05-10 (orchestrator-stamped defaults)
 
-1. **Product slug?** Proposed: `imobi-scheduling`. Alternatives: `imobi-media-scheduling`, `realty-content-scheduling`. Decided before Phase 1 (it's the most-painful-to-rename decision in the whole project). User decides.
-2. **Port allocation?** Pick from `KB § 05-INFRASTRUCTURE.md` available pool. Decided before Phase 2.
-3. **Frontend in v1?** Recommendation: **defer** — primary interface is WhatsApp; admin UI can land in a follow-up project once the bot is in steady state. Decided before Phase 13.
-4. **Single-agency or multi-tenant?** Recommendation: **single-agency v1** (mirrors sibling); multi-tenant is a refactor when a second agency arrives. Decided before Phase 3 (RLS shape).
-5. **Standalone or paired with `erp-imobiliario`?** Recommendation: **standalone product** but shares conventions with erp-imobiliario; cross-product data (e.g., property catalog) is a future integration concern. Decided before Phase 0 closes.
+1. **Product slug?** ✅ **`imobi-scheduling`** confirmed 2026-05-10 (orchestrator-stamped default).
+2. **Port allocation?** ⏳ **Engineer picks next available** from `KB § 05-INFRASTRUCTURE.md` during Phase 0 audit; logs in §11. (No user decision needed — it's a registry pick.)
+3. **Frontend in v1?** ✅ **DEFER** — WhatsApp-only v1; admin UI is a follow-up project. Orchestrator-stamped 2026-05-10.
+4. **Single-agency or multi-tenant?** ✅ **single-agency v1** (multi-tenant is a refactor when a second agency arrives). Orchestrator-stamped 2026-05-10.
+5. **Standalone or paired with `erp-imobiliario`?** ✅ **standalone product** — shares conventions with erp-imobiliario; cross-product data is a future integration concern. Orchestrator-stamped 2026-05-10.
 6. **Localization in v1 (pt-BR + en)?** Recommendation: **pt-BR only**; localization framework is a future seed concern. Decided in Phase 6.
 7. **LGPD posture?** Run the five questions (`KB § PATTERNS/lgpd.md`) over conversation message storage + tool audit rows. Recommendation: conversation messages are PII (phone, name, possibly location); tool audit rows hold the same; document basis + retention in Phase 12 KB doc. Apply `noctus.dev.lgpd_flag(...)` if uncertain.
 8. **Bot's WhatsApp number?** Operational decision; needs WAHA session provisioning. Decided before Phase 5.
@@ -368,6 +368,7 @@ python mcp/noctusai/cli.py --review
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | Initial project drafted; user confirmed bot becomes a noc product implemented fresh on our patterns; consumes the absorption-batch seed projects; sibling-folder deletion safe-after-completion is part of success criteria. | claude-opus-4-7 |
+| 2026-05-10 | **Phase 0 design decisions stamped by orchestrator** under user signal "resolve the 5 blocked ones". Defaults accepted: Q1 slug `imobi-scheduling`; Q3 frontend deferred (WhatsApp-only v1); Q4 single-agency RLS; Q5 standalone product. Q2 port allocation deferred to engineer's Phase 0 audit (registry pick, no user decision needed). All 4 substrate seed projects confirmed shipped — Phases 5-8 dependency unblocked. Phase 0 (sibling audit) + Phase 1 (scaffold) dispatched. | claude-opus-4-7 |
 
 ---
 
