@@ -1,16 +1,62 @@
-venv/
-.venv/
-node_modules/
-__pycache__/
-*.pyc
+# Python
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/htmlcov/
+**/.coverage
+**/.coverage.*
+**/coverage.xml
+**/*.egg-info/
+
+# Node
+**/node_modules/
+**/.npm/
+**/.yarn/
+**/dist/
+**/build/
+**/.next/
+**/.cache/
+**/.parcel-cache/
+
+# Editor + OS
+**/.idea/
+**/.vscode/
+**/.DS_Store
+**/*.swp
+**/*.swo
+
+# Git + CI artifacts
 .git/
-.env
-.env.local
-.DS_Store
-*.swp
-*.swo
+.github/
+.gitignore
+
+# Claude harness state
 .claude/
-dist/
-build/
-.idea/
-.vscode/
+
+# Secrets — NEVER copy into an image
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Build / test reports
+**/playwright-report/
+**/test-results/
+
+# Logs
+**/*.log
+**/logs/
+
+# Generated docs
+**/docs/_build/
+
+# Project + planning docs (shouldn't ship in images)
+projects/
+features/
+archive/

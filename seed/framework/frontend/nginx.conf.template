@@ -1,5 +1,5 @@
 server {
-    listen 8123;
+    listen ${PORT};
     root /usr/share/nginx/html;
     index index.html;
 

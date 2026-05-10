@@ -1,0 +1,73 @@
+# adconnect per-product compose fragment.
+#
+# Generated from the canonical pattern at products/seed/docker-compose.yml.
+# Use standalone (this product only) or orchestrated by repo-root compose
+# (all products together — root file uses `include:` to pull this in).
+#
+# Build context is `../..` so seed/ + product code are both reachable.
+
+services:
+  adconnect-backend:
+    build:
+      context: ../..
+      dockerfile: products/adconnect/backend/Dockerfile
+    container_name: noctus-adconnect-backend
+    image: noctus-adconnect-backend:dev
+    env_file:
+      - ../../.env
+    ports:
+      - "8007:8007"
+    networks:
+      - noctus-net
+      - adconnect-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8007/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  adconnect-frontend:
+    build:
+      context: ../..
+      dockerfile: products/adconnect/frontend/Dockerfile
+    container_name: noctus-adconnect-frontend
+    image: noctus-adconnect-frontend:dev
+    ports:
+      - "8130:8130"
+    depends_on:
+      adconnect-backend:
+        condition: service_healthy
+    networks:
+      - adconnect-net
+    restart: unless-stopped
+
+
+  adconnect-tunnel:
+    # Cloudflare quick-tunnel — ephemeral *.trycloudflare.com URL pointing
+    # at this product's backend. Profile-gated so it's opt-in (cost: one
+    # extra container; benefit: webhook/OAuth callback testing without a
+    # full deploy). Pattern from noctusai-youtube-crawler.
+    image: cloudflare/cloudflared:latest
+    container_name: noctus-adconnect-tunnel
+    # `--protocol http2` forces TCP from the start — see core/docker-compose.yml
+    # tunnel block for the full rationale (UDP/QUIC fails behind NATs after
+    # ~5min and cannot re-register the quick-tunnel hostname).
+    command: tunnel --no-autoupdate --protocol http2 --url http://adconnect-backend:8007
+    depends_on:
+      adconnect-backend:
+        condition: service_healthy
+    networks:
+      - adconnect-net
+    restart: unless-stopped
+    profiles:
+      - tunnel-adconnect
+      - tunnel-all
+
+networks:
+  noctus-net:
+    name: noctus-net
+    driver: bridge
+  adconnect-net:
+    driver: bridge

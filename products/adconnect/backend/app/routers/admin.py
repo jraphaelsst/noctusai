@@ -31,7 +31,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 
 from ..auth_deps import require_role
 from ..database import _db as _db_module
@@ -265,15 +265,19 @@ def update_reward_rule(
     return rows[0] if isinstance(rows, list) else rows
 
 
-@router.delete(
-    "/reward-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/reward-rules/{rule_id}", response_class=Response)
 def delete_reward_rule(
     rule_id: str = Path(...),
     user: dict[str, Any] = Depends(require_role("admin", "owner")),
-) -> None:
+) -> Response:
     """Soft-delete: flip ativa=false. Hard-delete is V2-deferred (audit trail
-    matters more than space in V1)."""
+    matters more than space in V1).
+
+    Returns 204 No Content via explicit Response to bypass FastAPI 0.115's
+    decorator-time assertion that flags `status_code=204` paired with any
+    inferred body type. The runtime behavior is identical to declaring
+    status_code on the decorator.
+    """
     db = _db()
     res = (
         db.table(admin_service.REGRAS_TABLE)
@@ -288,6 +292,7 @@ def delete_reward_rule(
     rows = res.data or []
     if not rows:
         raise HTTPException(404, "Regra não encontrada")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

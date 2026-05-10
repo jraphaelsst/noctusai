@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1.7
-# core backend Dockerfile.
+# personal-finance backend Dockerfile.
 #
 # Generated from the canonical pattern at products/seed/backend/Dockerfile.
 # When the platform pattern evolves, update seed/ first and propagate.
 #
 # Build context: repo root.
-# Build:    docker compose build core-backend
-# Standalone: docker build -f products/core/backend/Dockerfile -t noctus-core-backend .
+# Build:    docker compose build personal-finance-backend
+# Standalone: docker build -f products/personal-finance/backend/Dockerfile -t noctus-personal-finance-backend .
 
 FROM python:3.11-slim AS base
 
@@ -38,24 +38,24 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     -e ./seed/framework/backend
 
 # ─── Layer 2: product-specific dependencies ─────────────────────────────
-COPY products/core/backend/requirements.txt /tmp/requirements.txt
+COPY products/personal-finance/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     grep -v '^-e seed/' /tmp/requirements.txt > /tmp/requirements.clean.txt \
     && pip install -r /tmp/requirements.clean.txt
 
 # ─── Layer 3: product code (changes most often) ─────────────────────────
-COPY products/core/backend/ ./products/core/backend/
+COPY products/personal-finance/backend/ ./products/personal-finance/backend/
 
 RUN useradd -m -u 1000 noctus \
     && chown -R noctus:noctus /app
 USER noctus
 
-EXPOSE 8000
+EXPOSE 8002
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8000/api/health || exit 1
+    CMD curl -fsS http://localhost:8002/api/health || exit 1
 
 CMD ["uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--app-dir", "products/core/backend"]
+     "--port", "8002", \
+     "--app-dir", "products/personal-finance/backend"]

@@ -1,0 +1,77 @@
+# core per-product compose fragment.
+#
+# Generated from the canonical pattern at products/seed/docker-compose.yml.
+# Use standalone (this product only) or orchestrated by repo-root compose
+# (all products together — root file uses `include:` to pull this in).
+#
+# Build context is `../..` so seed/ + product code are both reachable.
+
+services:
+  core-backend:
+    build:
+      context: ../..
+      dockerfile: products/core/backend/Dockerfile
+    container_name: noctus-core-backend
+    image: noctus-core-backend:dev
+    env_file:
+      - ../../.env
+    ports:
+      - "8000:8000"
+    networks:
+      - noctus-net
+      - core-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  core-frontend:
+    build:
+      context: ../..
+      dockerfile: products/core/frontend/Dockerfile
+    container_name: noctus-core-frontend
+    image: noctus-core-frontend:dev
+    ports:
+      - "5173:5173"
+    depends_on:
+      core-backend:
+        condition: service_healthy
+    networks:
+      - core-net
+    restart: unless-stopped
+
+
+  core-tunnel:
+    # Cloudflare quick-tunnel — ephemeral *.trycloudflare.com URL pointing
+    # at this product's backend. Profile-gated so it's opt-in (cost: one
+    # extra container; benefit: webhook/OAuth callback testing without a
+    # full deploy). Pattern from noctusai-youtube-crawler.
+    image: cloudflare/cloudflared:latest
+    container_name: noctus-core-tunnel
+    # `--protocol http2` forces TCP from the start. The default `auto` tries
+    # QUIC/UDP first; home/office NATs frequently kill the UDP connection
+    # within ~5 minutes ("timeout: no recent network activity"), and
+    # cloudflared's auto-reconnect cannot re-register the quick-tunnel
+    # hostname once it's been dropped — DNS goes NXDOMAIN forever even
+    # though the container stays "Up". HTTP2 is the documented long-running
+    # fallback. See KB § PATTERNS/containerization.md § Troubleshooting.
+    command: tunnel --no-autoupdate --protocol http2 --url http://core-backend:8000
+    depends_on:
+      core-backend:
+        condition: service_healthy
+    networks:
+      - core-net
+    restart: unless-stopped
+    profiles:
+      - tunnel-core
+      - tunnel-all
+
+networks:
+  noctus-net:
+    name: noctus-net
+    driver: bridge
+  core-net:
+    driver: bridge

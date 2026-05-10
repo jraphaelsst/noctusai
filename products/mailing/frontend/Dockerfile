@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# dev-team frontend Dockerfile.
+# mailing frontend Dockerfile.
 #
 # Generated from the canonical pattern at products/seed/frontend/Dockerfile.
 # Multi-stage: Node builds, nginx:alpine serves. Build context = repo root
@@ -23,22 +23,22 @@ RUN --mount=type=cache,target=/root/.npm \
 
 # Layer 2: product manifest.
 WORKDIR /app
-COPY products/dev-team/frontend/package*.json ./products/dev-team/frontend/
-WORKDIR /app/products/dev-team/frontend
+COPY products/mailing/frontend/package*.json ./products/mailing/frontend/
+WORKDIR /app/products/mailing/frontend
 RUN --mount=type=cache,target=/root/.npm \
     npm install --no-audit --no-fund
 
 # Layer 3: product code + build.
-COPY products/dev-team/frontend ./
+COPY products/mailing/frontend ./
 RUN npm run build
 
 # Runtime: nginx serves the static bundle.
 FROM nginx:alpine
 
-COPY --from=build /app/products/dev-team/frontend/dist /usr/share/nginx/html
+COPY --from=build /app/products/mailing/frontend/dist /usr/share/nginx/html
 COPY seed/framework/frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
 
-ENV PORT=8123
-EXPOSE 8123
+ENV PORT=8120
+EXPOSE 8120
 
 CMD ["nginx", "-g", "daemon off;"]

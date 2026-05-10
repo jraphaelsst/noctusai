@@ -1,5 +1,20 @@
 #!/bin/bash
-# NoctusAI Platform — Start all services
+# NoctusAI Platform — Start all services.
+#
+# Default mode is **Docker**: every product runs as a container pair on
+# the `noctus-net` shared network. The native (uvicorn + vite) path is
+# preserved as the legacy mode for hot-reload-fast iteration on a single
+# product.
+#
+# Modes:
+#   ./start.sh                     full fleet (10 products × backend+frontend)
+#   ./start.sh redis               + Redis profile
+#   ./start.sh full                + Redis + WAHA
+#   ./start.sh tunnel <slug>       + cloudflare tunnel exposing one product
+#   ./start.sh tunnel              + cloudflare tunnels for ALL products
+#   ./start.sh build               rebuild images then up (forces refresh)
+#   ./start.sh native              legacy native (uvicorn + vite, hot-reload)
+#   ./start.sh --docker [profile]  legacy alias — kept for backward compat
 #
 # Products are registered in the PRODUCTS array below. The
 # `noctus.dev.scaffold_product` MCP tool auto-appends a new entry between
@@ -45,6 +60,206 @@ for entry in "${PRODUCTS[@]}"; do
   PORTS+=("$bp" "$fp")
 done
 
+# ──────────────────────────────────────────────────────────────────────
+# Mode dispatch.
+# ──────────────────────────────────────────────────────────────────────
+MODE="${1:-fleet}"
+
+# Backward-compat: ./start.sh --docker [profile]  →  ./start.sh [profile]
+if [[ "$MODE" == "--docker" ]]; then
+  MODE="${2:-fleet}"
+  shift  # so $1 becomes the old $2 (profile or slug)
+  set -- "$MODE" "${@:2}"  # rebuild $@ as if the user typed `./start.sh <mode>`
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Native mode (legacy) — uvicorn + vite directly on host. Preserved for
+# fast hot-reload on a single product. Mode 'native' falls through past
+# the docker block to the original code below.
+# ──────────────────────────────────────────────────────────────────────
+if [[ "$MODE" == "native" ]]; then
+  : # fall through to the legacy native code at the bottom
+else
+  # Default = Docker. Mode is one of: fleet | redis | full | tunnel | build
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "ERRO: docker nao esta instalado ou nao esta no PATH." >&2
+    echo "       Use './start.sh native' pra rodar sem Docker." >&2
+    exit 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "ERRO: 'docker compose' (v2) requerido. Instale Docker Desktop atualizado." >&2
+    exit 1
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    echo "ERRO: Docker daemon nao esta rodando." >&2
+    echo "" >&2
+    echo "  Abra o Docker Desktop e espere a baleia (icone na barra de menu)" >&2
+    echo "  estabilizar antes de tentar de novo:" >&2
+    echo "" >&2
+    echo "    open -a Docker" >&2
+    echo "" >&2
+    echo "  Ou rode em modo nativo: ./start.sh native" >&2
+    exit 1
+  fi
+
+  echo "============================================"
+  echo "  NoctusAI Platform — Docker"
+  echo "  modo: $MODE"
+  echo "============================================"
+  echo ""
+
+  # Build COMPOSE_ARGS based on mode
+  COMPOSE_ARGS=(compose)
+  TUNNEL_SLUG=""
+  case "$MODE" in
+    fleet|"")
+      ;;  # default — no extra profiles
+    redis)
+      COMPOSE_ARGS+=(--profile redis)
+      ;;
+    waha)
+      COMPOSE_ARGS+=(--profile waha)
+      ;;
+    full)
+      COMPOSE_ARGS+=(--profile full)
+      ;;
+    build)
+      ;;  # special-cased below; forces rebuild
+    tunnel)
+      TUNNEL_SLUG="${2:-}"
+      if [[ -z "$TUNNEL_SLUG" ]]; then
+        # tunnel ALL products
+        COMPOSE_ARGS+=(--profile tunnel-all)
+        echo "[tunnel] expondo TODA a frota via cloudflared (10 URLs publicas)"
+      else
+        # tunnel ONE product — validate slug against registry
+        FOUND=0
+        for entry in "${PRODUCTS[@]}"; do
+          IFS=':' read -r s _ _ _ <<< "$entry"
+          [[ "$s" == "$TUNNEL_SLUG" ]] && FOUND=1 && break
+        done
+        if [[ $FOUND -eq 0 ]]; then
+          echo "ERRO: slug '$TUNNEL_SLUG' nao registrado em PRODUCTS." >&2
+          echo "       Slugs disponiveis:" >&2
+          for entry in "${PRODUCTS[@]}"; do
+            IFS=':' read -r s _ _ _ <<< "$entry"
+            echo "         - $s" >&2
+          done
+          exit 1
+        fi
+        COMPOSE_ARGS+=(--profile "tunnel-$TUNNEL_SLUG")
+        echo "[tunnel] expondo $TUNNEL_SLUG via cloudflared"
+      fi
+      ;;
+    *)
+      echo "ERRO: modo desconhecido '$MODE'." >&2
+      echo "       Use: fleet | redis | waha | full | tunnel [slug] | build | native" >&2
+      exit 1
+      ;;
+  esac
+
+  # Build (cached for fleet/redis/full/tunnel; forced for `build` mode)
+  if [[ "$MODE" == "build" ]]; then
+    echo "[docker] Rebuild forcado (--no-cache)..."
+    docker "${COMPOSE_ARGS[@]}" build --no-cache --pull
+  else
+    echo "[docker] Buildando imagens (cache hit se ja construidas)..."
+    docker "${COMPOSE_ARGS[@]}" build
+  fi
+
+  echo "[docker] Subindo servicos em background..."
+  docker "${COMPOSE_ARGS[@]}" up -d
+
+  # Print URL summary using the registry block.
+  echo ""
+  echo "============================================"
+  echo "  Servicos containerizados rodando:"
+  for entry in "${PRODUCTS[@]}"; do
+    IFS=':' read -r _slug name bp fp <<< "$entry"
+    echo "  $name Backend  → http://localhost:$bp"
+    echo "  $name Frontend → http://localhost:$fp"
+  done
+  echo "============================================"
+
+  # Tunnel URL extraction — wait for cloudflared to log its public URL
+  if [[ "$MODE" == "tunnel" ]]; then
+    echo ""
+    echo "[tunnel] Aguardando URL publica do cloudflared (~10-30s)..."
+    extract_tunnel_url() {
+      local container="$1"
+      local url=""
+      for i in $(seq 1 30); do
+        url=$(docker logs "$container" 2>&1 | grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" | head -1 || true)
+        if [[ -n "$url" ]]; then
+          echo "$url"
+          return 0
+        fi
+        sleep 2
+      done
+      return 1
+    }
+
+    # Verify the extracted URL actually resolves and serves. Cloudflare's
+    # edge needs ~10s after the cloudflared registration log line to
+    # propagate the hostname. A second hidden failure mode: connection
+    # already died (QUIC dropout) — the log still shows the URL but DNS
+    # is NXDOMAIN. Curl-verifying here surfaces both before we report.
+    verify_tunnel_url() {
+      local url="$1"
+      [[ -z "$url" || "$url" =~ ^\( ]] && return 1
+      for i in $(seq 1 15); do
+        if curl -fsS -o /dev/null --max-time 8 "$url/api/health" 2>/dev/null; then
+          return 0
+        fi
+        sleep 2
+      done
+      return 1
+    }
+
+    if [[ -z "$TUNNEL_SLUG" ]]; then
+      # All products
+      echo ""
+      echo "  URLs publicas:"
+      for entry in "${PRODUCTS[@]}"; do
+        IFS=':' read -r s _ _ _ <<< "$entry"
+        url=$(extract_tunnel_url "noctus-$s-tunnel" || echo "(timeout — docker logs noctus-$s-tunnel)")
+        if verify_tunnel_url "$url"; then
+          printf "    ✓ %-20s → %s\n" "$s" "$url"
+        else
+          printf "    ⚠ %-20s → %s  (nao verificada — pode ainda estar propagando)\n" "$s" "$url"
+        fi
+      done
+    else
+      url=$(extract_tunnel_url "noctus-$TUNNEL_SLUG-tunnel" || echo "(timeout)")
+      echo ""
+      echo "  ╔════════════════════════════════════════════════════════════╗"
+      printf "  ║  Public URL (%s):  %-32s║\n" "$TUNNEL_SLUG" "$url"
+      echo "  ╚════════════════════════════════════════════════════════════╝"
+      echo ""
+      if verify_tunnel_url "$url"; then
+        echo "  ✓ Verificada via curl /api/health → 200 OK"
+      else
+        echo "  ⚠ AVISO: URL extraida dos logs mas nao respondeu em ~30s."
+        echo "    Pode ser propagacao do edge da Cloudflare (espere 1min e tente),"
+        echo "    OU o tunnel ja perdeu conexao (docker logs noctus-$TUNNEL_SLUG-tunnel)."
+      fi
+      echo ""
+      echo "  Use essa URL em webhooks de Stripe / Meta / Google OAuth callback."
+      echo "  A URL e EFEMERA — muda toda vez que o tunnel reinicia."
+    fi
+  fi
+
+  echo ""
+  echo "  docker compose logs -f       # acompanhar logs"
+  echo "  ./stop.sh                    # parar tudo"
+  echo ""
+  exit 0
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Native mode (legacy) — uvicorn + vite directly on host.
+# Reached only when the user passes 'native' as first arg.
+# ──────────────────────────────────────────────────────────────────────
 PIDS=()
 
 # Kill a process and all its descendants
@@ -85,7 +300,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 echo "============================================"
-echo "  NoctusAI Platform — Iniciando servicos"
+echo "  NoctusAI Platform — modo nativo (legacy)"
 echo "============================================"
 echo ""
 
