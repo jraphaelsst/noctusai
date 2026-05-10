@@ -56,10 +56,19 @@ class TestCodeMetrics:
         assert len(metrics) >= 6
 
     def test_seed_is_minimal(self):
+        """Seed ships ≤2 demo routers (example_router + webhook_router, see
+        commit 22750fd) — no domain routers. Products inherit from the
+        framework, never copy from seed. Backend stays slim; the bound
+        accommodates the demo routers but catches drift toward "seed as
+        a real product."""
         metrics = get_code_metrics()
         seed = next(m for m in metrics if m["product"] == "seed")
-        assert seed["routers"] == 0  # framework provides them
-        assert seed["backend_lines"] < 200
+        assert seed["routers"] <= 2, (
+            f"seed routers should stay ≤2 (demos only); got {seed['routers']}"
+        )
+        assert seed["backend_lines"] < 500, (
+            f"seed backend should stay under 500 lines; got {seed['backend_lines']}"
+        )
 
 
 class TestRunAll:
