@@ -7,10 +7,11 @@ the CLI and the MCP tools; this product is its multi-tenant face.
 
 Run with: uvicorn app.main:app --reload --port 8009
 """
-from noctusai_seed import create_product_app
+from noctusai_seed import HealthEndpointConfig, create_product_app
 
 from app.config import settings
 from app.api import agents, metrics, run, configs
+from app.services.agno_health import agno_ping
 
 app = create_product_app(
     name="dev-team",
@@ -24,4 +25,10 @@ app = create_product_app(
     ],
     version="0.1.0",
     standard_routers=["health", "notificacoes"],
+    # Wire the agno engine readiness probe through the seed-native seam
+    # at noctusai_seed.health. Surfaces in GET /_ready as the
+    # "agno_ping" entry. See app/services/agno_health.py for the three
+    # pins (ANTHROPIC_API_KEY presence / known-Anthropic leader model /
+    # dev_team package importable).
+    health_config=HealthEndpointConfig(readiness_hooks=[agno_ping]),
 )
