@@ -741,6 +741,47 @@ The status header (`Status: ⏳ Reactivated — execution in progress`) is **nar
 
 **Companion** to: `KB § 01-PHILOSOPHY.md § Branching-first orchestration` (orchestrator's full-responsibilities list — phase-state verification is now part of step 1 "plan + chunk").
 
+### 14.2 Prerequisite-merge verification before follow-up dispatch (NEW 2026-05-10)
+
+**The rule.** When dispatching follow-up subagents from `origin/main` whose work depends on a closed project's commits, the orchestrator MUST verify those commits ARE on `origin/main` BEFORE dispatching. Branch closure that pushes to `origin/<project-branch>` (in-flight push) is NOT enough — `origin/main` lags until the orchestrator's fast-forward push lands. Follow-up branches pre-created from `origin/main` will start from a base that lacks the closed project's work.
+
+**How it surfaced.** AdConnect MVP closed 2026-05-10; pushed to `origin/adconnect-mvp-implementation`; archived to `archive/projects/2026-05-10/01-adconnect-mvp-implementation/`. Orchestrator then pre-created 6 follow-up branches via `git push origin origin/main:refs/heads/<slug>` — but `origin/main` was still at the pre-MVP `51db601` (last actual main commit). Engineer C (`adconnect-test-conftest-distributor-binding`) needed AdConnect's tests + auth wiring to do the conftest binding; engineer correctly identified the gap and self-recovered via `git merge adconnect-mvp-implementation` into the project worktree branch as the prerequisite base. Methodology gap: should have FFed to main FIRST.
+
+**Recipe — pre-dispatch prerequisite check:**
+
+```bash
+# Before pre-creating follow-up branches from origin/main:
+git fetch origin
+
+# 1. Confirm the project's close commits are on origin/main:
+git log origin/main..origin/<project-branch> --oneline   # any output means main is BEHIND
+# Empty output = main has the close commits = safe to dispatch.
+
+# 2. If main is behind: FF push BEFORE pre-creating follow-up branches.
+git push origin origin/<project-branch>:main           # FF push to main
+git fetch origin                                         # re-sync
+git log origin/<project-branch>..origin/main --oneline  # should match (now identical)
+
+# 3. NOW pre-create follow-up branches:
+git push origin origin/main:refs/heads/<follow-up-1> \
+                origin/main:refs/heads/<follow-up-2> ...
+```
+
+**The structural answer.** Two choices for orchestrators after closing a project + before dispatching N follow-ups:
+
+- **Choice A (clean) — FF push to main FIRST.** The project's close commits land on main; follow-up branches start from a base that includes them. Required when N≥2 follow-ups depend on the closed work.
+- **Choice B (deferred) — pre-flag the cross-branch dependency in every brief.** Follow-up engineers fetch the project branch + merge it into their own branch as their prerequisite base. Add to brief: "*Your worktree's base will be `origin/main` which currently lacks the `<project>` close commits. Before starting, run `git fetch origin <project-branch> && git merge origin/<project-branch>` to bring them in.*" Document the engineer-side merge in the brief verbatim.
+
+**Choice A is preferred** when no merge-time review is pending on the project. Choice B is the carve-out when the orchestrator is intentionally holding the project's main-merge for further review. Default to Choice A; choose B explicitly with rationale.
+
+**Anti-patterns:**
+
+- **Pre-creating follow-up branches BEFORE FFing the prerequisite project.** Follow-ups silently start from a stale main; engineers either self-recover (paying merge-cost they shouldn't have to) or hit cross-branch dependency surprises mid-flight.
+- **Confusing "branch pushed to remote" with "merged to main".** A pushed in-flight branch makes work visible but does NOT update main. `origin/<branch>` ≠ `origin/main`.
+- **Trusting "engineer will figure it out" instead of pre-flagging.** Some engineers correctly self-recover (Engineer C 2026-05-10) but others may STOP-and-report (the §16.7 fallback) and burn dispatch capacity. The brief should pre-resolve the dependency, not delegate it.
+
+**Companion** to: `§ 16.7 Worktree-base mismatch` (engineer-side recovery via worktree-base preamble) — §14.2 is the orchestrator-side prevention of the same class of gap (prerequisite-merge before dispatch). Together: orchestrator verifies main has prerequisites, AND brief preamble lets engineers recover if it doesn't.
+
 ---
 
 ## 15. Exploratory branching — branch-and-compare and merge-upfront
