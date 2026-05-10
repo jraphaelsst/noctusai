@@ -14,7 +14,7 @@
 
 - **Created:** 2026-05-02
 - **Last updated:** 2026-05-10
-- **Status:** ⏳ EXECUTING — §7 Q1-Q4 ✅ resolved (orchestrator defaults stamped); §6 drafted 2026-05-10; Phase 0 dispatched.
+- **Status:** ⏳ EXECUTING — §7 Q1-Q4 ✅ resolved (orchestrator defaults stamped); §6 drafted 2026-05-10; Phase 0 ✅ shipped 2026-05-10 (scaffold + tokenizer smoke-test green); Phase 1 (schema + writer) pending dispatch.
 - **Owner / stakeholders:** Raphael · future zero-context execution agent
 - **Related docs:** `CLAUDE.md`; `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`; `templates/PROJECT-TEMPLATE.md`; **interlocks with** `projects/methodology-extraction/PROJECT.md` Phase 5 (which currently uses rough token estimates — this project's token-tracking tool would let Phase 5 measure precisely); **interlocks with** `projects/methodology-mirror-and-workspaces/PROJECT.md` (which would feed measured per-workspace token cost into the ledger if and when it ships).
 - **Project slug:** `project-history-ledger` — cross-product / platform-infra scope, lives at root `projects/`.
@@ -239,14 +239,20 @@ numbers.
 
 **Drafted 2026-05-10 after §7 Q1-Q4 resolution** (orchestrator-stamped defaults under user signal "resolve the 5 blocked ones"). Each phase ≤ ½ session.
 
-### Phase 0 — Scaffold + tokenizer
+### Phase 0 — Scaffold + tokenizer ✅ (2026-05-10)
 
-- [ ] Create `project-history/` directory at repo root (per Q1=B).
-- [ ] Create `project-history/README.md` (1-page convention doc — points back to this PROJECT.md, explains NDJSON format + columns).
-- [ ] Create `project-history/ledger.ndjson` (empty marker; gitignore-tracked-as-existing).
-- [ ] Create `project-history/PROJECT-HISTORY.md` (placeholder header — rendering filled in Phase 3).
-- [ ] Pick tokenizer: **`tiktoken`** for static counting (Anthropic-compatible cl100k_base encoding). Install via `pip install tiktoken` to `mcp/noctusai/.venv/`.
-- [ ] Smoke-test tokenizer: count tokens of one archived `PROJECT.md` file; confirm sane number.
+- [x] Create `project-history/` directory at repo root (per Q1=B).
+- [x] Create `project-history/README.md` (1-page convention doc — points back to this PROJECT.md, explains NDJSON format + columns).
+- [x] Create `project-history/ledger.ndjson` (empty marker; gitignore-tracked-as-existing).
+- [x] Create `project-history/PROJECT-HISTORY.md` (placeholder header — rendering filled in Phase 3).
+- [x] Pick tokenizer: **`tiktoken`** for static counting (Anthropic-compatible cl100k_base encoding). Install via `pip install tiktoken` to `mcp/noctusai/.venv/`. **Already installed** (`tiktoken==0.12.0`, already declared in `mcp/noctusai/requirements.txt` for `cost_evaluation`); no install needed — discovered on inspection. Reuses the same encoding the cost_evaluation tool uses.
+- [x] Smoke-test tokenizer: count tokens of one archived `PROJECT.md` file; confirm sane number. **Result**: `archive/projects/2026-05-10/06-pf-metas-seed-wiring/PROJECT.md` = **5369 tokens** (cl100k_base). Sanity-checked against chars/4 rough estimator (5347) — diverge by 0.4%, well within tolerance. `enc.encode('hello world') == [15339, 1917]` confirms encoder loads.
+
+**Improvements:**
+
+- **tiktoken already in requirements.txt** — Phase 0 expected to install; was a no-op. Saves dependency churn but worth noting: any agent reading PROJECT.md without inspecting `requirements.txt` would assume the install step ran. Folded into Phase 1's brief automatically since `noctus.dev.history_record` simply `import tiktoken`s.
+- **chars/4 estimator is honest** — 0.4% divergence on a representative PROJECT.md means previous projects' rough estimates (methodology-extraction Phase 0) are well-grounded; the precise tokenizer isn't an order-of-magnitude correction, just a precision improvement. Document this in §5 or Phase 5 close.
+- **cl100k_base vs o200k_base / Claude-native tokenizer** — `tiktoken` is OpenAI's tokenizer; Anthropic's official tokenizer is shipped via `anthropic.tokenizer` in the Python SDK. Q3=I resolved to `tiktoken` for speed-to-ship; the Anthropic tokenizer would be measurably more accurate for Claude-cost reasoning. **Defer-to-Phase-5-close as a v2 swap candidate**. The encoding choice is encapsulated in one call (`tiktoken.get_encoding('cl100k_base')`); swapping is local.
 
 ### Phase 1 — Schema + writer
 
@@ -453,3 +459,4 @@ When this project ships, the user can:
 |---|---|---|
 | 2026-05-02 | **Project filed.** User directive: *"also lets add a historical change log globally. This must contain a short-phrased summary of closed and deleted projects, the steps in a short review, and its token count. So for that, we're gonna have to add a token tracking mechanism to our methodology, so projects and steps get their counts. The idea of this is to have documented a historical timeline of the project's evolution."* + *"this change log project has to be filed as a project. We're gonna come back here to refine and work on it."* + *"for future ai training that im thinking of, so we can predict cost-efficiency and already proven solutions x cost"*. Filed at root `projects/project-history-ledger/` (cross-product / platform-infra scope). §1-§5 + §7 + §10 populated; §6 intentionally empty pending §7 resolution + user reactivation. **Interlock noted with `methodology-extraction` Phase 5** — that phase needs precise per-turn token counts and currently uses rough estimators; this project's token tool would replace them. | Claude Opus 4.7 |
 | 2026-05-10 | **§7 Q1-Q4 resolved (orchestrator-stamped defaults)** under user signal "resolve the 5 blocked ones". **Decisions**: Q1=B (dedicated `project-history/` dir at repo root), Q2=c (NDJSON append-only), Q3=I (static tokens via tiktoken; dynamic deferred), Q4=standard fields (slug + scope + status_at_close + dates + phases + summary + review + token_count + outcome_signals). §6 drafted: Phase 0 (scaffold + tokenizer) → Phase 1 (schema + writer) → Phase 2 (close-workflow integration) → Phase 3 (renderer) → Phase 4 (backfill, optional) → Phase 5 (close). Phase 0 dispatched. | claude-opus-4-7 |
+| 2026-05-10 | **Phase 0 ✅ shipped.** Engineer in isolated worktree. Created `project-history/` at repo root with `README.md` (1-page convention doc) + `ledger.ndjson` (0-byte append target) + `PROJECT-HISTORY.md` (placeholder header). `tiktoken==0.12.0` already installed in `mcp/noctusai/.venv/` (declared in `requirements.txt` for cost_evaluation); no install needed. Smoke-test green: `archive/projects/2026-05-10/06-pf-metas-seed-wiring/PROJECT.md` = 5369 tokens (cl100k_base); chars/4 estimator 5347 (0.4% divergence — rough estimator is honest). Improvements logged. Phase 1 (schema + writer MCP tool) is a separate dispatch. | claude-opus-4-7 (engineer) |
