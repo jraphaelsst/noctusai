@@ -119,7 +119,8 @@ const THERAPIST_NAV: NavGroupWithRoute[] = [
     items: [
       { name: "Dashboard", href: "/therapist", icon: LayoutDashboard, route: "therapist-dashboard" },
       { name: "Agenda", href: "/therapist/agenda", icon: CalendarDays, route: "therapist-agenda" },
-      { name: "Pacientes", href: "/therapist/pacientes", icon: Users, route: "therapist-pacientes" },
+        { name: "Agendamento", href: "/therapist/agendamento", icon: CalendarDays, route: "therapist-agendamento" },
+        { name: "Pacientes", href: "/therapist/pacientes", icon: Users, route: "therapist-pacientes" },
       { name: "Sessoes", href: "/therapist/sessoes", icon: ClipboardList, route: "therapist-sessoes" },
       { name: "Prontuario", href: "/therapist/prontuario", icon: ClipboardList, route: "therapist-prontuario" },
     ],
