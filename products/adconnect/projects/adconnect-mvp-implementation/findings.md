@@ -218,3 +218,67 @@ Flag tool signature: `noctus.dev.lgpd_flag(code_path: str, concern: str, reason:
 `vite build` result: ✓ built in 9.17s — clean. All pages compiled into individual lazy chunks (1-7 kB each).
 
 ---
+
+## Engineer C — Phase 2 catalog (2026-05-10)
+
+### errors
+
+- **Worktree branched from stale main.** Brief described Wave 1 (Engineer A's identity tables in 001, `app/schemas/identity.py`, auth_deps shim, `tests/realdb/test_identity_realdb.py`) as already-landed in the worktree. None present — only original mock-backed scaffolding. Engineer C noticed via `noctusai_lib.testing._schema_cache` resolving to parent-repo's canonical 001 (which had Phase 1 + Phase 4 tables already). Reconciled their 001 against parent canonical (correct path).
+- **3 pre-existing test collection failures.** `test_health.py` / `test_team_router.py` / `test_e2e_flows.py` import `HealthCheckSuite` / `TeamRouter*Suite` / `FrameworkEndpointsSuite` from `noctusai_lib.testing`. Worktree's seed/lib exports them; dev-team venv resolves `noctusai_lib` from parent-repo install which lacks them. Editable install isn't editable across worktrees. Phase 8 close should reconcile.
+
+### mistakes-slips
+
+- **Authored their own column shapes before checking schema cache.** Engineer C initially wrote catalog.py with `min_order`, `multiple`, `cashback_pct`, `image_url`, `legacy_id`, `categorias.slug` columns before discovering `_schema_cache.get_schema_map()` walks up to repo root via `_find_repo_root()` — when venv is in parent repo, it reads parent's migrations regardless of which worktree pytest runs from. Had to rewrite catalog.py + services + tests. **Lesson:** check `noctusai_lib.testing._schema_cache` resolution path BEFORE authoring column shapes; the worktree's local 001 might not be authoritative for the runtime.
+- **Trailing-slash route + post-construction `router.prefix=` no-op.** Initially registered routes with `@router.get("/")` + `router.prefix = "/products"` post-construction. FastAPI prepends prefix at decorator time, not include_router time → trailing-slash routes (`/products/`) didn't match `/products` requests; fell through to legacy orders router's `/{order_id}` wildcard. Fixed by `prefix=` in `APIRouter()` constructor + `@router.get("")` (no trailing slash).
+
+### lessons
+
+- **Wildcard routes without prefixes are landmines** (CRITICAL — applies to all 7 mock-backed routers). Legacy `app/routers/orders.py` registers `@router.get("/{order_id}")` with no router prefix. After `include_router`, this becomes top-level `/{order_id}` matching ANY 1-segment URL. Any router registered AFTER orders with bare-prefixed routes is silently swallowed. **Phase 3 MUST add `prefix=` to orders router AT CONSTRUCTION before its routes go on real URLs.** Same fix likely needed for cart, rewards, sellout, financial, admin routers.
+- **Route-registration order matters when wildcards are in play.** Engineer C moved distributors ahead of orders in `main.py` `_domain_routers` so distributors prefix-routes register first. Mitigation, not full fix; full fix is constructing every router with `prefix=`.
+- **`MockSupabaseClient(schema="adconnect")` is critical for non-public schemas.** Without `schema=`, the validate-schema check rejects `eq("org_id", ...)` because `public.products` has no `org_id` column. Worth surfacing as a `noctusai_lib.testing` doc rule.
+- **Module-level `get_admin_client = _db.get_admin_client` binds at import time.** Patching `app.database._db.get_admin_client` doesn't redirect router-level imports — those held the original method ref. Conftest needs explicit `patch.object(<router_module>, "get_admin_client", ...)`.
+
+### interesting-findings
+
+- **Parent-repo's `001_adconnect.sql` already had 17 tables covering Phases 1-7** (the orchestrator's consolidated single-001). Engineer C's worktree branched before that landed. Mocks-to-canonical schema decisions all reflected in the consolidated 001.
+- **`mocks.py` `_FilterMixin` methods (`.eq`, `.in_`, etc.) are pure no-ops for filtering** — they only validate column names. Tests must seed exactly the row(s) they expect to receive (no SQL-level filtering happens against seeded data).
+- **`create_database_module(settings, schema="adconnect")`** returns clients pre-bound to the schema via `ClientOptions(schema=...)`. Eliminates need for `db.schema("adconnect").table(...)` in router code.
+
+### knowledge-pieces
+
+**Standard backend test command:**
+```bash
+cd products/adconnect/backend && \
+  PYTHONPATH=. /Users/rapha/Documents/repository/NoctusAI/noctusai/products/dev-team/backend/.venv/bin/python \
+  -m pytest tests/ --ignore=tests/realdb -q
+```
+Pre-existing collection errors require `--ignore=tests/integration --ignore=tests/routers/test_health.py --ignore=tests/routers/test_team_router.py` until worktree↔venv mismatch is resolved (Phase 8).
+
+---
+
+## Engineer D — Phase 4 sellout/rewards (2026-05-10)
+
+### errors
+
+- **Worktree branched from stale main (same as Engineer C).** Brief claimed canonical 001 had Phase 4 tables already + Engineer A's Phase 1 distributors landed; neither was true in this worktree. Engineer D ADAPTED by adding minimal Phase 1 + Phase 4 tables to their 001 — orchestrator REJECTED these changes at merge time (canonical 001 is the correct shape; Engineer D's regression overwritten).
+- **Drive-by `app/security.py` rebuild + `app/config.py` jwt_* fields.** Engineer A had deleted `security.py` under Option A (custom JWT retired). Engineer D's stale worktree saw `security.py` still present, attempted to fix it, and added missing settings to config. Orchestrator REJECTED at merge time — `security.py` should stay deleted.
+
+### mistakes-slips
+
+- **Module-level binds defeat conftest patches.** Same issue Engineer C documented — `from ..database import get_supabase_client` freezes the binding at import time. Engineer D switched all Phase 4 routers to `_db.get_client()` lazy attribute access. **Cross-product gotcha; worth three-way-syncing as a testing methodology rule.**
+
+### lessons
+
+- **`router.prefix = X` post-construction is a no-op for routes already registered.** Engineer D verified all 7 pre-existing AdConnect domain routers ship unprefixed (route dump confirmed). Phase 4 routers fix this with `APIRouter(prefix=...)` at construction. **Documented as cross-product follow-up for Wave 3+.**
+- **FastAPI matches `/{var}` greedily.** Unprefixed `GET /{product_id}` from products router ate `/ledger` requests until `/rewards/...` was prefixed properly. Same shape as Engineer C's "wildcard landmines" finding.
+
+### interesting-findings
+
+- **`noctusai_lib.integrations.storage` ships full Protocol+Fake+Local+Supabase+factory** — no gap. `make_storage_backend(kind=...)` factory ready; lazy-imports `SupabaseStorageBackend` so slim envs still load `fake`/`local`. Phase 4 sellout attachments wire cleanly.
+- **No `noctusai_lib.domain.nfe` exists.** Phase 4 ships local `app/services/nfe_xml_parser.py`. **Recurrence rule trigger at N=2:** if any other product needs NF-e parsing, file `noctusai-lib-nfe-domain-absorption` follow-up project.
+
+### knowledge-pieces
+
+- **`MockSupabaseClient(validate_schema=False, schema="adconnect")`** is the right shape for product-test fixtures that pre-seed tables not in the auto-discovered cache. Allows arbitrary table seeding without schema validation gates.
+
+---

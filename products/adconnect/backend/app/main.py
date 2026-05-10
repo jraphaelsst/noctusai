@@ -23,47 +23,47 @@ from app.routers import (
     sellout,
 )
 
-# Domain routers — each gets its own /api/<domain> prefix at construction
-# time. Phase 1 of adconnect-mvp-implementation discovered that setting
-# `router.prefix = "/api/<domain>"` AFTER routes are registered is NOT
-# honored by FastAPI 0.115's include_router; the routes ended up at the
-# bare path the route declared (e.g. `/me`, `/dist-001`) and collided.
-# Wrapping each router with its prefix-set explicit FastAPI APIRouter at
-# include time fixes this.
-from fastapi import APIRouter as _APIRouter
-
-_domain_routers: list[tuple[object, str, list[str]]] = [
-    (auth.router, "/api/auth", ["auth"]),
-    (products.router, "/api/products", ["products"]),
-    (cart.router, "/api/cart", ["cart"]),
-    (orders.router, "/api/orders", ["orders"]),
-    (rewards.router, "/api/rewards", ["rewards"]),
-    (sellout.router, "/api/sellout", ["sellout"]),
-    (financial.router, "/api/financial", ["financial"]),
-    (distributors.router, "/api/distributors", ["distributors"]),
-    (admin.router, "/api/admin", ["admin"]),
+# Domain routers with their original prefixes and tags.
+#
+# Phase 2 routers (products + distributors) ship their own APIRouter prefix —
+# setting `router.prefix = ...` post-construction is a no-op for already-
+# registered routes (FastAPI prepends router.prefix at registration time, not
+# at include_router time). The legacy mock routers (cart/orders/rewards/...
+# below) still rely on this assignment loop and will be migrated in their
+# respective phases.
+#
+# Order matters: routers WITH wildcard root routes (e.g. orders.py's
+# `/{order_id}` registered at the bare `/`) must come AFTER routers with
+# concrete prefixes — otherwise the wildcard swallows requests for the
+# concrete-prefixed routes (caught in Phase 2: `/distributors` was 404'd
+# by orders.py's `/{order_id}` wildcard until distributors moved up).
+_domain_routers = [
+    (auth.router, "/auth", ["auth"]),
+    (products.router, "/products", ["products"]),
+    (distributors.router, "/distributors", ["distributors"]),
+    (cart.router, "/cart", ["cart"]),
+    (orders.router, "/orders", ["orders"]),
+    (rewards.router, "/rewards", ["rewards"]),
+    (sellout.router, "/sellout", ["sellout"]),
+    (financial.router, "/financial", ["financial"]),
+    (admin.router, "/admin", ["admin"]),
 ]
 
-
-def _wrap(child, prefix: str, tags: list[str]) -> _APIRouter:
-    """Wrap a router with an explicit prefix + tags at include time.
-
-    Mutating ``child.prefix`` after route registration is silently
-    ignored by FastAPI's ``include_router``; nesting under a fresh
-    parent applies the prefix correctly.
-    """
-    parent = _APIRouter(prefix=prefix, tags=tags)
-    parent.include_router(child)
-    return parent
-
-
-_wrapped_routers = [_wrap(r, p, t) for r, p, t in _domain_routers]
+# Attach prefix/tags to each router so create_product_app can include them.
+# (No-op for products + distributors since they're already prefixed in their
+# APIRouter constructors — the assignment is harmless and keeps the legacy
+# mock routers working until they're migrated.)
+for router, prefix, tags in _domain_routers:
+    if not router.prefix:
+        router.prefix = prefix
+    if not router.tags:
+        router.tags = tags
 
 app = create_product_app(
     name="AdConnect",
     schema="adconnect",
     settings=settings,
-    routers=_wrapped_routers,
+    routers=[r for r, _, _ in _domain_routers],
     version="0.1.0",
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team"],

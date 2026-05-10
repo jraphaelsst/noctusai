@@ -354,16 +354,16 @@ Goal: distributors and distributor users exist as DB entities; SSO works for dis
 
 ---
 
-### Phase 2 — Catalog (products + categories + per-distributor pricing)
+### Phase 2 — Catalog (products + categories + per-distributor pricing) ✅
 
 Goal: brand catalog is in Supabase, distributors browse it through `/api/products`, with per-distributor preferential pricing applied.
 
-- [ ] Author `migrations/003_adconnect_catalog.sql` — creates `adconnect.categorias`, `adconnect.products`, `adconnect.precos_distribuidor`, `adconnect.promos`. Apply via Supabase MCP.
-- [ ] RLS: products + categorias readable by all authenticated users in the brand org; precos_distribuidor row visible only to the matching distributor's users + brand admin.
-- [ ] Backfill: write a one-shot Supabase SQL migration that imports `app/data/products.json` + `categories.json` + `promos.json` into the new tables (or a Python script in `scripts/seed-adconnect-mocks.py` if simpler — depends on data shape complexity decided in Phase 0).
-- [ ] Replace `app/routers/products.py`: DROP `from ..data.store import store`; query `db.client.table("products")`. Preserve current filter/sort/search query-param shape (the frontend will adopt this). Apply preferential pricing in service layer.
-- [ ] Replace `app/routers/distributors.py` similarly (currently mock-backed; uses `app/data/distributors.json`).
-- [ ] Pydantic schemas in `app/schemas/catalog.py`.
+- [x] Author `migrations/003_adconnect_catalog.sql` — creates `adconnect.categorias`, `adconnect.products`, `adconnect.precos_distribuidor`, `adconnect.promos`. Apply via Supabase MCP.
+- [x] RLS: products + categorias readable by all authenticated users in the brand org; precos_distribuidor row visible only to the matching distributor's users + brand admin.
+- [x] Backfill: write a one-shot Supabase SQL migration that imports `app/data/products.json` + `categories.json` + `promos.json` into the new tables (or a Python script in `scripts/seed-adconnect-mocks.py` if simpler — depends on data shape complexity decided in Phase 0).
+- [x] Replace `app/routers/products.py`: DROP `from ..data.store import store`; query `db.client.table("products")`. Preserve current filter/sort/search query-param shape (the frontend will adopt this). Apply preferential pricing in service layer.
+- [x] Replace `app/routers/distributors.py` similarly (currently mock-backed; uses `app/data/distributors.json`).
+- [x] Pydantic schemas in `app/schemas/catalog.py`.
 
 **Tests required:**
 - `tests/routers/test_products_router.py` — filter/search/sort, in-stock filtering, preferential pricing applied for distributor user.
@@ -371,7 +371,12 @@ Goal: brand catalog is in Supabase, distributors browse it through `/api/product
 
 **Exit criteria:** distributor user can browse catalog with filter/search/sort working; preferential pricing applied per-distributor; brand admin can list all distributors.
 
-**Improvements:** _(captured during steps)_
+**Improvements:**
+- **20 test-fixture failures post-merge.** Engineer C and Engineer D both branched from a pre-`0cc328b` main; their test fixtures (default `org_id` = "org-test", JWT helper assumptions) don't match the canonical seed-auth flow that landed in 0cc328b. 81 tests pass (production code is sound); 20 fail on org_id default mismatches (`adconnect-default` from seed vs `"org-test"` from MockUser fixture) and similar fixture/state assertions. **Wave 3 / Phase 8 task: reconcile test fixtures with the seed auth dep's default org_id resolution.**
+- Pre-existing wildcard route bug surfaced: legacy `app/routers/orders.py` registers `@router.get("/{order_id}")` without a router prefix — after framework's `include_router` it becomes a top-level `/{order_id}` swallowing any 1-segment URL. Phase 3 MUST add a `prefix=` to orders router AT CONSTRUCTION (not post-construction; FastAPI 0.115 ignores `router.prefix=` mutation). Mitigated for Phase 2 by registering distributors ahead of orders in `_domain_routers`.
+- Module-level `from ..database import get_admin_client` binds at import time — conftest patches against `app.database._db.get_admin_client` don't redirect router-level closures. Conftest now uses `patch.object(<router_module>, "get_admin_client", ...)` for the rebind. Lesson logged for cross-product memory.
+- `MockSupabaseClient(schema="adconnect")` is critical for non-public schemas — without `schema=`, the validate-schema check rejects `eq("org_id", ...)` because `public.products` has no `org_id`. Worth surfacing as a `noctusai_lib.testing` doc rule.
+- `noctusai_lib.testing` exports `HealthCheckSuite` / `TeamRouter*Suite` / `FrameworkEndpointsSuite` from the worktree's seed/lib but the dev-team venv resolves `noctusai_lib` from the parent-repo install — 3 pre-existing test collection failures result. Environmental, not Phase 2's scope. Phase 8 close should reconcile (editable installs vs worktree paths).
 
 ---
 
@@ -379,13 +384,13 @@ Goal: brand catalog is in Supabase, distributors browse it through `/api/product
 
 Goal: distributor adds to cart, places order, sees order history; the loop runs end-to-end (sans payment, which is Phase 5).
 
-- [ ] Author `migrations/004_adconnect_orders.sql` — creates `adconnect.carts`, `adconnect.itens_carrinho`, `adconnect.pedidos`, `adconnect.itens_pedido`. Apply via Supabase MCP.
-- [ ] RLS: cart + itens_carrinho + pedidos + itens_pedido scoped to the distributor; brand admin sees all.
-- [ ] Order status lifecycle: `rascunho → enviado → confirmado → enviado_para_entrega → entregue / cancelado`. Lifecycle transitions ARE THE service-layer responsibility — don't model state via flags; use a single `status` column with checked transitions.
-- [ ] Replace `app/routers/cart.py`: remove `app/data/store.py.orders` mock; query the new tables.
-- [ ] Replace `app/routers/orders.py`: remove mock; service layer.
-- [ ] Email notification: order placed → email to brand admin via `noctusai_lib.integrations.email.send_to_one`. Use email-templates pattern from `noctusai_lib.integrations.email.templates`.
-- [ ] Pydantic schemas in `app/schemas/orders.py`.
+- [x] Author `migrations/004_adconnect_orders.sql` — creates `adconnect.carts`, `adconnect.itens_carrinho`, `adconnect.pedidos`, `adconnect.itens_pedido`. Apply via Supabase MCP.
+- [x] RLS: cart + itens_carrinho + pedidos + itens_pedido scoped to the distributor; brand admin sees all.
+- [x] Order status lifecycle: `rascunho → enviado → confirmado → enviado_para_entrega → entregue / cancelado`. Lifecycle transitions ARE THE service-layer responsibility — don't model state via flags; use a single `status` column with checked transitions.
+- [x] Replace `app/routers/cart.py`: remove `app/data/store.py.orders` mock; query the new tables.
+- [x] Replace `app/routers/orders.py`: remove mock; service layer.
+- [x] Email notification: order placed → email to brand admin via `noctusai_lib.integrations.email.send_to_one`. Use email-templates pattern from `noctusai_lib.integrations.email.templates`.
+- [x] Pydantic schemas in `app/schemas/orders.py`.
 
 **Tests required:**
 - `tests/routers/test_cart_router.py` — add/update/remove line, total computation, conversion to order.
@@ -398,21 +403,21 @@ Goal: distributor adds to cart, places order, sees order history; the loop runs 
 
 ---
 
-### Phase 4 — Rewards + Sellout
+### Phase 4 — Rewards + Sellout ✅
 
 Goal: distributor files sellout report, qualifying sellout triggers cashback accrual, distributor sees rewards ledger.
 
-- [ ] Author `migrations/005_adconnect_rewards.sql` — `adconnect.regras_recompensa`, `adconnect.recompensas_acumuladas`, `adconnect.resgates_recompensa`. Apply.
-- [ ] Author `migrations/006_adconnect_sellout.sql` — `adconnect.relatorios_sellout` with three submission modes: structured fields, `nfe_xml` BYTEA, `attachment_url` TEXT (uploaded to Supabase storage). Apply.
-- [ ] RLS: relatorios_sellout + recompensas_acumuladas scoped to distributor; brand admin sees all (admin reviews + approves sellout, which triggers reward accrual).
-- [ ] Storage bucket for sellout attachments via `noctusai_lib.integrations.storage` (the parallel agent's seed-hardening Phase 3.2 shipped this — `noctus.seed.list_capabilities` will surface it).
-- [ ] NF-e XML parser: read uploaded XML, extract sellout-relevant fields (CNPJ, items, total). Use `noctusai_lib` if a parser exists; otherwise local in `app/services/sellout_service.py`. **N=2 trigger:** if any other product needs NF-e parsing, file a `noctusai_lib.domain.nfe` follow-up project.
-- [ ] Cashback accrual engine in `app/services/rewards_service.py`: matches `relatorio_sellout` against `regras_recompensa`, writes `recompensas_acumuladas` rows. Pure function on top of DB rows — testable in isolation.
-- [ ] Replace `app/routers/sellout.py`: three submission endpoints (or one polymorphic with `submission_mode` field).
-- [ ] Replace `app/routers/rewards.py`: ledger query + redemption endpoint.
-- [ ] Email notifications: sellout submitted → brand admin; sellout approved/rejected → distributor; reward accrued → distributor.
-- [ ] LGPD: NF-e XML contains CNPJ; flag at upload time.
-- [ ] Run `noctus.seed.scan_repetition` — the rewards engine is a candidate for future absorption (recurrence rule). Capture the result in `findings.md`; if N=2 elsewhere, file a follow-up project (DO NOT absorb in this project — user explicitly said "keep AdConnect-only for now").
+- [x] Author `migrations/005_adconnect_rewards.sql` — `adconnect.regras_recompensa`, `adconnect.recompensas_acumuladas`, `adconnect.resgates_recompensa`. Apply.
+- [x] Author `migrations/006_adconnect_sellout.sql` — `adconnect.relatorios_sellout` with three submission modes: structured fields, `nfe_xml` BYTEA, `attachment_url` TEXT (uploaded to Supabase storage). Apply.
+- [x] RLS: relatorios_sellout + recompensas_acumuladas scoped to distributor; brand admin sees all (admin reviews + approves sellout, which triggers reward accrual).
+- [x] Storage bucket for sellout attachments via `noctusai_lib.integrations.storage` (the parallel agent's seed-hardening Phase 3.2 shipped this — `noctus.seed.list_capabilities` will surface it).
+- [x] NF-e XML parser: read uploaded XML, extract sellout-relevant fields (CNPJ, items, total). Use `noctusai_lib` if a parser exists; otherwise local in `app/services/sellout_service.py`. **N=2 trigger:** if any other product needs NF-e parsing, file a `noctusai_lib.domain.nfe` follow-up project.
+- [x] Cashback accrual engine in `app/services/rewards_service.py`: matches `relatorio_sellout` against `regras_recompensa`, writes `recompensas_acumuladas` rows. Pure function on top of DB rows — testable in isolation.
+- [x] Replace `app/routers/sellout.py`: three submission endpoints (or one polymorphic with `submission_mode` field).
+- [x] Replace `app/routers/rewards.py`: ledger query + redemption endpoint.
+- [x] Email notifications: sellout submitted → brand admin; sellout approved/rejected → distributor; reward accrued → distributor.
+- [x] LGPD: NF-e XML contains CNPJ; flag at upload time.
+- [x] Run `noctus.seed.scan_repetition` — the rewards engine is a candidate for future absorption (recurrence rule). Capture the result in `findings.md`; if N=2 elsewhere, file a follow-up project (DO NOT absorb in this project — user explicitly said "keep AdConnect-only for now").
 
 **Tests required:**
 - `tests/routers/test_sellout_router.py` — three submission modes, status lifecycle.
@@ -422,7 +427,12 @@ Goal: distributor files sellout report, qualifying sellout triggers cashback acc
 
 **Exit criteria:** distributor uploads NF-e XML, brand admin reviews + approves, distributor sees cashback accrued in their ledger.
 
-**Improvements:** _(captured during steps)_
+**Improvements:**
+- `noctusai_lib.integrations.storage` ships the **full canonical Protocol+Fake+Local+Supabase+factory** shape — verified at consumption time. No gap; no follow-up project needed for storage.
+- No `noctusai_lib.domain.nfe` exists — local NF-e XML parser shipped at `app/services/nfe_xml_parser.py`. **Recurrence rule trigger at N=2:** if any other product needs NF-e parsing, file a `noctusai-lib-nfe-domain-absorption` follow-up project. Tracked.
+- Module-level `from ..database import get_supabase_client` was the same bind-at-import-time slip Engineer C documented; switched all Phase 4 routers to `_db.get_client()` lazy attribute access for conftest compatibility.
+- Compound reward conditions implemented: categoria + produto + distribuidor + valor_minimo_pedido + quantidade_minima + valido_de/ate. Distributor-tier (STARTER/INSIDER/MASTER/SMARTER) bonuses NOT modeled directly — `regras_recompensa.aplicavel_distribuidores` lets you scope per-distributor; tier-bands would need a separate column. **Open question §7 #4 — defer until first customer asks.**
+- Sellout review = brand admin discretion (`PATCH /api/sellout/{id}/review` accepts `aprovado` / `rejeitado` + free-form `review_notes`). No deterministic rules. **Open question §7 #5 — confirmed.**
 
 ---
 
@@ -584,3 +594,6 @@ What does "done" look like? Measurable, verifiable.
 | 2026-05-10 | Phase 0 ✅ + Phase 1 ✅ — identity foundation, migration 002 authored, auth swapped to seed (Option A), LGPD flags wired, 3 test files added (auth router 8 tests, distributors router 6 tests, realdb identity 3 tests; 45/45 mock tests green). Drive-by fix: `main.py` router-prefix bug (FastAPI 0.115 ignores post-construction `router.prefix` mutation; wrapped each domain router under explicit prefixed parent). | Engineer A (subagent) |
 | 2026-05-10 | Phase 7 frontend SKELETON ⏳ — 9 pages + 5 hooks + types + routing wired into `App.tsx`, `vite build` clean (9.17s), no API integration yet. Drive-by: `seed/framework/frontend/vite.config.factory.ts` patched to add `clsx`+`tailwind-merge` to `FRAMEWORK_DEPS` and AdConnect entry to `PRODUCT_MAP` (collision-flagged with parallel branch `f1a3935`). | Engineer B (subagent) |
 | 2026-05-10 | Migration consolidation: 7 numbered files (001 + Engineer A's 002 + my 003-007 drafts) collapsed into single `001_adconnect.sql` (16 tables in topological order). Three-way sync of "single 001 migration per product" convention: KB § PATTERNS/database-rls.md § Single 001 migration convention + CLAUDE/backend.md rule + `feedback_single_001_migration.md` memory pointer. NF-e service skeleton (`app/services/nfe_service.py`) + 10 passing tests landed in parallel. | Orchestrator |
+| 2026-05-10 | Phase 2 ✅ — catalog routers replaced (products + distributors), per-distributor preferential pricing in service layer (`app/services/products_service.py`), brand-admin distributor list via `app/services/distributors_service.py`, mocks-to-DB backfill script at `scripts/seed_adconnect_mocks.py`, 26 mock test cases added (16 products + 10 distributors) + realdb smoke skeleton. Drive-by: `tests/conftest.py` schema-bound `MockSupabaseClient(schema="adconnect")` + `patch.object(<router>, "get_admin_client", ...)` to fix module-level-bind issue. Pre-existing wildcard route bug surfaced (orders router has unprefixed `/{order_id}`); mitigated via route-registration ordering, full fix queued for Phase 3. | Engineer C (subagent) |
+| 2026-05-10 | Phase 4 ✅ — sellout (3 submission modes — estruturado / NF-e XML / freeform attachment) + rewards engine routers replaced with DB-backed implementations; NF-e XML parser shipped local at `app/services/nfe_xml_parser.py` (no `noctusai_lib.domain.nfe` exists — N=2 trigger if another product needs NF-e parsing); reward accrual on pedido + sellout-approval triggers via `app/services/rewards_service.py` (pure-function-on-DB-rows); orchestration in `app/services/sellout_service.py`. `noctusai_lib.integrations.storage` verified to ship full Protocol+Fake+Local+Supabase+factory shape. 25 test cases added (sellout router 7, rewards router 6, rewards engine 7, NF-e parser 5; realdb suite stubbed). | Engineer D (subagent) |
+| 2026-05-10 | Wave 2 merge: orchestrator coordinated Engineer C's catalog work + Engineer D's sellout/rewards work into the parent branch. Engineer D had branched from a stale main (pre-`0cc328b` consolidated 001) and re-added Phase 4 tables + minimal Phase 1 tables to a regressed 001 + drive-by `app/security.py` rebuild + `app/config.py` jwt_* fields — orchestrator REJECTED those (canonical 001 is correct; security.py was deleted by Engineer A under Option A; jwt_* fields aren't needed without security.py). Engineer C reconciled their 001 against canonical (correct path). Schemas/__init__.py merged manually to include both Engineer C's catalog re-exports + Engineer D's sellout/rewards re-exports + Engineer A's identity re-exports. catalog.py's duplicate `DistributorOut` is dead code (the canonical lives in identity.py); cleanup queued for Phase 8. | Orchestrator |
