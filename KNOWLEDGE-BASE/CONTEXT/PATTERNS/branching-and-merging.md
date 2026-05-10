@@ -741,6 +741,47 @@ The status header (`Status: ⏳ Reactivated — execution in progress`) is **nar
 
 **Companion** to: `KB § 01-PHILOSOPHY.md § Branching-first orchestration` (orchestrator's full-responsibilities list — phase-state verification is now part of step 1 "plan + chunk").
 
+### 14.2 Prerequisite-merge verification before follow-up dispatch (NEW 2026-05-10)
+
+**The rule.** When dispatching follow-up subagents from `origin/main` whose work depends on a closed project's commits, the orchestrator MUST verify those commits ARE on `origin/main` BEFORE dispatching. Branch closure that pushes to `origin/<project-branch>` (in-flight push) is NOT enough — `origin/main` lags until the orchestrator's fast-forward push lands. Follow-up branches pre-created from `origin/main` will start from a base that lacks the closed project's work.
+
+**How it surfaced.** AdConnect MVP closed 2026-05-10; pushed to `origin/adconnect-mvp-implementation`; archived to `archive/projects/2026-05-10/01-adconnect-mvp-implementation/`. Orchestrator then pre-created 6 follow-up branches via `git push origin origin/main:refs/heads/<slug>` — but `origin/main` was still at the pre-MVP `51db601` (last actual main commit). Engineer C (`adconnect-test-conftest-distributor-binding`) needed AdConnect's tests + auth wiring to do the conftest binding; engineer correctly identified the gap and self-recovered via `git merge adconnect-mvp-implementation` into the project worktree branch as the prerequisite base. Methodology gap: should have FFed to main FIRST.
+
+**Recipe — pre-dispatch prerequisite check:**
+
+```bash
+# Before pre-creating follow-up branches from origin/main:
+git fetch origin
+
+# 1. Confirm the project's close commits are on origin/main:
+git log origin/main..origin/<project-branch> --oneline   # any output means main is BEHIND
+# Empty output = main has the close commits = safe to dispatch.
+
+# 2. If main is behind: FF push BEFORE pre-creating follow-up branches.
+git push origin origin/<project-branch>:main           # FF push to main
+git fetch origin                                         # re-sync
+git log origin/<project-branch>..origin/main --oneline  # should match (now identical)
+
+# 3. NOW pre-create follow-up branches:
+git push origin origin/main:refs/heads/<follow-up-1> \
+                origin/main:refs/heads/<follow-up-2> ...
+```
+
+**The structural answer.** Two choices for orchestrators after closing a project + before dispatching N follow-ups:
+
+- **Choice A (clean) — FF push to main FIRST.** The project's close commits land on main; follow-up branches start from a base that includes them. Required when N≥2 follow-ups depend on the closed work.
+- **Choice B (deferred) — pre-flag the cross-branch dependency in every brief.** Follow-up engineers fetch the project branch + merge it into their own branch as their prerequisite base. Add to brief: "*Your worktree's base will be `origin/main` which currently lacks the `<project>` close commits. Before starting, run `git fetch origin <project-branch> && git merge origin/<project-branch>` to bring them in.*" Document the engineer-side merge in the brief verbatim.
+
+**Choice A is preferred** when no merge-time review is pending on the project. Choice B is the carve-out when the orchestrator is intentionally holding the project's main-merge for further review. Default to Choice A; choose B explicitly with rationale.
+
+**Anti-patterns:**
+
+- **Pre-creating follow-up branches BEFORE FFing the prerequisite project.** Follow-ups silently start from a stale main; engineers either self-recover (paying merge-cost they shouldn't have to) or hit cross-branch dependency surprises mid-flight.
+- **Confusing "branch pushed to remote" with "merged to main".** A pushed in-flight branch makes work visible but does NOT update main. `origin/<branch>` ≠ `origin/main`.
+- **Trusting "engineer will figure it out" instead of pre-flagging.** Some engineers correctly self-recover (Engineer C 2026-05-10) but others may STOP-and-report (the §16.7 fallback) and burn dispatch capacity. The brief should pre-resolve the dependency, not delegate it.
+
+**Companion** to: `§ 16.7 Worktree-base mismatch` (engineer-side recovery via worktree-base preamble) — §14.2 is the orchestrator-side prevention of the same class of gap (prerequisite-merge before dispatch). Together: orchestrator verifies main has prerequisites, AND brief preamble lets engineers recover if it doesn't.
+
 ---
 
 ## 15. Exploratory branching — branch-and-compare and merge-upfront
@@ -1036,6 +1077,38 @@ If the orchestrator chooses to skip findings.md (trivial work), log a learning t
 - **Engineer files findings inline in their report instead of authoring findings.md.** Findings exist but aren't on the durable surface — they evaporate when the report is summarized away. (Engineer B of Batch 1C did this correctly as a fallback, but the file is the durable contract.)
 
 **Companion to** `KB § 01-PHILOSOPHY.md § Knowledge tracking — durable findings file for any non-trivial work` (foundational principle that this section specializes for orchestration).
+
+#### 17.6.1 Recurrence update — the explicit-authorization clause is INSUFFICIENT (N=5 confirmed 2026-05-10)
+
+**The recurrence.** The architect-side fix in §17.6 (above) — "include the explicit Write-authorization paragraph in the brief" — was authored after Batch 1C ERP (2026-05-04, N=1). The 2026-05-10 follow-up batch (6 engineer dispatches in parallel for AdConnect MVP follow-up projects) brought N=5 confirmed instances of harness-block on `findings.md` Write **despite** the brief carrying the §17.6 clause verbatim:
+
+- **Engineer F (mcp-tool-name-alignment):** "Harness blocked `findings.md` Write despite the brief's explicit Write authorization paragraph. The harness's 'subagents return findings as text, not write report files' guard fired."
+- **Engineer E (noctusai-lib-nfe-domain-absorption):** "Engineer brief's 'Write authorization' override does NOT win against the harness-level 'subagents return findings as text, not write files' rule."
+- **Engineer A (mock-supabase-write-propagation):** "Authorized `findings.md` write was blocked by harness despite the explicit Write-authorization paragraph in the dispatch brief."
+- **Engineer B (schedule-coro-fire-and-forget):** "harness blocked the Write despite the brief's explicit Write-authorization. Engineer-side workaround was to fold all findings/learnings into the in-tree PROJECT.md §11 + the bundled proposal + the SQLite phase-learning DB."
+- **Plus the original Batch 1C ERP wiring engineer (2026-05-04).**
+
+Per the recurrence rule, **N=3+ MUST formalize**. The brief-clause approach has hit its ceiling — the harness rule supersedes the user-authorization paragraph at engineer-subagent vantage point.
+
+**The structural answer.** Methodology splits the `findings.md` artifact across two roles:
+
+1. **Engineer authors findings AS TEXT in their final report** under a "`findings.md` content (returned as text per harness rule)" heading, formatted in the same 5-category structure (Errors / Mistakes-slips / Lessons / Interesting-findings / Knowledge-pieces).
+2. **Architect transcribes the engineer's text into `projects/<slug>/findings.md`** at fresh-eyes-merge time. The architect's `Write` calls succeed (orchestrator vantage point doesn't have the harness guard). The transcription happens BEFORE the merge commit, so the file lands on the engineer's branch in the merge / FF push.
+
+**Updated brief template clause.** The §17.6 paragraph above stays — it remains the right shape for `PROJECT.md` and bundled proposals, which engineers DO write successfully. Add this complementary clause for `findings.md` specifically:
+
+> ## findings.md — return-as-text protocol
+>
+> If the harness blocks your `Write` call to `projects/<slug>/findings.md` (the harness's "return findings as text" guard fires despite the §17.6 authorization clause), do NOT loop-fight the block. Return the 5-category content AS TEXT in your final report under a heading "`findings.md` content (returned as text per harness rule)". The orchestrator transcribes to the file at fresh-eyes-merge time. This is the documented structural answer to the N=4 recurrence (KB § 16.7's safety-net pattern: the safety net activating IS the methodology working).
+
+**Anti-patterns specific to this recurrence:**
+- **Brief omits the return-as-text fallback.** Engineer hits the harness block, doesn't know the structural answer, may either (a) loop-fight and run out of attempts, (b) silently drop findings, or (c) ad-hoc write into the report — fragile because no canonical heading.
+- **Architect skips post-merge transcription.** Engineer's findings exist in their report message but never land in `projects/<slug>/findings.md`. The 5-category content evaporates after the report is summarized away (silent-error shape).
+- **Looping the Write attempt.** Per `feedback_safety_nets_become_learnings`, the safety net activating IS the methodology working — capture the lesson, don't bypass.
+
+**The deeper lesson.** The architect-side override-clause pattern works for files engineers write routinely (PROJECT.md, code, tests). It hits a ceiling on files the harness has a vendor-level rule against (report-shaped `.md` files). For those specific paths, the methodology has to **split the artifact across roles** rather than override the harness. This is a generalizable principle: when a harness rule is structural (vendor-level), the methodology adapts at the **role boundary**, not at the **brief vocabulary** level.
+
+**Three-way-synced 2026-05-10**: this subsection (§17.6.1) + memory `feedback_findings_md_return_as_text.md` + CLAUDE/projects.md (no new pointer needed; existing §17.6 pointer in CLAUDE/projects.md covers the subsection by reference).
 
 ### 17.7 Read-bodies-before-dispatch — the absorption-brief discipline (NEW 2026-05-10)
 
