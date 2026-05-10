@@ -3,7 +3,34 @@ Pytest configuration and shared fixtures for AdConnect backend tests.
 
 AdConnect uses the seed framework (noctusai_seed), so patches target
 the framework's database module rather than product-level modules.
+
+-----------------------------------------------------------------------------
+Auth fixture pattern (Phase 1 of `adconnect-test-conftest-distributor-binding`)
+-----------------------------------------------------------------------------
+The `client` fixture yields an `AuthClient` whose underlying
+`MockSupabaseClient.auth.get_user` is a `MagicMock` returning a fixed
+`MockUser`. The mock IGNORES the bearer-token bytes — JWTs minted by tests
+via `_make_token(...)` are decorative; the binding controls resolution.
+
+To exercise role-gated routes (admin endpoints, distributor-scoped reads),
+tests rebind the user_metadata via `bind_adconnect_user(client, role=..., distributor_id=...)`
+or one of the higher-level fixtures `as_admin` / `as_customer` / `as_admin_other_org`.
+This replaces the byte-identical `_bind_user_metadata` helper that was
+duplicated across `test_cart_router.py`, `test_orders_router.py`, and
+`test_financial_router.py` before the absorption (recurrence rule, N=3+).
+
+Constants:
+- `ORG_ID_BRAND` — canonical brand-org UUID used by router tests + admin DEFAULT_ORG_ID.
+- `OTHER_ORG_ID` — used by tests asserting cross-org isolation.
+- `DIST_A_ID` / `DIST_B_ID` — canonical distributor UUIDs.
+
+See `products/adconnect/projects/adconnect-test-conftest-distributor-binding/PROJECT.md`
+for the full design.
 """
+from __future__ import annotations
+
+from typing import Any, Optional
+
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -22,18 +49,117 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
 )
 
 
+# ---------------------------------------------------------------------------
+# Canonical AdConnect test-data identifiers
+# ---------------------------------------------------------------------------
+# Mirrors the literal at `app/routers/admin.py:DEFAULT_ORG_ID` so role-gated
+# routes that filter by `user["org_id"]` see the same UUID the seeded data
+# carries.
+ORG_ID_BRAND = "00000000-0000-0000-0000-000000000001"
+OTHER_ORG_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+DIST_A_ID = "11111111-1111-1111-1111-111111111111"
+DIST_B_ID = "22222222-2222-2222-2222-222222222222"
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
 
 
+# ---------------------------------------------------------------------------
+# AdConnect-specific user_metadata binder
+# ---------------------------------------------------------------------------
+
+
+def bind_adconnect_user(
+    client_or_mock,
+    *,
+    role: str = "customer",
+    distributor_id: Optional[str] = None,
+    org_id: str = ORG_ID_BRAND,
+    user_id: Optional[str] = None,
+    email: str = "u@dist.com",
+    extra: Optional[dict[str, Any]] = None,
+) -> MockUserResponse:
+    """Re-bind the mock's `auth.get_user` to a user_metadata-rich MockUser.
+
+    Replaces the byte-identical `_bind_user_metadata` helper that was
+    copy-pasted into 3 router test files (cart/orders/financial) and
+    structurally repeated in 3 more (admin/rewards/sellout).
+
+    AdConnect's `auth_deps.get_current_user` reads:
+      - `user_metadata.role` → drives `require_role(...)`.
+      - `user_metadata.distributor_id` → exposed to routers as `user["distributorId"]`.
+      - `user_metadata.org_id` → exposed as `user["org_id"]`; admin routes filter by it.
+
+    Args:
+      client_or_mock: either an `AuthClient` (the standard fixture yield)
+        or a raw `MockSupabaseClient`. Both shapes resolved transparently.
+      role: AdConnect product-native role — typically "admin" / "customer" /
+        "owner". Maps to `user_metadata["role"]`.
+      distributor_id: when set, populates `user_metadata["distributor_id"]`.
+        Auth_deps surfaces it as `user["distributorId"]`. Distributor-scoped
+        routes 403 when this is None.
+      org_id: brand-org UUID. Defaults to `ORG_ID_BRAND` (the canonical
+        AdConnect test brand). Pass `OTHER_ORG_ID` to exercise cross-org
+        isolation.
+      user_id / email / extra: passthrough to `MockUser`.
+
+    Returns the underlying `MockUserResponse` (in case a test wants to
+    extract `.user` for assertions).
+    """
+    mock_sb = (
+        client_or_mock.mock_supabase
+        if hasattr(client_or_mock, "mock_supabase")
+        else client_or_mock
+    )
+    metadata: dict[str, Any] = {}
+    if distributor_id is not None:
+        metadata["distributor_id"] = distributor_id
+    if extra:
+        metadata.update(extra)
+    user = MockUser(
+        id=user_id or f"user-{distributor_id or 'admin'}",
+        email=email,
+        role=role,
+        org_id=org_id,
+        extra_metadata=metadata or None,
+    )
+    response = MockUserResponse(user)
+    mock_sb.auth.get_user = MagicMock(return_value=response)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Base client fixture — role-agnostic default
+# ---------------------------------------------------------------------------
+
+
 @pytest.fixture
 def client():
+    """Default test client.
+
+    Yields an `AuthClient` whose mock returns a default `MockUser` with no
+    `role` and no `distributor_id`. Suitable for:
+      - Framework / health / team tests (don't gate by AdConnect roles).
+      - Tests that re-bind the user themselves via `bind_adconnect_user(...)`.
+
+    Tests that need a pre-bound role-aware user use the higher-level
+    fixtures `as_admin`, `as_customer`, `as_admin_other_org` below.
+    """
     # AdConnect's product tables live in `adconnect.<table>` — bind the mock
     # to that schema so column-validation lookups resolve against the
     # canonical migrations/001_adconnect.sql tables.
-    mock_sb = MockSupabaseClient(schema="adconnect")
+    #
+    # validate_schema=False mirrors the pre-Phase-1 standalone fixtures
+    # (rewards/sellout). Several tables (e.g. `relatorios_sellout`) carry an
+    # `org_id` column at runtime that the migration doesn't declare —
+    # canonical schema-drift candidate, tracked by an `adconnect-schema-
+    # drift-reconciliation` follow-up project (mirrors the ERP precedent
+    # at `products/erp-imobiliario/backend/tests/conftest.py:28`). Flip to
+    # True once reconciliation lands.
+    mock_sb = MockSupabaseClient(validate_schema=False, schema="adconnect")
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(
-        MockUser(org_id="test-org-123")
+        MockUser(org_id=ORG_ID_BRAND)
     ))
 
     # Two patch layers:
@@ -72,4 +198,41 @@ def client():
             bind_consent_module_to_mock(mock_sb)
 
             tc = TestClient(app)
-            yield AuthClient(tc, mock_sb)
+            ac = AuthClient(tc, mock_sb)
+            # Expose the binder as a method on the AuthClient for callsite
+            # ergonomics: `client.bind(role="admin", distributor_id=...)`.
+            ac.bind = lambda **kw: bind_adconnect_user(ac, **kw)  # type: ignore[attr-defined]
+            yield ac
+
+
+# ---------------------------------------------------------------------------
+# Pre-bound convenience fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def as_admin(client):
+    """`client` pre-bound as a brand-admin user (no distributor)."""
+    bind_adconnect_user(client, role="admin", distributor_id=None)
+    return client
+
+
+@pytest.fixture
+def as_customer(client):
+    """`client` pre-bound as a customer with `DIST_A_ID` distributor."""
+    bind_adconnect_user(client, role="customer", distributor_id=DIST_A_ID)
+    return client
+
+
+@pytest.fixture
+def as_customer_b(client):
+    """`client` pre-bound as a customer with `DIST_B_ID` distributor."""
+    bind_adconnect_user(client, role="customer", distributor_id=DIST_B_ID)
+    return client
+
+
+@pytest.fixture
+def as_admin_other_org(client):
+    """`client` pre-bound as admin in a different org (cross-org isolation tests)."""
+    bind_adconnect_user(client, role="admin", distributor_id=None, org_id=OTHER_ORG_ID)
+    return client

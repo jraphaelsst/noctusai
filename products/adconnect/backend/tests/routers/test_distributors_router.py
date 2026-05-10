@@ -9,6 +9,12 @@ Covers:
 
 Distributor PII is LGPD-flagged at the auth.py invitation flow (Phase 1
 Engineer A); this router is read-only so no LGPD writes happen here.
+
+Auth fixture pattern (Phase 1 of `adconnect-test-conftest-distributor-binding`):
+the conftest's mock auth.get_user IGNORES bearer-token bytes — `_admin_headers()`
+/ `_customer_headers()` are decorative. The role + distributor_id MUST be bound
+on the mock via `bind_adconnect_user(...)` (or the `as_admin` / `as_customer`
+fixtures) before the request.
 """
 from __future__ import annotations
 
@@ -19,11 +25,13 @@ import jwt
 
 from app.config import settings
 
-
-ORG_ID = "00000000-0000-0000-0000-000000000001"
-OTHER_ORG_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
-DIST_A_ID = "11111111-1111-1111-1111-111111111111"
-DIST_B_ID = "22222222-2222-2222-2222-222222222222"
+from tests.conftest import (
+    ORG_ID_BRAND as ORG_ID,
+    OTHER_ORG_ID,
+    DIST_A_ID,
+    DIST_B_ID,
+    bind_adconnect_user,
+)
 
 
 def _make_token(payload: dict[str, Any]) -> str:
@@ -87,6 +95,7 @@ def _default_distributors() -> list[dict]:
 class TestListDistributors:
     def test_list_as_admin_returns_all_in_org(self, client):
         _seed_distributors(client.mock_supabase)
+        bind_adconnect_user(client, role="admin", distributor_id=None)
         r = client.raw().get("/distributors", headers=_admin_headers())
         assert r.status_code == 200
         data = r.json()["data"]
@@ -95,6 +104,7 @@ class TestListDistributors:
 
     def test_list_as_non_admin_rejected(self, client):
         _seed_distributors(client.mock_supabase)
+        bind_adconnect_user(client, role="customer", distributor_id=DIST_A_ID)
         r = client.raw().get("/distributors", headers=_customer_headers(DIST_A_ID))
         assert r.status_code == 403
 
@@ -111,14 +121,16 @@ class TestListDistributors:
 class TestMeEndpoint:
     def test_me_returns_distributor_for_customer_with_jwt_distributor_id(self, client):
         _seed_distributors(client.mock_supabase, distributors=[_default_distributors()[0]])
+        bind_adconnect_user(client, role="customer", distributor_id=DIST_A_ID)
         r = client.raw().get("/distributors/me", headers=_customer_headers(DIST_A_ID))
         assert r.status_code == 200
         assert r.json()["id"] == DIST_A_ID
 
     def test_me_admin_without_distributor_id_returns_401(self, client):
-        # Admin JWT has no distributorId → 401 (admin uses GET / instead).
-        # Mock has no memberships either, so the fallback path also fails.
+        # Admin's user_metadata has no distributor_id → 401 (admin uses GET /
+        # instead). Mock has no memberships either, so the fallback path also fails.
         _seed_distributors(client.mock_supabase, memberships=[])
+        bind_adconnect_user(client, role="admin", distributor_id=None)
         r = client.raw().get("/distributors/me", headers=_admin_headers())
         assert r.status_code == 401
 
@@ -134,6 +146,7 @@ class TestGetDistributor:
             client.mock_supabase,
             distributors=[_default_distributors()[1]],  # only B
         )
+        bind_adconnect_user(client, role="admin", distributor_id=None)
         r = client.raw().get(f"/distributors/{DIST_B_ID}", headers=_admin_headers())
         assert r.status_code == 200
         assert r.json()["nome"] == "Distribuidor B"
@@ -143,6 +156,7 @@ class TestGetDistributor:
             client.mock_supabase,
             distributors=[_default_distributors()[0]],  # only A
         )
+        bind_adconnect_user(client, role="customer", distributor_id=DIST_A_ID)
         r = client.raw().get(
             f"/distributors/{DIST_A_ID}",
             headers=_customer_headers(DIST_A_ID),
@@ -156,7 +170,8 @@ class TestGetDistributor:
             client.mock_supabase,
             distributors=[_default_distributors()[0]],  # the row IS A
         )
-        # Customer's JWT has distributorId=DIST_B_ID, but they request DIST_A_ID.
+        # Customer's user_metadata has distributor_id=DIST_B_ID; they request DIST_A_ID.
+        bind_adconnect_user(client, role="customer", distributor_id=DIST_B_ID)
         r = client.raw().get(
             f"/distributors/{DIST_A_ID}",
             headers=_customer_headers(DIST_B_ID),
@@ -169,6 +184,7 @@ class TestGetDistributor:
             client.mock_supabase,
             distributors=[_default_distributors()[0]],
         )
+        bind_adconnect_user(client, role="admin", distributor_id=None, org_id=OTHER_ORG_ID)
         r = client.raw().get(
             f"/distributors/{DIST_A_ID}",
             headers=_admin_headers(org_id=OTHER_ORG_ID),
@@ -177,6 +193,7 @@ class TestGetDistributor:
 
     def test_get_not_found(self, client):
         _seed_distributors(client.mock_supabase, distributors=[])
+        bind_adconnect_user(client, role="admin", distributor_id=None)
         r = client.raw().get(
             "/distributors/nonexistent-id",
             headers=_admin_headers(),

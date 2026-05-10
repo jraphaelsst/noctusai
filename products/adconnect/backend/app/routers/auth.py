@@ -39,7 +39,19 @@ def _get_admin_client():
     """
     return _database._db.get_admin_client()
 
-router = APIRouter()
+# Constructor-time prefix — assigning `router.prefix = "/auth"` after the
+# `@router.<verb>(...)` decorators are evaluated is a no-op for already-
+# registered routes (FastAPI captures the prefix at route-registration time,
+# not at include_router time). The MVP project's main.py loop assigned
+# `/auth` post-construction and the routes silently mounted at `/me` /
+# `/accept-distributor-invite` (bare). Match the seed convention with the
+# `/api/...` prefix the test suite already targets. (Per Phase 3 of the
+# closed MVP: cart/orders/distributors moved to constructor-time prefixes
+# for the same structural reason.)
+#
+# Picked up by `adconnect-test-conftest-distributor-binding` Phase 1 as a
+# drive-by structural fix that closes 9 of the 19 baseline failures.
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.get("/me")

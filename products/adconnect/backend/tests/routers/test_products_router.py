@@ -22,10 +22,12 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 
-
-ORG_ID = "00000000-0000-0000-0000-000000000001"
-DIST_A_ID = "11111111-1111-1111-1111-111111111111"
-DIST_B_ID = "22222222-2222-2222-2222-222222222222"
+from tests.conftest import (
+    ORG_ID_BRAND as ORG_ID,
+    DIST_A_ID,
+    DIST_B_ID,
+    bind_adconnect_user,
+)
 
 
 def _make_token(payload: dict[str, Any]) -> str:
@@ -195,6 +197,7 @@ class TestPreferentialPricing:
                 {"product_id": "p-1", "preferential_price": 70, "distributor_id": DIST_A_ID},
             ],
         )
+        bind_adconnect_user(client, role="customer", distributor_id=DIST_A_ID)
         r = client.raw().get("/products", headers=_distributor_headers(DIST_A_ID))
         assert r.status_code == 200
         by_sku = {p["sku"]: p for p in r.json()["data"]}
@@ -263,6 +266,7 @@ class TestGetProduct:
                 {"product_id": "p-1", "preferential_price": 70, "distributor_id": DIST_A_ID},
             ],
         )
+        bind_adconnect_user(client, role="customer", distributor_id=DIST_A_ID)
         r = client.raw().get("/products/p-1", headers=_distributor_headers(DIST_A_ID))
         assert r.status_code == 200
         assert float(r.json()["effective_price"]) == 70.0

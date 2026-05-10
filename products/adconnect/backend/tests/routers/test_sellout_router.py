@@ -1,29 +1,22 @@
 """
 Router tests for sellout — three submission modes + listing + review.
 
-The custom-JWT auth dep decodes a real JWT, so we mint tokens with the
-product's own `create_token` helper (no monkey-patching of our auth code).
+Phase 1 of `adconnect-test-conftest-distributor-binding` retired this
+file's standalone `db_and_client` fixture; tests now consume the shared
+`client` fixture and bind per-test via `bind_adconnect_user(...)`.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import pytest
-from fastapi.testclient import TestClient
-from noctusai_lib.testing import (
-    AuthClient,
-    MockSupabaseClient,
-    MockUser,
-    MockUserResponse,
-    bind_consent_module_to_mock,
-)
+
+from tests.conftest import bind_adconnect_user
 
 
 def _make_token(payload: dict) -> str:
     """Mint a test JWT. Production auth runs through the seed's
-    `make_get_current_user` factory (Supabase-backed); this helper just
-    produces a header-shape-valid token. `MockSupabaseClient.auth.get_user`
-    is patched in `db_and_client` fixture to ignore the token content."""
+    `make_get_current_user` factory (Supabase-backed); the `client`
+    fixture's mock IGNORES token content — the binding via
+    `bind_adconnect_user(...)` is the actual control surface."""
     import jwt
     from datetime import datetime, timedelta, timezone
     from app.config import settings
@@ -52,22 +45,16 @@ def _distributor_token() -> str:
 
 
 @pytest.fixture
-def db_and_client():
-    mock_sb = MockSupabaseClient(validate_schema=False, schema="adconnect")
-    mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(
-        MockUser(org_id="org-test")
-    ))
-    with patch("app.database._db.get_client", return_value=mock_sb), \
-         patch("app.database._db.get_core_client", return_value=mock_sb), \
-         patch("app.database._db.get_admin_client", return_value=mock_sb), \
-         patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
-         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
-         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
+def db_and_client(client):
+    """Compat shim — yields (tc, mock_sb) tuple expected by existing tests.
 
-        from app.main import app
-        bind_consent_module_to_mock(mock_sb)
-        tc = TestClient(app)
-        yield tc, mock_sb
+    Tests still call `db.set_table_data(...)` / `db.set_sequential_responses(...)`
+    and `tc.post(...)` directly. This shim unwraps the `AuthClient`'s
+    underlying TestClient + mock supabase so the existing test bodies stay
+    intact. Per-test `bind_adconnect_user(db, role=..., distributor_id=...,
+    org_id="org-test")` controls the resolved user.
+    """
+    return client.raw(), client.mock_supabase
 
 
 def _auth_headers(token: str) -> dict[str, str]:
@@ -76,6 +63,7 @@ def _auth_headers(token: str) -> dict[str, str]:
 
 def test_submit_estruturado_inserts_row(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     payload = {
         "distributor_id": "dist-001",
         "valor_total": 1500.0,
@@ -97,6 +85,7 @@ def test_submit_estruturado_inserts_row(db_and_client) -> None:
 
 def test_upload_nfe_parses_and_inserts(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe">'
@@ -126,6 +115,7 @@ def test_upload_nfe_parses_and_inserts(db_and_client) -> None:
 
 def test_upload_attachment_stores_url(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     res = tc.post(
         "/sellout/upload-attachment",
         data={"distributor_id": "dist-001"},
@@ -142,6 +132,7 @@ def test_upload_attachment_stores_url(db_and_client) -> None:
 
 def test_list_reports_distributor_scoped(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     db.set_table_data("relatorios_sellout", [
         {"id": "r1", "distributor_id": "dist-001", "submission_mode": "estruturado", "status": "pendente"},
     ])
@@ -152,6 +143,7 @@ def test_list_reports_distributor_scoped(db_and_client) -> None:
 
 def test_review_writes_status(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="admin", distributor_id=None, org_id="org-test")
     db.set_sequential_responses(
         "relatorios_sellout",
         [type("R", (), {"data": [
@@ -173,7 +165,8 @@ def test_review_writes_status(db_and_client) -> None:
 
 
 def test_review_rejects_for_non_admin(db_and_client) -> None:
-    tc, _ = db_and_client
+    tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     res = tc.patch(
         "/sellout/r1/review",
         json={"status": "aprovado"},

@@ -1,23 +1,22 @@
 """
 Router tests for rewards — ledger, rules, redemption request + processing.
+
+Pre-Phase-1 of `adconnect-test-conftest-distributor-binding`: this file
+shipped its own `db_and_client` fixture that duplicated the conftest's
+patching infrastructure. Phase 1 retires the duplicate; tests now
+consume the shared `client` fixture and bind per-test via
+`bind_adconnect_user(...)` from the conftest.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import pytest
-from fastapi.testclient import TestClient
-from noctusai_lib.testing import (
-    MockSupabaseClient,
-    MockUser,
-    MockUserResponse,
-    bind_consent_module_to_mock,
-)
+
+from tests.conftest import bind_adconnect_user
 
 
 def _make_token(payload: dict) -> str:
-    """Mint a test JWT (header-shape only — MockSupabaseClient.auth.get_user
-    is patched in db_and_client to ignore token content)."""
+    """Mint a test JWT (header-shape only — `mock.auth.get_user` ignores
+    token content; the binding is the actual control surface)."""
     import jwt
     from datetime import datetime, timedelta, timezone
     from app.config import settings
@@ -46,22 +45,19 @@ def _distributor_token() -> str:
 
 
 @pytest.fixture
-def db_and_client():
-    mock_sb = MockSupabaseClient(validate_schema=False, schema="adconnect")
-    mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(
-        MockUser(org_id="org-test")
-    ))
-    with patch("app.database._db.get_client", return_value=mock_sb), \
-         patch("app.database._db.get_core_client", return_value=mock_sb), \
-         patch("app.database._db.get_admin_client", return_value=mock_sb), \
-         patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
-         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
-         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
+def db_and_client(client):
+    """Compat shim — yields (tc, mock_sb) tuple expected by existing tests.
 
-        from app.main import app
-        bind_consent_module_to_mock(mock_sb)
-        tc = TestClient(app)
-        yield tc, mock_sb
+    Tests still use `db.set_table_data(...)` / `db.set_sequential_responses(...)` /
+    `tc.get(...)` directly. The new `client` fixture wraps both in an
+    AuthClient; we unwrap here for backwards compat.
+
+    Note: the previous standalone fixture used org_id="org-test"; this
+    one inherits the conftest default `ORG_ID_BRAND`. Tests that depended
+    on the literal "org-test" value re-bind via `bind_adconnect_user(...)`
+    explicitly — that's the right shape for AdConnect's auth flow.
+    """
+    return client.raw(), client.mock_supabase
 
 
 def _auth(token: str) -> dict:
@@ -70,6 +66,7 @@ def _auth(token: str) -> dict:
 
 def test_ledger_returns_summary_for_distributor(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     db.set_table_data("recompensas_acumuladas", [
         {"id": "a1", "distributor_id": "dist-001", "tipo": "cashback", "valor": 100.0, "status": "liberado"},
         {"id": "a2", "distributor_id": "dist-001", "tipo": "cashback", "valor": 30.0, "status": "utilizado"},
@@ -83,6 +80,7 @@ def test_ledger_returns_summary_for_distributor(db_and_client) -> None:
 
 def test_rules_endpoint_lists_active(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     db.set_table_data("regras_recompensa", [
         {"id": "r1", "org_id": "org-test", "nome": "Cabo 5%", "tipo": "cashback",
          "cashback_pct": 5.0, "ativo": True,
@@ -97,6 +95,7 @@ def test_rules_endpoint_lists_active(db_and_client) -> None:
 
 def test_redeem_creates_pending_redemption(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     payload = {
         "distributor_id": "dist-001",
         "tipo": "cashback",
@@ -114,7 +113,8 @@ def test_redeem_creates_pending_redemption(db_and_client) -> None:
 
 
 def test_redeem_rejects_non_positive_amount(db_and_client) -> None:
-    tc, _ = db_and_client
+    tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     payload = {
         "distributor_id": "dist-001",
         "tipo": "cashback",
@@ -125,7 +125,8 @@ def test_redeem_rejects_non_positive_amount(db_and_client) -> None:
 
 
 def test_process_redemption_admin_only(db_and_client) -> None:
-    tc, _ = db_and_client
+    tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     res = tc.patch(
         "/rewards/redeem/some-id/process",
         json={"status": "aprovado"},
@@ -136,6 +137,7 @@ def test_process_redemption_admin_only(db_and_client) -> None:
 
 def test_process_redemption_marks_paid(db_and_client) -> None:
     tc, db = db_and_client
+    bind_adconnect_user(db, role="admin", distributor_id=None, org_id="org-test")
     db.set_sequential_responses(
         "resgates_recompensa",
         [type("R", (), {"data": [

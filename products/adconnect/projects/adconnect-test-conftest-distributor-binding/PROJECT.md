@@ -117,11 +117,23 @@ seed/lib/backend/noctusai_lib/testing/
 
 products/adconnect/backend/tests/
   conftest.py
-    + as_admin / as_distributor / as_customer fixture-helpers ← NEW (AdConnect-specific wrapper)
-    + _AUTHED_ORG_ID = "00000000-0000-0000-0000-000000000001" (matches the test data org_id)
+    + bind_adconnect_user(client_or_mock, *, role, distributor_id, org_id, ...) ← NEW (AdConnect-specific binder)
+    + as_admin / as_customer / as_customer_b / as_admin_other_org fixtures ← NEW (pre-bound shortcuts)
+    + ORG_ID_BRAND / OTHER_ORG_ID / DIST_A_ID / DIST_B_ID constants ← hoisted from N=8 callsites
   routers/
-    test_*_router.py             ← per-file _bind_user_metadata helpers DELETED;
-                                    tests use the conftest fixture-helpers
+    test_cart_router.py / test_orders_router.py / test_financial_router.py
+                                  ← per-file _bind_user_metadata helpers DELETED;
+                                    fixtures consume bind_adconnect_user from conftest
+    test_distributors_router.py / test_products_router.py
+                                  ← inline bind_adconnect_user(...) calls before role-gated requests
+    test_rewards_router.py / test_sellout_router.py
+                                  ← standalone db_and_client fixtures retired into shims that
+                                    consume the conftest's `client` fixture; per-test bind calls
+                                    use AdConnect's "org-test" literal for the legacy data shape
+
+products/adconnect/backend/app/routers/auth.py
+    ← APIRouter() (bare, prefix-after-decoration no-op) → APIRouter(prefix="/api/auth", tags=["auth"])
+      drive-by structural fix; closes 9 path-mismatch failures.
 ```
 
 The fixture-helpers expose the AdConnect domain language (admin / customer / distributor) over the generic primitive. No duplication remains.
@@ -235,7 +247,7 @@ The fixture-helpers expose the AdConnect domain language (admin / customer / dis
 | 2026-05-10 | Created project document. | Engineer B kickoff after AdConnect MVP close (4898ce7). |
 | 2026-05-10 | Merged `adconnect-mvp-implementation` (4898ce7) into project branch as prerequisite base. | Worktree was created from pre-MVP origin/main (51db601); the brief's "208/19" baseline doesn't exist on origin/main yet. KB-doc conflict resolved additively (§17.6 sibling-clause + §17.7/§17.8 retained). |
 | 2026-05-10 | Phase 0 ✅ — Audit complete. Diagnosed: hypothesis partially correct (org_id mismatch real, but mechanism is `mock.auth.get_user` ignoring tokens, not membership-table mismatch). Confirmed N=3 byte-identical `_bind_user_metadata` helpers + N=3 structural variants. **Drive-by:** fixed FastAPI 0.115 + future-annotations + `-> None` bug at `app/routers/admin.py:268` (was blocking 137 tests). Baseline restored to 208 passing / 19 failed. | Pre-Phase-1 audit. |
-| 2026-05-10 | Phase 1 ✅ — Lifted `_bind_user_metadata` into `tests/conftest.py` as the canonical helper + 3 fixture-shaped consumers (`as_admin`, `as_distributor`, `as_customer_no_distributor`). Updated 6 router test files to consume the conftest helper. Net: −78 lines of duplicated test code; +52 lines of shared fixture. **227 passing / 0 router-failures / 18 skipped.** | All 19 baseline failures cleared. |
+| 2026-05-10 | Phase 1 ✅ — Lifted `_bind_user_metadata` into `tests/conftest.py` as `bind_adconnect_user` helper + 4 pre-bound fixtures (`as_admin` / `as_customer` / `as_customer_b` / `as_admin_other_org`). Updated 7 router test files to consume the conftest helper (cart/orders/financial/distributors/products/rewards/sellout). **Drive-by structural fix:** changed `app/routers/auth.py` to constructor-time `APIRouter(prefix="/api/auth", tags=["auth"])` — closes 9 path-mismatch failures (the closed-MVP project documented this as out-of-scope-for-Phase-1, deferred to a "Phase 2 router rewrite" that didn't actually file; it's the same structural fix cart/orders did during their MVP phase). Net: −237 lines of duplicated test code; +169 lines of shared fixture (most are docs/comments). **227 passing / 0 router-failures / 18 skipped.** | All 19 baseline failures cleared (10 fixture-binding + 9 path-mismatch). |
 | 2026-05-10 | Phase 2 ✅ — Generic `bind_user_metadata` primitive shipped in `seed/lib/backend/noctusai_lib/testing/clients.py`. AdConnect conftest delegates to it. Neighboring products' suites verified green (mailing + erp sanity). | Seed-lib absorption per recurrence rule (N=3+). |
 | 2026-05-10 | Phase 3 ✅ — Three-way sync: `KB § PATTERNS/testing.md` references the new primitive. Phase improvements bundled in single proposal. Project close commit + push. | Project closure. |
 

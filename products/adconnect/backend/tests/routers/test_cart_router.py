@@ -17,45 +17,22 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import MagicMock
 
 import jwt
 import pytest
-from noctusai_lib.testing import MockUser, MockUserResponse
 
 from app.config import settings
 
-
-ORG_ID = "00000000-0000-0000-0000-000000000001"
-DIST_A_ID = "11111111-1111-1111-1111-111111111111"
-
-
-def _bind_user_metadata(
-    client,
-    *,
-    role: str,
-    distributor_id: str | None = None,
-    org_id: str = ORG_ID,
-):
-    """Re-bind the mock's auth.get_user to a user_metadata-rich MockUser.
-
-    `auth_deps.get_current_user` reads `distributorId` from
-    `user.user_metadata.distributor_id` — the default conftest mock-user
-    only carries `org_id`, so distributor-scoped routes resolve to None.
-    Re-binding per-test is cheaper than rewriting the conftest.
-    """
-    user = MockUser(
-        id=f"user-{distributor_id or 'admin'}",
-        email="u@dist.com",
-        role=role,
-        org_id=org_id,
-        extra_metadata=(
-            {"distributor_id": distributor_id} if distributor_id else None
-        ),
-    )
-    client.mock_supabase.auth.get_user = MagicMock(
-        return_value=MockUserResponse(user)
-    )
+# `_bind_user_metadata` was lifted into the AdConnect conftest as
+# `bind_adconnect_user` (Phase 1 of `adconnect-test-conftest-distributor-binding`).
+# `ORG_ID` / `DIST_A_ID` constants likewise live in the conftest now —
+# imported here for backwards compat with the inline test bodies that
+# already reference them.
+from tests.conftest import (
+    ORG_ID_BRAND as ORG_ID,
+    DIST_A_ID,
+    bind_adconnect_user,
+)
 
 
 def _make_token(payload: dict[str, Any]) -> str:
@@ -87,14 +64,14 @@ def _admin_headers() -> dict[str, str]:
 @pytest.fixture
 def distributor_client(client):
     """client + auto-bound distributor user_metadata."""
-    _bind_user_metadata(client, role="customer", distributor_id=DIST_A_ID)
+    bind_adconnect_user(client, role="customer", distributor_id=DIST_A_ID)
     return client
 
 
 @pytest.fixture
 def admin_client(client):
     """client + auto-bound admin user_metadata (no distributor)."""
-    _bind_user_metadata(client, role="admin", distributor_id=None)
+    bind_adconnect_user(client, role="admin", distributor_id=None)
     return client
 
 
