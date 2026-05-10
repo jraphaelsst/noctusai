@@ -1,7 +1,7 @@
 # dev-team product backend requirements.
-# The shared root requirements.txt installs seed + lib + framework + the
-# product-shared deps (fastapi, supabase, pydantic, slowapi, pytest, ...).
-# This file pins ONLY product-specific extras.
+# The shared root requirements.txt installs the heavyweight base; this file
+# pins ONLY the seed editable installs (compliance scanner expects them
+# co-located with the product) and any product-specific extras.
 #
 # Engine consumption: the dev_team engine (at the repo root) is installed via
 #   pip install -e dev_team/
@@ -10,3 +10,6 @@
 #
 # No extra deps beyond root for MVP — telemetry / API endpoints all rely on
 # what the seed already ships.
+
+-e seed/lib/backend
+-e seed/framework/backend
