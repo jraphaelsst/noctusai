@@ -11,6 +11,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from noctusai_lib.primitives.tasks import schedule_coro
 from noctusai_lib.primitives.timeutil import current_day_ref
 from enum import Enum
 from typing import Any, Callable, Coroutine, Dict, List, Optional
@@ -117,8 +118,9 @@ def submit_job(name: str, org_id: str, params: Optional[Dict] = None) -> Job:
         for old_job in sorted_jobs[:len(_jobs) - 200]:
             del _jobs[old_job.id]
 
-    # Schedule execution
-    asyncio.ensure_future(_run_job(job))
+    # Schedule execution via the canonical fire-and-forget helper
+    # (logs exceptions via add_done_callback — never silent).
+    schedule_coro(_run_job(job), logger=logger, name=f"job_{job.id}")
     logger.info(f"[JOBS] Submitted job {job.id}: {name} for org {org_id}")
     return job
 

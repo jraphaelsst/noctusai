@@ -859,12 +859,16 @@ class TestScheduleTjspForOrg:
         mock_db.set_table_data("certidao_resultados", [])
 
         svc._tjsp_scheduled_tasks.pop("org-001", None)
-        with patch("app.services.certidoes_service.asyncio.create_task") as mock_ct:
+        # Patch the seed helper at the consumer's import site (refactored
+        # 2026-05-10: was `app.services.certidoes_service.asyncio.create_task`,
+        # now uses `noctusai_lib.primitives.tasks.schedule_coro` imported as
+        # `schedule_coro` in the consumer module).
+        with patch("app.services.certidoes_service.schedule_coro") as mock_sc:
             schedule_tjsp_for_org("org-001", mock_db)
-            mock_ct.assert_not_called()
+            mock_sc.assert_not_called()
 
     def test_creates_task_for_queued_item(self):
-        """Queued item → creates asyncio task with correct delay."""
+        """Queued item → schedules coroutine via the seed helper."""
         import app.services.certidoes_service as svc
         mock_db = MockSupabaseClient()
         mock_db.set_table_data("certidao_resultados", [
@@ -874,9 +878,14 @@ class TestScheduleTjspForOrg:
         svc._tjsp_scheduled_tasks.pop("org-001", None)
         mock_task = MagicMock()
         with patch("app.services.certidoes_service._get_tjsp_remaining_cooldown", return_value=1800.0), \
-             patch("app.services.certidoes_service.asyncio.create_task", return_value=mock_task) as mock_ct:
+             patch("app.services.certidoes_service.schedule_coro", return_value=mock_task) as mock_sc:
             schedule_tjsp_for_org("org-001", mock_db)
-            mock_ct.assert_called_once()
+            mock_sc.assert_called_once()
+            # The seed helper receives (coro, logger=..., name=...).
+            _, kwargs = mock_sc.call_args
+            assert kwargs.get("name") == "tjsp_org-001", (
+                f"expected name='tjsp_org-001'; got kwargs={kwargs}"
+            )
 
         # Cleanup
         svc._tjsp_scheduled_tasks.pop("org-001", None)
@@ -893,9 +902,9 @@ class TestScheduleTjspForOrg:
         existing_task.done.return_value = False
         svc._tjsp_scheduled_tasks["org-001"] = existing_task
 
-        with patch("app.services.certidoes_service.asyncio.create_task") as mock_ct:
+        with patch("app.services.certidoes_service.schedule_coro") as mock_sc:
             schedule_tjsp_for_org("org-001", mock_db)
-            mock_ct.assert_not_called()
+            mock_sc.assert_not_called()
 
         # Cleanup
         svc._tjsp_scheduled_tasks.pop("org-001", None)

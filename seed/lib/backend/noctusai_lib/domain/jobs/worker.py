@@ -9,6 +9,8 @@ consumers; this is a sibling module.
 
 Wiring recipe (consumer-side):
 
+    from noctusai_lib.primitives.tasks import schedule_coro
+
     repo = make_job_repository(use_fake=False, supabase_client=client)
     worker = Worker(
         repo,
@@ -18,7 +20,10 @@ Wiring recipe (consumer-side):
             "youtube.metadata_refresh": handle_metadata_refresh,
         },
     )
-    asyncio.create_task(worker.run_forever(stop_event=app_state.stop_event))
+    schedule_coro(
+        worker.run_forever(stop_event=app_state.stop_event),
+        name="job-worker-1",
+    )
 
 Differences from `ConversationWorker`:
 - async (asyncio) instead of sync (`time.sleep`) — fits FastAPI lifespans

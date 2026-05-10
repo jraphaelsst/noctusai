@@ -18,6 +18,7 @@ import httpx
 from xhtml2pdf import pisa
 
 from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.primitives.tasks import schedule_coro
 
 logger = logging.getLogger(__name__)
 
@@ -1096,8 +1097,10 @@ def schedule_tjsp_for_org(org_id: str, db) -> None:
         return
 
     remaining = _get_tjsp_remaining_cooldown(org_id, db)
-    task = asyncio.create_task(
-        _delayed_tjsp_process(remaining, items[0], org_id, db)
+    task = schedule_coro(
+        _delayed_tjsp_process(remaining, items[0], org_id, db),
+        logger=logger,
+        name=f"tjsp_{org_id}",
     )
     _tjsp_scheduled_tasks[org_id] = task
     logger.info(

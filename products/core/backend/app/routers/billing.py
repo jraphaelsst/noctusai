@@ -37,6 +37,8 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from noctusai_lib.primitives.tasks import NoRunningLoopError, schedule_coro
+
 from app.config import settings
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_org_id
@@ -167,8 +169,8 @@ async def stripe_webhook(request: Request):
 
 def _dispatch_webhook(event_type: str, event_data: dict) -> None:
     """Dispatch billing event to registered webhook endpoints (best-effort, fire-and-forget)."""
+    org_id = None
     try:
-        import asyncio
         from app.services import webhook_delivery
 
         session_obj = event_data.get("object", {})
@@ -196,13 +198,20 @@ def _dispatch_webhook(event_type: str, event_data: dict) -> None:
             "data": event_data,
         }
 
-        # Schedule as fire-and-forget coroutine
+        # Schedule as fire-and-forget coroutine via the canonical helper
+        # (logs exceptions via add_done_callback — never silent).
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(webhook_delivery.dispatch(org_id, event_type, payload))
-        except RuntimeError as exc:
+            schedule_coro(
+                webhook_delivery.dispatch(org_id, event_type, payload),
+                logger=logger,
+                name=f"billing_webhook_{event_type}",
+            )
+        except NoRunningLoopError as exc:
             # No running loop (shouldn't happen in FastAPI, but be safe)
-            logger.warning("billing: no running asyncio loop to dispatch webhook (%s); event %s for org=%s skipped", exc, event_type, org_id)
+            logger.warning(
+                "billing: no running asyncio loop to dispatch webhook (%s); event %s for org=%s skipped",
+                exc, event_type, org_id,
+            )
     except Exception as exc:
         logger.warning(
             "billing: webhook dispatch failed (%s); event %s for org=%s skipped",
