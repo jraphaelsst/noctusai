@@ -5,8 +5,8 @@
 > **Write for a zero-context reader.** §1 inlines the situation, §2 quotes the user, §5 names every call site with line numbers, §10 commands are copy-paste ready.
 
 - **Created:** 2026-05-03
-- **Last updated:** 2026-05-03
-- **Status:** 🅿️ **PARKED** — gated on `whatsapp-seed-absorption` Phase 1 (canonical `noctusai_lib.integrations.whatsapp.send_text()` lib must exist before either call site can be refactored).
+- **Last updated:** 2026-05-10
+- **Status:** ⏳ **EXECUTING (Path A — re-scoped 2026-05-10).** Engineer H Phase 0 STOP+escalate (no commit) surfaced that seed `WahaClient.send_text` covers WAHA transport only, NOT ERP's Meta Cloud API. **Real N=2 recurrence is `send_via_waha`, not `send_message`.** Re-scoped: ERP `whatsapp_service.send_via_waha` (line 319) + therapy `whatsapp_therapy_service.send_via_waha` (line 44) → consume seed `WahaClient`. ERP `send_message` (Meta) + therapy `send_message` stub UNTOUCHED (N=1 → low-priority follow-up `whatsapp-meta-cloud-api-seed-absorption`). Re-dispatched 2026-05-10.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `send-message-consolidation` — cross-product naming + transport collision; lives at `projects/<slug>/` per `KB § PATTERNS/project-execution.md §1`.
 - **Related docs:**
@@ -233,3 +233,4 @@ bash scripts/verify-kb-sync.sh
 | Date | Change | By |
 |---|---|---|
 | 2026-05-03 | **Project filed at N=2** per `NEXT-STEPS.md § P2 deferrals` directive *"file `send_message-consolidation` follow-up project NOW"* and the recurrence-rule pre-emption clause. §1-§10 populated; §6 phases drafted with predecessor gate on `whatsapp-seed-absorption` Phase 1. Status: 🅿️ PARKED. Used `send-message-consolidation` (dashes, platform-consistent) as slug rather than the `send_message-consolidation` form NEXT-STEPS.md used (hybrid underscore/dash) — slug normalized in the same commit. | Claude Opus 4.7 |
+| 2026-05-10 | **Re-scoped (Path A) after Engineer H Phase 0 STOP+escalate.** Engineer H correctly halted at premise-invalidation per "verify the seed ships it" methodology: seed `noctusai_lib.integrations.whatsapp.WahaClient.send_text` covers WAHA transport only, NOT Meta Cloud API. The REAL N=2 recurrence is `send_via_waha` (60→37 LoC dup at ERP `whatsapp_service.send_via_waha:319` + therapy `whatsapp_therapy_service.send_via_waha:44`), not `send_message`. Path A re-scope: (1) ERP `send_via_waha` → consume seed `WahaClient`. (2) Therapy `send_via_waha` → consume seed `WahaClient`. (3) ERP `send_message` (Meta Cloud API, N=1) UNTOUCHED — separate follow-up `whatsapp-meta-cloud-api-seed-absorption` filed. (4) Therapy `send_message` stub UNTOUCHED — wiring it to real send is a feature change. Re-dispatched 2026-05-10 with corrected scope. Engineer H's findings preserved as 6th confirmation of §17.6.1 return-as-text protocol. | claude-opus-4-7 |
