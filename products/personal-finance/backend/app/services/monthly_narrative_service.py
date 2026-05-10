@@ -27,6 +27,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from noctusai_lib.domain.digest import (
+    BaseDigestService,
+    DigestResult,
+    DigestWindow,
     build_and_send,
     email_template_dir,
     narrative as digest_narrative,
@@ -179,6 +182,101 @@ def _render_bodies(
     )
 
 
+class MonthlyNarrativeService(BaseDigestService):
+    """`BaseDigestService` subclass for the PF monthly narrative.
+
+    Methods delegate to the module-level free-functions
+    (`_fetch_window`, `_aggregate_period`, `_generate_narrative`,
+    `_render_bodies`) so existing test imports continue to target a
+    single source of truth. The class adds the orchestration shape on
+    top — the per-step logic remains module-level.
+    """
+
+    async def _fetch_window(self, window: DigestWindow):
+        # `period_days` lives on the window envelope; org_id on self.
+        period_days = window.period_days or 30
+        transacoes, org_record = await _fetch_window(
+            self.client, self.org_id or "", period_days
+        )
+        return {
+            "transacoes": transacoes,
+            "org_record": org_record,
+            "period_days": period_days,
+        }
+
+    def _aggregate(self, raw):
+        receita, despesa, by_categoria, count = _aggregate_period(
+            raw["transacoes"]
+        )
+        fluxo = receita - despesa
+        poupanca_pct = (fluxo / receita * 100.0) if receita > 0 else 0.0
+        top_categorias = sorted(
+            by_categoria.items(), key=lambda x: x[1], reverse=True
+        )
+        period_days = raw["period_days"]
+        end_date = date.today()
+        start_date = end_date - timedelta(days=period_days)
+        period_label = (
+            f"Últimos {period_days} dias "
+            f"({start_date.isoformat()} → {end_date.isoformat()})"
+        )
+        org_name = raw["org_record"].get("nome") or "Você"
+        return {
+            "org_name": org_name,
+            "period_days": period_days,
+            "period_label": period_label,
+            "receita": receita,
+            "despesa": despesa,
+            "fluxo": fluxo,
+            "poupanca_pct": poupanca_pct,
+            "top_categorias": top_categorias,
+            "transacoes_count": count,
+        }
+
+    async def _generate_narrative(self, agg, window):
+        return await _generate_narrative(
+            period_label=agg["period_label"],
+            receita=agg["receita"],
+            despesa=agg["despesa"],
+            fluxo=agg["fluxo"],
+            poupanca_pct=agg["poupanca_pct"],
+            top_categorias=agg["top_categorias"],
+            transacoes_count=agg["transacoes_count"],
+            org_id=self.org_id,
+        )
+
+    def _render_bodies(self, agg, narrative):
+        return _render_bodies(
+            org_name=agg["org_name"],
+            period_label=agg["period_label"],
+            receita=agg["receita"],
+            despesa=agg["despesa"],
+            fluxo=agg["fluxo"],
+            poupanca_pct=agg["poupanca_pct"],
+            top_categorias=agg["top_categorias"],
+            narrative=narrative,
+        )
+
+    def _build_subject(self, agg, window):
+        return f"[NoctusAI] Resumo financeiro mensal — {agg['org_name']}"
+
+    def _build_summary(self, agg, narrative, window):
+        return {
+            "period_days": agg["period_days"],
+            "period_label": agg["period_label"],
+            "receita_total": round(agg["receita"], 2),
+            "despesa_total": round(agg["despesa"], 2),
+            "fluxo_liquido": round(agg["fluxo"], 2),
+            "taxa_poupanca": round(agg["poupanca_pct"], 2),
+            "top_categorias": [
+                {"nome": n, "total": round(t, 2)}
+                for n, t in agg["top_categorias"][:6]
+            ],
+            "transacoes_count": agg["transacoes_count"],
+            "narrative": narrative,
+        }
+
+
 async def build_narrative(
     db: Any,
     *,
@@ -188,60 +286,15 @@ async def build_narrative(
     """Compute aggregates + narrative + render bodies. No DB writes, no email send.
 
     Returns `(Digest, summary_dict)`. Suitable for dashboard cards or
-    inspection endpoints.
+    inspection endpoints. Public API unchanged after the
+    `seed-digest-base-class` refactor — internally now delegates to
+    `MonthlyNarrativeService.run(...)`.
     """
-    transacoes, org_record = await _fetch_window(db, org_id, period_days)
-    org_name = org_record.get("nome") or "Você"
-
-    receita, despesa, by_categoria, count = _aggregate_period(transacoes)
-    fluxo = receita - despesa
-    poupanca_pct = (fluxo / receita * 100.0) if receita > 0 else 0.0
-    top_categorias = sorted(by_categoria.items(), key=lambda x: x[1], reverse=True)
-
-    end_date = date.today()
-    start_date = end_date - timedelta(days=period_days)
-    period_label = f"Últimos {period_days} dias ({start_date.isoformat()} → {end_date.isoformat()})"
-
-    narrative = await _generate_narrative(
-        period_label=period_label,
-        receita=receita,
-        despesa=despesa,
-        fluxo=fluxo,
-        poupanca_pct=poupanca_pct,
-        top_categorias=top_categorias,
-        transacoes_count=count,
-        org_id=org_id,
+    svc = MonthlyNarrativeService(client=db, org_id=org_id)
+    result: DigestResult = await svc.run(
+        DigestWindow(org_id=org_id, period_days=period_days)
     )
-
-    html, text = _render_bodies(
-        org_name=org_name,
-        period_label=period_label,
-        receita=receita,
-        despesa=despesa,
-        fluxo=fluxo,
-        poupanca_pct=poupanca_pct,
-        top_categorias=top_categorias,
-        narrative=narrative,
-    )
-    digest = Digest(
-        subject=f"[NoctusAI] Resumo financeiro mensal — {org_name}",
-        text=text,
-        html=html,
-    )
-    summary = {
-        "period_days": period_days,
-        "period_label": period_label,
-        "receita_total": round(receita, 2),
-        "despesa_total": round(despesa, 2),
-        "fluxo_liquido": round(fluxo, 2),
-        "taxa_poupanca": round(poupanca_pct, 2),
-        "top_categorias": [
-            {"nome": n, "total": round(t, 2)} for n, t in top_categorias[:6]
-        ],
-        "transacoes_count": count,
-        "narrative": narrative,
-    }
-    return digest, summary
+    return result.digest, result.summary
 
 
 async def send_monthly_narrative(

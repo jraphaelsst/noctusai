@@ -31,6 +31,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from noctusai_lib.domain.digest import (
+    BaseDigestService,
+    DigestResult,
+    DigestWindow,
     build_and_send,
     email_template_dir,
     narrative as digest_narrative,
@@ -218,43 +221,107 @@ def _render_bodies(
     )
 
 
+class _CampaignNotFound(Exception):
+    """Internal sentinel raised by `_fetch_window` when the campaign id
+    doesn't resolve. The top-level wrapper translates it back to a
+    `None` return so the legacy public API shape stays intact."""
+
+
+class CampaignDebriefService(BaseDigestService):
+    """`BaseDigestService` subclass for the mailing campaign debrief.
+
+    The campaign-debrief flow has a "campaign not found" branch that
+    returns `None` from the public API. Inside the orchestrator we
+    surface that as `_CampaignNotFound` raised from `_fetch_window`;
+    `build_debrief` translates the exception back to `None`. This keeps
+    the base's `run()` signature totally synchronous re the happy path
+    while preserving the legacy Optional-return public shape.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: Any,
+        campaign_id: str,
+        org_id: Optional[str] = None,
+    ) -> None:
+        super().__init__(client=client, org_id=org_id)
+        self.campaign_id = campaign_id
+
+    async def _fetch_window(self, window: DigestWindow):
+        fetched = await _fetch_window(
+            self.client, campaign_id=self.campaign_id
+        )
+        if fetched is None:
+            raise _CampaignNotFound(self.campaign_id)
+        campaign, send_logs, link_clicks = fetched
+        return {
+            "campaign": campaign,
+            "send_logs": send_logs,
+            "link_clicks": link_clicks,
+        }
+
+    def _aggregate(self, raw):
+        campaign = raw["campaign"]
+        metrics, top_links = _aggregate(
+            campaign, raw["send_logs"], raw["link_clicks"]
+        )
+        return {
+            "campaign_id": campaign.get("id") or self.campaign_id,
+            "campaign_name": campaign.get("nome") or "Campanha sem nome",
+            "metrics": metrics,
+            "top_links": top_links,
+        }
+
+    async def _generate_narrative(self, agg, window):
+        return await _generate_narrative(
+            campaign_name=agg["campaign_name"],
+            metrics=agg["metrics"],
+            top_links=agg["top_links"],
+            org_id=self.org_id,
+        )
+
+    def _render_bodies(self, agg, narrative):
+        return _render_bodies(
+            campaign_name=agg["campaign_name"],
+            metrics=agg["metrics"],
+            top_links=agg["top_links"],
+            narrative=narrative,
+        )
+
+    def _build_subject(self, agg, window):
+        return f"[NoctusAI] Debrief da campanha — {agg['campaign_name']}"
+
+    def _build_summary(self, agg, narrative, window):
+        return {
+            "campaign_id": agg["campaign_id"],
+            "campaign_name": agg["campaign_name"],
+            "metrics": agg["metrics"],
+            "top_links": [
+                {"url": u, "clicks": n}
+                for u, n in agg["top_links"][:5]
+            ],
+            "narrative": narrative,
+        }
+
+
 async def build_debrief(
     db: Any, *, campaign_id: str, org_id: Optional[str] = None
 ) -> Optional[tuple[Digest, dict[str, Any]]]:
     """Compute aggregates + narrative + render. No DB writes, no email send.
 
     Returns `(Digest, summary)` or None if the campaign doesn't exist.
+    Public API unchanged after the `seed-digest-base-class` refactor —
+    internally now delegates to `CampaignDebriefService.run(...)`.
     """
-    fetched = await _fetch_window(db, campaign_id=campaign_id)
-    if fetched is None:
+    svc = CampaignDebriefService(
+        client=db, campaign_id=campaign_id, org_id=org_id
+    )
+    try:
+        result: DigestResult = await svc.run(DigestWindow(org_id=org_id))
+    except _CampaignNotFound:
         return None
-    campaign, send_logs, link_clicks = fetched
-    campaign_name = campaign.get("nome") or "Campanha sem nome"
-
-    metrics, top_links = _aggregate(campaign, send_logs, link_clicks)
-    narrative = await _generate_narrative(
-        campaign_name=campaign_name,
-        metrics=metrics,
-        top_links=top_links,
-        org_id=org_id,
-    )
-
-    html, text = _render_bodies(
-        campaign_name=campaign_name, metrics=metrics, top_links=top_links, narrative=narrative
-    )
-    digest = Digest(
-        subject=f"[NoctusAI] Debrief da campanha — {campaign_name}",
-        text=text,
-        html=html,
-    )
-    summary = {
-        "campaign_id": campaign_id,
-        "campaign_name": campaign_name,
-        "metrics": metrics,
-        "top_links": [{"url": u, "clicks": n} for u, n in top_links[:5]],
-        "narrative": narrative,
-    }
-    return digest, summary
+    return result.digest, result.summary
 
 
 async def send_campaign_debrief(

@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from noctusai_lib.domain.digest import (
+    BaseDigestService,
+    DigestResult,
+    DigestWindow,
     build_and_send,
     email_template_dir,
     narrative as digest_narrative,
@@ -198,6 +201,82 @@ def _aggregate(
     )
 
 
+class AuditDigestService(BaseDigestService):
+    """`BaseDigestService` subclass for the core weekly audit digest.
+
+    Methods delegate to the module-level helpers (`_fetch_audit_window`,
+    `_aggregate`, `_generate_narrative`, `_render_bodies`) so existing
+    test imports keep working. Unlike the other three subclasses,
+    audit_digest fans out to ALL admins of an org — handled via
+    `_initial_recipients(raw)` returning the admin list pulled by
+    `_fetch_audit_window`. The per-product `send_weekly_audit_digest`
+    wrapper consumes `result.recipients` to drive the fan-out loop.
+    """
+
+    async def _fetch_window(self, window: DigestWindow):
+        period_days = window.period_days or 7
+        audit_rows, recipients, org_record = await _fetch_audit_window(
+            self.client,
+            org_id=self.org_id or "",
+            period_days=period_days,
+        )
+        return {
+            "audit_rows": audit_rows,
+            "recipients": recipients,
+            "org_record": org_record,
+            "period_days": period_days,
+        }
+
+    def _aggregate(self, raw):
+        actions_by_count, top_users, high_priority = _aggregate(
+            raw["audit_rows"]
+        )
+        return {
+            "org_name": raw["org_record"].get("nome") or "Organização",
+            "period_days": raw["period_days"],
+            "total_events": len(raw["audit_rows"]),
+            "actions_by_count": actions_by_count,
+            "top_users": top_users,
+            "high_priority": high_priority,
+        }
+
+    async def _generate_narrative(self, agg, window):
+        return await _generate_narrative(
+            org_name=agg["org_name"],
+            period_days=agg["period_days"],
+            total_events=agg["total_events"],
+            actions_by_count=agg["actions_by_count"],
+            top_users=agg["top_users"],
+            high_priority=agg["high_priority"],
+            org_id=self.org_id,
+        )
+
+    def _render_bodies(self, agg, narrative):
+        return _render_bodies(
+            org_name=agg["org_name"],
+            narrative=narrative,
+            actions_by_count=agg["actions_by_count"],
+            top_users=agg["top_users"],
+            period_days=agg["period_days"],
+            total_events=agg["total_events"],
+        )
+
+    def _build_subject(self, agg, window):
+        return f"[NoctusAI] Digest semanal — {agg['org_name']}"
+
+    def _build_summary(self, agg, narrative, window):
+        return {
+            "total_events": agg["total_events"],
+            "period_days": agg["period_days"],
+            "actions_top": agg["actions_by_count"][:10],
+            "high_priority_count": len(agg["high_priority"]),
+            "narrative_chars": len(narrative),
+        }
+
+    def _initial_recipients(self, raw):
+        return raw["recipients"]
+
+
 async def build_digest(
     db: Any,
     *,
@@ -208,48 +287,15 @@ async def build_digest(
     endpoints + tests.
 
     Returns `(Digest, recipients, summary_dict)` or None when the org
-    cannot be resolved. `summary_dict` carries the underlying counts so
-    callers can persist or display them.
+    cannot be resolved. Public API unchanged after the
+    `seed-digest-base-class` refactor — internally now delegates to
+    `AuditDigestService.run(...)`.
     """
-    audit_rows, recipients, org_record = await _fetch_audit_window(
-        db, org_id=org_id, period_days=period_days
+    svc = AuditDigestService(client=db, org_id=org_id)
+    result: DigestResult = await svc.run(
+        DigestWindow(org_id=org_id, period_days=period_days)
     )
-    org_name = org_record.get("nome") or "Organização"
-
-    actions_by_count, top_users, high_priority = _aggregate(audit_rows)
-    total_events = len(audit_rows)
-
-    narrative = await _generate_narrative(
-        org_name=org_name,
-        period_days=period_days,
-        total_events=total_events,
-        actions_by_count=actions_by_count,
-        top_users=top_users,
-        high_priority=high_priority,
-        org_id=org_id,
-    )
-
-    html, text = _render_bodies(
-        org_name=org_name,
-        narrative=narrative,
-        actions_by_count=actions_by_count,
-        top_users=top_users,
-        period_days=period_days,
-        total_events=total_events,
-    )
-    digest = Digest(
-        subject=f"[NoctusAI] Digest semanal — {org_name}",
-        text=text,
-        html=html,
-    )
-    summary = {
-        "total_events": total_events,
-        "period_days": period_days,
-        "actions_top": actions_by_count[:10],
-        "high_priority_count": len(high_priority),
-        "narrative_chars": len(narrative),
-    }
-    return digest, recipients, summary
+    return result.digest, result.recipients, result.summary
 
 
 async def send_weekly_audit_digest(
