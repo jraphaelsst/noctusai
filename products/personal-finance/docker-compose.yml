@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/personal-finance/backend/Dockerfile
     container_name: noctus-personal-finance-backend
-    image: noctus-personal-finance-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-personal-finance-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -33,7 +33,7 @@ services:
       context: ../..
       dockerfile: products/personal-finance/frontend/Dockerfile
     container_name: noctus-personal-finance-frontend
-    image: noctus-personal-finance-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-personal-finance-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8090:8090"
     depends_on:

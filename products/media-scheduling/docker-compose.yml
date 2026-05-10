@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/media-scheduling/backend/Dockerfile
     container_name: noctus-media-scheduling-backend
-    image: noctus-media-scheduling-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-media-scheduling-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -33,7 +33,7 @@ services:
       context: ../..
       dockerfile: products/media-scheduling/frontend/Dockerfile
     container_name: noctus-media-scheduling-frontend
-    image: noctus-media-scheduling-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-media-scheduling-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8140:8140"
     depends_on:

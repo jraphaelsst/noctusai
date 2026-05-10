@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/adconnect/backend/Dockerfile
     container_name: noctus-adconnect-backend
-    image: noctus-adconnect-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-adconnect-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -33,7 +33,7 @@ services:
       context: ../..
       dockerfile: products/adconnect/frontend/Dockerfile
     container_name: noctus-adconnect-frontend
-    image: noctus-adconnect-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-adconnect-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8130:8130"
     depends_on:

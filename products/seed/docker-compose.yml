@@ -27,7 +27,7 @@ services:
       context: ../..
       dockerfile: products/seed/backend/Dockerfile
     container_name: noctus-seed-backend
-    image: noctus-seed-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-seed-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -48,7 +48,7 @@ services:
       context: ../..
       dockerfile: products/seed/frontend/Dockerfile
     container_name: noctus-seed-frontend
-    image: noctus-seed-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-seed-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8100:8100"
     depends_on:
