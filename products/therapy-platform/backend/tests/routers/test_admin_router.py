@@ -367,3 +367,156 @@ class TestAdminListing:
     def test_list_all_patients_no_auth(self, client):
         resp = client._tc.get("/api/admin/patients")
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Admin Appointments — GET /api/admin/appointments
+# ---------------------------------------------------------------------------
+
+
+SAMPLE_APPOINTMENT = {
+    "id": "appt-001",
+    "patient_id": "patient-001",
+    "therapist_id": "therapist-001",
+    "clinic_id": "clinic-001",
+    "scheduled_start": "2026-05-10T15:00:00Z",
+    "scheduled_end": "2026-05-10T16:00:00Z",
+    "status": "waiting",
+    "patient_origin": "platform_assigned",
+    "session_price_applied": 150.0,
+    "created_at": "2026-05-01T10:00:00Z",
+}
+
+
+class TestAdminAppointments:
+    def test_list_appointments_as_admin(self, admin_client):
+        admin_client._mock_supabase.set_table_data("appointments", [SAMPLE_APPOINTMENT])
+        admin_client._mock_supabase.set_table_data("clinics", [
+            {"id": "clinic-001", "name": "Clínica Alpha"},
+        ])
+        resp = admin_client.get("/api/admin/appointments")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "data" in body
+        assert "pagination" in body
+        assert len(body["data"]) == 1
+        row = body["data"][0]
+        assert row["id"] == "appt-001"
+        assert row["clinic_name"] == "Clínica Alpha"
+        # patient_name / therapist_name fall back to "" when the identity
+        # resolver can't reach auth.admin in the mock; the keys must exist
+        # so the frontend's `?.toLowerCase()` doesn't trip a TypeError.
+        assert "patient_name" in row
+        assert "therapist_name" in row
+
+    def test_list_appointments_status_filter(self, admin_client):
+        admin_client._mock_supabase.set_table_data("appointments", [])
+        resp = admin_client.get("/api/admin/appointments?status=completed&page_size=5")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pagination"]["page_size"] == 5
+
+    def test_list_appointments_date_range(self, admin_client):
+        admin_client._mock_supabase.set_table_data("appointments", [])
+        resp = admin_client.get(
+            "/api/admin/appointments?date_start=2026-05-01&date_end=2026-05-31"
+        )
+        assert resp.status_code == 200
+
+    def test_list_appointments_as_therapist_forbidden(self, client):
+        resp = client.get("/api/admin/appointments")
+        assert resp.status_code == 403
+
+    def test_list_appointments_as_patient_forbidden(self, patient_client):
+        resp = patient_client.get("/api/admin/appointments")
+        assert resp.status_code == 403
+
+    def test_list_appointments_no_auth(self, client):
+        resp = client._tc.get("/api/admin/appointments")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Admin Dashboard — GET /api/admin/dashboard
+# ---------------------------------------------------------------------------
+
+
+class TestAdminDashboard:
+    def test_dashboard_as_admin(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "therapist_profiles", [SAMPLE_PENDING_THERAPIST]
+        )
+        admin_client._mock_supabase.set_table_data(
+            "clinics", [SAMPLE_PENDING_CLINIC]
+        )
+        admin_client._mock_supabase.set_table_data("appointments", [])
+        admin_client._mock_supabase.set_table_data("transactions", [
+            {"gross_amount": "200.00", "platform_fee_amount": "20.00", "status": "captured"},
+        ])
+        resp = admin_client.get("/api/admin/dashboard")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "data" in body
+        data = body["data"]
+        assert "pending_therapists" in data
+        assert "pending_clinics" in data
+        assert "sessions_today" in data
+        assert "total_revenue" in data
+        assert data["total_revenue"] == 200.0
+
+    def test_dashboard_therapist_forbidden(self, client):
+        resp = client.get("/api/admin/dashboard")
+        assert resp.status_code == 403
+
+    def test_dashboard_no_auth(self, client):
+        resp = client._tc.get("/api/admin/dashboard")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Suspend Entity — POST /api/admin/suspend/{type}/{id}
+# ---------------------------------------------------------------------------
+
+
+class TestSuspendEntity:
+    def test_suspend_therapist(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "therapist_profiles", [SAMPLE_APPROVED_THERAPIST]
+        )
+        resp = admin_client.post(
+            f"/api/admin/suspend/therapist/{SAMPLE_APPROVED_THERAPIST['user_id']}"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "data" in body
+
+    def test_suspend_clinic(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "clinics", [SAMPLE_PENDING_CLINIC]
+        )
+        resp = admin_client.post(
+            f"/api/admin/suspend/clinic/{SAMPLE_PENDING_CLINIC['id']}"
+        )
+        assert resp.status_code == 200
+
+    def test_suspend_invalid_entity_type(self, admin_client):
+        resp = admin_client.post("/api/admin/suspend/widget/some-id")
+        assert resp.status_code == 400
+        body = resp.json()
+        # Product wraps HTTPException details in the canonical error
+        # envelope `{"error": {"code", "message"}}` via the seed-supplied
+        # exception handler.
+        assert body.get("error", {}).get("code") == "BAD_REQUEST"
+
+    def test_suspend_nonexistent_entity(self, admin_client):
+        admin_client._mock_supabase.set_table_data("therapist_profiles", [])
+        resp = admin_client.post("/api/admin/suspend/therapist/missing-id")
+        assert resp.status_code == 404
+
+    def test_suspend_as_therapist_forbidden(self, client):
+        resp = client.post("/api/admin/suspend/therapist/any-id")
+        assert resp.status_code == 403
+
+    def test_suspend_no_auth(self, client):
+        resp = client._tc.post("/api/admin/suspend/clinic/any-id")
+        assert resp.status_code == 401

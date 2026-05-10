@@ -175,3 +175,226 @@ class TestProcessPayout:
         """No auth returns 401."""
         resp = client._tc.post("/api/admin/financials/payouts/payout-001/process")
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 regressions — summary, transactions, commissions GET/DELETE.
+# ---------------------------------------------------------------------------
+
+
+class TestFinancialSummary:
+    """GET /api/admin/financials/summary"""
+
+    def test_summary_aggregates(self, admin_client):
+        # NOTE: MockSelectBuilder doesn't apply `.eq()` filters on reads
+        # (only on UPDATE/DELETE). Seed only the captured rows the service
+        # should consume — the production code's `.eq("status", "captured")`
+        # is still on the wire and would filter against a real DB.
+        admin_client._mock_supabase.set_table_data("transactions", [
+            {"gross_amount": "200.00", "platform_fee_amount": "20.00", "status": "captured"},
+            {"gross_amount": "100.00", "platform_fee_amount": "10.00", "status": "captured"},
+        ])
+        admin_client._mock_supabase.set_table_data("payouts", [
+            {"amount": "150.00", "net_amount": "145.00", "status": "completed"},
+            {"amount": "200.00", "net_amount": "0.00", "status": "pending"},
+        ])
+        resp = admin_client.get("/api/admin/financials/summary")
+        assert resp.status_code == 200
+        body = resp.json()
+        data = body["data"]
+        assert data["total_revenue"] == 300.0
+        assert data["platform_fees"] == 30.0
+        assert data["payouts_completed"] == 145.0
+        assert data["payouts_pending"] == 200.0
+
+    def test_summary_therapist_forbidden(self, client):
+        resp = client.get("/api/admin/financials/summary")
+        assert resp.status_code == 403
+
+    def test_summary_no_auth(self, client):
+        resp = client._tc.get("/api/admin/financials/summary")
+        assert resp.status_code == 401
+
+
+class TestListAllTransactions:
+    """GET /api/admin/financials/transactions"""
+
+    def test_list_transactions(self, admin_client):
+        admin_client._mock_supabase.set_table_data("transactions", [SAMPLE_TRANSACTION])
+        resp = admin_client.get("/api/admin/financials/transactions")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "data" in body
+        assert "pagination" in body
+        assert len(body["data"]) == 1
+        assert body["data"][0]["id"] == "tx-001"
+
+    def test_list_transactions_status_filter(self, admin_client):
+        admin_client._mock_supabase.set_table_data("transactions", [])
+        resp = admin_client.get("/api/admin/financials/transactions?status=captured")
+        assert resp.status_code == 200
+
+    def test_list_transactions_date_range(self, admin_client):
+        admin_client._mock_supabase.set_table_data("transactions", [])
+        resp = admin_client.get(
+            "/api/admin/financials/transactions?date_start=2026-05-01&date_end=2026-05-31"
+        )
+        assert resp.status_code == 200
+
+    def test_list_transactions_therapist_forbidden(self, client):
+        resp = client.get("/api/admin/financials/transactions")
+        assert resp.status_code == 403
+
+    def test_list_transactions_no_auth(self, client):
+        resp = client._tc.get("/api/admin/financials/transactions")
+        assert resp.status_code == 401
+
+
+class TestGetCommissionConfig:
+    """GET /api/admin/financials/commissions"""
+
+    def test_get_config_with_overrides(self, admin_client):
+        admin_client._mock_supabase.set_table_data("platform_settings", [
+            {"key": "global_commission_rate", "value": "12.5"},
+        ])
+        admin_client._mock_supabase.set_table_data(
+            "platform_commission_overrides",
+            [
+                {"id": "ov-1", "target_type": "clinic", "target_id": "clinic-001",
+                 "custom_commission_pct": 8.0, "created_at": "2026-05-01T00:00:00Z"},
+                {"id": "ov-2", "target_type": "therapist", "target_id": "therapist-001",
+                 "custom_commission_pct": 5.0, "created_at": "2026-05-02T00:00:00Z"},
+            ],
+        )
+        admin_client._mock_supabase.set_table_data("clinics", [
+            {"id": "clinic-001", "name": "Clínica Alpha"},
+        ])
+        resp = admin_client.get("/api/admin/financials/commissions")
+        assert resp.status_code == 200
+        body = resp.json()
+        data = body["data"]
+        assert data["global_rate_pct"] == 12.5
+        assert len(data["overrides"]) == 2
+        ids = {o["id"] for o in data["overrides"]}
+        assert ids == {"ov-1", "ov-2"}
+        clinic_row = next(o for o in data["overrides"] if o["entity_type"] == "clinic")
+        assert clinic_row["entity_name"] == "Clínica Alpha"
+        assert clinic_row["rate_pct"] == 8.0
+
+    def test_get_config_default_when_setting_missing(self, admin_client):
+        admin_client._mock_supabase.set_table_data("platform_settings", [])
+        admin_client._mock_supabase.set_table_data("platform_commission_overrides", [])
+        resp = admin_client.get("/api/admin/financials/commissions")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["global_rate_pct"] == 10.0
+        assert body["data"]["overrides"] == []
+
+    def test_get_config_therapist_forbidden(self, client):
+        resp = client.get("/api/admin/financials/commissions")
+        assert resp.status_code == 403
+
+    def test_get_config_no_auth(self, client):
+        resp = client._tc.get("/api/admin/financials/commissions")
+        assert resp.status_code == 401
+
+
+class TestSetCommissionConfig:
+    """POST /api/admin/financials/commissions (new shape)"""
+
+    def test_post_global_rate_only(self, admin_client):
+        admin_client._mock_supabase.set_table_data("platform_settings", [
+            {"key": "global_commission_rate", "value": "10"},
+        ])
+        resp = admin_client.post(
+            "/api/admin/financials/commissions",
+            json={"global_rate_pct": "15.0"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["global_rate_pct"] == 15.0
+
+    def test_post_global_rate_creates_setting_when_absent(self, admin_client):
+        admin_client._mock_supabase.set_table_data("platform_settings", [])
+        resp = admin_client.post(
+            "/api/admin/financials/commissions",
+            json={"global_rate_pct": "11.0"},
+        )
+        assert resp.status_code == 200
+
+    def test_post_override_only(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "platform_commission_overrides", []
+        )
+        resp = admin_client.post(
+            "/api/admin/financials/commissions",
+            json={
+                "override": {
+                    "entity_type": "clinic",
+                    "entity_id": "clinic-001",
+                    "rate_pct": "7.5",
+                },
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["override"]["entity_type"] == "clinic"
+        assert body["data"]["override"]["rate_pct"] == 7.5
+
+    def test_post_legacy_shape_still_accepted(self, admin_client):
+        """The legacy ``{target_type, target_id, custom_commission_pct}`` body
+        is normalized into ``override`` so existing tooling keeps working."""
+        admin_client._mock_supabase.set_table_data(
+            "platform_commission_overrides", []
+        )
+        resp = admin_client.post(
+            "/api/admin/financials/commissions",
+            json={
+                "target_type": "clinic",
+                "target_id": "clinic-001",
+                "custom_commission_pct": "8.0",
+            },
+        )
+        assert resp.status_code == 200
+
+    def test_post_empty_body_rejected(self, admin_client):
+        resp = admin_client.post("/api/admin/financials/commissions", json={})
+        assert resp.status_code == 422
+
+    def test_post_therapist_forbidden(self, client):
+        resp = client.post(
+            "/api/admin/financials/commissions",
+            json={"global_rate_pct": "5.0"},
+        )
+        assert resp.status_code == 403
+
+
+class TestDeleteCommissionOverride:
+    """DELETE /api/admin/financials/commissions/{id}"""
+
+    def test_delete_override(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "platform_commission_overrides",
+            [{"id": "ov-1", "target_type": "clinic", "target_id": "clinic-001",
+              "custom_commission_pct": 8.0}],
+        )
+        resp = admin_client.delete("/api/admin/financials/commissions/ov-1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["id"] == "ov-1"
+        assert body["data"]["deleted"] is True
+
+    def test_delete_nonexistent_override(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "platform_commission_overrides", []
+        )
+        resp = admin_client.delete("/api/admin/financials/commissions/missing")
+        assert resp.status_code == 404
+
+    def test_delete_therapist_forbidden(self, client):
+        resp = client.delete("/api/admin/financials/commissions/any-id")
+        assert resp.status_code == 403
+
+    def test_delete_no_auth(self, client):
+        resp = client._tc.delete("/api/admin/financials/commissions/any-id")
+        assert resp.status_code == 401

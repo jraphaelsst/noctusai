@@ -190,3 +190,72 @@ async def list_all_patients(
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
     return paginated_response(result.data or [], result.count or 0, page, page_size)
+
+
+@router.get("/appointments")
+async def list_all_appointments(
+    authorization: Optional[str] = Header(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None, description="Filtrar por status da sessão"),
+    date_start: Optional[str] = Query(None, description="ISO date (yyyy-mm-dd)"),
+    date_end: Optional[str] = Query(None, description="ISO date (yyyy-mm-dd)"),
+):
+    """List all appointments for the admin console.
+
+    Resolves ``patient_name`` / ``therapist_name`` / ``clinic_name`` via the
+    Phase 1 identity resolver and a bulk clinic-name lookup.
+    """
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+
+    data, total = await admin_service.list_appointments_for_admin(
+        db=db,
+        page=page,
+        page_size=page_size,
+        status=status,
+        date_start=date_start,
+        date_end=date_end,
+    )
+    return paginated_response(data, total, page, page_size)
+
+
+# ── Dashboard ────────────────────────────────────────────────────────
+
+
+@router.get("/dashboard")
+async def admin_dashboard(
+    authorization: Optional[str] = Header(None),
+):
+    """Snapshot metrics for the admin landing page."""
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+    metrics = await admin_service.admin_dashboard_metrics(db)
+    return success_response(metrics)
+
+
+# ── Suspend ─────────────────────────────────────────────────────────
+
+
+@router.post("/suspend/{entity_type}/{entity_id}")
+async def suspend_entity(
+    entity_type: str,
+    entity_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Suspend a therapist or clinic (``is_active=False``).
+
+    Mirror of :func:`approve_entity`. Re-approval clears the suspension.
+    """
+    user, _ = await get_current_user(authorization)
+    admin_id = _require_admin(user)
+    db = get_admin_client()
+    result = await admin_service.suspend_entity(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        admin_id=admin_id,
+        db=db,
+    )
+    return success_response(result)

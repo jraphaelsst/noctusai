@@ -325,3 +325,225 @@ async def list_therapists_for_admin(
         identity = identities.get(uid, UserIdentity(user_id=uid))
         dtos.append(_therapist_row_to_dto(row, identity))
     return dtos, total
+
+
+# ---------------------------------------------------------------------------
+# Admin appointment listing (DTO-shaped for the admin Appointments page)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_clinic_names(db: Any, clinic_ids: List[str]) -> Dict[str, str]:
+    """Bulk-resolve clinic names. Returns ``{clinic_id: name}``.
+
+    Empty list returns empty dict. Mirrors
+    :func:`noctusai_lib.integrations.supabase_identity.fetch_user_identities`
+    in shape but reads from the product-owned ``clinics`` table — clinic
+    names live in our schema, not in ``auth.users``.
+    """
+    if not clinic_ids:
+        return {}
+    unique_ids = list({cid for cid in clinic_ids if cid})
+    if not unique_ids:
+        return {}
+    result = (
+        db.table("clinics")
+        .select("id, name")
+        .in_("id", unique_ids)
+        .execute()
+    )
+    rows = result.data or []
+    return {row["id"]: (row.get("name") or "") for row in rows if row.get("id")}
+
+
+def _appointment_row_to_dto(
+    row: Dict[str, Any],
+    identities: Dict[str, UserIdentity],
+    clinic_names: Dict[str, str],
+) -> Dict[str, Any]:
+    """Map an ``appointments`` row → admin DTO with resolved names.
+
+    The frontend ``AdminAppointment`` interface
+    (``pages/admin/Appointments.tsx``) reads ``patient_name``,
+    ``therapist_name``, ``clinic_name``, ``scheduled_start``,
+    ``scheduled_end``, ``status`` — those are the load-bearing fields.
+    """
+    patient_id = row.get("patient_id") or ""
+    therapist_id = row.get("therapist_id") or ""
+    clinic_id = row.get("clinic_id") or ""
+
+    patient_identity = identities.get(patient_id, UserIdentity(user_id=patient_id))
+    therapist_identity = identities.get(therapist_id, UserIdentity(user_id=therapist_id))
+
+    return {
+        "id": row.get("id"),
+        "patient_id": patient_id,
+        "therapist_id": therapist_id,
+        "clinic_id": clinic_id or None,
+        "patient_name": patient_identity.nome,
+        "therapist_name": therapist_identity.nome,
+        "clinic_name": clinic_names.get(clinic_id) if clinic_id else None,
+        "scheduled_start": row.get("scheduled_start"),
+        "scheduled_end": row.get("scheduled_end"),
+        "status": row.get("status"),
+        "patient_origin": row.get("patient_origin"),
+        "session_price_applied": row.get("session_price_applied"),
+        "created_at": row.get("created_at"),
+    }
+
+
+async def list_appointments_for_admin(
+    db: Any,
+    page: int,
+    page_size: int,
+    status: str | None = None,
+    date_start: str | None = None,
+    date_end: str | None = None,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """List appointments for the admin console, DTO-shaped.
+
+    Returns ``(data, total)``. Bulk-resolves patient/therapist identities
+    via :func:`fetch_user_identities` and clinic names via
+    :func:`_resolve_clinic_names` to avoid the N+1 trap (Phase 1 lesson).
+    """
+    query = db.table("appointments").select("*", count="exact")
+
+    if status:
+        query = query.eq("status", status)
+    if date_start:
+        query = query.gte("scheduled_start", date_start)
+    if date_end:
+        query = query.lte("scheduled_start", date_end)
+
+    query = query.order("scheduled_start", desc=True)
+    offset = (page - 1) * page_size
+    result = query.range(offset, offset + page_size - 1).execute()
+    rows = result.data or []
+    total = result.count or 0
+
+    user_ids: List[str] = []
+    clinic_ids: List[str] = []
+    for row in rows:
+        if row.get("patient_id"):
+            user_ids.append(row["patient_id"])
+        if row.get("therapist_id"):
+            user_ids.append(row["therapist_id"])
+        if row.get("clinic_id"):
+            clinic_ids.append(row["clinic_id"])
+
+    identities = fetch_user_identities(db, user_ids)
+    clinic_names = _resolve_clinic_names(db, clinic_ids)
+
+    dtos = [_appointment_row_to_dto(row, identities, clinic_names) for row in rows]
+    return dtos, total
+
+
+# ---------------------------------------------------------------------------
+# Admin dashboard metrics
+# ---------------------------------------------------------------------------
+
+
+async def admin_dashboard_metrics(db: Any) -> Dict[str, Any]:
+    """Snapshot metrics for the admin dashboard landing page.
+
+    Returns counts the UI surfaces as headline cards: pending therapists,
+    pending clinics, sessions today (count of appointments scheduled today),
+    total platform revenue (sum of captured platform fees).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    pending_therapists = (
+        db.table("therapist_profiles")
+        .select("user_id", count="exact")
+        .eq("is_approved", False)
+        .eq("is_active", True)
+        .execute()
+    )
+    pending_clinics = (
+        db.table("clinics")
+        .select("id", count="exact")
+        .eq("is_approved", False)
+        .eq("is_active", True)
+        .execute()
+    )
+
+    today = datetime.now(timezone.utc).date()
+    tomorrow = today + timedelta(days=1)
+    sessions_today = (
+        db.table("appointments")
+        .select("id", count="exact")
+        .gte("scheduled_start", today.isoformat())
+        .lt("scheduled_start", tomorrow.isoformat())
+        .execute()
+    )
+
+    tx_result = (
+        db.table("transactions")
+        .select("gross_amount, platform_fee_amount, status")
+        .eq("status", "captured")
+        .execute()
+    )
+    txs = tx_result.data or []
+    total_revenue = sum(float(t.get("gross_amount", 0) or 0) for t in txs)
+    platform_fees = sum(float(t.get("platform_fee_amount", 0) or 0) for t in txs)
+
+    return {
+        "pending_therapists": pending_therapists.count or 0,
+        "pending_clinics": pending_clinics.count or 0,
+        "sessions_today": sessions_today.count or 0,
+        "total_revenue": total_revenue,
+        "platform_fees": platform_fees,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Suspend a therapist or clinic (admin action)
+# ---------------------------------------------------------------------------
+
+
+async def suspend_entity(
+    entity_type: str,
+    entity_id: str,
+    admin_id: str,
+    db: Any,
+) -> Dict[str, Any]:
+    """Suspend a therapist or clinic (sets ``is_active=False``).
+
+    Mirror of :func:`approve_entity` for the suspension half of the
+    admin lifecycle. The list endpoint's ``status=suspenso`` filter and
+    :func:`_derive_therapist_status` already read ``is_active`` — flipping
+    it here closes the loop.
+    """
+    if entity_type == "therapist":
+        table = "therapist_profiles"
+        id_col = "user_id"
+    elif entity_type == "clinic":
+        table = "clinics"
+        id_col = "id"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Tipo de entidade inválido. Use 'therapist' ou 'clinic'",
+        )
+
+    check = db.table(table).select(id_col).eq(id_col, entity_id).execute()
+    if not check.data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{entity_type.capitalize()} não encontrado(a)",
+        )
+
+    result = (
+        db.table(table)
+        .update({"is_active": False})
+        .eq(id_col, entity_id)
+        .execute()
+    )
+    row = first_or_none(result)
+    if not row:
+        raise HTTPException(status_code=500, detail="Erro ao suspender entidade")
+
+    logger.info(
+        "Entity suspended: type=%s id=%s by_admin=%s",
+        entity_type, entity_id, admin_id,
+    )
+    return row

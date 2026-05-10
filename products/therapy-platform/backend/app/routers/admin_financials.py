@@ -11,8 +11,12 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from app.dependencies import get_current_user, get_user_role, get_admin_client, first_or_none
 from app.responses import paginated_response, success_response
 from app.responses import calculate_pagination
-from app.schemas.financial import CommissionOverrideRequest
+from app.schemas.financial import CommissionConfigRequest
 from app.services import payout_service
+from noctusai_lib.integrations.supabase_identity import (
+    UserIdentity,
+    fetch_user_identities,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/financials", tags=["Admin Financials"])
@@ -124,43 +128,291 @@ async def list_all_wallets(
 
 @router.post("/commissions")
 async def set_commission_override(
-    body: CommissionOverrideRequest,
+    body: CommissionConfigRequest,
     authorization: Optional[str] = Header(None),
 ):
-    """Set or update a platform commission override for a clinic or therapist."""
+    """Set commission configuration.
+
+    Accepts either ``global_rate_pct`` (updates ``platform_settings`` row
+    keyed ``global_commission_rate``) or ``override`` (upserts a row in
+    ``platform_commission_overrides``). Either or both may be sent.
+
+    Returns ``{global_rate_pct, override}`` with the persisted values.
+    """
+    user, _ = await get_current_user(authorization)
+    admin_id = _require_admin(user)
+    db = get_admin_client()
+
+    response: dict = {}
+
+    if body.global_rate_pct is not None:
+        new_value = str(body.global_rate_pct)
+        existing_setting = (
+            db.table("platform_settings")
+            .select("key")
+            .eq("key", "global_commission_rate")
+            .execute()
+        )
+        if first_or_none(existing_setting):
+            (
+                db.table("platform_settings")
+                .update({"value": new_value})
+                .eq("key", "global_commission_rate")
+                .execute()
+            )
+        else:
+            (
+                db.table("platform_settings")
+                .insert({"key": "global_commission_rate", "value": new_value})
+                .execute()
+            )
+        response["global_rate_pct"] = float(body.global_rate_pct)
+
+    if body.override is not None:
+        ov = body.override
+        existing = (
+            db.table("platform_commission_overrides")
+            .select("id")
+            .eq("target_type", ov.entity_type)
+            .eq("target_id", ov.entity_id)
+            .execute()
+        )
+        existing_row = first_or_none(existing)
+        payload = {
+            "target_type": ov.entity_type,
+            "target_id": ov.entity_id,
+            "custom_commission_pct": float(ov.rate_pct),
+            "set_by_admin_id": admin_id,
+        }
+        if existing_row:
+            result = (
+                db.table("platform_commission_overrides")
+                .update({
+                    "custom_commission_pct": float(ov.rate_pct),
+                    "set_by_admin_id": admin_id,
+                })
+                .eq("id", existing_row["id"])
+                .execute()
+            )
+        else:
+            result = (
+                db.table("platform_commission_overrides")
+                .insert(payload)
+                .execute()
+            )
+        saved = first_or_none(result) or payload
+        response["override"] = {
+            "id": saved.get("id"),
+            "entity_type": ov.entity_type,
+            "entity_id": ov.entity_id,
+            "rate_pct": float(ov.rate_pct),
+        }
+
+    if not response:
+        raise HTTPException(
+            status_code=422,
+            detail="Informe global_rate_pct ou override.",
+        )
+
+    return success_response(response)
+
+
+@router.get("/commissions")
+async def get_commission_config(
+    authorization: Optional[str] = Header(None),
+):
+    """Return the global commission rate + every override.
+
+    Shape matches ``useAdminCommissions`` in
+    ``frontend/src/hooks/useAdminFinancials.ts``::
+
+        { global_rate_pct: number, overrides: CommissionOverride[] }
+
+    Overrides include ``entity_name`` (resolved name of the clinic /
+    therapist) for the admin UI to render.
+    """
     user, _ = await get_current_user(authorization)
     _require_admin(user)
     db = get_admin_client()
 
-    # Upsert: check if override exists
+    setting_result = (
+        db.table("platform_settings")
+        .select("value")
+        .eq("key", "global_commission_rate")
+        .execute()
+    )
+    setting_row = first_or_none(setting_result)
+    try:
+        global_rate_pct = float(setting_row["value"]) if setting_row else 10.0
+    except (TypeError, ValueError):
+        global_rate_pct = 10.0
+
+    override_result = (
+        db.table("platform_commission_overrides")
+        .select("*")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    raw_overrides = override_result.data or []
+
+    therapist_ids = [
+        row["target_id"]
+        for row in raw_overrides
+        if row.get("target_type") == "therapist" and row.get("target_id")
+    ]
+    clinic_ids = [
+        row["target_id"]
+        for row in raw_overrides
+        if row.get("target_type") == "clinic" and row.get("target_id")
+    ]
+
+    identities = fetch_user_identities(db, therapist_ids)
+    clinic_name_map: dict = {}
+    if clinic_ids:
+        clinic_rows = (
+            db.table("clinics")
+            .select("id, name")
+            .in_("id", list({c for c in clinic_ids if c}))
+            .execute()
+        )
+        for c in clinic_rows.data or []:
+            if c.get("id"):
+                clinic_name_map[c["id"]] = c.get("name") or ""
+
+    overrides: list = []
+    for row in raw_overrides:
+        tid = row.get("target_id") or ""
+        ttype = row.get("target_type") or ""
+        if ttype == "therapist":
+            identity = identities.get(tid, UserIdentity(user_id=tid))
+            name = identity.nome
+        elif ttype == "clinic":
+            name = clinic_name_map.get(tid, "")
+        else:
+            name = ""
+        overrides.append({
+            "id": row.get("id"),
+            "entity_id": tid,
+            "entity_type": ttype,
+            "entity_name": name,
+            "rate_pct": float(row.get("custom_commission_pct", 0) or 0),
+        })
+
+    return success_response({
+        "global_rate_pct": global_rate_pct,
+        "overrides": overrides,
+    })
+
+
+@router.delete("/commissions/{override_id}")
+async def delete_commission_override(
+    override_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Delete a commission override row."""
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+
     existing = (
         db.table("platform_commission_overrides")
         .select("id")
-        .eq("target_type", body.target_type)
-        .eq("target_id", body.target_id)
+        .eq("id", override_id)
         .execute()
     )
-    row = first_or_none(existing)
+    if not first_or_none(existing):
+        raise HTTPException(status_code=404, detail="Override não encontrado")
 
-    if row:
-        result = (
-            db.table("platform_commission_overrides")
-            .update({"custom_commission_pct": float(body.custom_commission_pct)})
-            .eq("id", row["id"])
-            .execute()
-        )
-    else:
-        result = (
-            db.table("platform_commission_overrides")
-            .insert({
-                "target_type": body.target_type,
-                "target_id": body.target_id,
-                "custom_commission_pct": float(body.custom_commission_pct),
-            })
-            .execute()
-        )
+    (
+        db.table("platform_commission_overrides")
+        .delete()
+        .eq("id", override_id)
+        .execute()
+    )
+    return success_response({"id": override_id, "deleted": True})
 
-    return success_response(result.data[0])
+
+@router.get("/summary")
+async def financial_summary(
+    authorization: Optional[str] = Header(None),
+):
+    """Return the four headline metrics shown on the admin Financials page.
+
+    Shape matches ``AdminFinancialSummary`` in
+    ``frontend/src/types/financial.ts``::
+
+        { total_revenue, platform_fees, payouts_completed, payouts_pending }
+
+    Aggregates from ``transactions`` (status=``captured``) and ``payouts``.
+    """
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+
+    tx_result = (
+        db.table("transactions")
+        .select("gross_amount, platform_fee_amount, status")
+        .eq("status", "captured")
+        .execute()
+    )
+    txs = tx_result.data or []
+    total_revenue = sum(float(t.get("gross_amount", 0) or 0) for t in txs)
+    platform_fees = sum(float(t.get("platform_fee_amount", 0) or 0) for t in txs)
+
+    payout_result = (
+        db.table("payouts")
+        .select("amount, net_amount, status")
+        .execute()
+    )
+    payouts = payout_result.data or []
+    payouts_completed = sum(
+        float(p.get("net_amount", 0) or 0)
+        for p in payouts
+        if p.get("status") == "completed"
+    )
+    payouts_pending = sum(
+        float(p.get("amount", 0) or 0)
+        for p in payouts
+        if p.get("status") == "pending"
+    )
+
+    return success_response({
+        "total_revenue": total_revenue,
+        "platform_fees": platform_fees,
+        "payouts_completed": payouts_completed,
+        "payouts_pending": payouts_pending,
+    })
+
+
+@router.get("/transactions")
+async def list_all_transactions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None),
+    date_start: Optional[str] = Query(None),
+    date_end: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
+):
+    """List all transactions for the admin console (paginated)."""
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+
+    validated_page, validated_page_size, offset = calculate_pagination(page, page_size)
+    query = db.table("transactions").select("*", count="exact")
+
+    if status:
+        query = query.eq("status", status)
+    if date_start:
+        query = query.gte("created_at", date_start)
+    if date_end:
+        query = query.lte("created_at", date_end)
+
+    query = query.order("created_at", desc=True)
+    end = offset + validated_page_size - 1
+    result = query.range(offset, end).execute()
+    total = result.count if result.count is not None else 0
+    return paginated_response(result.data or [], total, page, page_size)
 
 
 @router.get("/payouts")

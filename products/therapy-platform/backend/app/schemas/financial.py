@@ -51,6 +51,55 @@ class CommissionOverrideRequest(BaseModel):
     custom_commission_pct: Decimal = Field(..., ge=Decimal("0"), le=Decimal("100"))
 
 
+class CommissionOverrideInput(BaseModel):
+    """Frontend-shape commission override embedded in
+    :class:`CommissionConfigRequest`. Mirrors the ``CommissionOverride`` type
+    declared in ``frontend/src/types/financial.ts``."""
+
+    entity_type: Literal["clinic", "therapist"]
+    entity_id: str = Field(..., min_length=1)
+    rate_pct: Decimal = Field(..., ge=Decimal("0"), le=Decimal("100"))
+
+
+class CommissionConfigRequest(BaseModel):
+    """POST ``/api/admin/financials/commissions`` body.
+
+    Accepts EITHER the new shape (``global_rate_pct`` and/or ``override``) OR
+    the legacy single-override shape (``target_type``, ``target_id``,
+    ``custom_commission_pct``). The legacy fields are normalized into
+    ``override`` by :func:`model_post_init` so the router handler only sees
+    one shape.
+
+    Either path must yield at least one of ``global_rate_pct`` / ``override``;
+    a body with neither is rejected at the router level.
+    """
+
+    global_rate_pct: Optional[Decimal] = Field(
+        default=None, ge=Decimal("0"), le=Decimal("100")
+    )
+    override: Optional[CommissionOverrideInput] = None
+
+    # Legacy shape (kept for backward compatibility with existing admin tooling).
+    target_type: Optional[Literal["clinic", "therapist"]] = None
+    target_id: Optional[str] = Field(default=None, min_length=1)
+    custom_commission_pct: Optional[Decimal] = Field(
+        default=None, ge=Decimal("0"), le=Decimal("100")
+    )
+
+    def model_post_init(self, __context):  # type: ignore[override]
+        if (
+            self.override is None
+            and self.target_type is not None
+            and self.target_id is not None
+            and self.custom_commission_pct is not None
+        ):
+            self.override = CommissionOverrideInput(
+                entity_type=self.target_type,
+                entity_id=self.target_id,
+                rate_pct=self.custom_commission_pct,
+            )
+
+
 class RefundRequestCreate(BaseModel):
     """Patient submits a refund request."""
 
