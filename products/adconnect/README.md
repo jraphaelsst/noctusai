@@ -34,17 +34,15 @@ Nine routers cover the marketplace surface area:
 - **distributors** — distributor account management
 - **admin** — brand-side administration
 
-## Current state — pre-implementation
+## Production state
 
-> **AdConnect is scaffolded, not implemented.** The backend routers are wired against an in-memory store backed by JSON files in `app/data/` (`products.json`, `distributors.json`, `reward-rules.json`, etc.). The frontend has no domain pages yet — only the framework-provided ones (Dashboard, Equipe, Login, Landing).
->
-> The mock-backed routers expose the intended shape of the domain. The implementation project replaces them with Supabase-backed services, ships the domain frontend, and adds proper RLS + tests. See `products/adconnect/projects/<implementation-slug>/PROJECT.md` once the project is filed.
+AdConnect is a real, production-shippable B2B marketplace product (post-MVP implementation, 2026-05-10).
 
-What is actually wired today:
-
-- `app/main.py` correctly inherits from `create_product_app()` (the seed framework provides health, team, notifications, CORS, Sentry, exception handlers, rate limiting, sidebar, header, AppShell, page-status filtering, SSO context).
-- 9 domain routers attached at `/auth`, `/products`, `/cart`, `/orders`, `/rewards`, `/sellout`, `/financial`, `/distributors`, `/admin` — all reading from `app/data/store.py`'s JSON-backed in-memory store.
-- Migration `001_adconnect.sql` creates `adconnect.status_pagina` + `adconnect.invitations` only. **No domain tables exist yet.**
+- Backend: 100% Supabase-backed. 16 domain tables in `migrations/001_adconnect.sql` (single fresh-start file per platform convention). Per-distributor preferential pricing, three-mode sellout (estruturado / NF-e XML / freeform), pure-function reward accrual engine, lifecycle state-machine for orders, FocusNFe Real adapter for NF-e issuance, Stripe webhook handler (Stripe pattern inherited from products/core).
+- Frontend: 9 distributor pages + 5 React Query hooks wired to live endpoints (catalog, cart+checkout, orders+history, sellout submission, rewards ledger).
+- Identity: Option A (distributor-as-noc-user) — distributor users live in `noc.noctus_users` with `org_id` = brand's org; per-distributor membership lives in `adconnect.distributor_memberships`. SSO via the seed's `make_get_current_user` factory.
+- 208 mock-backed tests passing; realdb suites scaffolded (auto-skip without Supabase credentials).
+- LGPD flags at every PII write site (9 entries in `LGPD-WARNINGS.md`).
 
 ## Tests
 

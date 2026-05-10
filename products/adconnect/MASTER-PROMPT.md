@@ -30,25 +30,25 @@ B2B marketplace connecting a brand to its distributor network. Distributors log 
 - **admin** -- brand-side administration surface.
 
 ### Auth
-- **auth** -- login + registration for distributors. Custom JWT scaffolded; password hashing in `app/security.py`; current state seeds in-memory users via `_seed_users()`.
+- **auth** -- distributor invitation acceptance + `/me` endpoint. Custom JWT retired (Option A locked in Phase 0); SSO inherited from seed's `make_get_current_user` factory.
 
-## Current state — pre-implementation
+## Production state (post-MVP, 2026-05-10)
 
-The backend routers and JSON-backed store are **scaffolded mock state from an early absorption**. They demonstrate the intended shape of the domain but are not production. Specifically:
+Backend is 100% Supabase-backed. Single `001_adconnect.sql` builds the full schema (16 tables in topological order: identity → catalog → sellout → orders → rewards → financial). All routers DB-backed with constructor-time `prefix=` (FastAPI 0.115 wildcard-route bug structurally fixed). Frontend ships 9 distributor pages + 5 React Query hooks against live endpoints.
 
-- All 9 routers route through `app/data/store.py` (JSON files loaded once at process start, mutations held in process memory — lost on restart).
-- Migration `001_adconnect.sql` creates only the framework tables (`status_pagina`, `invitations`); **zero domain tables exist in Supabase yet**.
-- The frontend has no domain pages — only the seed-provided Dashboard, Equipe, Login, Landing, etc. No catalog UI, cart UI, order history UI, rewards UI, sellout UI.
-- Tests cover only the framework (health, team) — no domain test coverage.
-
-The implementation project replaces the mock routers with Supabase-backed services, adds RLS, ships the domain frontend, and lands tests. **See `products/adconnect/projects/<slug>/PROJECT.md` once filed for the full scope and phase plan.**
+- 208 mock-backed tests passing; realdb suites scaffolded; 9 LGPD flags landed.
+- Brand admin V1 operates the marketplace via `/api/admin/*` — V2 (the brand-side UI) is a separate follow-up project.
+- NF-e issuance via `FocusNFeProvider` Real adapter (lazy-imported httpx; sandbox vs prod via `ambiente=`); cancel + status round-trip implemented.
+- Stripe pattern inherited from `products/core` (cross-product Python import is infeasible; SDK called directly with idempotency keys derived from `fatura.id`).
 
 ## Rules
 
-- The seed framework is non-negotiable — all domain routers stay attached through `create_product_app()`'s `routers=[...]` seam (already correct in `main.py`). Never re-wire CORS, exception handlers, or middleware locally.
-- Mock JSON state is throwaway — the implementation project is responsible for deriving DB schema FROM the mock shapes (don't ossify the mock shapes; treat them as informative, not authoritative).
-- Recurrence on rewards/sellout/financial primitives must absorb to `noctusai_lib.domain.*` per the recurrence rule if mailing/PF/ERP grow similar engines.
-- LGPD-first applies to distributor data (CNPJ, addresses, financial state) — the implementation project owns the data-class flagging.
+- The seed framework is non-negotiable — all domain routers stay attached through `create_product_app()`'s `routers=[...]` seam. Never re-wire CORS, exception handlers, or middleware locally.
+- Single `001_adconnect.sql` is the fresh-start migration. New schema changes edit 001 in-place + ship additive `002+` patches for live DBs (single-001 convention; `KB § PATTERNS/database-rls.md`).
+- Constructor-time `APIRouter(prefix=...)` everywhere. NEVER `router.prefix = ...` post-construction (FastAPI 0.115 silently no-ops it — Phase 2-6 structural fix).
+- Module-level `from ..database import X` binds at import time and defeats conftest patches. Use `_db.get_client()` lazy attribute access in services.
+- Recurrence on rewards/sellout/financial/NF-e primitives must absorb to `noctusai_lib.domain.*` per the recurrence rule if mailing/PF/ERP/etc. grow similar engines.
+- LGPD-first: distributor PII (CNPJ, addresses, financial state, NF-e XML) is flagged at every write site via `noctus.dev.lgpd_flag`.
 
 ## Testing
 
