@@ -17,6 +17,7 @@ from datetime import date
 from typing import Literal
 
 from noctusai_lib.domain.metas import PeriodKind, period_bounds
+from noctusai_lib.api.crud_safety import delete_with_existence_check
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +80,12 @@ def atualizar_periodo(db, periodo_id: str, patch: dict) -> dict:
 
 def deletar_periodo(db, periodo_id: str) -> None:
     """Hard delete — cascades to metas_empresa / metas_equipe via FK ON DELETE CASCADE."""
-    result = db.table("meta_periodos").delete().eq("id", periodo_id).execute()
-    if not result.data:
-        raise LookupError("Período não encontrado")
+    delete_with_existence_check(
+        db,
+        "meta_periodos",
+        ("id", periodo_id),
+        not_found_exc=lambda: LookupError("Período não encontrado"),
+    )
 
 
 # ── Date math (delegates to noctusai_lib.domain.metas.period_bounds) ─

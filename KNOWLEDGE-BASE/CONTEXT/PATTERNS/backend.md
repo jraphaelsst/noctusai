@@ -328,6 +328,69 @@ that's the absorbed layer; the lifecycle is the carved-out layer.
 
 ---
 
+## DELETE-with-existence-check helper (2026-05-10)
+
+**Use:** `noctusai_lib.api.crud_safety.delete_with_existence_check` (or the
+HTTPException-flavored convenience wrapper `delete_or_404`) for every DELETE
+endpoint that needs to distinguish "row absent" from "row present".
+
+**Why:** `db.table("X").delete().eq(...).execute()` + `if not result.data:`
+is an unreliable 404 detector. Two failure modes:
+
+1. **RLS-collapsed rows look identical to absent rows.** When RLS hides a row
+   from the caller, `.delete()` matches nothing and returns `data=[]` — the
+   service incorrectly reports 404 instead of 403, leaking row-existence
+   information across tenants.
+2. **PostgREST drivers vary on whether DELETE returns the deleted row.**
+   Relying on `result.data` couples the service to driver behavior.
+
+**The helper:**
+
+```python
+from noctusai_lib.api.crud_safety import delete_with_existence_check, delete_or_404
+
+# ERP convention — LookupError raise shape
+def deletar_regra(db, regra_id: str) -> None:
+    delete_with_existence_check(
+        db,
+        "regras_pontuacao",
+        ("id", regra_id),
+        not_found_exc=lambda: LookupError("Regra não encontrada"),
+    )
+
+# PF / router convention — HTTPException(404) raise shape via convenience wrapper
+delete_or_404(
+    db,
+    "recorrentes",
+    ("id", recorrente_id),
+    ("org_id", org_id),
+    message="Recorrente nao encontrado",
+)
+```
+
+**Variadic predicates.** Pass `(col, val)` tuples — chained as `.eq(col, val)`
+on BOTH the SELECT pre-check and the DELETE. Use the same scope predicates on
+both so RLS-aware filters match. Most callsites pass `(id,)` (RLS-via-parent
+tables like `orcamento_itens`) or `(id, org_id)` (the canonical PF/ERP pair).
+
+**Raise-shape injection.** ERP services raise `LookupError`; PF routers raise
+`HTTPException(404)`. The helper accepts a caller-provided zero-arg exception
+factory (`not_found_exc=lambda: ...`) so both conventions consume the same
+helper without forking.
+
+**N=3 cross-product recurrence (formalize trigger):** `personal-finance`
+`routers/recorrentes.py` + `erp-imobiliario` `meta_periodos_service.py` +
+`regras_pontuacao_service.py`. Per `KB § PATTERNS/project-execution.md § 2.7
+recurrence rule`, N=3 → MUST-FORMALIZE. Filed as `projects/delete-precheck-seed-lift/`.
+
+**N=6 follow-up backlog (Phase 0 grep surfaced N=9 total — 3 in scope, 6 out of scope, deferred):** `erp-imobiliario` `metas_empresa_service.py:92`, `metas_equipe_service.py:86`; `core` `routers/settings.py:126`, `:191`; `daily-life` `routers/goals.py:169`, `routers/schedule.py:171`, `routers/notes.py:141`. Same shape — `result = db.table(X).delete()...execute()` + `if not result.data:`. Deferred to follow-up project to avoid scope-creep; capture in `accept-with-rationale.md` until backfilled.
+
+**Don't:** keep the old `result = db.table().delete()...execute(); if not result.data:` shape in new code. Use the helper. If a callsite raises something other
+than `LookupError` / `HTTPException(404)`, pass that factory through — the
+helper is shape-agnostic.
+
+---
+
 See also:
 - `../03-SEED-ARCHITECTURE.md` — how `create_product_app()` works
 - `../04-SHARED-LIBRARY.md` — catalog of reusable helpers

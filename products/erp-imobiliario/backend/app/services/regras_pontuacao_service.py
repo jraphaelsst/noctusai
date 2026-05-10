@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Literal
+from noctusai_lib.api.crud_safety import delete_with_existence_check
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +119,12 @@ def atualizar_regra(db, regra_id: str, patch: dict) -> dict:
 
 
 def deletar_regra(db, regra_id: str) -> None:
-    result = db.table("regras_pontuacao").delete().eq("id", regra_id).execute()
-    if not result.data:
-        raise LookupError("Regra não encontrada")
+    delete_with_existence_check(
+        db,
+        "regras_pontuacao",
+        ("id", regra_id),
+        not_found_exc=lambda: LookupError("Regra não encontrada"),
+    )
 
 
 # ── Rule resolution (the hot path for event triggers) ───────────────
