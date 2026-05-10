@@ -54,6 +54,7 @@ const TherapistClinicalRecords = lazy(() => import("./pages/therapist/ClinicalRe
 const TherapistHomeworkManager = lazy(() => import("./pages/therapist/HomeworkManager"));
 const TherapistBiDashboard = lazy(() => import("./pages/therapist/BiDashboard"));
 const TherapistCrisisAlerts = lazy(() => import("./pages/therapist/CrisisAlerts"));
+const TherapistScheduling = lazy(() => import("./pages/therapist/Scheduling"));
 
 // Patient
 const PatientDashboard = lazy(() => import("./pages/patient/Dashboard"));
@@ -143,6 +144,7 @@ export default createProductApp({
         { path: "/", component: TherapistDashboard },
         { path: "/agenda", component: TherapistCalendar },
         { path: "/agenda/disponibilidade", component: TherapistAvailabilitySettings },
+          { path: "/agendamento", component: TherapistScheduling },
         { path: "/recorrentes", component: TherapistRecurringSchedules },
         { path: "/pacientes", component: TherapistPatients },
         { path: "/pacientes/:id", component: TherapistPatientProfile },

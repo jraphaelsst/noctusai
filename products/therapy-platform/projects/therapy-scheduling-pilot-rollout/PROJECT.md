@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-10
-- **Status:** ⏳ **EXECUTING (Phase 0+1+2 dispatched 2026-05-10)** — orchestrator-reactivated under user signal "resolve the 5 blocked ones, then unblock the deps on it". Phase 0 (state audit) + Phase 1 (KB OAuth runbook) + Phase 2 (route + nav wiring) are engineer-doable now. **Phase 3 (live OAuth + booking QA) STILL BLOCKED on user** — needs Google Cloud Console OAuth client creation + `THERAPY_GOOGLE_CLIENT_ID` + `THERAPY_GOOGLE_CLIENT_SECRET` env vars. Engineer surfaces a copy-paste runbook in Phase 1; user runs through it after Phase 2 ships.
+- **Status:** ⏳ **BLOCKED ON USER (Phase 3) — Phases 0+1+2 SHIPPED 2026-05-10** by engineer subagent. Pilot regression 34/34 ✓, seed regression 32/32 ✓, vite build clean. Runbook live at `KNOWLEDGE-BASE/CONTEXT/GUIDES/google-oauth-setup.md` — user follows it to create the Google Cloud Console OAuth client + populate `THERAPY_GOOGLE_CLIENT_ID` + `THERAPY_GOOGLE_CLIENT_SECRET` env vars. After credentials are wired, the user runs the §6.Phase 3 live-QA checklist (connect / book / blackout / re-auth / reschedule) and either reports clean or files small follow-up fixes per §6.Phase 4.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `therapy-scheduling-pilot-rollout` — single-product (therapy) scope; lives at `products/therapy-platform/projects/<slug>/`. Intent `rollout` per `KB § PATTERNS/project-execution.md §8` (the pilot code is shipped; this project lands the production-readiness pieces).
 - **Related docs:**
@@ -95,25 +95,31 @@ The runbook in scope adds **one new doc** at `KB § GUIDES/google-oauth-setup.md
 
 ## 6. Implementation phases (sketch — refine at reactivation)
 
-### Phase 0 — State audit at reactivation
+### Phase 0 — State audit at reactivation ✅ (2026-05-10)
 
-- [ ] Verify pilot still passes: `pytest products/therapy-platform/backend/tests/services/test_scheduling_*.py tests/routers/test_scheduling_router.py -q` should be 34/34.
-- [ ] Verify seed still passes: `pytest seed/lib/backend/tests/integrations/google_calendar/ -q` should be 32/32 (or higher if more landed).
-- [ ] Verify the route + nav landscape: read `frontend/src/App.tsx` and the therapy-wiring project's gap-table (if published) to pick the right insertion point without collision.
-- [ ] Confirm GCal real-adapter project is still closed and the `update_event` Protocol method is still present.
+- [x] Verify pilot still passes: `pytest products/therapy-platform/backend/tests/services/test_scheduling_*.py tests/routers/test_scheduling_router.py -q` should be 34/34. **34/34 ✓**
+- [x] Verify seed still passes: `pytest seed/lib/backend/tests/integrations/google_calendar/ -q` should be 32/32 (or higher if more landed). **32/32 ✓**
+- [x] Verify the route + nav landscape: read `frontend/src/App.tsx` and the therapy-wiring project's gap-table (if published) to pick the right insertion point without collision. **No `/therapist/agendamento` or `/therapist/scheduling` route present; sister wiring agent works on `admin*` only — zero overlap.**
+- [x] Confirm GCal real-adapter project is still closed and the `update_event` Protocol method is still present. **Confirmed — `types.py:78` (Protocol), `fake_adapter.py:66`, `oauth_adapter.py:116`, `service_account_adapter.py:116` all implement `update_event`; no open GCal real-adapter project.**
 
-### Phase 1 — OAuth credentials runbook + env wiring
+**Improvements:** none from this audit pass.
 
-- [ ] Write `KB § GUIDES/google-oauth-setup.md` — copy-paste steps for Google Cloud Console OAuth client creation. Include: project creation, OAuth consent screen (External), Calendar API enablement, OAuth client ID (Web application), redirect URI registration, scopes (`.../auth/calendar`), credentials JSON download.
-- [ ] Document the env-var placement (`THERAPY_GOOGLE_CLIENT_ID`, `THERAPY_GOOGLE_CLIENT_SECRET`) for both local dev (`.env` at repo root) and prod deploy (Render / wherever).
-- [ ] Add the doc to `KB § INDEX.md`.
+### Phase 1 — OAuth credentials runbook + env wiring ✅ (2026-05-10)
 
-### Phase 2 — Frontend route + nav
+- [x] Write `KB § GUIDES/google-oauth-setup.md` — copy-paste steps for Google Cloud Console OAuth client creation. Include: project creation, OAuth consent screen (External), Calendar API enablement, OAuth client ID (Web application), redirect URI registration, scopes (`.../auth/calendar`), credentials JSON download. **Shipped at `KNOWLEDGE-BASE/CONTEXT/GUIDES/google-oauth-setup.md` — 6 numbered steps + Troubleshooting table + "What lives where" file-map + "Reusing for another product" extension hint.**
+- [x] Document the env-var placement (`THERAPY_GOOGLE_CLIENT_ID`, `THERAPY_GOOGLE_CLIENT_SECRET`) for both local dev (`.env` at repo root) and prod deploy (Render / wherever). **In Step 5 of the runbook.**
+- [x] Add the doc to `KB § INDEX.md`. **Added to By-topic table + Layout tree; `bash scripts/verify-kb-sync.sh` clean.**
 
-- [ ] Add `<Route path="/therapist/agendamento" element={<Scheduling />} />` (path TBD) to `App.tsx`. Use AST tooling (`ts-morph`) for the import + JSX additions.
-- [ ] Add nav entry — link + icon — at the right spot in the therapist nav config. Mirror the established nav-pattern (probably `useTherapistNav` or similar).
-- [ ] Cross-reference the wiring agent's Phase 0 gap-table to confirm zero collision.
-- [ ] `npx vite build` clean.
+**Improvements:** the runbook's redirect-URI section notes that current shape routes to the *frontend* callback; if a future product flips to backend-callback shape, register the backend path. Captured as a flag in the runbook itself; no separate follow-up needed.
+
+### Phase 2 — Frontend route + nav ✅ (2026-05-10)
+
+- [x] Add `<Route path="/therapist/agendamento" element={<Scheduling />} />` (path TBD) to `App.tsx`. Use AST tooling (`ts-morph`) for the import + JSX additions. **App uses config-driven `createProductApp({ roleRoutes: { terapeuta: { routes: [...] } } })` shape (NOT JSX `<Route>`); ts-morph script added `const TherapistScheduling = lazy(...)` import + `{ path: "/agendamento", component: TherapistScheduling }` route entry directly after `/agenda/disponibilidade`. Codemod at `/tmp/therapy-ast/add-scheduling-route-and-nav.mjs` (worktree-local, not committed).**
+- [x] Add nav entry — link + icon — at the right spot in the therapist nav config. Mirror the established nav-pattern (probably `useTherapistNav` or similar). **Nav lives at `frontend/src/layouts.ts` `THERAPIST_NAV[0].items` ("consultorio" group). Inserted `{ name: "Agendamento", href: "/therapist/agendamento", icon: CalendarDays, route: "therapist-agendamento" }` directly after the existing Agenda entry — keeps scheduling adjacent to calendar.**
+- [x] Cross-reference the wiring agent's Phase 0 gap-table to confirm zero collision. **Sister wiring agent's scope is `app/routers/admin*` + `app/services/admin*` (backend); my scope is frontend `App.tsx` + `layouts.ts` + KB doc — zero overlap. `git status --short` confirms only 4 files touched, all in my scope.**
+- [x] `npx vite build` clean. **`✓ built in 22.58s` — clean. (Required installing `seed/framework/frontend` node_modules in the worktree first — the worktree didn't inherit them.)**
+
+**Improvements:** ts-morph's `insertElement` defaulted to slightly non-canonical indentation (2 extra spaces on the inserted lines). Build accepts it (whitespace doesn't matter to TS) and prettier would normalize on a future format pass. Left as-is rather than running prettier (no prettier config wired in this product; cross-cutting change outside scope). Tracked as a findings item.
 
 ### Phase 3 — Live OAuth + booking + re-auth QA
 
@@ -196,3 +202,4 @@ cd products/therapy-platform/frontend && npx vite build
 |---|---|---|
 | 2026-05-03 | **Project scaffolded** at `therapy-scheduling-pilot` close — bundles two deferrals (manual GCal QA setup + frontend routing/nav additions) into one follow-up per user instruction. Status: PARKED, awaits reactivation when therapist-facing rollout is wanted. Pilot's three improvements (`update_event` to seed Protocol, `updated_payloads` to MockSupabaseClient, in-place reschedule refactor) were applied inline before this scaffold and are validated by 34 pilot tests + 32 seed calendar tests + 7 mock-tracking tests, all green. | Claude Opus 4.7 |
 | 2026-05-10 | **Reactivated by orchestrator** under user signal "resolve the 5 blocked ones, then unblock the deps on it". Engineer dispatched with the audit + runbook + route-and-nav scope as one brief — all agent-doable. The downstream live-QA round stays explicitly blocked on user (needs Google Cloud Console OAuth client + redirect URI + scopes + env-var population — no agent can do this); engineer's runbook deliverable lets user complete it in a few minutes after the engineer's branch lands. Status flipped from PARKED to EXECUTING. | claude-opus-4-7 |
+| 2026-05-10 | **Phase 0+1+2 shipped** by engineer subagent. Phase 0: pilot regression 34/34 ✓, seed regression 32/32 ✓, no admin-router collision, GCal `update_event` Protocol confirmed. Phase 1: `KNOWLEDGE-BASE/CONTEXT/GUIDES/google-oauth-setup.md` written (6 steps + troubleshooting + reuse hint); INDEX.md updated; `verify-kb-sync.sh` clean. Phase 2: ts-morph codemod added `TherapistScheduling` lazy import + `/agendamento` route to `App.tsx` and "Agendamento" nav item to `THERAPIST_NAV[0].items` in `layouts.ts`; `npx vite build` clean in 22.58s (required installing seed/framework/frontend node_modules in worktree first). Phase 3 stays blocked on user — runbook is the unblocker. | claude-opus-4-7 (engineer subagent) |

@@ -57,7 +57,8 @@ KNOWLEDGE-BASE/
 │   │   ├── setup.md
 │   │   ├── new-product.md
 │   │   ├── seed-first-design.md
-│   │   └── deploy-workspace-online.md  ← "put X online" drill: verify docker artifacts → fill .env → docker compose up → verify; trigger phrases
+│   │   ├── deploy-workspace-online.md  ← "put X online" drill: verify docker artifacts → fill .env → docker compose up → verify; trigger phrases
+│   │   └── google-oauth-setup.md       ← Google Cloud Console OAuth client + Calendar API + redirect URI + env wiring; first adopter therapy-platform; reusable for any future product
 │   ├── INTEGRATIONS/       ← per-vendor integration references (auth, endpoints, error model, adapter contract)
 │   │   └── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
 │   ├── backend/            ← per-product backend details
@@ -136,6 +137,7 @@ KNOWLEDGE-BASE/
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
 | Putting a workspace product online for testing — the "deploy" drill (verify docker artifacts → fill `.env` → `docker compose up` → verify); trigger phrases the agent should recognise | `CONTEXT/GUIDES/deploy-workspace-online.md` |
+| Google Cloud Console OAuth setup — Calendar API (project + consent screen + Calendar API enablement + Web client + redirect URI registration + scopes + env-var wiring + smoke test + troubleshooting); first adopter therapy-platform per-therapist `/api/scheduling/gcal/*`; reusable for any future product needing user-delegated GCal | `CONTEXT/GUIDES/google-oauth-setup.md` |
 | Vista CRM REST API (auth, query convention, response envelope, error hierarchy, endpoint inventory, adapter contract, per-tenant calibration gap) | `CONTEXT/INTEGRATIONS/vista.md` |
 | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |
 | ERP backend | `CONTEXT/backend/02-ERP.md` |
