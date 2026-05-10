@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Textarea } from '@noctusai/seed/components/ui/textarea';
 import { EntityLink } from '@/components/ui/entity-link';
 import { useUpdateContrato } from '@/hooks/useContratos';
 import { formatCurrency, formatDate } from '@/lib/utils';

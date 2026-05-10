@@ -13,19 +13,19 @@ import {
   useTjspFila,
 } from '@/hooks/useCertidoes';
 import type { CertidaoConsulta, CertidaoResultado, TjspFilaStatus } from '@/hooks/useCertidoes';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Progress } from '@noctusai/seed/components/ui/progress';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@noctusai/seed/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -33,7 +33,7 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,7 +43,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@noctusai/seed/components/ui/alert-dialog';
 import {
   Table,
   TableBody,

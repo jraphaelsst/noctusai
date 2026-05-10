@@ -10,8 +10,8 @@
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Target, TrendingUp, Trophy, Sparkles } from 'lucide-react';
 import { RankBadge, ScorePill } from '@noctusai/lib/design-system';
 import { usePeriodos, useRankings } from '@/hooks/useMetasDomain';

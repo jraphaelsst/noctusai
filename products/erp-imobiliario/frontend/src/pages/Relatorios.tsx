@@ -5,9 +5,9 @@ import {
   useAtividadeMensal,
   useExportCSV,
 } from '@/hooks/useRelatorios';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -22,8 +22,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+} from '@noctusai/seed/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
 import { TableSkeleton } from '@/components/ui/page-skeleton';
 import {
   Trophy,

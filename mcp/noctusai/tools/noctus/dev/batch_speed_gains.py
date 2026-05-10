@@ -239,6 +239,42 @@ def query_batches(
         conn.close()
 
 
+def view(
+    orchestration_slug: str | None = None,
+    *,
+    mode: str = "both",
+    db_path: Path | None = None,
+) -> dict[str, Any]:
+    """mode='detail' (rows), 'cumulative' (stats), 'both' (rows+stats)."""
+    if mode not in {"detail", "cumulative", "both"}:
+        return {"error": f"invalid mode {mode!r}; valid: detail / cumulative / both"}
+
+    if mode == "detail":
+        return {
+            "orchestration_slug": orchestration_slug.strip() if orchestration_slug else None,
+            "batches": query_batches(
+                orchestration_slug=orchestration_slug, db_path=db_path,
+            ),
+        }
+    if orchestration_slug is None:
+        return {"error": "orchestration_slug is required for mode='cumulative' or 'both'"}
+    if mode == "cumulative":
+        return cumulative_stats(
+            orchestration_slug=orchestration_slug, db_path=db_path,
+        )
+    return {
+        "orchestration_slug": orchestration_slug.strip(),
+        "batches": query_batches(
+            orchestration_slug=orchestration_slug, db_path=db_path,
+        ),
+        "cumulative": cumulative_stats(
+            orchestration_slug=orchestration_slug, db_path=db_path,
+        ),
+    }
+
+
+
+
 def cumulative_stats(
     orchestration_slug: str,
     db_path: Path | None = None,
@@ -345,26 +381,15 @@ def register(server) -> None:
         return {"updated": ok}
 
     @server.tool(
-        name="noctus.dev.batch_speed_gain_query",
+        name="noctus.dev.batch_speed_gain_view",
         description=(
-            "List batch rows for one orchestration (or all if orchestration_slug=None). "
-            "Returns per-batch detail rows ready for table rendering."
+            "Batch-speed-gain reader. mode='detail' (per-batch rows; "
+            "slug=None for all), 'cumulative' (aggregated stats), "
+            "'both' (default — rows + stats)."
         ),
     )
-    def _batch_speed_gain_query(
+    def _batch_speed_gain_view(
         orchestration_slug: str | None = None,
+        mode: str = "both",
     ) -> dict:
-        rows = query_batches(orchestration_slug=orchestration_slug)
-        return {"batches": rows}
-
-    @server.tool(
-        name="noctus.dev.batch_speed_gain_cumulative",
-        description=(
-            "Aggregate COMPLETED batches for an orchestration: batch count, engineer total, "
-            "wall-clock parallel total, estimated serial total, overall speed gain %."
-        ),
-    )
-    def _batch_speed_gain_cumulative(
-        orchestration_slug: str,
-    ) -> dict:
-        return cumulative_stats(orchestration_slug=orchestration_slug)
+        return view(orchestration_slug=orchestration_slug, mode=mode)

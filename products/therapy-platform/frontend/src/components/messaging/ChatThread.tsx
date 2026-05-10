@@ -1,16 +1,16 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { ArrowLeft, MessageSquare } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Avatar, AvatarFallback } from '@noctusai/seed/components/ui/avatar';
+import { ScrollArea } from '@noctusai/seed/components/ui/scroll-area';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+} from '@noctusai/seed/components/ui/dialog';
+import { Input } from '@noctusai/seed/components/ui/input';
 import { cn } from '@/lib/utils';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';

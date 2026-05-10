@@ -31,7 +31,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 
 from ..auth_deps import require_role
 from ..database import _db as _db_module
@@ -299,6 +299,7 @@ def delete_reward_rule(
     rows = res.data or []
     if not rows:
         raise HTTPException(404, "Regra não encontrada")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

@@ -9,10 +9,10 @@
  *   4. "Distribuir igualmente" / "Distribuir por headcount" quick actions
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Target, TrendingUp, Scale, Users, Divide, Equal } from 'lucide-react';
 import {
   useCascadeResumo,

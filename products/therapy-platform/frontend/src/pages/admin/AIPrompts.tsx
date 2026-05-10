@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Brain, Save, ChevronDown, ChevronUp, History, Clock } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Separator } from '@noctusai/seed/components/ui/separator';
 import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+} from '@noctusai/seed/components/ui/collapsible';
 import { useAIPrompts, useUpdateAIPrompt, useAIPromptHistory } from '@/hooks/useSettings';
 
 interface PromptConfig {

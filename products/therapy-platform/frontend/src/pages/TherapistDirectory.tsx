@@ -1,6 +1,6 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Input } from "@noctusai/seed/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@noctusai/seed/components/ui/select";
 import { Search, Users } from "lucide-react";
 
 export default function TherapistDirectory() {

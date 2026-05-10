@@ -1,0 +1,73 @@
+# therapy-platform per-product compose fragment.
+#
+# Generated from the canonical pattern at products/seed/docker-compose.yml.
+# Use standalone (this product only) or orchestrated by repo-root compose
+# (all products together — root file uses `include:` to pull this in).
+#
+# Build context is `../..` so seed/ + product code are both reachable.
+
+services:
+  therapy-platform-backend:
+    build:
+      context: ../..
+      dockerfile: products/therapy-platform/backend/Dockerfile
+    container_name: noctus-therapy-platform-backend
+    image: noctus-therapy-platform-backend:dev
+    env_file:
+      - ../../.env
+    ports:
+      - "8003:8003"
+    networks:
+      - noctus-net
+      - therapy-platform-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8003/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  therapy-platform-frontend:
+    build:
+      context: ../..
+      dockerfile: products/therapy-platform/frontend/Dockerfile
+    container_name: noctus-therapy-platform-frontend
+    image: noctus-therapy-platform-frontend:dev
+    ports:
+      - "8095:8095"
+    depends_on:
+      therapy-platform-backend:
+        condition: service_healthy
+    networks:
+      - therapy-platform-net
+    restart: unless-stopped
+
+
+  therapy-platform-tunnel:
+    # Cloudflare quick-tunnel — ephemeral *.trycloudflare.com URL pointing
+    # at this product's backend. Profile-gated so it's opt-in (cost: one
+    # extra container; benefit: webhook/OAuth callback testing without a
+    # full deploy). Pattern from noctusai-youtube-crawler.
+    image: cloudflare/cloudflared:latest
+    container_name: noctus-therapy-platform-tunnel
+    # `--protocol http2` forces TCP from the start — see core/docker-compose.yml
+    # tunnel block for the full rationale (UDP/QUIC fails behind NATs after
+    # ~5min and cannot re-register the quick-tunnel hostname).
+    command: tunnel --no-autoupdate --protocol http2 --url http://therapy-platform-backend:8003
+    depends_on:
+      therapy-platform-backend:
+        condition: service_healthy
+    networks:
+      - therapy-platform-net
+    restart: unless-stopped
+    profiles:
+      - tunnel-therapy-platform
+      - tunnel-all
+
+networks:
+  noctus-net:
+    name: noctus-net
+    driver: bridge
+  therapy-platform-net:
+    driver: bridge

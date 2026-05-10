@@ -250,7 +250,18 @@ export function createProductApp(config: ProductAppConfig) {
         <Routes>
           {Landing && <Route path="/landing" element={<Landing />} />}
           {Login && <Route path="/login" element={<Login />} />}
-          {supabase && <Route path="/sso" element={<SSOCallback supabase={supabase} />} />}
+          {supabase && (
+            <Route
+              path="/sso"
+              element={
+                <SSOCallback
+                  supabase={supabase}
+                  coreApiUrl={import.meta.env.VITE_CORE_API_URL || "http://localhost:8000"}
+                  coreUrl={import.meta.env.VITE_CORE_URL || "http://localhost:5173"}
+                />
+              }
+            />
+          )}
           {AcceptInvite && <Route path="/accept-invite/:token" element={<AcceptInvite />} />}
           {ForgotPassword && <Route path="/forgot-password" element={<ForgotPassword />} />}
           {publicRoutes.map(({ path, component: Component }) => (

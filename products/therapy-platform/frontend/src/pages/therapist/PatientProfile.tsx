@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { User, Calendar, FileText, Eye, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Separator } from '@/components/ui/separator';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
+import { Separator } from '@noctusai/seed/components/ui/separator';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@noctusai/seed/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { useSessionJournal } from '@/hooks/useJournal';
 import { useClinicalLongitudinal, useClinicalLongitudinalVersions } from '@/hooks/useLongitudinal';

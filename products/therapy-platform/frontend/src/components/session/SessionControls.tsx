@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Mic, MicOff, Video, VideoOff, Monitor, MessageSquare, PhoneOff, Clock } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   AlertDialog,
@@ -12,8 +12,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+} from '@noctusai/seed/components/ui/alert-dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@noctusai/seed/components/ui/tooltip';
 
 interface SessionControlsProps {
   isTherapist: boolean;

@@ -1,5 +1,5 @@
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { usePropostas } from '@/hooks/usePropostas';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { PROPOSTA_STATUS_CONFIG } from '@/lib/constants';

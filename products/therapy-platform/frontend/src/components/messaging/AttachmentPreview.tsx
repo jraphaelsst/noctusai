@@ -3,7 +3,7 @@ import {
   Dialog,
   DialogContent,
   DialogTrigger,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import type { Message } from '@/types/messaging';
 
 interface AttachmentPreviewProps {

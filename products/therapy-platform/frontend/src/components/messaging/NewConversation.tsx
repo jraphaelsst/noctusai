@@ -5,11 +5,11 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ScrollArea } from '@/components/ui/scroll-area';
+} from '@noctusai/seed/components/ui/dialog';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Avatar, AvatarFallback } from '@noctusai/seed/components/ui/avatar';
+import { ScrollArea } from '@noctusai/seed/components/ui/scroll-area';
 import { useQuery } from '@tanstack/react-query';
 import { api, useAuthStore } from '@noctusai/seed/infra';
 import { useStartConversation } from '@/hooks/useConversations';

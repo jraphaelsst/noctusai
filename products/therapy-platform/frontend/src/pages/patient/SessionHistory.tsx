@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock, FileText, ChevronRight, Loader2 } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { useSessionJournal } from '@/hooks/useJournal';
 
 export default function SessionHistory() {

@@ -1,4 +1,4 @@
-import { Card } from '@/components/ui/card';
+import { Card } from '@noctusai/seed/components/ui/card';
 import { useMatches, useAtualizarStatusMatch } from '@/hooks/useMatches';
 import { MatchCard } from '@/components/shared/MatchCard';
 

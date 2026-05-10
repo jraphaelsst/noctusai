@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Button } from "@/components/ui/button";
+import { Button } from "@noctusai/seed/components/ui/button";
 import {
   Building2, Users, Filter, Brain, MessageSquare,
   DollarSign, FileText, ArrowRight,

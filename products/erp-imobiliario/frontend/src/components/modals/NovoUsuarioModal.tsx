@@ -6,10 +6,10 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@noctusai/seed/components/ui/dialog";
+import { Button } from "@noctusai/seed/components/ui/button";
+import { Input } from "@noctusai/seed/components/ui/input";
+import { Label } from "@noctusai/seed/components/ui/label";
 import { UserPlus, Eye, EyeOff } from "lucide-react";
 import { useCreateProfile } from "@/hooks/useProfiles";
 import { corretorSchema } from "@/lib/validations";

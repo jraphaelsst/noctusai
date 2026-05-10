@@ -13,3 +13,9 @@
 
 -e seed/lib/backend
 -e seed/framework/backend
+
+# Server runtime — required for the `uvicorn` entry point. The other 9
+# products pin this explicitly; seed/lib/backend's pyproject lists FastAPI
+# but not uvicorn. Follow-up: consider absorbing uvicorn into
+# seed/lib/backend deps so every product inherits it.
+uvicorn[standard]==0.30.6

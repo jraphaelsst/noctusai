@@ -1,7 +1,7 @@
 import { Cliente } from '@/types/clientes';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { ExternalLink, MessageSquare, Archive, Brain } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';

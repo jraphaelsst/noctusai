@@ -1,11 +1,11 @@
 import { useForm } from 'react-hook-form';
 import { useCreateCondominio, NovoCondominioForm } from '@/hooks/useCondominios';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@noctusai/seed/components/ui/dialog';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Textarea } from '@noctusai/seed/components/ui/textarea';
+import { Switch } from '@noctusai/seed/components/ui/switch';
 
 interface Props {
   open: boolean;

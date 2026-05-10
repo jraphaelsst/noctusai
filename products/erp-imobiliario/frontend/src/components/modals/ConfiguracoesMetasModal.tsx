@@ -1,19 +1,19 @@
 import { useState, useEffect } from "react";
 import { Settings, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@noctusai/seed/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+} from "@noctusai/seed/components/ui/dialog";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@noctusai/seed/components/ui/card";
+import { Label } from "@noctusai/seed/components/ui/label";
+import { Input } from "@noctusai/seed/components/ui/input";
+import { Switch } from "@noctusai/seed/components/ui/switch";
+import { Separator } from "@noctusai/seed/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@noctusai/seed/components/ui/tooltip";
 import { useMetasConfig, useUpsertMetaConfig, MetaConfigForm } from "@/hooks/useMetasConfig";
 import { TipoMeta, CategoriaMeta } from "@/types";
 import { categoriaLabels, categoriasDisponiveis } from "@/lib/categorias";

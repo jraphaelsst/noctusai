@@ -16,7 +16,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer,
   CartesianGrid, Cell,
 } from 'recharts';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
 import { ProgressRing } from '@noctusai/lib/design-system';
 import {
   useEquipes, useMetasEquipe, useRankings,

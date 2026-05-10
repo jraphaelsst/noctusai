@@ -114,29 +114,15 @@ def build_all_frontends(timeout: int = 120) -> dict:
 
 def register(server) -> None:
     @server.tool(
-        name="noctus.dev.run_tests",
-        description="Run pytest for a product",
+        name="noctus.dev.pytest",
+        description="Run pytest for one product (slug=...) or all products (slug=None).",
     )
-    def _run_tests(slug: str) -> dict:
-        return run_product_tests(slug)
+    def _pytest(slug: str | None = None) -> dict:
+        return run_all_tests() if slug is None else run_product_tests(slug)
 
     @server.tool(
-        name="noctus.dev.run_all_tests",
-        description="Run tests for all products",
+        name="noctus.dev.vite_build",
+        description="Run vite build for one product (slug=...) or all (slug=None).",
     )
-    def _run_all_tests() -> dict:
-        return run_all_tests()
-
-    @server.tool(
-        name="noctus.dev.build_frontend",
-        description="Build a product's frontend (vite build)",
-    )
-    def _build_fe(slug: str) -> dict:
-        return build_product_frontend(slug)
-
-    @server.tool(
-        name="noctus.dev.build_all_frontends",
-        description="Build all product frontends",
-    )
-    def _build_all_fe() -> dict:
-        return build_all_frontends()
+    def _vite_build(slug: str | None = None) -> dict:
+        return build_all_frontends() if slug is None else build_product_frontend(slug)

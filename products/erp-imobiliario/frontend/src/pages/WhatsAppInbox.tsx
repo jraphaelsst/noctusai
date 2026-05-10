@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@noctusai/seed/components/ui/input";
+import { Button } from "@noctusai/seed/components/ui/button";
+import { Badge } from "@noctusai/seed/components/ui/badge";
+import { ScrollArea } from "@noctusai/seed/components/ui/scroll-area";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useWhatsAppConversations,

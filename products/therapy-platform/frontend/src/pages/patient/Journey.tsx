@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Loader2, ChevronDown, Sparkles } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Separator } from '@noctusai/seed/components/ui/separator';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@noctusai/seed/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { usePatientLongitudinal, usePatientLongitudinalVersions } from '@/hooks/useLongitudinal';
 import type { PatientLongitudinal } from '@/types/session';

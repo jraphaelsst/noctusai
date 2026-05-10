@@ -13,7 +13,7 @@
  */
 import { useState } from 'react';
 import { Loader2, ShieldCheck, ShieldOff } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from '@noctusai/seed/components/ui/button';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,7 +23,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@noctusai/seed/components/ui/alert-dialog';
 import {
   useConsents,
   useRevokeConsent,

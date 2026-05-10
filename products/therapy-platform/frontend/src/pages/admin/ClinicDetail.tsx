@@ -4,15 +4,15 @@ import {
   ArrowLeft, CheckCircle, XCircle, Ban,
   Building2, Users, DollarSign, Star, Percent,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Separator } from '@noctusai/seed/components/ui/separator';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import { useAdminClinic, useApproveEntity, useRejectEntity, useSuspendEntity } from '@/hooks/useAdmin';
 
 const STATUS_BADGE: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {

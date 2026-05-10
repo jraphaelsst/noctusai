@@ -1,7 +1,7 @@
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Progress } from '@noctusai/seed/components/ui/progress';
 import { useMatches, useAtualizarStatusMatch, Match } from '@/hooks/useMatches';
 import { formatCurrency } from '@/lib/utils';
 import { Sparkles, HomeIcon, ArrowLeftRight, Check, X } from 'lucide-react';

@@ -1,15 +1,15 @@
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Card, CardHeader, CardTitle, CardContent } from '@noctusai/seed/components/ui/card';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import { supabase } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 import { loginSchema, signUpSchema } from '@/lib/validations';

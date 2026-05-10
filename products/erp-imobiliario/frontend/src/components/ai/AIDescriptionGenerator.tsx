@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@noctusai/seed/components/ui/button";
+import { Textarea } from "@noctusai/seed/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Badge } from "@noctusai/seed/components/ui/badge";
 import { toast } from "sonner";
 import { useGenerateDescription } from "@/hooks/useAI";
 

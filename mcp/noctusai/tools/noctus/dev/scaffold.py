@@ -416,6 +416,7 @@ RESERVED_RANGES: list[tuple[int, str]] = [
     (8006, "mailing"),
     (8007, "adconnect"),
     (8009, "dev-team"),
+    (8010, "youtube-crawler"),
     (8096, "media-scheduling"),
     # Frontend ports (5173 + 8080-range)
     (5173, "core"),                # Core frontend (Vite default)
@@ -428,6 +429,7 @@ RESERVED_RANGES: list[tuple[int, str]] = [
     (8123, "dev-team"),            # Dev Team frontend (off-pattern: see vite.config.ts)
     (8130, "adconnect"),           # AdConnect frontend
     (8140, "media-scheduling"),    # Media Scheduling frontend
+    (8150, "youtube-crawler"),     # YouTube Crawler frontend
 ]
 
 
@@ -592,6 +594,16 @@ def scaffold_product(
         frontend_port=frontend_port,
     )
 
+    # In-noc compose registration — appends include: line to root
+    # docker-compose.yml so `docker compose up` brings the new product up
+    # alongside the others. No-op for sibling-workspace scaffolds (they
+    # have a single workspace-root compose, not a per-product include
+    # orchestrator).
+    root_compose_registration = _register_in_root_compose(
+        slug=slug,
+        repo_root=base_products_dir.parent,
+    )
+
     next_steps = [
         f"Add to CLAUDE.md product table",
         f"Run migration: mcp/noctusai tools → noctusai_apply_migration",
@@ -642,6 +654,7 @@ def scaffold_product(
         "seed_row_migration": seed_row_migration,
         "start_sh_registration": start_sh_registration,
         "docker_patch": docker_patch,
+        "root_compose_registration": root_compose_registration,
         "next_steps": next_steps,
     }
 
@@ -694,6 +707,9 @@ def delete_product(
     start_sh_unregistration = _unregister_from_start_sh(
         slug=slug, repo_root=repo_root,
     )
+    root_compose_unregistration = _unregister_from_root_compose(
+        slug=slug, repo_root=repo_root,
+    )
     if remove_directory:
         directory_removal = _remove_product_directory(
             slug=slug, products_dir=base_products_dir,
@@ -718,6 +734,10 @@ def delete_product(
         next_steps.append(
             f"start.sh unchanged: {start_sh_unregistration['skipped']}"
         )
+    if root_compose_unregistration.get("skipped"):
+        next_steps.append(
+            f"docker-compose.yml unchanged: {root_compose_unregistration['skipped']}"
+        )
     if not remove_directory and directory_removal.get("skipped"):
         # Only surface this hint when the directory actually exists — when it
         # doesn't, suggesting "re-run with remove_directory=True" is noise.
@@ -735,6 +755,7 @@ def delete_product(
     return {
         "deactivate_migration": deactivate_migration,
         "start_sh_unregistration": start_sh_unregistration,
+        "root_compose_unregistration": root_compose_unregistration,
         "directory_removal": directory_removal,
         "next_steps": next_steps,
     }
@@ -986,6 +1007,119 @@ def _unregister_from_start_sh(
         return {"skipped": f"OSError writing {start_sh}: {exc}"}
 
     return {"path": str(start_sh), "removed_entry": removed_entry}
+
+
+# ─── Root docker-compose include: list registration ─────────────────────
+# Mirror of _register_in_start_sh / _unregister_from_start_sh, but for the
+# root docker-compose.yml's `include:` block. New products are appended
+# between BEGIN_PRODUCTS_INCLUDE / END_PRODUCTS_INCLUDE sentinels so
+# `docker compose up` at the repo root brings the new product up alongside
+# the others. Idempotent on re-scaffold.
+_ROOT_COMPOSE_INCLUDE_RE = re.compile(
+    r"(# BEGIN_PRODUCTS_INCLUDE\n)(.*?)(  # END_PRODUCTS_INCLUDE)",
+    re.DOTALL,
+)
+
+
+def _register_in_root_compose(*, slug: str, repo_root: Path) -> dict:
+    """Append a `- products/<slug>/docker-compose.yml` line to the root
+    `docker-compose.yml`'s `include:` block, between
+    BEGIN_PRODUCTS_INCLUDE / END_PRODUCTS_INCLUDE sentinels.
+
+    Idempotent on re-scaffold; returns ``{"skipped": ...}`` when the slug
+    is already in the list, or when the compose file / sentinels are
+    missing (caller surfaces the manual step).
+
+    Returns ``{"path": str, "entry": str}`` on success.
+    """
+    compose = repo_root / "docker-compose.yml"
+    if not compose.is_file():
+        return {"skipped": f"{compose} does not exist"}
+
+    try:
+        content = compose.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"skipped": f"OSError reading {compose}: {exc}"}
+
+    match = _ROOT_COMPOSE_INCLUDE_RE.search(content)
+    if not match:
+        return {
+            "skipped": (
+                f"{compose} missing BEGIN_PRODUCTS_INCLUDE / END_PRODUCTS_INCLUDE "
+                "sentinels around the include: list"
+            )
+        }
+
+    head, body, tail = match.group(1), match.group(2), match.group(3)
+    entry = f"  - products/{slug}/docker-compose.yml"
+
+    # Idempotency — match any line whose path segment ends with /<slug>/.
+    slug_token = f"/{slug}/docker-compose.yml"
+    for line in body.splitlines():
+        if slug_token in line:
+            return {"skipped": f"slug '{slug}' already registered in root docker-compose include:"}
+
+    new_body = body.rstrip("\n") + "\n" + entry + "\n"
+    new_content = content[: match.start()] + head + new_body + tail + content[match.end():]
+
+    try:
+        compose.write_text(new_content, encoding="utf-8")
+    except OSError as exc:
+        return {"skipped": f"OSError writing {compose}: {exc}"}
+
+    return {"path": str(compose), "entry": entry.strip()}
+
+
+def _unregister_from_root_compose(*, slug: str, repo_root: Path) -> dict:
+    """Inverse of :func:`_register_in_root_compose`: remove a single slug's
+    line from the root `docker-compose.yml`'s `include:` block.
+
+    Idempotent on missing slug. Returns ``{"path": str, "removed_entry": str}``
+    on success, or ``{"skipped": ...}`` when slug not found, sentinels
+    missing, or compose file missing.
+    """
+    compose = repo_root / "docker-compose.yml"
+    if not compose.is_file():
+        return {"skipped": f"{compose} does not exist"}
+
+    try:
+        content = compose.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"skipped": f"OSError reading {compose}: {exc}"}
+
+    match = _ROOT_COMPOSE_INCLUDE_RE.search(content)
+    if not match:
+        return {
+            "skipped": (
+                f"{compose} missing BEGIN_PRODUCTS_INCLUDE / END_PRODUCTS_INCLUDE "
+                "sentinels around the include: list"
+            )
+        }
+
+    head, body, tail = match.group(1), match.group(2), match.group(3)
+    slug_token = f"/{slug}/docker-compose.yml"
+    kept_lines: list[str] = []
+    removed_entry: str | None = None
+    for line in body.splitlines():
+        if slug_token in line and removed_entry is None:
+            removed_entry = line.strip()
+            continue
+        kept_lines.append(line)
+
+    if removed_entry is None:
+        return {"skipped": f"slug '{slug}' not found in root docker-compose include:"}
+
+    new_body = "\n".join(kept_lines)
+    if new_body and not new_body.endswith("\n"):
+        new_body += "\n"
+    new_content = content[: match.start()] + head + new_body + tail + content[match.end():]
+
+    try:
+        compose.write_text(new_content, encoding="utf-8")
+    except OSError as exc:
+        return {"skipped": f"OSError writing {compose}: {exc}"}
+
+    return {"path": str(compose), "removed_entry": removed_entry}
 
 
 _MIGRATION_NUMBER_RE = re.compile(r"^(\d{3})_")

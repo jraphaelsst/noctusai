@@ -1,42 +1,88 @@
-version: "3.8"
+# NoctusAI Platform — root orchestrator compose.
+#
+# This file orchestrates the full platform: it `include:`s every product's
+# own docker-compose.yml fragment, plus shared platform services (Redis,
+# WAHA when needed) under profiles. Each product can also be brought up
+# alone via its own compose (cd products/<slug> && docker compose up).
+#
+# The product list mirrors start.sh's PRODUCTS registry. When you scaffold
+# a new product, append its compose to the include list below — same
+# discipline as start.sh (one canonical writer, hand-edits only when you
+# know what you're doing).
+#
+# Usage:
+#   docker compose up                       # all products, no extras
+#   docker compose --profile redis up       # all products + Redis
+#   docker compose --profile full up        # all products + Redis + WAHA
+#   docker compose --profile minimal up     # core + erp only (smoke)
+#
+# Or via start.sh:
+#   ./start.sh --docker [profile]
+#   ./stop.sh  --docker
+
+include:
+  # BEGIN_PRODUCTS_INCLUDE
+  - products/core/docker-compose.yml
+  - products/erp-imobiliario/docker-compose.yml
+  - products/personal-finance/docker-compose.yml
+  - products/therapy-platform/docker-compose.yml
+  - products/seed/docker-compose.yml
+  - products/daily-life/docker-compose.yml
+  - products/mailing/docker-compose.yml
+  - products/adconnect/docker-compose.yml
+  - products/dev-team/docker-compose.yml
+  - products/media-scheduling/docker-compose.yml
+  # END_PRODUCTS_INCLUDE
 
 services:
-  core-backend:
-    build:
-      context: .
-      dockerfile: products/core/backend/Dockerfile
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    restart: unless-stopped
+  # ─── Shared platform services ───────────────────────────────────────
+  # Default-off via profiles; products that need them opt in. Pattern
+  # mirrors templates/seed-workspace-docker/docker-compose.yml so the
+  # standalone-workspace and in-noc-orchestrator paths stay consistent.
 
-  erp-backend:
-    build:
-      context: .
-      dockerfile: products/erp-imobiliario/backend/Dockerfile
+  redis:
+    image: redis:7-alpine
+    container_name: noctus-redis
     ports:
-      - "8001:8001"
-    env_file:
-      - .env
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - noctus-net
     restart: unless-stopped
+    profiles:
+      - redis
+      - full
 
-  core-frontend:
-    build:
-      context: .
-      dockerfile: products/core/frontend/Dockerfile
+  waha:
+    # WhatsApp HTTP API — for chatbot-using products (mailing, dev-team
+    # follow-ups, media-scheduling). Consumed via the
+    # noctusai_lib.integrations.whatsapp factory; FakeWahaClient fallback
+    # when WAHA_BASE_URL is empty (so non-chatbot products are unaffected).
+    image: devlikeapro/waha:latest
+    platform: linux/amd64
+    container_name: noctus-waha
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
     ports:
-      - "5173:5173"
-    depends_on:
-      - core-backend
+      - "3000:3000"
+    volumes:
+      - waha_sessions:/app/.sessions
+    networks:
+      - noctus-net
     restart: unless-stopped
+    profiles:
+      - waha
+      - full
 
-  erp-frontend:
-    build:
-      context: .
-      dockerfile: products/erp-imobiliario/frontend/Dockerfile
-    ports:
-      - "8080:8080"
-    depends_on:
-      - erp-backend
-    restart: unless-stopped
+networks:
+  noctus-net:
+    name: noctus-net
+    driver: bridge
+
+volumes:
+  redis_data:
+  waha_sessions:

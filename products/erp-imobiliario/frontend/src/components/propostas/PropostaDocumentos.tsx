@@ -1,6 +1,6 @@
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { useDocumentos } from '@/hooks/useDocumentos';
 import { TipoDocumento } from '@/types/documentos';
 import { formatDate } from '@/lib/utils';

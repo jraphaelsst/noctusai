@@ -1,4 +1,4 @@
-import { Card } from '@/components/ui/card';
+import { Card } from '@noctusai/seed/components/ui/card';
 import { Camera } from 'lucide-react';
 
 interface VistoriaFotosProps {

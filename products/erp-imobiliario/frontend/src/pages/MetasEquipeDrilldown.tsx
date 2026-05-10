@@ -8,10 +8,10 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription,
-} from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+} from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Input } from '@noctusai/seed/components/ui/input';
 import {
   ArrowLeft, Target, TrendingUp, Users, Trophy, Crown,
 } from 'lucide-react';

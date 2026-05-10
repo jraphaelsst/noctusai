@@ -8,17 +8,17 @@ import {
 import { useClientes } from '@/hooks/useClientes';
 import { useProfiles } from '@/hooks/useProfiles';
 import type { ModoDistribuicao } from '@/types/locacoes';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Input } from '@noctusai/seed/components/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@noctusai/seed/components/ui/select';
 import {
   Table,
   TableBody,

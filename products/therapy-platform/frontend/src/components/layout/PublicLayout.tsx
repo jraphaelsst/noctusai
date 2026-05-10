@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Button } from "@/components/ui/button";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { Heart } from "lucide-react";
 
 interface PublicLayoutProps {

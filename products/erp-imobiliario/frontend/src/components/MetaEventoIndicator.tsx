@@ -12,7 +12,7 @@
  * meta_evento — e.g. an ativo with no captador_id).
  */
 import { Sparkles } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { ScorePill } from '@noctusai/lib/design-system';
 import { useMetaEventosFor, type MetaEvento } from '@/hooks/useMetasDomain';
 

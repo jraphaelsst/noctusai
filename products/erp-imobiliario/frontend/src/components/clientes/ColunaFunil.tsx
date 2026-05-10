@@ -1,6 +1,6 @@
 import { ColunaFunil as ColunaFunilType } from '@/types/clientes';
-import { Badge } from '@/components/ui/badge';
-import { Card } from '@/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Card } from '@noctusai/seed/components/ui/card';
 import { ETAPAS_CONFIG } from '@/lib/etapasConfig';
 import { formatCurrency } from '@/lib/utils';
 import { ClienteCard } from './ClienteCard';

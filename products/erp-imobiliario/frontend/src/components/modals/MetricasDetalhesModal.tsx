@@ -1,23 +1,23 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@noctusai/seed/components/ui/dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@noctusai/seed/components/ui/collapsible";
 import { MetaCard } from "@/components/ui/meta-card";
 import { Meta, TipoMeta, CategoriaMeta } from "@/types";
 import { ChevronDown, Filter, CalendarIcon, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { MetaDetalhesModal } from "./MetaDetalhesModal";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@noctusai/seed/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Label } from "@noctusai/seed/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@noctusai/seed/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@noctusai/seed/components/ui/popover";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useUserRole } from "@/hooks/useUserRole";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@noctusai/seed/components/ui/badge";
 import { categoriaLabels as categoriaMetaLabels, categoriaOrdem, sortMetasByCategoria } from "@/lib/categorias";
 
 interface MetricasDetalhesModalProps {

@@ -1,4 +1,4 @@
-import { Card } from '@/components/ui/card';
+import { Card } from '@noctusai/seed/components/ui/card';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { HistoricoProposta } from '@/types/propostas';
 

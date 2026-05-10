@@ -1,11 +1,11 @@
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@noctusai/seed/components/ui/select";
+import { Label } from "@noctusai/seed/components/ui/label";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { X, Calendar as CalendarIcon, CheckSquare } from "lucide-react";
 import { useFiltrosStore } from "@/store/filtrosStore";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useUserRole } from "@/hooks/useUserRole";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@noctusai/seed/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import {
   format,

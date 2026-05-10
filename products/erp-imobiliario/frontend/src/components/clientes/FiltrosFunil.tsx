@@ -1,8 +1,8 @@
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@noctusai/seed/components/ui/select';
+import { Switch } from '@noctusai/seed/components/ui/switch';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { X, Plus } from 'lucide-react';
 import { useFunilFiltrosStore } from '@/store/funilFiltrosStore';
 import { useProfiles } from '@/hooks/useProfiles';

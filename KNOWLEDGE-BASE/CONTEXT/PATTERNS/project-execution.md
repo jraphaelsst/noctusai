@@ -91,13 +91,26 @@ CLOSE PROJECT (only after the verification checklist is fully green)
           Project lands at `archive/projects/<today>/<NN>-<slug>/` with PROJECT.md + proposals/ preserved
           as-is. NOT `git rm -r` — the move uses `git mv` to preserve history. Explicit deletion is the
           override: when the user says "delete X" / "remove X" (NOT "close X"), `git rm -r` is correct.
-  └─ **Final commit + push (NEW 2026-05-03).** Stage everything still uncommitted (per-phase commits already
+  └─ **Final commit + branch-push (NEW 2026-05-03).** Stage everything still uncommitted (per-phase commits already
           captured each phase; the close commit captures the methodology amendments + folder archive + any
           end-of-project polish). Subject: `chore(projects): close <project-slug> — archived to archive/projects/<today>/<NN>-<slug>/ [<slug> close]`. Then
-          `git push`. Pushing is the literal last step of the project — it makes the work visible to other
-          agents and pinned in remote history. Never push partway through; never push without an explicit
+          `git push` to the branch. Never push partway through; never push without an explicit
           project-close gate. If the user explicitly delegated the close (e.g. "commit and push the project"),
           this step runs without a re-confirmation prompt; absent that delegation, ask before pushing.
+  └─ **Orchestrator FF-to-main — the literal last step of project close (NEW 2026-05-10).** The branch-push
+          above makes the work remotely visible; the FF-to-main makes it INTEGRATED. **Project is NOT closed
+          until the branch tip lands on origin/main.** The orchestrator (CLI agent in user's session-spanning
+          conversation, per `feedback_orchestrator_role.md`) runs the fresh-eyes review pass + the FF push:
+            git diff origin/main..origin/<branch>        # fresh-eyes diff review
+            git push origin origin/<branch>:main         # FF push branch tip to main
+          **Why a hard gate, not a separate optional step:** without it, branches accumulate post-close on the
+          remote (10+ unmerged branches observed 2026-05-10 — slip recorded in this file's §11 entry). Engineers
+          DID follow per-phase + branch-push discipline; what was missing was the integrator's act. The
+          gate makes integration the orchestrator's project-close responsibility, not a deferred maintenance
+          task. Same-agent carve-out preserved (per `feedback_orchestrator_role.md` — mode-switch + re-read diff
+          when no subagent was spawned). When FF fails (branch is behind main), the merging methodology applies
+          per §10.2 — rebase OR merge origin/main into branch first, then FF; if conflicts, use file-type
+          heuristics (§10.4). The project is still not closed until main reflects the work.
 ```
 
 **Cross-cutting language trigger that fires at every step.** If you see or write any of these phrasings — in your own response, in the project doc, in a user prompt — STOP and challenge the framing: *"per-product X"*, *"mount across N products"*, *"for each product Y"*, *"mount on each ___"*. The right per-product code count for cross-product concerns is **zero**. See the language-trigger rule (§ The replication-to-seed symmetry rule).

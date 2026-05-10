@@ -6,10 +6,10 @@ import { z } from "zod";
 import { supabase } from '@noctusai/seed/infra';
 import { toast } from "sonner";
 import { PublicLayout } from "@/components/layout/PublicLayout";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Input } from "@noctusai/seed/components/ui/input";
+import { Label } from "@noctusai/seed/components/ui/label";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { Heart, Users, Building2, UserCircle, ArrowLeft, Loader2, CheckCircle2, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 

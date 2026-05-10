@@ -1,7 +1,7 @@
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Progress } from '@noctusai/seed/components/ui/progress';
 import { CheckCircle, XCircle } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import type { Match } from '@/hooks/useMatches';

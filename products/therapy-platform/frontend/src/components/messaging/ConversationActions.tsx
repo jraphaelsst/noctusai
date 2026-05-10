@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { MoreVertical, Archive, BellOff, Bell, Ban, Flag } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from '@noctusai/seed/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from '@noctusai/seed/components/ui/dropdown-menu';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,15 +17,15 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@noctusai/seed/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+} from '@noctusai/seed/components/ui/dialog';
+import { Input } from '@noctusai/seed/components/ui/input';
 import type { Conversation } from '@/types/messaging';
 
 interface ConversationActionsProps {

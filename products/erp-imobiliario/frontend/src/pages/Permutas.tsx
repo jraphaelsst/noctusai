@@ -4,17 +4,17 @@ import { usePerfilsPermuta, PerfilPermuta } from '@/hooks/usePermutas';
 import { useMatches, useMatchCounts, useRecalcularMatches, useAtualizarStatusMatch } from '@/hooks/useMatches';
 import { NovoPerfilPermutaDialog } from '@/components/permutas/NovoPerfilPermutaDialog';
 import { MatchCard } from '@/components/shared/MatchCard';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
 import {
   Search, Plus, ArrowLeftRight, Sparkles,
   ChevronDown, ChevronUp,
   Car, Home as HomeIcon, RefreshCw,
 } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@noctusai/seed/components/ui/select';
 import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { formatCurrency } from '@/lib/utils';
 

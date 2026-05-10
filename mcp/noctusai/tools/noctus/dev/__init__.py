@@ -1,6 +1,6 @@
 """``noctus.dev.*`` tool umbrella — developer-experience MCP tools.
 
-All 26 modules in this package expose a top-level ``register(server)``
+All modules in this package expose a top-level ``register(server)``
 function. ``register_all`` calls them in alphabetical order with lazy
 imports so the server's import-time stays light (``ai_brain`` pulls in
 OpenAI, ``testing`` shells out to pytest, etc. — only when the registrar
@@ -15,6 +15,7 @@ def register_all(server) -> None:
     from . import ai_brain
     from . import analyzers
     from . import archive
+    from . import audit_product
     from . import batch_speed_gains
     from . import build
     from . import catalog
@@ -25,6 +26,7 @@ def register_all(server) -> None:
     from . import improvements
     from . import lgpd
     from . import master_prompts
+    from . import outline
     from . import outline_python
     from . import outline_typescript
     from . import phase_learnings
@@ -36,6 +38,7 @@ def register_all(server) -> None:
     from . import review
     from . import scaffold
     from . import scaffold_migration
+    from . import scan_unified
     from . import session_review
     from . import status
     from . import testing
@@ -44,6 +47,7 @@ def register_all(server) -> None:
     ai_brain.register(server)
     analyzers.register(server)
     archive.register(server)
+    audit_product.register(server)
     batch_speed_gains.register(server)
     build.register(server)
     catalog.register(server)
@@ -54,6 +58,7 @@ def register_all(server) -> None:
     improvements.register(server)
     lgpd.register(server)
     master_prompts.register(server)
+    outline.register(server)
     outline_python.register(server)
     outline_typescript.register(server)
     phase_learnings.register(server)
@@ -65,6 +70,7 @@ def register_all(server) -> None:
     review.register(server)
     scaffold.register(server)
     scaffold_migration.register(server)
+    scan_unified.register(server)
     session_review.register(server)
     status.register(server)
     testing.register(server)

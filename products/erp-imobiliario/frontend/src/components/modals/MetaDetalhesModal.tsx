@@ -5,7 +5,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@noctusai/seed/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,12 +15,12 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+} from "@noctusai/seed/components/ui/alert-dialog";
+import { Button } from "@noctusai/seed/components/ui/button";
+import { Input } from "@noctusai/seed/components/ui/input";
+import { Label } from "@noctusai/seed/components/ui/label";
+import { Badge } from "@noctusai/seed/components/ui/badge";
+import { Progress } from "@noctusai/seed/components/ui/progress";
 import { Calendar, Target, TrendingUp, Edit2, X, Save, Trash2, RotateCcw, AlertTriangle, Activity, Clock, ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -30,7 +30,7 @@ import { useIsAdmin, useUserRole } from "@/hooks/useUserRole";
 import { cn, formatDate } from "@/lib/utils";
 import { User } from "lucide-react";
 import { categoriaLabels as categoriaMetaLabels, getDisplayCategoria } from "@/lib/categorias";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@noctusai/seed/components/ui/tooltip";
 
 interface MetaDetalhesModalProps {
   meta: Meta;

@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle } from "@noctusai/seed/components/ui/card";
+import { Avatar, AvatarFallback } from "@noctusai/seed/components/ui/avatar";
+import { Badge } from "@noctusai/seed/components/ui/badge";
+import { Skeleton } from "@noctusai/seed/components/ui/skeleton";
 import { Plus, Mail, Phone, Calendar, Target } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";

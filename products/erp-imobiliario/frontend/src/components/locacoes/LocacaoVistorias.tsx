@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Card } from '@noctusai/seed/components/ui/card';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { useVistorias } from '@/hooks/useVistorias';
 import { formatDate } from '@/lib/utils';
 import { ClipboardCheck, Calendar, Eye } from 'lucide-react';

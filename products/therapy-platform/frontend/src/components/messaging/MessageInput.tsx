@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { Send, ImageIcon, Mic, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from '@noctusai/seed/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useUploadAttachment } from '@/hooks/useMessages';

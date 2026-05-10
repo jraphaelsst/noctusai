@@ -3,13 +3,13 @@ import {
   Settings as SettingsIcon, Save, User, Landmark,
   Link2, Bell, DollarSign,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Label } from '@noctusai/seed/components/ui/label';
+import { Switch } from '@noctusai/seed/components/ui/switch';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Separator } from '@noctusai/seed/components/ui/separator';
 import { useTherapistSettings, useUpdateTherapistSettings } from '@/hooks/useSettings';
 
 export default function TherapistSettings() {

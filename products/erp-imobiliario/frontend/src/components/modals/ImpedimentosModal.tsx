@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@noctusai/seed/components/ui/dialog";
 import { Meta } from "@/types";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@noctusai/seed/components/ui/card";
+import { Badge } from "@noctusai/seed/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@noctusai/seed/components/ui/select";
+import { Button } from "@noctusai/seed/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@noctusai/seed/components/ui/popover";
 import { CalendarIcon, AlertTriangle, Target } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";

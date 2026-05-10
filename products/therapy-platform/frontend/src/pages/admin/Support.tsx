@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { HeadphonesIcon } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import { ConversationList } from '@/components/messaging/ConversationList';
 import { ChatThread } from '@/components/messaging/ChatThread';
 import { useAdminSupportConversations } from '@/hooks/useAdmin';

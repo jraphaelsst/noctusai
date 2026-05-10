@@ -26,9 +26,21 @@ class TestListProducts:
 
 
 class TestGetProductSummary:
-    def test_seed_has_zero_routers(self):
+    def test_seed_has_only_demo_routers(self):
+        """Seed ships exactly two demo routers — `example_router` (route
+        conventions reference) and `webhook_router` (webhook 5-pin compliance
+        reference, added in commit 22750fd `feat(seed): inherit start.sh +
+        stop.sh + day-one routes + webhook 5-pin compliance`). NO domain
+        routers — products inherit shared routers from the framework, never
+        copy from seed.
+        """
         summary = get_product_summary("seed")
-        assert summary["routers"] == []
+        DEMO_ROUTERS = {"example_router", "webhook_router"}
+        actual = set(summary["routers"])
+        assert actual == DEMO_ROUTERS, (
+            f"seed routers should be exactly {DEMO_ROUTERS} (demos only); "
+            f"got {actual}"
+        )
         assert summary["has_backend"] is True
         assert summary["has_readme"] is True
 

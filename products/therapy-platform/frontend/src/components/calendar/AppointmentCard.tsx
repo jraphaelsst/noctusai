@@ -1,6 +1,6 @@
 import { Clock, Video, X, Eye } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
 import { cn } from '@/lib/utils';
 import { APPOINTMENT_STATUS_CONFIG, type Appointment } from '@/types/scheduling';
 import { RecurringBadge } from './RecurringBadge';

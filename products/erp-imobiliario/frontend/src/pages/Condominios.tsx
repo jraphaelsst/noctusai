@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useCondominios, useDeleteCondominio } from '@/hooks/useCondominios';
 import { NovoCondominioDialog } from '@/components/condominios/NovoCondominioDialog';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Badge } from '@noctusai/seed/components/ui/badge';
 import {
   Search, Plus, Building2, MapPin, Phone, Users, Trash2,
   Waves, Dumbbell, PartyPopper, TreePine, Flame, ShieldCheck
@@ -13,7 +13,7 @@ import { formatCurrency } from '@/lib/utils';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@noctusai/seed/components/ui/alert-dialog';
 import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 
 export default function Condominios() {

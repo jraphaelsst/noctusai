@@ -625,19 +625,12 @@ def register(server) -> None:
         return list_proposals(agent, product=product)
 
     @server.tool(
-        name="noctus.dev.accept_proposal",
-        description="Accept a proposal",
+        name="noctus.dev.set_proposal_status",
+        description="Accept or reject a proposal. status='accepted' or 'rejected'.",
     )
-    def _accept(filename: str, product: str | None = None) -> dict:
-        return update_proposal_status(filename, "accepted", product=product)
-
-    @server.tool(
-        name="noctus.dev.reject_proposal",
-        description="Reject a proposal",
-    )
-    def _reject(
-        filename: str,
-        reason: str = "",
-        product: str | None = None,
+    def _set_status(
+        filename: str, status: str, reason: str = "", product: str | None = None,
     ) -> dict:
-        return update_proposal_status(filename, "rejected", reason, product=product)
+        if status not in {"accepted", "rejected"}:
+            return {"error": f"invalid status {status!r}; valid: accepted / rejected"}
+        return update_proposal_status(filename, status, reason, product=product)

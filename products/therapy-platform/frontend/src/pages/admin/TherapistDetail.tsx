@@ -4,16 +4,16 @@ import {
   ArrowLeft, CheckCircle, XCircle, Ban, Mail,
   Star, Calendar, DollarSign, Percent, User,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
+import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Button } from '@noctusai/seed/components/ui/button';
+import { Badge } from '@noctusai/seed/components/ui/badge';
+import { Avatar, AvatarFallback } from '@noctusai/seed/components/ui/avatar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
+import { Input } from '@noctusai/seed/components/ui/input';
+import { Separator } from '@noctusai/seed/components/ui/separator';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+} from '@noctusai/seed/components/ui/dialog';
 import { useAdminTherapist, useApproveEntity, useRejectEntity, useSuspendEntity } from '@/hooks/useAdmin';
 import { formatCurrency } from '@/lib/utils';
 
