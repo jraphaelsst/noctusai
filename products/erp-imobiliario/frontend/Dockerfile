@@ -35,6 +35,11 @@ RUN npm run build
 # Runtime: nginx serves the static bundle.
 FROM nginx:alpine
 
+# OCI image labels — populated via --build-arg GIT_SHA=$(git rev-parse HEAD).
+ARG GIT_SHA=dev
+LABEL org.opencontainers.image.source="https://github.com/jraphaelsst/noctusai"
+LABEL org.opencontainers.image.revision="${GIT_SHA}"
+
 COPY --from=build /app/products/erp-imobiliario/frontend/dist /usr/share/nginx/html
 COPY seed/framework/frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
 
