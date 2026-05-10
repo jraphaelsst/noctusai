@@ -194,7 +194,7 @@ OPENAI_MODEL=gpt-4o-mini
 
 **Massive work. ~14 phases. Phase-by-phase by default.**
 
-### Phase 0 — Audit + decisions
+### Phase 0 — Audit + decisions ✅
 
 - [x] Confirm target product slug (Q1). ✅ **`imobi-scheduling`** (orchestrator-stamped 2026-05-10).
 - [x] Confirm port allocation (Q2 — pick a number under `KB § 05-INFRASTRUCTURE.md` rules). ✅ **backend 8011 / frontend 8160** (engineer pick via `noctus.dev.available_ports`; rationale in §11).
@@ -203,12 +203,23 @@ OPENAI_MODEL=gpt-4o-mini
 - [x] Confirm dependency order: Phase 1 (scaffold) waits on **none**. Phases 5+ depend on the seed projects landing — **all 4 substrate seed projects shipped** (whatsapp + chatbot + llm-tool-audit + scheduling-engine + Calendar/Maps). Phases 5-8 are unblocked. ✅ orchestrator-stamped 2026-05-10.
 - [x] Read sibling repo `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/` end-to-end for any product-domain detail not yet captured (validation evidence). ✅ Audit notes in `findings.md` §4 (sibling-repo domain detail). Sibling repo is now **read-only reference for the duration of this project**; no leftovers post-completion.
 
+**Improvements:**
+- **§5 entity list expansion** — sibling audit surfaced 11 entities (not the 9 in §5): add `crew_skill` (M2M crew↔service-type), `oauth_credential` (encrypted refresh-tokens), `pending_chat_identity` (LID-aware deferred-auth state), `route` (Maps cache). Apply during Phase 3 brief.
+- **7 sibling known-issues recipes** captured; items 1-3 product-domain (Phase 5/6); items 4-7 (docker-compose hardcode-shadowing, restart-vs-recreate, log windowing, WAHA `timestamps.activity` diagnostic) are candidate lifts to `KB § PATTERNS/whatsapp-chatbot-seed.md` — true for every WhatsApp-using product.
+- **`media-scheduling/` vs `imobi-scheduling/`** — surfaced to architect (open question for §7). Three paths: (a) delete + archival migration on imobi close, (b) rename `-deprecated` + freeze, (c) active-until-cutover then delete. Defer to architect; logged in §7.
+
 ### Phase 1 — Scaffold the product ✅
 
 - [x] Run `noctus.dev.scaffold_product` MCP tool (name=Imobi Scheduling, slug=imobi-scheduling, schema=imobi_scheduling, backend=8011, frontend=8160, color=#10b981, icon=CalendarClock). Emitted: 58 files at `products/imobi-scheduling/`, seed-row migration at `products/core/backend/migrations/028_seed_imobi_scheduling_product.sql`, registration in `start.sh` + root `docker-compose.yml`.
 - [x] Verify `products/imobi-scheduling/{backend, frontend, README.md, MASTER-PROMPT.md, docker-compose.yml}` exists and is shape-compliant per `KB § GUIDES/new-product.md`. Backend has `app/{main,config,database,dependencies,middleware,logging_config,rate_limit,responses}.py` + `routers/` + `schemas/` + `services/` + `migrations/` + `tests/` (41/41 green: health=14, example_router=5, webhook_router=5, team_router=14, e2e=3).
 - [x] Smoke test green: `pytest tests/ -q` → 41 passed.
 - [x] Initial commit boundary (this engineer commit). Phases 2+ build on this.
+
+**Improvements:**
+- **P0 — MCP scaffold tool bypasses worktree isolation.** `noctus.dev.scaffold_product` wrote to canonical noc root (main worktree) instead of the engineer's worktree. Engineer worked around via `cp -r` + hand-mirror of `start.sh` / root `docker-compose.yml`. Deferred to a follow-up project (`mcp-worktree-path-resolution`) per orchestrator routing — N=1 today, N≥2 will recur for every worktree-based engineer who scaffolds.
+- **N=2 frontend-deferred recurrence** (imobi + youtube-crawler). Scaffold tool has no `--backend-only` opt-out. Triage: future MCP enhancement — `backend_only=True` flag on `scaffold_product`. Filed for absorption-tracking.
+- **LLM-rewrite returned None** at scaffold time for README + MASTER-PROMPT. Tool reports cleanly but day-one prose is best-effort. Phase 12 (prose authoring) handles the re-run.
+- **Open question (decide before close)**: `media-scheduling/` (prior 2026-05-04 code-port) vs `imobi-scheduling/` (fresh implementation). Three paths: (a) delete + archival migration on imobi close, (b) rename `-deprecated` + freeze, (c) active-until-cutover then delete. Surfaced to architect.
 
 ### Phase 2 — Backend foundation
 
