@@ -212,11 +212,11 @@ Both packages export `src/*.ts` directly via `package.json#main` and `exports`. 
 - The lib has lucide-react / radix imports that need installation as devDeps. These are real peer relationships; products provide them at runtime, but tsc-time needs them for module resolution.
 - Original 8-frontend ambition is being retired in Phase 5 as opt-in over time; this prevents a future agent from re-opening the question.
 
-### Phase 1 — Lib: install peer-dep types + standalone tsc green (non-strict)
+### Phase 1 — Lib: install peer-dep types + standalone tsc green (non-strict) ✅ (executed 2026-05-10)
 
 Goal: zero `tsc --noEmit -p .` errors in lib's current `strict: false` state.
 
-- [ ] From `seed/lib/frontend/`, install peer-dep types as devDeps:
+- [x] From `seed/lib/frontend/`, install peer-dep types as devDeps:
   ```
   npm install --save-dev \
     lucide-react \
@@ -224,13 +224,21 @@ Goal: zero `tsc --noEmit -p .` errors in lib's current `strict: false` state.
     @radix-ui/react-hover-card \
     tailwindcss
   ```
-- [ ] Resolve the `@noctusai/seed/infra` import — this is a workspace cross-package reference. Install via `npm install --save-dev ../framework` (workspace link) or add path-mapping in tsconfig (preferred — keeps node_modules clean).
-- [ ] Run `tsc --noEmit -p .` — confirm zero errors.
-- [ ] Add `"check": "tsc --noEmit"` script to `package.json`.
+- [x] Resolve the `@noctusai/seed/infra` import — this is a workspace cross-package reference. Install via `npm install --save-dev ../framework` (workspace link) or add path-mapping in tsconfig (preferred — keeps node_modules clean). **Done via path-mapping.**
+- [x] Run `tsc --noEmit -p .` — confirm zero errors.
+- [x] Add `"check": "tsc --noEmit"` script to `package.json`.
 
 **Verification:**
-- `npm run check` exits 0
-- `git status --short -- seed/lib/frontend/` shows only `package.json`, `package-lock.json`, `tsconfig.json` (if path-mapping added) modified — no source-file edits needed.
+- `npm run check` exits 0 ✅
+- `git status --short -- seed/lib/frontend/` shows `package.json`, `package-lock.json`, `tsconfig.json` modified **plus 1 source edit** (`src/design-system/tailwind.config.base.ts` — surfaced bug fix, see Improvements).
+
+**Improvements / findings:**
+- **Surfaced bug:** Installing `tailwindcss` exposed a non-strict TS2322 in `src/design-system/tailwind.config.base.ts` line 20: `darkMode: ["class"]` should be `darkMode: "class"` (tuple form requires `[mode, selector]` 2-tuple per `DarkModeStrategy`; single-string form is canonical and behaviorally equivalent to `["class", ".dark"]` default). Applied inline. The bug went unnoticed because tailwindcss types were not previously installed.
+- **Phase 0 baseline drift:** Phase 0 audit ran with framework's tsc binary against a working-tree state that had peer deps available; this Phase 1 worktree starts from a cleaner state, so the initial `npm install` (existing devDeps) was a precondition before the 4 documented installs.
+- **Additional in-src test deps needed:** `src/components/FakeModeBadge.test.tsx` lives under `src/` (included in tsconfig's `include`), so vitest + @testing-library/react + @testing-library/jest-dom were installed as devDeps. The Phase 0 audit list of 4 packages was incomplete for a clean install — log entry: **test-imports-from-src-counted as peer-dep types**.
+- **Path mapping needs to recurse:** Mapping `@noctusai/seed/infra` to `../../framework/frontend/src/infra.tsx` works but `infra.tsx` itself imports from `@noctusai/lib/*`, requiring a SELF path mapping for the lib package. Added `@noctusai/lib` + `@noctusai/lib/*` entries pointing to `./src/*.ts` / `./src/*/index.ts` / `./src/*.tsx`. The Vite-injected `import.meta.env` typing also needed `vite/client` added to `types[]`.
+- **Latest-version drift:** Initial install of `tailwindcss` resolved to v4 (current latest) which would have been a major-version mismatch against framework's `^0.462.0` Lucide and Tailwind v3 ecosystem. Re-installed with explicit `tailwindcss@^3.4.0` / `lucide-react@^0.462.0` / `vitest@^2.1.8` / `typescript@^5.8.3` etc. to match the framework. **Lesson:** for workspace-cross packages, peer-dep installs should explicitly pin to the major versions used by the other workspace packages.
+- **Architectural inconsistency caught:** `seed/framework/frontend/package.json` `exports` block does not declare `./infra`, yet `seed/lib/frontend/src/design-system/ai/*` imports `@noctusai/seed/infra`. This currently works at runtime only because product Vite resolvers fall through to file paths; a stricter consumer (TypeScript without path-mapping; modern bundlers using export-conditions strictly) would break. **Recommend Phase 3 add `"./infra": "./src/infra.tsx"` to framework's exports block** so the package's public surface matches its consumers' imports.
 
 ### Phase 2 — Lib: flip strict + fix errors
 
