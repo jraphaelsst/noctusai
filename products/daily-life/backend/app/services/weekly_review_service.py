@@ -26,6 +26,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from noctusai_lib.domain.digest import (
+    BaseDigestService,
+    DigestResult,
+    DigestWindow,
     build_and_send,
     email_template_dir,
     narrative as digest_narrative,
@@ -212,6 +215,95 @@ def _render_bodies(
     )
 
 
+class WeeklyReviewService(BaseDigestService):
+    """`BaseDigestService` subclass for the daily-life weekly review.
+
+    Methods delegate to the module-level helpers (`_fetch_window`,
+    `_aggregate`, `_generate_narrative`, `_render_bodies`) so existing
+    test imports keep working. The class adds the orchestration shape
+    + the user-scoped extras (user_id, user_label) that the abstract
+    DigestWindow doesn't carry by default.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: Any,
+        user_id: str,
+        user_label: str = "Você",
+        org_id: Optional[str] = None,
+    ) -> None:
+        super().__init__(client=client, org_id=org_id)
+        self.user_id = user_id
+        self.user_label = user_label
+
+    async def _fetch_window(self, window: DigestWindow):
+        period_days = window.period_days or 7
+        raw = await _fetch_window(
+            self.client, user_id=self.user_id, period_days=period_days
+        )
+        return {"window": raw, "period_days": period_days}
+
+    def _aggregate(self, raw):
+        agg = _aggregate(raw["window"])
+        period_days = raw["period_days"]
+        end_date = date.today()
+        start_date = end_date - timedelta(days=period_days)
+        period_label = (
+            f"Últimos {period_days} dias "
+            f"({start_date.isoformat()} → {end_date.isoformat()})"
+        )
+        return {**agg, "period_label": period_label}
+
+    async def _generate_narrative(self, agg, window):
+        return await _generate_narrative(
+            user_label=self.user_label,
+            period_label=agg["period_label"],
+            tasks_completed=agg["tasks_completed"],
+            tasks_pending=agg["tasks_pending"],
+            tasks_cancelled=agg["tasks_cancelled"],
+            habit_streaks=agg["habit_streaks"],
+            notas_count=agg["notas_count"],
+            focus_minutes=agg["focus_minutes"],
+            org_id=self.org_id,
+        )
+
+    def _render_bodies(self, agg, narrative):
+        # The module-level _render_bodies expects an `agg` dict that
+        # carries a few derived display fields (focus_label is built
+        # there). We reconstruct the original-shaped agg for delegation.
+        derived_agg = {
+            "tasks_completed": agg["tasks_completed"],
+            "tasks_pending": agg["tasks_pending"],
+            "notas_count": agg["notas_count"],
+            "habit_streaks": agg["habit_streaks"],
+            "focus_minutes": agg["focus_minutes"],
+        }
+        return _render_bodies(
+            user_label=self.user_label,
+            period_label=agg["period_label"],
+            agg=derived_agg,
+            narrative=narrative,
+        )
+
+    def _build_subject(self, agg, window):
+        return f"[NoctusAI] Sua semana — {self.user_label}"
+
+    def _build_summary(self, agg, narrative, window):
+        # Keep the original summary shape: full agg + narrative +
+        # period_label.
+        return {
+            "tasks_completed": agg["tasks_completed"],
+            "tasks_pending": agg["tasks_pending"],
+            "tasks_cancelled": agg["tasks_cancelled"],
+            "habit_streaks": agg["habit_streaks"],
+            "notas_count": agg["notas_count"],
+            "focus_minutes": agg["focus_minutes"],
+            "narrative": narrative,
+            "period_label": agg["period_label"],
+        }
+
+
 async def build_review(
     db: Any,
     *,
@@ -220,36 +312,18 @@ async def build_review(
     org_id: Optional[str] = None,
     period_days: int = 7,
 ) -> tuple[Digest, dict[str, Any]]:
-    """Compute aggregates + narrative + render. No DB writes, no email send."""
-    window = await _fetch_window(db, user_id=user_id, period_days=period_days)
-    agg = _aggregate(window)
+    """Compute aggregates + narrative + render. No DB writes, no email send.
 
-    end_date = date.today()
-    start_date = end_date - timedelta(days=period_days)
-    period_label = f"Últimos {period_days} dias ({start_date.isoformat()} → {end_date.isoformat()})"
-
-    narrative = await _generate_narrative(
-        user_label=user_label,
-        period_label=period_label,
-        tasks_completed=agg["tasks_completed"],
-        tasks_pending=agg["tasks_pending"],
-        tasks_cancelled=agg["tasks_cancelled"],
-        habit_streaks=agg["habit_streaks"],
-        notas_count=agg["notas_count"],
-        focus_minutes=agg["focus_minutes"],
-        org_id=org_id,
+    Public API unchanged after the `seed-digest-base-class` refactor —
+    internally now delegates to `WeeklyReviewService.run(...)`.
+    """
+    svc = WeeklyReviewService(
+        client=db, user_id=user_id, user_label=user_label, org_id=org_id
     )
-
-    html, text = _render_bodies(
-        user_label=user_label, period_label=period_label, agg=agg, narrative=narrative
+    result: DigestResult = await svc.run(
+        DigestWindow(org_id=org_id, period_days=period_days)
     )
-    digest = Digest(
-        subject=f"[NoctusAI] Sua semana — {user_label}",
-        text=text,
-        html=html,
-    )
-    summary = {**agg, "narrative": narrative, "period_label": period_label}
-    return digest, summary
+    return result.digest, result.summary
 
 
 async def send_weekly_review(
