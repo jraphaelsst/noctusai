@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-04
 - **Last updated:** 2026-05-10
-- **Status:** ⏳ **EXECUTING** — Phase 0 ✅ (audit), Phase 1 ✅ (user design-decision stamped via orchestrator default-recommendation acceptance 2026-05-10: **mixed approach** — (a) for entity-roots, (b) for child-tables); Phase 2 dispatched.
+- **Status:** ⏳ **EXECUTING** — Phase 0 ✅ (audit), Phase 1 ✅ (user design-decision stamped via orchestrator default-recommendation acceptance 2026-05-10: **mixed approach** — (a) for entity-roots, (b) for child-tables); Phase 2 ✅ (2026-05-10) — re-audit surfaced major schema drift vs brief matrix; ship narrowed-scope migration 027 (WITH CHECK + FK closure on 5 already-org-scoped tables); 3 follow-up items deferred to documented destinations. Phase 3 pending.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
 - **Related docs:**
   - `KB § PATTERNS/database-rls.md` — RLS subquery patterns the new policies should follow.
@@ -86,29 +86,38 @@ Decision matrix at Phase 2 close:
 
 **Improvements:** none identified — design-only decision phase; no code touched.
 
-### Phase 2 — Implementation (chosen path: mixed)
+### Phase 2 — Implementation (chosen path: mixed) ✅ *(2026-05-10)*
 
-**Per-table assignment (engineer to confirm via Phase 2 first sub-task):**
+**Per-table assignment — revised after Phase 2 re-audit against live schema:**
 
-| Table | Path | Rationale |
-|---|---|---|
-| `ativos` | (a) add column | entity-root |
-| `clientes` | (a) add column | entity-root |
-| `profiles` | (a) add column | entity-root (user-org binding) |
-| `metas` | (a) add column | entity-root (goals own their org) |
-| `agenda` | (a) add column | entity-root |
-| `imoveis` | (a) add column | entity-root |
-| `site_imoveis_config` | (a) add column | entity-root (per-org site config) |
-| `whatsapp_settings` | (a) add column | entity-root (per-org integration) |
-| `certidoes_consultas` | (a) add column | entity-root |
-| `financeiro` | (a) add column | entity-root |
-| `whatsapp_etiquetas` | (b) join via `whatsapp_settings` | child of whatsapp_settings |
+| Brief target | Live table | Status as of 2026-05-10 | Phase 2 action |
+|---|---|---|---|
+| `ativos` | `erp.ativos` | NO `org_id`; scoped via `owner_id` + role RLS | **Deferred** — separate design (new project `erp-rls-org-scope-redesign`) |
+| `clientes` | `erp.clientes` | NO `org_id`; scoped via `usuario_id` + role RLS | **Deferred** — same destination |
+| `profiles` | `erp.profiles` | `org_id` nullable (predecessor 024 fail-closed) | **Out of scope** — intentional design preserved |
+| `metas` | `erp.metas` | NO `org_id`; scoped via `usuario_id` + role RLS | **Deferred** — same destination |
+| `agenda` | `erp.eventos` (renamed) | `org_id NOT NULL`; RLS USING org_id; **WITH CHECK on UPDATE missing**; **FK missing** | Migration 027 closes both gaps |
+| `imoveis` | does NOT exist (merged into `ativos`) | n/a | Brief alias retired |
+| `site_imoveis_config` | `erp.site_config` (renamed) | same gap shape as eventos | Migration 027 closes |
+| `whatsapp_settings` | `erp.whatsapp_config` (renamed) | same gap shape as eventos | Migration 027 closes |
+| `certidoes_consultas` | `erp.certidao_consultas` (brief typo) | `org_id NOT NULL`; **RLS scoped via `created_by`** (not org_id) — different design; **FK missing** | Migration 027 closes FK; RLS policy shape question deferred |
+| `financeiro` | `erp.lancamentos` (renamed) | same gap shape as eventos | Migration 027 closes |
+| `whatsapp_etiquetas` | does NOT exist | n/a | Brief alias retired |
 
-- [ ] Engineer confirms per-table assignment in §5 decision matrix (one sub-task, fast).
-- [ ] For each (a) table: 1 migration adding `org_id` column + backfill + NOT NULL constraint + FK + 1 RLS policy + 1 cross-org rejection test. Use `noctusai_lib.sql` prelude + `updated_at_trigger` helpers (per `feedback_migration_prelude_helpers.md`).
-- [ ] For each (b) table: refactor query sites to join through org-scoped parent + tests verify cross-org rejection at the join.
-- [ ] All affected services/routers verified.
-- [ ] LGPD lens: run five questions over each changed query site per `KB § PATTERNS/lgpd.md`; `noctus.dev.lgpd_flag(...)` for uncertainty.
+- [x] Engineer re-audited per-table assignment against live schema (sub-task 1) — 11 brief targets resolved to 5 already-org-scoped + 3 needing-design + 3 nonexistent.
+- [x] Single migration `027_erp_org_scoping_completion.sql` ships the in-scope changes (Part 1: WITH CHECK on 4 UPDATE policies; Part 2: 5 FKs to `public.organizations`). Applied via Supabase MCP + mirrored in filesystem per `feedback_mcp_migrations_mirror_file.md`. Uses `noctusai_lib.sql.prelude('erp')` (per `feedback_migration_prelude_helpers.md`).
+- [x] Structural unit test `tests/test_org_scoping_completion_migration.py` — 41 cases (lock-in of policy + FK contract; lifted from the canonical `test_metas_migration.py` pattern).
+- [x] Real-DB orphan-org rejection test `tests/realdb/test_org_scoping_realdb.py` — auto-skips without credentials; 5 cases parametrized over the FK'd tables.
+- [x] Services / routers verified — `eq("org_id", ...)` query sites in `routers/site_imoveis.py`, `routers/portal_externo.py`, `routers/assinaturas.py`, `routers/whatsapp_webhook.py`, `services/metas_*` continue to work unchanged (no code edits required for the 5 already-org-scoped tables; routers depend on RLS via `get_user_client(token)`).
+- [x] LGPD lens (per `KB § PATTERNS/lgpd.md`): cross-org rejection is the LGPD positive deliverable; the WITH CHECK addition makes cross-org UPDATE-mutation impossible, and the FK addition rejects orphan-org refs at insert. No new query sites were authored — no fresh five-questions needed.
+
+**Improvements (live during Phase 2):**
+
+- **conftest.py:30-39 stale header** — claims `ativos/clientes/metas/profiles` insert with `org_id`; grep confirms NONE do. **Destination:** `KB § PATTERNS/accept-with-rationale.md` entry "stale erp conftest schema-drift header" with refresh follow-up if `erp-schema-drift-reconciliation` lands.
+- **`ativos`/`clientes`/`metas` `org_id` decision** — needs parent-org-discovery seam choice (filial→org? profile-derived? new column with backfill source decided). **Destination:** new project `erp-rls-org-scope-redesign` to be filed at Phase 3 close. NOT a security gap today (RLS uses `owner_id`/`usuario_id` + role, not org_id); deferring is safe.
+- **`certidao_consultas` RLS scoping mismatch** — `org_id NOT NULL` but RLS uses `created_by`. **Destination:** Phase 3 wrap-up decision (intentional per-user scoping vs accidental drift from platform org-scoping pattern).
+- **`profiles.org_id` NOT NULL + FK** — predecessor 024 left it nullable for fail-closed-guard semantics. Adding NOT NULL + FK appropriate but requires backfill confidence + design (does fail-closed survive NOT NULL?). **Destination:** Phase 3 wrap-up.
+- **Brief lifted stale table names** (`imoveis`, `whatsapp_etiquetas`, `financeiro` as proxy for `lancamentos`) — methodology gap: Phase 0 audits driving Phase 2 migrations MUST cross-check inferred tables against `information_schema.tables`, not just code-grep. **Destination:** logged in §11 + findings.md; potential `phase_learning_log` entry surfaced to architect for three-way sync.
 
 ### Phase 3 — Project close
 
@@ -141,6 +150,7 @@ Decision matrix at Phase 2 close:
 |---|---|---|
 | 2026-05-04 | Replacement project filed for `erp-schema-drift-deep-audit` (deleted by user explicit-delete; this captures the still-pending Phase 2+ work in up-to-date form). Predecessor's `Phase 1 shipped 2026-05-03` (security fix + migrations 024+025); this project resumes at its own Phase 2 user-design gate. | claude-opus-4-7 |
 | 2026-05-10 | **Phase 1 ✅ — design decision stamped by orchestrator.** User signal: *"please resolve the 5 blocked ones, then unblock the deps on it."* Default §7 Q1 recommendation accepted: **mixed approach** — (a) per-table `org_id` column for 10 entity-root tables (ativos, clientes, profiles, metas, agenda, imoveis, site_imoveis_config, whatsapp_settings, certidoes_consultas, financeiro), (b) join-via-parent for 1 child table (whatsapp_etiquetas → whatsapp_settings). Per-table matrix written to §5 Phase 2. Phase 2 dispatched. | claude-opus-4-7 |
+| 2026-05-10 | **Phase 2 ✅ — re-audit revealed major drift between brief matrix and live `erp.*` schema.** Of the 11 brief targets: 4 already shipped `org_id NOT NULL` under renamed identifiers (`eventos`/`lancamentos`/`site_config`/`whatsapp_config`; brief used `agenda`/`financeiro`/`site_imoveis_config`/`whatsapp_settings`); `certidao_consultas` exists with `org_id NOT NULL` but RLS scoped via `created_by` (different design); `profiles.org_id` nullable per predecessor 024 fail-closed; `ativos`/`clientes`/`metas` lack `org_id` AND no code path queries them by `org_id` (scoped via `owner_id`/`usuario_id` + role); `imoveis` / `whatsapp_etiquetas` / `financeiro`-as-distinct-table don't exist. Adjusted Phase 2 ships single migration `027_erp_org_scoping_completion.sql` (Part 1: WITH CHECK on UPDATE policies for the 4 jwt-org-scoped tables — closes the org_id-mutation gap; Part 2: 5 FKs to `public.organizations` — closes the orphan-org gap). Mirrored at `products/erp-imobiliario/backend/migrations/027_erp_org_scoping_completion.sql`; applied via Supabase MCP. Tests: +41 structural unit tests (`test_org_scoping_completion_migration.py`) + 5 realdb FK rejection tests (auto-skip without creds). Suite: 1856 pass / 4 pre-existing fail (financeiro `mark_overdue` + recorrencia inadimplência — unchanged). Keeper review: 0 issues / 0 proposals. Deferred follow-up work documented in §6 Phase 2 Improvements + findings.md. | claude-opus-4-7 (engineer) |
 
 ## 12. No-leftovers constraint
 
