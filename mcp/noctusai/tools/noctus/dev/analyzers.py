@@ -200,6 +200,17 @@ def run_all_analyzers():
     }
 
 
+_ANALYZE_KINDS: dict[str, callable] = {
+    "patterns": lambda: {
+        "duplicated": find_duplicated_functions(),
+        "inline_hooks": find_inline_hooks(),
+    },
+    "deps": audit_python_deps,
+    "tests": analyze_test_coverage,
+    "all": run_all_analyzers,
+}
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.platform_metrics",
@@ -210,34 +221,10 @@ def register(server) -> None:
 
     @server.tool(
         name="noctus.dev.analyze",
-        description="Run all analyzers: patterns, deps, tests, metrics",
+        description="Run an analyzer. kind='all' / 'patterns' / 'deps' / 'tests'.",
     )
-    def _analyze() -> dict:
-        return run_all_analyzers()
-
-    desc_patterns = "Find duplicated functions and inline hooks"
-
-    def _analyze_patterns() -> dict:
-        return {
-            "duplicated": find_duplicated_functions(),
-            "inline_hooks": find_inline_hooks(),
-        }
-
-    server.tool(
-        name="noctus.dev.analyze_patterns",
-        description=desc_patterns,
-    )(_analyze_patterns)
-
-    @server.tool(
-        name="noctus.dev.analyze_deps",
-        description="Check dependency version consistency",
-    )
-    def _analyze_deps() -> dict:
-        return audit_python_deps()
-
-    @server.tool(
-        name="noctus.dev.analyze_tests",
-        description="Check test coverage per product",
-    )
-    def _analyze_tests() -> dict:
-        return analyze_test_coverage()
+    def _analyze(kind: str = "all") -> dict:
+        impl = _ANALYZE_KINDS.get(kind)
+        if impl is None:
+            return {"error": f"invalid kind {kind!r}; valid: {sorted(_ANALYZE_KINDS)}"}
+        return impl()

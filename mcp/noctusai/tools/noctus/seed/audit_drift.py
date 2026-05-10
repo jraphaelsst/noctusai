@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import re
 from pathlib import Path
 
 from settings import PRODUCTS_DIR, REPO_ROOT
@@ -29,6 +30,101 @@ logger = logging.getLogger(__name__)
 
 
 _TEMPLATE_ROOT = REPO_ROOT / "templates" / "product-seed"
+
+
+# Placeholder names that the scaffold tool's mechanical substitution writes.
+# When auditing drift, we substitute these in the template using each
+# product's actual metadata BEFORE diffing — so successful substitution
+# doesn't show up as drift. Keep in sync with `scaffold_product`'s
+# `replacements` dict.
+_PLACEHOLDER_NAMES: tuple[str, ...] = (
+    "PRODUCT_NAME",
+    "PRODUCT_SLUG",
+    "SCHEMA_NAME",
+    "BACKEND_PORT",
+    "FRONTEND_PORT",
+    "PRODUCT_ICON",
+)
+
+_START_SH_PRODUCT_RE = re.compile(
+    r'"(?P<slug>[a-z0-9][a-z0-9-]*):(?P<name>[^:]+):(?P<bp>\d+):(?P<fp>\d+)"'
+)
+_SEED_ROW_NAME_RE = re.compile(
+    r"INSERT INTO public\.products[^;]*VALUES\s*\(\s*'([^']+)'",
+    re.DOTALL | re.IGNORECASE,
+)
+_SEED_ROW_ICON_RE = re.compile(
+    r"'([A-Z][A-Za-z0-9]+)'\s*,\s*'http",
+)
+
+
+def _read_product_metadata(products_dir: Path, slug: str) -> dict[str, str]:
+    """Best-effort read of product metadata for placeholder substitution.
+
+    Returns the dict the scaffold tool's mechanical pass uses. Falls back
+    to slug-derived defaults when the source-of-truth files aren't present
+    (so the function never raises and audit_drift can always proceed).
+
+    Sources, in priority order:
+    1. ``start.sh`` PRODUCTS array — display name + ports.
+    2. ``products/core/backend/migrations/NNN_seed_<slug>_product.sql`` —
+       display name (canonical) + icon.
+    3. Slug-derived defaults — name = title-cased slug, ports = "0", icon = "Box".
+    """
+    metadata: dict[str, str] = {
+        "PRODUCT_SLUG": slug,
+        "SCHEMA_NAME": slug.replace("-", "_"),
+        "PRODUCT_NAME": slug.replace("-", " ").title(),
+        "BACKEND_PORT": "0",
+        "FRONTEND_PORT": "0",
+        "PRODUCT_ICON": "Box",
+    }
+
+    # start.sh registry — ports + display name
+    start_sh = products_dir.parent / "start.sh"
+    if start_sh.is_file():
+        try:
+            content = start_sh.read_text(encoding="utf-8")
+        except OSError:
+            content = ""
+        for match in _START_SH_PRODUCT_RE.finditer(content):
+            if match.group("slug") == slug:
+                metadata["PRODUCT_NAME"] = match.group("name")
+                metadata["BACKEND_PORT"] = match.group("bp")
+                metadata["FRONTEND_PORT"] = match.group("fp")
+                break
+
+    # Seed-row migration — name (canonical) + icon
+    core_migrations = products_dir / "core" / "backend" / "migrations"
+    if core_migrations.is_dir():
+        slug_for_filename = slug.replace("-", "_")
+        for migration in core_migrations.glob(
+            f"*_seed_{slug_for_filename}_product.sql"
+        ):
+            try:
+                content = migration.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            name_match = _SEED_ROW_NAME_RE.search(content)
+            if name_match:
+                metadata["PRODUCT_NAME"] = name_match.group(1)
+            icon_match = _SEED_ROW_ICON_RE.search(content)
+            if icon_match:
+                metadata["PRODUCT_ICON"] = icon_match.group(1)
+            break
+
+    return metadata
+
+
+def _substitute_placeholders(template_text: str, metadata: dict[str, str]) -> str:
+    """Apply the same mechanical substitution scaffold_product does, using
+    the product's resolved metadata. Returns the substituted text — caller
+    diffs THIS against the product file."""
+    out = template_text
+    for key in _PLACEHOLDER_NAMES:
+        value = metadata.get(key, "")
+        out = out.replace(f"{{{{{key}}}}}", value)
+    return out
 
 
 def _read_text_or_bytes_marker(path: Path) -> tuple[str | None, bool]:
@@ -64,6 +160,7 @@ def audit_drift(
     template_root: Path | None = None,
     products_dir: Path | None = None,
     drift_threshold_lines: int = 20,
+    mask_placeholders: bool = True,
 ) -> dict:
     """Diff every product against the canonical template.
 
@@ -74,6 +171,12 @@ def audit_drift(
         drift_threshold_lines: Files with drift_lines ≤ this count are
             classified ``small_drift`` (good convergence candidates).
             Files above are ``large_drift`` (intentional divergence likely).
+        mask_placeholders: When True (default), apply the scaffold tool's
+            mechanical substitution to the template (using each product's
+            resolved metadata) BEFORE diffing. So lines that ONLY differ in
+            successful substitution don't surface as drift. Set False to
+            see the raw template-vs-product diff (useful for debugging the
+            substitution itself).
 
     Returns:
         ``{
@@ -123,6 +226,13 @@ def audit_drift(
         p.name for p in base_products_dir.iterdir() if p.is_dir()
     )
 
+    # Pre-resolve each product's placeholder metadata once — read once,
+    # used per-file. Cheap (a few file reads per product).
+    product_metadata: dict[str, dict[str, str]] = {}
+    if mask_placeholders:
+        for slug in product_slugs:
+            product_metadata[slug] = _read_product_metadata(base_products_dir, slug)
+
     files_report: list[dict] = []
     counts = {"identical_count": 0, "small_drift_count": 0, "large_drift_count": 0, "missing_count": 0}
 
@@ -171,7 +281,25 @@ def audit_drift(
                 counts["large_drift_count"] += 1
                 continue
 
-            drift = _diff_lines(template_text, product_text)
+            # Substitute placeholders in the template using THIS product's
+            # metadata before diffing — so successful mechanical
+            # substitution doesn't show as drift. Small-drift findings now
+            # reflect REAL per-product divergence, not boilerplate noise.
+            template_for_diff = template_text
+            if mask_placeholders:
+                template_for_diff = _substitute_placeholders(
+                    template_text, product_metadata.get(slug, {}),
+                )
+                # If substitution made the template byte-equal the product
+                # file, it's effectively identical — early-out.
+                if template_for_diff == product_text:
+                    per_product.append({
+                        "slug": slug, "status": "identical", "drift_lines": 0,
+                    })
+                    counts["identical_count"] += 1
+                    continue
+
+            drift = _diff_lines(template_for_diff, product_text)
             status = "small_drift" if drift <= drift_threshold_lines else "large_drift"
             per_product.append({"slug": slug, "status": status, "drift_lines": drift})
             counts[f"{status}_count"] += 1
@@ -194,10 +322,19 @@ def register(server) -> None:
         description=(
             "Diff every product against the canonical templates/product-seed/ "
             "shape. For each (file, product) pair: identical / small_drift / "
-            "large_drift / missing. Surfaces convergence candidates "
-            "(small drift = re-sync opportunity) vs intentional divergence "
-            "(large drift = product genuinely customized)."
+            "large_drift / missing. By default, mechanical placeholders in "
+            "the template ({{PRODUCT_NAME}}, {{PRODUCT_SLUG}}, etc.) are "
+            "substituted with each product's resolved metadata BEFORE diffing "
+            "— so successful substitution doesn't surface as drift. Pass "
+            "mask_placeholders=False to see raw diffs (debugging the "
+            "substitution itself)."
         ),
     )
-    def _audit(drift_threshold_lines: int = 20) -> dict:
-        return audit_drift(drift_threshold_lines=drift_threshold_lines)
+    def _audit(
+        drift_threshold_lines: int = 20,
+        mask_placeholders: bool = True,
+    ) -> dict:
+        return audit_drift(
+            drift_threshold_lines=drift_threshold_lines,
+            mask_placeholders=mask_placeholders,
+        )

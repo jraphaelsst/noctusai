@@ -65,6 +65,25 @@
 - **`noctus.dev.build_parallel`** — parallel cross-product `vite build` sweep. Supersedes the legacy sequential `noctus.dev.build_all_frontends`. Combine with `changed_only=True` to scope to git-changed products only (perf — skips unchanged products). 4-worker default; configurable.
 - **`noctus.dev.status`** — cross-project state digest. Walks every PROJECT.md across the three valid locations + emits status / sub-task progress / last-updated / `⏳`-`✅` icon / §3a presence / phase-state-detector flags. Sorted: executing → ready → parked → blocked → shipped (audit history at the bottom).
 - **`noctus.dev.check_three_way_sync`** — verify KB ↔ CLAUDE.md ↔ memory parity. Closes the gap that `verify-kb-sync.sh` cannot cover (memory dir lives outside the repo at `~/.claude/.../memory/`). Reports missing index entries, dangling links, missing KB anchors, and CLAUDE.md keyword mismatches per the three-way-sync rule (`KB § 01-PHILOSOPHY § Docs stay in sync`).
+- **Code-hygiene trio + `noctus.hound.scan` orchestrator (added 2026-05-10).** The seed-absorption methodology operates at three orthogonal scopes; the **hound** is a single MCP entry point that runs all three and emits a `next_action` recommendation. Keeper-analog: keeper enforces compliance contracts (regulatory); hound surfaces hygiene candidates (curatorial).
+
+  | Scope | Question | Detector | When to use |
+  |---|---|---|---|
+  | **Absorption** (cross-product, file-level) | Same file across N≥2 products? | `noctus.seed.report` (rolls up `scan_repetition` + `audit_drift`) | Pre-phase audit; whenever scaffolding a new product. |
+  | **Fusion** (cross-tool, function-level) | Multiple tools that should collapse? | `noctus.seed.scan_fusions` (with `scope='cross_file'` / `'same_file'` / `'all'`) | When the toolkit grows; meta-tooling consolidation. |
+  | **Optimization** (intra-file, line-level) | Dead code / single-use helpers / wrappers? | `noctus.seed.scan_optimizations` | End-of-phase polish. |
+  | **Trio orchestrator** | Where should I look first? | `noctus.hound.scan` | Default entry point — "what cleanup is most urgent?". |
+
+  **Hound `next_action` priority ladder:** absorption-P0 → optimization-high → absorption-P1 → fusion-subsume → optimization-warning → ad-hoc. The hound preserves each scope's full output under `scopes.<name>` and aggregates counts + LoC-savings + files-absorbable estimates under `unified`. Soft-fails per scope (errors[] populated, non-failed scopes still run).
+
+  **Calibration learnings (2026-05-10):**
+  - **Structural-duplicate filter** in `scan_repetition` (default-on): skips empty marker files (`__init__.py`, `.gitkeep`) AND already-absorbed re-export shims (any file ≤5 operative lines that mentions `seed/` / `@noctusai/seed` / `noctusai_seed` / `noctusai_lib`). Without this filter, 11 of 11 P1 candidates were false positives. Pass `skip_structural_duplicates=False` to disable.
+  - **Wrapper detector** (`scan_optimizations`): requires the function to have ≥1 parameter AND the body's call's attribute receiver must be a `Name` (not a `Call`). Chained calls like `datetime.now().isoformat()` are NOT wrappers; zero-param "wrappers" are usually named-operation factories.
+  - **LoC-savings heuristic** (`scan_fusions`): calibrated from `× 0.6` → `× 0.15` after a 12× overestimate against actual collapse work — see `feedback_tool_collapse_loc_lesson.md`.
+  - **Real ceiling is small.** Post-filter, the live tree has 0 P0/P1 absorption candidates, ~3 fusion subsumes, ~47 small single-call helpers. Don't quote inflated savings estimates.
+
+  Lives at `mcp/noctusai/tools/noctus/hound/`. New sub-umbrella `noctus.hound.*` parallels `noctus.dev.*` / `noctus.seed.*` / `noctus.team.*`. Detail: `KB § PATTERNS/seed-absorption.md`.
+
 - **Absorption-search sextet (use whenever working in product code — the user's standing directive 2026-04-28):**
 
   | Scan | What it catches | First-run calibration (2026-04-28) |

@@ -410,11 +410,11 @@ def main():
             print(f"  {m['product']:<20} {m['backend_lines']:<8} {m['frontend_lines']:<8} {m['routers']:<4} {m['services']:<4} {m['pages']:<4} {m['hooks']:<4}")
 
     elif args.sync_prompts:
-        from tools.noctus.dev.master_prompts import sync_all_master_prompts
-        results = sync_all_master_prompts()
-        for r in results:
-            status = f"{GREEN}synced{RESET}" if r.get("updated") else "up to date"
-            print(f"  {r.get('product', '?')}: {status}")
+        from tools.noctus.dev.master_prompts import verify_master_prompt
+        bundle = verify_master_prompt(all_products=True, write=True)
+        for r in bundle["products"]:
+            status = f"{GREEN}synced{RESET}" if r.get("synced") else "up to date"
+            print(f"  {r.get('slug', '?')}: {status}")
 
     elif args.test:
         from tools.noctus.dev.testing import run_all_tests

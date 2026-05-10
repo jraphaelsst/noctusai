@@ -49,17 +49,6 @@ def sync_master_prompt(slug: str) -> dict:
     }
 
 
-def sync_all_master_prompts() -> list[dict]:
-    """Sync all product MASTER-PROMPTs."""
-    results = []
-    for d in sorted(PRODUCTS_DIR.iterdir()):
-        if not d.is_dir() or d.name.startswith("."):
-            continue
-        if (d / "MASTER-PROMPT.md").exists():
-            results.append(sync_master_prompt(d.name))
-    return results
-
-
 def check_master_prompt_staleness(slug: str) -> dict:
     """Check if a MASTER-PROMPT is out of sync with the filesystem."""
     path = PRODUCTS_DIR / slug
@@ -156,24 +145,63 @@ def _replace_section(content: str, section_name: str, new_content: str) -> tuple
     return content, False
 
 
+def verify_master_prompt(
+    slug: str | None = None,
+    *,
+    write: bool = False,
+    all_products: bool = False,
+) -> dict:
+    """Staleness check + optional regenerate. all_products=True iterates."""
+    if all_products:
+        products: list[dict] = []
+        for d in sorted(PRODUCTS_DIR.iterdir()):
+            if not d.is_dir() or d.name.startswith("."):
+                continue
+            if (d / "MASTER-PROMPT.md").exists():
+                products.append(
+                    verify_master_prompt(d.name, write=write, all_products=False)
+                )
+        return {
+            "products": products,
+            "total": len(products),
+            "stale_count": sum(1 for p in products if p.get("stale")),
+            "synced_count": sum(1 for p in products if p.get("synced")),
+            "write_attempted": write,
+        }
+
+    if slug is None:
+        return {"error": "slug is required when all_products=False"}
+
+    check = check_master_prompt_staleness(slug)
+    out = {
+        "slug": slug,
+        "stale": check.get("stale", False),
+        "issues": check.get("issues", []),
+        "reason": check.get("reason"),
+        "synced": False,
+        "changes": [],
+        "write_attempted": write,
+    }
+    if write and out["stale"]:
+        sync = sync_master_prompt(slug)
+        out["synced"] = sync.get("updated", False)
+        out["changes"] = sync.get("changes", [])
+        if "error" in sync:
+            out["error"] = sync["error"]
+    return out
+
+
 def register(server) -> None:
     @server.tool(
-        name="noctus.dev.sync_master_prompt",
-        description="Regenerate MASTER-PROMPT structural sections from filesystem",
+        name="noctus.dev.verify_master_prompt",
+        description=(
+            "MASTER-PROMPT.md staleness check (write=False) or "
+            "regenerate-if-stale (write=True). all_products=True iterates."
+        ),
     )
-    def _sync(slug: str) -> dict:
-        return sync_master_prompt(slug)
-
-    @server.tool(
-        name="noctus.dev.sync_all_master_prompts",
-        description="Sync all product MASTER-PROMPTs",
-    )
-    def _sync_all() -> list:
-        return sync_all_master_prompts()
-
-    @server.tool(
-        name="noctus.dev.check_master_prompt",
-        description="Check if a MASTER-PROMPT is stale",
-    )
-    def _check(slug: str) -> dict:
-        return check_master_prompt_staleness(slug)
+    def _verify(
+        slug: str | None = None,
+        write: bool = False,
+        all_products: bool = False,
+    ) -> dict:
+        return verify_master_prompt(slug, write=write, all_products=all_products)

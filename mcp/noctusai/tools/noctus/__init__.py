@@ -2,6 +2,8 @@
 
 Sub-umbrellas:
   - ``noctus.dev.*`` — developer-experience tools (28 modules; ships today).
+  - ``noctus.hound.*`` — code-hygiene orchestrator (runs the absorption
+    + fusion + optimization trio together).
   - ``noctus.seed.*`` — seed-system absorption + capability tools.
   - ``noctus.team.*`` — agno multi-agent dev team tools.
   - ``noctus.business.*`` — product business-logic tools (Phase 4 of
@@ -15,9 +17,10 @@ from __future__ import annotations
 
 def register_all(server) -> None:
     """Register every tool under the ``noctus.*`` umbrella."""
-    from . import dev, seed, team
+    from . import dev, hound, seed, team
 
     dev.register_all(server)
+    hound.register_all(server)
     seed.register_all(server)
     team.register_all(server)
 

@@ -138,24 +138,23 @@ def check_api_consistency(slug: str) -> dict:
     return {"product": slug, "issues": issues}
 
 
+_INSPECT_MODES = {
+    "diff_against_seed": diff_product_against_seed,
+    "find_orphans": find_orphaned_files,
+    "check_api_consistency": check_api_consistency,
+}
+
+
 def register(server) -> None:
     @server.tool(
-        name="noctus.dev.diff_against_seed",
-        description="Compare a product's structural files against the seed product",
+        name="noctus.dev.inspect_product",
+        description=(
+            "Per-product inspector. mode='diff_against_seed' / "
+            "'find_orphans' / 'check_api_consistency'."
+        ),
     )
-    def _diff(slug: str) -> dict:
-        return diff_product_against_seed(slug)
-
-    @server.tool(
-        name="noctus.dev.find_orphans",
-        description="Find orphaned files not imported anywhere",
-    )
-    def _orphans(slug: str) -> dict:
-        return find_orphaned_files(slug)
-
-    @server.tool(
-        name="noctus.dev.check_api_consistency",
-        description="Check API response pattern consistency",
-    )
-    def _api_consistency(slug: str) -> dict:
-        return check_api_consistency(slug)
+    def _inspect(slug: str, mode: str = "diff_against_seed") -> dict:
+        impl = _INSPECT_MODES.get(mode)
+        if impl is None:
+            return {"error": f"invalid mode {mode!r}; valid: {sorted(_INSPECT_MODES)}"}
+        return impl(slug)

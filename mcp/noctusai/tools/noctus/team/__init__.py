@@ -6,6 +6,8 @@ The 6 tools mirror the facade contract one-to-one:
   - ``noctus.team.agent_metrics`` — per-agent metrics rollup.
   - ``noctus.team.configure``     — patch an agent's model / provider in a
                                      named YAML config.
+  - ``noctus.team.dashboard``     — composite of status + metrics +
+                                     per-agent metrics (rollup).
   - ``noctus.team.metrics``       — top-level metrics rollup.
   - ``noctus.team.route``         — team-vs-direct heuristic.
   - ``noctus.team.run``           — fire the team on a task.
@@ -22,10 +24,11 @@ from __future__ import annotations
 
 def register_all(server) -> None:
     """Register every tool under the ``noctus.team.*`` umbrella."""
-    from . import agent_metrics, configure, metrics, route, run, status
+    from . import agent_metrics, configure, dashboard, metrics, route, run, status
 
     agent_metrics.register(server)
     configure.register(server)
+    dashboard.register(server)
     metrics.register(server)
     route.register(server)
     run.register(server)

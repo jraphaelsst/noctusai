@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -31,13 +32,6 @@ logger = logging.getLogger(__name__)
 
 def _hash_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
-
-
-def _read_text_or_none(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):
-        return None
 
 
 def _pairwise_similarity(texts: list[str]) -> float:
@@ -72,11 +66,52 @@ def _suggest_destination(rel_path: str) -> str:
     return f"seed/framework/{rel_path}"
 
 
+# Patterns that signal "this file is a shim pointing at seed" — covers
+# TS/JS factory calls, CSS @imports, Python re-exports, all the shapes
+# we've absorbed before. Treat ANY such reference in a small file as
+# evidence that the file IS the absorbed state.
+_SEED_REFERENCE_FRAGMENTS: tuple[str, ...] = (
+    "/seed/",
+    "@noctusai/seed",
+    "noctusai_seed",
+    "noctusai_lib",
+)
+
+_SHIM_MAX_OPERATIVE_LINES = 5
+
+
+def _is_structural_duplicate(content: bytes) -> bool:
+    """True when the content is structural rather than value-bearing —
+    empty-marker files (Python __init__.py / .gitkeep) or already-absorbed
+    re-export shims.
+
+    - Empty / whitespace-only: Python package markers, ``.gitkeep``,
+      empty configs.
+    - Small (≤5 operative lines) AND references the seed framework:
+      already-absorbed shim (factory call, re-export, ``@import``,
+      Python ``from noctusai_seed import ...``).
+    """
+    if not content.strip():
+        return True
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    operative_lines = [
+        line for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "//", "/*", "*"))
+    ]
+    if len(operative_lines) > _SHIM_MAX_OPERATIVE_LINES:
+        return False
+    return any(frag in text for frag in _SEED_REFERENCE_FRAGMENTS)
+
+
 def scan_repetition(
     *,
     products_dir: Path | None = None,
     near_identical_threshold: float = 0.95,
     min_products: int = 2,
+    skip_structural_duplicates: bool = True,
 ) -> dict:
     """Group files across products by relative path and classify duplicates.
 
@@ -146,6 +181,7 @@ def scan_repetition(
             path_to_files.setdefault(rel, []).append((slug, content))
 
     groups: list[dict] = []
+    skipped_structural = 0
     for rel_path, entries in sorted(path_to_files.items()):
         if len(entries) < min_products:
             continue
@@ -158,6 +194,11 @@ def scan_repetition(
         if len(hashes) == 1:
             classification = "byte_identical"
             similarity = 1.0
+            # Skip empty markers + already-absorbed re-export shims —
+            # they surface as byte_identical but aren't real candidates.
+            if skip_structural_duplicates and _is_structural_duplicate(readable[0][1]):
+                skipped_structural += 1
+                continue
         else:
             texts: list[str] = []
             for _, content in readable:
@@ -200,6 +241,7 @@ def scan_repetition(
         "near_identical_count": sum(1 for g in groups if g["classification"] == "near_identical"),
         "divergent_count": sum(1 for g in groups if g["classification"] == "divergent"),
         "total_groups": len(groups),
+        "skipped_structural_duplicates": skipped_structural,
     }
 
     return {
@@ -213,18 +255,20 @@ def register(server) -> None:
     @server.tool(
         name="noctus.seed.scan_repetition",
         description=(
-            "Find files duplicated across N≥2 products at the same relative "
-            "path. Classify each group as byte_identical / near_identical / "
-            "divergent based on content similarity. Surfaces candidates for "
-            "seed absorption. Read-only — companion absorb_file tool comes "
-            "later once we inspect real output."
+            "Find files duplicated across N≥2 products. Classifies as "
+            "byte_identical / near_identical / divergent. By default skips "
+            "structural duplicates — empty markers (Python __init__.py, "
+            ".gitkeep) and already-absorbed re-export shims — since those "
+            "surface as identical but aren't real candidates. Read-only."
         ),
     )
     def _scan(
         near_identical_threshold: float = 0.95,
         min_products: int = 2,
+        skip_structural_duplicates: bool = True,
     ) -> dict:
         return scan_repetition(
             near_identical_threshold=near_identical_threshold,
             min_products=min_products,
+            skip_structural_duplicates=skip_structural_duplicates,
         )
