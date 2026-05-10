@@ -1,16 +1,20 @@
 #!/bin/bash
 # NoctusAI Platform — Stop all services.
 #
-# Companion to ./start.sh. Use this when start.sh was backgrounded or
-# run from another shell (so Ctrl+C trap is unreachable). Reads the
-# PRODUCTS array from start.sh — source of truth stays single — and
-# kills any process bound to a registered backend or frontend port.
+# Default mode is **Docker** (mirrors start.sh). Native (legacy) mode
+# requires explicit `native` arg.
 #
 # Usage:
-#   ./stop.sh                kill processes on registered product ports
-#   ./stop.sh --venv         + remove venv/  (full reset)
-#   ./stop.sh --node         + remove products/*/frontend/node_modules
-#   ./stop.sh --all          ports + venv + node_modules
+#   ./stop.sh                   docker compose down (containers + network; volumes preserved)
+#   ./stop.sh volumes           + remove named volumes
+#   ./stop.sh prune             + remove images + volumes + orphans (full clean)
+#   ./stop.sh native            kill native uvicorn/vite processes on registered ports
+#   ./stop.sh native --venv     + remove venv/
+#   ./stop.sh native --node     + remove products/*/frontend/node_modules
+#   ./stop.sh native --all      ports + venv + node_modules
+#   ./stop.sh --docker          legacy alias for default Docker stop
+#   ./stop.sh --docker-volumes  legacy alias for `volumes`
+#   ./stop.sh --docker-prune    legacy alias for `prune`
 #
 # Idempotent — already-stopped is a no-op.
 
@@ -19,17 +23,72 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 START_SH="$ROOT_DIR/start.sh"
 
+MODE="${1:-docker}"
+
+# Backward-compat aliases
+case "$MODE" in
+  --docker)         MODE="docker" ;;
+  --docker-volumes) MODE="volumes" ;;
+  --docker-prune)   MODE="prune" ;;
+esac
+
+docker_pre_check() {
+  command -v docker >/dev/null 2>&1 || { echo "ERRO: docker nao esta no PATH." >&2; exit 1; }
+  docker info >/dev/null 2>&1 || { echo "ERRO: Docker daemon nao esta rodando (open -a Docker)." >&2; exit 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────
+# Docker modes (default + explicit)
+# ──────────────────────────────────────────────────────────────────────
+case "$MODE" in
+  docker)
+    docker_pre_check
+    echo "==> docker compose down (todos os profiles)"
+    # --remove-orphans handles tunnel containers from a previous tunnel run
+    # whose profile isn't active in the current invocation.
+    cd "$ROOT_DIR" && docker compose down --remove-orphans
+    echo ""
+    echo "NoctusAI Platform — containers parados (volumes preservados)."
+    echo "  Reiniciar:        ./start.sh"
+    echo "  Remover volumes:  ./stop.sh volumes"
+    echo "  Limpeza total:    ./stop.sh prune"
+    exit 0
+    ;;
+  volumes)
+    docker_pre_check
+    echo "==> docker compose down -v --remove-orphans (containers + volumes)"
+    cd "$ROOT_DIR" && docker compose down -v --remove-orphans
+    echo "NoctusAI Platform — containers + volumes removidos."
+    exit 0
+    ;;
+  prune)
+    docker_pre_check
+    echo "==> docker compose down --rmi all -v --remove-orphans (containers + imagens + volumes)"
+    cd "$ROOT_DIR" && docker compose down --rmi all -v --remove-orphans
+    echo "NoctusAI Platform — containers + imagens + volumes removidos."
+    exit 0
+    ;;
+  native)
+    : # fall through to native code below
+    ;;
+  *)
+    echo "ERRO: modo desconhecido '$MODE'." >&2
+    echo "       Use: (default) | volumes | prune | native | native --venv | native --node | native --all" >&2
+    exit 1
+    ;;
+esac
+
+# ──────────────────────────────────────────────────────────────────────
+# Native mode (legacy) — kills uvicorn/vite processes on registered ports.
+# ──────────────────────────────────────────────────────────────────────
 if [[ ! -f "$START_SH" ]]; then
   echo "ERRO: $START_SH nao encontrado." >&2
   exit 1
 fi
 
-MODE="${1:-ports}"
+NATIVE_FLAG="${2:-ports}"
 
 # ----- harvest PRODUCTS registry from start.sh -----
-# Source the BEGIN/END_PRODUCTS_REGISTRY block so the registry has one
-# canonical writer (scaffold_product) and one canonical reader (start.sh +
-# stop.sh). awk emits only the array declaration so we can eval safely.
 PRODUCTS=()
 eval "$(awk '
   /^# BEGIN_PRODUCTS_REGISTRY/  {capture=1; next}
@@ -79,8 +138,8 @@ free_ports() {
   fi
 }
 
-# ----- mode dispatch -----
-case "$MODE" in
+# ----- native flag dispatch -----
+case "$NATIVE_FLAG" in
   ports)
     free_ports
     ;;
@@ -106,12 +165,12 @@ case "$MODE" in
     find "$ROOT_DIR/products" -mindepth 3 -maxdepth 3 -type d -name node_modules -prune -exec rm -rf {} +
     ;;
   *)
-    echo "ERRO: modo desconhecido '$MODE'. Use: (none) | --venv | --node | --all" >&2
+    echo "ERRO: flag desconhecido '$NATIVE_FLAG' apos 'native'. Use: (none) | --venv | --node | --all" >&2
     exit 1
     ;;
 esac
 
 echo ""
-echo "NoctusAI Platform — servicos parados."
-echo "  Reiniciar:  ./start.sh"
+echo "NoctusAI Platform — servicos nativos parados."
+echo "  Reiniciar:  ./start.sh native  (ou ./start.sh para Docker)"
 echo ""
