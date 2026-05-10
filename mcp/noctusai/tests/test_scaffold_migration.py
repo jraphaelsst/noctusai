@@ -25,6 +25,10 @@ from noctusai_lib.domain.sql_templates import (  # noqa: E402
     updated_at_function,
     updated_at_trigger,
 )
+from noctusai_lib.sql import (  # noqa: E402
+    prelude as sql_prelude,
+    updated_at_trigger as sql_updated_at_trigger,
+)
 
 from tools.noctus.dev import scaffold_migration as sm  # noqa: E402
 
@@ -323,6 +327,183 @@ class TestSqlTemplatesIntegration:
         body = Path(result["path"]).read_text()
 
         expected = updated_at_trigger("demo", "users")
+        assert _normalize_ws(expected) in _normalize_ws(body)
+
+
+# ---------------------------------------------------------------------------
+# Prelude shape — the new `noctusai_lib.sql.prelude(...)` comment block
+# ---------------------------------------------------------------------------
+
+
+class TestPreludeShape:
+    """Pin the `noctusai_lib.sql.prelude(...)` shape at the top of every
+    new migration. Matches the seed-migration-prelude project (2026-05-10):
+    every new migration ships the schema-lock with a why-block.
+    """
+
+    def test_prelude_comment_block_present(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo", "thing", schema="ai_chat", products_dir=products
+        )
+        body = Path(result["path"]).read_text()
+
+        # Why-block names both rationales — RLS + cross-product safety.
+        assert "RLS isolation" in body
+        assert "Cross-product safety" in body
+        # Schema-lock line is verbatim.
+        assert "SET search_path = ai_chat, public;" in body
+
+    def test_prelude_matches_helper_output(self, tmp_path):
+        # Emitted prelude block matches `sql_prelude(...)` verbatim.
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo", "thing", schema="ai_chat", products_dir=products
+        )
+        body = Path(result["path"]).read_text()
+
+        # `prelude(...)` returns a comment block + schema-lock + trailing
+        # newline. Strip the trailing newline because the body re-joins
+        # parts with `\n\n`.
+        expected = sql_prelude("ai_chat").rstrip("\n")
+        assert expected in body, (
+            f"scaffold_migration prelude drifted from sql_prelude() helper.\n"
+            f"Expected:\n{expected!r}\n"
+            f"Body head:\n{body[:600]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# `with_updated_at=` block — multi-table updated_at trigger emission
+# ---------------------------------------------------------------------------
+
+
+class TestWithUpdatedAt:
+    def test_single_table_emits_function_and_trigger(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo",
+            "touch_posts",
+            schema="blog",
+            with_updated_at=["posts"],
+            products_dir=products,
+        )
+
+        assert result["created"] is True
+        body = Path(result["path"]).read_text()
+        assert "CREATE OR REPLACE FUNCTION blog.set_updated_at()" in body
+        assert "BEFORE UPDATE ON blog.posts" in body
+        assert "CREATE OR REPLACE TRIGGER set_updated_at_posts" in body
+
+    def test_multi_table_emits_function_once(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo",
+            "auto_touch_all",
+            schema="blog",
+            with_updated_at=["posts", "comments", "tags"],
+            products_dir=products,
+        )
+
+        body = Path(result["path"]).read_text()
+        # Function declared exactly once despite 3 triggers.
+        assert body.count("CREATE OR REPLACE FUNCTION blog.set_updated_at()") == 1
+        # All three triggers present.
+        assert "CREATE OR REPLACE TRIGGER set_updated_at_posts" in body
+        assert "CREATE OR REPLACE TRIGGER set_updated_at_comments" in body
+        assert "CREATE OR REPLACE TRIGGER set_updated_at_tags" in body
+        # All three tables targeted.
+        assert "BEFORE UPDATE ON blog.posts" in body
+        assert "BEFORE UPDATE ON blog.comments" in body
+        assert "BEFORE UPDATE ON blog.tags" in body
+
+    def test_with_table_and_with_updated_at_compose(self, tmp_path):
+        # `with_table=` (single full block with RLS) AND `with_updated_at=`
+        # (multi-table touch) should both emit. Same migration adding a
+        # new table + auto-touch on existing tables.
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo",
+            "extend_blog",
+            schema="blog",
+            with_table="reactions",
+            with_updated_at=["posts", "comments"],
+            products_dir=products,
+        )
+
+        body = Path(result["path"]).read_text()
+        # `with_table=` block.
+        assert "CREATE TABLE IF NOT EXISTS blog.reactions" in body
+        # `with_updated_at=` block.
+        assert "BEFORE UPDATE ON blog.posts" in body
+        assert "BEFORE UPDATE ON blog.comments" in body
+
+    def test_omitted_emits_no_block(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo", "nothing", schema="demo", products_dir=products
+        )
+
+        body = Path(result["path"]).read_text()
+        # Without with_table or with_updated_at, no trigger emitted.
+        assert "CREATE OR REPLACE TRIGGER" not in body
+        assert "BEFORE UPDATE ON" not in body
+
+    def test_invalid_type_returns_error(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo",
+            "bad",
+            with_updated_at="posts",  # type: ignore[arg-type]
+            products_dir=products,
+        )
+        assert "error" in result
+        assert "list" in result["error"]
+
+    def test_empty_string_in_list_returns_error(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo",
+            "bad",
+            with_updated_at=["posts", "  "],
+            products_dir=products,
+        )
+        assert "error" in result
+        assert "non-empty" in result["error"]
+
+    def test_emitted_block_matches_helper(self, tmp_path):
+        # Drift-detection: scaffold output for a single-table
+        # `with_updated_at=[t]` must contain exactly what
+        # `sql_updated_at_trigger(t, schema=s)` returns.
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
+
+        result = sm.scaffold_migration(
+            "demo",
+            "touch",
+            schema="blog",
+            with_updated_at=["posts"],
+            products_dir=products,
+        )
+        body = Path(result["path"]).read_text()
+
+        expected = sql_updated_at_trigger("posts", schema="blog")
         assert _normalize_ws(expected) in _normalize_ws(body)
 
 
