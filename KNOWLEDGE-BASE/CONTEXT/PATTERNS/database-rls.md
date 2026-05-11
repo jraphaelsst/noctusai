@@ -54,6 +54,47 @@ CREATE POLICY "leader sees team"
   ));
 ```
 
+### Service-role bypass — canonical helper
+
+Every product backend uses the Supabase `service_role` JWT through `get_admin_client()`. The JWT bypasses RLS at the *connection level* — so admin-client reads/writes work even without a per-table policy. But the platform ships a keeper detector (`check_admin_endpoint_service_role_bypass`, run by `python mcp/noctusai/cli.py --review`) that surfaces tables lacking an *explicit named* `service_role_bypass` policy — the explicit policy makes the intent unambiguous and is the platform convention going forward.
+
+> **Critical:** the detector heuristic is *literal name match*. It looks for a policy whose name is exactly `service_role_bypass`. Equivalent policies under different names (e.g. core's `noctus_users_service_role` or ERP's dynamic DO-block-generated anonymous policies) are *still flagged*. **Renaming the policy in a future cleanup pass re-opens every keeper finding for that table.** The literal name is the contract.
+
+**Canonical SQL (mirrors `products/therapy-platform/backend/migrations/001_therapy_platform.sql:846+`):**
+
+```sql
+CREATE POLICY "service_role_bypass" ON <schema>.<table>
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+```
+
+**Helper:** `noctusai_lib.sql.service_role_bypass(table, schema="public")` — added 2026-05-11 by `projects/keeper-trio-seed-formalize/` as the Wave 0 seed addition for the keeper-trio platform triage. Mirrors the existing `prelude` + `updated_at_trigger` shape (canonical impl in `noctusai_lib.domain.sql_templates`; thin re-export wrapper in `noctusai_lib.sql`).
+
+**Usage in fresh migrations:**
+
+```python
+from noctusai_lib.sql import prelude, service_role_bypass, updated_at_trigger
+
+body = "\n".join([
+    prelude("erp"),
+    updated_at_trigger("clientes", schema="erp"),
+    "",
+    service_role_bypass("clientes", schema="erp"),
+    service_role_bypass("contratos", schema="erp"),
+    # one line per RLS-enabled table needing admin-client access
+])
+```
+
+**Output (single line per table, byte-equal to therapy):**
+
+```sql
+CREATE POLICY "service_role_bypass" ON erp.clientes FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON erp.contratos FOR ALL TO service_role USING (true) WITH CHECK (true);
+```
+
+**Reference adopter:** `products/therapy-platform/backend/migrations/001_therapy_platform.sql:846+` emits 40 of these in sequence. Test `test_service_role_bypass.TestAgainstTherapyMigration` pins byte-equality against the real migration.
+
+**Coverage gap context:** Engineer RR's triage (`projects/keeper-trio-platform-triage/phase-0-triage.md`, 2026-05-11) classified 192 of 215 keeper findings as this same DEFENSE_IN_DEPTH cluster — every per-product admin client call on a table that lacks the literal `service_role_bypass` policy. Wave 1 per-product children (`keeper-trio-{core,erp,mailing,pf}`) consume this helper to close the cluster.
+
 ## Migrations
 
 Numbered SQL files in `products/<name>/backend/migrations/001_*.sql`, `002_*.sql`, etc. These files are the **authoritative replay log** — the DB is mutable state and can be wiped; the files are what rebuild it.
