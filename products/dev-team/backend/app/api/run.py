@@ -1,6 +1,12 @@
-"""POST /api/run — fire the team."""
-from __future__ import annotations
+"""POST /api/run — fire the team.
 
+Note: `from __future__ import annotations` is intentionally absent. Combining
+PEP 563 string annotations with slowapi's `@limiter.limit` decorator triggers
+`PydanticUndefinedAnnotation` at import time — `@functools.wraps` does not
+propagate `__globals__`, so FastAPI/Pydantic resolve the BaseModel forward-ref
+in slowapi's module namespace where `RunRequest` is undefined. Same shape as
+AUTH-RL's fix on core/sso.py + media-scheduling/oauth.py.
+"""
 import logging
 from typing import Optional
 
