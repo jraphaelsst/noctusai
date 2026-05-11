@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-11
 - **Last updated:** 2026-05-11
-- **Status:** ⏳ **EXECUTING — Phase 1 ✅ 2026-05-11 (commit `06b5eeb`).** Engineer QQ shipped seed-side router fix (5 broken call sites — wider than spec) + 7 integration tests at `seed/framework/backend/tests/routers/test_team_router_accept.py`; 55/55 seed/framework tests green. **Phase 2 (per-product migrations + accept_invitation domain helper update) PENDING** — orchestrator dispatches after Wave 13 settles to avoid file-overlap with parallel therapy/PF/imobi engineers.
+- **Status:** ⏳ **EXECUTING — Phase 1 ✅ 2026-05-11 (commit `06b5eeb`); Phase 2 ✅ 2026-05-11 (Engineer CCC).** Phase 2 added optional `accepted_by` kwarg to `accept_invitation` domain helper + 8 per-product migrations + 6 live ALTER TABLE applies (adconnect + youtube-crawler files-only — schemas not yet provisioned). Seed-lib: 178/178 green (+5 new tests). Seed-framework: 55/55 green (Phase-1 tests unbroken). Phase 3 (close + archive) PENDING orchestrator FF-to-main.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `seed-team-router-accept-real-adapter`
 - **Related docs:**
@@ -117,11 +117,30 @@ ALTER TABLE invitations
 - **`seed/framework/backend` lacks `.venv` hydration** in `scripts/bootstrap-worktree.sh` — engineer fell back to `mcp/noctusai/.venv/bin/python` + manual `pip install apscheduler`. Follow-up candidate.
 - **libcst `cst.Comma()` defaults collapse to `f(a,b,c)`** — use `cst.Comma(whitespace_after=cst.SimpleWhitespace(" "))` for PEP-8. Candidate addition to `KB § PATTERNS/ast.md`.
 
-### Phase 2 — Per-product migrations + smoke
+### Phase 2 — Domain helper + per-product migrations + smoke ✅ *(2026-05-11)*
 
-- [ ] For each product missing `accepted_at`/`accepted_by`: add migration `00N_invitations_accepted_columns.sql`.
-- [ ] Apply via Supabase MCP (pass `worktree_path=`).
-- [ ] Smoke against PF AcceptInvite happy path.
+- [x] **Domain helper updated** — `accept_invitation(db, table, invitation_id, *, accepted_by=None)` in `seed/lib/backend/noctusai_lib/domain/invitations.py`. When `accepted_by` is provided, the UPDATE payload includes `accepted_at = now()` + `accepted_by`. When `None` (default), only `status="accepted"` is written — preserves back-compat with adopters that haven't yet migrated columns. 5 new tests at `seed/lib/backend/tests/domain/test_invitations.py` covering back-compat + accepted-by-write + ISO8601-utc-window + kwarg-only enforcement.
+- [x] **Seed router NOT modified** — current `/accept` handler validates token-only (no authenticated-user dependency). Elevating to `Depends(get_current_user_org)` would contradict the invitation flow's intent (invitee may not have an account yet). The optional `accepted_by` kwarg is forward-compatible — wired through once the user-creator seam (`seed-team-router-user-creation-seam` follow-up candidate from Phase 1) lands.
+- [x] **8 per-product migrations written** (one per `team`-mounting adopter):
+  - `products/adconnect/backend/migrations/002_invitations_accepted_columns.sql`
+  - `products/daily-life/backend/migrations/004_invitations_accepted_columns.sql`
+  - `products/media-scheduling/backend/migrations/006_invitations_accepted_columns.sql`
+  - `products/imobi-scheduling/backend/migrations/002_invitations_accepted_columns.sql`
+  - `products/seed/backend/migrations/002_invitations_accepted_columns.sql` (canonical scaffold mirror)
+  - `products/personal-finance/backend/migrations/010_invitations_accepted_columns.sql`
+  - `products/mailing/backend/migrations/004_invitations_accepted_columns.sql`
+  - `products/youtube-crawler/backend/migrations/002_invitations_accepted_columns.sql`
+- [x] **6 live ALTER TABLEs applied** via Supabase MCP `apply_migration` to project `nyplttplcoyiiqjrvtiw`. Verified via `information_schema.columns` query — every adopter's live `invitations` table now has `accepted_at TIMESTAMPTZ` + `accepted_by UUID REFERENCES auth.users(id)`. **`adconnect` + `youtube_crawler` files-only** — schemas not yet provisioned live (`information_schema.schemata` returned 0 rows for those two); migration applies when the product's 001_<slug>.sql initialization runs.
+- [x] **Seed-lib pytest** — 178/178 green (was 173; +5 new tests). `seed/framework/backend` — 55/55 green (Phase 1 tests unbroken). PF + daily-life pytest reproduced **baseline pre-existing failures** (worktree venv lacks `pytest-asyncio`); `git stash` parity confirmed Phase-2 changes introduced zero new failures.
+
+**Improvements (Phase 2):**
+- **Optional-kwarg back-compat pattern** keeps 8 adopters working while user-creator seam is built — no big-bang migration coupling needed.
+- **All 8 adopters share identical invitations table shape** (9 canonical columns + adconnect's `distributor_id` extension). Candidate for absorption into `noctusai_lib.sql.templates.invitations_table()` — would let new products inherit the canonical shape via one call rather than copy-pasting. Catalog candidate (not blocking).
+- **libcst `parse_module` rejects indented snippets** — wrap body in a full `def f(): ...`, extract `module.body[0]`. Candidate addition to `KB § PATTERNS/ast.md`.
+- **libcst node-substitution drops the surrounding blank line** — replacing FunctionDefs collapses `\n\n`. Either set `leading_lines=[cst.EmptyLine()]` on the new node or hand-Edit afterward. Candidate addition to `KB § PATTERNS/ast.md`.
+- **Worktree venv hydration gap recurs** — same gap QQ surfaced in Phase 1. `pytest-asyncio` missing in worktree-local venvs surfaces as ~141 baseline failures in PF; pre-existing on `main`, confirmed via `git stash` parity. Bootstrap hydration follow-up candidate (Phase 1 already noted).
+
+### Phase 3 — Close
 
 ### Phase 3 — Close
 
@@ -151,6 +170,7 @@ Single-engineer dispatch via worktree. Pattern locked by JJ's proposal — pure 
 | Date | Change | By |
 |---|---|---|
 | 2026-05-11 | **Filed under user signal "create projects for deferrals/parks that happen along the way."** Engineer JJ's PF P6 (commit `0c45079`) surfaced runtime-broken seed team /accept handler across all adopters. TypeError on first call. Drift survived because no seed integration test exercises the endpoint. Mechanical fix at router caller-side + integration test + per-product migration columns. | claude-opus-4-7 |
+| 2026-05-11 | **Phase 2 closed by Engineer CCC.** `accept_invitation` updated at `seed/lib/backend/noctusai_lib/domain/invitations.py` — new keyword-only `accepted_by: Optional[str] = None` arg; when provided, payload includes `accepted_at = utcnow().isoformat()` + `accepted_by`; when omitted, only `status="accepted"` (back-compat preserved). 5 new domain tests at `seed/lib/backend/tests/domain/test_invitations.py` — back-compat (status-only payload), explicit-None equivalence, accepted_by writes 3 fields, ISO8601-utc window membership, kwarg-only enforcement. 178/178 seed-lib green. 8 per-product migrations written (adconnect→002, daily-life→004, media-scheduling→006, imobi-scheduling→002, seed→002, personal-finance→010, mailing→004, youtube-crawler→002). 6 live applies via Supabase MCP — daily_life / imobi_scheduling / mailing / media_scheduling / personal-finance / seed schemas now carry `accepted_at TIMESTAMPTZ` + `accepted_by UUID REFERENCES auth.users(id)`. AdConnect + youtube_crawler files-only (schemas not yet provisioned). Seed router NOT modified — `/accept` is auth-less (token-only) by design (invitation flow predates the invitee having an account); `accepted_by=None` until the `seed-team-router-user-creation-seam` follow-up wires a user-creator injection seam. Seed-framework 55/55 green; Phase-1 tests unbroken. | engineer-subagent CCC |
 | 2026-05-11 | **Phase 1 closed by Engineer QQ** (commit `a51c29c` → cherry-picked to main as `06b5eeb`). Caller-side fix at `seed/framework/backend/noctusai_seed/routers.py` — **5 broken call sites** (not just `/accept` as spec'd): lines 130, 156, 164, 185, 195. All converted from `db=admin, schema=deps._db.schema, X=Y` kwargs to positional `(admin, f"{schema}.invitations", ...)`. `/accept` body simplified from `{token, user_id, email, password, name}` (5 fields, 4 dead) to `{token: str}`. New integration test `tests/routers/test_team_router_accept.py` with 7 cases; status-code-assertion-rule honored throughout. Pre-fix run: 6/7 FAILED with literal `TypeError: validate_invitation() got an unexpected keyword argument 'schema'`. Post-fix run: 7/7 PASSED. Seed/framework suite: 55/55 green (was 48). Keeper `--review --product seed` → 0 issues. **Phase 2 dependencies surfaced**: (1) `accept_invitation` domain helper does NOT write `accepted_at`/`accepted_by` — needs lockstep update with per-product migrations; (2) user-creation seam may be needed if frontend expected user creation in old `/accept` — filed as follow-up candidate `seed-team-router-user-creation-seam`. | engineer-subagent QQ |
 
 ## 12. No-leftovers constraint

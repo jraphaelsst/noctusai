@@ -165,10 +165,31 @@ def validate_invitation(db, table: str, token: str) -> dict:
     return data
 
 
-def accept_invitation(db, table: str, invitation_id: str) -> None:
-    """Mark an invitation as accepted."""
-    db.table(table).update({"status": "accepted"}).eq("id", invitation_id).execute()
-    logger.info("Invitation %s accepted", invitation_id)
+def accept_invitation(
+    db,
+    table: str,
+    invitation_id: str,
+    *,
+    accepted_by: Optional[str] = None,
+) -> None:
+    """Mark an invitation as accepted.
+
+    Args:
+        db: Supabase client (schema-targeted).
+        table: Table name (e.g. "invitations" or "<schema>.invitations").
+        invitation_id: Invitation row id.
+        accepted_by: Optional user id of the accepting user. When provided,
+            the row's ``accepted_at`` (utcnow) and ``accepted_by`` columns
+            are populated alongside ``status="accepted"``. When ``None``
+            (default), only ``status`` is written — preserves back-compat
+            with adopters that haven't yet migrated the columns.
+    """
+    payload: dict = {"status": "accepted"}
+    if accepted_by is not None:
+        payload["accepted_at"] = datetime.now(timezone.utc).isoformat()
+        payload["accepted_by"] = accepted_by
+    db.table(table).update(payload).eq("id", invitation_id).execute()
+    logger.info("Invitation %s accepted (accepted_by=%s)", invitation_id, accepted_by)
 
 
 def cancel_invitation(db, table: str, invitation_id: str, org_id: str) -> None:
