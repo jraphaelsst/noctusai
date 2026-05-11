@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 # Import REPO_ROOT from settings per the centralization rule
 # (`feedback_mcp_path_constants_from_settings.md`).
 from settings import REPO_ROOT
+from workspace import resolve_caller_root
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ def archive(
     mode: str | None = None,
     name: str | None = None,
     repo_root: Path | None = None,
+    worktree_path: str | Path | None = None,
 ) -> dict:
     """Move target to the archive folder per `KB § PATTERNS/project-execution.md § 11.2`.
 
@@ -111,6 +113,13 @@ def archive(
         name: ad-hoc only — descriptive name in `<date>_<time>_<name>`.
             Required when mode="ad_hoc"; ignored otherwise.
         repo_root: override (tests).
+        worktree_path: **Caller-aware path resolution.** When set, the
+            archive operation runs inside the given worktree (git mv lands
+            files under ``<worktree>/archive/``) instead of the MCP server's
+            startup workspace. Engineers in a git worktree pass their
+            worktree root; architects on main noc omit. Mutually exclusive
+            with ``repo_root`` (which is the test-seam override) — pass one
+            or the other. See ``resolve_caller_root``.
 
     Returns:
         {
@@ -124,7 +133,15 @@ def archive(
             target already under archive/ (idempotency guard).
         subprocess.CalledProcessError: git mv failure.
     """
-    root = repo_root or REPO_ROOT
+    # Resolution order: explicit `repo_root` test seam wins; otherwise
+    # route via `worktree_path` (caller-aware); otherwise fall back to
+    # the server-startup REPO_ROOT.
+    if repo_root is not None:
+        root = repo_root
+    elif worktree_path is not None:
+        root = resolve_caller_root(worktree_path)
+    else:
+        root = REPO_ROOT
     target = Path(target_path)
     if not target.is_absolute():
         target = (root / target_path).resolve()
@@ -211,16 +228,20 @@ def register(server) -> None:
             "feature; else → ad_hoc (requires `name`). Lands at archive/projects/<today>/<NN>-"
             "<slug>/ or archive/features/<today>/<NN>-<slug>.md or archive/<date>_<time>_<name>/. "
             "Uses git mv (preserves history). Idempotency guard: refuses if target already under "
-            "archive/. See KB § PATTERNS/project-execution.md § 11.2 Archive system."
+            "archive/. Pass `worktree_path` when called from inside a git worktree so the git mv "
+            "+ archive landing happens in the worktree, not the MCP server's startup workspace. "
+            "See KB § PATTERNS/project-execution.md § 11.2 + KB § PATTERNS/mcp-tool-conventions.md."
         ),
     )
     def _archive(
         target_path: str,
         mode: str | None = None,
         name: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
         return archive(
             target_path=target_path,
             mode=mode,
             name=name,
+            worktree_path=worktree_path,
         )

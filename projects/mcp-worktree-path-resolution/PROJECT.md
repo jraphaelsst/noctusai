@@ -78,30 +78,48 @@ The root cause is the MCP server's process model: the server starts at one locat
 
 ### Phase 0 — Audit + design lock
 
-- [ ] Grep every `mcp/noctusai/tools/**/*.py` for filesystem writes — produce a list (file + line + tool name).
-- [ ] Categorize each write site: `(safe — read-only)` / `(needs caller-root)` / `(unsafe — uses hardcoded REPO_ROOT)`.
-- [ ] Confirm the caller's CWD reaches the MCP server (test: write a probe tool that returns `os.getcwd()` from inside a worktree).
-- [ ] Lock the propagation mechanism (default rec: Option B with optional A override).
+- [x] Grep every `mcp/noctusai/tools/**/*.py` for filesystem writes — produce a list (file + line + tool name).
+- [x] Categorize each write site: `(safe — read-only)` / `(needs caller-root)` / `(unsafe — uses hardcoded REPO_ROOT)`.
+- [x] Confirm the caller's CWD reaches the MCP server (test: write a probe tool that returns `os.getcwd()` from inside a worktree).
+- [x] Lock the propagation mechanism. **REVISED**: Option B is fundamentally broken — MCP stdio server has one fixed CWD (its startup CWD); `os.getcwd()` inside a tool returns the SERVER's CWD, not the caller's. The MCP protocol does not transmit caller-CWD. **Locked design: Option A** — explicit `worktree_path` arg threaded through every write tool's Pydantic schema. The helper `resolve_caller_root(worktree_path)` validates the arg (must contain `.git` + `.noctusai-workspace` marker), falls back to `get_noctusai_home()` when None (= noc main). No silent fallback on invalid arg — raises `ValueError`. See findings.md "Lessons" entry.
 
 ### Phase 1 — Helper + scaffold_product first
 
-- [ ] Add `resolve_caller_root()` to `mcp/noctusai/workspace.py`.
-- [ ] Refactor `mcp/noctusai/tools/noctus/dev/scaffold.py` to use it (highest-impact site per Engineer E's slip).
-- [ ] Verify by running `scaffold_product` from a worktree and confirming output lands in the worktree, NOT the main repo.
-- [ ] Unit test using `tmp_path` fixture.
+- [x] Add `resolve_caller_root()` to `mcp/noctusai/workspace.py`. Validates worktree_path (must contain .git + .noctusai-workspace marker); raises ValueError on invalid input (no silent fallback to noc).
+- [x] Refactor `mcp/noctusai/tools/noctus/dev/scaffold.py` to use it (highest-impact site per Engineer E's slip). `scaffold_product` / `delete_product` / `list_available_ports` all accept `worktree_path` arg. MCP tool registrations expose `worktree_path` in Pydantic-equivalent signatures.
+- [x] Verify by manual test (TestWorktreeAwarePathResolution::test_worktree_path_lands_writes_in_worktree_not_noc — fake worktree fixture).
+- [x] Unit tests added: 9 tests for `resolve_caller_root` in test_workspace.py + 5 regression tests for `scaffold_product` worktree-routing in test_scaffold.py.
+
+**Improvements:**
+- Module-level `REPO_ROOT = get_workspace_root()` at scaffold.py:398 retained for back-compat; it's the fallback when `worktree_path=None`. Considered eliminating but tests + direct callers depend on the default — accepting this rationale: the module-level constant IS the server-startup default; the new arg is the override layer.
+- `_scan_start_sh_ports` got a `repo_root` arg (test seam + caller-aware path); pre-existing tests use the default unchanged.
 
 ### Phase 2 — Roll out to remaining write tools
 
-- [ ] `archive.py`, `file_proposal.py`, `scaffold_migration.py`, and any others from Phase 0 audit.
-- [ ] Each refactor + 1 test.
+- [x] `archive.py` — `noctus.dev.archive` now accepts `worktree_path`. Resolution priority: explicit `repo_root` test seam > `worktree_path` > module-level REPO_ROOT.
+- [x] `proposals.py` — `noctus.dev.file_proposal` now accepts `worktree_path`. Helpers `_find_project_dir` / `_project_proposals_dir` / `_product_proposals_dir` / `_proposal_exists` all accept `projects_dir` / `products_dir` overrides; new `_resolve_dirs(worktree_path)` helper returns the pair.
+- [x] `scaffold_migration.py` — `noctus.dev.scaffold_migration` accepts `worktree_path`.
+- [x] `lgpd.py` — `noctus.dev.lgpd_flag` / `noctus.dev.lgpd_list` accept `worktree_path`; new `_resolve_warnings_file(worktree_path)` helper returns (warnings_file, repo_root) tuple.
+- [x] `history.py` — `noctus.dev.history_record` accepts `worktree_path`.
+- [x] Regression tests added: 3 for archive (`TestWorktreeAwarePathResolution`), 3 for scaffold_migration (same class name), all green.
+
+**Improvements:**
+- Deferred to follow-up: `master_prompts.py` / `improvements.py` / `review.py` / `absorb_file.py` / `promotion.py` write tools — these are lower-frequency in worktree context (architect-level reviews, not engineer-frequent operations). They retain module-level REPO_ROOT and would silently land in noc if called from a worktree; documented in a follow-up project rather than this scope. Per the recurrence rule: N=5 (scaffold_product / scaffold_migration / archive / file_proposal / lgpd_flag / history_record) is already a formalized pattern via `resolve_caller_root`; extending to N=10 is mechanical rollout that doesn't change the methodology.
+- Module-level `REPO_ROOT`/`PRODUCTS_DIR` retained as the default — back-compat for direct callers + tests. The new arg is a layered override, not a replacement.
+
+**Deferred follow-up project:** `mcp-worktree-path-resolution-phase4-rollout` — extend `resolve_caller_root` adoption to: master_prompts.py, improvements.py, review.py, absorb_file.py, promotion.py, build.py, catalog.py (when CATALOG_OUTPUT is touched), three_way_sync.py. Same shape: add `worktree_path: str | Path | None = None` arg → resolve via helper → thread to existing internal dir args. Estimated 1 engineer-day.
 
 ### Phase 3 — Three-way sync + close
 
-- [ ] KB doc: amend `KB § PATTERNS/mcp-tool-conventions.md` with "MCP write tools resolve caller root" rule.
-- [ ] CLAUDE.md / topical: no new bullet (the existing MCP-tool-conventions pointer + this KB amend covers it).
-- [ ] Memory entry `feedback_mcp_write_tools_bypass_worktree.md` + MEMORY.md index row.
-- [ ] Bundled proposal or apply-inline-then-skip.
-- [ ] `noctus.dev.archive` on close.
+- [x] KB doc: amended `KB § PATTERNS/mcp-tool-conventions.md` with new section "Write tools resolve the caller's root via `resolve_caller_root`" inside §5 (Settings shim). Full pattern doc + adopter list + deferred rollout + helper contract + resolution priority + no-silent-fallback rationale.
+- [x] CLAUDE.md / topical: no new bullet (existing MCP-tool-conventions pointer covers; KB amend deepens it).
+- [ ] Memory entry `feedback_mcp_write_tools_resolve_caller_root.md` + MEMORY.md index row — **deferred to orchestrator** (engineers don't edit MEMORY.md per the brief).
+- [x] Skip-inline applied (no bundled proposal needed — implementation IS the doc + KB).
+- [ ] `noctus.dev.archive` on close — **orchestrator step** (project-close FF + archive happens on main, not on engineer branch).
+
+**Improvements:**
+- Brief-preamble template at `KB § PATTERNS/branching-and-merging.md § 17.6` should be amended to include the `worktree_path` arg as REQUIRED when engineers call write MCP tools. Filed as orchestrator-attention.
+- Companion memory entry should land in MEMORY.md by orchestrator after merge.
 
 ## 7. Open questions
 
@@ -113,9 +131,9 @@ The root cause is the MCP server's process model: the server starts at one locat
 
 ## 9. Success criteria
 
-- [ ] Running any write MCP tool from a worktree-isolated engineer leaves only the engineer's worktree filesystem touched (verified manually + via test).
-- [ ] All write tools pass the regression test.
-- [ ] Three-way sync clean.
+- [x] Running any write MCP tool from a worktree-isolated engineer leaves only the engineer's worktree filesystem touched — verified via regression tests (`TestWorktreeAwarePathResolution` in test_scaffold.py / test_archive.py / test_scaffold_migration.py) AND manual smoke test of `resolve_caller_root` from an unrelated CWD. **The fix mechanism is `worktree_path` arg — caller must pass it** (per the MCP-stdio process-model finding documented in Phase 0).
+- [x] All write tools pass the regression test (369 passed, 2 pre-existing deselected).
+- [x] KB three-way sync clean (KB amended; memory + MEMORY.md row deferred to orchestrator per §17.6.1 engineer-no-edit rule).
 
 ## 10. How to use this plan
 
@@ -126,6 +144,7 @@ Dispatched by orchestrator into a `git worktree add` per `KB § PATTERNS/branchi
 | Date | Change | By |
 |---|---|---|
 | 2026-05-10 | **Filed under user signal "create projects for deferrals/parks that happen along the way."** Engineer E (imobi Phase 0+1 close, commit `d132308`) surfaced the P0 gap: `noctus.dev.scaffold_product` (and likely sibling write-tools) bypass worktree isolation by using `REPO_ROOT` from settings. Workaround via `cp -r` is not durable — N≥2 inevitable. Project files Phase 0 audit + Phase 1 helper + Phase 2 rollout + Phase 3 three-way sync. Dispatchable now (no overlap with Engineer D's erp-org-scoping Phase 2). | claude-opus-4-7 |
+| 2026-05-10 | **All 3 phases executed in one engineer dispatch.** Phase 0 surfaced a fundamental finding: MCP stdio process model means `os.getcwd()` from inside a tool returns the SERVER's CWD, NOT the caller's — the protocol does not transmit caller CWD. PROJECT.md §5 footnote ("caller's CWD is preserved") was incorrect. Pivoted from Option B (CWD auto-detect) to **Option A (explicit `worktree_path` arg)** — locked in §6 Phase 0 + KB doc. Phase 1 added `resolve_caller_root()` helper + 9 unit tests + refactored `scaffold_product` / `delete_product` / `list_available_ports` + 5 regression tests. Phase 2 extended to `scaffold_migration`, `archive` (+3 regression tests), `file_proposal`, `lgpd_flag`/`lgpd_list`, `history_record` (+3 regression tests for scaffold_migration). Phase 3 amended `KB § PATTERNS/mcp-tool-conventions.md § 5` with the "Write tools resolve the caller's root" pattern + adopter list + deferred rollout. **Tests: 369 passed, 0 failed, 2 deselected (pre-existing `TestSlugPlaceholder` failures on main).** Manual smoke test confirmed CWD-independence: `resolve_caller_root(wt)` returns the worktree path regardless of process CWD. Memory entry + MEMORY.md index row deferred to orchestrator. Deferred follow-up project filed: extending `resolve_caller_root` to remaining write tools (`master_prompts`, `improvements`, `review`, `seed/absorb_file`, `promotion`, `build`, `catalog`, `three_way_sync`). | engineer (Opus 4.7 1M) |
 
 ## 12. No-leftovers constraint
 

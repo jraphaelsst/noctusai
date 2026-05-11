@@ -221,6 +221,80 @@ to bump every `parents[3]` to `parents[5]` (the file relocation
 changed the depth). Rule: **path constants are framework-level; tools
 import, never compute.**
 
+### Write tools resolve the caller's root via `resolve_caller_root`
+
+**Rule.** Every MCP tool that writes to the filesystem (creates dirs,
+writes files, runs `git mv`, mutates compose / start.sh / migrations,
+…) accepts an explicit `worktree_path: str | Path | None = None`
+argument and resolves the target root via
+`workspace.resolve_caller_root(worktree_path)`. Module-level
+`REPO_ROOT`/`PRODUCTS_DIR` is the **default** (used when
+`worktree_path is None`), not the only resolution path.
+
+**Why.** The MCP server is a single long-running stdio process. It
+boots with one fixed CWD (typically noc main) and `os.getcwd()`
+inside any tool returns the SERVER's CWD, NOT the caller's. The
+MCP protocol does not transmit caller-CWD per call. Therefore tools
+that need caller-aware paths MUST receive the worktree root as an
+explicit argument — auto-detection from server-side state is
+fundamentally impossible.
+
+**Background.** Filed by
+`projects/mcp-worktree-path-resolution/` (2026-05-10) after
+Engineer E's `imobi-scheduling-bot-creation` Phase 0+1 close
+surfaced the bug: `scaffold_product` wrote 58+ files to noc's
+filesystem from inside Engineer E's isolated worktree because
+`REPO_ROOT` was bound at server startup. Engineer E worked around
+via `cp -r` + hand-mirror; the fix lives at the seed level.
+
+**Helper contract** (`mcp/noctusai/workspace.py`):
+
+```python
+def resolve_caller_root(worktree_path: str | Path | None = None) -> Path:
+    """When worktree_path is None → returns noc_home (back-compat).
+    When set → validates path (must be a dir containing both `.git`
+    AND `.noctusai-workspace`); returns the resolved Path.
+    Raises ValueError on invalid input — no silent fallback to noc.
+    """
+```
+
+**Resolution priority** in every write tool:
+
+1. Explicit test seam (`products_dir=` / `repo_root=` / `ledger_path=`) wins.
+2. `worktree_path` arg → `resolve_caller_root(worktree_path)`.
+3. Module-level `REPO_ROOT` / `PRODUCTS_DIR` fallback (server-startup default).
+
+This ordering preserves test seams while letting production code thread
+the new arg through. Tests calling the function directly omit
+`worktree_path`; engineers in worktrees pass it; architects on main
+omit it.
+
+**Adopters** (current state, 2026-05-10):
+
+- `noctus.dev.scaffold_product` / `noctus.dev.delete_product` / `noctus.dev.available_ports`
+- `noctus.dev.scaffold_migration`
+- `noctus.dev.archive`
+- `noctus.dev.file_proposal`
+- `noctus.dev.lgpd_flag` / `noctus.dev.lgpd_list`
+- `noctus.dev.history_record`
+
+**Deferred rollout (follow-up project):**
+`master_prompts.py` / `improvements.py` / `review.py` /
+`seed/absorb_file.py` / `promotion.py` / `build.py` /
+`catalog.py` / `three_way_sync.py`. Same shape, mechanical
+extension.
+
+**No silent fallback.** Passing an invalid `worktree_path`
+(non-directory, missing `.git`, missing `.noctusai-workspace`) MUST
+raise `ValueError` — the whole point of the arg is to surface
+worktree-bypass slips. Silent fallback to noc home would defeat the
+guard.
+
+**Regression tests live in** `mcp/noctusai/tests/test_workspace.py`
+(`TestResolveCallerRoot`) + per-tool test files
+(`TestWorktreeAwarePathResolution` in `test_scaffold.py`,
+`test_archive.py`, `test_scaffold_migration.py`).
+
 ---
 
 ## 6. CLI dual-entrypoint stays
