@@ -8,19 +8,13 @@ PATCH  /api/organizations/{id}  — Update
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin
+from app.schemas.organizations import OrgUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
-
-
-class OrgUpdate(BaseModel):
-    nome: Optional[str] = None
-    plano: Optional[str] = None
-    category: Optional[str] = Field(default=None, pattern="^(normal|test)$")
 
 
 @router.get("")

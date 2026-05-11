@@ -27,29 +27,14 @@ DELETE /api/roles/{id}     — Delete custom role (admin/owner only, can't delet
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.services.permissions import check_permission
+from app.schemas.roles import RoleCreate, RoleUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/roles", tags=["Roles"])
-
-
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
-
-class RoleCreate(BaseModel):
-    name: str = Field(..., max_length=100)
-    slug: str = Field(..., max_length=50)
-    permissions: List[str] = Field(default_factory=list)
-
-
-class RoleUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=100)
-    permissions: Optional[List[str]] = None
 
 
 # ---------------------------------------------------------------------------

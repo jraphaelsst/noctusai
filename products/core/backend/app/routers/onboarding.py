@@ -13,11 +13,11 @@ PATCH /api/onboarding/complete — Marks a step as completed
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_org_id
 from app.rate_limit import limiter
+from app.schemas.onboarding import StepComplete, CompanyDetailsUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
@@ -30,18 +30,6 @@ DEFAULT_STEPS = {
     "invite_team": False,
     "enable_product": False,
 }
-
-
-class StepComplete(BaseModel):
-    step: str = Field(..., description="Nome do passo a completar")
-    data: Optional[dict] = Field(default=None, description="Dados opcionais do passo")
-
-
-class CompanyDetailsUpdate(BaseModel):
-    nome: Optional[str] = Field(default=None, max_length=200)
-    cnpj: Optional[str] = Field(default=None, max_length=18)
-    telefone: Optional[str] = Field(default=None, max_length=20)
-    endereco: Optional[str] = Field(default=None, max_length=500)
 
 
 @router.get("/status")

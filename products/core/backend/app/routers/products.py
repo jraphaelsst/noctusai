@@ -10,33 +10,13 @@ DELETE /api/products/{id}         — Deactivate product (platform admin only)
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin
+from app.schemas.products import ProductCreate, ProductUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["Products"])
-
-
-class ProductCreate(BaseModel):
-    nome: str
-    slug: str
-    descricao: Optional[str] = None
-    icone: Optional[str] = None
-    url_base: str  # e.g. http://localhost:8080 or https://erp.noctus.ai
-    cor: Optional[str] = "#6366f1"  # brand color
-    logout_behavior: Optional[str] = "redirect"  # 'redirect' or 'signout'
-
-
-class ProductUpdate(BaseModel):
-    nome: Optional[str] = None
-    descricao: Optional[str] = None
-    icone: Optional[str] = None
-    url_base: Optional[str] = None
-    cor: Optional[str] = None
-    ativo: Optional[bool] = None
-    logout_behavior: Optional[str] = None  # 'redirect' or 'signout'
 
 
 @router.get("")
