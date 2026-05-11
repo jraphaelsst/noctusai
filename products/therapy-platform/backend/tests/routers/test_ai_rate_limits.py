@@ -13,7 +13,8 @@ decorator runs BEFORE the 403 check, so all 30 still count toward the
 window. The 31st must trip 429.
 
 Therapy conftest already auto-resets the limiter between tests via
-`_reset_rate_limiter` (autouse) — we still call `limiter.reset()`
+`reset_rate_limiter` (autouse, re-imported from
+`noctusai_lib.testing.fixtures`) — we still call `limiter.reset()`
 explicitly at test start for documentary clarity + isolation from any
 prior call within the SAME test.
 """
@@ -23,7 +24,7 @@ class TestTherapyAIRateLimit:
     def test_embed_paciente_rate_limited_at_30_per_minute(self, client):
         """31 successive POSTs to /api/matching/embed-paciente — last one trips 429."""
         # The limiter is module-level state; explicit reset (the autouse
-        # `_reset_rate_limiter` fixture does this between tests; we do it
+        # `reset_rate_limiter` fixture does this between tests; we do it
         # again here for isolation from any prior call within THIS test).
         from app.rate_limit import limiter
         limiter.reset()

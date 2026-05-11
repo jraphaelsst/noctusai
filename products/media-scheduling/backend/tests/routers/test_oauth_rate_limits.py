@@ -10,7 +10,8 @@ Coverage:
 The audit-status route (`GET /api/oauth/google/status`) is gated by
 the admin role dep — out of scope per the brief.
 
-The `_reset_rate_limiter` autouse fixture in `conftest.py` clears the
+The `reset_rate_limiter` autouse fixture (re-imported from
+`noctusai_lib.testing.fixtures` in `conftest.py`) clears the
 in-memory slowapi counters before/after every test.
 """
 

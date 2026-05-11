@@ -20,25 +20,11 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
     AuthClient,
     bind_consent_module_to_mock,
 )
+from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
-
-
-@pytest.fixture(autouse=True)
-def _reset_rate_limiter():
-    """Reset the slowapi limiter between tests.
-
-    slowapi keeps in-memory counters at module scope; without this fixture,
-    decorated endpoints that get hit N+ times across the suite would
-    surface 429s in unrelated tests (auth-rate-limit-rollout 2026-05-11
-    surfaced this in core during the same session).
-    """
-    from app.rate_limit import limiter
-    limiter.reset()
-    yield
-    limiter.reset()
 
 
 @pytest.fixture

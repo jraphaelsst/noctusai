@@ -7,7 +7,8 @@ and asserts the LAST response is 429. We assert on `.status_code` only
 (per the status-code-assertion rule); body shape coverage lives in the
 existing per-endpoint test files.
 
-The `_reset_rate_limiter` autouse fixture in `conftest.py` clears the
+The `reset_rate_limiter` autouse fixture (re-imported from
+`noctusai_lib.testing.fixtures` in `conftest.py`) clears the
 in-memory slowapi counters before/after every test, so these tests can
 co-exist with the existing happy-path tests that hit the same routes.
 

@@ -55,6 +55,7 @@ from noctusai_lib.testing.framework_test_suites import (
     NotificationFlowSuite,
     AuthBoundarySuite,
 )
+from noctusai_lib.testing.fixtures import reset_rate_limiter
 
 __all__ = [
     "MockSupabaseResponse",
@@ -83,4 +84,5 @@ __all__ = [
     "TeamFlowSuite",
     "NotificationFlowSuite",
     "AuthBoundarySuite",
+    "reset_rate_limiter",
 ]
