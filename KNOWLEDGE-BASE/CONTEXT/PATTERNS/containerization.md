@@ -1683,6 +1683,8 @@ is for "I want the full fleet up in one command."
 
 N=2 today (two `!reset` rounds: HMR Option B's build+command, then 2026-05-11 expansion to volumes + backend-command). If a future dispatch adds another runtime-affecting key to the dev override → recurrence rule fires.
 
+This rule is CI-enforced via `.github/workflows/test.yml::prod-render-clean` — any future override change that re-introduces a leak fails CI.
+
 **Anti-patterns.**
 
 - **Resetting at per-product-prod-overlay level** (inside `products/<slug>/docker-compose.prod.yml`). Doesn't fire — wrong merge-operation scope. HMR engineer hit this on first pass + fixed by hoisting to top level.
