@@ -10,29 +10,17 @@ import logging
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, EmailStr
 
 from supabase import create_client
 from app.config import settings
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
+from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
 from noctusai_lib.api.product_urls import resolve_product_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
-
-
-class SignupRequest(BaseModel):
-    nome: str
-    email: str
-    password: str
-    empresa: str  # Organization name
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
 
 
 @router.post("/signup")
@@ -217,15 +205,6 @@ async def get_me(authorization: Optional[str] = Header(None)):
     }
 
 
-class ProfileUpdate(BaseModel):
-    nome: Optional[str] = None
-    avatar_url: Optional[str] = None
-
-
-class PasswordChange(BaseModel):
-    new_password: str
-
-
 @router.post("/change-password")
 @limiter.limit("5/minute")
 async def change_password(
@@ -263,10 +242,6 @@ async def change_password(
         logger.warning("auth: password-change audit log failed for user_id=%s (%s)", user.id, exc)
 
     return {"ok": True, "message": "Senha atualizada com sucesso"}
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str
 
 
 @router.post("/refresh")

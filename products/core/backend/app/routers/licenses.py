@@ -12,19 +12,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
+from app.schemas.licenses import LicenseGrant
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/licenses", tags=["Licenses"])
-
-
-class LicenseGrant(BaseModel):
-    org_id: str
-    product_id: str
-    fim: Optional[str] = None  # ISO 8601 datetime, null = perpetual
 
 
 @router.get("")

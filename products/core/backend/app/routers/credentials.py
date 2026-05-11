@@ -22,10 +22,10 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header
-from pydantic import BaseModel
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user
+from app.schemas.credentials import CredentialsBody
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/platform/credentials", tags=["Platform Credentials"])
@@ -34,13 +34,6 @@ router = APIRouter(prefix="/api/platform/credentials", tags=["Platform Credentia
 # know which credential rows to surface; the underlying tables are generic
 # key/value (and still reachable via /api/settings/*).
 _LLM_PROVIDERS = ("openai", "anthropic", "gemini")
-
-
-class CredentialsBody(BaseModel):
-    """PUT body — every provider key is optional; only non-null keys are written."""
-    openai: Optional[str] = None
-    anthropic: Optional[str] = None
-    gemini: Optional[str] = None
 
 
 def _mask(value: Optional[str]) -> Optional[str]:

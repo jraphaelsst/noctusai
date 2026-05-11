@@ -35,7 +35,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from noctusai_lib.primitives.tasks import NoRunningLoopError, schedule_coro
 
@@ -44,37 +44,10 @@ from app.database import get_admin_client
 from app.dependencies import get_current_user, get_org_id
 from app.rate_limit import limiter
 from app.services import billing_service, stripe_service
+from app.schemas.billing import CheckoutRequest, PortalRequest, CancelRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
-
-
-# ---------------------------------------------------------------------------
-# Request schemas
-# ---------------------------------------------------------------------------
-
-class CheckoutRequest(BaseModel):
-    plan_id: str = Field(..., description="UUID do plano desejado")
-    billing_cycle: str = Field(
-        default="monthly",
-        pattern="^(monthly|yearly)$",
-        description="Ciclo de cobranca: monthly ou yearly",
-    )
-    success_url: Optional[str] = Field(
-        default=None,
-        description="URL de redirecionamento apos pagamento bem-sucedido",
-    )
-    cancel_url: Optional[str] = Field(
-        default=None,
-        description="URL de redirecionamento se o usuario cancelar o checkout",
-    )
-
-
-class PortalRequest(BaseModel):
-    return_url: Optional[str] = Field(
-        default=None,
-        description="URL de retorno apos sair do portal Stripe",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -318,17 +291,6 @@ async def create_portal(body: PortalRequest, authorization: Optional[str] = Head
     )
 
     return {"data": {"portal_url": session.url}}
-
-
-# ---------------------------------------------------------------------------
-# POST /api/billing/cancel
-# ---------------------------------------------------------------------------
-
-class CancelRequest(BaseModel):
-    at_period_end: bool = Field(
-        default=True,
-        description="Se True, cancela ao final do periodo atual. Se False, cancela imediatamente.",
-    )
 
 
 @router.post("/cancel")
