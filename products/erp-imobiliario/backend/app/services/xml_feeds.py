@@ -11,7 +11,10 @@ Each portal has specific field requirements and XML structure.
 import logging
 from typing import Dict, List
 from xml.etree.ElementTree import Element, SubElement, tostring
-from xml.dom.minidom import parseString
+
+# defusedxml's minidom.parseString is a drop-in defense against XML attacks
+# (billion laughs / external entity expansion). Same toprettyxml() surface.
+from defusedxml.minidom import parseString
 
 logger = logging.getLogger(__name__)
 

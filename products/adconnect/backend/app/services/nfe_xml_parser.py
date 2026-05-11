@@ -30,7 +30,10 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
-from xml.etree import ElementTree as ET
+from xml.etree import ElementTree as ET  # type-only: ParseError reused
+
+from defusedxml.ElementTree import fromstring as _safe_fromstring
+from defusedxml.common import DefusedXmlException
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +160,13 @@ def parse_nfe_xml(xml_bytes: bytes | str, *, strict: bool = False) -> ParsedNFe:
         xml_text = xml_bytes
 
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
+        # defusedxml's fromstring is a drop-in defense against XML attacks
+        # (billion laughs / external entity expansion); raises ET.ParseError
+        # on malformed input AND DefusedXmlException (EntitiesForbidden /
+        # DTDForbidden / ExternalReferenceForbidden) on hostile XML — wrap
+        # both into the parser's surface error type.
+        root = _safe_fromstring(xml_text)
+    except (ET.ParseError, DefusedXmlException) as exc:
         raise NFeParseError(f"NF-e XML parse failed: {exc}") from exc
 
     cnpj = _first_text_under_parent(root, "dest", "CNPJ")

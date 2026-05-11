@@ -29,3 +29,8 @@ pytest-asyncio>=0.21.0
 openai>=1.50.0
 anthropic>=0.40.0
 google-generativeai>=0.8.0
+
+# defusedxml — XML parser hardening (bandit B313-B320). Used by DIMOB
+# tax-XML generation (dimob_service.py) and property-feed XML generation
+# (xml_feeds.py); drop-in replacement for xml.dom.minidom.parseString.
+defusedxml>=0.7.1

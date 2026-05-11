@@ -319,7 +319,11 @@ def book_appointment(
 ) -> dict:
     """Insert appointment + (best-effort) write GCal event. Returns
     the inserted appointment row including `google_event_id`."""
-    request_id = hashlib.sha1(
+    # SHA256 (was SHA1 — bandit B324). The hash is sent to Google Calendar
+    # as `events.insert` request_id (idempotency dedup key, NOT security).
+    # It is not persisted, so the swap is observable only as a longer-hex
+    # token in retries within a single book_appointment call.
+    request_id = hashlib.sha256(
         f"{therapist_id}|{patient_id}|{slot_start.isoformat()}".encode()
     ).hexdigest()
 

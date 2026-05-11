@@ -95,3 +95,19 @@ def test_parse_strict_raises_on_missing() -> None:
 def test_parse_invalid_xml_raises() -> None:
     with pytest.raises(NFeParseError):
         parse_nfe_xml("<not-real><<>")
+
+
+def test_parse_rejects_xxe_external_entity() -> None:
+    """defusedxml hardening: external-entity declarations must be rejected
+    (bandit B314 — XML external-entity-expansion attack defense). Reading
+    `/etc/passwd` via XXE was the classic exploit vector against the prior
+    stdlib `xml.etree.ElementTree.fromstring`. defusedxml raises
+    `EntitiesForbidden` (subclass of ET.ParseError) — we wrap to NFeParseError.
+    """
+    xxe_payload = (
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>\n'
+        "<nfeProc><dest><CNPJ>&xxe;</CNPJ></dest></nfeProc>"
+    )
+    with pytest.raises(NFeParseError):
+        parse_nfe_xml(xxe_payload)

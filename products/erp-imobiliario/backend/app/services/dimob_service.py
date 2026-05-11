@@ -10,7 +10,10 @@ Generates DIMOB XML for Receita Federal (Brazilian IRS) with the following recor
 import logging
 from typing import Any
 from xml.etree.ElementTree import Element, SubElement, tostring
-from xml.dom.minidom import parseString
+
+# defusedxml's minidom.parseString is a drop-in defense against XML attacks
+# (billion laughs / external entity expansion). Same toprettyxml() surface.
+from defusedxml.minidom import parseString
 
 from noctusai_lib.primitives.parsing import format_brl
 

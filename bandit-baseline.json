@@ -1,103 +1,20 @@
 {
   "errors": [],
-  "generated_at": "2026-05-11T20:04:43Z",
+  "generated_at": "2026-05-11T21:55:58Z",
   "metrics": {
     "_totals": {
-      "CONFIDENCE.HIGH": 12,
+      "CONFIDENCE.HIGH": 6,
       "CONFIDENCE.LOW": 0,
       "CONFIDENCE.MEDIUM": 6,
       "CONFIDENCE.UNDEFINED": 0,
-      "SEVERITY.HIGH": 1,
-      "SEVERITY.LOW": 14,
-      "SEVERITY.MEDIUM": 3,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 12,
+      "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 82342,
+      "loc": 82677,
       "nosec": 0,
       "skipped_tests": 0
     }
   },
-  "results": [
-    {
-      "code": "159     try:\n160         root = ET.fromstring(xml_text)\n161     except ET.ParseError as exc:\n",
-      "col_offset": 15,
-      "end_col_offset": 38,
-      "filename": "products/adconnect/backend/app/services/nfe_xml_parser.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 20,
-        "link": "https://cwe.mitre.org/data/definitions/20.html"
-      },
-      "issue_severity": "MEDIUM",
-      "issue_text": "Using xml.etree.ElementTree.fromstring to parse untrusted XML data is known to be vulnerable to XML attacks. Replace xml.etree.ElementTree.fromstring with its defusedxml equivalent function or make sure defusedxml.defuse_stdlib() is called",
-      "line_number": 160,
-      "line_range": [
-        160
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b313-b320-xml-bad-elementtree",
-      "test_id": "B314",
-      "test_name": "blacklist"
-    },
-    {
-      "code": "232     try:\n233         dom = parseString(xml_str)\n234         return dom.toprettyxml(indent=\"  \", encoding=None)\n",
-      "col_offset": 14,
-      "end_col_offset": 34,
-      "filename": "products/erp-imobiliario/backend/app/services/dimob_service.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 20,
-        "link": "https://cwe.mitre.org/data/definitions/20.html"
-      },
-      "issue_severity": "MEDIUM",
-      "issue_text": "Using xml.dom.minidom.parseString to parse untrusted XML data is known to be vulnerable to XML attacks. Replace xml.dom.minidom.parseString with its defusedxml equivalent function or make sure defusedxml.defuse_stdlib() is called",
-      "line_number": 233,
-      "line_range": [
-        233
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b313-b320-xml-bad-minidom",
-      "test_id": "B318",
-      "test_name": "blacklist"
-    },
-    {
-      "code": "317     try:\n318         parsed = parseString(rough_string)\n319         return xml_declaration + parsed.toprettyxml(indent=\"  \").split(\"\\n\", 1)[1]\n",
-      "col_offset": 17,
-      "end_col_offset": 42,
-      "filename": "products/erp-imobiliario/backend/app/services/xml_feeds.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 20,
-        "link": "https://cwe.mitre.org/data/definitions/20.html"
-      },
-      "issue_severity": "MEDIUM",
-      "issue_text": "Using xml.dom.minidom.parseString to parse untrusted XML data is known to be vulnerable to XML attacks. Replace xml.dom.minidom.parseString with its defusedxml equivalent function or make sure defusedxml.defuse_stdlib() is called",
-      "line_number": 318,
-      "line_range": [
-        318
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b313-b320-xml-bad-minidom",
-      "test_id": "B318",
-      "test_name": "blacklist"
-    },
-    {
-      "code": "321     the inserted appointment row including `google_event_id`.\"\"\"\n322     request_id = hashlib.sha1(\n323         f\"{therapist_id}|{patient_id}|{slot_start.isoformat()}\".encode()\n324     ).hexdigest()\n325 \n",
-      "col_offset": 17,
-      "end_col_offset": 5,
-      "filename": "products/therapy-platform/backend/app/services/scheduling/service.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 327,
-        "link": "https://cwe.mitre.org/data/definitions/327.html"
-      },
-      "issue_severity": "HIGH",
-      "issue_text": "Use of weak SHA1 hash for security. Consider usedforsecurity=False",
-      "line_number": 322,
-      "line_range": [
-        322,
-        323,
-        324
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b324_hashlib.html",
-      "test_id": "B324",
-      "test_name": "hashlib"
-    }
-  ]
+  "results": []
 }

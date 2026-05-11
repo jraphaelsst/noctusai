@@ -25,3 +25,8 @@ email-validator>=2.0.0
 
 # Form data — required by FastAPI when any endpoint uses Form() or UploadFile
 python-multipart>=0.0.9
+
+# defusedxml — XML parser hardening (bandit B313-B320). NF-e XML uploads
+# from distributors are untrusted input; defusedxml.ElementTree.fromstring
+# is a drop-in for stdlib xml.etree.ElementTree.fromstring.
+defusedxml>=0.7.1
