@@ -229,6 +229,107 @@ class TestSendMessage:
 
         assert result["phone"] == "5521999990000"
 
+    @pytest.mark.asyncio
+    async def test_success_delegates_to_seed_meta_cloud_client(self, monkeypatch):
+        """Successful send: patch `httpx.AsyncClient` at the external HTTP
+        boundary inside the seed `MetaCloudClient`; ERP-side normalization +
+        envelope preserved. Mirrors `test_send_via_waha::test_success_delegates_to_seed_client`."""
+        from unittest.mock import AsyncMock, MagicMock
+        from app.services.whatsapp_service import send_message, WhatsAppConfig
+        from noctusai_lib.integrations.whatsapp import meta_cloud_client as meta_cloud_module
+
+        captured_post: dict = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(
+            return_value={"messages": [{"id": "wamid.HBgM..."}]},
+        )
+
+        async def fake_post(url, json=None, headers=None):
+            captured_post["url"] = url
+            captured_post["json"] = json
+            captured_post["headers"] = headers
+            return mock_response
+
+        fake_async_client = AsyncMock()
+        fake_async_client.post = fake_post
+        fake_async_client.__aenter__ = AsyncMock(return_value=fake_async_client)
+        fake_async_client.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            meta_cloud_module.httpx,
+            "AsyncClient",
+            lambda **_: fake_async_client,
+        )
+
+        config = WhatsAppConfig(
+            api_token="meta-token", phone_number_id="999", api_version="v18.0"
+        )
+        result = await send_message(
+            phone="11912345678",
+            message="Olá",
+            config=config,
+        )
+
+        # Envelope assertions (status + ID + phone).
+        assert result["status"] == "sent"
+        assert result["message_id"] == "wamid.HBgM..."
+        assert result["phone"] == "5511912345678"  # ERP-side BR country-code prepend
+
+        # Verify the seed client built the right URL + payload + headers.
+        assert captured_post["url"] == "https://graph.facebook.com/v18.0/999/messages"
+        assert captured_post["json"] == {
+            "messaging_product": "whatsapp",
+            "to": "5511912345678",
+            "type": "text",
+            "text": {"body": "Olá"},
+        }
+        assert captured_post["headers"]["Authorization"] == "Bearer meta-token"
+        assert captured_post["headers"]["Content-Type"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_seed_client_exception_returns_failed(self, monkeypatch):
+        """When seed `MetaCloudClient.send_text` raises (HTTPStatusError or
+        other), ERP surfaces the legacy `{status: failed, error: ...}` envelope.
+        Mirrors `test_send_via_waha::test_seed_client_exception_returns_failed`."""
+        from unittest.mock import AsyncMock, MagicMock
+        import httpx
+        from app.services.whatsapp_service import send_message, WhatsAppConfig
+        from noctusai_lib.integrations.whatsapp import meta_cloud_client as meta_cloud_module
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "500 Internal Server Error",
+                request=MagicMock(),
+                response=mock_response,
+            ),
+        )
+
+        fake_async_client = AsyncMock()
+        fake_async_client.post = AsyncMock(return_value=mock_response)
+        fake_async_client.__aenter__ = AsyncMock(return_value=fake_async_client)
+        fake_async_client.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            meta_cloud_module.httpx,
+            "AsyncClient",
+            lambda **_: fake_async_client,
+        )
+
+        config = WhatsAppConfig(api_token="meta-token", phone_number_id="999")
+        result = await send_message(
+            phone="11912345678",
+            message="test",
+            config=config,
+        )
+
+        assert result["status"] == "failed"
+        assert result["message_id"] is None
+        assert "500" in result["error"]
+        assert result["phone"] == "5511912345678"
+
 
 # ---------------------------------------------------------------------------
 # send_property_card (dry-run mode)
