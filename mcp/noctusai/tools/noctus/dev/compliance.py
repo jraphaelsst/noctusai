@@ -2370,6 +2370,57 @@ def _iter_table_callsites(tree: ast.AST):
             yield node
 
 
+def _has_schema_in_chain(call: ast.Call) -> bool:
+    """True if `call` is `<receiver>.schema(...).…table(...)` — i.e. the
+    `.table(...)` invocation is preceded by a `.schema(...)` call anywhere
+    in the receiver chain.
+
+    Walks backward from the `.table(...)` call's receiver looking for an
+    `ast.Call` whose `.func.attr == "schema"`. Stops at the first non-Call
+    receiver (`Name`/`Attribute`/`Subscript`).
+
+    Why this matters — cross-schema lookups (canonical site:
+    `products/core/backend/app/routers/admin_llm_usage.py:92`,
+    `db.schema(schema).table("llm_usage")` iterating `_PRODUCT_SCHEMAS`)
+    target tables in another product's migration tree. The local-schema
+    detectors can't verify those without resolving `schema → product slug
+    → migrations dir`, which is impossible when the `schema` arg is a
+    runtime variable. **Heuristic limit (documented):** we detect the
+    *presence* of the `.schema(...)` call regardless of whether its arg
+    is a literal or a runtime expression, and skip the local-schema
+    check. False-negative trade is acceptable — cross-schema runtime
+    failures are loud (Postgres raises on missing schema), unlike the
+    silent MockSupabase WARN+skip that the original detector defends
+    against.
+
+    Both production-correctness detectors (`check_unknown_table_references`
+    + `check_admin_endpoint_service_role_bypass`) gate on this helper.
+    The admin-bypass detector also fails its receiver-shape check on
+    `db.schema(Y).table(...)` (receiver is a `Call`, not a `Name`/
+    `get_admin_client()`), but the explicit skip closes the gap
+    structurally so a future receiver-shape refactor doesn't reintroduce
+    the false positive.
+    """
+    if not isinstance(call.func, ast.Attribute):
+        return False
+    receiver: ast.AST | None = call.func.value
+    # Walk backward through call chains: `<x>.schema(...).table(...)`,
+    # `<x>.schema(...).foo().table(...)` (rare but legal), etc.
+    while isinstance(receiver, ast.Call):
+        if (
+            isinstance(receiver.func, ast.Attribute)
+            and receiver.func.attr == "schema"
+        ):
+            return True
+        # Step further back: descend into the receiver's own receiver.
+        if isinstance(receiver.func, ast.Attribute):
+            receiver = receiver.func.value
+        else:
+            # `foo()` style — no further chain.
+            receiver = None
+    return False
+
+
 def check_unknown_table_references(product_path: Path) -> list[dict]:
     """Flag `<X>.table("name")` callsites where `name` is not declared by a
     `CREATE TABLE` in the product's migrations.
@@ -2429,6 +2480,12 @@ def check_unknown_table_references(product_path: Path) -> list[dict]:
             rel = str(py_file)
 
         for call in _iter_table_callsites(tree):
+            # Cross-schema lookup (`db.schema(X).table(Y)`) — Y lives in a
+            # foreign product's migration tree. Heuristic limit: we don't
+            # resolve `schema → product slug → migrations`. See
+            # `_has_schema_in_chain` docstring.
+            if _has_schema_in_chain(call):
+                continue
             table_name = _extract_table_string_arg(call)
             if table_name is None:
                 continue
@@ -2678,6 +2735,14 @@ def check_admin_endpoint_service_role_bypass(product_path: Path) -> list[dict]:
             rel = str(py_file)
 
         for call in _iter_table_callsites(tree):
+            # Cross-schema lookup (`admin_db.schema(X).table(Y)`) — bypass
+            # policy must live in X's migration tree, not this product's.
+            # Skip explicitly so a future receiver-shape refactor (e.g.
+            # extending `_is_*_admin_table_call` to follow chains) doesn't
+            # reintroduce the false positive. See `_has_schema_in_chain`
+            # docstring for the heuristic-limit rationale.
+            if _has_schema_in_chain(call):
+                continue
             is_admin = (
                 _is_chained_admin_table_call(call)
                 or _is_bound_admin_table_call(call, bindings)

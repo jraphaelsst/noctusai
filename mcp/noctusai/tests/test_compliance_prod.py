@@ -134,6 +134,74 @@ class TestCheckUnknownTableReferences:
         )
         assert check_unknown_table_references(product) == []
 
+    def test_schema_chained_table_call_is_skipped(self):
+        """`db.schema("erp").table("X")` → not flagged even if X is not in
+        local migrations (X lives in a foreign product's migration tree).
+
+        Canonical site: `core/admin_llm_usage.py:92` where the platform-admin
+        endpoint iterates `_PRODUCT_SCHEMAS` and calls
+        `db.schema(schema).table("llm_usage")`. See `_has_schema_in_chain`
+        for the heuristic-limit rationale.
+        """
+        product = _mk_product(
+            migrations={
+                "001_init.sql": (
+                    "CREATE TABLE IF NOT EXISTS core.noctus_users ( id UUID );\n"
+                )
+            },
+            app_files={
+                "routers/admin_llm_usage.py": (
+                    "def aggregate(db):\n"
+                    "    rows = db.schema('erp').table('llm_usage').select('*').execute()\n"
+                    "    return rows\n"
+                )
+            },
+        )
+        assert check_unknown_table_references(product) == []
+
+    def test_dynamic_schema_chain_is_skipped(self):
+        """`db.schema(var).table("X")` → not flagged. Detector cannot
+        resolve `var` to a product slug at AST time; the chain itself
+        signals cross-schema intent, so skip.
+        """
+        product = _mk_product(
+            migrations={
+                "001_init.sql": (
+                    "CREATE TABLE IF NOT EXISTS core.noctus_users ( id UUID );\n"
+                )
+            },
+            app_files={
+                "routers/admin_llm_usage.py": (
+                    "def aggregate(db):\n"
+                    "    for slug, schema in [('erp', 'erp'), ('therapy', 'therapy')]:\n"
+                    "        rows = db.schema(schema).table('llm_usage').select('*').execute()\n"
+                    "    return rows\n"
+                )
+            },
+        )
+        assert check_unknown_table_references(product) == []
+
+    def test_no_schema_chain_still_flags_unknown(self):
+        """Regression guard — the schema-chain skip MUST NOT mask bare
+        `db.table('unknown_table')` calls (the original detector intent).
+        """
+        product = _mk_product(
+            migrations={
+                "001_init.sql": (
+                    "CREATE TABLE IF NOT EXISTS core.noctus_users ( id UUID );\n"
+                )
+            },
+            app_files={
+                "routers/foo.py": (
+                    "def bad(db):\n"
+                    "    db.table('totally_made_up_table').select('*').execute()\n"
+                )
+            },
+        )
+        issues = check_unknown_table_references(product)
+        assert len(issues) == 1
+        assert issues[0]["table"] == "totally_made_up_table"
+
 
 class TestCheckFunctionSearchPathPinned:
     """Detector for `CREATE FUNCTION` blocks missing `SET search_path`.
@@ -331,3 +399,30 @@ class TestCheckAdminEndpointServiceRoleBypass:
         root = Path(tempfile.mkdtemp(prefix="compliance_prod_admin_nomig_"))
         (root / "backend" / "app").mkdir(parents=True)
         assert check_admin_endpoint_service_role_bypass(root) == []
+
+    def test_schema_chained_admin_call_is_skipped(self):
+        """`admin_db.schema(X).table('T')` → not flagged. The bypass policy
+        must live in X's migration tree, not this product's.
+
+        Today the receiver-shape check (`Name`/`get_admin_client()`)
+        already silently misses this site (receiver is a `Call`), but the
+        explicit `_has_schema_in_chain` gate closes the gap structurally
+        so a future receiver-shape refactor doesn't reintroduce the
+        false positive.
+        """
+        product = _mk_product(
+            migrations={
+                "001.sql": (
+                    "CREATE TABLE IF NOT EXISTS core.noctus_users ( id UUID );\n"
+                )
+            },
+            app_files={
+                "routers/admin_llm_usage.py": (
+                    "def aggregate():\n"
+                    "    admin_db = get_admin_client()\n"
+                    "    for schema in ['erp', 'therapy']:\n"
+                    "        admin_db.schema(schema).table('llm_usage').select('*').execute()\n"
+                )
+            },
+        )
+        assert check_admin_endpoint_service_role_bypass(product) == []
