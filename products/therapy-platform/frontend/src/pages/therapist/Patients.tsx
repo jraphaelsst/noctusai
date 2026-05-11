@@ -5,19 +5,8 @@ import { Input } from '@noctusai/seed/components/ui/input';
 import { Button } from '@noctusai/seed/components/ui/button';
 import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Avatar, AvatarFallback } from '@noctusai/seed/components/ui/avatar';
-import { useAuthStore, api } from '@noctusai/seed/infra';
-import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-
-interface TherapistPatient {
-  id: string;
-  nome: string;
-  email?: string;
-  origin?: string;
-  session_count?: number;
-  next_appointment?: string;
-  last_session?: string;
-}
+import { useTherapistPatients } from '@/hooks/useTherapistPatients';
 
 const ORIGIN_BADGE: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' }> = {
   direct: { label: 'Direto', variant: 'default' },
@@ -26,27 +15,24 @@ const ORIGIN_BADGE: Record<string, { label: string; variant: 'default' | 'second
 };
 
 function getInitials(name: string) {
+  if (!name) return '?';
   return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
 }
 
 export default function TherapistPatients() {
-  const { user } = useAuthStore();
   const navigate = useNavigate();
   const [busca, setBusca] = useState('');
 
-  const { data, isLoading } = useQuery<{ data: TherapistPatient[] }>({
-    queryKey: ['therapist', 'patients'],
-    queryFn: async () => api.get('/api/therapist/patients'),
-    enabled: !!user,
-    staleTime: 2 * 60 * 1000,
-  });
+  const { data, isLoading } = useTherapistPatients(busca);
 
   const patients = data?.data ?? [];
 
   const filtered = useMemo(() => {
     if (!busca.trim()) return patients;
     const q = busca.toLowerCase();
-    return patients.filter(p => p.nome.toLowerCase().includes(q));
+    // Server-side filter handles `busca` for phone/user_id; client-side
+    // backfill covers `nome` (which lives in auth metadata, not the row).
+    return patients.filter(p => (p.nome ?? '').toLowerCase().includes(q));
   }, [patients, busca]);
 
   return (
@@ -96,11 +82,11 @@ export default function TherapistPatients() {
                 <CardContent className="p-5">
                   <div className="flex items-start gap-4">
                     <Avatar className="h-12 w-12">
-                      <AvatarFallback>{getInitials(p.nome)}</AvatarFallback>
+                      <AvatarFallback>{getInitials(p.nome ?? '')}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold truncate">{p.nome}</span>
+                        <span className="font-semibold truncate">{p.nome ?? 'Paciente'}</span>
                         <Badge variant={origin.variant} className="shrink-0">{origin.label}</Badge>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">{p.session_count ?? 0} sessoes</p>

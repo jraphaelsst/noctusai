@@ -1,27 +1,10 @@
 import { Star, Flag, TrendingUp } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
+import { Card, CardContent } from '@noctusai/seed/components/ui/card';
 import { Button } from '@noctusai/seed/components/ui/button';
 import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Separator } from '@noctusai/seed/components/ui/separator';
-import { useAuthStore, api } from '@noctusai/seed/infra';
-import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-
-interface Review {
-  id: string;
-  nota: number;
-  comentario?: string;
-  patient_name: string;
-  tags?: string[];
-  created_at: string;
-  is_anonymous: boolean;
-}
-
-interface ReviewSummary {
-  average: number;
-  total: number;
-  distribution: Record<number, number>;
-}
+import { useTherapistReviews } from '@/hooks/useTherapistReviews';
 
 function StarRating({ rating, size = 'md' }: { rating: number; size?: 'sm' | 'md' }) {
   const cls = size === 'sm' ? 'h-3.5 w-3.5' : 'h-5 w-5';
@@ -38,16 +21,11 @@ function StarRating({ rating, size = 'md' }: { rating: number; size?: 'sm' | 'md
 }
 
 export default function TherapistReviews() {
-  const { user } = useAuthStore();
-
-  const { data, isLoading } = useQuery<{ data: Review[]; summary: ReviewSummary }>({
-    queryKey: ['therapist', 'reviews'],
-    queryFn: async () => api.get('/api/therapist/reviews'),
-    enabled: !!user,
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data, isLoading } = useTherapistReviews();
 
   const reviews = data?.data ?? [];
+  // Summary is not yet emitted by the backend — see hook docstring.
+  // Falls back to zero-state defaults; renders gracefully.
   const summary = data?.summary ?? { average: 0, total: 0, distribution: {} };
 
   const handleFlag = (id: string) => {
@@ -125,7 +103,7 @@ export default function TherapistReviews() {
                     <div className="flex items-center gap-3">
                       <StarRating rating={r.nota} size="sm" />
                       <span className="text-sm font-medium">
-                        {r.is_anonymous ? 'Paciente anonimo' : r.patient_name}
+                        {r.is_anonymous ? 'Paciente anonimo' : (r.patient_name ?? 'Paciente')}
                       </span>
                     </div>
                     {r.comentario && (
