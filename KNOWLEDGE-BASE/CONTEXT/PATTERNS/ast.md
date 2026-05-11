@@ -181,6 +181,32 @@ Same trap shape, other forms:
 
 ---
 
+## Extract-and-move risk floor — cross-module schema-ref grep is the Phase 0 step
+
+Before any "extract X from module A into module B" project (most commonly: lifting inline `BaseModel` / dataclass / typed-DTO classes from router files into a sibling `schemas/` directory), do this **single grep**:
+
+```bash
+git grep -n '<ClassName>' app/ tests/        # per-class
+# OR for a whole module's classes:
+git grep -n 'from app.routers.<file> import' app/ tests/
+```
+
+**The risk model**: extraction is high-risk when classes are imported across modules; near-zero risk when each class is only used inside its own router file. A 30-second grep distinguishes these two regimes upfront — without it, you're guessing.
+
+**Operational rule (Phase 0 deliverable for any extract-and-move project)**:
+
+1. Enumerate every class targeted for extraction.
+2. For each: `git grep -n '<ClassName>' app/ tests/` → record hit count.
+3. **Zero hits across all classes → extraction is mechanical** (codemod-only; no behavior change). The follow-up project can be dispatched as a single engineer or per-file parallel waves with confidence.
+4. **Hits surfaced → extraction is structural** (touches multiple modules; each import site needs updating). Plan accordingly — usually means one engineer per coupling boundary.
+5. **Same-name collisions across target modules** (the `RoleUpdate` shape: `roles.py:RoleUpdate` and `team.py:RoleUpdate` are different classes) → **MUST resolve naming first** before any extraction wave fires. File as Wave 1 rename project; subsequent waves gate on its FF-merge.
+
+**Where this rule comes from**: CORE-SCHEMAS-AUDIT 2026-05-11 (`projects/core-schemas-extraction-audit/`) audited 40 inline `BaseModel` classes across 28 core routers. Zero cross-module hits across all 40 (audit dispatched as "risk floor confirmed; extraction is mechanical"). Surfaced one same-name collision (`RoleUpdate` in `roles.py` + `team.py`) → filed as Wave 1 rename unblocker.
+
+**Anti-pattern**: starting extraction without this grep, then discovering mid-flight that 6 callers in 4 modules import `RoleUpdate` and you've created N=2 same-name files. Cleanup costs > what the grep would have prevented.
+
+---
+
 ## When regex IS the right tool
 
 - **Search-only** — `grep` / `rg` for finding occurrences before deciding what to edit. The keeper's `noctusai_scan_*` recurrence scans use regex internally on string-line shape, intentionally.
