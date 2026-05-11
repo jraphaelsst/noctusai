@@ -60,6 +60,7 @@ the to_thread coroutine resolves.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 from dataclasses import dataclass, field
@@ -87,11 +88,23 @@ from app.services.calendar import (
     update_calendar_event,
 )
 from app.services.maps import get_maps_module
+from app.services.anomaly import record_dispatch_observed
+from app.services.sanitization import wrap_handler as wrap_handler_with_sanitization
 from app.services.scheduling import SchedulingService, build_rules
 from app.services.tool_audit import make_supabase_audit_writer
 from app.services.tool_registry import TOOL_DESCRIPTORS, build_tool_handler
 
 logger = logging.getLogger(__name__)
+
+
+# Phase 11 — conversation_id threaded through the tool-handler stack via
+# ContextVar so the anomaly detector wrapper (defined inside
+# `_build_processor`) can read it without changing the seed's
+# `Callable[[ToolCall], ToolResult]` signature. Set inside `_process(...)`
+# before invoking the dispatcher; cleared after the dispatch returns.
+_current_conversation_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "imobi_scheduling_current_conversation_id", default=""
+)
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +372,23 @@ def _build_processor(
         `Callable[[str, list[dict]], None]` matching
         `noctusai_lib.domain.chatbot.ConversationProcessor`.
     """
-    handler = build_tool_handler(scheduling_service=scheduling_service)
+    raw_handler = build_tool_handler(scheduling_service=scheduling_service)
+    # Phase 11 — sanitization + anomaly-detection layer. Wrap the tool
+    # handler so every dispatch (a) has PII redacted from the result
+    # before it flows back to the LLM + (b) is observed by the anomaly
+    # detector for threshold-based WARN logs. Wrap-order: anomaly OUTSIDE
+    # sanitization so the anomaly detector sees the original tool name
+    # cleanly (sanitization touches `result.content`, not `call.name`).
+    sanitized_handler = wrap_handler_with_sanitization(raw_handler)
+
+    def _observed_handler(call):
+        result = sanitized_handler(call)
+        cid = _current_conversation_id.get()
+        if cid:
+            record_dispatch_observed(cid, tool_name=call.name)
+        return result
+
+    handler = _observed_handler
     system_prompt = build_system_prompt()
 
     def _process(conversation_id: str, memory: list[dict[str, Any]]) -> None:
@@ -367,6 +396,10 @@ def _build_processor(
             {"role": "system", "content": system_prompt},
             *memory_to_chat_messages(memory),
         ]
+        # Phase 11 — thread conversation_id through the tool-handler
+        # stack via ContextVar so the anomaly-detector wrapper can
+        # observe it without changing the seed's ToolHandler signature.
+        token = _current_conversation_id.set(conversation_id)
         try:
             reply = dispatcher.reply(
                 messages=messages,
@@ -380,6 +413,8 @@ def _build_processor(
                 conversation_id,
             )
             return
+        finally:
+            _current_conversation_id.reset(token)
         # Phase 6 stops at logging the reply. Phase 7 wires outbound
         # emission to WAHA via the WhatsApp client + persists the
         # outbound turn to the buffer via `buffer.append_to_memory(...)`.

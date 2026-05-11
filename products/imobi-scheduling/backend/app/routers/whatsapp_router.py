@@ -61,6 +61,7 @@ from noctusai_lib.integrations.whatsapp import (
 from app.config import settings
 from app.dependencies import coerce_org_uuid, get_admin_client
 from app.services.authorization import AuthorizationService, looks_like_lid
+from app.services.conversation_rate_limit import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,28 @@ async def handle_inbound_whatsapp(inbound: WhatsAppInboundMessage) -> None:
             inbound.from_phone,
         )
         return
+
+    # Phase 11 — per-conversation rate limit. Check BEFORE auth resolution
+    # so a flood from an unauthenticated chat_id can't burn DB query budget.
+    # Limiter is optional (None = disabled, e.g. tests not exercising the
+    # security layer). Failure-open semantics live inside the limiter
+    # itself; here we only branch on `allowed`.
+    rate_limiter = get_rate_limiter()
+    if rate_limiter is not None:
+        decision = rate_limiter.check(inbound.chat_id)
+        if not decision.allowed:
+            # Loud log already emitted inside the limiter; this is the
+            # second signal at the request boundary (per-conversation
+            # rate-limit rejected the inbound). WAHA still gets 200 —
+            # the upstream isn't at fault, the conversation is.
+            logger.info(
+                "WhatsApp inbound throttled by per-conversation rate limit: "
+                "chat_id=%s count=%d limit=%d",
+                inbound.chat_id,
+                decision.current_count,
+                decision.limit,
+            )
+            return
 
     org_uuid = coerce_org_uuid(SINGLE_AGENCY_ORG_KEY)
     svc = AuthorizationService(admin, org_id=org_uuid)

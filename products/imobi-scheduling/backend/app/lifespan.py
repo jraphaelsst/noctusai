@@ -33,14 +33,27 @@ from __future__ import annotations
 
 import logging
 
+from noctusai_lib.integrations.redis import (
+    make_fake_redis_client,
+    make_redis_client,
+)
+
 from app.config import settings
 from app.dependencies import coerce_org_uuid, get_admin_client
 from app.routers.whatsapp_router import SINGLE_AGENCY_ORG_KEY
+from app.services.anomaly import (
+    ToolDispatchAnomalyDetector,
+    configure_anomaly_detector,
+)
 from app.services.calendar import configure_calendar_module
 from app.services.conversation import (
     configure_conversation_module,
     start_worker,
     stop_worker,
+)
+from app.services.conversation_rate_limit import (
+    RedisConversationRateLimiter,
+    configure_rate_limiter,
 )
 from app.services.maps import configure_maps_module, load_condominium_coords
 
@@ -80,6 +93,26 @@ async def on_startup() -> None:
     )
 
     configure_conversation_module(admin_client=admin, org_id=org_uuid)
+
+    # Phase 11 — security hardening. Wire the per-conversation rate
+    # limiter + tool-dispatch anomaly detector. Both consume the same
+    # Redis client the conversation buffer uses (`make_redis_client`
+    # if REDIS_URL configured, else `make_fake_redis_client`). Failure
+    # to construct either is non-blocking — both have `None` as a
+    # valid "disabled" state at the consumer side, surfaced via WARN.
+    try:
+        redis_url = getattr(settings, "redis_url", None) or ""
+        security_redis = (
+            make_redis_client(redis_url) if redis_url else make_fake_redis_client()
+        )
+        configure_rate_limiter(RedisConversationRateLimiter(security_redis))
+        configure_anomaly_detector(ToolDispatchAnomalyDetector(security_redis))
+    except Exception:  # noqa: BLE001 — lifespan robustness.
+        logger.exception(
+            "Phase 11 security layer wiring failed; rate-limit + anomaly "
+            "detector disabled. WhatsApp inbounds still flow."
+        )
+
     start_worker()
     logger.info("Imobi Scheduling lifespan startup: conversation module ready.")
 
