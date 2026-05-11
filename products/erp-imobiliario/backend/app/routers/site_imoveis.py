@@ -25,10 +25,11 @@ import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import success_response
+from noctusai_lib.api import StrictHttpModel
 
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ router = APIRouter(prefix="/api/site", tags=["Site Imóveis"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class SiteConfigUpdate(BaseModel):
+class SiteConfigUpdate(StrictHttpModel):
     nome_site: Optional[str] = Field(default=None, min_length=1, max_length=100)
     slug: Optional[str] = Field(default=None, min_length=3, max_length=60)
     logo_url: Optional[str] = Field(default=None, max_length=500)
@@ -70,7 +71,7 @@ class SiteConfigUpdate(BaseModel):
         return v
 
 
-class SiteConfigCreate(BaseModel):
+class SiteConfigCreate(StrictHttpModel):
     nome_site: str = Field(..., min_length=1, max_length=100)
     slug: str = Field(..., min_length=3, max_length=60)
     logo_url: Optional[str] = Field(default=None, max_length=500)

@@ -23,12 +23,13 @@ from typing import Optional, Literal
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import success_response, paginated_response, ok_response, calculate_pagination
 from app.config import settings
 from app.rate_limit import limiter
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portal", tags=["Portal Externo"])
@@ -38,7 +39,7 @@ router = APIRouter(prefix="/api/portal", tags=["Portal Externo"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class GerarLinkBody(BaseModel):
+class GerarLinkBody(StrictHttpModel):
     tipo: Literal["proprietario", "locatario"]
     pessoa_id: str
     nome: str = Field(..., min_length=1, max_length=255)

@@ -7,17 +7,17 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel
 
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import success_response
 from app.services import meta_fechamentos_service as svc
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas/fechamentos", tags=["Metas — Fechamentos"])
 
 
-class CloseBody(BaseModel):
+class CloseBody(StrictHttpModel):
     periodo_id: str
 
 

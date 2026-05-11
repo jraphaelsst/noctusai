@@ -5,7 +5,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
 
 from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 from noctusai_lib.primitives.responses import success_response
@@ -14,29 +13,30 @@ from app.dependencies import get_current_user_org, get_org_id, get_user_client
 from app.rate_limit import limiter
 from app.services import ai_service
 from app.services import segmentation_service
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
 
 
-class SubjectsRequest(BaseModel):
+class SubjectsRequest(StrictHttpModel):
     campaign_summary: str
 
 
-class TemplateDraftRequest(BaseModel):
+class TemplateDraftRequest(StrictHttpModel):
     prompt: str
 
 
-class ReengagementRequest(BaseModel):
+class ReengagementRequest(StrictHttpModel):
     context: str
 
 
-class DeliverabilityRequest(BaseModel):
+class DeliverabilityRequest(StrictHttpModel):
     html: str
     subject: Optional[str] = None
 
 
-class TranslationRequest(BaseModel):
+class TranslationRequest(StrictHttpModel):
     html: str
     target_lang: str  # "en" | "es" | "fr"
 
@@ -117,7 +117,7 @@ async def translate_endpoint(
 # ---------------------------------------------------------------------------
 
 
-class SegmentRequest(BaseModel):
+class SegmentRequest(StrictHttpModel):
     list_id: Optional[str] = None  # if absent: segment ALL active contacts of the org
     threshold: Optional[float] = None
     max_segments: Optional[int] = None
@@ -219,7 +219,7 @@ async def segment_contacts_endpoint(
 # ---------------------------------------------------------------------------
 
 
-class CampaignDebriefRequest(BaseModel):
+class CampaignDebriefRequest(StrictHttpModel):
     recipient: str
 
 

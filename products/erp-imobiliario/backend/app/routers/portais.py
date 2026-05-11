@@ -8,10 +8,10 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import success_response
 from app.services.xml_feeds import generate_zap_xml, generate_olx_xml, generate_vivareal_xml
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portais", tags=["Portais"])
@@ -41,7 +41,7 @@ PORTAL_INFO = {
 }
 
 
-class TogglePortalRequest(BaseModel):
+class TogglePortalRequest(StrictHttpModel):
     pronto_para_portais: bool
 
 

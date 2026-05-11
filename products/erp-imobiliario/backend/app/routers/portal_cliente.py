@@ -31,12 +31,13 @@ and client-facing endpoints (token-based, no Bearer auth) for client self-servic
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.portal_cliente_service import PortalClienteService
 from app.rate_limit import limiter
 from app.config import settings
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portal-cliente", tags=["Portal do Cliente"])
@@ -44,7 +45,7 @@ router = APIRouter(prefix="/api/portal-cliente", tags=["Portal do Cliente"])
 
 # --- Pydantic models ---
 
-class GerarAcessoRequest(BaseModel):
+class GerarAcessoRequest(StrictHttpModel):
     cliente_id: str = Field(..., description="ID do cliente para gerar acesso")
     data_expiracao: Optional[str] = Field(
         default=None,
@@ -52,7 +53,7 @@ class GerarAcessoRequest(BaseModel):
     )
 
 
-class ChamadoCreate(BaseModel):
+class ChamadoCreate(StrictHttpModel):
     assunto: str = Field(..., min_length=1, max_length=255, description="Assunto do chamado")
     descricao: str = Field(..., min_length=1, max_length=2000, description="Descrição detalhada")
     prioridade: Optional[str] = Field(
@@ -62,7 +63,7 @@ class ChamadoCreate(BaseModel):
     )
 
 
-class ChamadoUpdate(BaseModel):
+class ChamadoUpdate(StrictHttpModel):
     status: Optional[str] = Field(
         default=None,
         pattern="^(aberto|em_andamento|resolvido|fechado)$",

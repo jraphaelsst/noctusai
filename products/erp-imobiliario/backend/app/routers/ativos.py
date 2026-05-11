@@ -4,17 +4,18 @@ Ativos CRUD Router — Unified table for imóveis + permutas.
 import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ativos", tags=["Ativos"])
 
 
-class AtivoCreate(BaseModel):
+class AtivoCreate(StrictHttpModel):
     natureza: Literal["imovel", "permuta_imovel", "permuta_automovel"]
     valor: float = Field(default=0, ge=0, description="Valor deve ser >= 0")
     status: str = "ativo"
@@ -75,7 +76,7 @@ class AtivoCreate(BaseModel):
     quilometragem_max: Optional[int] = Field(default=None, ge=0)
 
 
-class AtivoUpdate(BaseModel):
+class AtivoUpdate(StrictHttpModel):
     valor: Optional[float] = Field(default=None, ge=0)
     status: Optional[str] = None
     observacoes: Optional[str] = None

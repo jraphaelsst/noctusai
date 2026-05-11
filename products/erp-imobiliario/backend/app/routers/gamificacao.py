@@ -25,7 +25,7 @@ Gamification Router — leaderboard, points, achievements, and point registratio
 import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client
 from app.responses import success_response, paginated_response, calculate_pagination
 from app.config import settings
@@ -35,6 +35,7 @@ from app.services.gamificacao_service import (
     PONTOS_POR_ACAO,
     BADGES,
 )
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/gamificacao", tags=["Gamificação"])
@@ -44,7 +45,7 @@ router = APIRouter(prefix="/api/gamificacao", tags=["Gamificação"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class RegistrarPontosRequest(BaseModel):
+class RegistrarPontosRequest(StrictHttpModel):
     acao: str = Field(..., description="Action type (novo_cliente, visita_realizada, etc.)")
     referencia_id: Optional[str] = None
     referencia_tipo: Optional[str] = None

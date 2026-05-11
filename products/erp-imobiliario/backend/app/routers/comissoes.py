@@ -29,11 +29,12 @@ Comissoes CRUD Router — Commission management for real estate sales.
 import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.comissoes_service import ComissoesService
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/comissoes", tags=["Comissoes"])
@@ -41,13 +42,13 @@ router = APIRouter(prefix="/api/comissoes", tags=["Comissoes"])
 
 # ---------- Schemas ----------
 
-class SplitInput(BaseModel):
+class SplitInput(StrictHttpModel):
     corretor_id: str
     corretor_nome: str = Field(..., min_length=1, max_length=255)
     percentual: float = Field(..., gt=0, le=100)
 
 
-class ComissaoCreate(BaseModel):
+class ComissaoCreate(StrictHttpModel):
     venda_id: Optional[str] = None
     imovel_id: Optional[str] = None
     valor_venda: float = Field(..., gt=0, description="Valor da venda")
@@ -57,7 +58,7 @@ class ComissaoCreate(BaseModel):
     splits: Optional[List[SplitInput]] = None
 
 
-class ComissaoStatusUpdate(BaseModel):
+class ComissaoStatusUpdate(StrictHttpModel):
     status: Literal["pendente", "aprovada", "paga", "cancelada"]
     data_pagamento: Optional[str] = None
     observacoes: Optional[str] = None

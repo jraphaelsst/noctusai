@@ -27,12 +27,13 @@ and annual summaries per property.
 import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.impostos_service import ImpostosService
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/impostos", tags=["Impostos"])
@@ -40,7 +41,7 @@ router = APIRouter(prefix="/api/impostos", tags=["Impostos"])
 
 # --- Pydantic models ---
 
-class ImpostoCreate(BaseModel):
+class ImpostoCreate(StrictHttpModel):
     imovel_id: str = Field(..., description="ID do imóvel associado")
     tipo: Literal["iptu", "itbi", "txa_lixo", "contribuicao_melhoria", "outro"]
     ano: int = Field(..., ge=2000, le=2100, description="Ano de referência")
@@ -56,7 +57,7 @@ class ImpostoCreate(BaseModel):
     observacoes: Optional[str] = None
 
 
-class ImpostoUpdate(BaseModel):
+class ImpostoUpdate(StrictHttpModel):
     tipo: Optional[Literal["iptu", "itbi", "txa_lixo", "contribuicao_melhoria", "outro"]] = None
     ano: Optional[int] = Field(default=None, ge=2000, le=2100)
     valor_total: Optional[float] = Field(default=None, gt=0)

@@ -27,7 +27,7 @@ import logging
 from typing import Optional, Literal, List
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from noctusai_lib.security.webhook_signatures import (
     ResolvedSecret,
@@ -40,6 +40,7 @@ from app.dependencies import get_current_user, get_user_client, get_admin_client
 from app.rate_limit import limiter
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.assinatura_service import AssinaturaService
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/assinaturas", tags=["Assinaturas"])
@@ -103,13 +104,13 @@ async def _resolve_assinatura_secret(request: Request, body: bytes) -> ResolvedS
 
 # --- Pydantic models ---
 
-class Signatario(BaseModel):
+class Signatario(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=200)
     email: str = Field(..., min_length=5, max_length=200)
     papel: str = Field(..., min_length=1, max_length=100, description="Papel do signatario (ex: comprador, vendedor, testemunha)")
 
 
-class EnviarAssinaturaRequest(BaseModel):
+class EnviarAssinaturaRequest(StrictHttpModel):
     documento_nome: str = Field(..., min_length=1, max_length=300)
     documento_url: Optional[str] = Field(default=None, max_length=1000)
     contrato_id: Optional[str] = None
@@ -117,13 +118,13 @@ class EnviarAssinaturaRequest(BaseModel):
     provedor: Optional[Literal["interno", "clicksign", "docusign", "d4sign"]] = "interno"
 
 
-class WebhookPayload(BaseModel):
+class WebhookPayload(StrictHttpModel):
     assinatura_id: str = Field(..., description="ID da assinatura")
     evento: str = Field(..., min_length=1, max_length=100, description="Tipo do evento (ex: assinado, recusado, expirado)")
     dados: Optional[dict] = Field(default=None, description="Dados adicionais do evento")
 
 
-class AssinaturaUpdate(BaseModel):
+class AssinaturaUpdate(StrictHttpModel):
     documento_nome: Optional[str] = Field(default=None, min_length=1, max_length=300)
     documento_url: Optional[str] = Field(default=None, max_length=1000)
     status: Optional[Literal["pendente", "enviado", "assinado", "recusado", "expirado", "cancelado"]] = None

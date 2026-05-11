@@ -9,13 +9,14 @@ from typing import Optional
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_user_client, get_current_user_org
 from app.services.goals_service import register_checkin
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
 from noctusai_lib.api.auth import first_or_none
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/goals", tags=["Goals & Habits"])
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/api/goals", tags=["Goals & Habits"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class GoalCreate(BaseModel):
+class GoalCreate(StrictHttpModel):
     titulo: str = Field(..., min_length=1, max_length=300)
     descricao: Optional[str] = None
     tipo: str = Field(default="meta", pattern="^(meta|habito)$")
@@ -36,7 +37,7 @@ class GoalCreate(BaseModel):
     data_limite: Optional[date] = None
 
 
-class GoalUpdate(BaseModel):
+class GoalUpdate(StrictHttpModel):
     titulo: Optional[str] = Field(None, min_length=1, max_length=300)
     descricao: Optional[str] = None
     categoria: Optional[str] = None
@@ -48,7 +49,7 @@ class GoalUpdate(BaseModel):
     status: Optional[str] = Field(None, pattern="^(ativa|concluida|pausada|cancelada)$")
 
 
-class HabitCheckIn(BaseModel):
+class HabitCheckIn(StrictHttpModel):
     data: date
     valor: Optional[float] = 1.0
     nota: Optional[str] = None

@@ -32,11 +32,12 @@ from typing import Optional, Literal
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chaves", tags=["Chaves"])
@@ -46,26 +47,26 @@ router = APIRouter(prefix="/api/chaves", tags=["Chaves"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class ChaveCreate(BaseModel):
+class ChaveCreate(StrictHttpModel):
     imovel_id: str
     codigo: str = Field(..., min_length=1, max_length=50)
     descricao: Optional[str] = Field(default=None, max_length=255)
     observacoes: Optional[str] = None
 
 
-class ChaveUpdate(BaseModel):
+class ChaveUpdate(StrictHttpModel):
     codigo: Optional[str] = Field(default=None, min_length=1, max_length=50)
     descricao: Optional[str] = Field(default=None, max_length=255)
     status: Optional[Literal["disponivel", "emprestada", "perdida"]] = None
     observacoes: Optional[str] = None
 
 
-class RetiradaBody(BaseModel):
+class RetiradaBody(StrictHttpModel):
     corretor_nome: str = Field(..., min_length=1, max_length=150)
     motivo: Optional[str] = Field(default=None, max_length=500)
 
 
-class DevolucaoBody(BaseModel):
+class DevolucaoBody(StrictHttpModel):
     corretor_nome: str = Field(..., min_length=1, max_length=150)
     motivo: Optional[str] = Field(default=None, max_length=500)
 

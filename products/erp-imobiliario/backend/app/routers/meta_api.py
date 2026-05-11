@@ -11,7 +11,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from noctusai_lib.security.webhook_signatures import (
     ResolvedSecret,
@@ -29,6 +29,7 @@ from app.services.meta_api_service import (
     sync_campaigns,
     parse_lead_webhook,
 )
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meta", tags=["meta-api"])
@@ -73,7 +74,7 @@ async def _resolve_meta_secret(request: Request, body: bytes) -> ResolvedSecret:
 
 # ── Schemas ──────────────────────────────────────────────────────────
 
-class MetaConfigCreate(BaseModel):
+class MetaConfigCreate(StrictHttpModel):
     page_id: Optional[str] = Field(default=None, max_length=100)
     access_token: Optional[str] = None
     ad_account_id: Optional[str] = Field(default=None, max_length=100)

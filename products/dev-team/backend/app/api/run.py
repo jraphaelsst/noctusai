@@ -11,18 +11,19 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_org_id
 from app.rate_limit import limiter
 from app.services import dev_team_proxy
 from noctusai_lib.primitives.responses import success_response
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/run", tags=["dev-team run"])
 
 
-class RunRequest(BaseModel):
+class RunRequest(StrictHttpModel):
     """POST /api/run body."""
     task: str = Field(..., min_length=1, description="Free-form task for the team")
     project: Optional[str] = Field(None, description="Optional project slug for telemetry grouping")

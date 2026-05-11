@@ -10,17 +10,18 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_org_id
 from app.services import dev_team_proxy
 from noctusai_lib.primitives.responses import success_response
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/configs", tags=["dev-team configs"])
 
 
-class ConfigPatch(BaseModel):
+class ConfigPatch(StrictHttpModel):
     """PATCH /api/configs/{name} body."""
     agent_name: str = Field(..., description="Which agent role to patch (e.g. 'leader')")
     model: Optional[str] = Field(None, description="New model identifier")

@@ -35,12 +35,13 @@ and document generation from templates.
 import logging
 from typing import Optional, Literal, Dict
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.document_service import DocumentService
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documentos", tags=["Documentos"])
@@ -48,7 +49,7 @@ router = APIRouter(prefix="/api/documentos", tags=["Documentos"])
 
 # --- Pydantic models ---
 
-class DocumentoCreate(BaseModel):
+class DocumentoCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=255)
     tipo: Literal["contrato", "procuracao", "laudo", "certidao", "outro"]
     arquivo_url: Optional[str] = None
@@ -62,7 +63,7 @@ class DocumentoCreate(BaseModel):
     metadata: Optional[dict] = None
 
 
-class TemplateCreate(BaseModel):
+class TemplateCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=255)
     tipo: Literal["contrato", "procuracao", "laudo", "certidao", "outro"]
     conteudo: str = Field(..., min_length=1, description="Conteúdo do template com variáveis {{nome}}")
@@ -70,7 +71,7 @@ class TemplateCreate(BaseModel):
     is_active: bool = True
 
 
-class GenerateDocumentRequest(BaseModel):
+class GenerateDocumentRequest(StrictHttpModel):
     template_id: str
     variables: Dict[str, str] = Field(..., description="Valores das variáveis do template")
     imovel_id: Optional[str] = None

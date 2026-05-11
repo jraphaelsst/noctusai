@@ -6,22 +6,23 @@ never exposed to the client.
 import logging
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action, first_or_none
 from app.responses import success_response, ok_response
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/profiles", tags=["Profiles"])
 
 
-class ProfileCreate(BaseModel):
+class ProfileCreate(StrictHttpModel):
     nome: str
     email: str
     telefone: Optional[str] = None
     password: str
 
 
-class ProfileUpdate(BaseModel):
+class ProfileUpdate(StrictHttpModel):
     nome: Optional[str] = None
     telefone: Optional[str] = None
     cargo: Optional[str] = None

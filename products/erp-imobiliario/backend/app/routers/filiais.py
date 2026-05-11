@@ -23,11 +23,12 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/filiais", tags=["Filiais"])
@@ -37,7 +38,7 @@ router = APIRouter(prefix="/api/filiais", tags=["Filiais"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class FilialCreate(BaseModel):
+class FilialCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=255)
     codigo: str = Field(..., min_length=1, max_length=20)
     endereco: Optional[str] = Field(default=None, max_length=500)
@@ -47,7 +48,7 @@ class FilialCreate(BaseModel):
     responsavel_id: Optional[str] = None
 
 
-class FilialUpdate(BaseModel):
+class FilialUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     codigo: Optional[str] = Field(default=None, min_length=1, max_length=20)
     endereco: Optional[str] = Field(default=None, max_length=500)

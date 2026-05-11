@@ -3,19 +3,19 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
 from app.dependencies import get_current_user_org, get_org_id, get_admin_client
 from noctusai_lib.primitives.responses import success_response
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
 
-class DomainAdd(BaseModel):
+class DomainAdd(StrictHttpModel):
     domain: str
 
 
-class SenderConfig(BaseModel):
+class SenderConfig(StrictHttpModel):
     remetente_nome: Optional[str] = None
     remetente_email: Optional[str] = None
 

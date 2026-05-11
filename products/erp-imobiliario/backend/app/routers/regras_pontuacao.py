@@ -14,7 +14,7 @@ import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import (
     get_current_user,
@@ -24,6 +24,7 @@ from app.dependencies import (
 )
 from app.responses import success_response
 from app.services import regras_pontuacao_service as svc
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas/regras-pontuacao", tags=["Metas — Regras"])
@@ -34,7 +35,7 @@ ModalidadeLiteral = Literal["padrao", "compartilhada", "exclusividade"]
 
 # ── Schemas ──────────────────────────────────────────────────────────
 
-class RegraUpsert(BaseModel):
+class RegraUpsert(StrictHttpModel):
     evento_tipo: EventoLiteral
     modalidade: ModalidadeLiteral = "padrao"
     pontos: float
@@ -43,7 +44,7 @@ class RegraUpsert(BaseModel):
     org_scope: bool = True   # True → tenant rule (org_id = caller's); False → platform default (admin only)
 
 
-class RegraUpdate(BaseModel):
+class RegraUpdate(StrictHttpModel):
     pontos: Optional[float] = None
     descricao: Optional[str] = None
 

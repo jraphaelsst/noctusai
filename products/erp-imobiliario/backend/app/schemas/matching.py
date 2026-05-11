@@ -1,17 +1,18 @@
 """
 Pydantic schemas for matching requests and responses.
 """
-from pydantic import BaseModel, Field
+from pydantic import Field
 from typing import Optional
+from noctusai_lib.api import StrictHttpModel
 
 
-class MatchRequest(BaseModel):
+class MatchRequest(StrictHttpModel):
     """Request to generate matches. Both IDs empty = full platform scan."""
     ativo_origem_id: Optional[str] = None
     ativo_destino_id: Optional[str] = None
 
 
-class MatchDetails(BaseModel):
+class MatchDetails(StrictHttpModel):
     """Sub-score breakdown for a match."""
     compatibilidade_regiao: int = 0
     compatibilidade_preco: int = 0
@@ -22,7 +23,7 @@ class MatchDetails(BaseModel):
     embedding_similarity: Optional[float] = None
 
 
-class ScoreBreakdown(BaseModel):
+class ScoreBreakdown(StrictHttpModel):
     """Weighted score breakdown — unified for both AI and rule-based matches."""
     embedding_similarity: float = 0
     compatibilidade_regiao: float = 0
@@ -32,7 +33,7 @@ class ScoreBreakdown(BaseModel):
     interesses: float = 0
 
 
-class MatchResult(BaseModel):
+class MatchResult(StrictHttpModel):
     """Result of a single match calculation."""
     ativo_origem_id: str
     ativo_destino_id: str
@@ -42,30 +43,30 @@ class MatchResult(BaseModel):
     score_breakdown: Optional[ScoreBreakdown] = None
 
 
-class MatchResponse(BaseModel):
+class MatchResponse(StrictHttpModel):
     """Response from the matching endpoint."""
     data: list[MatchResult]
     total: int
 
 
-class MatchStatusUpdate(BaseModel):
+class MatchStatusUpdate(StrictHttpModel):
     """Request to update a match status."""
     status: str  # 'aceito' | 'rejeitado' | 'pendente' | 'expirado'
 
 
-class EmbedRequest(BaseModel):
+class EmbedRequest(StrictHttpModel):
     """Request to generate embedding for a single ativo."""
     ativo_id: str
 
 
-class EmbedResponse(BaseModel):
+class EmbedResponse(StrictHttpModel):
     """Response from embedding endpoint."""
     ativo_id: str
     success: bool
     message: str
 
 
-class EmbedBatchResponse(BaseModel):
+class EmbedBatchResponse(StrictHttpModel):
     """Response from batch embedding endpoint."""
     total: int
     embedded: int

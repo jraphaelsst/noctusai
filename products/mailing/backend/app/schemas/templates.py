@@ -1,9 +1,10 @@
 """Pydantic schemas for email templates."""
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class TemplateCreate(BaseModel):
+class TemplateCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=200)
     assunto: str = Field(..., min_length=1, max_length=500)
     corpo_html: str
@@ -12,7 +13,7 @@ class TemplateCreate(BaseModel):
     categoria: str = "marketing"
 
 
-class TemplateUpdate(BaseModel):
+class TemplateUpdate(StrictHttpModel):
     nome: Optional[str] = None
     assunto: Optional[str] = None
     corpo_html: Optional[str] = None
@@ -22,7 +23,7 @@ class TemplateUpdate(BaseModel):
     ativo: Optional[bool] = None
 
 
-class TemplatePreviewRequest(BaseModel):
+class TemplatePreviewRequest(StrictHttpModel):
     """Sample variables for preview rendering."""
     variaveis: dict = Field(default_factory=lambda: {
         "nome": "Joao Silva",
@@ -31,7 +32,7 @@ class TemplatePreviewRequest(BaseModel):
     })
 
 
-class TemplateSendTestRequest(BaseModel):
+class TemplateSendTestRequest(StrictHttpModel):
     """Send a test email with the template."""
     to: str
     variaveis: dict = Field(default_factory=dict)

@@ -9,12 +9,13 @@ from typing import Optional
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_user_client, get_current_user_org
 from app.services.tasks_service import get_prioridade_ordem, compute_task_stats
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
 from noctusai_lib.api.auth import first_or_none
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tasks", tags=["Tasks"])
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/tasks", tags=["Tasks"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class TaskCreate(BaseModel):
+class TaskCreate(StrictHttpModel):
     titulo: str = Field(..., min_length=1, max_length=300)
     descricao: Optional[str] = None
     prioridade: str = Field(default="media", pattern="^(alta|media|baixa)$")
@@ -32,7 +33,7 @@ class TaskCreate(BaseModel):
     data_vencimento: Optional[date] = None
 
 
-class TaskUpdate(BaseModel):
+class TaskUpdate(StrictHttpModel):
     titulo: Optional[str] = Field(None, min_length=1, max_length=300)
     descricao: Optional[str] = None
     prioridade: Optional[str] = Field(None, pattern="^(alta|media|baixa)$")

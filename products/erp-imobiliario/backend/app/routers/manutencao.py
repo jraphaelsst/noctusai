@@ -31,12 +31,13 @@ cost management, and overdue detection.
 import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.manutencao_service import ManutencaoService
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/manutencao", tags=["Manutencao"])
@@ -44,7 +45,7 @@ router = APIRouter(prefix="/api/manutencao", tags=["Manutencao"])
 
 # --- Pydantic models ---
 
-class OrdemServicoCreate(BaseModel):
+class OrdemServicoCreate(StrictHttpModel):
     imovel_id: Optional[str] = None
     cliente_id: Optional[str] = None
     titulo: str = Field(..., min_length=1, max_length=255)
@@ -63,7 +64,7 @@ class OrdemServicoCreate(BaseModel):
     observacoes: Optional[str] = None
 
 
-class OrdemServicoUpdate(BaseModel):
+class OrdemServicoUpdate(StrictHttpModel):
     imovel_id: Optional[str] = None
     cliente_id: Optional[str] = None
     titulo: Optional[str] = Field(default=None, min_length=1, max_length=255)

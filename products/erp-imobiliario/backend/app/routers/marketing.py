@@ -29,11 +29,12 @@ Marketing Automation Router — campaigns, sends, and interest-based alerts.
 import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.marketing_service import get_campaign_stats, process_alerts
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing", tags=["Marketing"])
@@ -43,7 +44,7 @@ router = APIRouter(prefix="/api/marketing", tags=["Marketing"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class CampanhaCreate(BaseModel):
+class CampanhaCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=200)
     tipo: Literal["email", "whatsapp", "alerta_imovel"]
     template: str = Field(..., min_length=1)
@@ -51,7 +52,7 @@ class CampanhaCreate(BaseModel):
     status: Literal["rascunho", "ativa", "pausada", "concluida"] = "rascunho"
 
 
-class CampanhaUpdate(BaseModel):
+class CampanhaUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, max_length=200)
     tipo: Optional[Literal["email", "whatsapp", "alerta_imovel"]] = None
     template: Optional[str] = None

@@ -6,16 +6,17 @@ Submit, list, and check status of background jobs.
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_org_id
 from app.services.job_service import submit_job, get_job, list_jobs
 from app.responses import success_response
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
-class JobSubmitRequest(BaseModel):
+class JobSubmitRequest(StrictHttpModel):
     name: str = Field(..., min_length=1, max_length=100)
     params: dict = Field(default_factory=dict)
 

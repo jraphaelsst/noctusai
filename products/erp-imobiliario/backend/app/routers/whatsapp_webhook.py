@@ -12,7 +12,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, Field
 
 from noctusai_lib.security.webhook_signatures import (
     ResolvedSecret,
@@ -24,6 +24,7 @@ from app.config import settings
 from app.dependencies import get_current_user, get_user_client, get_admin_client
 from app.rate_limit import limiter
 from app.responses import success_response
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp-webhook"])
@@ -68,13 +69,20 @@ async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
 
 # ── Schemas ──────────────────────────────────────────────────────────
 
-class WAHAMessageEvent(BaseModel):
+class WAHAMessageEvent(StrictHttpModel):
+    # Carve-out: inbound 3rd-party webhook payload — WAHA emits richer event
+    # shapes (id, timestamp, me, engine, environment, …) that we ignore by
+    # name. Strict-mode would 422 every event. Per Wave 1's explicit-carve-out
+    # convention (adconnect.DistributorWithMetricsOut), opt out via
+    # `extra="allow"` so unknown keys pass through.
+    model_config = ConfigDict(extra="allow")
+
     event: str = Field(..., description="Event type: message, message.ack, etc.")
     session: str = Field(default="default")
     payload: dict = Field(default_factory=dict)
 
 
-class WAHASessionRequest(BaseModel):
+class WAHASessionRequest(StrictHttpModel):
     session_name: str = Field(default="default", max_length=100)
 
 

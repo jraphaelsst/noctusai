@@ -13,7 +13,7 @@ import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import (
     get_current_user,
@@ -23,6 +23,7 @@ from app.dependencies import (
 )
 from app.responses import success_response
 from app.services import meta_periodos_service as svc
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas/periodos", tags=["Metas — Períodos"])
@@ -32,7 +33,7 @@ TipoLiteral = Literal["diaria", "semanal", "quinzenal", "mensal", "trimestral", 
 
 # ── Schemas ──────────────────────────────────────────────────────────
 
-class PeriodoCreate(BaseModel):
+class PeriodoCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=100)
     tipo: TipoLiteral
     data_inicio: str  # ISO date
@@ -40,7 +41,7 @@ class PeriodoCreate(BaseModel):
     parent_periodo_id: Optional[str] = None
 
 
-class PeriodoUpdate(BaseModel):
+class PeriodoUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=100)
     tipo: Optional[TipoLiteral] = None
     data_inicio: Optional[str] = None
@@ -49,12 +50,12 @@ class PeriodoUpdate(BaseModel):
     parent_periodo_id: Optional[str] = None
 
 
-class AutoGenerateBody(BaseModel):
+class AutoGenerateBody(StrictHttpModel):
     year: int = Field(..., ge=2020, le=2100)
     quarter: int = Field(..., ge=1, le=4)
 
 
-class PreviewBody(BaseModel):
+class PreviewBody(StrictHttpModel):
     year: int = Field(..., ge=2020, le=2100)
     quarter: int = Field(..., ge=1, le=4)
 

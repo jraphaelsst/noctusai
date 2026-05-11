@@ -1,9 +1,10 @@
 """Pydantic schemas for contacts."""
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import EmailStr, Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class ContactCreate(BaseModel):
+class ContactCreate(StrictHttpModel):
     email: EmailStr
     nome: Optional[str] = None
     telefone: Optional[str] = None
@@ -13,7 +14,7 @@ class ContactCreate(BaseModel):
     source: str = "manual"
 
 
-class ContactUpdate(BaseModel):
+class ContactUpdate(StrictHttpModel):
     nome: Optional[str] = None
     telefone: Optional[str] = None
     empresa: Optional[str] = None
@@ -21,6 +22,6 @@ class ContactUpdate(BaseModel):
     custom_fields: Optional[dict] = None
 
 
-class ContactImport(BaseModel):
+class ContactImport(StrictHttpModel):
     """CSV import — expects a list of contacts."""
     contacts: list[ContactCreate]

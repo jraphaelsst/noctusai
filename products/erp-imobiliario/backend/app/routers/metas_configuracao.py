@@ -10,7 +10,7 @@ import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import (
     get_current_user,
@@ -20,12 +20,13 @@ from app.dependencies import (
 )
 from app.responses import success_response
 from app.services import metas_configuracao_service as svc
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas/configuracao", tags=["Metas — Configuração"])
 
 
-class ConfigUpsert(BaseModel):
+class ConfigUpsert(StrictHttpModel):
     vgv_por_ponto: Optional[float] = Field(default=None, gt=0)
     peso_pontos: Optional[float] = Field(default=None, ge=0)
     peso_vgv: Optional[float] = Field(default=None, ge=0)

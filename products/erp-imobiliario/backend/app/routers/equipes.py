@@ -14,7 +14,7 @@ import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import (
     get_admin_client,
@@ -25,6 +25,7 @@ from app.dependencies import (
 )
 from app.responses import ok_response, success_response
 from app.services import equipes_service
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas/equipes", tags=["Metas — Equipes"])
@@ -32,14 +33,14 @@ router = APIRouter(prefix="/api/metas/equipes", tags=["Metas — Equipes"])
 
 # ── Schemas ──────────────────────────────────────────────────────────
 
-class EquipeCreate(BaseModel):
+class EquipeCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=100)
     cor: Optional[str] = Field(default=None, max_length=20)
     icone: Optional[str] = Field(default=None, max_length=50)
     lider_id: Optional[str] = None
 
 
-class EquipeUpdate(BaseModel):
+class EquipeUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=100)
     cor: Optional[str] = Field(default=None, max_length=20)
     icone: Optional[str] = Field(default=None, max_length=50)
@@ -47,12 +48,12 @@ class EquipeUpdate(BaseModel):
     ativo: Optional[bool] = None
 
 
-class MembroAdd(BaseModel):
+class MembroAdd(StrictHttpModel):
     user_id: str
     papel: Literal["lider", "corretor"] = "corretor"
 
 
-class MembroUpdate(BaseModel):
+class MembroUpdate(StrictHttpModel):
     papel: Literal["lider", "corretor"]
 
 

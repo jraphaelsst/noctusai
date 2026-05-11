@@ -11,7 +11,7 @@ Supports two providers:
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import success_response, paginated_response, calculate_pagination
 from app.config import settings
@@ -24,6 +24,7 @@ from app.services.whatsapp_service import (
     get_message_history,
     get_whatsapp_config_from_env,
 )
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/whatsapp", tags=["WhatsApp"])
@@ -31,13 +32,13 @@ router = APIRouter(prefix="/api/whatsapp", tags=["WhatsApp"])
 
 # ---------- Schemas ----------
 
-class SendMessageRequest(BaseModel):
+class SendMessageRequest(StrictHttpModel):
     phone: str = Field(..., min_length=8, max_length=20, description="Numero de telefone do destinatario")
     message: str = Field(..., min_length=1, max_length=4096, description="Conteudo da mensagem")
     cliente_id: Optional[str] = None
 
 
-class SendPropertyRequest(BaseModel):
+class SendPropertyRequest(StrictHttpModel):
     phone: str = Field(..., min_length=8, max_length=20, description="Numero de telefone do destinatario")
     imovel_id: str = Field(..., description="ID do imovel a enviar")
     cliente_id: Optional[str] = None

@@ -13,7 +13,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import (
     get_current_user,
@@ -22,6 +22,7 @@ from app.dependencies import (
 )
 from app.responses import success_response
 from app.services import metas_empresa_service as svc
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas/empresa", tags=["Metas — Empresa"])
@@ -29,14 +30,14 @@ router = APIRouter(prefix="/api/metas/empresa", tags=["Metas — Empresa"])
 
 # ── Schemas ──────────────────────────────────────────────────────────
 
-class MetaEmpresaUpsert(BaseModel):
+class MetaEmpresaUpsert(StrictHttpModel):
     periodo_id: str
     valor_meta: float = Field(..., ge=0)
     categoria: str = "vgv"
     observacoes: Optional[str] = None
 
 
-class MetaEmpresaUpdate(BaseModel):
+class MetaEmpresaUpdate(StrictHttpModel):
     valor_meta: Optional[float] = Field(default=None, ge=0)
     observacoes: Optional[str] = None
 

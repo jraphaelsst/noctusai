@@ -4,12 +4,13 @@ Metas CRUD Router — Goals/targets management.
 import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.metas_service import criar_metas_hoje
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas", tags=["Metas"])
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/api/metas", tags=["Metas"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class MetaCreate(BaseModel):
+class MetaCreate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, max_length=255)
     categoria: Literal[
         "captacao", "visitas", "contatos", "propostas", "fechamento",
@@ -38,7 +39,7 @@ class MetaCreate(BaseModel):
     motivo_impedimento: Optional[str] = None
 
 
-class MetaUpdate(BaseModel):
+class MetaUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, max_length=255)
     meta_realizada: Optional[int] = Field(default=None, ge=0)
     status: Optional[Literal["aberta", "concluida", "atrasada", "no_prazo", "vence_amanha"]] = None
@@ -55,20 +56,20 @@ class MetaUpdate(BaseModel):
     carry_out: Optional[int] = None
 
 
-class MetaConfigCreate(BaseModel):
+class MetaConfigCreate(StrictHttpModel):
     categoria: str
     categoria_custom: Optional[str] = None
     meta_pretendida: int = Field(..., ge=0)
     ativo: bool = True
 
 
-class ScaffoldBody(BaseModel):
+class ScaffoldBody(StrictHttpModel):
     tipo: Literal["diaria", "semanal", "mensal", "anual"]
     categoria: str
     data_ref: Optional[str] = None
 
 
-class CalcularProporcionalBody(BaseModel):
+class CalcularProporcionalBody(StrictHttpModel):
     meta_mensal: int = Field(..., ge=0)
     tipo: Literal["diaria", "semanal", "mensal", "anual"]
     data_ref: Optional[str] = None

@@ -23,7 +23,7 @@ import logging
 from typing import Optional, Literal, List, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
@@ -34,6 +34,7 @@ from app.services.vistorias_service import (
     summarise_checklist,
 )
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vistorias", tags=["Vistorias"])
@@ -41,13 +42,13 @@ router = APIRouter(prefix="/api/vistorias", tags=["Vistorias"])
 
 # --------------- Schemas ---------------
 
-class ChecklistItem(BaseModel):
+class ChecklistItem(StrictHttpModel):
     item: str
     estado: Literal["bom", "regular", "ruim", "NA"] = "bom"
     observacao: Optional[str] = ""
 
 
-class VistoriaCreate(BaseModel):
+class VistoriaCreate(StrictHttpModel):
     imovel_id: str
     tipo: Literal["entrada", "saida", "periodica"]
     data_vistoria: str = Field(..., description="Data da vistoria (YYYY-MM-DD)")
@@ -58,7 +59,7 @@ class VistoriaCreate(BaseModel):
     observacoes_gerais: Optional[str] = None
 
 
-class VistoriaUpdate(BaseModel):
+class VistoriaUpdate(StrictHttpModel):
     tipo: Optional[Literal["entrada", "saida", "periodica"]] = None
     data_vistoria: Optional[str] = None
     responsavel_id: Optional[str] = None
@@ -70,7 +71,7 @@ class VistoriaUpdate(BaseModel):
     assinatura_locatario: Optional[str] = None
 
 
-class FotosRequest(BaseModel):
+class FotosRequest(StrictHttpModel):
     urls: List[str] = Field(..., min_length=1, description="Lista de URLs de fotos")
 
 

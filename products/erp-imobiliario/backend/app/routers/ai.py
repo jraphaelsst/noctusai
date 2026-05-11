@@ -4,7 +4,6 @@ AI Features Router — property description generation, lead scoring, and price 
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
 
 from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 
@@ -12,6 +11,7 @@ from app.dependencies import get_current_user, get_user_client, get_org_id
 from app.responses import success_response
 from app.rate_limit import limiter
 from app.services.ai_service import check_openai_configured
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
@@ -54,22 +54,22 @@ def _require_openai(org_id):
 # Schemas
 # ---------------------------------------------------------------------------
 
-class GenerateDescriptionRequest(BaseModel):
+class GenerateDescriptionRequest(StrictHttpModel):
     imovel_id: Optional[str] = None
     imovel_data: Optional[dict] = None
 
 
-class LeadScoreRequest(BaseModel):
+class LeadScoreRequest(StrictHttpModel):
     cliente_id: Optional[str] = None
     cliente_data: Optional[dict] = None
 
 
-class SuggestPriceRequest(BaseModel):
+class SuggestPriceRequest(StrictHttpModel):
     imovel_id: Optional[str] = None
     imovel_data: Optional[dict] = None
 
 
-class FollowUpDraftRequest(BaseModel):
+class FollowUpDraftRequest(StrictHttpModel):
     cliente_id: str
     imovel_interesse: Optional[str] = None
 
@@ -273,17 +273,17 @@ async def follow_up_draft(
 # ---------------------------------------------------------------------------
 
 
-class WhatsAppIntentRequest(BaseModel):
+class WhatsAppIntentRequest(StrictHttpModel):
     cliente_id: str
     message_text: str
     cliente_nome: Optional[str] = None
 
 
-class CertidoesScoreRequest(BaseModel):
+class CertidoesScoreRequest(StrictHttpModel):
     cliente_id: str
 
 
-class MetasCoachTipRequest(BaseModel):
+class MetasCoachTipRequest(StrictHttpModel):
     user_id: str
     user_nome: str
     progresso_percent: float
@@ -291,11 +291,11 @@ class MetasCoachTipRequest(BaseModel):
     eventos_recentes: Optional[list[str]] = None
 
 
-class PhotoComplianceRequest(BaseModel):
+class PhotoComplianceRequest(StrictHttpModel):
     imovel_id: str
 
 
-class SearchRelevanceRequest(BaseModel):
+class SearchRelevanceRequest(StrictHttpModel):
     imovel_id: str
     query: str
 

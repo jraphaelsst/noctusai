@@ -31,12 +31,13 @@ from noctusai_lib.primitives.timeutil import now_utc
 from dateutil.relativedelta import relativedelta
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.financeiro_service import FinanceiroService
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/financeiro", tags=["Financeiro"])
@@ -44,7 +45,7 @@ router = APIRouter(prefix="/api/financeiro", tags=["Financeiro"])
 
 # --- Pydantic models ---
 
-class LancamentoCreate(BaseModel):
+class LancamentoCreate(StrictHttpModel):
     tipo: Literal["receita", "despesa"]
     categoria: str = Field(..., min_length=1, max_length=100)
     descricao: str = Field(..., min_length=1, max_length=500)
@@ -60,7 +61,7 @@ class LancamentoCreate(BaseModel):
     observacoes: Optional[str] = None
 
 
-class LancamentoUpdate(BaseModel):
+class LancamentoUpdate(StrictHttpModel):
     tipo: Optional[Literal["receita", "despesa"]] = None
     categoria: Optional[str] = Field(default=None, min_length=1, max_length=100)
     descricao: Optional[str] = Field(default=None, min_length=1, max_length=500)

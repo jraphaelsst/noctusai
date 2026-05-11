@@ -9,11 +9,12 @@ from typing import Optional
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_user_client, get_current_user_org
 from noctusai_lib.primitives.responses import success_response, paginated_response
 from noctusai_lib.api.auth import first_or_none
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metricas", tags=["Metrics"])
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/api/metricas", tags=["Metrics"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class MetricCreate(BaseModel):
+class MetricCreate(StrictHttpModel):
     data: date
     tarefas_concluidas: int = Field(default=0, ge=0)
     tarefas_criadas: int = Field(default=0, ge=0)

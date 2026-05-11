@@ -11,17 +11,18 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import success_response
 from app.services import metas_equipe_service as svc
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas/equipes-quotas", tags=["Metas — Quotas Equipe"])
 
 
-class MetaEquipeUpsert(BaseModel):
+class MetaEquipeUpsert(StrictHttpModel):
     periodo_id: str
     equipe_id: str
     valor_meta: float = Field(..., ge=0)

@@ -32,12 +32,13 @@ Emails CRUD Router — CRM email sending, templates, and tracking.
 import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.email_service import EmailService
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/emails", tags=["Emails"])
@@ -47,7 +48,7 @@ router = APIRouter(prefix="/api/emails", tags=["Emails"])
 # Pydantic models
 # ---------------------------------------------------------------------------
 
-class EnviarEmailRequest(BaseModel):
+class EnviarEmailRequest(StrictHttpModel):
     destinatario: str = Field(..., min_length=1, max_length=255)
     assunto: str = Field(..., min_length=1, max_length=500)
     corpo: str = Field(..., min_length=1)
@@ -55,14 +56,14 @@ class EnviarEmailRequest(BaseModel):
     template_id: Optional[str] = None
 
 
-class TemplateCreate(BaseModel):
+class TemplateCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=255)
     assunto: str = Field(..., min_length=1, max_length=500)
     corpo: str = Field(..., min_length=1)
     variaveis: List[str] = Field(default_factory=list)
 
 
-class TemplateUpdate(BaseModel):
+class TemplateUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     assunto: Optional[str] = Field(default=None, min_length=1, max_length=500)
     corpo: Optional[str] = Field(default=None, min_length=1)

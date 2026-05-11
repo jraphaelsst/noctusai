@@ -38,6 +38,28 @@ class TestCreateCampaign:
         assert resp.status_code == 200
         assert resp.json()["data"]["nome"] == "Black Friday"
 
+    def test_create_rejects_unknown_field_with_422(self, client):
+        """StrictHttpModel migration guard — unknown keys 422 (was silently dropped).
+
+        Pre-migration (`pydantic.BaseModel`, `extra="ignore"`) silently dropped
+        `bogus_field`. Post-migration (`StrictHttpModel`, `extra="forbid"`) the
+        schema rejects with 422 and names the offending `loc`. Defends against
+        the silent-drop misroute class (`KB § PATTERNS/pydantic-strict-http.md`).
+        """
+        client.mock_supabase.set_table_data("campaigns", [MOCK_CAMPAIGN])
+        resp = client.post("/api/campaigns", json={
+            "nome": "Black Friday",
+            "template_id": "t1",
+            "list_id": "l1",
+            "bogus_field": "should-422",
+        })
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert any(
+            "bogus_field" in str(err.get("loc", ""))
+            for err in body.get("detail", [])
+        )
+
 
 class TestGetCampaign:
     def test_get_with_stats(self, client):

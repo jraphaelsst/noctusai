@@ -49,7 +49,7 @@ from typing import Optional, Literal
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Header, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
@@ -67,6 +67,7 @@ from app.services.certidoes_service import (
     cancelar_processamento,
     _get_tjsp_last_request_at,
 )
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/certidoes", tags=["Certidões"])
@@ -78,7 +79,7 @@ _STALE_CHECK_INTERVAL = 60.0
 
 # --------------- Schemas ---------------
 
-class ConsultaCreate(BaseModel):
+class ConsultaCreate(StrictHttpModel):
     tipo_documento: Literal["cpf", "cnpj"]
     documento: str = Field(..., min_length=11, max_length=18)
     nome: str = Field(..., min_length=2, max_length=200)

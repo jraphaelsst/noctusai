@@ -4,17 +4,18 @@ Clientes CRUD Router — Manages clients, archiving, and pipeline moves.
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import Field, EmailStr
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/clientes", tags=["Clientes"])
 
 
-class ClienteCreate(BaseModel):
+class ClienteCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=255)
     email: Optional[EmailStr] = None
     telefone: Optional[str] = Field(default=None, max_length=20)
@@ -25,7 +26,7 @@ class ClienteCreate(BaseModel):
     valor_estimado: Optional[float] = Field(default=None, ge=0)
 
 
-class ClienteUpdate(BaseModel):
+class ClienteUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     email: Optional[EmailStr] = None
     telefone: Optional[str] = Field(default=None, max_length=20)
@@ -37,7 +38,7 @@ class ClienteUpdate(BaseModel):
     etapa_atual: Optional[str] = None
 
 
-class MoverEtapaRequest(BaseModel):
+class MoverEtapaRequest(StrictHttpModel):
     para_etapa: str
     motivo: Optional[str] = None
     novo_indice: Optional[int] = None

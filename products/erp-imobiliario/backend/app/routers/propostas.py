@@ -24,12 +24,13 @@ history tracking, and statistics.
 import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.propostas_service import PropostasService
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/propostas", tags=["Propostas"])
@@ -37,7 +38,7 @@ router = APIRouter(prefix="/api/propostas", tags=["Propostas"])
 
 # --- Pydantic models ---
 
-class PropostaCreate(BaseModel):
+class PropostaCreate(StrictHttpModel):
     imovel_id: str
     cliente_id: str
     valor_proposta: float = Field(..., gt=0, description="Valor da proposta deve ser > 0")
@@ -46,7 +47,7 @@ class PropostaCreate(BaseModel):
     observacoes: Optional[str] = Field(default=None, max_length=2000)
 
 
-class PropostaUpdate(BaseModel):
+class PropostaUpdate(StrictHttpModel):
     status: Optional[Literal["enviada", "em_analise", "contraproposta", "aceita", "recusada", "expirada"]] = None
     valor_proposta: Optional[float] = Field(default=None, gt=0)
     valor_contraproposta: Optional[float] = Field(default=None, gt=0)
@@ -55,7 +56,7 @@ class PropostaUpdate(BaseModel):
     observacoes: Optional[str] = Field(default=None, max_length=2000)
 
 
-class ContrapropostaCreate(BaseModel):
+class ContrapropostaCreate(StrictHttpModel):
     valor_contraproposta: float = Field(..., gt=0, description="Valor da contraproposta deve ser > 0")
     condicoes_pagamento: Optional[str] = Field(default=None, max_length=1000)
     observacoes: Optional[str] = Field(default=None, max_length=2000)

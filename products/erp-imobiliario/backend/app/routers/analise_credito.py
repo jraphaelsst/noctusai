@@ -24,11 +24,12 @@ from typing import Optional, Literal
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/analise-credito", tags=["Análise de Crédito"])
@@ -38,7 +39,7 @@ router = APIRouter(prefix="/api/analise-credito", tags=["Análise de Crédito"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class ConsultaCreditoBody(BaseModel):
+class ConsultaCreditoBody(StrictHttpModel):
     cpf: str = Field(..., min_length=11, max_length=14, description="CPF com ou sem formatação")
     nome: str = Field(..., min_length=2, max_length=255)
     cliente_id: Optional[str] = None
@@ -57,7 +58,7 @@ class ConsultaCreditoBody(BaseModel):
         return cleaned
 
 
-class AtualizarAnaliseBody(BaseModel):
+class AtualizarAnaliseBody(StrictHttpModel):
     status: Optional[Literal["pendente", "aprovado", "reprovado", "em_analise"]] = None
     score: Optional[int] = Field(default=None, ge=0, le=1000)
     resultado: Optional[dict] = None

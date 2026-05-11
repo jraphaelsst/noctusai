@@ -38,12 +38,13 @@ and overdue detection.
 import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.contratos_service import ContratosService
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/contratos", tags=["Contratos"])
@@ -51,7 +52,7 @@ router = APIRouter(prefix="/api/contratos", tags=["Contratos"])
 
 # --- Pydantic models ---
 
-class ContratoCreate(BaseModel):
+class ContratoCreate(StrictHttpModel):
     tipo: Literal["venda", "locacao"]
     status: Optional[Literal["rascunho", "ativo", "concluido", "cancelado", "distratado"]] = "rascunho"
     cliente_id: str = Field(..., description="ID do cliente")
@@ -66,7 +67,7 @@ class ContratoCreate(BaseModel):
     observacoes: Optional[str] = None
 
 
-class ContratoUpdate(BaseModel):
+class ContratoUpdate(StrictHttpModel):
     tipo: Optional[Literal["venda", "locacao"]] = None
     status: Optional[Literal["rascunho", "ativo", "concluido", "cancelado", "distratado"]] = None
     cliente_id: Optional[str] = None
@@ -81,13 +82,13 @@ class ContratoUpdate(BaseModel):
     observacoes: Optional[str] = None
 
 
-class ParcelaUpdate(BaseModel):
+class ParcelaUpdate(StrictHttpModel):
     status: Optional[Literal["pendente", "pago", "atrasado", "cancelado"]] = None
     data_pagamento: Optional[str] = Field(default=None, description="Data de pagamento (YYYY-MM-DD)")
     forma_pagamento: Optional[str] = Field(default=None, max_length=50)
 
 
-class GerarParcelasRequest(BaseModel):
+class GerarParcelasRequest(StrictHttpModel):
     valor_entrada: float = Field(default=0, ge=0, description="Valor de entrada")
     num_parcelas: int = Field(..., ge=1, description="Número de parcelas")
 

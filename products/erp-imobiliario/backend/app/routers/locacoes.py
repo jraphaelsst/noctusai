@@ -26,13 +26,14 @@ from typing import Optional, Literal
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.locacoes_service import calculate_reajuste
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/locacoes", tags=["Locações"])
@@ -40,7 +41,7 @@ router = APIRouter(prefix="/api/locacoes", tags=["Locações"])
 
 # --------------- Schemas ---------------
 
-class ContratoCreate(BaseModel):
+class ContratoCreate(StrictHttpModel):
     imovel_id: str
     locatario_id: str
     proprietario_id: Optional[str] = None
@@ -55,7 +56,7 @@ class ContratoCreate(BaseModel):
     observacoes: Optional[str] = None
 
 
-class ContratoUpdate(BaseModel):
+class ContratoUpdate(StrictHttpModel):
     valor_aluguel: Optional[float] = Field(default=None, gt=0)
     dia_vencimento: Optional[int] = Field(default=None, ge=1, le=31)
     data_fim: Optional[str] = None
@@ -67,12 +68,12 @@ class ContratoUpdate(BaseModel):
     observacoes: Optional[str] = None
 
 
-class ReajusteRequest(BaseModel):
+class ReajusteRequest(StrictHttpModel):
     percentual: Optional[float] = Field(default=None, ge=0, le=100, description="Override do percentual")
     aplicar: bool = Field(default=False, description="Se True, aplica o reajuste; se False, apenas calcula preview")
 
 
-class RenovarRequest(BaseModel):
+class RenovarRequest(StrictHttpModel):
     nova_data_fim: str = Field(..., description="Nova data de término (YYYY-MM-DD)")
     novo_valor: Optional[float] = Field(default=None, gt=0, description="Novo valor; se omitido, mantém atual")
 

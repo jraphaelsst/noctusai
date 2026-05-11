@@ -44,11 +44,12 @@ movimentacoes against lancamentos, and generation of CNAB 240/400 remittance fil
 import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.banco_service import BancoService
 from app.config import settings
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/banco", tags=["Banco"])
@@ -56,33 +57,33 @@ router = APIRouter(prefix="/api/banco", tags=["Banco"])
 
 # ---------- Schemas ----------
 
-class MovimentacaoImport(BaseModel):
+class MovimentacaoImport(StrictHttpModel):
     data: str = Field(..., description="Data da movimentacao (YYYY-MM-DD)")
     descricao: str = Field(..., min_length=1, max_length=500)
     valor: float = Field(..., gt=0, description="Valor da movimentacao")
     tipo: Literal["credito", "debito"]
 
 
-class ImportarExtratoRequest(BaseModel):
+class ImportarExtratoRequest(StrictHttpModel):
     banco: str = Field(..., min_length=1, max_length=100, description="Nome ou codigo do banco")
     agencia: Optional[str] = Field(default=None, max_length=20)
     conta: Optional[str] = Field(default=None, max_length=30)
     movimentacoes: List[MovimentacaoImport] = Field(..., min_length=1, description="Lista de movimentacoes do extrato")
 
 
-class ConciliarRequest(BaseModel):
+class ConciliarRequest(StrictHttpModel):
     movimentacao_id: str = Field(..., description="ID da movimentacao bancaria")
     lancamento_id: str = Field(..., description="ID do lancamento financeiro correspondente")
 
 
-class TituloRemessa(BaseModel):
+class TituloRemessa(StrictHttpModel):
     valor: float = Field(..., gt=0, description="Valor do titulo")
     vencimento: str = Field(..., description="Data de vencimento (YYYY-MM-DD)")
     sacado_nome: str = Field(..., min_length=1, max_length=255, description="Nome do sacado")
     sacado_cpf: str = Field(..., min_length=11, max_length=14, description="CPF/CNPJ do sacado")
 
 
-class GerarRemessaRequest(BaseModel):
+class GerarRemessaRequest(StrictHttpModel):
     tipo: Literal["cnab240", "cnab400"]
     banco: str = Field(..., min_length=1, max_length=100)
     titulos: List[TituloRemessa] = Field(..., min_length=1, description="Lista de titulos para a remessa")

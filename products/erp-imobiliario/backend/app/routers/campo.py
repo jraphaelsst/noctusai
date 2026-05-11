@@ -21,12 +21,13 @@ import math
 from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, calculate_pagination
 from app.config import settings
 from app.services.campo_service import CampoService
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/campo", tags=["Campo"])
@@ -36,7 +37,7 @@ router = APIRouter(prefix="/api/campo", tags=["Campo"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class CheckinCreate(BaseModel):
+class CheckinCreate(StrictHttpModel):
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
     tipo: Literal["visita", "vistoria", "captacao", "reuniao"]
@@ -45,7 +46,7 @@ class CheckinCreate(BaseModel):
     fotos: Optional[list[str]] = Field(default_factory=list)
 
 
-class VistoriaRapidaCreate(BaseModel):
+class VistoriaRapidaCreate(StrictHttpModel):
     imovel_id: str
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
@@ -58,7 +59,7 @@ class VistoriaRapidaCreate(BaseModel):
     fotos: Optional[list[str]] = Field(default_factory=list)
 
 
-class SyncCheckin(BaseModel):
+class SyncCheckin(StrictHttpModel):
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
     tipo: Literal["visita", "vistoria", "captacao", "reuniao"]
@@ -69,7 +70,7 @@ class SyncCheckin(BaseModel):
     created_at_local: Optional[str] = None
 
 
-class SyncVistoria(BaseModel):
+class SyncVistoria(StrictHttpModel):
     imovel_id: str
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
@@ -81,7 +82,7 @@ class SyncVistoria(BaseModel):
     created_at_local: Optional[str] = None
 
 
-class SyncRequest(BaseModel):
+class SyncRequest(StrictHttpModel):
     checkins: Optional[list[SyncCheckin]] = Field(default_factory=list)
     vistorias: Optional[list[SyncVistoria]] = Field(default_factory=list)
 

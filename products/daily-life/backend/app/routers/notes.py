@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from noctusai_lib.domain.ai import consent_required
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
@@ -15,6 +15,7 @@ from noctusai_lib.api.auth import first_or_none
 
 from app.dependencies import get_user_client, get_current_user_org
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notes", tags=["Notes"])
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/notes", tags=["Notes"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class NoteCreate(BaseModel):
+class NoteCreate(StrictHttpModel):
     titulo: str = Field(..., min_length=1, max_length=300)
     conteudo: Optional[str] = None
     categoria: Optional[str] = None
@@ -32,7 +33,7 @@ class NoteCreate(BaseModel):
     fixada: bool = False
 
 
-class NoteUpdate(BaseModel):
+class NoteUpdate(StrictHttpModel):
     titulo: Optional[str] = Field(None, min_length=1, max_length=300)
     conteudo: Optional[str] = None
     categoria: Optional[str] = None

@@ -6,17 +6,17 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel
 
 from app.dependencies import get_current_user, get_org_id
 from noctusai_lib.config.credentials import resolve_credential
 from app.responses import success_response
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/configuracoes", tags=["Configurações"])
 
 
-class TestResult(BaseModel):
+class TestResult(StrictHttpModel):
     key: str
     success: bool
     message: str

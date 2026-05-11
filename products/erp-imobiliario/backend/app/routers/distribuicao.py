@@ -17,11 +17,12 @@ import logging
 from typing import Optional, Literal, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
 from app.responses import success_response
 from app.services.distribuicao_service import auto_assign, get_queue_info
+from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/distribuicao", tags=["Distribuição"])
@@ -29,13 +30,13 @@ router = APIRouter(prefix="/api/distribuicao", tags=["Distribuição"])
 
 # --------------- Schemas ---------------
 
-class ConfigUpdate(BaseModel):
+class ConfigUpdate(StrictHttpModel):
     modo: Optional[Literal["manual", "round_robin", "por_regiao", "por_especialidade"]] = None
     corretores_ativos: Optional[List[str]] = None
     regras: Optional[Dict[str, Any]] = None
 
 
-class AtribuirRequest(BaseModel):
+class AtribuirRequest(StrictHttpModel):
     cliente_id: str
     corretor_id: Optional[str] = Field(
         default=None,
