@@ -69,8 +69,13 @@ class TestBalanceReversalOnUpdate:
     @pytest.mark.asyncio
     async def test_reverses_old_and_applies_new(self):
         svc, sb = make_service()
-        old_tx = {"id": "tx-001", "tipo": "despesa", "valor": 300, "conta_id": "c-1", "data": "2026-02-05"}
-        new_tx = {"id": "tx-001", "tipo": "despesa", "valor": 500, "conta_id": "c-1", "data": "2026-02-05"}
+        # `org_id` is required on the seeded row because `atualizar` filters
+        # the UPDATE chain by `.eq("org_id", self.org_id)`. SELECT predicates
+        # are tracked-but-not-evaluated by the seed mock; UPDATE predicates
+        # ARE evaluated — so a missing `org_id` matches SELECT but fails
+        # UPDATE, returning `None` from the service.
+        old_tx = {"id": "tx-001", "org_id": ORG_ID, "tipo": "despesa", "valor": 300, "conta_id": "c-1", "data": "2026-02-05"}
+        new_tx = {"id": "tx-001", "org_id": ORG_ID, "tipo": "despesa", "valor": 500, "conta_id": "c-1", "data": "2026-02-05"}
         sb.set_table_data("transacoes", [old_tx])
         sb.set_table_data("contas", [{"id": "c-1", "saldo": 1000}])
         sb.set_table_data("orcamento_itens", [])

@@ -117,11 +117,18 @@ class TestObterProgressoWithSync:
                 "categoria_id": "cat-1",
                 "periodo_mes": "2026-02",
                 "valor_planejado": 1000,
-                "valor_gasto": 500,
+                "valor_gasto": 0,
                 "categoria": {"id": "cat-1", "nome": "Alimentacao", "icone": "utensils", "cor": "#ef4444"},
             },
         ])
-        sb.set_table_data("transacoes", [])
+        # `obter_progresso` always calls `sincronizar_gastos` first, which
+        # overwrites `valor_gasto` with the SUM of matching transactions.
+        # Seed transactions whose sum (500) drives the expected 50% — pre-
+        # seeding `valor_gasto: 500` would be overwritten to 0 by the sync.
+        sb.set_table_data("transacoes", [
+            {"org_id": ORG_ID, "valor": 200, "tipo": "despesa", "categoria_id": "cat-1", "data": "2026-02-05"},
+            {"org_id": ORG_ID, "valor": 300, "tipo": "despesa", "categoria_id": "cat-1", "data": "2026-02-10"},
+        ])
         sb.set_table_data("orcamentos", [{"id": "orc-1", "org_id": ORG_ID}])
 
         result = await svc.obter_progresso("orc-1", "2026-02")
