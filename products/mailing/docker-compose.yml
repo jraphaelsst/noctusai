@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/mailing/backend/Dockerfile
     container_name: noctus-mailing-backend
-    image: noctus-mailing-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-mailing-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -38,7 +38,7 @@ services:
       args:
         VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-mailing-frontend
-    image: noctus-mailing-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-mailing-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8120:8120"
     depends_on:

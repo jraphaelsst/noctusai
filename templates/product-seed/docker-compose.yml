@@ -1,6 +1,6 @@
 # Canonical per-product compose fragment.
 #
-# This file at products/seed/docker-compose.yml is the reference; every
+# This file at products/{{PRODUCT_SLUG}}/docker-compose.yml is the reference; every
 # other product's docker-compose.yml is a copy with slug + ports
 # substituted. Two ways to use it:
 #
@@ -19,22 +19,22 @@
 # Networks:
 #   noctus-net   shared platform fabric — declared external so the root
 #                compose can create it once and every product joins it.
-#   seed-net     product-private — backend ↔ frontend isolation by default.
+#   {{PRODUCT_SLUG}}-net     product-private — backend ↔ frontend isolation by default.
 
 services:
-  seed-backend:
+  {{PRODUCT_SLUG}}-backend:
     build:
       context: ../..
-      dockerfile: products/seed/backend/Dockerfile
-    container_name: noctus-seed-backend
-    image: noctus-seed-backend:dev
+      dockerfile: products/{{PRODUCT_SLUG}}/backend/Dockerfile
+    container_name: noctus-{{PRODUCT_SLUG}}-backend
+    image: ghcr.io/jraphaelsst/noctus-{{PRODUCT_SLUG}}-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
       - "{{BACKEND_PORT}}:{{BACKEND_PORT}}"
     networks:
       - noctus-net
-      - seed-net
+      - {{PRODUCT_SLUG}}-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:{{BACKEND_PORT}}/api/health"]
@@ -42,11 +42,24 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    # Per-product healthcheck override — uncomment + customize for products
+    # with deeper readiness probes (e.g. dev-team wires `agno_ping` via
+    # HealthEndpointConfig(readiness_hooks=[...]) and targets /_ready here).
+    # The seed-native `/_ready` endpoint aggregates every registered
+    # readiness_hook; prefer composing hooks over inventing new paths.
+    # See KB § PATTERNS/containerization.md §11c · Per-product healthcheck
+    # override.
+    # healthcheck:
+    #   test: ["CMD", "curl", "-fsS", "http://localhost:{{BACKEND_PORT}}/_ready"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
 
-  seed-frontend:
+  {{PRODUCT_SLUG}}-frontend:
     build:
       context: ../..
-      dockerfile: products/seed/frontend/Dockerfile
+      dockerfile: products/{{PRODUCT_SLUG}}/frontend/Dockerfile
       # VITE_* build-arg contract — every `import.meta.env.VITE_*`
       # referenced in code MUST be declared (a) as ARG in the frontend
       # Dockerfile build stage and (b) as a key in this `args:` block,
@@ -59,25 +72,25 @@ services:
       # those two). See KB § PATTERNS/containerization.md § VITE_* build-arg contract.
       args:
         VITE_CORE_URL: ${VITE_CORE_URL:-}
-    container_name: noctus-seed-frontend
-    image: noctus-seed-frontend:dev
+    container_name: noctus-{{PRODUCT_SLUG}}-frontend
+    image: ghcr.io/jraphaelsst/noctus-{{PRODUCT_SLUG}}-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "{{FRONTEND_PORT}}:{{FRONTEND_PORT}}"
     depends_on:
-      seed-backend:
+      {{PRODUCT_SLUG}}-backend:
         condition: service_healthy
     networks:
-      - seed-net
+      - {{PRODUCT_SLUG}}-net
     restart: unless-stopped
 
 
-  seed-tunnel:
+  {{PRODUCT_SLUG}}-tunnel:
     # Cloudflare quick-tunnel — ephemeral *.trycloudflare.com URL pointing
     # at this product's backend. Profile-gated so it's opt-in (cost: one
     # extra container; benefit: webhook/OAuth callback testing without a
     # full deploy). Pattern from noctusai-youtube-crawler.
     image: cloudflare/cloudflared:latest
-    container_name: noctus-seed-tunnel
+    container_name: noctus-{{PRODUCT_SLUG}}-tunnel
     # `--protocol http2` forces TCP from the start. The default `auto` tries
     # QUIC/UDP first; home/office NATs frequently kill the UDP connection
     # within ~5 minutes ("timeout: no recent network activity"), and
@@ -85,20 +98,20 @@ services:
     # hostname once it's been dropped — DNS goes NXDOMAIN forever even
     # though the container stays "Up". HTTP2 is the documented long-running
     # fallback. See KB § PATTERNS/containerization.md § Troubleshooting.
-    command: tunnel --no-autoupdate --protocol http2 --url http://seed-backend:{{BACKEND_PORT}}
+    command: tunnel --no-autoupdate --protocol http2 --url http://{{PRODUCT_SLUG}}-backend:{{BACKEND_PORT}}
     depends_on:
-      seed-backend:
+      {{PRODUCT_SLUG}}-backend:
         condition: service_healthy
     networks:
-      - seed-net
+      - {{PRODUCT_SLUG}}-net
     restart: unless-stopped
     profiles:
-      - tunnel-seed
+      - tunnel-{{PRODUCT_SLUG}}
       - tunnel-all
 
 networks:
   noctus-net:
     name: noctus-net
     driver: bridge
-  seed-net:
+  {{PRODUCT_SLUG}}-net:
     driver: bridge

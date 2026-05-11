@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/dev-team/backend/Dockerfile
     container_name: noctus-dev-team-backend
-    image: noctus-dev-team-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-dev-team-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -21,12 +21,22 @@ services:
       - noctus-net
       - dev-team-net
     restart: unless-stopped
+    # Per-product healthcheck override — targets /_ready (seed-native
+    # readiness path) instead of the seed-default /api/health. Required
+    # because dev-team registers an `agno_ping` readiness_hook via
+    # HealthEndpointConfig(readiness_hooks=[agno_ping]) in app/main.py
+    # (probes ANTHROPIC_API_KEY presence + leader model allowlist +
+    # dev_team package importability). Tuned timeout=10s (agno_ping is
+    # sub-100ms but allow headroom) + start_period=30s (agno warmup is
+    # genuinely slower than seed default). See
+    # KB § PATTERNS/containerization.md §11c · Per-product healthcheck
+    # override.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8009/api/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8009/_ready"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 30s
 
   dev-team-frontend:
     build:
@@ -38,7 +48,7 @@ services:
       args:
         VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-dev-team-frontend
-    image: noctus-dev-team-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-dev-team-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8123:8123"
     depends_on:

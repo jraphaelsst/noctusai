@@ -1,0 +1,25 @@
+# Dev override compose — auto-merged by `docker compose up` (no -f).
+# See KB § PATTERNS/containerization.md §11d for the full pattern.
+
+services:
+  therapy-platform-backend:
+    volumes:
+      - ./backend:/app/products/therapy-platform/backend
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8003"
+      - --reload
+      - --app-dir
+      - products/therapy-platform/backend
+    restart: "no"
+
+  therapy-platform-frontend:
+    volumes:
+      - ./frontend:/app/products/therapy-platform/frontend
+    environment:
+      NODE_ENV: development
+    restart: "no"

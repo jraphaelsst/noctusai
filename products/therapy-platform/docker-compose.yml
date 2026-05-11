@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/therapy-platform/backend/Dockerfile
     container_name: noctus-therapy-platform-backend
-    image: noctus-therapy-platform-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-therapy-platform-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -38,7 +38,7 @@ services:
       args:
         VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-therapy-platform-frontend
-    image: noctus-therapy-platform-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-therapy-platform-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8095:8095"
     depends_on:

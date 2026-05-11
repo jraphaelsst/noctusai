@@ -291,12 +291,25 @@ services:
     profiles: [waha, full]
     # ...
 
+  postgres:                              # Local Postgres (offline dev — §11.13)
+    image: postgres:16-alpine
+    container_name: noctus-postgres
+    environment: { POSTGRES_USER: noctus, POSTGRES_PASSWORD: noctus_local, POSTGRES_DB: noctus }
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-local-db:/docker-entrypoint-initdb.d:ro
+    networks: [noctus-net]
+    profiles: [postgres, full]
+    # healthcheck: pg_isready -U noctus -d noctus
+
 networks:
   noctus-net: { name: noctus-net, driver: bridge }
 
 volumes:
   redis_data:
   waha_sessions:
+  postgres_data:
 ```
 
 **Profiles.** Anything that not all products need lives behind a
@@ -351,7 +364,8 @@ iteration.
 ./start.sh                      # 10 products × backend+frontend (20 containers)
 ./start.sh redis                # + Redis profile
 ./start.sh waha                 # + WAHA (WhatsApp HTTP API)
-./start.sh full                 # + Redis + WAHA
+./start.sh local-db             # + local Postgres (offline dev — see §11.13)
+./start.sh full                 # + Redis + WAHA + Postgres
 ./start.sh build                # rebuild images (--no-cache --pull) then up
 
 # Cloudflare tunnel — expose a product to the internet via *.trycloudflare.com
@@ -745,19 +759,28 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
 
 ### 🟡 Soon — quality lifts
 
-8. **No `docker-compose.override.yml` for dev.** Today the same compose
-   shape is used for dev and (would-be) prod. Splitting into
-   `docker-compose.yml` (production-shape: no volume binds, no
-   reload) + `docker-compose.override.yml` (dev: bind product source
-   for hot-reload) is the standard pattern.
+8. ✅ **Dev override compose (T7, containerization-backlog-closure
+   Wave 2, 2026-05-10).** Each per-product `docker-compose.yml` now has
+   a sibling `docker-compose.override.yml` that bind-mounts the product
+   source for hot-reload and swaps the production CMD for
+   `uvicorn --reload`. Root `docker-compose.override.yml` auto-enables
+   the `redis` profile in dev and drops `restart:` on shared services.
+   `docker compose up` (no -f flags) auto-merges every override; the
+   production overlay (`docker-compose.prod.yml`) is T8's scope and is
+   loaded via explicit `-f docker-compose.yml -f docker-compose.prod.yml`.
+   Full pattern at **§11d · Dev override compose** below.
 9. **CI builds only 4 of 20 images (smoke).** Full-fleet build is
    ~30 minutes on free GH runners — current job builds core + seed
    only. Future: matrix strategy with one job per product, or move
    to a self-hosted runner with disk + cache reuse.
-10. **No image registry strategy.** Local builds only today. For
-    deploy, images need to land in a registry (GHCR, ECR, etc.).
-    Decision needed: monorepo registry with prefix, or per-product
-    registries. <- human decision: per-product registries.
+10. ✅ **Image registry strategy — per-product registries (2026-05-10).**
+    Decision locked: per-product registries (rationale at §11a). Every
+    per-product `docker-compose.yml` `image:` line now points at
+    `ghcr.io/jraphaelsst/noctus-<slug>-<role>:${NOCTUS_IMAGE_TAG:-dev}`
+    so local builds keep working (`:dev` fallback) and CI can set
+    `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` for immutable tags.
+    See **§11a · Image registry strategy** for the full pattern + manual
+    push recipe. T9 (Wave 3) will land the automated push workflow.
 11. **Backend image is fat (600-900MB).** A second pass with
     multi-stage (build deps in one stage, runtime-only in another)
     could shave 200-400MB. Standard pattern; deferred for later. <- please do it
@@ -772,6 +795,29 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
     Supabase. For offline dev / fully-isolated CI, a `postgres` profile
     serving a local DB (with a schema-init script that mirrors
     migrations) would unlock more scenarios.
+14. ✅ **Per-product healthcheck override (2026-05-10).** dev-team uses
+    an `agno_ping` readiness_hook on `/_ready` (seed-native seam). Wired
+    via `HealthEndpointConfig(readiness_hooks=[agno_ping])` passed to
+    `create_product_app(...)` in `products/dev-team/backend/app/main.py`;
+    the hook lives at `products/dev-team/backend/app/services/agno_health.py`
+    and probes ANTHROPIC_API_KEY presence + leader model allowlist +
+    `dev_team` package importability. Per-product compose override
+    targets `http://localhost:8009/_ready` with `timeout=10s` +
+    `start_period=30s`. Scaffolder template (`templates/product-seed/
+    docker-compose.yml`) gains a commented healthcheck-override seam so
+    future products can opt-in trivially. Full pattern at **§11c ·
+    Per-product healthcheck override** below.
+
+13. ✅ **Postgres profile — applied (T4, containerization-backlog-closure
+    Wave 1).** `postgres:16-alpine` service in the root compose under
+    `profiles: [postgres, full]`. Schema init via
+    `scripts/init-local-db/`: `00-extensions.sql` (pgcrypto, uuid-ossp,
+    citext) + `00a-supabase-shims.sql` (roles + `auth.jwt()`/`auth.uid()`
+    stubs + `extensions` + `storage` schemas + minimal `auth.users` table)
+    + `01-schemas.sql` + `02-migrations.sql` (last two regenerated from
+    each product's first migration by `scripts/build-init-local-db.sh`).
+    `./start.sh local-db` activates the profile alongside the fleet. See
+    §11b below for the full mental model + caveats.
 14. **Health endpoint per-product variation.** All products use the
     seed's `/api/health` — fine, but dev-team's agno engine has
     deeper health probes (`/api/health/agno`) that the docker
@@ -796,6 +842,126 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
   once the scaffolder is wired).
 
 ---
+
+## 11a · Image registry strategy
+
+**Per-product registries** — locked 2026-05-10 (T5 of
+`projects/containerization-backlog-closure/`). Each product gets its
+own GHCR namespace; the platform does **not** ship a single monorepo
+registry with a `noctus-<slug>` prefix.
+
+### Rationale
+
+- **Per-product access control.** A read/write PAT scoped to one
+  product's package can be handed to a per-product deploy pipeline
+  without granting blast-radius on the rest of the fleet.
+- **Per-product image lifecycle.** Older immutable tags can be pruned
+  per product without affecting siblings (e.g. ERP keeps 30 days of
+  SHA tags, mailing keeps 7 days — independent retention policies).
+- **Per-product publication cadence.** When a product ships at a
+  different rhythm (e.g. core every PR, daily-life weekly), the
+  registry view stays clean — no interleaved cross-product noise.
+- **Per-product ownership.** Aligns with the product-folder boundary
+  used everywhere else in the repo (`products/<slug>/{backend,frontend}`,
+  per-product `docker-compose.yml`, per-product start.sh registration).
+  Same boundary, same registry slot.
+
+### Tag pattern
+
+```
+ghcr.io/jraphaelsst/noctus-<slug>-<role>:<tag>
+```
+
+Where:
+- `<slug>` is the product slug (matches `products/<slug>/` dir name).
+- `<role>` is `backend` or `frontend`.
+- `<tag>` is one of:
+  - `dev` — local development build. Default fallback when
+    `NOCTUS_IMAGE_TAG` is unset. Local `docker compose build` produces
+    images at this tag.
+  - `<git-sha>` — 7-char short SHA, immutable per commit. CI builds
+    set `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` to produce
+    these. Deploys reference these for reproducibility.
+  - `latest` — the most recent CI build on `main`. Moves on every push
+    to main. Convenience tag for "pull whatever just shipped"; never
+    use in production deploys (race-prone).
+  - `<semver>` — tagged releases (e.g. `v1.4.2`). Future; reserved for
+    when products start cutting versioned releases.
+
+### How the compose plumbing works
+
+Every per-product `docker-compose.yml` carries:
+
+```yaml
+services:
+  <slug>-backend:
+    image: ghcr.io/jraphaelsst/noctus-<slug>-backend:${NOCTUS_IMAGE_TAG:-dev}
+  <slug>-frontend:
+    image: ghcr.io/jraphaelsst/noctus-<slug>-frontend:${NOCTUS_IMAGE_TAG:-dev}
+```
+
+`${NOCTUS_IMAGE_TAG:-dev}` is shell-style interpolation that Docker
+Compose evaluates natively at compose-parse time. Three modes:
+
+1. **Local build (no env).** `docker compose build` produces images
+   tagged `ghcr.io/jraphaelsst/noctus-<slug>-<role>:dev`. The registry
+   path is just a canonical image name on the local Docker daemon —
+   no push, no registry contact. This is exactly the old `:dev` flow,
+   just with a longer name.
+2. **CI build (per-commit).** Pipeline exports
+   `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` before
+   `docker compose build`. Images get tagged with the short SHA;
+   `docker push` lands them at GHCR; deploys reference the exact SHA.
+3. **Manual override.** Anyone can `NOCTUS_IMAGE_TAG=test123 docker compose up`
+   to swap which tag the compose pulls/builds — useful for testing a
+   pre-built image without rebuilding locally.
+
+### Manual push recipe
+
+When you need to push a single image by hand (one-off deploys, debug,
+pre-CI sanity):
+
+```bash
+# 1. Build locally (defaults to :dev tag)
+cd products/core && docker compose build
+
+# 2. Authenticate to GHCR
+#    Use a fine-scoped PAT with write:packages (and read:packages).
+echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
+# 3. Push the dev tag
+docker push ghcr.io/jraphaelsst/noctus-core-backend:dev
+
+# 4. (Optional) re-tag for a specific SHA and push that too
+docker tag ghcr.io/jraphaelsst/noctus-core-backend:dev \
+           ghcr.io/jraphaelsst/noctus-core-backend:$(git rev-parse --short HEAD)
+docker push ghcr.io/jraphaelsst/noctus-core-backend:$(git rev-parse --short HEAD)
+```
+
+`GHCR_USERNAME` + `GHCR_TOKEN` are declared (commented) in the root
+`.env.example`. Local devs typically leave them unset.
+
+### Container names are unchanged
+
+`container_name: noctus-<slug>-<role>` (no registry path) stays the
+same — that's the friendly local-docker name used by `docker ps`,
+inter-service DNS within the compose network, and start.sh's
+healthcheck logic. Only `image:` carries the registry path.
+
+### What still has to happen
+
+- **T9 (Wave 3) — automated push workflow.** A GitHub Actions workflow
+  that on every `main` push:
+    - builds all per-product images,
+    - tags them `${short-sha}` + `latest`,
+    - logs in to GHCR via `GITHUB_TOKEN`,
+    - pushes both tags per product.
+  Pairs with §11 #15 (image scanning via trivy/grype) once the images
+  are in the registry.
+- **Per-product retention policies.** Once images start landing in
+  GHCR, configure per-package retention (e.g. keep last 30 SHA tags,
+  always keep `latest` + `dev`). Done in the GHCR UI; future
+  improvement to script via the API.
 
 ## 11b · `VITE_*` build-arg contract
 
@@ -940,6 +1106,376 @@ already handle missing values gracefully).
 
 ---
 
+## 11c · Per-product healthcheck override
+
+**Rule.** Products inherit the seed-default Docker healthcheck which
+hits `/api/health` (a simple liveness probe — "FastAPI is up and
+routing requests"). When a product needs a **deeper readiness probe**
+(API key presence, model allowlist, downstream package importability,
+external service reachability), attach a `HealthCheckHook` to the
+seed's existing `/_ready` endpoint via `HealthEndpointConfig
+(readiness_hooks=[<hook>])` passed to `create_product_app(...)`, then
+override the per-product `docker-compose.yml` healthcheck to target
+`/_ready` (or `/_health` for liveness-only) with timeouts and
+`start_period` tuned for the deeper probe.
+
+**Why prefer `/_ready` over inventing `/api/health/<concern>`.** The
+seed-native `/_ready` endpoint is a NAMED SEAM (per the Seed-First
+rule). Inventing a `/api/health/<concern>` URL shape is a structural
+fork — it duplicates plumbing the seed already provides and creates a
+per-product convention divergence. The `readiness_hooks` list **composes**:
+every hook a product registers contributes a single entry to the
+`/_ready` JSON `checks[]` array; `/_ready` aggregates and returns 503
+when **any** hook reports `ok=False`. Multiple hooks per product, one
+endpoint, one contract.
+
+### dev-team example (concrete reference)
+
+- **Hook**: `products/dev-team/backend/app/services/agno_health.py`
+  defines `agno_ping`. Three sub-100ms local checks (no network):
+  ANTHROPIC_API_KEY env truthy, leader model in known-Anthropic
+  allowlist, `dev_team` package importable + `__version__` readable.
+  Returns `(ok: bool, error_msg: str | None)` matching the seed's
+  `HealthCheckHook` Protocol.
+- **Wiring**: `products/dev-team/backend/app/main.py` passes
+  `health_config=HealthEndpointConfig(readiness_hooks=[agno_ping])` to
+  `create_product_app(...)`. The hook's `__name__` ("agno_ping")
+  surfaces in `/_ready` JSON `checks[]` automatically.
+- **Compose override**: `products/dev-team/docker-compose.yml` carries:
+
+  ```yaml
+  dev-team-backend:
+    # ... build / image / env_file / ports / networks ...
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8009/_ready"]
+      interval: 30s
+      timeout: 10s            # agno_ping is sub-100ms but allow headroom
+      retries: 3
+      start_period: 30s        # agno warmup is genuinely slower
+  ```
+
+- **Why `start_period: 30s`.** dev-team's first import of
+  `dev_team.configs` lazy-loads agno's adapter packages; the cold-start
+  cost lands the first ready response in the 5–10s range on a warm
+  daemon. The seed's default `start_period: 20s` cuts it too close on
+  slower hosts.
+- **Why `timeout: 10s`.** `agno_ping` itself is sub-100ms (all three
+  pins are local lookups), but the override keeps headroom in case
+  `load_config('default')` ever evolves to read more YAML or `dev_team
+  .__init__` adds a heavier lazy attr.
+- **503 contract is preserved.** When ANTHROPIC_API_KEY is unset,
+  `agno_ping` reports `ok=False`; `/_ready` returns 503; Docker flips
+  the container to `unhealthy`. This is correct behavior — the
+  container truthfully reports it cannot dispatch team runs.
+
+### Scaffolder template seam
+
+`templates/product-seed/docker-compose.yml` ships a commented
+override block under the default healthcheck, demonstrating the
+shape for future products. Uncommenting + tweaking is a 30-second
+operation; the discoverability cost of "where do I put this?" is
+paid once by the template, not N times by readers.
+
+### When NOT to override
+
+- The product's actual health surface is "is FastAPI up?" — the
+  seed default `/api/health` is correct and there's nothing deeper
+  to probe.
+- The "deeper" probe would do real I/O (network call, DB query) on
+  every healthcheck interval — that's an anti-pattern. Healthchecks
+  run frequently (every 30s by default); a hook that hits Anthropic
+  per probe would generate cost and rate-limit pressure. Keep
+  readiness hooks cheap and local; let runtime errors surface real
+  network failures.
+
+### Anti-patterns
+
+- **Inventing `/api/health/<concern>` instead of using `/_ready`.**
+  Structural fork; `/_ready` already exists in the seed and composes.
+- **Healthcheck with side effects.** Probes must be read-only. A
+  healthcheck that warms a cache or initializes a connection pool is
+  doing real work on every interval.
+- **Reducing `start_period` to chase faster boot reporting.** The
+  start_period is a grace window — until it elapses, failures don't
+  flip the container `unhealthy`. Too short → first agno warmup
+  flips the container unhealthy → orchestrators restart it → loop.
+- **Forgetting to update both the override AND the registration.**
+  The compose healthcheck and the `readiness_hooks=[...]` list are
+  twin sides of the same change; touching only one leaves either
+  the deeper probe unwired (the readiness hook never runs because
+  Docker's still hitting `/api/health`) or the override blind
+  (Docker hits `/_ready` but no product-specific hooks are
+  registered, so the deeper signal isn't surfaced).
+
+## 11b · Local-postgres profile (offline dev)
+
+> **Status:** Applied 2026-05-10 (T4, containerization-backlog-closure
+> Wave 1). Closes §11 backlog #13.
+
+### When to use it
+
+- **Offline dev** — flight, no internet, no Supabase reach.
+- **Fully-isolated CI** — no network to remote services; reproducible
+  schema applied identically every run.
+- **Fresh laptop** — Supabase project credentials not yet provisioned;
+  want to verify the stack starts.
+- **Migration sanity-check** — apply every product's first migration
+  against a clean Postgres to surface SQL errors *before* they hit
+  staging.
+
+Default `docker compose up` does NOT bring postgres up. Default `start.sh`
+fleet mode does NOT bring it up. The profile is fully opt-in.
+
+### How to activate
+
+```bash
+./start.sh local-db                                # fleet + postgres
+docker compose --profile postgres up -d postgres   # postgres only
+docker compose --profile full up                   # everything
+```
+
+The container exposes `5432` on the host, plus an internal alias
+`postgres` reachable on `noctus-net`:
+
+| From | URL |
+|---|---|
+| host shell (psql, pgcli, IDE) | `postgresql://noctus:noctus_local@localhost:5432/noctus` |
+| inside any product container | `postgresql://noctus:noctus_local@postgres:5432/noctus` |
+
+### What runs on first boot
+
+Files under `scripts/init-local-db/` are bind-mounted to
+`/docker-entrypoint-initdb.d/` (read-only). The official postgres image
+runs every `.sql` / `.sh` in that directory in **alphabetical order**
+on a fresh `postgres_data` volume:
+
+| Order | File | Purpose |
+|---|---|---|
+| 1 | `00-extensions.sql` | `CREATE EXTENSION pgcrypto / "uuid-ossp" / citext` |
+| 2 | `00a-supabase-shims.sql` | roles (`anon` / `authenticated` / `service_role`) + `auth.{jwt,uid,role,email}()` no-op functions + `auth.users` shim + `extensions` / `storage` schema placeholders |
+| 3 | `01-schemas.sql` | `CREATE SCHEMA IF NOT EXISTS <slug>` per product **(generated)** |
+| 4 | `02-migrations.sql` | concatenated `products/*/backend/migrations/<first>_*.sql` wrapped in `BEGIN; ... COMMIT;` per product **(generated)** |
+
+### Regenerating the init scripts
+
+When a product's first migration changes (rare — usually 001 is frozen),
+regenerate the two generated files:
+
+```bash
+bash scripts/build-init-local-db.sh
+```
+
+The generator finds the lexicographically-first numeric-prefixed `.sql`
+in each `products/*/backend/migrations/` directory (handles both
+3-digit `001_*` and 4-digit `0001_*` zero-padding). Output is
+deterministic; commit alongside the migration change.
+
+### Caveat — schema init runs ONCE per volume
+
+The postgres official image only runs `/docker-entrypoint-initdb.d/`
+when the data directory is empty. After the first successful boot, the
+volume has data and subsequent `docker compose up postgres` reuses it
+unchanged. To re-init:
+
+```bash
+./stop.sh volumes        # drops the postgres_data volume
+./start.sh local-db      # fresh init
+```
+
+### Caveat — RLS policies evaluate to FALSE under default settings
+
+Every product migration references `auth.jwt()->>'org_id'` in its RLS
+policies. The shim returns NULL (no JWT issuer in offline-dev), so RLS
+filters reject all rows for non-superusers. Two workarounds:
+
+1. **Connect as `noctus`** (the `POSTGRES_USER` — superuser; bypasses
+   RLS). Default in `psql -U noctus`.
+2. **Simulate a logged-in user per session** —
+   `SET LOCAL request.jwt.claims = '{"org_id": "...", "sub": "..."}';`
+   before queries. `auth.jwt()` will then return that JSON.
+
+### Caveat — Supabase-specific features are best-effort
+
+Some product migrations reference features `postgres:16-alpine` doesn't
+ship: `CREATE EXTENSION vector`, `CREATE EXTENSION pg_cron`, `CREATE
+EXTENSION pg_net`, Supabase `storage.objects` table. The generator
+wraps each product's migration in `BEGIN; ... COMMIT;` so a single
+product's failure rolls back THAT product's block only — the rest of
+the fleet still applies. ERP is the typical casualty (uses pgvector
+for embeddings); accept-with-rationale for offline-dev. To use those
+features locally, install the extensions in the postgres image
+(rebuild postgres with `pgvector/pgvector:pg16` base) or live with
+that one product missing in offline-dev.
+
+### Wiring a product at the local DB
+
+Most products consume Supabase via PostgREST (`SUPABASE_URL` is an
+HTTP endpoint, not a raw postgres URL). Pointing a product at the
+local Postgres requires the product to swap its data-access path to
+raw psycopg2/asyncpg — out of scope for T4. The local DB is shipped
+today as a **schema + data substrate** for ad-hoc psql / pgcli /
+direct-SQL workflows; a follow-up (or per-product carve-out) wires
+runtime read/write through.
+
+---
+
+## 11d · Dev override compose
+
+**Locked 2026-05-10** (T7 of `projects/containerization-backlog-closure/`,
+Wave 2). Closes §11 backlog item #8.
+
+Standard Docker pattern: split a single `docker-compose.yml` into a
+production-shape base file + a `docker-compose.override.yml` that flips
+runtime behavior toward dev. `docker compose up` (no `-f` flags) auto-
+merges the override on top; production deployment uses an explicit
+`-f docker-compose.yml -f docker-compose.prod.yml` combo (the prod
+overlay — T8's scope — does NOT inherit the dev override).
+
+### Rule
+
+Per-product `docker-compose.override.yml` is auto-loaded by
+`docker compose up` when no `-f` flags are given. Each override file
+carries three flips relative to the base compose:
+
+1. **Bind-mount the product source.** `./backend:/app/products/<slug>/backend`
+   + `./frontend:/app/products/<slug>/frontend`. Edits propagate without
+   rebuild — uvicorn's `--reload` watches the bind-mounted tree via
+   `watchfiles` (bundled with `uvicorn[standard]`).
+2. **`uvicorn --reload`.** The override replaces the production CMD
+   (which runs without `--reload`) with a list-form `command:` that
+   adds `--reload` while keeping the same `--host` / `--port` /
+   `--app-dir` invocation. Required because the production Dockerfile
+   CMD is the no-reload form (matches how it ships).
+3. **`restart: "no"`.** Production carries `restart: unless-stopped` so
+   container crashes auto-recover. In dev that hides the crash in logs
+   between restart loops; flipping to `"no"` makes failures visible.
+4. **`NODE_ENV=development`.** Frontend container env so any build-time
+   conditional routes to the dev path. Note: the production frontend
+   serves a pre-built nginx-static bundle, so bind-mount alone doesn't
+   give hot-reload — that requires the vite dev server, which is a
+   separate dev-server compose service (out of T7's scope; deferred).
+
+### When the override applies
+
+Two paths auto-load the override:
+
+```bash
+# Path A: standalone (one product at a time)
+cd products/seed && docker compose up
+# auto-finds docker-compose.yml + docker-compose.override.yml siblings.
+
+# Path B: orchestrated (full fleet from root)
+docker compose up
+# root docker-compose.yml's `include:` uses extended `path:` syntax to
+# pull each per-product compose + override as a 2-file list, so the
+# override merges per product. See "How the root-compose merge works"
+# below.
+```
+
+Production deployment uses an explicit flag combo that excludes the
+override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+```
+
+`start.sh` continues to work in dev — it shells out to `docker compose
+up` with no `-f`, so the override auto-loads.
+
+### How the root-compose merge works
+
+Critical detail discovered empirically (2026-05-10, T7): Docker
+Compose's auto-load of `docker-compose.override.yml` ONLY applies to
+the override sibling of the invoked file. Files pulled in via
+`include:` do NOT auto-pull their own overrides. Without intervention,
+`docker compose up` at root would NOT apply per-product overrides.
+
+The fix: root `docker-compose.yml`'s `include:` block uses the extended
+`path:` list syntax (compose v2.20+) so each entry loads both the base
+compose AND the override:
+
+```yaml
+include:
+  # BEGIN_PRODUCTS_INCLUDE
+  - path:
+      - products/core/docker-compose.yml
+      - products/core/docker-compose.override.yml
+  - path:
+      - products/seed/docker-compose.yml
+      - products/seed/docker-compose.override.yml
+  # ... etc per product
+  # END_PRODUCTS_INCLUDE
+```
+
+The scaffolder's `_register_in_root_compose` emits this multi-line
+shape for new products; `_unregister_from_root_compose` removes the
+whole 4-line block (path: parent + base + override) on delete.
+
+### Common pitfalls
+
+- **Bind-mount must NOT clobber `/opt/venv`.** The backend Dockerfile
+  installs the virtualenv at `/opt/venv` (outside `/app`); the bind
+  only replaces source under `/app/products/<slug>/backend`. If a
+  future Dockerfile moves the venv into `/app`, the override needs an
+  anonymous volume to protect it.
+- **`--reload` requires `uvicorn[standard]`.** Every product's
+  `requirements.txt` pins `uvicorn[standard]==0.30.6` which bundles
+  watchfiles. Confirmed across all 10 products (T7 audit).
+- **Don't override `image:` in the override.** Image tag stays shared
+  with prod (the `ghcr.io/jraphaelsst/...` line from §11a). The
+  override only changes runtime behavior (bind-mounts, command, env),
+  not the built artifact.
+- **Don't add `restart: unless-stopped` in the override.** Dev wants
+  visible crashes.
+- **dev-team agno warmup.** `--reload` works but every backend save
+  re-runs the agno engine warmup (re-imports `dev_team/`, re-probes
+  ANTHROPIC_API_KEY, re-validates the leader allowlist). Cold reload
+  takes 10-20s on a warm Anthropic connection. If iteration becomes
+  painful, drop `--reload` from `products/dev-team/docker-compose.override.yml`
+  and use `docker compose restart dev-team-backend` for manual reload.
+  Documented inline at the dev-team override.
+
+### Root override
+
+The root `docker-compose.override.yml` covers the shared platform
+services (`redis`, `waha`, `postgres`):
+
+- **Redis profile auto-on in dev.** `profiles: !reset []` clears the
+  `[redis, full]` gate from the base file so `docker compose up`
+  (no `--profile redis`) brings Redis up automatically. Many products
+  use it (chatbot buffer, WhatsApp router, scheduling queues); having
+  it default-on in dev is a usability win. Production excludes this
+  override → profile gating returns → redis stays opt-in.
+- **Redis verbose logging.** `redis-server --loglevel verbose` for dev
+  command-level visibility (vs default `notice`).
+- **`waha` stays gated** even in dev — heavy, only needed by chatbot
+  products.
+- **`restart: "no"`** on all shared services so dev crashes are visible.
+
+### Scaffolder template
+
+`templates/product-seed/docker-compose.override.yml` mirrors the
+per-product pattern with `{{PRODUCT_SLUG}}` / `{{BACKEND_PORT}}`
+placeholders. `scripts/sync-seed-template.sh` substitutes literal
+`seed-*` service names + `products/seed/` paths in compose files into
+`{{PRODUCT_SLUG}}` during sync, so the seed override at
+`products/seed/docker-compose.override.yml` (literal `seed-backend`)
+correctly mirrors to the template (`{{PRODUCT_SLUG}}-backend`) for
+downstream scaffold consumption.
+
+### imobi-scheduling carve-out
+
+`products/imobi-scheduling/docker-compose.yml` still carries stale
+literal `seed-*` service names (a pre-existing scaffold artifact, not
+T7's regression). T7 deliberately did NOT author an override for
+imobi-scheduling because the override would have to match the stale
+service names (e.g. `seed-backend`) rather than the slug. Tracked as
+a follow-up: rename imobi-scheduling's service names + add the
+override. The compose `include:` keeps imobi-scheduling on the legacy
+single-line syntax (no override path) until that gap closes.
+
+---
+
 ## 12 · References
 
 - Root compose: `docker-compose.yml`
@@ -947,5 +1483,7 @@ already handle missing values gracefully).
 - nginx template: `seed/framework/frontend/nginx.conf.template`
 - Vite alias factory: `seed/framework/frontend/vite.config.factory.ts`
 - Workspace template (sibling-product equivalent): `templates/seed-workspace-docker/`
+- Local-postgres init scripts: `scripts/init-local-db/`
+- Local-postgres generator: `scripts/build-init-local-db.sh`
 - Deploy drill (when user says "put X online"): `KB § GUIDES/deploy-workspace-online.md`
 - Operations: `start.sh`, `stop.sh`
