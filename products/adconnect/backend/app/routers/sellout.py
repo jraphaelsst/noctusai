@@ -97,7 +97,8 @@ async def submit_estruturado(
             submitted_by=user.get("sub"),
             valor_total=body.valor_total,
             quantidade_itens=body.quantidade_itens,
-            periodo=body.periodo,
+            periodo_inicio=body.periodo_inicio,
+            periodo_fim=body.periodo_fim,
             cnpj_cliente_final=body.cnpj_cliente_final,
             descricao_resumida=body.descricao_resumida,
             items_json=body.items_json,
@@ -116,7 +117,8 @@ async def submit_estruturado(
 async def submit_nfe(
     file: UploadFile = File(...),
     distributor_id: str = Form(...),
-    periodo: Optional[str] = Form(None),
+    periodo_inicio: Optional[str] = Form(None),
+    periodo_fim: Optional[str] = Form(None),
     observacoes: Optional[str] = Form(None),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -130,7 +132,8 @@ async def submit_nfe(
             submitted_by=user.get("sub"),
             xml_bytes=xml_bytes,
             filename=file.filename or "sellout.xml",
-            periodo=periodo,
+            periodo_inicio=periodo_inicio,
+            periodo_fim=periodo_fim,
             observacoes=observacoes,
         )
     except sellout_service.SubmissionError as exc:
@@ -146,7 +149,8 @@ async def submit_nfe(
 async def submit_attachment(
     file: UploadFile = File(...),
     distributor_id: str = Form(...),
-    periodo: Optional[str] = Form(None),
+    periodo_inicio: Optional[str] = Form(None),
+    periodo_fim: Optional[str] = Form(None),
     observacoes: Optional[str] = Form(None),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -161,7 +165,8 @@ async def submit_attachment(
             file_bytes=file_bytes,
             filename=file.filename or "sellout.bin",
             content_type=file.content_type or "application/octet-stream",
-            periodo=periodo,
+            periodo_inicio=periodo_inicio,
+            periodo_fim=periodo_fim,
             observacoes=observacoes,
         )
     except sellout_service.SubmissionError as exc:
@@ -178,7 +183,12 @@ def list_reports(
     role = user.get("role")
     builder = db.table(SELLOUT_TABLE).select("*")
     if role == "admin":
-        builder = builder.eq("org_id", _user_org(user))
+        # Tenant scoping for admin runs through RLS:
+        # `sellout_brand_admin_sees_all` policy joins through
+        # `distributors.org_id == auth.jwt.org_id`. The previous
+        # `.eq("org_id", ...)` filtered a column that doesn't exist on
+        # `relatorios_sellout` (would error in production; mock accepts).
+        pass
     elif distributor_id:
         builder = builder.eq("distributor_id", distributor_id)
     else:

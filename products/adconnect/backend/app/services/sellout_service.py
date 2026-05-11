@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional, Protocol
 
 from noctusai_lib.integrations.email import Digest, send_to_one
@@ -137,6 +137,19 @@ async def _notify_admin_submission(
         logger.warning("sellout_service: notification email failed (%s)", exc)
 
 
+def _iso_date(value: Any) -> Optional[str]:
+    """Coerce a date / datetime / ISO-string into the ISO-date string the
+    DB expects. Accepts None → None for callers that don't carry period
+    fields (e.g. nfe_xml flow when XML lacks period coverage)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
 async def submit_estruturado(
     db: Any,
     *,
@@ -145,7 +158,8 @@ async def submit_estruturado(
     submitted_by: Optional[str],
     valor_total: float,
     quantidade_itens: int,
-    periodo: Optional[str] = None,
+    periodo_inicio: Optional[Any] = None,
+    periodo_fim: Optional[Any] = None,
     cnpj_cliente_final: Optional[str] = None,
     descricao_resumida: Optional[str] = None,
     items_json: Optional[list[dict[str, Any]]] = None,
@@ -156,12 +170,16 @@ async def submit_estruturado(
         raise SubmissionError("valor_total não pode ser negativo")
     if quantidade_itens < 0:
         raise SubmissionError("quantidade_itens não pode ser negativa")
+    # `org_id` is intentionally NOT in the payload — `relatorios_sellout`
+    # has no `org_id` column; tenant scoping flows through
+    # `distributor_id → distributors.org_id` via RLS. Kept as a kwarg for
+    # the notification email (admin lookup) only.
     payload: dict[str, Any] = {
-        "org_id": org_id,
         "distributor_id": distributor_id,
         "submitted_by": submitted_by,
         "submission_mode": "estruturado",
-        "periodo": periodo,
+        "periodo_inicio": _iso_date(periodo_inicio),
+        "periodo_fim": _iso_date(periodo_fim),
         "cnpj_cliente_final": cnpj_cliente_final,
         "valor_total": valor_total,
         "quantidade_itens": quantidade_itens,
@@ -189,7 +207,8 @@ async def submit_nfe(
     submitted_by: Optional[str],
     xml_bytes: bytes,
     filename: str,
-    periodo: Optional[str] = None,
+    periodo_inicio: Optional[Any] = None,
+    periodo_fim: Optional[Any] = None,
     observacoes: Optional[str] = None,
     storage: Optional[StorageBackend] = None,
     admin_email: Optional[str] = None,
@@ -210,12 +229,13 @@ async def submit_nfe(
         content_type="application/xml",
     )
 
+    # `org_id` is intentionally NOT in the payload — see submit_estruturado.
     payload: dict[str, Any] = {
-        "org_id": org_id,
         "distributor_id": distributor_id,
         "submitted_by": submitted_by,
         "submission_mode": "nfe_xml",
-        "periodo": periodo,
+        "periodo_inicio": _iso_date(periodo_inicio),
+        "periodo_fim": _iso_date(periodo_fim),
         "observacoes": observacoes,
         "nfe_xml_url": nfe_url,
         "status": "pendente",
@@ -241,7 +261,8 @@ async def submit_attachment(
     file_bytes: bytes,
     filename: str,
     content_type: str,
-    periodo: Optional[str] = None,
+    periodo_inicio: Optional[Any] = None,
+    periodo_fim: Optional[Any] = None,
     observacoes: Optional[str] = None,
     storage: Optional[StorageBackend] = None,
     admin_email: Optional[str] = None,
@@ -256,12 +277,16 @@ async def submit_attachment(
         data=file_bytes,
         content_type=content_type or "application/octet-stream",
     )
+    # `org_id` is intentionally NOT in the payload — see submit_estruturado.
+    # `submission_mode` is `freeform` per DB CHECK; the route is still
+    # named `/upload-attachment` because that's the UX surface (frontend
+    # already labels the persisted mode `freeform`).
     payload: dict[str, Any] = {
-        "org_id": org_id,
         "distributor_id": distributor_id,
         "submitted_by": submitted_by,
-        "submission_mode": "attachment",
-        "periodo": periodo,
+        "submission_mode": "freeform",
+        "periodo_inicio": _iso_date(periodo_inicio),
+        "periodo_fim": _iso_date(periodo_fim),
         "observacoes": observacoes,
         "attachment_url": attachment_url,
         "status": "pendente",
@@ -271,7 +296,7 @@ async def submit_attachment(
     await _notify_admin_submission(
         org_id=org_id,
         distributor_id=distributor_id,
-        submission_mode="attachment",
+        submission_mode="freeform",
         admin_email=admin_email,
     )
     return row
@@ -287,9 +312,14 @@ async def review(
     distributor_email: Optional[str] = None,
     org_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Brand-admin review write. Returns the updated row."""
-    if status not in {"aprovado", "rejeitado"}:
-        raise SubmissionError("status deve ser 'aprovado' ou 'rejeitado'")
+    """Brand-admin review write. Returns the updated row.
+
+    DB CHECK constrains `status` to ('pendente','em_analise','aprovado',
+    'recusado') — the reviewer uses the terminal pair only. Pre-fix the
+    code accepted `'rejeitado'` which would CHECK-violate on write.
+    """
+    if status not in {"aprovado", "recusado"}:
+        raise SubmissionError("status deve ser 'aprovado' ou 'recusado'")
     payload = {
         "status": status,
         "review_notes": review_notes,
