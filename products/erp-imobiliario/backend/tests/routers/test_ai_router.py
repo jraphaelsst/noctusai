@@ -479,12 +479,33 @@ class TestWhatsAppIntent:
 
 class TestCertidoesScore:
     def test_happy_path(self, client, _stub_persist):
+        # Post keeper-trio-erp Phase 1: the router queries the canonical
+        # certidões schema (erp.certidao_consultas joined with
+        # erp.certidao_resultados via consulta_id, name-matched by
+        # cliente.nome). The legacy phantom `certidoes_negativas` table
+        # is gone; the stubs below mirror the real shape.
         client._mock_supabase.set_table_data("clientes", {
             "id": "11111111-1111-1111-1111-111111111111",
             "nome": "Pedro",
         })
-        client._mock_supabase.set_table_data("certidoes_negativas", [
-            {"tipo": "fed", "status": "ok", "data_emissao": "2026-04-01"},
+        client._mock_supabase.set_table_data("certidao_consultas", [
+            {
+                "id": "cc111111-1111-1111-1111-111111111111",
+                "nome": "Pedro",
+                "tipo_documento": "cpf",
+                "documento": "12345678900",
+                "created_at": "2026-04-01T10:00:00Z",
+            },
+        ])
+        client._mock_supabase.set_table_data("certidao_resultados", [
+            {
+                "tipo": "fed",
+                "nome_display": "Federal",
+                "status": "sucesso",
+                "analise_ia": "ok",
+                "api_requested_at": "2026-04-01T10:00:00Z",
+                "consulta_id": "cc111111-1111-1111-1111-111111111111",
+            },
         ])
         with patch(
             "app.services.ai_service.score_certidoes",
@@ -510,6 +531,35 @@ class TestCertidoesScore:
         client._mock_supabase.set_table_data("clientes", [])
         resp = client.post("/api/ai/clientes/22222222-2222-2222-2222-222222222222/certidoes-score")
         assert resp.status_code == 404
+
+    def test_no_consultas_returns_empty_score(self, client, _stub_persist):
+        """Cliente exists but no certidões — score_certidoes receives []."""
+        client._mock_supabase.set_table_data("clientes", {
+            "id": "33333333-3333-3333-3333-333333333333",
+            "nome": "Maria",
+        })
+        client._mock_supabase.set_table_data("certidao_consultas", [])
+        with patch(
+            "app.services.ai_service.score_certidoes",
+            new_callable=AsyncMock,
+            return_value={
+                "kind": "score",
+                "label": "sem certidões",
+                "score": 0.0,
+                "chip": "0/100",
+                "explanation": "Nenhuma certidão registrada para o cliente.",
+                "confidence": 1.0,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "erp-certidoes-score@v1",
+            },
+        ) as stub:
+            resp = client.post(
+                "/api/ai/clientes/33333333-3333-3333-3333-333333333333/certidoes-score",
+            )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["score"] == 0.0
+        # Verify the certidões list passed to the service was empty.
+        assert stub.call_args.kwargs["certidoes"] == []
 
 
 class TestMetasCoachTip:

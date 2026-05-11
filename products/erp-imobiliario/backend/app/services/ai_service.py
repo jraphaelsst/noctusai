@@ -456,8 +456,11 @@ async def score_certidoes(
 ) -> dict:
     """E6 — summarize a client's certidões status into a 0-100 health score.
 
-    `certidoes` is a list of `{tipo, status, data_emissao?, observacoes?}`
-    dicts pulled from the `certidoes_negativas` table.
+    `certidoes` is a list of `{tipo, nome_display?, status, analise_ia?,
+    api_requested_at?}` dicts pulled from the `erp.certidao_resultados`
+    table. The legacy keys `data_emissao` / `observacoes` are still
+    accepted for backward compatibility with any caller that surfaces
+    pre-normalized data.
     """
     if not certidoes:
         return {
@@ -473,10 +476,12 @@ async def score_certidoes(
 
     cert_lines = []
     for c in certidoes[:20]:
+        emitted = c.get("api_requested_at") or c.get("data_emissao")
+        note = c.get("analise_ia") or c.get("observacoes")
         cert_lines.append(
             f"- {c.get('tipo', '?')}: {c.get('status', '?')}"
-            + (f" (emitida {c['data_emissao']})" if c.get("data_emissao") else "")
-            + (f" — {c['observacoes']}" if c.get("observacoes") else "")
+            + (f" (emitida {emitted})" if emitted else "")
+            + (f" — {note}" if note else "")
         )
 
     system = (

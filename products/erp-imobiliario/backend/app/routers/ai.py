@@ -347,19 +347,41 @@ async def certidoes_score(
     if not cliente_res.data:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
-    cert_res = (
-        db.table("certidoes_negativas")
-        .select("tipo, status, data_emissao, observacoes")
-        .eq("cliente_id", cliente_id)
-        .order("data_emissao", desc=True)
-        .limit(20)
+    cliente_nome = cliente_res.data.get("nome") or "cliente"
+
+    # The canonical certidões schema (migrations/001 §12B) splits the data
+    # across erp.certidao_consultas (one row per cliente-document lookup) and
+    # erp.certidao_resultados (one row per certidão tipo within a consulta).
+    # erp.clientes has no `cpf` / `cnpj` / `documento` column, and consultas
+    # carry no `cliente_id` FK — the available linkage is by `nome`. We do a
+    # best-effort name match (case-insensitive equality) on the 5 most recent
+    # consultas for this cliente, then aggregate their resultados.
+    consultas_res = (
+        db.table("certidao_consultas")
+        .select("id, nome, tipo_documento, documento, created_at")
+        .ilike("nome", cliente_nome)
+        .order("created_at", desc=True)
+        .limit(5)
         .execute()
     )
-    certidoes = cert_res.data or []
+    consultas = consultas_res.data or []
+
+    certidoes: list[dict] = []
+    if consultas:
+        consulta_ids = [c["id"] for c in consultas]
+        resultados_res = (
+            db.table("certidao_resultados")
+            .select("tipo, nome_display, status, analise_ia, api_requested_at")
+            .in_("consulta_id", consulta_ids)
+            .order("api_requested_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        certidoes = resultados_res.data or []
 
     from app.services.ai_service import score_certidoes
     out = await score_certidoes(
-        cliente_nome=cliente_res.data.get("nome") or "cliente",
+        cliente_nome=cliente_nome,
         certidoes=certidoes,
         org_id=get_org_id(user),
     )

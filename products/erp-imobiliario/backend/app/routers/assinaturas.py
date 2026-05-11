@@ -80,8 +80,15 @@ async def _resolve_assinatura_secret(request: Request, body: bytes) -> ResolvedS
     if not org_id:
         return ResolvedSecret(secret=None, extras={"assinatura_id": assinatura_id, "org_id": None})
 
+    # org_settings is the cross-product per-org per-key secret store; it
+    # lives in core (see projects/keeper-trio-erp/PROJECT.md §7 Q1 + the
+    # accept-with-rationale catalog). Use `db.schema("core")` so the
+    # admin client reaches the canonical table rather than hitting the
+    # phantom local `erp.org_settings`. The Wave 0 detector tuning
+    # (40269c3) treats `.schema(X).table(Y)` chains as legitimate.
     secret_res = (
-        db.table("org_settings")
+        db.schema("core")
+        .table("org_settings")
         .select("value")
         .eq("org_id", org_id)
         .eq("key", "assinatura_webhook_secret")

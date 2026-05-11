@@ -31,7 +31,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
 | Core | 28 | 12 | 26 | 0 | 39 | 439 |
-| ERP | 59 | 52 | 67 | 66 | 112 | 1,658 |
+| ERP | 59 | 52 | 67 | 66 | 112 | 1,659 |
 | PF | 15 | 17 | 30 | 16 | 44 | 459 |
 | Therapy | 40 | 45 | 65 | 29 | 78 | 1,072 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
@@ -42,7 +42,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Media Scheduling | 5 | 8 | 10 | 3 | 13 | 56 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 8 | 8 | 1 | 16 | 185 |
-| **Total** | **178** | **172** | **275** | **137** | **369** | **4,546** |
+| **Total** | **178** | **172** | **275** | **137** | **369** | **4,547** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
