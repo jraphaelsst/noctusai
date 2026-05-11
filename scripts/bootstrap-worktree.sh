@@ -64,6 +64,22 @@ if ! WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
 fi
 cd "$WORKTREE_ROOT"
 
+# ─── Pre-flight: cleanup stale worktrees from prior sessions ────────────────
+# Per KB § PATTERNS/branching-and-merging.md §19 (Worktree lifecycle), every
+# agent worktree whose branch is merged to main is removable. Sweeping before
+# hydrate keeps disk usage bounded — a 76-worktree accumulation cost 67 GiB
+# 2026-05-11 + blocked Engineer III at preamble (disk hit 100%).
+#
+# Skipped in --check mode (read-only) and when invoked from inside an agent
+# worktree (engineers don't sweep peers — only main-tree invocations do).
+CLEANUP_SCRIPT="$WORKTREE_ROOT/scripts/cleanup-stale-worktrees.sh"
+NOC_ROOT="$(cd "$WORKTREE_ROOT" && git rev-parse --git-common-dir 2>/dev/null | xargs -I{} dirname {})"
+if [[ $CHECK_ONLY -eq 0 && "$WORKTREE_ROOT" != *".claude/worktrees/agent-"* && -x "$CLEANUP_SCRIPT" ]]; then
+  echo "→ Pre-flight: sweep stale agent worktrees"
+  bash "$CLEANUP_SCRIPT" --force 2>&1 | sed 's/^/  /'
+  echo ""
+fi
+
 echo "→ Hydrating worktree at $WORKTREE_ROOT"
 if [[ $CHECK_ONLY -eq 1 ]]; then
   echo "  (--check mode — reporting only, no installs)"

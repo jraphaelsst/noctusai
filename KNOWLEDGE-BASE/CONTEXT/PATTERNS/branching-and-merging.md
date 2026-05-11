@@ -1498,3 +1498,65 @@ This was the recipe applied during Wave 1+2 to restore T3's ARG VITE blocks afte
 - `feedback_parallel_agent_collision_protocol.md` — the **explicit-revert** companion; both shapes can co-occur in the same session.
 
 **Three-way-synced 2026-05-10**: this subsection (§18.5) + memory `feedback_parallel_agent_collision_protocol.md` (extend with "silent regression via auto-merge" sub-rule) + CLAUDE.md branching-first bullet (no new pointer — §18 covers it).
+
+---
+
+## 19. Worktree lifecycle + auto-cleanup (NEW 2026-05-11)
+
+> **Stale worktrees are unrecoverable disk debt.** A fresh `git worktree add` for `Agent(isolation: "worktree")` materializes ~880 MiB on disk (node_modules + Python venvs after `bootstrap-worktree.sh` hydrate). The harness locks the worktree to prevent accidental git-side cleanup, but the lock has no expiry — so 76 sessions over a week left **67 GiB stranded** on the noc data volume (verified 2026-05-11; disk hit 100% mid-session, blocking Engineer III at preamble + the orchestrator's own Bash tool output staging).
+
+### 19.1 — The rule
+
+Every agent worktree under `.claude/worktrees/agent-*/` is removable as soon as its branch is reachable from `origin/main` (i.e. cherry-picked + pushed by the orchestrator). The worktree's job is done; the work is durable on main; the disk footprint is pure overhead.
+
+**`scripts/cleanup-stale-worktrees.sh`** is the canonical sweep:
+- Iterates `git worktree list --porcelain` + on-disk `agent-*/` orphans.
+- **STALE** = branch reachable from `origin/main` (`git merge-base --is-ancestor`) OR directory exists without a corresponding registered worktree.
+- **ACTIVE** (kept) = branch has commits not yet merged.
+- Removes via `git worktree remove --force` first (cleans `.git/worktrees/<name>/` too), falls back to `rm -rf` for orphans, then `git worktree prune`.
+
+```bash
+bash scripts/cleanup-stale-worktrees.sh           # interactive
+bash scripts/cleanup-stale-worktrees.sh --dry-run # report only
+bash scripts/cleanup-stale-worktrees.sh --force   # no prompt (cron / hook)
+```
+
+### 19.2 — When to invoke
+
+| Trigger | Mechanism | Frequency |
+|---|---|---|
+| **After each FF + push of an engineer's commit** | Orchestrator workflow extension — invoke `--force` mode targeting the just-merged branch's worktree. | Per merge. **Highest leverage** — disk never accumulates. |
+| **At worktree-bootstrap time** | `bootstrap-worktree.sh` invokes `cleanup-stale-worktrees.sh --force` before its own hydrate. Catches stale worktrees from prior sessions before they balloon. | Per dispatch. **Best for engineers** — the worktree they enter is on a fresh-disk state. |
+| **Nightly cron** | `0 3 * * * cd /Users/rapha/Documents/repository/NoctusAI/noctusai && bash scripts/cleanup-stale-worktrees.sh --force` | Daily. **Safety net** for sessions that crashed mid-flow. |
+| **Manual** | `bash scripts/cleanup-stale-worktrees.sh` (interactive). | Ad-hoc. **Disk-pressure recovery** — the rescue path the 2026-05-11 incident took. |
+
+### 19.3 — Safety constraints
+
+- **NEVER removes the main worktree.** Skipped explicitly by path comparison to `git rev-parse --show-toplevel`.
+- **NEVER removes sibling workspaces** outside `.claude/worktrees/agent-*/` (e.g. `noctusai-worktrees/pf-metas-seed-wiring`).
+- **NEVER removes worktrees with unmerged commits.** The `git merge-base --is-ancestor origin/main` check is the gate; only worktrees whose branch is fully reachable from main are eligible.
+- **Idempotent**: re-running on an already-clean tree is a no-op.
+
+### 19.4 — Disk pressure as a methodology gap
+
+The 2026-05-11 incident (disk filled mid-session, blocked Engineer III + the architect's own Bash tool output) surfaced two complementary gaps:
+
+1. **No cleanup mechanism existed** — every worktree accumulated until manual sweep. *Fixed by `cleanup-stale-worktrees.sh` + §19.2 invocation triggers.*
+2. **No bootstrap pre-flight** — `bootstrap-worktree.sh` happily ran `npm ci` on a near-full disk and exited 144 mid-loop. *Fix candidate*: pre-flight `df -h /private/tmp /Users` check at script start; abort cleanly if either is <5 GiB free. Engineer FFF's `proposals/phase-7-disk-space-preflight.md` (archived 2026-05-11) carries the exact recipe.
+
+The combination of **(a) auto-cleanup on merge** + **(b) pre-flight at bootstrap** + **(c) nightly safety-net cron** structurally prevents the disk-full lockout class.
+
+### 19.5 — Anti-patterns
+
+- **Removing locked agent worktrees while the engineer is still running.** Always check the in-flight engineer's `agent-<id>` against the cleanup list. The `git merge-base --is-ancestor` check naturally protects this — an active engineer's branch has unmerged commits, so it's classified ACTIVE.
+- **Skipping `git worktree prune` after `rm -rf`.** Leaves `.git/worktrees/<name>/` metadata orphans that confuse later `git worktree list` output. The script always invokes it.
+- **Using `--force` interactively without dry-run first.** The first sweep on a heavily-accumulated worktree dir should always start with `--dry-run` to confirm the active-vs-stale classification before committing to removal.
+
+### 19.6 — References
+
+- `scripts/cleanup-stale-worktrees.sh` — the canonical sweep (added 2026-05-11).
+- §16.7 — worktree-base verification (Step 0 — bootstrap; this rule extends Step 0 with cleanup-before-hydrate).
+- §18.4 — Resource-bounded engineer parallelism (this rule reduces the disk dimension of "resource-bounded").
+- `archive/projects/2026-05-11/16-personal-finance-wiring/proposals/phase-7-disk-space-preflight.md` — Engineer FFF's disk-full slip + the bootstrap pre-flight recipe.
+
+**Three-way-synced 2026-05-11**: this subsection (§19) + memory entry `feedback_worktree_auto_cleanup.md` + CLAUDE.md §1 universal-rules pointer (no new bullet — KB pointer suffices since §19 is self-contained methodology).
