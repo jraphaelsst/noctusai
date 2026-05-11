@@ -46,6 +46,7 @@ from noctusai_lib.domain.sql_templates import (
     rls_subquery_policy,
     set_search_path,
 )
+from noctusai_lib.sql import prelude
 
 
 def _normalize_ws(s: str) -> str:
@@ -102,20 +103,24 @@ class TestScaffold:
 
 
 class TestSqlTemplatesIntegration:
-    """Scaffolded `001_<schema>.sql` must match the canonical helpers from
+    """Scaffolded `001_<slug>.sql` must match the canonical helpers from
     `noctusai_lib.domain.sql_templates`. These tests catch drift between
     the template file and the helpers — without forcing the template to be
     runtime-rendered (which would make it a Python module, not SQL).
 
     Filed by `projects/side-projects-batch/` Phase 1.d
-    (`mcp-scaffold-sql-templates-integration`, 2026-05-03)."""
+    (`mcp-scaffold-sql-templates-integration`, 2026-05-03). Filename moved
+    from `001_seed.sql` → `001_<slug>.sql` and header replaced by
+    `noctusai_lib.sql.prelude(schema)` output by
+    `projects/scaffold-tool-canonical-emit/` (2026-05-10)."""
 
     SCAFFOLD_SCHEMA = "ai_chat"
+    SCAFFOLD_SLUG = "test-scaffold-sql-temp"
 
     def _scaffold_and_read_migration(self, products_dir: Path) -> str:
         result = scaffold_product(
             "AI Chat",
-            "test-scaffold-sql-temp",
+            self.SCAFFOLD_SLUG,
             self.SCAFFOLD_SCHEMA,
             8099,
             8199,
@@ -125,8 +130,27 @@ class TestSqlTemplatesIntegration:
             template_dir=WORKTREE_TEMPLATE,
         )
         assert result["created"] is True, result
-        migration = products_dir / "test-scaffold-sql-temp" / "backend" / "migrations" / "001_seed.sql"
+        # Canonical filename is `001_<slug>.sql` (was `001_seed.sql`).
+        migration = (
+            products_dir
+            / self.SCAFFOLD_SLUG
+            / "backend"
+            / "migrations"
+            / f"001_{self.SCAFFOLD_SLUG}.sql"
+        )
         assert migration.exists(), f"scaffold did not produce {migration}"
+        # And the legacy filename MUST be gone (renamed, not duplicated).
+        legacy = migration.parent / "001_seed.sql"
+        assert not legacy.exists(), (
+            f"scaffold left legacy `001_seed.sql` alongside `{migration.name}` — "
+            "rename should remove the source."
+        )
+        # The scaffold result advertises the canonical_migration outcome.
+        canonical = result.get("canonical_migration")
+        assert canonical is not None, result
+        assert canonical.get("renamed") is True, canonical
+        assert canonical.get("prelude_injected") is True, canonical
+        assert canonical.get("path") == str(migration), canonical
         return migration.read_text()
 
     def test_set_search_path_matches_helper(self, tmp_path):
@@ -137,6 +161,36 @@ class TestSqlTemplatesIntegration:
             f"Expected line: {expected_line!r}\n"
             f"Actual content head:\n{content[:400]}"
         )
+
+    def test_migration_header_is_canonical_prelude(self, tmp_path):
+        """The migration must START with `prelude(schema)` output verbatim —
+        no hand-rolled header survives the canonicalization pass.
+
+        Closes the N=10 hand-rolled-prelude recurrence Engineer U surfaced
+        in the imobi P2 close (commit 31a0833)."""
+        content = self._scaffold_and_read_migration(tmp_path)
+        canonical_prelude_block = prelude(self.SCAFFOLD_SCHEMA)
+        assert content.startswith(canonical_prelude_block), (
+            f"Scaffolded migration does not begin with `prelude({self.SCAFFOLD_SCHEMA!r})` "
+            f"output.\nExpected head:\n{canonical_prelude_block!r}\n"
+            f"Actual head:\n{content[: len(canonical_prelude_block) + 40]!r}"
+        )
+        # The hand-rolled comment from the template (which mentions
+        # PRODUCT_NAME) must NOT survive — the canonical block replaces it.
+        assert "{{PRODUCT_NAME}} schema" not in content
+        assert " schema\n-- Schema:" not in content, (
+            "Hand-rolled `<NAME> schema / -- Schema: <SCHEMA>` header leaked "
+            "into the scaffolded migration — canonicalization should have "
+            "dropped it."
+        )
+
+    def test_migration_filename_uses_slug(self, tmp_path):
+        """The migration file MUST land at `001_<slug>.sql` — the legacy
+        `001_seed.sql` is rejected (and the assertion in
+        `_scaffold_and_read_migration` enforces both files).
+        """
+        # _scaffold_and_read_migration runs the full assertion suite for us.
+        self._scaffold_and_read_migration(tmp_path)
 
     def test_invitations_rls_policy_matches_helper(self, tmp_path):
         content = self._scaffold_and_read_migration(tmp_path)
