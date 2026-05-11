@@ -35,6 +35,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
+from workspace import resolve_caller_root  # noqa: E402
 
 
 ReviewMode = Literal["agent", "headless", "evaluate"]
@@ -66,7 +67,11 @@ class ReviewOutput(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict, description="Mode-specific keys.")
 
 
-def _detect(product_slug: str | None) -> tuple[list[Path], list[dict]]:
+def _detect(
+    product_slug: str | None,
+    *,
+    products_dir: Path | None = None,
+) -> tuple[list[Path], list[dict]]:
     from tools.noctus.dev.compliance import (
         check_seed_compliance,
         check_path_references,
@@ -78,11 +83,12 @@ def _detect(product_slug: str | None) -> tuple[list[Path], list[dict]]:
         check_test_status_assertion,
     )
 
+    base = products_dir if products_dir is not None else PRODUCTS_DIR
     if product_slug:
-        p = PRODUCTS_DIR / product_slug
+        p = base / product_slug
         products = [p] if p.exists() else []
     else:
-        products = sorted([d for d in PRODUCTS_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")])
+        products = sorted([d for d in base.iterdir() if d.is_dir() and not d.name.startswith(".")])
 
     issues: list[dict] = []
     for product_path in products:
@@ -206,6 +212,9 @@ def run_review(
     product_slug: str | None = None,
     mode: Literal["agent", "headless", "evaluate"] = "agent",
     model: str = "gpt-4o-mini",
+    *,
+    worktree_path: str | Path | None = None,
+    products_dir: Path | None = None,
 ) -> dict:
     """Run a review pass. Mode selects who authors the proposals.
 
@@ -220,12 +229,33 @@ def run_review(
               (`products/<product>/proposals/evaluations/<timestamp>-<slug>/`) so the
               agent can later drop its own version + `comparison.md` next to it.
         model: Override the OpenAI model (headless + evaluate modes only).
+        worktree_path: **Caller-aware path resolution.** When set,
+            detection + proposal writes target the caller's worktree's
+            ``products/`` tree instead of the MCP server's startup
+            workspace. Engineers calling from inside a ``git worktree add``
+            MUST pass their worktree root. See ``resolve_caller_root``.
+        products_dir: Override the module-level :data:`PRODUCTS_DIR`
+            (test seam). When set, wins over ``worktree_path``.
+
+    3-tier priority: explicit ``products_dir`` > ``worktree_path`` >
+    module default :data:`PRODUCTS_DIR`.
 
     Returns a dict keyed by mode — see examples in `mcp/noctusai/README.md`.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract).
     """
     from tools.noctus.dev.compliance import check_all_products
 
-    products, issues = _detect(product_slug)
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif worktree_path is not None:
+        base_products_dir = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
+
+    products, issues = _detect(product_slug, products_dir=base_products_dir)
     report: dict = {
         "mode": mode,
         "reviewed_products": [p.name for p in products],
@@ -251,21 +281,21 @@ def run_review(
         # Group issues by product for proper scoping
         products_with_issues = set(i.get("product", "") for i in issues)
         for p_slug in products_with_issues:
-            p_proposals_dir = PRODUCTS_DIR / p_slug / "proposals" / eval_subdir
+            p_proposals_dir = base_products_dir / p_slug / "proposals" / eval_subdir
             p_proposals_dir.mkdir(parents=True, exist_ok=True)
         # Persist the issue set so both paths reason about the same inputs.
         if product_slug:
-            issues_dir = PRODUCTS_DIR / product_slug / "proposals" / eval_subdir
+            issues_dir = base_products_dir / product_slug / "proposals" / eval_subdir
         else:
             # For all-products eval, put issues.json under the first product
             first_product = next(iter(products_with_issues), "unknown")
-            issues_dir = PRODUCTS_DIR / first_product / "proposals" / eval_subdir
+            issues_dir = base_products_dir / first_product / "proposals" / eval_subdir
         issues_dir.mkdir(parents=True, exist_ok=True)
         (issues_dir / "issues.json").write_text(
             json.dumps(issues, indent=2, default=str)
         )
         for issue in issues:
-            product_path = PRODUCTS_DIR / issue.get("product", "")
+            product_path = base_products_dir / issue.get("product", "")
             agent_tag = f"openai-{model}"
             openai_results.append(
                 _headless_author(issue, product_path, model=model, agent_tag=agent_tag, subdir=eval_subdir)
@@ -284,7 +314,7 @@ def run_review(
         llm_authored = 0
         skeletons = 0
         for issue in issues:
-            product_path = PRODUCTS_DIR / issue.get("product", "")
+            product_path = base_products_dir / issue.get("product", "")
             agent_tag = f"keeper-openai-{model}"
             result = _headless_author(issue, product_path, model=model, agent_tag=agent_tag)
             if result.get("mode") == "llm":
@@ -308,15 +338,24 @@ def register(server) -> None:
         "for the in-session agent to author proposals with session context, zero LLM "
         "cost), `headless` (OpenAI gpt-4o-mini authors proposals for CI/cron — set "
         "OPENAI_API_KEY), `evaluate` (writes OpenAI proposals to a scratch subfolder "
-        "for side-by-side comparison with agent-authored versions). NEVER modifies code."
+        "for side-by-side comparison with agent-authored versions). NEVER modifies code. "
+        "Pass `worktree_path` when called from inside a git worktree so detection + "
+        "proposal writes target the worktree's products/ tree NOT the MCP server's "
+        "startup workspace. See KB § PATTERNS/mcp-tool-conventions.md."
     )
 
     def _review(
         product: str | None = None,
         mode: str = "agent",
         model: str = "gpt-4o-mini",
+        worktree_path: str | None = None,
     ) -> dict:
-        return run_review(product_slug=product, mode=mode, model=model)
+        return run_review(
+            product_slug=product,
+            mode=mode,
+            model=model,
+            worktree_path=worktree_path,
+        )
 
     server.tool(
         name="noctus.dev.review",

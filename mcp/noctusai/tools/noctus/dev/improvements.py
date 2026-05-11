@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from workspace import resolve_caller_root
+
 
 # ── Dataclasses ───────────────────────────────────────────────────────
 
@@ -287,13 +289,44 @@ def render_improvements(report: ImprovementsReport) -> str:
 
 # ── Public entry points ───────────────────────────────────────────────
 
-def generate_improvements(project_path: str | Path, *, write: bool = True) -> dict:
+def generate_improvements(
+    project_path: str | Path,
+    *,
+    write: bool = True,
+    worktree_path: str | Path | None = None,
+) -> dict:
     """Parse a plan and (optionally) write `improvements.md` next to it.
+
+    Args:
+        project_path: Path to the project's ``PROJECT.md`` (or any phase-
+            structured file). Absolute paths resolve as-is; relative paths
+            resolve against ``worktree_path`` when set, else against the
+            MCP server's startup CWD (which is rarely the caller's worktree
+            — pass ``worktree_path`` to be explicit).
+        write: When True, write the rendered ``improvements.md`` next to
+            the project file. When False, return the markdown in the
+            response payload instead.
+        worktree_path: **Caller-aware path resolution.** When set AND
+            ``project_path`` is relative, the path is anchored to the
+            caller's worktree root. Engineers calling from inside a
+            ``git worktree add`` MUST pass their worktree root to keep
+            relative paths intact. See ``resolve_caller_root``.
 
     Returns a structured dict with the generated markdown, the destination
     path, and the extracted report — suitable for both CLI and MCP use.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract). No
+        silent fallback — misuse surfaces loudly.
     """
-    project_file = Path(project_path).resolve()
+    pp = Path(project_path)
+    if pp.is_absolute():
+        project_file = pp.resolve()
+    elif worktree_path is not None:
+        project_file = (resolve_caller_root(worktree_path) / pp).resolve()
+    else:
+        project_file = pp.resolve()
     if not project_file.exists():
         return {
             "error": f"Project file not found: {project_file}",
@@ -341,8 +374,16 @@ def register(server) -> None:
             "ticking a phase header to `✅`. Aggregates the `**Improvements:**` block "
             "each completed phase captures — observations, refactor candidates, edge "
             "cases, tech debt learned while implementing THAT phase. NOT a preview of "
-            "upcoming phases (that's already in the project)."
+            "upcoming phases (that's already in the project). Pass `worktree_path` "
+            "when `project_path` is relative + the call originates from inside a git "
+            "worktree, so the relative path resolves against the worktree root NOT "
+            "the MCP server's startup CWD. See KB § PATTERNS/mcp-tool-conventions.md."
         ),
     )
-    def _improvements(project_path: str) -> dict:
-        return generate_improvements(project_path, write=True)
+    def _improvements(
+        project_path: str,
+        worktree_path: str | None = None,
+    ) -> dict:
+        return generate_improvements(
+            project_path, write=True, worktree_path=worktree_path,
+        )

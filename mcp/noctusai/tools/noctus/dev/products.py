@@ -15,9 +15,21 @@ def list_products() -> list[dict]:
     return products
 
 
-def get_product_summary(slug: str) -> dict:
-    """Get a quick summary of a product."""
-    path = PRODUCTS_DIR / slug
+def get_product_summary(
+    slug: str,
+    *,
+    products_dir: Path | None = None,
+) -> dict:
+    """Get a quick summary of a product.
+
+    Args:
+        slug: Product slug.
+        products_dir: Override the module-level :data:`PRODUCTS_DIR` —
+            used by callers that scope the lookup to a different
+            ``products/`` tree (typically a caller's git worktree).
+    """
+    base = products_dir if products_dir is not None else PRODUCTS_DIR
+    path = base / slug
     if not path.exists():
         return {"error": f"Product '{slug}' not found"}
 

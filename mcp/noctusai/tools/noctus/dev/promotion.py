@@ -38,7 +38,12 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from workspace import get_noctusai_home, get_workspace_context, get_workspace_root
+from workspace import (
+    get_noctusai_home,
+    get_workspace_context,
+    get_workspace_root,
+    resolve_caller_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,13 +185,40 @@ def _all_manifests(workspace_root: Path) -> list[Path]:
     return sorted(p for p in promotions_dir.glob("*.md") if p.is_file())
 
 
-def list_promotions(workspace_root: Path | None = None) -> dict:
+def list_promotions(
+    workspace_root: Path | None = None,
+    *,
+    worktree_path: str | Path | None = None,
+) -> dict:
     """List promotion manifests in the current workspace.
+
+    Args:
+        workspace_root: Explicit seed-workspace root (test seam). When
+            set, wins over ``worktree_path``.
+        worktree_path: **Caller-aware path resolution.** When set AND
+            ``workspace_root`` is None, the seed-workspace lookup walks
+            up from the caller's worktree root instead of the MCP
+            server's startup CWD. Engineers calling from inside a
+            ``git worktree add`` MUST pass their worktree root unless
+            they're targeting the server-startup workspace. See
+            ``resolve_caller_root``. Note: a promotion manifest is
+            specifically a SEED-workspace artifact; if the worktree is
+            itself a primary workspace, this listing will be empty
+            (and ``promote_from_seed_workspace`` will refuse).
 
     Returns: {"workspace": str, "pending": [...], "promoted": [...]}.
     Items: {"slug", "origin", "destination", "promoted_on"}.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract).
     """
-    ws_root = workspace_root or get_workspace_root()
+    if workspace_root is not None:
+        ws_root = workspace_root
+    elif worktree_path is not None:
+        ws_root = get_workspace_root(resolve_caller_root(worktree_path))
+    else:
+        ws_root = get_workspace_root()
     pending: list[dict] = []
     promoted: list[dict] = []
     for manifest_path in _all_manifests(ws_root):
@@ -243,6 +275,8 @@ def promote_from_seed_workspace(
     force: bool = False,
     workspace_root: Path | None = None,
     noctusai_home: Path | None = None,
+    *,
+    worktree_path: str | Path | None = None,
 ) -> dict:
     """Promote a template addition into noc per its `.promotions/<slug>.md` entry.
 
@@ -255,12 +289,54 @@ def promote_from_seed_workspace(
       6. Copy addition(s) into noc.
       7. Rewrite manifest's `promoted_on` to today's ISO date.
 
+    Args:
+        slug: Promotion-manifest slug (the ``.promotions/<slug>.md`` entry).
+        dry_run: Compute + return the plan without copying anything.
+        force: Re-promote already-promoted entries, overwriting destination.
+        workspace_root: Explicit seed-workspace root (test seam).
+        noctusai_home: Explicit noc-home destination (test seam).
+        worktree_path: **Caller-aware path resolution.** When set:
+            ``workspace_root`` resolution walks up from the caller's
+            worktree root (so promotion finds the seed workspace
+            adjacent to the worktree), AND ``noctusai_home`` falls back
+            to the caller's worktree itself when not explicitly seamed.
+            Engineers calling from inside a ``git worktree add`` MUST
+            pass their worktree root unless they're targeting the
+            server-startup workspace. See ``resolve_caller_root``.
+
+    3-tier priority: explicit ``workspace_root`` / ``noctusai_home``
+    seams > ``worktree_path`` > module defaults.
+
     Returns: {"slug", "origin", "destination", "files_copied",
               "promoted_on", "dry_run"}.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract).
     """
-    ws_root = workspace_root or get_workspace_root()
+    # Resolve caller's worktree root once; reused for whichever of
+    # workspace_root / noctusai_home is not explicitly seamed.
+    caller_root: Path | None = None
+    if worktree_path is not None:
+        caller_root = resolve_caller_root(worktree_path)
+
+    if workspace_root is not None:
+        ws_root = workspace_root
+    elif caller_root is not None:
+        ws_root = get_workspace_root(caller_root)
+    else:
+        ws_root = get_workspace_root()
     _validate_workspace(ws_root)
-    noc_home = noctusai_home or get_noctusai_home()
+
+    if noctusai_home is not None:
+        noc_home = noctusai_home
+    elif caller_root is not None:
+        # When called from a worktree of noc, noctusai_home is the
+        # worktree itself (not the original noc main) — per the
+        # resolve_caller_root contract.
+        noc_home = caller_root
+    else:
+        noc_home = get_noctusai_home()
 
     manifest_path = _manifest_path(ws_root, slug)
     if not manifest_path.is_file():
@@ -381,19 +457,33 @@ def register(server) -> None:
             "analysis from the manifest, validates origin exists + destination is safe, "
             "copies file or directory into noc, rewrites manifest's `promoted_on` to "
             "today. Refuses from primary workspaces. Use `dry_run=True` first to "
-            "preview the plan."
+            "preview the plan. Pass `worktree_path` when called from inside a git "
+            "worktree so the seed-workspace lookup AND the noc destination land in "
+            "the worktree NOT the MCP server's startup workspace. See "
+            "KB § PATTERNS/mcp-tool-conventions.md."
         ),
     )
-    def _promote(slug: str, dry_run: bool = False, force: bool = False) -> dict:
-        return promote_from_seed_workspace(slug=slug, dry_run=dry_run, force=force)
+    def _promote(
+        slug: str,
+        dry_run: bool = False,
+        force: bool = False,
+        worktree_path: str | None = None,
+    ) -> dict:
+        return promote_from_seed_workspace(
+            slug=slug,
+            dry_run=dry_run,
+            force=force,
+            worktree_path=worktree_path,
+        )
 
     @server.tool(
         name="noctus.dev.list_promotions",
         description=(
             "List promotion manifests in the current workspace, split into pending "
             "(`promoted_on=not-yet`) vs promoted (with date). Reads `.promotions/*.md`. "
-            "See KB § PATTERNS/seed-workspace.md."
+            "See KB § PATTERNS/seed-workspace.md. Pass `worktree_path` when called "
+            "from inside a git worktree."
         ),
     )
-    def _list_promotions() -> dict:
-        return list_promotions()
+    def _list_promotions(worktree_path: str | None = None) -> dict:
+        return list_promotions(worktree_path=worktree_path)
