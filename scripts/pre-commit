@@ -74,6 +74,35 @@ if [[ -x "$REPO_ROOT/scripts/stamp-seed-version.sh" ]]; then
     bash "$REPO_ROOT/scripts/stamp-seed-version.sh" 2>&1 | sed 's/^/[pre-commit] /' || true
 fi
 
+# ─── 3b. Project-history ledger → PROJECT-HISTORY.md render ─────
+# Per `projects/project-history-ledger/PROJECT.md § 6 Phase 3`.
+# Re-render the human view when the ledger is staged OR when the
+# ledger has been modified by an earlier step in this hook chain
+# (e.g. an archive-step that stamped a new record before commit).
+# Output auto-stages so the human view never drifts from the
+# structured source — matches the §2 KB-counts pattern.
+if [[ -x "$REPO_ROOT/scripts/render-project-history.py" ]]; then
+    STAGED_LEDGER=$(git diff --cached --name-only -- project-history/ledger.ndjson 2>/dev/null || true)
+    UNSTAGED_LEDGER=$(git status --porcelain -- project-history/ledger.ndjson 2>/dev/null || true)
+    if [[ -n "$STAGED_LEDGER" || -n "$UNSTAGED_LEDGER" ]]; then
+        # Reuse the `$PY` discovered in §2 (worktree-aware). Falls back
+        # to python3 if §2 didn't run for some reason.
+        PY="${PY:-${PYTHON:-python3}}"
+        if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
+            echo "[pre-commit] Rendering project-history/PROJECT-HISTORY.md..."
+            "$PY" "$REPO_ROOT/scripts/render-project-history.py" 2>&1 \
+                | sed 's/^/[pre-commit] /'
+            CHANGED_HISTORY=$(git status --porcelain -- project-history/PROJECT-HISTORY.md 2>/dev/null || true)
+            if [[ -n "$CHANGED_HISTORY" ]]; then
+                echo "[pre-commit] Staging updated project-history/PROJECT-HISTORY.md"
+                git add project-history/PROJECT-HISTORY.md
+            fi
+        else
+            echo "[pre-commit] Skipping history render — python3 not found"
+        fi
+    fi
+fi
+
 # ─── 4. KB ↔ CLAUDE.md sync verification (blocking) ─────────────
 if [[ -x "$REPO_ROOT/scripts/verify-kb-sync.sh" ]]; then
     echo "[pre-commit] Verifying KB sync..."
