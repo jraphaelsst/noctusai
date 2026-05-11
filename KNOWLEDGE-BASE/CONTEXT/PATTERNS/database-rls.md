@@ -167,6 +167,23 @@ See also `CLAUDE.md → MCP migrations mirror the file` and `CONTEXT/01-PHILOSOP
 - Tenant key per product: see `02-LANDSCAPE.md` product table (`org_id` for most; `clinic_id` for Therapy).
 - Every business table has the tenant key as the first filter in its RLS policy.
 
+## Per-user-scoped vs org-scoped tables (the decision matrix) — 2026-05-10
+
+**Two RLS-scoping conventions coexist intentionally** across the ERP product (and by extension other products that adopt the same pattern). The choice is design-driven, not a bug:
+
+| Scoping | When to pick | Example tables (ERP) |
+|---|---|---|
+| **org-scoped** (`org_id` column + RLS filter) | Entity is shared across an org's users; multiple users can read/write the same row; admin role sees all rows in an org | `eventos`, `lancamentos`, `site_config`, `whatsapp_config`, `certidao_consultas` (post-2026-05-10 migration 027) |
+| **per-user-scoped** (`owner_id` / `usuario_id` / `created_by` + RLS filter) | Entity belongs to one specific user within an org; admin role sees all via role-RLS, but normal users see only their own | `ativos`, `clientes`, `metas` (ERP); `recorrentes`, `transacoes`, `metas` (PF — user-owns-everything model); `goals`, `schedule`, `notes` (daily-life) |
+
+**Rule of thumb:**
+- If "user A and user B in the same org both work on row X" is normal → org-scoped.
+- If "user A's row X is invisible to user B even in the same org (except admin)" is normal → per-user-scoped.
+
+**The Engineer-D finding (2026-05-10):** `ativos`, `clientes`, `metas` in ERP appeared to be candidates for org-scoping retrofit at brief-time. Re-audit showed they're intentionally per-user-scoped — adding `org_id` would force a join through profiles.org_id and break the per-user mental model. **Documented as intentional divergence per `projects/erp-rls-org-scope-redesign/`** (resolved 2026-05-10 with Q1=b orchestrator-stamped default). Not a security gap — code paths for these tables never filter via `.eq("org_id", ...)`.
+
+**Anti-pattern:** silently switching a per-user-scoped table to org-scoped without re-validating that "user A's row visible to user B in same org" is acceptable. The RLS-scoping switch is a design change, not a refactor.
+
 ## Provisioning
 
 Trigger `on_license_change` fires when `public.product_licenses` changes. Auto-provisions product defaults (initial teams, seed rows, roles) in the product's schema.

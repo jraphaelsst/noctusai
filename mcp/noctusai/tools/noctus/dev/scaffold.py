@@ -5,10 +5,16 @@ DDL conventions used elsewhere in the platform. Helpers live at
 `noctusai_lib.domain.sql_templates` (`set_search_path`, `updated_at_function`,
 `updated_at_trigger`, `rls_subquery_policy`). The bundled `001_seed.sql`
 template uses placeholders that resolve to schema-correct SQL on scaffold;
-the regression tests at `tests/test_scaffold.py` (TestSqlTemplatesIntegration)
+at scaffold time the file is renamed to `001_<slug>.sql` and its header
+is replaced with `noctusai_lib.sql.prelude(schema)` output by
+``_canonicalize_seed_migration`` so every new product ships from a single
+source of truth (closes the N=3 filename + N=10 hand-rolled-prelude
+recurrence Engineer U surfaced in the imobi P2 close, 2026-05-10).
+The regression tests at `tests/test_scaffold.py` (TestSqlTemplatesIntegration)
 assert the scaffolded migration's `SET search_path` line + RLS policy line
-match the helpers' output, so future drift is caught at CI rather than
-discovered via a broken migration.
+match the helpers' output AND that the header is the canonical prelude AND
+that the file lands at `001_<slug>.sql` — so future drift is caught at CI
+rather than discovered via a broken migration.
 
 **Two-phase scaffold (post-2026-05-05):**
 
@@ -42,7 +48,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from workspace import get_noctusai_home, get_workspace_root
+from workspace import get_noctusai_home, get_workspace_root, resolve_caller_root
+from noctusai_lib.sql import prelude
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +402,14 @@ def _run_llm_rewrites(
 # scaffold_product from a template lands in template's products/, not
 # noc's). The seed template lives only in noc — fetched via get_noctusai_home().
 # See mcp/noctusai/workspace.py + KB § PATTERNS/seed-workspace.md.
+#
+# These module-level constants resolve at import time to the MCP SERVER's
+# startup workspace (typically noc main). For caller-aware resolution (a
+# worktree-isolated engineer asking the tool to land its writes in the
+# engineer's worktree, NOT main), pass `worktree_path` to `scaffold_product`
+# / `delete_product` and the tool routes via `resolve_caller_root`. See
+# `projects/mcp-worktree-path-resolution/` for the surfacing slip and the
+# fix design.
 REPO_ROOT = get_workspace_root()
 PRODUCTS_DIR = REPO_ROOT / "products"
 TEMPLATE_DIR = get_noctusai_home() / "templates" / "product-seed"
@@ -447,6 +462,75 @@ _BINARY_SUFFIXES: frozenset[str] = frozenset({
 })
 
 
+def _canonicalize_seed_migration(target: Path, slug: str, schema: str) -> dict:
+    """Rename `001_seed.sql` → `001_<slug>.sql` and inject `prelude(schema)`.
+
+    Runs immediately after the template `shutil.copytree(...)` and BEFORE
+    the mechanical placeholder-substitution loop. The hand-rolled migration
+    header in the template (a comment block + `SET search_path = ...` line)
+    is replaced with the canonical `prelude(schema)` output so every new
+    product starts from a single source of truth (vs. the N=10 hand-rolled
+    preludes the audit on 2026-05-09 surfaced).
+
+    Idempotent on the canonical body: if the expected header is not found
+    (template was edited to a non-canonical shape), the file is left as-is
+    and the return dict surfaces the skip — never silent-error.
+
+    Args:
+        target: The product folder just copied from `templates/product-seed/`.
+        slug: Product slug — used for the new filename `001_<slug>.sql`.
+        schema: Schema name — passed verbatim to `prelude(schema)`.
+
+    Returns:
+        ``{renamed: bool, path: str, prelude_injected: bool}`` — used by the
+        scaffold result for downstream verification.
+    """
+    migrations_dir = target / "backend" / "migrations"
+    source = migrations_dir / "001_seed.sql"
+    if not source.exists():
+        return {"renamed": False, "skipped": f"{source} does not exist"}
+
+    body = source.read_text(encoding="utf-8")
+    # The template's hand-rolled header runs from the very top through the
+    # first `SET search_path = ..., public;` line + its trailing blank line.
+    # Match conservatively: drop everything up to and including the first
+    # blank line that follows the `SET search_path` directive. If the shape
+    # doesn't match, leave the body alone and surface the skip.
+    canonical_prelude = prelude(schema)
+    lines = body.splitlines()
+    cut_index: int | None = None
+    for idx, line in enumerate(lines):
+        if line.startswith("SET search_path"):
+            # Drop the SET line + the blank line after (if present).
+            cut_index = idx + 1
+            if cut_index < len(lines) and lines[cut_index].strip() == "":
+                cut_index += 1
+            break
+
+    if cut_index is None:
+        prelude_injected = False
+        new_body = body
+    else:
+        remainder = "\n".join(lines[cut_index:])
+        # `prelude(schema)` already ends with a trailing newline; join with
+        # a single blank line before the domain body.
+        new_body = canonical_prelude + "\n" + remainder
+        if not new_body.endswith("\n"):
+            new_body += "\n"
+        prelude_injected = True
+
+    dest = migrations_dir / f"001_{slug}.sql"
+    dest.write_text(new_body, encoding="utf-8")
+    if dest != source:
+        source.unlink()
+
+    return {
+        "renamed": True,
+        "path": str(dest),
+        "prelude_injected": prelude_injected,
+    }
+
+
 def scaffold_product(
     name: str,
     slug: str,
@@ -459,6 +543,7 @@ def scaffold_product(
     *,
     brief: dict | None = None,
     llm_provider: str = "anthropic",
+    worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
     template_dir: Path | None = None,
 ) -> dict:
@@ -473,15 +558,41 @@ def scaffold_product(
     Returns {created: bool, path: str, files: int, seed_row_migration: str}.
 
     Args:
+        worktree_path: **Caller-aware path resolution.** When set, the tool
+            writes ALL filesystem outputs (the product folder, root compose
+            include, start.sh patch, docker artifacts) under the given
+            worktree root instead of the MCP server's startup workspace.
+            Engineers calling from inside a ``git worktree add`` MUST pass
+            their worktree root (e.g.
+            ``/Users/.../.claude/worktrees/agent-<hex>/``). Architects
+            calling from main noc omit / pass ``None`` — output lands in
+            noc as before. The MCP stdio process model does not propagate
+            caller CWD; this arg is the protocol-supported substitute. See
+            ``projects/mcp-worktree-path-resolution/`` for the surfacing
+            slip and the fix design.
         products_dir: Override for the ``products/`` root (test seam).
-            Defaults to module-level :data:`PRODUCTS_DIR`. Tests pass
-            tmp_path-based dirs; production callers leave it as None.
+            Defaults to ``<worktree_path or server-startup-workspace>/products``.
+            Tests pass tmp_path-based dirs; production callers leave it as None.
         template_dir: Override for the seed template root (test seam).
             Defaults to :data:`TEMPLATE_DIR` (noc's
             ``templates/product-seed/``). Tests targeting an in-worktree
             template variant pass an explicit path.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract). No
+        silent fallback — misuse surfaces.
     """
-    base_products_dir = products_dir if products_dir is not None else PRODUCTS_DIR
+    # Resolve caller's worktree root if provided; otherwise fall back to
+    # the server-startup workspace's products/ dir. NEVER silently swallow
+    # a bad worktree_path — the whole point of this arg is to surface
+    # worktree-bypass slips loudly (per no-silent-errors rule).
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif worktree_path is not None:
+        base_products_dir = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
     base_template_dir = template_dir if template_dir is not None else TEMPLATE_DIR
     target = base_products_dir / slug
     if target.exists():
@@ -492,6 +603,12 @@ def scaffold_product(
 
     # ─── 1. Copy template (skeleton, not content) ───────────────────────
     shutil.copytree(base_template_dir, target, ignore=shutil.ignore_patterns("node_modules", "__pycache__", ".backup", "*.egg-info"))
+    # ─── 1.b. Canonicalize the seed migration (rename + prelude swap) ─
+    # The template ships `001_seed.sql` with a hand-rolled prelude. At
+    # scaffold time the file gets renamed to `001_<slug>.sql` and its
+    # header is replaced with the canonical `prelude(schema)` output
+    # so every new product starts from a single source of truth.
+    canonical_migration = _canonicalize_seed_migration(target, slug, schema)
 
     # ─── 2. Write the brief FIRST (durable record before any prose edit)
     # Per user rule (2026-05-05): the brief survives any subsequent failure
@@ -652,6 +769,7 @@ def scaffold_product(
         "mechanical_substitution": mechanical_status,
         "llm_rewrite": llm_rewrite,
         "seed_row_migration": seed_row_migration,
+        "canonical_migration": canonical_migration,
         "start_sh_registration": start_sh_registration,
         "docker_patch": docker_patch,
         "root_compose_registration": root_compose_registration,
@@ -663,6 +781,7 @@ def delete_product(
     slug: str,
     *,
     remove_directory: bool = False,
+    worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
 ) -> dict:
     """Cascading delete — inverse of :func:`scaffold_product`.
@@ -698,7 +817,15 @@ def delete_product(
         ``{"deactivate_migration": {...}, "start_sh_unregistration": {...},
             "directory_removal": {...}, "next_steps": [...]}``
     """
-    base_products_dir = products_dir if products_dir is not None else PRODUCTS_DIR
+    # Mirror scaffold_product's resolution order: explicit `products_dir`
+    # test seam wins; otherwise route via `worktree_path` (caller-aware);
+    # otherwise fall back to the server-startup workspace.
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif worktree_path is not None:
+        base_products_dir = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
     repo_root = base_products_dir.parent
 
     deactivate_migration = _emit_products_deactivate_migration(
@@ -1155,15 +1282,21 @@ def _sql_text_or_null(value: str | None) -> str:
     return _sql_text(value)
 
 
-def _scan_start_sh_ports() -> tuple[set[int], set[int]]:
+def _scan_start_sh_ports(repo_root: Path | None = None) -> tuple[set[int], set[int]]:
     """Parse start.sh for `--port <N>` occurrences. Returns (backend, frontend).
 
     Heuristic: ports < 8100 (and != 5173) → backend; everything else → frontend.
     Kept tolerant — start.sh missing returns empty sets, never raises.
+
+    Args:
+        repo_root: Override (test seam, also wired by ``list_available_ports``
+            when called with a caller-aware ``worktree_path``). Defaults to
+            module-level :data:`REPO_ROOT`.
     """
     used_backend: set[int] = set()
     used_frontend: set[int] = set()
-    start_sh = REPO_ROOT / "start.sh"
+    base_root = repo_root if repo_root is not None else REPO_ROOT
+    start_sh = base_root / "start.sh"
     if not start_sh.exists():
         return used_backend, used_frontend
     content = start_sh.read_text()
@@ -1268,18 +1401,24 @@ def _patch_workspace_docker_files(
     return {"patched": patched, "skipped": skipped}
 
 
-def list_available_ports() -> dict:
+def list_available_ports(worktree_path: str | Path | None = None) -> dict:
     """Find the next available backend and frontend ports.
 
     The set of "used" ports unions the static :data:`RESERVED_RANGES` table
     with whatever `start.sh` actually wires (defensive — methodology says the
     table IS the source of truth, but products land in start.sh first when
     docs lag).
+
+    Args:
+        worktree_path: Caller-aware path resolution — read start.sh from
+            the caller's worktree, not the server's startup workspace. Omit
+            for the noc-main default. See ``resolve_caller_root``.
     """
     used_backend: set[int] = {p for p, _ in RESERVED_RANGES if p < 8080 and p != 5173}
     used_frontend: set[int] = {p for p, _ in RESERVED_RANGES if p == 5173 or p >= 8080}
 
-    sh_backend, sh_frontend = _scan_start_sh_ports()
+    scan_root = resolve_caller_root(worktree_path) if worktree_path is not None else REPO_ROOT
+    sh_backend, sh_frontend = _scan_start_sh_ports(scan_root)
     used_backend |= sh_backend
     used_frontend |= sh_frontend
 
@@ -1518,7 +1657,12 @@ def register(server) -> None:
             "the seed's narrative DNA, emits the dashboard seed-row migration, "
             "and registers the product in start.sh. Pass brief=None to enter "
             "the skip path (mechanical substitution skipped; LLM rewrite "
-            "uses name+slug only; surfaced loudly in next_steps)."
+            "uses name+slug only; surfaced loudly in next_steps). "
+            "When called from inside a git worktree, pass `worktree_path` "
+            "(the worktree's absolute root) so writes land in the worktree, "
+            "NOT the MCP server's startup workspace — required because the "
+            "MCP stdio process model does not propagate caller CWD. See "
+            "KB § PATTERNS/mcp-tool-conventions.md."
         ),
     )
     def _scaffold(
@@ -1532,6 +1676,7 @@ def register(server) -> None:
         description: str | None = None,
         brief: dict | None = None,
         llm_provider: str = "anthropic",
+        worktree_path: str | None = None,
     ) -> dict:
         return scaffold_product(
             name,
@@ -1544,6 +1689,7 @@ def register(server) -> None:
             description=description,
             brief=brief,
             llm_provider=llm_provider,
+            worktree_path=worktree_path,
         )
 
     @server.tool(
@@ -1555,14 +1701,20 @@ def register(server) -> None:
             "products/<slug>/ when remove_directory=True (default off for "
             "safety). Apply the emitted migration via Supabase MCP. "
             "RESERVED_RANGES is left intact — deleted ports stay reserved "
-            "as historical record."
+            "as historical record. Pass `worktree_path` when called from "
+            "inside a git worktree (mirror of scaffold_product)."
         ),
     )
     def _delete(
         slug: str,
         remove_directory: bool = False,
+        worktree_path: str | None = None,
     ) -> dict:
-        return delete_product(slug, remove_directory=remove_directory)
+        return delete_product(
+            slug,
+            remove_directory=remove_directory,
+            worktree_path=worktree_path,
+        )
 
     @server.tool(
         name="noctus.dev.create_testing_ground",
@@ -1586,10 +1738,14 @@ def register(server) -> None:
 
     @server.tool(
         name="noctus.dev.available_ports",
-        description="Find next available backend and frontend ports",
+        description=(
+            "Find next available backend and frontend ports. Pass "
+            "`worktree_path` to scan the caller's worktree's start.sh "
+            "instead of the MCP server's startup workspace."
+        ),
     )
-    def _available_ports() -> dict:
-        return list_available_ports()
+    def _available_ports(worktree_path: str | None = None) -> dict:
+        return list_available_ports(worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.reserve_port_range",

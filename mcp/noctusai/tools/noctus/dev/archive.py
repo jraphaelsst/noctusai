@@ -7,7 +7,13 @@ features move to a structured `archive/` folder at repo root, preserving
 content + chronological order + git history (via `git mv`).
 
 Public surface:
-    archive(target_path, mode=None, name=None) -> dict
+    archive(target_path, mode=None, name=None, ..., skip_history=False) -> dict
+
+When ``mode == "project"`` and ``skip_history`` is False (default), the tool
+stamps a single record in ``project-history/ledger.ndjson`` BEFORE the
+``git mv`` lands. Order is critical — the source project folder is the
+input to ``history_record``; once moved, it's no longer at the original
+path. Failures of ``history_record`` propagate (no silent skip).
 
 MCP tool registration at module bottom via `register(server)` per the
 per-file FastMCP registration pattern.
@@ -24,6 +30,11 @@ from zoneinfo import ZoneInfo
 # Import REPO_ROOT from settings per the centralization rule
 # (`feedback_mcp_path_constants_from_settings.md`).
 from settings import REPO_ROOT
+from workspace import resolve_caller_root
+
+# Sibling history-record tool — same file imports are cheap; tools share
+# the dev-umbrella import surface.
+from tools.noctus.dev.history import history_record
 
 logger = logging.getLogger(__name__)
 
@@ -96,11 +107,43 @@ def _git_mv(src: Path, dst: Path, repo_root: Path) -> None:
     )
 
 
+def _derive_default_summary(project_md_text: str) -> str:
+    """Derive a 1-sentence default summary from a PROJECT.md body.
+
+    Best-effort: first non-empty, non-heading, non-blockquote line. Falls
+    back to ``"(no summary available)"`` if nothing usable is found.
+    Used only when the caller does not pass an explicit ``summary_md`` to
+    ``archive()`` — explicit beats inferred.
+    """
+    for raw in project_md_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):  # heading
+            continue
+        if line.startswith(">"):  # blockquote (PROJECT.md uses ``>`` for status notes)
+            continue
+        if line.startswith("-") or line.startswith("*"):  # bullet
+            # Strip bullet prefix and use the content.
+            stripped = re.sub(r"^[-*]\s+", "", line)
+            if stripped:
+                return stripped
+            continue
+        return line
+    return "(no summary available)"
+
+
 def archive(
     target_path: str,
     mode: str | None = None,
     name: str | None = None,
     repo_root: Path | None = None,
+    worktree_path: str | Path | None = None,
+    skip_history: bool = False,
+    status_at_close: str = "shipped",
+    summary_md: str | None = None,
+    review_md: str | None = None,
+    outcome_signals: list[str] | None = None,
 ) -> dict:
     """Move target to the archive folder per `KB § PATTERNS/project-execution.md § 11.2`.
 
@@ -111,20 +154,56 @@ def archive(
         name: ad-hoc only — descriptive name in `<date>_<time>_<name>`.
             Required when mode="ad_hoc"; ignored otherwise.
         repo_root: override (tests).
+        worktree_path: **Caller-aware path resolution.** When set, the
+            archive operation runs inside the given worktree (git mv lands
+            files under ``<worktree>/archive/``) instead of the MCP server's
+            startup workspace. Engineers in a git worktree pass their
+            worktree root; architects on main noc omit. Mutually exclusive
+            with ``repo_root`` (which is the test-seam override) — pass one
+            or the other. See ``resolve_caller_root``.
+        skip_history: when ``mode="project"`` and ``skip_history=False``
+            (default), a single NDJSON record is appended to
+            ``project-history/ledger.ndjson`` via
+            ``noctus.dev.history_record`` BEFORE the ``git mv``. Pass
+            ``True`` to opt-out (e.g. tests, backfill scripts, or when the
+            ledger was already stamped manually). Ignored when
+            ``mode != "project"``.
+        status_at_close: one of ``shipped``, ``abandoned``, ``split``,
+            ``deferred``, ``historical``. Defaults to ``"shipped"`` —
+            archive's most common trigger. Only used when stamping the
+            ledger.
+        summary_md: 1-3 sentence summary; written to the ledger record's
+            ``short_summary``. When ``None``, derived from PROJECT.md's
+            first usable line.
+        review_md: 5-10 bullet review; written to the ledger record's
+            ``short_review``. When ``None``, defaults to the PROJECT.md
+            body — phases are best-effort regex-extracted from it.
+        outcome_signals: optional list of measured outcomes for the
+            ledger record.
 
     Returns:
         {
           "archived_to": "<archive/relative/path>",  # path relative to repo root
           "mode": "project" | "feature" | "ad_hoc",
           "next_NN": int | None,                       # null for ad_hoc
+          "history": <history_record_result_dict> | None,  # only when stamped
         }
 
     Raises:
         ValueError: invalid mode, missing name for ad_hoc, target doesn't exist,
-            target already under archive/ (idempotency guard).
+            target already under archive/ (idempotency guard); also raised
+            when ledger-stamp fails (propagated from ``history_record``).
         subprocess.CalledProcessError: git mv failure.
     """
-    root = repo_root or REPO_ROOT
+    # Resolution order: explicit `repo_root` test seam wins; otherwise
+    # route via `worktree_path` (caller-aware); otherwise fall back to
+    # the server-startup REPO_ROOT.
+    if repo_root is not None:
+        root = repo_root
+    elif worktree_path is not None:
+        root = resolve_caller_root(worktree_path)
+    else:
+        root = REPO_ROOT
     target = Path(target_path)
     if not target.is_absolute():
         target = (root / target_path).resolve()
@@ -171,6 +250,37 @@ def archive(
         time_str = _now_time_str()
         dst = archive_root / f"{today}_{time_str}_{slug}"
 
+    # Ledger stamp — BEFORE the git mv, so the source path still exists
+    # for `history_record` to read PROJECT.md / improvements.md /
+    # proposals/. Only applies to project archives; opt-out via
+    # ``skip_history=True``. Errors propagate (no silent skip per the
+    # no-silent-errors rule).
+    history_result: dict | None = None
+    if resolved_mode == "project" and not skip_history:
+        project_md_text = (target / "PROJECT.md").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        resolved_summary = (
+            summary_md if summary_md is not None
+            else _derive_default_summary(project_md_text)
+        )
+        resolved_review = (
+            review_md if review_md is not None
+            else project_md_text
+        )
+        history_result = history_record(
+            project_path=str(target),
+            status_at_close=status_at_close,
+            summary_md=resolved_summary,
+            review_md=resolved_review,
+            outcome_signals=outcome_signals,
+            repo_root=root,
+        )
+        logger.info(
+            "archive: stamped ledger for slug=%s before git mv (line_count=%s)",
+            slug, history_result.get("line_count"),
+        )
+
     # Move via git mv (preserves history).
     _git_mv(target, dst, root)
 
@@ -189,6 +299,7 @@ def archive(
         "archived_to": archived_to,
         "mode": resolved_mode,
         "next_NN": nn,
+        "history": history_result,
     }
 
 
@@ -211,16 +322,33 @@ def register(server) -> None:
             "feature; else → ad_hoc (requires `name`). Lands at archive/projects/<today>/<NN>-"
             "<slug>/ or archive/features/<today>/<NN>-<slug>.md or archive/<date>_<time>_<name>/. "
             "Uses git mv (preserves history). Idempotency guard: refuses if target already under "
-            "archive/. See KB § PATTERNS/project-execution.md § 11.2 Archive system."
+            "archive/. Pass `worktree_path` when called from inside a git worktree so the git mv "
+            "+ archive landing happens in the worktree, not the MCP server's startup workspace. "
+            "When mode=project and skip_history=False (default), a single NDJSON record is "
+            "stamped into project-history/ledger.ndjson via noctus.dev.history_record BEFORE the "
+            "git mv (status_at_close default 'shipped'; summary/review derived from PROJECT.md "
+            "when not supplied). See KB § PATTERNS/project-execution.md § 11.2."
         ),
     )
     def _archive(
         target_path: str,
         mode: str | None = None,
         name: str | None = None,
+        worktree_path: str | None = None,
+        skip_history: bool = False,
+        status_at_close: str = "shipped",
+        summary_md: str | None = None,
+        review_md: str | None = None,
+        outcome_signals: list[str] | None = None,
     ) -> dict:
         return archive(
             target_path=target_path,
             mode=mode,
             name=name,
+            worktree_path=worktree_path,
+            skip_history=skip_history,
+            status_at_close=status_at_close,
+            summary_md=summary_md,
+            review_md=review_md,
+            outcome_signals=outcome_signals,
         )

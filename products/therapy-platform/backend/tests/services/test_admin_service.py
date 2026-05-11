@@ -153,3 +153,416 @@ class TestSuspendEntity:
                 db=db,
             )
         assert exc.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — DTO mapper service tests
+# ---------------------------------------------------------------------------
+
+
+SAMPLE_CLINIC = {
+    "id": "clinic-alpha",
+    "name": "Clínica Alpha",
+    "cnpj": "11111111000111",
+    "responsible_person": "Maria",
+    "contact_email": "alpha@x.com",
+    "phone": "+5511999999999",
+    "is_approved": True,
+    "is_active": True,
+    "approved_by": "admin-uid-001",
+    "created_at": "2026-04-01T10:00:00Z",
+    "updated_at": "2026-04-02T10:00:00Z",
+}
+
+
+@pytest.mark.asyncio
+class TestListClinicsForAdmin:
+    async def test_dto_shape(self):
+        db = _client()
+        db.set_table_data("clinics", [SAMPLE_CLINIC])
+        data, total = await admin_service.list_clinics_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert total == 1
+        row = data[0]
+        # Load-bearing ``Clinica`` fields the page reads.
+        assert row["id"] == "clinic-alpha"
+        assert row["nome"] == "Clínica Alpha"
+        assert row["cnpj"] == "11111111000111"
+        assert row["status"] == "aprovada"
+        assert "responsavel" in row
+        assert "email" in row
+
+    async def test_derives_pending_status(self):
+        db = _client()
+        db.set_table_data(
+            "clinics",
+            [{**SAMPLE_CLINIC, "is_approved": False, "is_active": True}],
+        )
+        data, _ = await admin_service.list_clinics_for_admin(
+            db, page=1, page_size=20,
+        )
+        # Read-side predicates aren't applied by MockSupabase, so the row
+        # comes through; the derived-status mapper still classifies it.
+        assert data[0]["status"] == "pendente"
+
+    async def test_rejeitada_short_circuits_to_empty(self):
+        db = _client()
+        db.set_table_data("clinics", [SAMPLE_CLINIC])
+        data, total = await admin_service.list_clinics_for_admin(
+            db, page=1, page_size=20, status="rejeitada",
+        )
+        assert data == []
+        assert total == 0
+
+    async def test_busca_filter_does_not_blow_up(self):
+        db = _client()
+        db.set_table_data("clinics", [SAMPLE_CLINIC])
+        data, total = await admin_service.list_clinics_for_admin(
+            db, page=1, page_size=20, busca="Alpha",
+        )
+        # ``or_`` ilike isn't applied by MockSupabase on reads — we
+        # just verify the route accepts it and the mapper still runs.
+        assert isinstance(data, list)
+
+
+SAMPLE_PATIENT = {
+    "user_id": "patient-001",
+    "current_therapist_id": "therapist-001",
+    "clinic_id": "clinic-alpha",
+    "origin": "platform",
+    "phone": "+5511988887777",
+    "is_active": True,
+    "created_at": "2026-04-01T10:00:00Z",
+    "updated_at": "2026-04-02T10:00:00Z",
+}
+
+
+@pytest.mark.asyncio
+class TestListPatientsForAdmin:
+    async def test_dto_shape(self):
+        db = _client()
+        db.set_table_data("patient_profiles", [SAMPLE_PATIENT])
+        db.set_table_data("appointments", [])
+        data, total = await admin_service.list_patients_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert total == 1
+        row = data[0]
+        # ``AdminPatient`` DTO fields the page reads.
+        assert row["id"] == "patient-001"
+        assert "nome" in row
+        assert "email" in row
+        assert "terapeuta_nome" in row  # key MUST exist (even null)
+        assert row["origin"] == "platform"
+        assert row["session_count"] == 0
+
+    async def test_session_count_aggregates_completed(self):
+        db = _client()
+        db.set_table_data("patient_profiles", [SAMPLE_PATIENT])
+        db.set_table_data(
+            "appointments",
+            [
+                {"patient_id": "patient-001", "status": "completed"},
+                {"patient_id": "patient-001", "status": "completed"},
+            ],
+        )
+        data, _ = await admin_service.list_patients_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert data[0]["session_count"] == 2
+
+    async def test_empty_input(self):
+        db = _client()
+        db.set_table_data("patient_profiles", [])
+        db.set_table_data("appointments", [])
+        data, total = await admin_service.list_patients_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert data == []
+        assert total == 0
+
+
+SAMPLE_REPORT = {
+    "id": "report-001",
+    "conversation_id": "convo-001",
+    "message_id": "msg-001",
+    "reported_by_user_id": "reporter-uid",
+    "reason": "Spam",
+    "status": "pending",
+    "created_at": "2026-04-30T10:00:00Z",
+}
+
+
+@pytest.mark.asyncio
+class TestListReportsForAdmin:
+    async def test_dto_shape_with_preview(self):
+        db = _client()
+        db.set_table_data("message_reports", [SAMPLE_REPORT])
+        db.set_table_data(
+            "messages",
+            [
+                {
+                    "id": "msg-001",
+                    "content": "Conteúdo da mensagem",
+                    "message_type": "text",
+                },
+            ],
+        )
+        data, total = await admin_service.list_reports_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert total == 1
+        row = data[0]
+        assert row["id"] == "report-001"
+        assert row["reason"] == "Spam"
+        assert "reporter_name" in row
+        assert row["reported_message_preview"]  # non-empty
+        assert row["conversation_id"] == "convo-001"
+
+    async def test_preview_falls_back_to_type_tag(self):
+        db = _client()
+        db.set_table_data("message_reports", [SAMPLE_REPORT])
+        db.set_table_data(
+            "messages",
+            [{"id": "msg-001", "content": "", "message_type": "system"}],
+        )
+        data, _ = await admin_service.list_reports_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert data[0]["reported_message_preview"] == "[system]"
+
+
+@pytest.mark.asyncio
+class TestResolveReport:
+    async def test_resolves_and_returns_row(self):
+        db = _client()
+        db.set_table_data("message_reports", [SAMPLE_REPORT])
+        result = await admin_service.resolve_report(
+            report_id="report-001",
+            admin_id="admin-uid",
+            resolution="Resolvido manualmente",
+            db=db,
+        )
+        assert "id" in result
+
+    async def test_not_found_raises_404(self):
+        db = _client()
+        db.set_table_data("message_reports", [])
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            await admin_service.resolve_report(
+                report_id="missing",
+                admin_id="admin-uid",
+                resolution="Anything",
+                db=db,
+            )
+        assert exc.value.status_code == 404
+
+
+SAMPLE_T_REVIEW = {
+    "id": "review-t-001",
+    "patient_id": "patient-001",
+    "therapist_id": "therapist-001",
+    "clinic_id": None,
+    "star_rating": 1,
+    "review_text": "Comentário",
+    "is_flagged": True,
+    "is_hidden": False,
+    "flagged_by_therapist_id": "therapist-001",
+    "flagged_reason": "Difamação",
+    "created_at": "2026-04-30T10:00:00Z",
+    "updated_at": "2026-04-30T10:00:00Z",
+}
+
+SAMPLE_C_REVIEW = {
+    "id": "review-c-001",
+    "patient_id": "patient-002",
+    "clinic_id": "clinic-alpha",
+    "star_rating": 2,
+    "review_text": "Comentário clínica",
+    "is_flagged": True,
+    "is_hidden": False,
+    "flagged_by_clinic_admin_id": "clinic-admin",
+    "flagged_reason": "Inválida",
+    "created_at": "2026-04-29T10:00:00Z",
+    "updated_at": "2026-04-29T10:00:00Z",
+}
+
+
+@pytest.mark.asyncio
+class TestListFlaggedReviewsForAdmin:
+    async def test_dto_shape_both_tables(self):
+        db = _client()
+        db.set_table_data("reviews", [SAMPLE_T_REVIEW])
+        db.set_table_data("clinic_reviews", [SAMPLE_C_REVIEW])
+        db.set_table_data(
+            "clinics",
+            [{"id": "clinic-alpha", "name": "Clínica Alpha"}],
+        )
+        data, total = await admin_service.list_flagged_reviews_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert total == 2
+        assert len(data) == 2
+        types = {r["entity_type"] for r in data}
+        assert types == {"therapist", "clinic"}
+        for row in data:
+            assert "nota" in row
+            assert "comentario" in row
+            assert "patient_name" in row
+            assert "entity_name" in row
+
+    async def test_filter_to_clinic_only(self):
+        db = _client()
+        db.set_table_data("reviews", [SAMPLE_T_REVIEW])
+        db.set_table_data("clinic_reviews", [SAMPLE_C_REVIEW])
+        db.set_table_data(
+            "clinics",
+            [{"id": "clinic-alpha", "name": "Clínica Alpha"}],
+        )
+        data, _ = await admin_service.list_flagged_reviews_for_admin(
+            db, page=1, page_size=20, entity_type="clinic",
+        )
+        assert all(r["entity_type"] == "clinic" for r in data)
+
+
+@pytest.mark.asyncio
+class TestModerateReview:
+    async def test_dismiss_therapist_review(self):
+        db = _client()
+        db.set_table_data("reviews", [SAMPLE_T_REVIEW])
+        db.set_table_data("clinic_reviews", [])
+        row = await admin_service.moderate_review(
+            review_id="review-t-001",
+            action="dismiss",
+            admin_id="admin-uid",
+            db=db,
+        )
+        assert row["id"] == "review-t-001"
+
+    async def test_hide_falls_through_to_clinic_reviews(self):
+        db = _client()
+        db.set_table_data("reviews", [])
+        db.set_table_data("clinic_reviews", [SAMPLE_C_REVIEW])
+        row = await admin_service.moderate_review(
+            review_id="review-c-001",
+            action="hide",
+            admin_id="admin-uid",
+            db=db,
+        )
+        assert row["id"] == "review-c-001"
+
+    async def test_invalid_action_raises_400(self):
+        db = _client()
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            await admin_service.moderate_review(
+                review_id="x",
+                action="bogus",
+                admin_id="admin-uid",
+                db=db,
+            )
+        assert exc.value.status_code == 400
+
+    async def test_unknown_review_raises_404(self):
+        db = _client()
+        db.set_table_data("reviews", [])
+        db.set_table_data("clinic_reviews", [])
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            await admin_service.moderate_review(
+                review_id="missing",
+                action="dismiss",
+                admin_id="admin-uid",
+                db=db,
+            )
+        assert exc.value.status_code == 404
+
+
+SAMPLE_BLOCK = {
+    "id": "block-001",
+    "blocker_user_id": "user-a",
+    "blocked_user_id": "user-b",
+    "created_at": "2026-04-30T10:00:00Z",
+}
+
+
+@pytest.mark.asyncio
+class TestListBlocksForAdmin:
+    async def test_dto_shape(self):
+        db = _client()
+        db.set_table_data("user_blocks", [SAMPLE_BLOCK])
+        data, total = await admin_service.list_blocks_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert total == 1
+        row = data[0]
+        assert row["id"] == "block-001"
+        assert "blocker_name" in row
+        assert "blocked_name" in row
+        assert row["created_at"] == "2026-04-30T10:00:00Z"
+
+    async def test_empty(self):
+        db = _client()
+        db.set_table_data("user_blocks", [])
+        data, total = await admin_service.list_blocks_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert data == []
+        assert total == 0
+
+
+SAMPLE_SUPPORT_CONV = {
+    "id": "convo-support-001",
+    "mode": "human",
+    "last_message_at": "2026-04-01T10:00:00Z",
+    "created_at": "2026-04-01T09:00:00Z",
+    "last_message_preview": "Olá",
+    "unread_count": 2,
+    "is_muted": False,
+}
+
+
+@pytest.mark.asyncio
+class TestListSupportConversationsForAdmin:
+    async def test_dto_shape(self):
+        db = _client()
+        db.set_table_data("conversations", [SAMPLE_SUPPORT_CONV])
+        db.set_table_data(
+            "conversation_participants",
+            [
+                {
+                    "conversation_id": "convo-support-001",
+                    "participant_type": "platform_support",
+                    "participant_id": None,
+                    "clinic_id": None,
+                },
+                {
+                    "conversation_id": "convo-support-001",
+                    "participant_type": "user",
+                    "participant_id": "patient-uid-1",
+                    "clinic_id": None,
+                },
+            ],
+        )
+        data, total = await admin_service.list_support_conversations_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert total == 1
+        row = data[0]
+        assert row["id"] == "convo-support-001"
+        assert row["is_support"] is True
+        assert "other_participant_name" in row
+        assert row["other_participant_type"] in ("user", "clinic", "platform_support")
+        assert row["unread_count"] == 2
+
+    async def test_empty_when_no_support_participants(self):
+        db = _client()
+        db.set_table_data("conversations", [])
+        db.set_table_data("conversation_participants", [])
+        data, total = await admin_service.list_support_conversations_for_admin(
+            db, page=1, page_size=20,
+        )
+        assert data == []
+        assert total == 0

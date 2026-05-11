@@ -38,6 +38,7 @@ from pathlib import Path
 # Per `feedback_mcp_path_constants_from_settings.md` — every MCP tool module
 # imports REPO_ROOT/PRODUCTS_DIR from settings, never computes via parents[N].
 from settings import PRODUCTS_DIR
+from workspace import resolve_caller_root
 
 # Seed-lib lookup is a separate concern from REPO_ROOT — settings doesn't
 # expose it because the seed-lib path is not a tool-resolution constant. We
@@ -214,6 +215,7 @@ def scaffold_migration(
     schema: str | None = None,
     with_table: str | None = None,
     with_updated_at: list[str] | None = None,
+    worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
 ) -> dict:
     """Emit the next-numbered migration SQL file for ``<product_slug>``.
@@ -237,10 +239,16 @@ def scaffold_migration(
             triggers attach to each named table. Convenient when adding
             ``updated_at`` auto-touch to several existing tables in one
             migration.
+        worktree_path: **Caller-aware path resolution.** When set, the
+            migration is emitted under the given worktree's
+            ``products/<slug>/backend/migrations/`` instead of the MCP
+            server's startup workspace. Engineers in a git worktree pass
+            their worktree root; architects on main noc omit. See
+            ``resolve_caller_root`` + ``KB § PATTERNS/mcp-tool-conventions.md``.
         products_dir: Override for the ``products/`` root (test seam).
-            Defaults to the module-level :data:`PRODUCTS_DIR` from
-            ``settings``. Tests pass tmp_path-based dirs; the MCP tool
-            registration leaves it as None so the seed-aware default wins.
+            Defaults to ``<worktree_path or server-startup>/products``.
+            Tests pass tmp_path-based dirs; the MCP tool registration leaves
+            it as None so the worktree-aware default wins.
 
     Returns ``{"created": True, "path": str, "number": int, "schema": str}``
     on success, or ``{"error": str}`` on failure. NEVER raises — the caller
@@ -263,7 +271,15 @@ def scaffold_migration(
                 "error": "with_updated_at entries must be non-empty strings"
             }
 
-    base_products_dir = products_dir if products_dir is not None else PRODUCTS_DIR
+    # Resolution order: explicit `products_dir` test seam wins; otherwise
+    # route via `worktree_path` (caller-aware); otherwise fall back to the
+    # server-startup workspace's PRODUCTS_DIR.
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif worktree_path is not None:
+        base_products_dir = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
 
     product_dir = base_products_dir / product_slug
     if not product_dir.is_dir():
@@ -341,7 +357,9 @@ def register(server) -> None:
         description=(
             "Emit the next-numbered migration SQL file for a product, "
             "pre-wired with set_search_path / updated_at / RLS helpers from "
-            "noctusai_lib.domain.sql_templates."
+            "noctusai_lib.domain.sql_templates. Pass `worktree_path` when "
+            "calling from inside a git worktree so the migration lands in "
+            "the worktree, not the MCP server's startup workspace."
         ),
     )
     def _scaffold_migration(
@@ -350,6 +368,7 @@ def register(server) -> None:
         schema: str | None = None,
         with_table: str | None = None,
         with_updated_at: list[str] | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
         return scaffold_migration(
             product_slug,
@@ -357,4 +376,5 @@ def register(server) -> None:
             schema=schema,
             with_table=with_table,
             with_updated_at=with_updated_at,
+            worktree_path=worktree_path,
         )

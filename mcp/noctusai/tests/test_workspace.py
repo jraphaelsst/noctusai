@@ -23,6 +23,7 @@ from workspace import (
     get_workspace_context,
     get_workspace_root,
     get_workspace_state_dir,
+    resolve_caller_root,
 )
 
 
@@ -191,3 +192,94 @@ class TestBackCompat:
         # Both shapes have a valid noc root.
         assert ctx.noctusai_home.is_dir()
         assert (ctx.noctusai_home / "CLAUDE.md").is_file() or (ctx.root / "CLAUDE.md").is_file()
+
+
+def _make_fake_worktree(root: Path, *, kind: str = "primary", name: str = "fake-wt") -> Path:
+    """Create a directory shaped like a git worktree root: a ``.git``
+    entry (file, like real worktrees) plus a ``.noctusai-workspace``
+    marker. Returns the worktree root.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    # Real worktrees have a ``.git`` FILE (gitdir: pointer), not a dir.
+    # Either shape passes the helper's existence check.
+    (root / ".git").write_text(f"gitdir: /tmp/fake/worktrees/{name}\n", encoding="utf-8")
+    _write_marker(root, kind=kind, name=name, noc_home=root)
+    return root
+
+
+class TestResolveCallerRoot:
+    """Tests for `resolve_caller_root` — the caller-aware path resolver
+    for MCP write tools.
+
+    Surfaced by `projects/mcp-worktree-path-resolution/` (2026-05-10) —
+    MCP stdio process model means `os.getcwd()` cannot reach the caller,
+    so write tools accept an explicit `worktree_path` arg.
+    """
+
+    def test_none_falls_back_to_noctusai_home(self) -> None:
+        """When worktree_path is None, helper returns the canonical noc home.
+        This preserves back-compat for callers that omit the new arg.
+        """
+        result = resolve_caller_root(None)
+        assert result == get_noctusai_home()
+        assert result.is_dir()
+
+    def test_valid_worktree_path_returns_resolved_root(self, tmp_path: Path) -> None:
+        """When given a valid worktree path (dir + .git + marker), the
+        helper returns the resolved Path — this is the worktree-isolation
+        path.
+        """
+        wt = _make_fake_worktree(tmp_path / "wt", name="agent-abc")
+        assert resolve_caller_root(wt) == wt.resolve()
+
+    def test_accepts_string_path(self, tmp_path: Path) -> None:
+        """Pydantic schemas serialize Path as str; helper accepts both."""
+        wt = _make_fake_worktree(tmp_path / "wt-str")
+        assert resolve_caller_root(str(wt)) == wt.resolve()
+
+    def test_expands_user(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`~`-prefixed paths should expand. Use $HOME indirection so the
+        test doesn't depend on the real home dir layout.
+        """
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        wt = _make_fake_worktree(fake_home / "wt")
+        monkeypatch.setenv("HOME", str(fake_home))
+        assert resolve_caller_root("~/wt") == wt.resolve()
+
+    def test_nonexistent_path_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not a directory"):
+            resolve_caller_root(tmp_path / "does-not-exist")
+
+    def test_path_to_file_raises(self, tmp_path: Path) -> None:
+        f = tmp_path / "a-file.txt"
+        f.write_text("not a dir", encoding="utf-8")
+        with pytest.raises(ValueError, match="not a directory"):
+            resolve_caller_root(f)
+
+    def test_dir_without_git_raises(self, tmp_path: Path) -> None:
+        """Directory without .git entry — refused with explicit error."""
+        d = tmp_path / "no-git"
+        d.mkdir()
+        _write_marker(d, kind="primary", name="x", noc_home=d)
+        with pytest.raises(ValueError, match="missing .git"):
+            resolve_caller_root(d)
+
+    def test_dir_with_git_but_no_marker_raises(self, tmp_path: Path) -> None:
+        """Directory with .git but no workspace marker — refused."""
+        d = tmp_path / "no-marker"
+        d.mkdir()
+        (d / ".git").write_text("gitdir: /tmp/x\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="missing .noctusai-workspace"):
+            resolve_caller_root(d)
+
+    def test_no_silent_fallback_to_noc_home(self, tmp_path: Path) -> None:
+        """Critical contract: a malformed `worktree_path` MUST NOT silently
+        fall back to noc home. The whole point of this helper is to surface
+        worktree-bypass slips — silent fallback would defeat that.
+        """
+        bad = tmp_path / "bad"
+        bad.mkdir()
+        with pytest.raises(ValueError):
+            resolve_caller_root(bad)
+        # And confirm: noc home is NOT what was returned (we got a raise instead).

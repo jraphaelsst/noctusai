@@ -874,6 +874,8 @@ noctus.dev.archive(
 
 **Implementation:** `subprocess.run(["git", "mv", src, dst])` for the move (preserves history). Date computed from local timezone (`America/Sao_Paulo`).
 
+**Ledger-stamp side-effect (2026-05-10 — project archives only).** When `mode="project"` and `skip_history=False` (default), `noctus.dev.archive` calls `noctus.dev.history_record` to append one NDJSON line to `project-history/ledger.ndjson` **before** the `git mv` lands. Order matters: history_record reads the project's source files (`PROJECT.md` + `improvements.md` + `proposals/*.md`) — once `git mv` moves them, the original path is gone. Failures propagate (no silent skip per the no-silent-errors rule); the archive aborts and the source folder stays in place. Opt-out with `skip_history=True` for tests / manual backfill. Defaults: `status_at_close="shipped"`; `summary_md` derived from PROJECT.md's first usable line when not supplied; `review_md` defaults to the PROJECT.md body (phases best-effort regex-extracted). Filed by `projects/project-history-ledger/PROJECT.md § 6 Phase 2`.
+
 ### When archive applies
 
 | Situation | Action |

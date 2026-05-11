@@ -51,40 +51,74 @@ class TestFormatReminderMessage:
 # ---------------------------------------------------------------------------
 
 class TestSendViaWaha:
+    """Therapy's `send_via_waha` delegates HTTP transport to the seed
+    `noctusai_lib.integrations.whatsapp.WahaClient`. Tests patch `httpx.AsyncClient`
+    at the seed-lib import site (external integration boundary) — never the
+    product's `send_via_waha` itself, per the no-monkey-patching rule."""
+
     @pytest.mark.asyncio
     async def test_send_success(self):
+        from noctusai_lib.integrations.whatsapp import client as waha_client_module
+
+        captured_post: dict = {}
+
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
         mock_response.json.return_value = {"id": "msg-123", "status": "sent"}
 
-        with patch("app.services.whatsapp_therapy_service.httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
+        async def fake_post(path, json=None, headers=None):
+            captured_post["path"] = path
+            captured_post["json"] = json
+            captured_post["headers"] = headers
+            return mock_response
 
+        mock_client = AsyncMock()
+        mock_client.post = fake_post
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(
+            waha_client_module.httpx, "AsyncClient", lambda **_: mock_client,
+        ):
             result = await whatsapp_therapy_service.send_via_waha(
                 waha_url="http://localhost:3000",
                 session_name="default",
                 phone="5511999998888",
                 message="Olá!",
             )
+            # Status + body assertions (status-code-assertion-rule analog).
             assert result["status"] == "sent"
+            assert result["id"] == "msg-123"
+            assert captured_post["path"] == "/api/sendText"
+            assert captured_post["json"] == {
+                "session": "default",
+                "chatId": "5511999998888@c.us",
+                "text": "Olá!",
+            }
 
     @pytest.mark.asyncio
     async def test_send_api_error(self):
+        import httpx
+        from noctusai_lib.integrations.whatsapp import client as waha_client_module
+
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "500 Internal Server Error", request=MagicMock(), response=mock_response,
+            ),
+        )
 
-        with patch("app.services.whatsapp_therapy_service.httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
 
+        with patch.object(
+            waha_client_module.httpx, "AsyncClient", lambda **_: mock_client,
+        ):
             with pytest.raises(ValueError, match="Erro ao enviar mensagem via WAHA"):
                 await whatsapp_therapy_service.send_via_waha(
                     waha_url="http://localhost:3000",

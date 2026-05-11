@@ -528,3 +528,70 @@ class TestReturnShape:
         result = sm.scaffold_migration("nope", "thing", products_dir=products)
         assert "error" in result
         assert "created" not in result
+
+
+# ---------------------------------------------------------------------------
+# worktree_path — caller-aware path resolution (the
+# `projects/mcp-worktree-path-resolution/` fix).
+# ---------------------------------------------------------------------------
+
+
+class TestWorktreeAwarePathResolution:
+    """`scaffold_migration` honors `worktree_path` so engineers in
+    git worktrees don't get their migrations written to noc main.
+    """
+
+    def _make_fake_worktree(self, root: Path) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / ".git").write_text("gitdir: /tmp/fake/.git\n", encoding="utf-8")
+        (root / ".noctusai-workspace").write_text(
+            "workspace_kind=primary\n"
+            "workspace_name=fake\n"
+            f"noctusai_home={root}\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def test_migration_lands_in_worktree(self, tmp_path):
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        # Plant a product with an existing migration inside the worktree.
+        _make_fake_product(
+            wt / "products",
+            "wt-product",
+            migration_files=["001_seed.sql"],
+        )
+        result = sm.scaffold_migration(
+            "wt-product", "add_thing", worktree_path=wt,
+        )
+        assert result.get("created") is True, result
+        new_file = wt / "products" / "wt-product" / "backend" / "migrations" / "002_add_thing.sql"
+        assert new_file.exists(), (
+            f"scaffold_migration with worktree_path={wt} must place the new "
+            f"migration under {new_file}, got result={result}"
+        )
+
+    def test_invalid_worktree_path_raises(self, tmp_path):
+        bad = tmp_path / "not-wt"
+        bad.mkdir()
+        # The helper raises before any side effect.
+        import pytest
+        with pytest.raises(ValueError):
+            sm.scaffold_migration(
+                "anything", "thing", worktree_path=bad,
+            )
+
+    def test_explicit_products_dir_overrides_worktree_path(self, tmp_path):
+        """Test seam wins — explicit products_dir wins over worktree_path."""
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        sink = tmp_path / "sink"
+        _make_fake_product(
+            sink, "sink-product", migration_files=["001_seed.sql"],
+        )
+        result = sm.scaffold_migration(
+            "sink-product",
+            "thing",
+            worktree_path=wt,
+            products_dir=sink,
+        )
+        assert result.get("created") is True, result
+        assert (sink / "sink-product" / "backend" / "migrations" / "002_thing.sql").exists()

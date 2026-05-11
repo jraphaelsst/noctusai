@@ -2,22 +2,34 @@
 import re
 from pathlib import Path
 from tools.noctus.dev.products import get_product_summary, REPO_ROOT, PRODUCTS_DIR
+from workspace import resolve_caller_root
 
 
-def sync_master_prompt(slug: str) -> dict:
+def sync_master_prompt(
+    slug: str,
+    *,
+    products_dir: Path | None = None,
+) -> dict:
     """Regenerate the structural sections of a product's MASTER-PROMPT.md.
 
     Reads the filesystem to get current routers, services, schemas, pages, hooks.
     Updates the MASTER-PROMPT while preserving descriptive sections.
     Returns {updated: bool, changes: list[str]}.
+
+    Args:
+        slug: Product slug.
+        products_dir: Override the module-level :data:`PRODUCTS_DIR` — used
+            by callers that scope the lookup to a different ``products/``
+            tree (typically a caller's git worktree).
     """
-    path = PRODUCTS_DIR / slug
+    base = products_dir if products_dir is not None else PRODUCTS_DIR
+    path = base / slug
     mp_file = path / "MASTER-PROMPT.md"
 
     if not mp_file.exists():
         return {"error": f"No MASTER-PROMPT.md for '{slug}'", "updated": False}
 
-    structure = get_product_summary(slug)
+    structure = get_product_summary(slug, products_dir=base)
     current = mp_file.read_text()
     changes = []
 
@@ -49,16 +61,26 @@ def sync_master_prompt(slug: str) -> dict:
     }
 
 
-def check_master_prompt_staleness(slug: str) -> dict:
-    """Check if a MASTER-PROMPT is out of sync with the filesystem."""
-    path = PRODUCTS_DIR / slug
+def check_master_prompt_staleness(
+    slug: str,
+    *,
+    products_dir: Path | None = None,
+) -> dict:
+    """Check if a MASTER-PROMPT is out of sync with the filesystem.
+
+    Args:
+        slug: Product slug.
+        products_dir: Override the module-level :data:`PRODUCTS_DIR`.
+    """
+    base = products_dir if products_dir is not None else PRODUCTS_DIR
+    path = base / slug
     mp_file = path / "MASTER-PROMPT.md"
 
     if not mp_file.exists():
         return {"slug": slug, "stale": True, "reason": "No MASTER-PROMPT.md"}
 
     content = mp_file.read_text()
-    structure = get_product_summary(slug)
+    structure = get_product_summary(slug, products_dir=base)
     issues = []
 
     # Check if routers mentioned in MASTER-PROMPT match filesystem
@@ -150,16 +172,53 @@ def verify_master_prompt(
     *,
     write: bool = False,
     all_products: bool = False,
+    worktree_path: str | Path | None = None,
+    products_dir: Path | None = None,
 ) -> dict:
-    """Staleness check + optional regenerate. all_products=True iterates."""
+    """Staleness check + optional regenerate. all_products=True iterates.
+
+    Args:
+        slug: Product slug (required unless ``all_products=True``).
+        write: When True + stale, regenerate the MASTER-PROMPT structural
+            sections in place.
+        all_products: When True, iterate every product under
+            ``products_dir`` (or :data:`PRODUCTS_DIR`).
+        worktree_path: **Caller-aware path resolution.** When set, the
+            check reads + writes MASTER-PROMPT.md under the caller's
+            worktree's ``products/`` tree instead of the MCP server's
+            startup workspace. Engineers calling from inside a
+            ``git worktree add`` MUST pass their worktree root. See
+            ``resolve_caller_root`` for the contract.
+        products_dir: Override the module-level :data:`PRODUCTS_DIR`
+            (test seam). When set, wins over ``worktree_path``.
+
+    3-tier priority: explicit ``products_dir`` > ``worktree_path`` >
+    module default :data:`PRODUCTS_DIR`.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract).
+    """
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif worktree_path is not None:
+        base_products_dir = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
+
     if all_products:
         products: list[dict] = []
-        for d in sorted(PRODUCTS_DIR.iterdir()):
+        for d in sorted(base_products_dir.iterdir()):
             if not d.is_dir() or d.name.startswith("."):
                 continue
             if (d / "MASTER-PROMPT.md").exists():
                 products.append(
-                    verify_master_prompt(d.name, write=write, all_products=False)
+                    verify_master_prompt(
+                        d.name,
+                        write=write,
+                        all_products=False,
+                        products_dir=base_products_dir,
+                    )
                 )
         return {
             "products": products,
@@ -172,7 +231,7 @@ def verify_master_prompt(
     if slug is None:
         return {"error": "slug is required when all_products=False"}
 
-    check = check_master_prompt_staleness(slug)
+    check = check_master_prompt_staleness(slug, products_dir=base_products_dir)
     out = {
         "slug": slug,
         "stale": check.get("stale", False),
@@ -183,7 +242,7 @@ def verify_master_prompt(
         "write_attempted": write,
     }
     if write and out["stale"]:
-        sync = sync_master_prompt(slug)
+        sync = sync_master_prompt(slug, products_dir=base_products_dir)
         out["synced"] = sync.get("updated", False)
         out["changes"] = sync.get("changes", [])
         if "error" in sync:
@@ -196,12 +255,22 @@ def register(server) -> None:
         name="noctus.dev.verify_master_prompt",
         description=(
             "MASTER-PROMPT.md staleness check (write=False) or "
-            "regenerate-if-stale (write=True). all_products=True iterates."
+            "regenerate-if-stale (write=True). all_products=True iterates. "
+            "Pass `worktree_path` when called from inside a git worktree so "
+            "the check + regeneration target the worktree's products/ tree, "
+            "NOT the MCP server's startup workspace. See "
+            "KB § PATTERNS/mcp-tool-conventions.md."
         ),
     )
     def _verify(
         slug: str | None = None,
         write: bool = False,
         all_products: bool = False,
+        worktree_path: str | None = None,
     ) -> dict:
-        return verify_master_prompt(slug, write=write, all_products=all_products)
+        return verify_master_prompt(
+            slug,
+            write=write,
+            all_products=all_products,
+            worktree_path=worktree_path,
+        )

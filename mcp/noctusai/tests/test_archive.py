@@ -1,6 +1,7 @@
 """Tests for the archive MCP tool."""
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +10,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.noctus.dev.archive import archive, _detect_mode, _next_nn, _today_str
+from tools.noctus.dev.archive import (
+    archive,
+    _derive_default_summary,
+    _detect_mode,
+    _next_nn,
+    _today_str,
+)
 
 
 @pytest.fixture
@@ -294,3 +301,276 @@ class TestMcpRegistration:
         s = build_server()
         manager = s._tool_manager
         assert "noctus.dev.archive" in manager._tools
+
+
+# ---------------------------------------------------------------------------
+# worktree_path — caller-aware path resolution.
+# ---------------------------------------------------------------------------
+
+
+class TestWorktreeAwarePathResolution:
+    """`archive` honors `worktree_path` — files archive into the caller's
+    worktree, not the MCP server's startup workspace.
+
+    Filed by ``projects/mcp-worktree-path-resolution/``.
+    """
+
+    def _make_fake_worktree_repo(self, tmp_path: Path) -> Path:
+        """Build a worktree-shaped repo: real git init + .noctusai-workspace
+        marker. Real git is required because archive() runs `git mv`.
+        """
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(wt), check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(wt), check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=str(wt), check=True)
+        (wt / ".noctusai-workspace").write_text(
+            "workspace_kind=primary\nworkspace_name=wt\n", encoding="utf-8",
+        )
+        (wt / "archive" / "projects").mkdir(parents=True)
+        (wt / "archive" / "features").mkdir(parents=True)
+        (wt / "archive" / "projects" / ".gitkeep").touch()
+        (wt / "archive" / "features" / ".gitkeep").touch()
+        (wt / "projects").mkdir()
+        subprocess.run(["git", "add", "-A"], cwd=str(wt), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(wt), check=True)
+        return wt
+
+    def test_archive_lands_in_worktree(self, tmp_path):
+        wt = self._make_fake_worktree_repo(tmp_path)
+        # Plant a project inside the worktree.
+        proj = wt / "projects" / "demo"
+        proj.mkdir()
+        (proj / "PROJECT.md").write_text("# demo\n")
+        subprocess.run(["git", "add", "-A"], cwd=str(wt), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "demo"], cwd=str(wt), check=True)
+
+        result = archive(
+            target_path=str(proj),
+            mode="project",
+            worktree_path=wt,
+        )
+        # archived_to is relative to the worktree root.
+        archived = wt / result["archived_to"]
+        assert archived.exists(), (
+            f"archive with worktree_path={wt} must land at {archived}, "
+            f"got result={result}"
+        )
+
+    def test_invalid_worktree_path_raises(self, tmp_path):
+        bad = tmp_path / "not-wt"
+        bad.mkdir()
+        with pytest.raises(ValueError):
+            archive(
+                target_path=str(bad),
+                mode="ad_hoc",
+                name="x",
+                worktree_path=bad,
+            )
+
+    def test_explicit_repo_root_overrides_worktree_path(self, tmp_path):
+        """`repo_root` (test seam) wins over `worktree_path`."""
+        wt = self._make_fake_worktree_repo(tmp_path)
+        # Build a second repo as the "sink"; archive must land here, not wt.
+        sink = tmp_path / "sink"
+        sink.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(sink), check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(sink), check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=str(sink), check=True)
+        (sink / "archive" / "projects").mkdir(parents=True)
+        (sink / "projects").mkdir()
+        proj = sink / "projects" / "demo"
+        proj.mkdir()
+        (proj / "PROJECT.md").write_text("# demo\n")
+        subprocess.run(["git", "add", "-A"], cwd=str(sink), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(sink), check=True)
+
+        result = archive(
+            target_path=str(proj),
+            mode="project",
+            repo_root=sink,  # should win
+            worktree_path=wt,
+        )
+        archived = sink / result["archived_to"]
+        assert archived.exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — ledger-stamp side-effect (project archives only).
+# ---------------------------------------------------------------------------
+
+
+class TestLedgerStampOnProjectArchive:
+    """`archive(mode="project")` stamps a `project-history/ledger.ndjson`
+    line BEFORE the git mv lands. Default-on; opt-out via
+    ``skip_history=True``. Errors propagate.
+
+    Filed per ``projects/project-history-ledger/PROJECT.md § 6 Phase 2``.
+    """
+
+    def test_project_archive_appends_one_ndjson_line(self, tmp_repo):
+        """Sample project archive → ledger.ndjson grows by exactly one
+        line; that line is valid JSON; ``slug`` matches the archived
+        project.
+        """
+        proj = _make_project(tmp_repo, "phase2-sample")
+        # Ledger doesn't exist yet — the tool should create it.
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        assert not ledger.exists()
+
+        result = archive("projects/phase2-sample", repo_root=tmp_repo)
+
+        # Ledger exists; exactly one line; that line is valid JSON for
+        # this slug.
+        assert ledger.exists(), "archive must create ledger.ndjson on first project stamp"
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1, f"expected exactly 1 ledger line; got {len(lines)}"
+        rec = json.loads(lines[0])
+        assert rec["slug"] == "phase2-sample"
+        assert rec["status_at_close"] == "shipped"
+        assert "short_summary" in rec
+        assert "token_count" in rec
+        # And the surfacing in archive's return dict:
+        assert result["history"] is not None
+        assert result["history"]["line_count"] == 1
+        # Source still archived:
+        assert not proj.exists()
+
+    def test_second_project_archive_appends_second_line(self, tmp_repo):
+        """Re-running on a second project appends (not overwrites)."""
+        _make_project(tmp_repo, "first")
+        archive("projects/first", repo_root=tmp_repo)
+        subprocess.run(["git", "commit", "-q", "-am", "archive first"], cwd=str(tmp_repo), check=True)
+        _make_project(tmp_repo, "second")
+        archive("projects/second", repo_root=tmp_repo)
+
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        slugs = [json.loads(L)["slug"] for L in lines]
+        assert slugs == ["first", "second"]
+
+    def test_skip_history_flag_disables_stamp(self, tmp_repo):
+        """``skip_history=True`` — no ledger writes; archive still works."""
+        _make_project(tmp_repo, "no-stamp")
+        result = archive(
+            "projects/no-stamp", repo_root=tmp_repo, skip_history=True
+        )
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        assert not ledger.exists(), "skip_history=True must NOT create the ledger"
+        assert result["history"] is None
+        # But the archive itself still happened:
+        assert result["mode"] == "project"
+        today = _today_str()
+        assert (tmp_repo / "archive" / "projects" / today / "01-no-stamp").exists()
+
+    def test_feature_archive_does_not_stamp(self, tmp_repo):
+        """Feature archives are NOT projects — no ledger entry."""
+        _make_feature(tmp_repo, "feat")
+        result = archive("features/feat.md", repo_root=tmp_repo)
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        assert not ledger.exists(), "feature archives must not stamp the ledger"
+        assert result["history"] is None
+
+    def test_ad_hoc_archive_does_not_stamp(self, tmp_repo):
+        """Ad-hoc archives are NOT projects — no ledger entry."""
+        scratch = tmp_repo / "scratch"
+        scratch.mkdir()
+        (scratch / "stuff.txt").write_text("x")
+        subprocess.run(["git", "add", "-A"], cwd=str(tmp_repo), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "scratch"], cwd=str(tmp_repo), check=True)
+        result = archive(
+            "scratch", mode="ad_hoc", name="ad-hoc-thing", repo_root=tmp_repo
+        )
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        assert not ledger.exists()
+        assert result["history"] is None
+
+    def test_stamp_failure_aborts_archive_no_git_mv(self, tmp_repo):
+        """If the ledger stamp raises, the archive must NOT proceed.
+
+        We trigger a real failure by passing an invalid
+        ``status_at_close`` — ``history_record`` raises ``ValueError``
+        at the validation gate (real error path, NOT a monkey-patched
+        mock — see the no-monkey-patching-of-our-own-code rule). The
+        source project must remain in place; no archive folder gets
+        created.
+
+        Per the no-silent-errors rule: history_record errors propagate;
+        archive does not swallow them.
+        """
+        proj = _make_project(tmp_repo, "fail-stamp")
+
+        with pytest.raises(ValueError, match="invalid status_at_close"):
+            archive(
+                "projects/fail-stamp",
+                repo_root=tmp_repo,
+                status_at_close="not-a-valid-status",
+            )
+
+        # Source untouched — archive did NOT proceed:
+        assert proj.exists(), "archive must NOT git-mv when ledger stamp fails"
+        today = _today_str()
+        archived_dst = tmp_repo / "archive" / "projects" / today / "01-fail-stamp"
+        assert not archived_dst.exists(), "no archive folder when stamp aborts"
+        # No ledger line written either (validation fails before append).
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        assert not ledger.exists() or ledger.read_text() == ""
+
+    def test_explicit_summary_and_review_passed_through(self, tmp_repo):
+        """Explicit summary_md / review_md / outcome_signals reach the
+        ledger record."""
+        _make_project(tmp_repo, "explicit")
+        archive(
+            "projects/explicit",
+            repo_root=tmp_repo,
+            summary_md="A precise human-written summary.",
+            review_md="- step a\n- step b",
+            outcome_signals=["pytest 60/60 green"],
+        )
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        rec = json.loads(ledger.read_text().splitlines()[0])
+        assert rec["short_summary"] == "A precise human-written summary."
+        assert "step a" in rec["short_review"]
+        assert rec["outcome_signals"] == ["pytest 60/60 green"]
+
+    def test_default_status_is_shipped(self, tmp_repo):
+        """When ``status_at_close`` is not supplied, default is
+        ``shipped`` (archive's most common trigger)."""
+        _make_project(tmp_repo, "defaults")
+        archive("projects/defaults", repo_root=tmp_repo)
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        rec = json.loads(ledger.read_text().splitlines()[0])
+        assert rec["status_at_close"] == "shipped"
+
+    def test_explicit_status_passed_through(self, tmp_repo):
+        """When ``status_at_close`` is supplied, it lands in the record."""
+        _make_project(tmp_repo, "abandoned-one")
+        archive(
+            "projects/abandoned-one",
+            repo_root=tmp_repo,
+            status_at_close="abandoned",
+        )
+        ledger = tmp_repo / "project-history" / "ledger.ndjson"
+        rec = json.loads(ledger.read_text().splitlines()[0])
+        assert rec["status_at_close"] == "abandoned"
+
+
+class TestDeriveDefaultSummary:
+    """Default summary derivation when caller doesn't pass ``summary_md``."""
+
+    def test_skips_headings(self):
+        body = "# Title\n\nReal first sentence.\n"
+        assert _derive_default_summary(body) == "Real first sentence."
+
+    def test_skips_blockquotes(self):
+        body = "# Title\n\n> a note\n\nThe meat.\n"
+        assert _derive_default_summary(body) == "The meat."
+
+    def test_strips_bullet_prefix(self):
+        body = "# Title\n\n- bullet line one\n"
+        assert _derive_default_summary(body) == "bullet line one"
+
+    def test_falls_back_when_empty(self):
+        assert _derive_default_summary("# only-headings\n\n# more\n") == "(no summary available)"
+        assert _derive_default_summary("") == "(no summary available)"

@@ -229,6 +229,107 @@ class TestSendMessage:
 
         assert result["phone"] == "5521999990000"
 
+    @pytest.mark.asyncio
+    async def test_success_delegates_to_seed_meta_cloud_client(self, monkeypatch):
+        """Successful send: patch `httpx.AsyncClient` at the external HTTP
+        boundary inside the seed `MetaCloudClient`; ERP-side normalization +
+        envelope preserved. Mirrors `test_send_via_waha::test_success_delegates_to_seed_client`."""
+        from unittest.mock import AsyncMock, MagicMock
+        from app.services.whatsapp_service import send_message, WhatsAppConfig
+        from noctusai_lib.integrations.whatsapp import meta_cloud_client as meta_cloud_module
+
+        captured_post: dict = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(
+            return_value={"messages": [{"id": "wamid.HBgM..."}]},
+        )
+
+        async def fake_post(url, json=None, headers=None):
+            captured_post["url"] = url
+            captured_post["json"] = json
+            captured_post["headers"] = headers
+            return mock_response
+
+        fake_async_client = AsyncMock()
+        fake_async_client.post = fake_post
+        fake_async_client.__aenter__ = AsyncMock(return_value=fake_async_client)
+        fake_async_client.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            meta_cloud_module.httpx,
+            "AsyncClient",
+            lambda **_: fake_async_client,
+        )
+
+        config = WhatsAppConfig(
+            api_token="meta-token", phone_number_id="999", api_version="v18.0"
+        )
+        result = await send_message(
+            phone="11912345678",
+            message="Olá",
+            config=config,
+        )
+
+        # Envelope assertions (status + ID + phone).
+        assert result["status"] == "sent"
+        assert result["message_id"] == "wamid.HBgM..."
+        assert result["phone"] == "5511912345678"  # ERP-side BR country-code prepend
+
+        # Verify the seed client built the right URL + payload + headers.
+        assert captured_post["url"] == "https://graph.facebook.com/v18.0/999/messages"
+        assert captured_post["json"] == {
+            "messaging_product": "whatsapp",
+            "to": "5511912345678",
+            "type": "text",
+            "text": {"body": "Olá"},
+        }
+        assert captured_post["headers"]["Authorization"] == "Bearer meta-token"
+        assert captured_post["headers"]["Content-Type"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_seed_client_exception_returns_failed(self, monkeypatch):
+        """When seed `MetaCloudClient.send_text` raises (HTTPStatusError or
+        other), ERP surfaces the legacy `{status: failed, error: ...}` envelope.
+        Mirrors `test_send_via_waha::test_seed_client_exception_returns_failed`."""
+        from unittest.mock import AsyncMock, MagicMock
+        import httpx
+        from app.services.whatsapp_service import send_message, WhatsAppConfig
+        from noctusai_lib.integrations.whatsapp import meta_cloud_client as meta_cloud_module
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "500 Internal Server Error",
+                request=MagicMock(),
+                response=mock_response,
+            ),
+        )
+
+        fake_async_client = AsyncMock()
+        fake_async_client.post = AsyncMock(return_value=mock_response)
+        fake_async_client.__aenter__ = AsyncMock(return_value=fake_async_client)
+        fake_async_client.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            meta_cloud_module.httpx,
+            "AsyncClient",
+            lambda **_: fake_async_client,
+        )
+
+        config = WhatsAppConfig(api_token="meta-token", phone_number_id="999")
+        result = await send_message(
+            phone="11912345678",
+            message="test",
+            config=config,
+        )
+
+        assert result["status"] == "failed"
+        assert result["message_id"] is None
+        assert "500" in result["error"]
+        assert result["phone"] == "5511912345678"
+
 
 # ---------------------------------------------------------------------------
 # send_property_card (dry-run mode)
@@ -274,3 +375,150 @@ class TestSendPropertyCard:
         )
 
         assert result["status"] == "sent"
+
+
+# ---------------------------------------------------------------------------
+# send_via_waha (consumes seed WahaClient via get_whatsapp_client factory)
+# ---------------------------------------------------------------------------
+
+class TestSendViaWaha:
+    """ERP's `send_via_waha` delegates HTTP transport to the seed
+    `noctusai_lib.integrations.whatsapp.WahaClient`. Tests patch the seed's
+    `WahaClient.send_text` (external integration boundary) — never the
+    product's `send_via_waha` itself."""
+
+    @pytest.mark.asyncio
+    async def test_not_configured_returns_failed(self):
+        """No row in `whatsapp_config` → fail envelope, never touches the lib."""
+        from app.services.whatsapp_service import send_via_waha
+
+        db = MockSupabaseClient()
+        db.set_table_data("whatsapp_config", [])
+
+        result = await send_via_waha(db, "11912345678", "hello")
+
+        assert result["status"] == "failed"
+        assert result["error"] == "WAHA not configured"
+        assert result["phone"] == "11912345678"
+
+    @pytest.mark.asyncio
+    async def test_dry_run_when_no_waha_url(self):
+        """Config row exists but `waha_api_url` is empty → dry_run envelope."""
+        from app.services.whatsapp_service import send_via_waha
+
+        db = MockSupabaseClient()
+        db.set_table_data("whatsapp_config", [{
+            "provider": "waha",
+            "is_active": True,
+            "waha_api_url": "",
+            "waha_api_key": "",
+            "waha_session_name": "default",
+        }])
+
+        result = await send_via_waha(db, "11912345678", "hello")
+
+        assert result["dry_run"] is True
+        assert result["status"] == "sent"
+        assert result["message_id"] == "dry_run_11912345678"
+
+    @pytest.mark.asyncio
+    async def test_success_delegates_to_seed_client(self, monkeypatch):
+        """Successful send: patch `httpx.AsyncClient` at the external HTTP
+        boundary inside the seed `WahaClient`; ERP-side normalization +
+        envelope preserved. Pattern mirrors seed's own client tests."""
+        from unittest.mock import AsyncMock, MagicMock
+        import httpx
+        from app.services.whatsapp_service import send_via_waha
+        from noctusai_lib.integrations.whatsapp import client as waha_client_module
+
+        captured_post: dict = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = MagicMock(return_value={"id": "waha-msg-42"})
+
+        async def fake_post(path, json=None, headers=None):
+            captured_post["path"] = path
+            captured_post["json"] = json
+            captured_post["headers"] = headers
+            return mock_response
+
+        fake_async_client = AsyncMock()
+        fake_async_client.post = fake_post
+        fake_async_client.__aenter__ = AsyncMock(return_value=fake_async_client)
+        fake_async_client.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            waha_client_module.httpx,
+            "AsyncClient",
+            lambda **_: fake_async_client,
+        )
+
+        db = MockSupabaseClient()
+        db.set_table_data("whatsapp_config", [{
+            "provider": "waha",
+            "is_active": True,
+            "waha_api_url": "http://waha.local:3000",
+            "waha_api_key": "secret-key",
+            "waha_session_name": "erp-session",
+        }])
+
+        result = await send_via_waha(db, "11912345678", "Olá")
+
+        # Envelope assertions (status + ID + phone).
+        assert result["status"] == "sent"
+        assert result["message_id"] == "waha-msg-42"
+        assert result["phone"] == "5511912345678"  # ERP-side BR country-code prepend
+
+        # Verify the seed client built the right payload + headers.
+        assert captured_post["path"] == "/api/sendText"
+        assert captured_post["json"] == {
+            "session": "erp-session",
+            "chatId": "5511912345678@c.us",
+            "text": "Olá",
+        }
+        assert captured_post["headers"]["X-Api-Key"] == "secret-key"
+        assert captured_post["headers"]["Content-Type"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_seed_client_exception_returns_failed(self, monkeypatch):
+        """When seed `WahaClient.send_text` raises (HTTPStatusError or other),
+        ERP surfaces the legacy `{status: failed, error: ...}` envelope."""
+        from unittest.mock import AsyncMock, MagicMock
+        import httpx
+        from app.services.whatsapp_service import send_via_waha
+        from noctusai_lib.integrations.whatsapp import client as waha_client_module
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "500 Internal Server Error", request=MagicMock(), response=mock_response,
+            ),
+        )
+
+        fake_async_client = AsyncMock()
+        fake_async_client.post = AsyncMock(return_value=mock_response)
+        fake_async_client.__aenter__ = AsyncMock(return_value=fake_async_client)
+        fake_async_client.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            waha_client_module.httpx,
+            "AsyncClient",
+            lambda **_: fake_async_client,
+        )
+
+        db = MockSupabaseClient()
+        db.set_table_data("whatsapp_config", [{
+            "provider": "waha",
+            "is_active": True,
+            "waha_api_url": "http://waha.local:3000",
+            "waha_api_key": "secret-key",
+            "waha_session_name": "default",
+        }])
+
+        result = await send_via_waha(db, "11912345678", "test")
+
+        assert result["status"] == "failed"
+        assert result["message_id"] is None
+        assert "500" in result["error"]
+        assert result["phone"] == "5511912345678"

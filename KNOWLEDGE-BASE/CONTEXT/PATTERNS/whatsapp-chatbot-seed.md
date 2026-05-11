@@ -20,9 +20,12 @@
 A product needs the **whatsapp** connector when:
 
 - Inbound WhatsApp messages need to be received (via WAHA today;
-  Twilio / Meta Cloud API parsers slot in later under the same
+  Twilio parsers slot in later under the same
   `WhatsAppInboundMessage` shape).
-- Outbound replies need to be sent through WAHA's `/api/sendText`.
+- Outbound replies need to be sent through WAHA's `/api/sendText`, or
+  via the Meta WhatsApp Business Cloud API (`MetaCloudClient.send_text`
+  shipped 2026-05-10 — Protocol+Fake+Real+factory sibling of `WahaClient`,
+  consumed by ERP).
 
 A product needs the **chatbot framework** when:
 

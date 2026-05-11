@@ -46,6 +46,7 @@ from noctusai_lib.domain.sql_templates import (
     rls_subquery_policy,
     set_search_path,
 )
+from noctusai_lib.sql import prelude
 
 
 def _normalize_ws(s: str) -> str:
@@ -102,20 +103,24 @@ class TestScaffold:
 
 
 class TestSqlTemplatesIntegration:
-    """Scaffolded `001_<schema>.sql` must match the canonical helpers from
+    """Scaffolded `001_<slug>.sql` must match the canonical helpers from
     `noctusai_lib.domain.sql_templates`. These tests catch drift between
     the template file and the helpers — without forcing the template to be
     runtime-rendered (which would make it a Python module, not SQL).
 
     Filed by `projects/side-projects-batch/` Phase 1.d
-    (`mcp-scaffold-sql-templates-integration`, 2026-05-03)."""
+    (`mcp-scaffold-sql-templates-integration`, 2026-05-03). Filename moved
+    from `001_seed.sql` → `001_<slug>.sql` and header replaced by
+    `noctusai_lib.sql.prelude(schema)` output by
+    `projects/scaffold-tool-canonical-emit/` (2026-05-10)."""
 
     SCAFFOLD_SCHEMA = "ai_chat"
+    SCAFFOLD_SLUG = "test-scaffold-sql-temp"
 
     def _scaffold_and_read_migration(self, products_dir: Path) -> str:
         result = scaffold_product(
             "AI Chat",
-            "test-scaffold-sql-temp",
+            self.SCAFFOLD_SLUG,
             self.SCAFFOLD_SCHEMA,
             8099,
             8199,
@@ -125,8 +130,27 @@ class TestSqlTemplatesIntegration:
             template_dir=WORKTREE_TEMPLATE,
         )
         assert result["created"] is True, result
-        migration = products_dir / "test-scaffold-sql-temp" / "backend" / "migrations" / "001_seed.sql"
+        # Canonical filename is `001_<slug>.sql` (was `001_seed.sql`).
+        migration = (
+            products_dir
+            / self.SCAFFOLD_SLUG
+            / "backend"
+            / "migrations"
+            / f"001_{self.SCAFFOLD_SLUG}.sql"
+        )
         assert migration.exists(), f"scaffold did not produce {migration}"
+        # And the legacy filename MUST be gone (renamed, not duplicated).
+        legacy = migration.parent / "001_seed.sql"
+        assert not legacy.exists(), (
+            f"scaffold left legacy `001_seed.sql` alongside `{migration.name}` — "
+            "rename should remove the source."
+        )
+        # The scaffold result advertises the canonical_migration outcome.
+        canonical = result.get("canonical_migration")
+        assert canonical is not None, result
+        assert canonical.get("renamed") is True, canonical
+        assert canonical.get("prelude_injected") is True, canonical
+        assert canonical.get("path") == str(migration), canonical
         return migration.read_text()
 
     def test_set_search_path_matches_helper(self, tmp_path):
@@ -137,6 +161,36 @@ class TestSqlTemplatesIntegration:
             f"Expected line: {expected_line!r}\n"
             f"Actual content head:\n{content[:400]}"
         )
+
+    def test_migration_header_is_canonical_prelude(self, tmp_path):
+        """The migration must START with `prelude(schema)` output verbatim —
+        no hand-rolled header survives the canonicalization pass.
+
+        Closes the N=10 hand-rolled-prelude recurrence Engineer U surfaced
+        in the imobi P2 close (commit 31a0833)."""
+        content = self._scaffold_and_read_migration(tmp_path)
+        canonical_prelude_block = prelude(self.SCAFFOLD_SCHEMA)
+        assert content.startswith(canonical_prelude_block), (
+            f"Scaffolded migration does not begin with `prelude({self.SCAFFOLD_SCHEMA!r})` "
+            f"output.\nExpected head:\n{canonical_prelude_block!r}\n"
+            f"Actual head:\n{content[: len(canonical_prelude_block) + 40]!r}"
+        )
+        # The hand-rolled comment from the template (which mentions
+        # PRODUCT_NAME) must NOT survive — the canonical block replaces it.
+        assert "{{PRODUCT_NAME}} schema" not in content
+        assert " schema\n-- Schema:" not in content, (
+            "Hand-rolled `<NAME> schema / -- Schema: <SCHEMA>` header leaked "
+            "into the scaffolded migration — canonicalization should have "
+            "dropped it."
+        )
+
+    def test_migration_filename_uses_slug(self, tmp_path):
+        """The migration file MUST land at `001_<slug>.sql` — the legacy
+        `001_seed.sql` is rejected (and the assertion in
+        `_scaffold_and_read_migration` enforces both files).
+        """
+        # _scaffold_and_read_migration runs the full assertion suite for us.
+        self._scaffold_and_read_migration(tmp_path)
 
     def test_invitations_rls_policy_matches_helper(self, tmp_path):
         content = self._scaffold_and_read_migration(tmp_path)
@@ -1130,3 +1184,155 @@ class TestWorkspaceDockerPatch:
         for f in tmp_path.iterdir():
             if f.is_file():
                 assert f.read_text() == snapshot[f.name], f"{f.name} changed on second patch"
+
+
+class TestWorktreeAwarePathResolution:
+    """Regression — `scaffold_product` accepts an explicit `worktree_path`
+    so MCP write tools route caller-aware paths, NOT the server's startup
+    workspace.
+
+    Filed by ``projects/mcp-worktree-path-resolution/`` (2026-05-10) —
+    surfacing slip in ``imobi-scheduling-bot-creation`` Phase 0+1 close
+    where ``scaffold_product`` wrote 58+ files to the noc main worktree
+    from inside Engineer E's isolated worktree.
+    """
+
+    def _make_fake_worktree(self, root: Path) -> Path:
+        """Build a directory shaped like a real worktree root: .git file
+        + .noctusai-workspace marker + a copy of the seed template at
+        ``templates/product-seed`` (so we don't depend on tmp -> noc
+        symlinks).
+        """
+        root.mkdir(parents=True, exist_ok=True)
+        (root / ".git").write_text(
+            "gitdir: /tmp/fake/.git/worktrees/agent-test\n", encoding="utf-8"
+        )
+        (root / ".noctusai-workspace").write_text(
+            "workspace_kind=primary\n"
+            "workspace_name=fake-worktree\n"
+            f"noctusai_home={root}\n"
+            "bootstrap_version=1\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def test_worktree_path_lands_writes_in_worktree_not_noc(self, tmp_path):
+        """Core regression: when `worktree_path` is given, the new product
+        folder lands UNDER the worktree, NOT under noc's PRODUCTS_DIR.
+        """
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        slug = "wt-test-product"
+
+        result = scaffold_product(
+            "Worktree Test",
+            slug,
+            "wt_test",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            worktree_path=wt,
+            template_dir=WORKTREE_TEMPLATE,
+        )
+
+        assert result["created"] is True, result
+        # MUST land in the worktree, NOT noc.
+        assert (wt / "products" / slug / "backend" / "app" / "main.py").exists(), (
+            "scaffold_product with worktree_path=<wt> must place the new "
+            f"product under {wt}/products/, got result={result}"
+        )
+
+    def test_worktree_path_none_keeps_default_behavior(self, tmp_path):
+        """When `worktree_path` is None (architect on main noc), the
+        explicit `products_dir` seam still wins — back-compat for tests
+        and direct callers.
+        """
+        result = scaffold_product(
+            "Default Path",
+            "default-path-temp",
+            "default_path",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            worktree_path=None,
+            products_dir=tmp_path,  # explicit seam — wins over both worktree + module-default
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True, result
+        assert (tmp_path / "default-path-temp" / "backend").exists()
+
+    def test_invalid_worktree_path_raises_no_silent_fallback(self, tmp_path):
+        """The whole point of this arg is to surface worktree-bypass slips.
+        Silent fallback would defeat that — an invalid worktree_path MUST
+        raise ValueError, not quietly write to noc.
+        """
+        bad = tmp_path / "not-a-worktree"
+        bad.mkdir()
+        # No .git, no marker — bad shape.
+        with pytest.raises(ValueError, match=r"missing \.git|not a directory"):
+            scaffold_product(
+                "Bad Path",
+                "bad-path-temp",
+                "bad_path",
+                8099,
+                8199,
+                "Zap",
+                brief={},
+                worktree_path=bad,
+                template_dir=WORKTREE_TEMPLATE,
+            )
+
+    def test_explicit_products_dir_overrides_worktree_path(self, tmp_path):
+        """Test-seam priority — explicit `products_dir` wins over
+        `worktree_path` resolution. Keeps existing tests stable while
+        the new arg surfaces in production.
+        """
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        sink = tmp_path / "sink"
+        result = scaffold_product(
+            "Sink Test",
+            "sink-test-temp",
+            "sink_test",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            worktree_path=wt,
+            products_dir=sink,  # SHOULD win
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True, result
+        assert (sink / "sink-test-temp" / "backend").exists()
+        # Worktree's products/ should be UNTOUCHED.
+        assert not (wt / "products" / "sink-test-temp").exists()
+
+    def test_delete_product_honors_worktree_path(self, tmp_path):
+        """`delete_product` mirrors `scaffold_product`'s resolution order."""
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        slug = "delete-wt-test"
+        # First, scaffold into the worktree.
+        scaffold_product(
+            "Delete WT",
+            slug,
+            "delete_wt",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            worktree_path=wt,
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        target = wt / "products" / slug
+        assert target.exists()
+
+        # Now delete with remove_directory=True.
+        result = delete_product(
+            slug,
+            remove_directory=True,
+            worktree_path=wt,
+        )
+        # The product folder under the worktree should be gone.
+        assert not target.exists(), f"delete_product did not remove {target}"
+        # Result should reference the worktree's directory removal.
+        assert "directory_removal" in result
