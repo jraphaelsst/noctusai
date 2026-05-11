@@ -144,8 +144,14 @@ async def _fetch_window(
         .execute()
     )
     transacoes = tx_res.data or []
+    # PF-8: organizations lives in the `public` schema, not the `personal-finance`
+    # product schema. The `db` arg points at the product schema, so we cross-schema
+    # via get_core_client() (schema="public"). Without this, PostgREST raises
+    # PGRST205 ("relation organizations not found in schema personal-finance").
+    from app.database import get_core_client
+    core = get_core_client()
     org_res = (
-        db.table("organizations").select("id, nome").eq("id", org_id).single().execute()
+        core.table("organizations").select("id, nome").eq("id", org_id).single().execute()
     )
     org_record = org_res.data or {"id": org_id, "nome": "Você"}
     return transacoes, org_record

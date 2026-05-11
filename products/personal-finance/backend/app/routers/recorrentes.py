@@ -1,10 +1,8 @@
 """Recurring transactions & bills router."""
 import logging
-from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
-from noctusai_lib.api.crud_safety import delete_or_404
-from app.dependencies import get_current_user_org, get_user_client, first_or_none
+from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, ok_response
 from app.schemas.recorrentes import RecorrenteCreate, RecorrenteUpdate
 from app.services.recorrentes_service import RecorrentesService
@@ -20,11 +18,9 @@ async def listar_recorrentes(
 ):
     user, token, org_id = await get_current_user_org(authorization)
     db = get_user_client(token)
-    query = db.table("recorrentes").select("*, conta:contas(id,nome), categoria:categorias(id,nome,icone,cor)").eq("org_id", org_id).order("proxima_data")
-    if ativo is not None:
-        query = query.eq("ativo", ativo)
-    result = query.execute()
-    return success_response(result.data or [], total=len(result.data or []))
+    service = RecorrentesService(db, org_id)
+    data = await service.listar(ativo=ativo)
+    return success_response(data, total=len(data))
 
 
 @router.post("/executar")
@@ -45,10 +41,9 @@ async def proximas_contas(
     """Get upcoming bills within the next N days."""
     user, token, org_id = await get_current_user_org(authorization)
     db = get_user_client(token)
-    hoje = date.today().isoformat()
-    limite = (date.today() + timedelta(days=dias)).isoformat()
-    result = db.table("recorrentes").select("*, conta:contas(id,nome), categoria:categorias(id,nome,icone,cor)").eq("org_id", org_id).eq("ativo", True).gte("proxima_data", hoje).lte("proxima_data", limite).order("proxima_data").execute()
-    return success_response(result.data or [])
+    service = RecorrentesService(db, org_id)
+    data = await service.proximas(dias)
+    return success_response(data)
 
 
 @router.post("/{recorrente_id}/executar")
@@ -67,23 +62,22 @@ async def executar_unico(recorrente_id: str, authorization: Optional[str] = Head
 async def obter_recorrente(recorrente_id: str, authorization: Optional[str] = Header(None)):
     user, token, org_id = await get_current_user_org(authorization)
     db = get_user_client(token)
-    result = db.table("recorrentes").select("*, conta:contas(id,nome), categoria:categorias(id,nome,icone,cor)").eq("id", recorrente_id).eq("org_id", org_id).single().execute()
-    if not result.data:
+    service = RecorrentesService(db, org_id)
+    data = await service.obter(recorrente_id)
+    if not data:
         raise HTTPException(status_code=404, detail="Recorrente nao encontrado")
-    return success_response(result.data)
+    return success_response(data)
 
 
 @router.post("")
 async def criar_recorrente(body: RecorrenteCreate, authorization: Optional[str] = Header(None)):
     user, token, org_id = await get_current_user_org(authorization)
     db = get_user_client(token)
-    data = body.model_dump(exclude_none=True)
-    data["org_id"] = org_id
-    result = db.table("recorrentes").insert(data).execute()
-    row = first_or_none(result)
-    if not row:
+    service = RecorrentesService(db, org_id)
+    data = await service.criar(body.model_dump(exclude_none=True))
+    if not data:
         raise HTTPException(status_code=500, detail="Erro ao criar recorrente")
-    return success_response(row)
+    return success_response(data)
 
 
 @router.patch("/{recorrente_id}")
@@ -93,22 +87,17 @@ async def atualizar_recorrente(recorrente_id: str, body: RecorrenteUpdate, autho
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
-    result = db.table("recorrentes").update(updates).eq("id", recorrente_id).eq("org_id", org_id).execute()
-    row = first_or_none(result)
-    if not row:
+    service = RecorrentesService(db, org_id)
+    data = await service.atualizar(recorrente_id, updates)
+    if not data:
         raise HTTPException(status_code=404, detail="Recorrente nao encontrado")
-    return success_response(row)
+    return success_response(data)
 
 
 @router.delete("/{recorrente_id}")
 async def excluir_recorrente(recorrente_id: str, authorization: Optional[str] = Header(None)):
     user, token, org_id = await get_current_user_org(authorization)
     db = get_user_client(token)
-    delete_or_404(
-        db,
-        "recorrentes",
-        ("id", recorrente_id),
-        ("org_id", org_id),
-        message="Recorrente nao encontrado",
-    )
+    service = RecorrentesService(db, org_id)
+    await service.excluir(recorrente_id)
     return ok_response("Recorrente excluido com sucesso")
