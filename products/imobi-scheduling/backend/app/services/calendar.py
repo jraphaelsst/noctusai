@@ -69,6 +69,8 @@ from noctusai_lib.integrations.google_calendar import (
     get_calendar_adapter,
 )
 
+from app.services.retry import RETRY_POLICY_CALENDAR, retry_call
+
 logger = logging.getLogger(__name__)
 
 
@@ -412,7 +414,19 @@ def create_calendar_event(
         attendees=attendees,
         request_id=request_id,
     )
-    return module.adapter.create_event(target_calendar, event)
+    # Phase 10 — wrap the adapter call in `retry_call` so transient
+    # Calendar API failures (503 / network blip) are retried with
+    # exponential backoff. Same `request_id` is reused across retries,
+    # so wire-level idempotency (once the seed-side guard lands per the
+    # P0 follow-up) will collapse duplicates server-side. Until then,
+    # consumer-side DB-pre-check is the line of defense — the bot only
+    # calls this BEFORE the appointment-row INSERT, so a retried success
+    # cannot create two DB rows for the same logical confirmation.
+    return retry_call(
+        lambda: module.adapter.create_event(target_calendar, event),
+        policy=RETRY_POLICY_CALENDAR,
+        label="calendar.create_event",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +459,16 @@ def cancel_calendar_event(
     """
     module = get_calendar_module()
     target_calendar = calendar_id or module.default_calendar_id
-    module.adapter.delete_event(target_calendar, event_id)
+    # Phase 10 — retry on transient deletion failures. Deletion is
+    # idempotent at the Google Calendar API (404s on already-deleted
+    # events are NOT raised by the seed adapter — it logs + swallows
+    # per the calendar adapter contract). Retry covers 503 / transient
+    # network errors only.
+    retry_call(
+        lambda: module.adapter.delete_event(target_calendar, event_id),
+        policy=RETRY_POLICY_CALENDAR,
+        label="calendar.delete_event",
+    )
 
 
 def update_calendar_event(
@@ -505,7 +528,16 @@ def update_calendar_event(
         attendees=attendees,
         request_id=request_id,
     )
-    return module.adapter.update_event(target_calendar, event_id, event)
+    # Phase 10 — retry on transient update failures. Same idempotency
+    # semantics as `create_calendar_event`: the deterministic
+    # `request_id` ensures a retried success doesn't desync any
+    # consumer-side state (the seed adapter's `update_event` returns
+    # the post-update body which is the source of truth).
+    return retry_call(
+        lambda: module.adapter.update_event(target_calendar, event_id, event),
+        policy=RETRY_POLICY_CALENDAR,
+        label="calendar.update_event",
+    )
 
 
 __all__ = [
