@@ -142,7 +142,16 @@ async def set_commission_override(
 ) -> Dict:
     """Set a platform-level commission override for a clinic or therapist.
 
-    Stored in the commission_overrides table.
+    Stored in the ``platform_commission_overrides`` table (canonical name —
+    see migration 001 §platform_commission_overrides). The admin-id column
+    is ``set_by_admin_id`` per the migration schema.
+
+    Phase 4 fix (therapy-platform-wiring, 2026-05-10): previously wrote to
+    a non-existent ``commission_overrides`` table with a non-existent
+    ``set_by`` column. Mock-Supabase WARN+skip masked the bug in tests;
+    production calls would 500 (table not found) or silent-no-op depending
+    on the driver. Aligned with the canonical write path in
+    ``app/routers/admin_financials.py::set_commission_override``.
     """
     if target_type not in ("clinic", "therapist"):
         raise HTTPException(status_code=400, detail="Tipo deve ser 'clinic' ou 'therapist'")
@@ -151,10 +160,10 @@ async def set_commission_override(
         "target_type": target_type,
         "target_id": target_id,
         "custom_commission_pct": custom_commission_pct,
-        "set_by": admin_id,
+        "set_by_admin_id": admin_id,
     }
     result = (
-        db.table("commission_overrides")
+        db.table("platform_commission_overrides")
         .upsert(override_data, on_conflict="target_type,target_id")
         .execute()
     )
