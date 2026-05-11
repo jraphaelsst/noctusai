@@ -17,6 +17,7 @@ from noctusai_lib.integrations.supabase_identity import (
     UserIdentity,
     fetch_user_identities,
 )
+from app.services._bulk import bulk_lookup
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/financials", tags=["Admin Financials"])
@@ -267,17 +268,8 @@ async def get_commission_config(
     ]
 
     identities = fetch_user_identities(db, therapist_ids)
-    clinic_name_map: dict = {}
-    if clinic_ids:
-        clinic_rows = (
-            db.table("clinics")
-            .select("id, name")
-            .in_("id", list({c for c in clinic_ids if c}))
-            .execute()
-        )
-        for c in clinic_rows.data or []:
-            if c.get("id"):
-                clinic_name_map[c["id"]] = c.get("name") or ""
+    clinic_name_map = bulk_lookup(db, "clinics", clinic_ids, value_cols="name")
+    clinic_name_map = {k: (v or "") for k, v in clinic_name_map.items()}
 
     overrides: list = []
     for row in raw_overrides:

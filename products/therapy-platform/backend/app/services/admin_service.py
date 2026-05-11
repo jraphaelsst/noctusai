@@ -15,6 +15,7 @@ from noctusai_lib.integrations.supabase_identity import (
     UserIdentity,
     fetch_user_identities,
 )
+from app.services._bulk import bulk_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -335,24 +336,11 @@ async def list_therapists_for_admin(
 def _resolve_clinic_names(db: Any, clinic_ids: List[str]) -> Dict[str, str]:
     """Bulk-resolve clinic names. Returns ``{clinic_id: name}``.
 
-    Empty list returns empty dict. Mirrors
-    :func:`noctusai_lib.integrations.supabase_identity.fetch_user_identities`
-    in shape but reads from the product-owned ``clinics`` table — clinic
-    names live in our schema, not in ``auth.users``.
+    Thin wrapper over :func:`app.services._bulk.bulk_lookup` — kept for
+    call-site readability (3 admin listings consume this by name). Empty
+    input → empty dict. Reads the product-owned ``clinics`` table.
     """
-    if not clinic_ids:
-        return {}
-    unique_ids = list({cid for cid in clinic_ids if cid})
-    if not unique_ids:
-        return {}
-    result = (
-        db.table("clinics")
-        .select("id, name")
-        .in_("id", unique_ids)
-        .execute()
-    )
-    rows = result.data or []
-    return {row["id"]: (row.get("name") or "") for row in rows if row.get("id")}
+    return {k: (v or "") for k, v in bulk_lookup(db, "clinics", clinic_ids, value_cols="name").items()}
 
 
 def _appointment_row_to_dto(
@@ -799,29 +787,22 @@ def _resolve_message_previews(
     Returns ``{message_id: content_preview}`` where preview is the first
     ~120 chars of ``content`` (system/AI messages fall back to a tag).
     Empty input → empty dict.
+
+    Built on :func:`app.services._bulk.bulk_lookup` (dict-mode); the
+    truncation + system-tag fallback is post-processing on the bulk
+    result.
     """
-    if not message_ids:
-        return {}
-    unique_ids = list({mid for mid in message_ids if mid})
-    if not unique_ids:
-        return {}
-    result = (
-        db.table("messages")
-        .select("id, content, message_type")
-        .in_("id", unique_ids)
-        .execute()
+    rows = bulk_lookup(
+        db, "messages", message_ids,
+        value_cols=["content", "message_type"],
     )
-    rows = result.data or []
     previews: Dict[str, str] = {}
-    for r in rows:
-        mid = r.get("id")
-        if not mid:
-            continue
-        content = (r.get("content") or "").strip()
+    for mid, cols in rows.items():
+        content = (cols.get("content") or "").strip()
         if content:
             previews[mid] = content[:120]
         else:
-            previews[mid] = f"[{r.get('message_type') or 'system'}]"
+            previews[mid] = f"[{cols.get('message_type') or 'system'}]"
     return previews
 
 

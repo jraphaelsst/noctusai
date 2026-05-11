@@ -33,11 +33,11 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Core | 28 | 12 | 26 | 0 | 38 | 425 |
 | ERP | 59 | 52 | 67 | 66 | 112 | 1,658 |
 | PF | 15 | 17 | 23 | 16 | 44 | 459 |
-| Therapy | 40 | 44 | 65 | 29 | 76 | 1,047 |
+| Therapy | 40 | 45 | 65 | 29 | 77 | 1,058 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 7 | 7 | 11 | 7 | 15 | 226 |
 | Mailing | 10 | 10 | 21 | 9 | 16 | 184 |
-| **Total** | **161** | **143** | **221** | **128** | **306** | **4,009** |
+| **Total** | **161** | **144** | **221** | **128** | **307** | **4,020** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
