@@ -47,6 +47,7 @@ forever — the user catches them retroactively.
 """
 from __future__ import annotations
 
+import ast
 import logging
 import re
 from collections import defaultdict
@@ -394,6 +395,99 @@ def _is_meaningful_helper(name: str) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# ABC-override filter (2026-05-11 — hound-abc-override-filter)
+# ---------------------------------------------------------------------------
+#
+# Problem: when a seed-side ABC declares N abstract methods and N products
+# subclass it, the detector saw `_render_bodies` / `_aggregate` / etc. in
+# 4-5 products and (correctly under the OLD heuristic, incorrectly under the
+# REAL semantics) flagged them as cross-product duplication. They're not —
+# they're REQUIRED overrides of an already-formalized base class. The seed
+# is doing its job; the names recur because the contract demands it.
+#
+# Fix: track per-product per-name whether each occurrence is a method of a
+# class that inherits from a known ABC base (`BaseDigestService`, …). If
+# EVERY product's occurrence of a given name is such an override (no
+# module-level definitions), drop the finding — it's contract-satisfaction,
+# not absorption-shaped duplication.
+#
+# Mixed case is preserved (some module-level + some ABC-override) so a
+# helper that exists both as a free function AND as a method override still
+# surfaces — that's a real absorption candidate at the seed layer.
+#
+# Extensible via `_KNOWN_ABC_BASES`. Adding a base here says: "methods that
+# override THIS ABC's abstract contract are not absorption candidates."
+
+# Bases whose subclass-method overrides should NOT count toward cross-product
+# helper duplication. Keep this set tight — only add bases that ship as
+# template-method ABCs in `noctusai_lib` (i.e. the seed already owns the
+# absorption; the per-product methods are the contracted override surface).
+_KNOWN_ABC_BASES: set[str] = {
+    "BaseDigestService",  # noctusai_lib.domain.digest.base — 4 narrative services
+}
+
+
+def _extract_abc_override_names(path: Path) -> set[str]:
+    """Return method names that override an ABC base in `_KNOWN_ABC_BASES`.
+
+    Uses stdlib `ast` (no external deps — mirrors `_ast` usage in this
+    module's block-pattern detector). For each `ClassDef` whose base list
+    contains a known ABC base name (resolved via the `Name` or `Attribute`
+    leaf, so both `class Foo(BaseDigestService)` and
+    `class Foo(digest.BaseDigestService)` qualify), collect every
+    direct-child `FunctionDef` / `AsyncFunctionDef` name.
+
+    Returns an empty set for non-Python files or unparseable content (we
+    log + skip, same as `_extract_helper_names`). Only method NAMES are
+    returned — call-site verification is the caller's responsibility (the
+    filter checks name-equality against the recurrence-finding name).
+    """
+    if path.suffix != ".py":
+        return set()
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as exc:
+        logger.warning("recurrence: cannot read %s (%s) for ABC scan, skipping", path, exc)
+        return set()
+    try:
+        tree = ast.parse(content)
+    except SyntaxError as exc:
+        logger.warning("recurrence: cannot parse %s (%s) for ABC scan, skipping", path, exc)
+        return set()
+    override_names: set[str] = set()
+    for class_def in ast.walk(tree):
+        if not isinstance(class_def, ast.ClassDef):
+            continue
+        if not _class_inherits_known_abc(class_def):
+            continue
+        for child in class_def.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                override_names.add(child.name)
+    return override_names
+
+
+def _class_inherits_known_abc(class_def: ast.ClassDef) -> bool:
+    """True if any base in `class_def.bases` resolves (by leaf-name) to `_KNOWN_ABC_BASES`.
+
+    Handles both shapes:
+      - `class Foo(BaseDigestService):` → base is `ast.Name(id='BaseDigestService')`
+      - `class Foo(digest.BaseDigestService):` → base is `ast.Attribute(attr='BaseDigestService')`
+
+    A class that subclasses an intermediate which itself inherits the ABC is
+    not handled here (would need import resolution). Acceptable: the 4
+    digest-service consumers all inherit directly. If an intermediate base
+    pattern emerges (N≥2), add the intermediate name to `_KNOWN_ABC_BASES`
+    or extend this resolver.
+    """
+    for base in class_def.bases:
+        if isinstance(base, ast.Name) and base.id in _KNOWN_ABC_BASES:
+            return True
+        if isinstance(base, ast.Attribute) and base.attr in _KNOWN_ABC_BASES:
+            return True
+    return False
+
+
 @dataclass
 class HelperFinding:
     """One cross-product helper-name recurrence."""
@@ -492,6 +586,11 @@ def scan_cross_product_helpers(
 
     # name → {product → first file path that defined it}
     name_to_products: dict[str, dict[str, str]] = defaultdict(dict)
+    # For each (name, product) record whether the occurrence was an ABC
+    # override. If, for a given name, EVERY occurrence across every product
+    # is an ABC override, we drop the finding (contract-satisfaction, not
+    # absorption). See `_extract_abc_override_names` + `_KNOWN_ABC_BASES`.
+    name_to_product_all_abc: dict[str, dict[str, bool]] = defaultdict(dict)
 
     for glob in _HELPER_SCAN_GLOBS:
         for path in root.glob(glob):
@@ -505,17 +604,34 @@ def scan_cross_product_helpers(
             product = _product_of(rel)
             if product is None:
                 continue
-            for name in _extract_helper_names(path):
+            file_names = _extract_helper_names(path)
+            file_abc_overrides = _extract_abc_override_names(path)
+            for name in file_names:
                 if not _is_meaningful_helper(name):
                     continue
-                # Record only the FIRST occurrence per product so multi-file
-                # uses inside one product don't inflate the count.
+                is_abc_override = name in file_abc_overrides
                 if product not in name_to_products[name]:
+                    # First occurrence of this name in this product — record it.
                     name_to_products[name][product] = str(rel)
+                    name_to_product_all_abc[name][product] = is_abc_override
+                else:
+                    # Already saw this name in this product. Treat the
+                    # product as "non-ABC" if ANY occurrence was non-ABC
+                    # (a module-level free function in one file + a method
+                    # override in another → still an absorption candidate).
+                    if not is_abc_override:
+                        name_to_product_all_abc[name][product] = False
 
     findings: list[HelperFinding] = []
+    abc_filtered_names: list[str] = []
     for name, by_product in name_to_products.items():
         if len(by_product) < min_count:
+            continue
+        # ABC-override filter: skip if EVERY product's occurrence of this
+        # name is a method override of a known ABC base.
+        per_product_abc = name_to_product_all_abc[name]
+        if per_product_abc and all(per_product_abc.values()):
+            abc_filtered_names.append(name)
             continue
         products = sorted(by_product.keys())
         locations = sorted(by_product.values())
@@ -546,6 +662,9 @@ def scan_cross_product_helpers(
             "min_count_threshold": min_count,
             "must_formalize_threshold": must_formalize_threshold,
             "files_scanned_globs": _HELPER_SCAN_GLOBS,
+            "abc_override_filtered": sorted(abc_filtered_names),
+            "abc_override_filter_count": len(abc_filtered_names),
+            "known_abc_bases": sorted(_KNOWN_ABC_BASES),
         },
     }
 

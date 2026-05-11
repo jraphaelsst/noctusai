@@ -222,6 +222,185 @@ class TestScanCrossProductHelpers:
         assert target["severity"] == "warning"
 
 
+class TestScanCrossProductHelpersAbcOverrideFilter:
+    """Regression tests for the ABC-override filter (2026-05-11).
+
+    The detector previously flagged template-method ABC overrides as
+    cross-product duplication. Example: 4 narrative services inherit
+    `BaseDigestService` and override `_render_bodies` / `_aggregate` /
+    `_fetch_window` — those are REQUIRED contract satisfactions, not
+    absorption candidates. The filter recognises them and skips.
+    """
+
+    def _mk_repo(self, products: dict[str, dict[str, str]]) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="abc_override_test_"))
+        for slug, files in products.items():
+            for rel, content in files.items():
+                full = tmp / "products" / slug / rel
+                full.parent.mkdir(parents=True, exist_ok=True)
+                full.write_text(content)
+        return tmp
+
+    def test_abc_subclass_overrides_not_flagged(self):
+        # 4 products each define `class XService(BaseDigestService):` with
+        # `_render_bodies` as a method override. The filter must drop these.
+        body = (
+            "from noctusai_lib.domain.digest import BaseDigestService\n"
+            "\n"
+            "class XService(BaseDigestService):\n"
+            "    def _render_bodies(self, agg, narrative):\n"
+            "        return ('subject', 'body')\n"
+        )
+        repo = self._mk_repo({
+            "p1": {"backend/app/services/svc.py": body},
+            "p2": {"backend/app/services/svc.py": body},
+            "p3": {"backend/app/services/svc.py": body},
+            "p4": {"backend/app/services/svc.py": body},
+        })
+        r = scan_cross_product_helpers(repo)
+        names = [f["helper_name"] for f in r["findings"]]
+        assert "_render_bodies" not in names, (
+            f"Expected `_render_bodies` to be filtered as ABC override; got: {names}"
+        )
+        # Stats expose the filter for observability.
+        assert "_render_bodies" in r["stats"]["abc_override_filtered"]
+        assert r["stats"]["abc_override_filter_count"] >= 1
+        assert "BaseDigestService" in r["stats"]["known_abc_bases"]
+
+    def test_bare_module_level_helpers_still_flagged(self):
+        # Same NAMES, but defined at module scope (no ABC subclass). These
+        # are real absorption candidates — the filter must NOT touch them.
+        body = (
+            "def _render_bodies(agg, narrative):\n"
+            "    return ('subject', 'body')\n"
+        )
+        repo = self._mk_repo({
+            "p1": {"backend/app/services/svc.py": body},
+            "p2": {"backend/app/services/svc.py": body},
+            "p3": {"backend/app/services/svc.py": body},
+            "p4": {"backend/app/services/svc.py": body},
+        })
+        r = scan_cross_product_helpers(repo)
+        target = next((f for f in r["findings"] if f["helper_name"] == "_render_bodies"), None)
+        assert target is not None, (
+            f"Expected bare module-level `_render_bodies` to be flagged. "
+            f"Findings: {[f['helper_name'] for f in r['findings']]}"
+        )
+        assert target["product_count"] == 4
+        assert target["severity"] == "high"
+        assert "_render_bodies" not in r["stats"]["abc_override_filtered"]
+
+    def test_mixed_module_level_and_abc_overrides_still_flagged(self):
+        # 2 products have it as ABC override; 2 have it as module-level free
+        # function. Mixed case → KEEP the finding (the module-level ones
+        # signal a real absorption candidate; the seed already covers the
+        # override path, but the bare ones might need to switch to the seed).
+        abc_body = (
+            "from noctusai_lib.domain.digest import BaseDigestService\n"
+            "\n"
+            "class XService(BaseDigestService):\n"
+            "    def _aggregate(self, raw):\n"
+            "        return raw\n"
+        )
+        bare_body = (
+            "def _aggregate(raw):\n"
+            "    return raw\n"
+        )
+        repo = self._mk_repo({
+            "p_abc1": {"backend/app/services/svc.py": abc_body},
+            "p_abc2": {"backend/app/services/svc.py": abc_body},
+            "p_bare1": {"backend/app/services/svc.py": bare_body},
+            "p_bare2": {"backend/app/services/svc.py": bare_body},
+        })
+        r = scan_cross_product_helpers(repo)
+        target = next((f for f in r["findings"] if f["helper_name"] == "_aggregate"), None)
+        assert target is not None, (
+            f"Mixed bare+ABC `_aggregate` should still be flagged. "
+            f"Findings: {[f['helper_name'] for f in r['findings']]}"
+        )
+        assert target["product_count"] == 4
+        assert "_aggregate" not in r["stats"]["abc_override_filtered"]
+
+    def test_class_not_inheriting_abc_still_flagged(self):
+        # `_render_bodies` is a method but the class doesn't inherit a
+        # known ABC. Treat as an unrelated method whose name happens to
+        # collide — the filter must NOT drop it (no contract behind it).
+        body = (
+            "class SomeOtherClass:\n"
+            "    def _render_bodies(self, x, y):\n"
+            "        return (x, y)\n"
+        )
+        repo = self._mk_repo({
+            "p1": {"backend/app/services/svc.py": body},
+            "p2": {"backend/app/services/svc.py": body},
+            "p3": {"backend/app/services/svc.py": body},
+        })
+        r = scan_cross_product_helpers(repo)
+        names = [f["helper_name"] for f in r["findings"]]
+        assert "_render_bodies" in names, (
+            f"Non-ABC-inheriting class method should still be flagged: {names}"
+        )
+
+    def test_abc_attribute_base_resolved(self):
+        # `class Foo(digest.BaseDigestService):` — base is an `ast.Attribute`,
+        # not a bare Name. Filter must still recognise the leaf name.
+        body = (
+            "from noctusai_lib.domain import digest\n"
+            "\n"
+            "class XService(digest.BaseDigestService):\n"
+            "    def _fetch_window(self, window):\n"
+            "        return None\n"
+        )
+        repo = self._mk_repo({
+            "p1": {"backend/app/services/svc.py": body},
+            "p2": {"backend/app/services/svc.py": body},
+            "p3": {"backend/app/services/svc.py": body},
+        })
+        r = scan_cross_product_helpers(repo)
+        names = [f["helper_name"] for f in r["findings"]]
+        assert "_fetch_window" not in names, (
+            f"Attribute-base ABC override should be filtered; got: {names}"
+        )
+        assert "_fetch_window" in r["stats"]["abc_override_filtered"]
+
+    def test_async_def_override_recognised(self):
+        # `async def _fetch_window(...)` inside an ABC subclass — must
+        # also be recognised as an override (the BaseDigestService
+        # abstract method IS async).
+        body = (
+            "from noctusai_lib.domain.digest import BaseDigestService\n"
+            "\n"
+            "class XService(BaseDigestService):\n"
+            "    async def _fetch_window(self, window):\n"
+            "        return None\n"
+        )
+        repo = self._mk_repo({
+            "p1": {"backend/app/services/svc.py": body},
+            "p2": {"backend/app/services/svc.py": body},
+            "p3": {"backend/app/services/svc.py": body},
+            "p4": {"backend/app/services/svc.py": body},
+        })
+        r = scan_cross_product_helpers(repo)
+        names = [f["helper_name"] for f in r["findings"]]
+        assert "_fetch_window" not in names
+        assert "_fetch_window" in r["stats"]["abc_override_filtered"]
+
+    def test_unparseable_file_does_not_crash_filter(self):
+        # SyntaxError in a product file must not crash the scan; the file
+        # is skipped for ABC analysis (same shape as `_extract_helper_names`
+        # skip-on-read-error).
+        repo = self._mk_repo({
+            "p1": {"backend/app/services/svc.py": "def _safe_float(x):\n    return float(x)\n"},
+            "p2": {"backend/app/services/svc.py": "def _safe_float(x:\n    pass  # SYNTAX ERROR\n"},
+        })
+        # Should not raise; should still detect the valid p1 occurrence
+        # (p2 contributes nothing — file unparseable). Result: only 1
+        # product → below min_count, no finding. Important assertion is
+        # "does not raise".
+        r = scan_cross_product_helpers(repo, min_count=2)
+        assert isinstance(r["findings"], list)
+
+
 class TestScanServiceLineRecurrence:
     def _mk_repo(self, products: dict[str, dict[str, str]]) -> Path:
         tmp = Path(tempfile.mkdtemp(prefix="service_line_test_"))
