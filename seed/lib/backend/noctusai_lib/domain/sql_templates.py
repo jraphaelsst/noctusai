@@ -95,6 +95,52 @@ def updated_at_trigger(
     )
 
 
+def service_role_bypass(table: str, schema: str = "public") -> str:
+    """Emit the canonical ``service_role_bypass`` policy for one table.
+
+    Keeper-detector coupling: the platform's
+    ``check_admin_endpoint_service_role_bypass`` detector (CLI ``--review``)
+    searches each migration for a policy whose *literal name* is
+    ``service_role_bypass``. Equivalent policies under different names
+    are flagged as defense-in-depth gaps even when they work at runtime —
+    so the literal name MUST be preserved by every caller. Renaming the
+    policy re-opens every keeper finding for that table.
+
+    Output shape mirrors ``products/therapy-platform/backend/migrations/
+    001_therapy_platform.sql:846+`` — the canonical reference adopter.
+    Byte-equal output is verified in the test suite.
+
+    Args:
+        table: Table name within ``schema`` (e.g. ``"clinics"``).
+        schema: Schema-qualifying the table. Defaults to ``"public"``
+            (matches the few core tables that don't use a product-private
+            schema). Pass the product schema for every real adopter
+            (``"therapy"``, ``"erp"``, ``"mailing"``, ...). Dashed schema
+            names (``"personal-finance"``) pass through unchanged —
+            Postgres-quoting is the caller's responsibility upstream.
+
+    Returns:
+        A single-line ``CREATE POLICY`` string terminated with ``;``. No
+        trailing newline — callers compose with ``"\n"``-joined sections.
+
+    Example::
+
+        >>> service_role_bypass("clinics", schema="therapy")
+        'CREATE POLICY "service_role_bypass" ON therapy.clinics FOR ALL TO service_role USING (true) WITH CHECK (true);'
+
+    Raises:
+        ValueError: If ``table`` or ``schema`` is empty / all-whitespace.
+    """
+    if not table or not table.strip():
+        raise ValueError("service_role_bypass requires a non-empty table")
+    if not schema or not schema.strip():
+        raise ValueError("service_role_bypass requires a non-empty schema")
+    return (
+        f'CREATE POLICY "service_role_bypass" ON {schema}.{table} '
+        f"FOR ALL TO service_role USING (true) WITH CHECK (true);"
+    )
+
+
 def rls_subquery_policy(
     schema: str,
     table: str,
@@ -112,7 +158,7 @@ def rls_subquery_policy(
     standard documented in ``KB § PATTERNS/database-rls.md``.
 
     Args:
-        schema: Schema-qualifying the table (``erp``, ``therapy``, …).
+        schema: Schema-qualifying the table (``erp``, ``therapy``, ...).
         table: Table name within the schema.
         policy_name: Name of the policy. Quoted in output.
         command: One of ``SELECT``, ``INSERT``, ``UPDATE``, ``DELETE``,
