@@ -35,7 +35,7 @@ SAMPLE_COMMISSION_OVERRIDE = {
     "target_type": "clinic",
     "target_id": "clinic-001",
     "custom_commission_pct": 25.0,
-    "set_by": "test-user-123",
+    "set_by_admin_id": "test-user-123",
 }
 
 SAMPLE_PATIENT = {
@@ -190,7 +190,10 @@ class TestRejectEntity:
 
 class TestSetCommission:
     def test_set_commission_success(self, admin_client):
-        admin_client._mock_supabase.set_table_data("commission_overrides", [
+        # Phase 4 fix: canonical table is platform_commission_overrides
+        # (see migration 001 §platform_commission_overrides). admin_service
+        # previously wrote to a non-existent commission_overrides table.
+        admin_client._mock_supabase.set_table_data("platform_commission_overrides", [
             SAMPLE_COMMISSION_OVERRIDE,
         ])
         resp = admin_client.post("/api/admin/commissions", json={
@@ -201,9 +204,12 @@ class TestSetCommission:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["custom_commission_pct"] == 25.0
+        # Status-code-assertion-rule + payload contract:
+        # set_by_admin_id is the canonical column name (NOT set_by).
+        assert data.get("set_by_admin_id") == "test-user-123"
 
     def test_set_commission_for_therapist(self, admin_client):
-        admin_client._mock_supabase.set_table_data("commission_overrides", [
+        admin_client._mock_supabase.set_table_data("platform_commission_overrides", [
             {**SAMPLE_COMMISSION_OVERRIDE, "target_type": "therapist", "target_id": "t-001"},
         ])
         resp = admin_client.post("/api/admin/commissions", json={
