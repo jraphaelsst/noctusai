@@ -497,6 +497,28 @@ state change, not a removal.
 
 ---
 
+## Entries from `trivy-prescan-2026-05-11` (filed 2026-05-11)
+
+### `wheel` CVE-2026-24049 carried in runtime venv (multi-stage Docker leak; attack surface not exercised)
+
+- **Subject:** `wheel==0.45.1` ships in `/opt/venv` in every slim image (`noctus-seed-backend:slim`, `noctus-youtube-crawler-backend:smoke`, and by extension every product whose Dockerfile is the canonical seed copy at `products/seed/backend/Dockerfile`). Trivy reports it as HIGH (CVE-2026-24049, CVSS 7.1, GHSA `wheel: Privilege Escalation or Arbitrary Code Execution via malicious wheel file unpacking`). Fix is `wheel>=0.46.2`.
+- **Decision:** keep `wheel==0.45.1` in the runtime venv; do **not** force-bump or scrub it from the runtime image at this time. Suppress the finding via Trivy's `.trivyignore` (T9 owns ignore-file wiring) referencing this entry's short title.
+- **Reason:** the exploit requires invoking `wheel unpack <attacker-controlled.whl>` against attacker-controlled input. Our runtime never invokes wheel — confirmed via `grep -rn "import wheel\|from wheel" --include="*.py" ./products ./seed` returning zero hits. `wheel` is a build-time package that rides along into the runtime venv because the canonical multi-stage Dockerfile copies `/opt/venv` verbatim from builder → runtime stage (lines 110-111 of `products/seed/backend/Dockerfile`). The attack surface is not exercised; patching the `wheel` version would require running `pip install -U wheel` in the builder, which is harmless but adds CI work for zero runtime gain. Force-scrubbing `wheel` via `pip uninstall -y wheel` in the builder stage right before the runtime copy is the right structural fix but lands at N=2 (when a second non-exercised build-time package surfaces the same shape; currently only `wheel` + `jaraco.context` qualify, and they share the same fix).
+- **Scope:** all slim images built from `products/seed/backend/Dockerfile` or its slug+port copies — at time of filing: `seed`, `youtube-crawler`, and every other product since they share the canonical pattern. Trivy's `.trivyignore` should target `CVE-2026-24049` package-narrowed to `wheel`.
+- **Revisit trigger:** **a second non-exercised build-time CVE surfaces** (third-party builder-stage package, not invoked at runtime) — at N=2 the structural fix is "scrub non-runtime packages from the builder→runtime copy" in the seed Dockerfile, with both entries flipping to FORMALIZED. OR **`wheel` becomes a runtime dep** (a future feature invokes `wheel unpack` for installer flows) — at that point the accept flips to refactor (force-bump and remove the catalog entry).
+- **Recorded by:** `projects/trivy-prescan-2026-05-11/PROJECT.md` (2026-05-11) — Trivy pre-scan against the two currently-built slim images using `aquasec/trivy:0.49.1` + `--severity HIGH,CRITICAL` + `--ignore-unfixed` (T9 CI gate config bit-for-bit). 4 unique CVEs surfaced; 2 patched (`PyJWT 2.9.0 → 2.12.0`, `fastapi 0.115.0 → 0.115.5+` brings starlette ≥0.40.0), 2 accepted (this entry + `jaraco.context` sibling).
+
+### `jaraco.context` CVE-2026-23949 carried in runtime venv (setuptools transitive; attack surface not exercised)
+
+- **Subject:** `jaraco.context==5.3.0` ships in `/opt/venv` in every slim image (transitive of `setuptools`, which pip's bootstrap installs into the venv). Trivy reports it as HIGH (CVE-2026-23949, CVSS 8.6, GHSA "jaraco.context: Path traversal via malicious tar archives"). Fix is `jaraco.context>=6.1.0`.
+- **Decision:** keep `jaraco.context==5.3.0` in the runtime venv; do **not** force-bump or scrub it. Suppress via Trivy's `.trivyignore` referencing this entry's short title.
+- **Reason:** the exploit requires invoking `jaraco.context.tarball()` against attacker-controlled tar archives (the `tarball()` function is a context manager for extracting tarballs with `tarfile.extractall()`). Our runtime never invokes `jaraco.context` — confirmed via `grep -rn "import jaraco\|from jaraco" --include="*.py" ./products ./seed` returning zero hits. `jaraco.context` is pulled in transitively by `setuptools`, which we don't directly depend on at runtime either but which lives in the venv as part of pip's bootstrap. Same shape as the `wheel` entry above. Force-bumping `jaraco.context` requires either pinning it directly (adding a runtime requirement we don't actually use) or upgrading `setuptools` (which may break wheel-build compatibility for products with native deps like cryptography/psycopg2). The structural fix (scrub non-runtime packages from the builder→runtime copy) lands at N=2 alongside `wheel`.
+- **Scope:** all slim images built from `products/seed/backend/Dockerfile` or its slug+port copies. Trivy's `.trivyignore` should target `CVE-2026-23949` package-narrowed to `jaraco.context`.
+- **Revisit trigger:** **shared with `wheel` entry above** — at N=2 (which is now, with `wheel` + `jaraco.context`), the recurrence rule says formalize. But the formalization here is a Dockerfile change (add `pip uninstall -y wheel setuptools` or equivalent scrub step in the builder stage right before the venv copy), which is best landed as a single follow-up project, not inline. Both entries flip to FORMALIZED at that project's close. OR **`jaraco.context` becomes a runtime dep** (a future feature invokes `tarball()` for archive extraction flows) — at that point the accept flips to refactor.
+- **Recorded by:** `projects/trivy-prescan-2026-05-11/PROJECT.md` (2026-05-11) — same scan that surfaced the `wheel` entry above.
+
+---
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.
