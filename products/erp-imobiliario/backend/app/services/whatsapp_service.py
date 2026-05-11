@@ -317,7 +317,20 @@ def get_message_history(
 
 
 async def send_via_waha(db, phone: str, message: str) -> dict:
-    """Send a message through the WAHA API."""
+    """Send a message through the WAHA API.
+
+    Thin product wrapper around `noctusai_lib.integrations.whatsapp.WahaClient.send_text`
+    (consumed via `get_whatsapp_client(...)` factory). Owns ERP-specific concerns:
+
+    1. WAHA config lookup from the `whatsapp_config` table.
+    2. Brazilian phone normalization (strip non-digits, prepend "55" country code
+       when missing) — ERP keeps phone numbers in mixed formats from CRM imports.
+    3. The legacy `{message_id, status, phone, [error|dry_run]}` envelope expected
+       by the `/whatsapp/send` router.
+
+    Transport (HTTP POST to `/api/sendText`, headers, response parsing) lives in
+    the seed `WahaClient`; this function never touches `httpx` directly.
+    """
     config_result = db.table("whatsapp_config").select("*").eq("provider", "waha").eq("is_active", True).execute()
     if not config_result.data:
         return {"message_id": None, "status": "failed", "phone": phone, "error": "WAHA not configured"}
@@ -330,51 +343,28 @@ async def send_via_waha(db, phone: str, message: str) -> dict:
     if not waha_url:
         return {"message_id": f"dry_run_{phone}", "status": "sent", "phone": phone, "dry_run": True}
 
+    # Normalize phone for WAHA format (ERP-specific: CRM imports may omit country code).
+    digits = "".join(c for c in phone if c.isdigit())
+    if len(digits) <= 11:
+        digits = "55" + digits
+    chat_id = f"{digits}@c.us"
+
+    from noctusai_lib.integrations.whatsapp import get_whatsapp_client
+
+    client = get_whatsapp_client(base_url=waha_url, api_key=waha_key, session=session)
     try:
-        import httpx
-
-        headers = {"Content-Type": "application/json"}
-        if waha_key:
-            headers["Authorization"] = f"Bearer {waha_key}"
-
-        # Normalize phone for WAHA format
-        digits = "".join(c for c in phone if c.isdigit())
-        if len(digits) <= 11:
-            digits = "55" + digits
-        chat_id = f"{digits}@c.us"
-
-        payload = {"chatId": chat_id, "text": message, "session": session}
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{waha_url.rstrip('/')}/api/sendText",
-                headers=headers,
-                json=payload,
-                timeout=30.0,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    "message_id": data.get("id", ""),
-                    "status": "sent",
-                    "phone": digits,
-                }
-            else:
-                return {
-                    "message_id": None,
-                    "status": "failed",
-                    "phone": digits,
-                    "error": response.text,
-                }
-    except ImportError as exc:
-        # Don't log the phone number — LGPD personal data, and the failure
-        # mode (httpx not installed) has nothing to do with which phone was
-        # being sent to. Caller still gets `phone` in the return dict.
-        logger.warning("whatsapp_service: httpx unavailable (%s); returning dry_run", exc)
-        return {"message_id": f"no_httpx_{phone}", "status": "sent", "phone": phone, "dry_run": True}
+        data = await client.send_text(chat_id, message)
     except Exception as e:
-        logger.error(f"WAHA send error: {e}")
-        return {"message_id": None, "status": "failed", "phone": phone, "error": str(e)}
+        # WahaClient raises httpx.HTTPStatusError on non-2xx (raise_for_status).
+        # Surface the legacy error envelope so router-side dry-run + history-write
+        # paths keep working.
+        logger.error("WAHA send error: %s", e)
+        return {"message_id": None, "status": "failed", "phone": digits, "error": str(e)}
+    return {
+        "message_id": data.get("id", ""),
+        "status": "sent",
+        "phone": digits,
+    }
 
 
 def get_whatsapp_config_from_env() -> WhatsAppConfig:

@@ -9,8 +9,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-import httpx
-
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -49,35 +47,35 @@ async def send_via_waha(
 ) -> Dict:
     """Send a WhatsApp message via WAHA HTTP API.
 
-    Args:
-        waha_url: Base URL of the WAHA instance (e.g., http://localhost:3000).
-        session_name: WAHA session name.
-        phone: Recipient phone number (with country code, e.g., '5511999998888').
-        message: Message text.
+    Thin product wrapper around `noctusai_lib.integrations.whatsapp.WahaClient.send_text`
+    (consumed via `get_whatsapp_client(...)` factory). Therapy assumes `phone`
+    arrives already in international format (`5511999998888`), as enforced
+    upstream by `patient_profiles.phone` collection. The return shape is the
+    raw WAHA response (`{id, ...}`) for backward compatibility with
+    `send_reminder`'s `waha_response` field.
 
-    Returns:
-        WAHA API response dict.
+    Raises:
+        ValueError: when the WAHA HTTP call returns a non-2xx status. The
+        seed `WahaClient.send_text` raises `httpx.HTTPStatusError`; we wrap
+        it as `ValueError` to preserve the therapy-product contract that
+        `send_reminder` catches.
     """
-    endpoint = f"{waha_url}/api/sendText"
-    payload = {
-        "session": session_name,
-        "chatId": f"{phone}@c.us",
-        "text": message,
-    }
+    from noctusai_lib.integrations.whatsapp import get_whatsapp_client
 
-    async with httpx.AsyncClient(timeout=WAHA_TIMEOUT) as client:
-        response = await client.post(endpoint, json=payload)
+    client = get_whatsapp_client(
+        base_url=waha_url,
+        api_key=None,
+        session=session_name,
+    )
+    chat_id = f"{phone}@c.us"
+    try:
+        result = await client.send_text(chat_id, message)
+    except Exception as exc:
+        logger.error("WAHA send failed for phone=%s: %s", phone, exc)
+        raise ValueError(f"Erro ao enviar mensagem via WAHA: {exc}") from exc
 
-        if response.status_code != 200:
-            logger.error(
-                "WAHA send failed: %d — %s",
-                response.status_code,
-                response.text,
-            )
-            raise ValueError(f"Erro ao enviar mensagem via WAHA: {response.status_code}")
-
-        logger.info("WhatsApp message sent to %s via WAHA", phone)
-        return response.json()
+    logger.info("WhatsApp message sent to %s via WAHA", phone)
+    return result
 
 
 # ---------------------------------------------------------------------------
