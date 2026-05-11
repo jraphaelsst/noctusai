@@ -1405,3 +1405,69 @@ When an engineer hits BuildKit instability mid-build:
 6. Resume dispatched engineers (or dispatch follow-up rebuild engineer).
 
 **Three-way-synced 2026-05-10**: this subsection (§18.4) + memory `feedback_wave_dispatch_and_pause_on_dependency.md` (extend "pause-on-environment" sub-rule) + CLAUDE.md branching-first bullet (no new pointer — §18 covers it).
+
+### 18.5 — Parallel-agent shared-tree merge hygiene (NEW 2026-05-10)
+
+The existing collision protocol (`feedback_parallel_agent_collision_protocol.md` + KB § PATTERNS/project-execution.md § 2.9) covers the **explicit revert** shape: parallel agent re-edits the same lines you edited; STOP at the second revert; wait. This subsection covers the **silent regression** shape that surfaced multiple times during `containerization-backlog-closure` Wave 1+2 merging.
+
+**The pattern.** Parallel agent commits unrelated work to a shared branch state (typically `main` or the orchestrator's project branch via auto-merge). When the orchestrator's next merge runs, git's 3-way merge picks a **merge-base older than the orchestrator's most recent intermediate state**. The 3-way auto-resolution interprets "HEAD added X, incoming didn't add X, base also didn't have X" as ambiguous, and on some hunk shapes it drops HEAD's addition rather than keeping it. The work isn't visibly reverted — it just silently doesn't appear in the merge result.
+
+**Worked example (T2 merge regression, 2026-05-10).**
+
+```
+0f6f694 (Phase 0)
+  ├─ d1a7f01 (T3 merge — added VITE_* ARG block to product Dockerfiles)
+  │    └─ ... eventually 9d1b708 (T6-A merge)
+  │             └─ c6bff31 (T6-A's commit, intermediate parent)
+  │                  └─ orchestrator HEAD pre-T2-merge
+  └─ 858fda5 (T2 branch — T6-A merge onto Phase 0)
+       └─ 3cff1ab (T2's commit — added OCI labels, NOT T3's ARG block)
+```
+
+When the orchestrator merged `3cff1ab` (T2) into HEAD:
+- **Merge-base picked by git:** `c6bff31` (T6-A's commit — the most recent common ancestor reachable from BOTH sides).
+- At `c6bff31`: file had **no ARG VITE block**, **no OCI labels**.
+- At HEAD (`9d1b708`): file had **ARG VITE block** (T3's contribution).
+- At T2 (`3cff1ab`): file had **OCI labels** (T2's contribution), **no ARG VITE block** (T2's branch never saw T3).
+- 3-way auto-merge result: file had **OCI labels** (incoming addition) **but lost the ARG VITE block** (HEAD's addition silently dropped because the auto-merge interpreted "incoming-side has no such addition" as "incoming wants to remove this region").
+
+The regression is not a bug in git's 3-way merger — it's the predictable outcome when the merge-base is chosen by ancestry rather than by content-similarity. **It's a methodology gap, not a tool bug.**
+
+**Detection.** Silent regressions hide unless the architect post-merge-verifies. The cheap detection:
+
+1. **Spot-check the merged file** for the prior wave's key markers. E.g., after merging T2: `grep -c 'ARG VITE' products/adconnect/frontend/Dockerfile` should return 1 (T3's contribution preserved). If it returns 0, regression detected.
+2. **Read the merge commit's diff** against the orchestrator's pre-merge HEAD. If the diff DELETES lines the merging branch never touched, that's a silent regression.
+3. **`git log <merge-commit> -p -- <suspected-file>`** to see exactly what the merge resolved.
+
+**Recovery.** Cherry-pick the regressed commit back on top of the merge commit:
+
+```bash
+git cherry-pick --no-commit <regressed-commit-sha>      # re-apply the dropped changes
+# resolve any conflicts (usually clean since the merge already integrated the new file)
+git commit -m "fix(merge): restore <X> lost in <Y> merge auto-resolution"
+```
+
+This was the recipe applied during Wave 1+2 to restore T3's ARG VITE blocks after the T2 merge regression. Worked cleanly each time.
+
+**Prevention (architect-side).**
+
+1. **Verify-after-merge is non-negotiable** when the orchestrator branch has accumulated parallel-agent commits between dispatches. The architect's between-wave protocol (KB §18.3) already says "Architect runs verification on merged state" — this sub-rule sharpens it: include a content-specific spot-check for the most recent wave's key markers, not just compose-config / pytest validity.
+2. **Per-wave marker set.** When dispatching a wave, the orchestrator notes 2-3 file:line markers that each engineer's work will introduce. The post-merge verification greps for those markers; if any missing, regression detected.
+3. **Cherry-pick recovery as a documented step**, not improvisation. Architect catalogs in findings.md: "T2 merge regressed T3's ARG VITE block at lines 9-18; recovered via cherry-pick of `6484414` on top of `7d9d6f6`."
+
+**Engineer-side: nothing.** Engineers can't predict or prevent this — it happens at architect-merge time, after their work is committed + pushed. This is purely an architect responsibility.
+
+**Anti-patterns.**
+
+- **Architect skips post-merge content verification because compose-config / pytest passed.** Those are NECESSARY but not SUFFICIENT. They catch syntactic regressions, not content regressions. The marker grep is the content gate.
+- **Architect re-merges from a fresh branch as the "fix" without understanding the regression.** A re-merge from the same branches with the same merge-base will produce the same regression. The fix is cherry-pick of the dropped content, not re-merge.
+- **Architect treats silent regression as "the parallel agent's fault" and waits for them to fix it.** The parallel agent doesn't know about your dropped changes — they're operating on entirely unrelated work. The collision is architectural (shared tree + merge mechanics), not adversarial.
+- **Architect doesn't catalog the regression.** Each silent regression caught + recovered teaches the methodology a real failure mode. Findings.md entry under "Mistakes / slips" is mandatory.
+
+**Sibling rules (compose with this one).**
+- §16.7 — Worktree-base verification preamble (catches the analog of this problem at engineer dispatch time).
+- §17.4 — Architect's append cadence (silent regressions become findings.md entries the moment they're caught).
+- §18.3 — Wave-based execution (between-wave verification gate — this rule extends what "verification" means).
+- `feedback_parallel_agent_collision_protocol.md` — the **explicit-revert** companion; both shapes can co-occur in the same session.
+
+**Three-way-synced 2026-05-10**: this subsection (§18.5) + memory `feedback_parallel_agent_collision_protocol.md` (extend with "silent regression via auto-merge" sub-rule) + CLAUDE.md branching-first bullet (no new pointer — §18 covers it).
