@@ -6,6 +6,7 @@ All operations require platform_admin role, enforced at the router level.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
 from fastapi import HTTPException
@@ -28,7 +29,12 @@ async def approve_entity(
 ) -> Dict:
     """Approve a therapist or clinic.
 
-    Sets is_approved=True on the corresponding table.
+    Sets ``is_approved=True`` on the corresponding table. Re-approval after
+    a prior rejection also re-activates the row (``is_active=True``) and
+    clears the three reject-audit columns
+    (``rejection_reason`` / ``rejected_at`` / ``rejected_by``) so the live
+    row reflects current state only — the audit trail lives in application
+    logs per the Phase 5 §3 design decision (Q1, 2026-05-03).
     """
     if entity_type == "therapist":
         table = "therapist_profiles"
@@ -46,7 +52,13 @@ async def approve_entity(
 
     result = (
         db.table(table)
-        .update({"is_approved": True})
+        .update({
+            "is_approved": True,
+            "is_active": True,
+            "rejection_reason": None,
+            "rejected_at": None,
+            "rejected_by": None,
+        })
         .eq(id_col, entity_id)
         .execute()
     )
@@ -70,7 +82,11 @@ async def reject_entity(
 ) -> Dict:
     """Reject a therapist or clinic with a reason.
 
-    Sets is_approved=False and stores the rejection reason.
+    Sets ``is_approved=False`` and writes the three reject-audit columns
+    (``rejection_reason`` / ``rejected_at`` / ``rejected_by``) added by
+    migration 013. Idempotent re-reject overwrites the reason and updates
+    the timestamp + actor — latest reject wins on the live row; the
+    historical chain lives in application logs.
     """
     if entity_type == "therapist":
         table = "therapist_profiles"
@@ -91,6 +107,8 @@ async def reject_entity(
         .update({
             "is_approved": False,
             "rejection_reason": reason,
+            "rejected_at": datetime.now(timezone.utc).isoformat(),
+            "rejected_by": admin_id,
         })
         .eq(id_col, entity_id)
         .execute()
@@ -263,13 +281,24 @@ def _derive_therapist_status(row: Dict[str, Any]) -> str:
     return "pendente"
 
 
-def _therapist_row_to_dto(row: Dict[str, Any], identity: UserIdentity) -> Dict[str, Any]:
+def _therapist_row_to_dto(
+    row: Dict[str, Any],
+    identity: UserIdentity,
+    rejected_by_identity: UserIdentity | None = None,
+) -> Dict[str, Any]:
     """Map a `therapist_profiles` row + resolved auth identity → admin DTO.
 
     The frontend `Terapeuta` type (in `frontend/src/types/`) expects
     Portuguese-named fields. Avatar `foto_url` falls back to the
     profile's `photo_url` column when the auth-side `user_metadata.foto_url`
     is missing — keeps existing avatars rendering.
+
+    Phase 5 adds the reject-audit triplet
+    (``rejection_reason`` / ``rejected_at`` / ``rejected_by``) plus a
+    resolved ``rejected_by_name`` so the admin detail page can render
+    *"Rejected by Maria Silva on 2026-05-11"* without an extra round-trip.
+    Fields are always present (``None`` when not rejected) so the
+    frontend can rely on key existence.
     """
     return {
         "id": row.get("user_id"),
@@ -286,6 +315,12 @@ def _therapist_row_to_dto(row: Dict[str, Any], identity: UserIdentity) -> Dict[s
         "status": _derive_therapist_status(row),
         "nota_media": row.get("avg_rating"),
         "total_avaliacoes": row.get("review_count"),
+        "rejection_reason": row.get("rejection_reason"),
+        "rejected_at": row.get("rejected_at"),
+        "rejected_by": row.get("rejected_by"),
+        "rejected_by_name": (
+            rejected_by_identity.display_name if rejected_by_identity else None
+        ),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -312,14 +347,18 @@ async def list_therapists_for_admin(
         if status == "aprovado":
             query = query.eq("is_approved", True).eq("is_active", True)
         elif status == "pendente":
-            query = query.eq("is_approved", False).eq("is_active", True)
+            query = (
+                query.eq("is_approved", False)
+                .eq("is_active", True)
+                .is_("rejection_reason", "null")
+            )
         elif status == "suspenso":
             query = query.eq("is_active", False)
         elif status == "rejeitado":
-            # Rejected state is captured in ``rejection_reason``, but that column is
-            # not yet migrated into ``therapist_profiles``. Return nothing until the
-            # reject flow is wired up end-to-end.
-            return [], 0
+            # Migration 013 (Phase 5) added the reject-audit columns. The
+            # rejeitado bucket is now ``is_approved=False`` AND
+            # ``rejection_reason IS NOT NULL``.
+            query = query.eq("is_approved", False).not_.is_("rejection_reason", "null")
 
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
@@ -327,14 +366,57 @@ async def list_therapists_for_admin(
     total = result.count or 0
 
     user_ids = [row.get("user_id") for row in rows if row.get("user_id")]
-    identities = fetch_user_identities(db, user_ids)
+    rejected_by_ids = [
+        row.get("rejected_by") for row in rows if row.get("rejected_by")
+    ]
+    # Single auth.users lookup batch — owners + admins-who-rejected.
+    identities = fetch_user_identities(db, list({*user_ids, *rejected_by_ids}))
 
     dtos: List[Dict[str, Any]] = []
     for row in rows:
         uid = row.get("user_id") or ""
         identity = identities.get(uid, UserIdentity(user_id=uid))
-        dtos.append(_therapist_row_to_dto(row, identity))
+        rejected_by_id = row.get("rejected_by") or ""
+        rejected_by_identity = (
+            identities.get(rejected_by_id) if rejected_by_id else None
+        )
+        dtos.append(_therapist_row_to_dto(row, identity, rejected_by_identity))
     return dtos, total
+
+
+async def get_therapist_for_admin(
+    db: Any, therapist_id: str,
+) -> Dict[str, Any]:
+    """Fetch a single therapist as the admin DTO.
+
+    Phase 5 delivery — backs the admin detail page (``/admin/terapeutas/:id``).
+    Resolves the responsible identity AND, when present, the
+    ``rejected_by`` admin's display name in one bulk lookup.
+    Raises 404 when the therapist is not found.
+    """
+    result = (
+        db.table("therapist_profiles")
+        .select("*")
+        .eq("user_id", therapist_id)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        raise HTTPException(
+            status_code=404, detail="Terapeuta não encontrado(a)"
+        )
+    row = rows[0]
+    user_ids = [row.get("user_id") or ""]
+    if row.get("rejected_by"):
+        user_ids.append(row["rejected_by"])
+    identities = fetch_user_identities(db, [u for u in user_ids if u])
+    uid = row.get("user_id") or ""
+    identity = identities.get(uid, UserIdentity(user_id=uid))
+    rejected_by_id = row.get("rejected_by") or ""
+    rejected_by_identity = (
+        identities.get(rejected_by_id) if rejected_by_id else None
+    )
+    return _therapist_row_to_dto(row, identity, rejected_by_identity)
 
 
 # ---------------------------------------------------------------------------
@@ -568,7 +650,11 @@ def _derive_clinic_status(row: Dict[str, Any]) -> str:
     return "pendente"
 
 
-def _clinic_row_to_dto(row: Dict[str, Any], identity: UserIdentity) -> Dict[str, Any]:
+def _clinic_row_to_dto(
+    row: Dict[str, Any],
+    identity: UserIdentity,
+    rejected_by_identity: UserIdentity | None = None,
+) -> Dict[str, Any]:
     """Map a ``clinics`` row + responsible-person identity → admin DTO.
 
     Mirrors the ``Clinica`` shape declared in
@@ -578,6 +664,12 @@ def _clinic_row_to_dto(row: Dict[str, Any], identity: UserIdentity) -> Dict[str,
     same identity lookup when present, else falls back to
     ``contact_email`` on the row. ``cidade`` / ``estado`` are not yet
     persisted; the page treats them as optional.
+
+    Phase 5 adds the reject-audit triplet
+    (``rejection_reason`` / ``rejected_at`` / ``rejected_by``) plus the
+    resolved ``rejected_by_name`` so the admin detail page can render
+    *"Rejeitada por Maria Silva em 11/05/2026"* without an extra
+    round-trip. Fields are always present (``None`` when not rejected).
     """
     return {
         "id": row.get("id"),
@@ -594,6 +686,12 @@ def _clinic_row_to_dto(row: Dict[str, Any], identity: UserIdentity) -> Dict[str,
         "status": _derive_clinic_status(row),
         "nota_media": row.get("avg_rating"),
         "total_avaliacoes": row.get("review_count"),
+        "rejection_reason": row.get("rejection_reason"),
+        "rejected_at": row.get("rejected_at"),
+        "rejected_by": row.get("rejected_by"),
+        "rejected_by_name": (
+            rejected_by_identity.display_name if rejected_by_identity else None
+        ),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -624,13 +722,18 @@ async def list_clinics_for_admin(
         if status == "aprovada":
             query = query.eq("is_approved", True).eq("is_active", True)
         elif status == "pendente":
-            query = query.eq("is_approved", False).eq("is_active", True)
+            query = (
+                query.eq("is_approved", False)
+                .eq("is_active", True)
+                .is_("rejection_reason", "null")
+            )
         elif status == "suspensa":
             query = query.eq("is_active", False)
         elif status == "rejeitada":
-            # Reject-audit columns land in Phase 5; until then, the
-            # rejeitada bucket is empty.
-            return [], 0
+            # Migration 013 (Phase 5) added the reject-audit columns. The
+            # rejeitada bucket is now ``is_approved=False`` AND
+            # ``rejection_reason IS NOT NULL``.
+            query = query.eq("is_approved", False).not_.is_("rejection_reason", "null")
 
     if busca:
         # PostgREST ``or`` with ``ilike`` — matches name or cnpj.
@@ -645,14 +748,58 @@ async def list_clinics_for_admin(
         row.get("approved_by") for row in rows
         if row.get("approved_by")
     ]
-    identities = fetch_user_identities(db, user_ids)
+    rejected_by_ids = [
+        row.get("rejected_by") for row in rows if row.get("rejected_by")
+    ]
+    identities = fetch_user_identities(db, list({*user_ids, *rejected_by_ids}))
 
     dtos: List[Dict[str, Any]] = []
     for row in rows:
         uid = row.get("approved_by") or ""
         identity = identities.get(uid, UserIdentity(user_id=uid))
-        dtos.append(_clinic_row_to_dto(row, identity))
+        rejected_by_id = row.get("rejected_by") or ""
+        rejected_by_identity = (
+            identities.get(rejected_by_id) if rejected_by_id else None
+        )
+        dtos.append(_clinic_row_to_dto(row, identity, rejected_by_identity))
     return dtos, total
+
+
+async def get_clinic_for_admin(db: Any, clinic_id: str) -> Dict[str, Any]:
+    """Fetch a single clinic as the admin DTO.
+
+    Phase 5 delivery — backs the admin detail page (``/admin/clinicas/:id``).
+    Resolves the responsible-person identity (via ``approved_by``) AND,
+    when present, the ``rejected_by`` admin's display name in one bulk
+    lookup. Raises 404 when the clinic is not found.
+    """
+    result = (
+        db.table("clinics")
+        .select("*")
+        .eq("id", clinic_id)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        raise HTTPException(
+            status_code=404, detail="Clínica não encontrada"
+        )
+    row = rows[0]
+    candidate_ids = []
+    if row.get("approved_by"):
+        candidate_ids.append(row["approved_by"])
+    if row.get("rejected_by"):
+        candidate_ids.append(row["rejected_by"])
+    identities = fetch_user_identities(db, candidate_ids)
+    approved_by_id = row.get("approved_by") or ""
+    identity = identities.get(
+        approved_by_id, UserIdentity(user_id=approved_by_id)
+    )
+    rejected_by_id = row.get("rejected_by") or ""
+    rejected_by_identity = (
+        identities.get(rejected_by_id) if rejected_by_id else None
+    )
+    return _clinic_row_to_dto(row, identity, rejected_by_identity)
 
 
 # ---------------------------------------------------------------------------

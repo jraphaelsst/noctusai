@@ -2,8 +2,11 @@
 Service-level tests for admin Phase 2 additions.
 
 Covers ``list_appointments_for_admin`` (DTO shape), ``admin_dashboard_metrics``
-(aggregation math), and ``suspend_entity`` (404 + invalid-type branches).
+(aggregation math), ``suspend_entity`` (404 + invalid-type branches), and
+the Phase-5 reject-flow audit-column invariants.
 """
+from datetime import datetime, timezone
+
 import pytest
 
 from tests.conftest import MockSupabaseClient
@@ -206,14 +209,20 @@ class TestListClinicsForAdmin:
         # comes through; the derived-status mapper still classifies it.
         assert data[0]["status"] == "pendente"
 
-    async def test_rejeitada_short_circuits_to_empty(self):
+    async def test_rejeitada_filter_accepts_status(self):
+        # Phase 5: empty-fallback hack removed after migration 013 added
+        # the reject-audit columns. The filter now resolves via PostgREST
+        # predicates (`is_approved=False AND rejection_reason IS NOT NULL`)
+        # against the real DB. MockSupabase doesn't apply read-side
+        # filters, so we confirm the route accepts the filter and the
+        # mapper runs.
         db = _client()
         db.set_table_data("clinics", [SAMPLE_CLINIC])
         data, total = await admin_service.list_clinics_for_admin(
             db, page=1, page_size=20, status="rejeitada",
         )
-        assert data == []
-        assert total == 0
+        assert isinstance(data, list)
+        assert isinstance(total, int)
 
     async def test_busca_filter_does_not_blow_up(self):
         db = _client()
@@ -566,3 +575,267 @@ class TestListSupportConversationsForAdmin:
         )
         assert data == []
         assert total == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Reject flow audit-column invariants
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestRejectEntityAuditColumns:
+    """``reject_entity`` writes all three reject-audit columns from migration 013."""
+
+    async def test_reject_therapist_writes_audit_triplet(self):
+        db = _client()
+        db.set_table_data(
+            "therapist_profiles",
+            [{"user_id": "t1", "is_approved": False, "is_active": True}],
+        )
+        await admin_service.reject_entity(
+            entity_type="therapist",
+            entity_id="t1",
+            admin_id="admin-uid-007",
+            reason="CRP inválido",
+            db=db,
+        )
+        payloads = db.table("therapist_profiles").updated_payloads
+        assert len(payloads) == 1
+        payload = payloads[0]
+        assert payload["is_approved"] is False
+        assert payload["rejection_reason"] == "CRP inválido"
+        assert payload["rejected_by"] == "admin-uid-007"
+        # rejected_at is ISO-formatted UTC; we don't pin the exact string but
+        # confirm it parses + is recent.
+        rejected_at = payload["rejected_at"]
+        assert isinstance(rejected_at, str)
+        parsed = datetime.fromisoformat(rejected_at)
+        delta = datetime.now(timezone.utc) - parsed
+        assert delta.total_seconds() < 5
+
+    async def test_reject_clinic_writes_audit_triplet(self):
+        db = _client()
+        db.set_table_data(
+            "clinics",
+            [{"id": "c1", "is_approved": False, "is_active": True}],
+        )
+        await admin_service.reject_entity(
+            entity_type="clinic",
+            entity_id="c1",
+            admin_id="admin-uid-007",
+            reason="CNPJ inválido",
+            db=db,
+        )
+        payloads = db.table("clinics").updated_payloads
+        assert len(payloads) == 1
+        payload = payloads[0]
+        assert payload["is_approved"] is False
+        assert payload["rejection_reason"] == "CNPJ inválido"
+        assert payload["rejected_by"] == "admin-uid-007"
+        assert isinstance(payload["rejected_at"], str)
+
+    async def test_reject_idempotent_overwrites_reason(self):
+        db = _client()
+        db.set_table_data(
+            "therapist_profiles",
+            [
+                {
+                    "user_id": "t1",
+                    "is_approved": False,
+                    "is_active": True,
+                    "rejection_reason": "old reason",
+                    "rejected_by": "admin-uid-prev",
+                }
+            ],
+        )
+        await admin_service.reject_entity(
+            entity_type="therapist",
+            entity_id="t1",
+            admin_id="admin-uid-new",
+            reason="new reason",
+            db=db,
+        )
+        payloads = db.table("therapist_profiles").updated_payloads
+        # Latest reject wins: reason + actor on the live row reflect the
+        # most recent call; chain lives in application logs.
+        assert payloads[-1]["rejection_reason"] == "new reason"
+        assert payloads[-1]["rejected_by"] == "admin-uid-new"
+
+
+@pytest.mark.asyncio
+class TestApproveEntityClearsAudit:
+    """``approve_entity`` clears the reject-audit triplet on re-approval."""
+
+    async def test_re_approve_therapist_clears_audit(self):
+        db = _client()
+        db.set_table_data(
+            "therapist_profiles",
+            [
+                {
+                    "user_id": "t1",
+                    "is_approved": False,
+                    "is_active": True,
+                    "rejection_reason": "needs documentation",
+                    "rejected_at": "2026-05-10T10:00:00+00:00",
+                    "rejected_by": "admin-uid-prev",
+                }
+            ],
+        )
+        await admin_service.approve_entity(
+            entity_type="therapist",
+            entity_id="t1",
+            admin_id="admin-uid-new",
+            db=db,
+        )
+        payload = db.table("therapist_profiles").updated_payloads[0]
+        assert payload["is_approved"] is True
+        assert payload["is_active"] is True
+        assert payload["rejection_reason"] is None
+        assert payload["rejected_at"] is None
+        assert payload["rejected_by"] is None
+
+    async def test_re_approve_clinic_clears_audit(self):
+        db = _client()
+        db.set_table_data(
+            "clinics",
+            [
+                {
+                    "id": "c1",
+                    "is_approved": False,
+                    "is_active": True,
+                    "rejection_reason": "needs CNPJ verification",
+                    "rejected_at": "2026-05-10T10:00:00+00:00",
+                    "rejected_by": "admin-uid-prev",
+                }
+            ],
+        )
+        await admin_service.approve_entity(
+            entity_type="clinic",
+            entity_id="c1",
+            admin_id="admin-uid-new",
+            db=db,
+        )
+        payload = db.table("clinics").updated_payloads[0]
+        assert payload["is_approved"] is True
+        assert payload["is_active"] is True
+        assert payload["rejection_reason"] is None
+        assert payload["rejected_at"] is None
+        assert payload["rejected_by"] is None
+
+
+@pytest.mark.asyncio
+class TestGetTherapistForAdmin:
+    """Phase 5 admin detail endpoint — single-therapist DTO."""
+
+    async def test_returns_dto_shape(self):
+        db = _client()
+        db.set_table_data(
+            "therapist_profiles",
+            [
+                {
+                    "user_id": "t1",
+                    "crp": "06/123",
+                    "is_approved": True,
+                    "is_active": True,
+                }
+            ],
+        )
+        dto = await admin_service.get_therapist_for_admin(db, "t1")
+        assert dto["id"] == "t1"
+        assert dto["user_id"] == "t1"
+        assert dto["status"] == "aprovado"
+        # Reject-audit triplet is always present (None when not rejected).
+        assert dto["rejection_reason"] is None
+        assert dto["rejected_at"] is None
+        assert dto["rejected_by"] is None
+        assert dto["rejected_by_name"] is None
+
+    async def test_returns_audit_fields_when_rejected(self):
+        db = _client()
+        db.set_table_data(
+            "therapist_profiles",
+            [
+                {
+                    "user_id": "t1",
+                    "is_approved": False,
+                    "is_active": True,
+                    "rejection_reason": "needs docs",
+                    "rejected_at": "2026-05-11T10:00:00+00:00",
+                    "rejected_by": "admin-uid-007",
+                }
+            ],
+        )
+        dto = await admin_service.get_therapist_for_admin(db, "t1")
+        assert dto["status"] == "rejeitado"
+        assert dto["rejection_reason"] == "needs docs"
+        assert dto["rejected_at"] == "2026-05-11T10:00:00+00:00"
+        assert dto["rejected_by"] == "admin-uid-007"
+        # rejected_by_name resolves to display_name (falls back to
+        # "Usuário" via UserIdentity.display_name when the mock auth
+        # can't resolve the admin's nome).
+        assert "rejected_by_name" in dto
+
+    async def test_404_when_not_found(self):
+        db = _client()
+        db.set_table_data("therapist_profiles", [])
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            await admin_service.get_therapist_for_admin(db, "missing")
+        assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestGetClinicForAdmin:
+    """Phase 5 admin detail endpoint — single-clinic DTO."""
+
+    async def test_returns_dto_shape(self):
+        db = _client()
+        db.set_table_data(
+            "clinics",
+            [
+                {
+                    "id": "c1",
+                    "name": "Clínica X",
+                    "is_approved": True,
+                    "is_active": True,
+                }
+            ],
+        )
+        dto = await admin_service.get_clinic_for_admin(db, "c1")
+        assert dto["id"] == "c1"
+        assert dto["nome"] == "Clínica X"
+        assert dto["status"] == "aprovada"
+        assert dto["rejection_reason"] is None
+        assert dto["rejected_at"] is None
+        assert dto["rejected_by"] is None
+        assert dto["rejected_by_name"] is None
+
+    async def test_returns_audit_fields_when_rejected(self):
+        db = _client()
+        db.set_table_data(
+            "clinics",
+            [
+                {
+                    "id": "c1",
+                    "name": "Clínica X",
+                    "is_approved": False,
+                    "is_active": True,
+                    "rejection_reason": "CNPJ inválido",
+                    "rejected_at": "2026-05-11T10:00:00+00:00",
+                    "rejected_by": "admin-uid-007",
+                }
+            ],
+        )
+        dto = await admin_service.get_clinic_for_admin(db, "c1")
+        assert dto["status"] == "rejeitada"
+        assert dto["rejection_reason"] == "CNPJ inválido"
+        assert dto["rejected_at"] == "2026-05-11T10:00:00+00:00"
+        assert dto["rejected_by"] == "admin-uid-007"
+
+    async def test_404_when_not_found(self):
+        db = _client()
+        db.set_table_data("clinics", [])
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            await admin_service.get_clinic_for_admin(db, "missing")
+        assert exc.value.status_code == 404

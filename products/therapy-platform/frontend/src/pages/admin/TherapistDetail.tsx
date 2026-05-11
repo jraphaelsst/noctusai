@@ -75,6 +75,13 @@ export default function AdminTherapistDetail() {
   const email = (t.email as string) ?? '';
   const approvedAt = t.approved_at as string | undefined;
   const commissionRate = (t.commission_override_pct as number) ?? null;
+  // Phase 5 — reject-audit triplet from migration 013. Fields are
+  // always present on the DTO (null when not rejected). We render the
+  // card only when a rejection_reason has been recorded.
+  const rejectionReason = t.rejection_reason as string | null | undefined;
+  const rejectedAt = t.rejected_at as string | null | undefined;
+  const rejectedByName = t.rejected_by_name as string | null | undefined;
+  const rejectedById = t.rejected_by as string | null | undefined;
 
   const handleReject = () => {
     if (!id || !rejectReason.trim()) return;
@@ -149,6 +156,32 @@ export default function AdminTherapistDetail() {
         </TabsList>
 
         <TabsContent value="perfil" className="space-y-4 mt-4">
+          {rejectionReason && (
+            <Card className="border-destructive/40 bg-destructive/5">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <XCircle className="h-5 w-5 text-destructive" /> Rejeicao registrada
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Motivo</label>
+                  <p className="mt-1 whitespace-pre-wrap">{rejectionReason}</p>
+                </div>
+                {rejectedAt && (
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Quando</label>
+                    <p className="mt-1">{new Date(rejectedAt).toLocaleString('pt-BR')}</p>
+                  </div>
+                )}
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Por</label>
+                  <p className="mt-1">{rejectedByName ?? rejectedById ?? '-'}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">

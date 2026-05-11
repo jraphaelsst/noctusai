@@ -574,12 +574,18 @@ class TestAdminClinicsDTO:
         # the shape/route accepts the filter without breaking.
         assert "data" in body
 
-    def test_list_clinics_rejeitada_returns_empty(self, admin_client):
+    def test_list_clinics_rejeitada_accepts_filter(self, admin_client):
+        # Phase 5: removed the empty-fallback hack after migration 013
+        # landed the reject-audit columns. The filter now resolves to
+        # ``is_approved=False AND rejection_reason IS NOT NULL`` against
+        # the real DB. MockSupabase doesn't apply read predicates so we
+        # only assert the route accepts the filter without breaking.
         admin_client._mock_supabase.set_table_data("clinics", [SAMPLE_CLINIC_ROW])
         resp = admin_client.get("/api/admin/clinics?status=rejeitada")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["data"] == []
+        assert "data" in body
+        assert "pagination" in body
 
     def test_list_clinics_as_therapist_forbidden(self, client):
         resp = client.get("/api/admin/clinics")
@@ -993,4 +999,209 @@ class TestAdminSupportConversations:
 
     def test_list_support_conversations_no_auth(self, client):
         resp = client._tc.get("/api/admin/support/conversations")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Reject flow router transitions
+# ---------------------------------------------------------------------------
+
+
+class TestRejectFlowTransitions:
+    """End-to-end transitions across the reject lifecycle."""
+
+    def test_pendente_to_rejeitado_with_reason(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "therapist_profiles",
+            [{"user_id": "t1", "is_approved": False, "is_active": True}],
+        )
+        resp = admin_client.post(
+            "/api/admin/reject/therapist/t1",
+            json={"action": "reject", "reason": "CRP inválido"},
+        )
+        assert resp.status_code == 200
+        # The update payload carries the full reject-audit triplet
+        # (migration 013 columns); inspecting `updated_payloads` is the
+        # canonical way to assert UPDATE shape under MockSupabase.
+        payloads = admin_client._mock_supabase.table(
+            "therapist_profiles"
+        ).updated_payloads
+        assert payloads, "reject should have issued an update"
+        payload = payloads[-1]
+        assert payload["is_approved"] is False
+        assert payload["rejection_reason"] == "CRP inválido"
+        assert payload["rejected_by"]  # admin id from JWT
+        assert payload["rejected_at"]  # ISO timestamp
+
+    def test_rejeitado_to_aprovado_clears_audit(self, admin_client):
+        # Seed state: previously rejected therapist.
+        admin_client._mock_supabase.set_table_data(
+            "therapist_profiles",
+            [
+                {
+                    "user_id": "t1",
+                    "is_approved": False,
+                    "is_active": True,
+                    "rejection_reason": "needs docs",
+                    "rejected_at": "2026-05-10T10:00:00+00:00",
+                    "rejected_by": "admin-uid-prev",
+                }
+            ],
+        )
+        resp = admin_client.post("/api/admin/approve/therapist/t1")
+        assert resp.status_code == 200
+        payload = admin_client._mock_supabase.table(
+            "therapist_profiles"
+        ).updated_payloads[-1]
+        # Re-approval clears the reject-audit triplet AND
+        # reactivates the row (in case prior reject was followed by a
+        # suspend that lowered is_active).
+        assert payload["is_approved"] is True
+        assert payload["is_active"] is True
+        assert payload["rejection_reason"] is None
+        assert payload["rejected_at"] is None
+        assert payload["rejected_by"] is None
+
+    def test_aprovado_suspenso_aprovado_keeps_audit_clear(self, admin_client):
+        # 1) Approved baseline (no audit columns).
+        admin_client._mock_supabase.set_table_data(
+            "therapist_profiles",
+            [{"user_id": "t1", "is_approved": True, "is_active": True}],
+        )
+        # 2) Suspend.
+        r1 = admin_client.post("/api/admin/suspend/therapist/t1")
+        assert r1.status_code == 200
+        suspended_payload = admin_client._mock_supabase.table(
+            "therapist_profiles"
+        ).updated_payloads[-1]
+        assert suspended_payload["is_active"] is False
+        # Suspension touches `is_active` only — leaves audit columns clean.
+        assert "rejection_reason" not in suspended_payload
+        assert "rejected_at" not in suspended_payload
+
+        # 3) Re-approve clears audit defensively (no-op if already clean).
+        r2 = admin_client.post("/api/admin/approve/therapist/t1")
+        assert r2.status_code == 200
+        approved_payload = admin_client._mock_supabase.table(
+            "therapist_profiles"
+        ).updated_payloads[-1]
+        assert approved_payload["is_approved"] is True
+        assert approved_payload["is_active"] is True
+        assert approved_payload["rejection_reason"] is None
+        assert approved_payload["rejected_at"] is None
+        assert approved_payload["rejected_by"] is None
+
+    def test_clinic_pendente_to_rejeitada_with_reason(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "clinics",
+            [{"id": "c1", "is_approved": False, "is_active": True}],
+        )
+        resp = admin_client.post(
+            "/api/admin/reject/clinic/c1",
+            json={"action": "reject", "reason": "CNPJ inválido"},
+        )
+        assert resp.status_code == 200
+        payload = admin_client._mock_supabase.table(
+            "clinics"
+        ).updated_payloads[-1]
+        assert payload["rejection_reason"] == "CNPJ inválido"
+        assert payload["rejected_by"]
+        assert payload["rejected_at"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Admin detail endpoints (GET /api/admin/{therapists,clinics}/:id)
+# ---------------------------------------------------------------------------
+
+
+class TestAdminTherapistDetail:
+    def test_get_returns_audit_fields_when_rejected(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "therapist_profiles",
+            [
+                {
+                    "user_id": "t1",
+                    "crp": "06/111",
+                    "is_approved": False,
+                    "is_active": True,
+                    "rejection_reason": "CRP inválido",
+                    "rejected_at": "2026-05-11T10:00:00+00:00",
+                    "rejected_by": "admin-uid-007",
+                }
+            ],
+        )
+        resp = admin_client.get("/api/admin/therapists/t1")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["id"] == "t1"
+        assert data["status"] == "rejeitado"
+        assert data["rejection_reason"] == "CRP inválido"
+        assert data["rejected_at"] == "2026-05-11T10:00:00+00:00"
+        assert data["rejected_by"] == "admin-uid-007"
+        assert "rejected_by_name" in data
+
+    def test_get_returns_clean_audit_when_not_rejected(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "therapist_profiles",
+            [{"user_id": "t1", "is_approved": True, "is_active": True}],
+        )
+        resp = admin_client.get("/api/admin/therapists/t1")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["status"] == "aprovado"
+        assert data["rejection_reason"] is None
+        assert data["rejected_at"] is None
+        assert data["rejected_by"] is None
+
+    def test_get_404_when_missing(self, admin_client):
+        admin_client._mock_supabase.set_table_data("therapist_profiles", [])
+        resp = admin_client.get("/api/admin/therapists/missing")
+        assert resp.status_code == 404
+
+    def test_get_as_therapist_forbidden(self, client):
+        resp = client.get("/api/admin/therapists/t1")
+        assert resp.status_code == 403
+
+    def test_get_no_auth(self, client):
+        resp = client._tc.get("/api/admin/therapists/t1")
+        assert resp.status_code == 401
+
+
+class TestAdminClinicDetail:
+    def test_get_returns_audit_fields_when_rejected(self, admin_client):
+        admin_client._mock_supabase.set_table_data(
+            "clinics",
+            [
+                {
+                    "id": "c1",
+                    "name": "Clínica X",
+                    "is_approved": False,
+                    "is_active": True,
+                    "rejection_reason": "CNPJ inválido",
+                    "rejected_at": "2026-05-11T10:00:00+00:00",
+                    "rejected_by": "admin-uid-007",
+                }
+            ],
+        )
+        resp = admin_client.get("/api/admin/clinics/c1")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["id"] == "c1"
+        assert data["status"] == "rejeitada"
+        assert data["rejection_reason"] == "CNPJ inválido"
+        assert data["rejected_at"] == "2026-05-11T10:00:00+00:00"
+        assert data["rejected_by"] == "admin-uid-007"
+        assert "rejected_by_name" in data
+
+    def test_get_404_when_missing(self, admin_client):
+        admin_client._mock_supabase.set_table_data("clinics", [])
+        resp = admin_client.get("/api/admin/clinics/missing")
+        assert resp.status_code == 404
+
+    def test_get_as_therapist_forbidden(self, client):
+        resp = client.get("/api/admin/clinics/c1")
+        assert resp.status_code == 403
+
+    def test_get_no_auth(self, client):
+        resp = client._tc.get("/api/admin/clinics/c1")
         assert resp.status_code == 401

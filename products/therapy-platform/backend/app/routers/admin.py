@@ -157,6 +157,29 @@ async def list_all_therapists(
     return paginated_response(data, total, page, page_size)
 
 
+@router.get("/therapists/{therapist_id}")
+async def get_therapist_detail(
+    therapist_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Fetch a single therapist as the admin DTO.
+
+    Phase 5 delivery — backs the admin detail page
+    (``/admin/terapeutas/:id``). Same DTO shape as the list endpoint,
+    including the Phase-5 reject-audit triplet
+    (``rejection_reason`` / ``rejected_at`` / ``rejected_by``) plus the
+    resolved ``rejected_by_name`` so the page can render the audit row
+    without an extra round-trip.
+    """
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+    result = await admin_service.get_therapist_for_admin(
+        db=db, therapist_id=therapist_id,
+    )
+    return success_response(result)
+
+
 @router.get("/clinics")
 async def list_all_clinics(
     authorization: Optional[str] = Header(None),
@@ -178,6 +201,25 @@ async def list_all_clinics(
         busca=busca,
     )
     return paginated_response(data, total, page, page_size)
+
+
+@router.get("/clinics/{clinic_id}")
+async def get_clinic_detail(
+    clinic_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Fetch a single clinic as the admin DTO.
+
+    Phase 5 delivery — backs the admin detail page
+    (``/admin/clinicas/:id``). Mirrors :func:`get_therapist_detail`.
+    """
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+    result = await admin_service.get_clinic_for_admin(
+        db=db, clinic_id=clinic_id,
+    )
+    return success_response(result)
 
 
 @router.get("/patients")

@@ -69,6 +69,11 @@ export default function AdminClinicDetail() {
   const notaMedia = c.nota_media as number | undefined;
   const totalAvaliacoes = (c.total_avaliacoes as number) ?? 0;
   const commissionRate = (c.commission_override_pct as number) ?? null;
+  // Phase 5 — reject-audit triplet from migration 013.
+  const rejectionReason = c.rejection_reason as string | null | undefined;
+  const rejectedAt = c.rejected_at as string | null | undefined;
+  const rejectedByName = c.rejected_by_name as string | null | undefined;
+  const rejectedById = c.rejected_by as string | null | undefined;
 
   const handleReject = () => {
     if (!id || !rejectReason.trim()) return;
@@ -133,6 +138,32 @@ export default function AdminClinicDetail() {
         </TabsList>
 
         <TabsContent value="perfil" className="space-y-4 mt-4">
+          {rejectionReason && (
+            <Card className="border-destructive/40 bg-destructive/5">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <XCircle className="h-5 w-5 text-destructive" /> Rejeicao registrada
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Motivo</label>
+                  <p className="mt-1 whitespace-pre-wrap">{rejectionReason}</p>
+                </div>
+                {rejectedAt && (
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Quando</label>
+                    <p className="mt-1">{new Date(rejectedAt).toLocaleString('pt-BR')}</p>
+                  </div>
+                )}
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Por</label>
+                  <p className="mt-1">{rejectedByName ?? rejectedById ?? '-'}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Informacoes da Clinica</CardTitle>
