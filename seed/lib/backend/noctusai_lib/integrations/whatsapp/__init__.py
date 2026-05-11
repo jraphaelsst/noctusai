@@ -27,6 +27,13 @@ See `KB § PATTERNS/whatsapp-chatbot-seed.md` for the wiring recipe.
 
 from noctusai_lib.integrations.whatsapp.client import WahaClient
 from noctusai_lib.integrations.whatsapp.fake_adapter import FakeWahaClient
+from noctusai_lib.integrations.whatsapp.meta_cloud_client import (
+    DEFAULT_BASE_URL as META_CLOUD_DEFAULT_BASE_URL,
+)
+from noctusai_lib.integrations.whatsapp.meta_cloud_client import (
+    FakeMetaCloudClient,
+    MetaCloudClient,
+)
 from noctusai_lib.integrations.whatsapp.mappers import (
     build_send_text_body,
     chat_id_for_phone,
@@ -69,9 +76,37 @@ def get_whatsapp_client(
     return WahaClient(base_url=base_url, api_key=api_key, session=session)
 
 
+def get_meta_cloud_client(
+    *,
+    phone_number_id: str | None = None,
+    api_key: str | None = None,
+    base_url: str = META_CLOUD_DEFAULT_BASE_URL,
+) -> MetaCloudClient | FakeMetaCloudClient:
+    """Return a real `MetaCloudClient` when `api_key` is set; `FakeMetaCloudClient` otherwise.
+
+    Mirrors `get_whatsapp_client()` and `get_calendar_adapter()` factories per
+    `KB § PATTERNS/seed-fake-real-adapter.md`. The presence of `api_key` is
+    the configured-vs-not-configured signal — Meta Cloud API rejects all
+    requests without a Bearer token, so an unset key means we are talking
+    to a fake.
+    """
+    if not api_key:
+        return FakeMetaCloudClient(
+            phone_number_id=phone_number_id, base_url=base_url
+        )
+    return MetaCloudClient(
+        phone_number_id=phone_number_id or "",
+        api_key=api_key,
+        base_url=base_url,
+    )
+
+
 __all__ = [
+    "FakeMetaCloudClient",
     "FakeWahaClient",
     "InboundHandler",
+    "META_CLOUD_DEFAULT_BASE_URL",
+    "MetaCloudClient",
     "WahaClient",
     "WahaIgnoredEvent",
     "WahaInboundMessage",
@@ -86,6 +121,7 @@ __all__ = [
     "build_send_text_body",
     "chat_id_for_phone",
     "create_whatsapp_webhook_router",
+    "get_meta_cloud_client",
     "get_whatsapp_client",
     "parse_waha_inbound_message",
     "phone_from_chat_id",

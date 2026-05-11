@@ -167,11 +167,23 @@ async def send_message(
     config: WhatsAppConfig,
 ) -> Dict[str, Any]:
     """
-    Send a text message via WhatsApp Business API.
+    Send a text message via Meta WhatsApp Business Cloud API.
 
-    If the API is not configured, operates in dry-run mode and returns
-    a simulated response. This allows development and testing without
-    requiring an actual WhatsApp Business account.
+    Thin product wrapper around `noctusai_lib.integrations.whatsapp.MetaCloudClient.send_text`
+    (consumed via `get_meta_cloud_client(...)` factory). Owns ERP-specific
+    concerns:
+
+    1. Brazilian phone normalization (strip non-digits, prepend "55" country
+       code when missing) — ERP keeps phone numbers in mixed formats from
+       CRM imports.
+    2. Dry-run fallback when no API key is configured (returns simulated
+       envelope; never raises).
+    3. The legacy `{message_id, status, phone, [error|dry_run]}` envelope
+       expected by the `/whatsapp/send` router.
+
+    Transport (HTTP POST to `{base_url}/{phone_number_id}/messages`, headers,
+    response parsing) lives in the seed `MetaCloudClient`; this function
+    never touches `httpx` directly.
 
     Args:
         phone: Recipient phone number (will be normalized)
@@ -181,6 +193,8 @@ async def send_message(
     Returns:
         Dict with message_id, status, and phone
     """
+    from noctusai_lib.integrations.whatsapp import get_meta_cloud_client
+
     normalized_phone = _normalize_phone(phone)
 
     if not config.is_configured:
@@ -195,54 +209,17 @@ async def send_message(
             "dry_run": True,
         }
 
-    # Real API call
+    client = get_meta_cloud_client(
+        phone_number_id=config.phone_number_id,
+        api_key=config.api_token,
+        base_url=config.base_url,
+    )
     try:
-        import httpx
-
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": normalized_phone,
-            "type": "text",
-            "text": {"body": message},
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                config.send_url,
-                headers=config.headers,
-                json=payload,
-                timeout=30.0,
-            )
-
-            if response.status_code != 200:
-                logger.error(
-                    f"WhatsApp API error {response.status_code}: {response.text}"
-                )
-                return {
-                    "message_id": None,
-                    "status": "failed",
-                    "phone": normalized_phone,
-                    "error": response.text,
-                }
-
-            data = response.json()
-            message_id = data.get("messages", [{}])[0].get("id", "unknown")
-
-            return {
-                "message_id": message_id,
-                "status": "sent",
-                "phone": normalized_phone,
-            }
-
-    except ImportError:
-        logger.warning("httpx not installed. Running in dry-run mode.")
-        return {
-            "message_id": f"no_httpx_{normalized_phone}",
-            "status": "sent",
-            "phone": normalized_phone,
-            "dry_run": True,
-        }
+        data = await client.send_text(normalized_phone, message)
     except Exception as e:
+        # MetaCloudClient raises httpx.HTTPStatusError on non-2xx
+        # (raise_for_status). Surface the legacy error envelope so router-side
+        # paths keep working.
         logger.error(f"WhatsApp send error: {e}")
         return {
             "message_id": None,
@@ -250,6 +227,13 @@ async def send_message(
             "phone": normalized_phone,
             "error": str(e),
         }
+
+    message_id = data.get("messages", [{}])[0].get("id", "unknown")
+    return {
+        "message_id": message_id,
+        "status": "sent",
+        "phone": normalized_phone,
+    }
 
 
 async def send_property_card(
