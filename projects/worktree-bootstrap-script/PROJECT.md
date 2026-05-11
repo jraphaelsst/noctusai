@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-10
 - **Last updated:** 2026-05-10
-- **Status:** 📋 **READY FOR EXECUTION.** Filed under user signal "create projects for deferrals/parks that happen along the way." Engineers Q + AA + N + S confirmed N=4+ worktree env-parity gotcha: fresh worktrees inherit empty node_modules + need `npm install` in multiple seed/product dirs to verify changes.
+- **Status:** ✅ **CLOSED 2026-05-10.** All phases (0-2) shipped. Script lives at `scripts/bootstrap-worktree.sh` (executable, idempotent, `--check` mode); KB §16.7 amended with Step 0 environment-hydration clause. Smoke verified: 14/14 frontends hydrated (90s first pass; 0.23s idempotent re-run); vite build green on `products/seed/frontend`.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `worktree-bootstrap-script`
 
@@ -83,21 +83,31 @@ echo "  export PYTHONPATH=$WORKTREE_ROOT/seed/lib/backend"
 
 ## 6. Implementation phases
 
-### Phase 0 — Confirm scope + write script
+### Phase 0 — Confirm scope + write script ✅
 
-- [ ] Author `scripts/bootstrap-worktree.sh` per §5 template.
-- [ ] Idempotency check (re-run on hydrated worktree should be fast or no-op).
-- [ ] `chmod +x scripts/bootstrap-worktree.sh`.
+- [x] Author `scripts/bootstrap-worktree.sh` per §5 template (with two extensions: `--check` read-only mode + `npm install` fallback when `package-lock.json` absent).
+- [x] Idempotency check — re-run on hydrated worktree is 0.23s (skip-if-newer guard via `node_modules/.package-lock.json` mtime comparison).
+- [x] `chmod +x scripts/bootstrap-worktree.sh` (mode `-rwxr-xr-x`).
 
-### Phase 1 — Document + amend engineer-brief preamble
+**Improvements (Phase 0):**
+- Added `--check` mode (read-only baseline reporter) — useful for orchestrators detecting whether a dispatched worktree needs hydration before re-dispatch.
+- Added `npm install` fallback when a frontend has no `package-lock.json`. First-pass smoke surfaced this: `products/imobi-scheduling/frontend` + `products/youtube-crawler/frontend` have no checked-in lockfile, so `npm ci` errored. Fallback unblocked both. These two products SHOULD eventually check in their lockfiles for deterministic CI — deferred (see Phase 2 Improvements).
+- Hardened error reporting: per-frontend FAILED tracking + non-zero exit + recap so partial failures are loud, not silent.
 
-- [ ] Add reference in `KB § PATTERNS/branching-and-merging.md §16.7` (worktree-base-verification): "Step 0: run `bash scripts/bootstrap-worktree.sh` if your brief touches frontend or runs vitest/vite build."
-- [ ] Mention in `feedback_worktree_base_verification.md` memory entry (sub-rule for env-parity).
+### Phase 1 — Document + amend engineer-brief preamble ✅
 
-### Phase 2 — Close
+- [x] KB §16.7 amended with new "Step 0 — environment hydration" paragraph; references `scripts/bootstrap-worktree.sh` + idempotency timing + N=5+ origin + skip-rule (purely-backend briefs).
+- [x] Memory entry update routed to orchestrator per engineer/architect role split (engineer doesn't edit `MEMORY.md`). Surfaced in findings.
 
-- [ ] Smoke: create a fresh worktree via `git worktree add`, run the script, verify all frontends + python work.
-- [ ] Improvements block + §11 + archive.
+### Phase 2 — Close ✅
+
+- [x] Smoke: this worktree was fresh (all 14 frontends started without `node_modules/`); script hydrated 12 via `npm ci`, then 2 via `npm install` fallback, all green on retry. Verified `npx vite build` on `products/seed/frontend` → green in 3.4s. Idempotent `--check` re-run confirms 0 stale.
+- [x] Improvements blocks captured per-phase (above).
+- [x] §11 close-row added (below).
+- [x] Archive — orchestrator handles per brief instruction.
+
+**Improvements (Phase 2):**
+- **Lockfile check-in for `imobi-scheduling` + `youtube-crawler`.** N=2 cross-product recurrence: both lack `package-lock.json` in git. Triage = **formalize** (commit the generated lockfiles per product) — small + deterministic + removes the `npm install` fallback's need over time. The lockfiles WERE generated as side-effects of the smoke run; left untracked because they're not engineer-authored code per the brief's authorship discipline. Orchestrator can stage them in a follow-up commit or file a dedicated follow-up.
 
 ## 7. Open questions
 
@@ -109,10 +119,10 @@ echo "  export PYTHONPATH=$WORKTREE_ROOT/seed/lib/backend"
 
 ## 9. Success criteria
 
-- [ ] Script ships at `scripts/bootstrap-worktree.sh`.
-- [ ] §16.7 preamble references it.
-- [ ] Memory entry mentions Step 0 for worktree-frontend work.
-- [ ] Smoke: fresh worktree → run script → all frontends green.
+- [x] Script ships at `scripts/bootstrap-worktree.sh`.
+- [x] §16.7 preamble references it (Step 0 — environment hydration clause, NEW 2026-05-10).
+- [ ] Memory entry mentions Step 0 for worktree-frontend work. *(deferred to orchestrator per role split — engineer does not edit MEMORY.md)*
+- [x] Smoke: fresh worktree → run script → all frontends green (12 via `npm ci`, 2 via `npm install` fallback; vite build smoke on `products/seed/frontend` green in 3.4s).
 
 ## 10. How to use this plan
 
@@ -123,6 +133,7 @@ Single-engineer dispatch. Mechanical.
 | Date | Change | By |
 |---|---|---|
 | 2026-05-10 | **Filed under user signal "create projects for deferrals/parks that happen along the way."** N=5+ confirmed across Engineers G, Q, AA, N, S in this session (~5-10 min wasted each on env-parity dance: npm install in seed/lib + seed/framework + product/frontend + python venv). One-shot script + §16.7 preamble update. | claude-opus-4-7 |
+| 2026-05-10 | **Phases 0-2 closed by Engineer.** Script lives at `scripts/bootstrap-worktree.sh` (executable, idempotent, `--check` flag). KB §16.7 amended with "Step 0 — environment hydration" clause. Smoke: 14/14 frontends hydrated (12 via `npm ci`, 2 via `npm install` fallback — `products/imobi-scheduling/frontend` + `products/youtube-crawler/frontend` lack `package-lock.json`; surfaced as Improvement). Idempotent re-check: 0.23s. Vite build green on `products/seed/frontend` (3.4s). Memory-entry sync deferred to orchestrator per role split. Mid-flight slip: 3 of my Edit calls landed on `/Users/rapha/.../noctusai/...` (main repo) instead of `.../noctusai/.claude/worktrees/agent-.../...` (this worktree); recovered via `git stash` in main repo + re-applied on worktree paths. Slip explained in end-state findings. | engineer-agent-a8fc647dc320b0bb2 |
 
 ## 12. No-leftovers constraint
 
