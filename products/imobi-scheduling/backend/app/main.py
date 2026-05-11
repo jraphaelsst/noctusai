@@ -24,6 +24,7 @@ over `gpt-4o-mini`):
 """
 from noctusai_seed import create_product_app
 from app.config import settings
+from app.lifespan import on_shutdown, on_startup
 from app.rate_limit import limiter
 from app.routers.example_router import router as example_router
 from app.routers.webhook_router import router as webhook_router
@@ -47,6 +48,13 @@ app = create_product_app(
     # ``noctusai_seed.routers._STANDARD_ROUTERS``. Promotion to standard-
     # router shape deferred until N=2 (mailing / therapy needing WhatsApp).
     routers=[example_router, webhook_router, whatsapp_router],
+    # Phase 6 — conversation framework wiring. The lifespan hooks
+    # ``on_startup`` / ``on_shutdown`` configure the conversation module
+    # (buffer + LLM dispatcher + audit writer) and start/stop the
+    # polling worker. See ``app/lifespan.py`` and
+    # ``app/services/conversation.py``.
+    lifespan_startup=on_startup,
+    lifespan_shutdown=on_shutdown,
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):
