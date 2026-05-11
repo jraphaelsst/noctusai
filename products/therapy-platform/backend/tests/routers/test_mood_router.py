@@ -24,12 +24,12 @@ SAMPLE_ANALYTICS = {
 
 
 class TestCreateMoodEntry:
-    """POST /api/humor"""
+    """POST /api/mood"""
 
     def test_create_mood_entry(self, patient_client):
         """Patient creates a mood entry."""
         patient_client._mock_supabase.set_table_data("mood_entries", [SAMPLE_MOOD_ENTRY])
-        resp = patient_client.post("/api/humor", json={
+        resp = patient_client.post("/api/mood", json={
             "rating": 7,
             "emocoes": ["calma", "esperança"],
             "nota": "Dia bom",
@@ -39,33 +39,33 @@ class TestCreateMoodEntry:
 
     def test_create_mood_therapist_forbidden(self, client):
         """Therapist cannot create mood entries."""
-        resp = client.post("/api/humor", json={
+        resp = client.post("/api/mood", json={
             "rating": 7,
         })
         assert resp.status_code == 403
 
     def test_create_mood_admin_forbidden(self, admin_client):
         """Admin cannot create mood entries."""
-        resp = admin_client.post("/api/humor", json={
+        resp = admin_client.post("/api/mood", json={
             "rating": 7,
         })
         assert resp.status_code == 403
 
     def test_create_mood_401(self, patient_client):
         """No auth returns 401."""
-        resp = patient_client._tc.post("/api/humor", json={
+        resp = patient_client._tc.post("/api/mood", json={
             "rating": 7,
         })
         assert resp.status_code == 401
 
 
 class TestListMoodEntries:
-    """GET /api/humor"""
+    """GET /api/mood"""
 
     def test_list_entries(self, patient_client):
         """Patient lists their mood entries."""
         patient_client._mock_supabase.set_table_data("mood_entries", [SAMPLE_MOOD_ENTRY])
-        resp = patient_client.get("/api/humor")
+        resp = patient_client.get("/api/mood")
         assert resp.status_code == 200
         assert "data" in resp.json()
 
@@ -73,19 +73,19 @@ class TestListMoodEntries:
         """Patient lists entries with date filters."""
         patient_client._mock_supabase.set_table_data("mood_entries", [SAMPLE_MOOD_ENTRY])
         resp = patient_client.get(
-            "/api/humor",
+            "/api/mood",
             params={"data_inicio": "2026-04-01", "data_fim": "2026-04-30"},
         )
         assert resp.status_code == 200
 
     def test_list_entries_therapist_forbidden(self, client):
         """Therapist cannot list patient mood entries."""
-        resp = client.get("/api/humor")
+        resp = client.get("/api/mood")
         assert resp.status_code == 403
 
 
 class TestMoodAnalytics:
-    """GET /api/humor/analytics"""
+    """GET /api/mood/analytics"""
 
     def test_analytics(self, patient_client):
         """Patient gets mood analytics."""
@@ -93,7 +93,7 @@ class TestMoodAnalytics:
             {"rating": 7, "emocoes": ["calma"], "created_at": "2026-04-01T10:00:00Z"},
             {"rating": 5, "emocoes": ["ansiedade"], "created_at": "2026-03-20T10:00:00Z"},
         ])
-        resp = patient_client.get("/api/humor/analytics")
+        resp = patient_client.get("/api/mood/analytics")
         assert resp.status_code == 200
         assert "data" in resp.json()
 
@@ -101,17 +101,17 @@ class TestMoodAnalytics:
         """Patient gets analytics for a specific period."""
         patient_client._mock_supabase.set_table_data("mood_entries", [])
         resp = patient_client.get(
-            "/api/humor/analytics",
+            "/api/mood/analytics",
             params={"data_inicio": "2026-03-01", "data_fim": "2026-04-01"},
         )
         assert resp.status_code == 200
 
     def test_analytics_therapist_forbidden(self, client):
         """Therapist cannot access patient mood analytics."""
-        resp = client.get("/api/humor/analytics")
+        resp = client.get("/api/mood/analytics")
         assert resp.status_code == 403
 
     def test_analytics_admin_forbidden(self, admin_client):
         """Admin cannot access patient mood analytics."""
-        resp = admin_client.get("/api/humor/analytics")
+        resp = admin_client.get("/api/mood/analytics")
         assert resp.status_code == 403

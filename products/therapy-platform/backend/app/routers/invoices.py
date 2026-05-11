@@ -19,10 +19,10 @@ from app.responses import paginated_response, success_response
 from app.services import invoice_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/recibos", tags=["Invoices"])
+router = APIRouter(prefix="/api/invoices", tags=["Invoices"])
 
 
-@router.post("/gerar")
+@router.post("")
 async def generate_invoice(
     body: dict,
     authorization: Optional[str] = Header(None),

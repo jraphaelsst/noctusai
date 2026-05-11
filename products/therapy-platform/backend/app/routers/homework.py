@@ -19,7 +19,7 @@ from app.responses import paginated_response, success_response
 from app.services import homework_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/tarefas", tags=["Homework"])
+router = APIRouter(prefix="/api/homework", tags=["Homework"])
 
 
 @router.post("")

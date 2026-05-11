@@ -20,7 +20,7 @@ from app.responses import paginated_response, success_response
 from app.services import crisis_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/alertas-crise", tags=["Crisis Alerts"])
+router = APIRouter(prefix="/api/crisis-alerts", tags=["Crisis Alerts"])
 
 
 @router.get("")
@@ -81,7 +81,7 @@ async def get_alert(
     return success_response(existing)
 
 
-@router.patch("/{alert_id}/revisar")
+@router.patch("/{alert_id}/review")
 async def review_alert(
     alert_id: str,
     body: dict,
@@ -118,7 +118,7 @@ async def review_alert(
     return success_response(data)
 
 
-@router.post("/escanear")
+@router.post("/scan")
 async def manual_scan(
     authorization: Optional[str] = Header(None),
 ):

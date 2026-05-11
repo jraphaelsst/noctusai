@@ -19,7 +19,7 @@ from app.responses import ok_response, paginated_response, success_response
 from app.services import clinical_records_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/planos-tratamento", tags=["Treatment Plans"])
+router = APIRouter(prefix="/api/treatment-plans", tags=["Treatment Plans"])
 
 
 @router.post("")

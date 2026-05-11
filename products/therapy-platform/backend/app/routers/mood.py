@@ -18,7 +18,7 @@ from app.responses import success_response
 from app.services import mood_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/humor", tags=["Mood"])
+router = APIRouter(prefix="/api/mood", tags=["Mood"])
 
 
 @router.post("")

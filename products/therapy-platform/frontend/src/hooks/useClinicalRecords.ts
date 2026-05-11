@@ -16,7 +16,7 @@ export function useAnamnese(patientId?: string) {
   return useQuery<Anamnese>({
     queryKey: KEYS.anamnese(patientId!),
     queryFn: async () => {
-      const res = await api.get(`/api/clinical/anamnese/${patientId}`);
+      const res = await api.get(`/api/anamnese/${patientId}`);
       return res.data ?? res;
     },
     enabled: !!user && !!patientId,
@@ -35,7 +35,7 @@ export function useCreateAnamnese() {
       medicacoes?: string;
       observacoes?: string;
     }) => {
-      return api.post('/api/clinical/anamnese', data);
+      return api.post('/api/anamnese', data);
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: KEYS.anamnese(variables.patient_id) });
@@ -59,7 +59,7 @@ export function useUpdateAnamnese() {
       medicacoes?: string;
       observacoes?: string;
     }) => {
-      return api.patch(`/api/clinical/anamnese/${id}`, data);
+      return api.patch(`/api/anamnese/${id}`, data);
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: KEYS.anamnese(variables.patient_id) });
@@ -78,7 +78,7 @@ export function useTreatmentPlans(patientId?: string) {
   return useQuery<{ data: TreatmentPlan[]; total: number }>({
     queryKey: KEYS.treatmentPlans(patientId!),
     queryFn: async () => {
-      const res = await api.get(`/api/clinical/treatment-plans?patient_id=${patientId}`);
+      const res = await api.get(`/api/treatment-plans?patient_id=${patientId}`);
       return res;
     },
     enabled: !!user && !!patientId,
@@ -96,7 +96,7 @@ export function useCreateTreatmentPlan() {
       data_inicio: string;
       data_revisao?: string;
     }) => {
-      return api.post('/api/clinical/treatment-plans', data);
+      return api.post('/api/treatment-plans', data);
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: KEYS.treatmentPlans(variables.patient_id) });
@@ -115,7 +115,7 @@ export function useEvolutionNotes(patientId?: string) {
   return useQuery<{ data: EvolutionNote[]; total: number }>({
     queryKey: KEYS.evolutionNotes(patientId!),
     queryFn: async () => {
-      const res = await api.get(`/api/clinical/evolution-notes?patient_id=${patientId}`);
+      const res = await api.get(`/api/evolution-notes?patient_id=${patientId}`);
       return res;
     },
     enabled: !!user && !!patientId,
@@ -136,7 +136,7 @@ export function useCreateEvolutionNote() {
       plano?: string;
       conteudo_livre?: string;
     }) => {
-      return api.post('/api/clinical/evolution-notes', data);
+      return api.post('/api/evolution-notes', data);
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: KEYS.evolutionNotes(variables.patient_id) });

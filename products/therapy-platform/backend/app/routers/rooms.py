@@ -20,7 +20,7 @@ from app.responses import ok_response, success_response
 from app.services import room_service
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/salas", tags=["Rooms"])
+router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
 
 
 @router.post("")
@@ -105,7 +105,7 @@ async def update_room(
     return success_response(data)
 
 
-@router.post("/reservas")
+@router.post("/bookings")
 async def create_booking(
     body: dict,
     authorization: Optional[str] = Header(None),
@@ -124,7 +124,7 @@ async def create_booking(
     return success_response(data)
 
 
-@router.delete("/reservas/{booking_id}")
+@router.delete("/bookings/{booking_id}")
 async def delete_booking(
     booking_id: str,
     authorization: Optional[str] = Header(None),
