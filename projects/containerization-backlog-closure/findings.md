@@ -245,3 +245,44 @@ This is the first orchestration under the new §18 methodology. Track diligently
 - **Conservative resource caps as starting envelope, not load-tested values.** 1.0 CPU + 512 MB for backend, 0.5 + 256 MB for frontend, 2.0 + 1024 MB for dev-team (agno engine). Documented in the KB table; expectation is to revise after first real-traffic measurements. Setting caps now is forward-compatible with Swarm/k8s rollout (where they're enforced); under plain `docker compose up` they're advisory.
 - **`read_only: true` + tmpfs for nginx writes.** Frontend container's rootfs is read-only at the kernel level; nginx's required write paths (`/var/cache/nginx`, `/var/run` for pidfile, `/tmp` for client_body_temp) are tmpfs mounts. Means an exploited frontend container can't drop a binary, but legitimate nginx operation is unaffected. Backend left writable — auditing the seed framework's IO paths is a separate project.
 - **Log rotation defaults vs Docker's default.** json-file driver without `max-size` is unbounded — has been a documented cause of "container says up but host out of disk" surprises in fleet deployments. `max-size: 10m` + `max-file: 3` caps each container's log footprint at ~30 MB. Cheap insurance.
+
+---
+
+## T9 findings — CI matrix + push + scan (engineer report, 2026-05-10)
+
+### Errors encountered
+- _(none — workflow YAML drafted, parsed, and verified at the config layer; no runtime daemon errors encountered)_
+
+### Mistakes / slips
+- **First draft used `push:` + `load:` as mutually-exclusive booleans, breaking Trivy's scan step on main pushes.** Initial cut wrote `push: ${{ on-main }}` + `load: ${{ not on-main }}` on a single `docker/build-push-action` step. Problem: when `push: true` and `load: false`, the image goes to the registry but is NOT loaded into the local daemon — so Trivy's `image-ref` (which scans the local daemon by default) has nothing to find on main pushes. Fix: split into three steps — (1) build to local daemon always (`load: true, push: false`), (2) Trivy scan from local daemon, (3) push to GHCR on main only via a second `build-push-action` invocation that hits the same `cache-from` scope (cache-hit re-export, ~negligible cost). Side benefit: the split makes Trivy's `exit-code: 1` a hard gate on the push — vulnerable images never reach the registry. Documented at §11f "Build → scan → push ordering".
+
+### Lessons learned (durable rules)
+- **Scan-before-push is a structural fail-safe, not a nice-to-have.** Splitting `build → scan → push` ensures Trivy's exit code gates registry publication. The "single build-push-action with push=true" shortcut would publish first and scan second — vulnerable SHAs would land in the registry briefly even if the workflow eventually fails. With the split, a HIGH/CRITICAL CVE means the SHA never publishes; the registry stays clean by construction.
+- **Per-cell `cache-from`/`cache-to` `scope` is the difference between cache-warm and cache-cold runs.** Without `scope`, GHA's 10GB cap evicts cross-cell as products compete for the same cache namespace — adconnect's heavy build evicts seed's small build, then seed's next run is cold. With per-cell `scope`, each product+role gets its own LRU slot; eviction is fair-ish. Tested by reading the `docker/build-push-action` README + buildx cache backend docs.
+- **`security-events: write` is invisible until SARIF upload silently fails.** The default `GITHUB_TOKEN` does NOT have `security-events: write`. Without the explicit `permissions:` grant, `github/codeql-action/upload-sarif@v3` runs to completion, prints a success-looking line, but the SARIF never appears in the Security tab. Same shape as silent-error anti-pattern. Granted at both workflow level (default) AND job level (explicit) for clarity.
+- **`fail-fast: false` is the only correct default for image-build matrices.** A heavy-dependency product (dev-team's agno backend ~900MB) is naturally the flake source. Letting it cancel the other 19 builds wastes ~20-30 min of compute per failure. The principle: each matrix cell's failure should be inspectable, not silenced by a cancellation.
+
+### Interesting findings (surprises, discoveries)
+- **The brief's matrix list omits `imobi-scheduling` and `youtube-crawler`** — both have backend Dockerfiles on disk but are intentionally excluded:
+  - `youtube-crawler`: T3 audit (see findings above) revealed it has no `frontend/Dockerfile` and no `docker-compose.yml` — pure absence, not a stale state. Building it would fail at file-resolution time.
+  - `imobi-scheduling`: T7 + T8 carve-out (see findings above) — it carries stale `seed-*` literal service names; adding it to the CI matrix would publish images at the wrong tag (`noctus-imobi-scheduling-backend` from a Dockerfile that thinks it's the seed). Surfacing as the lingering follow-up.
+- **`actions/checkout@v4` default of shallow checkout (depth=1) is fine for build context but means `git rev-parse --short HEAD` works without `fetch-depth: 0`.** Shallow checkout still gives HEAD; only `git describe` or full-history walks need fetch-depth: 0. Saves ~30s per cell on the 20-cell matrix.
+- **`ignore-unfixed: true` is the difference between "Trivy is useful" and "Trivy is permanently red".** Base images regularly carry CVEs without an upstream-fixed version (e.g. a CVE was filed against a glibc symbol but no patched glibc exists yet). Without `ignore-unfixed`, the workflow fails on these forever — the CVE can't be addressed by any action we can take. With it, the workflow fires only on actionable findings.
+- **`actions/checkout@v4` does NOT need `fetch-depth: 0` for our use case.** Worth flagging because the brief's "Common pitfalls" mentioned it. Our build doesn't `git describe` or `git log`; just `git rev-parse --short HEAD`, which works on a depth=1 checkout. Saved the fetch cost intentionally.
+
+### Knowledge pieces (durable patterns)
+- **`docker/build-push-action@v5` cache backend nuance.** Only `type=gha` works for the GitHub Actions cache backend; `actions/cache@v4` doesn't apply (different cache mechanism, not buildx-compatible). `type=registry` works for self-hosted caches but adds a push step. `type=inline` bakes cache metadata into the image itself but doesn't share across cells. For GHA-runners + multi-cell matrix, `type=gha, scope=<cell>` is the canonical choice.
+- **`if: always()` on SARIF upload is intentional.** A failed Trivy scan returns non-zero, so the upload step's default `if: success()` would skip it — losing the most valuable artifact (the SARIF showing exactly which CVEs failed). `if: always()` ensures the SARIF lands in the Security tab even when the matrix cell fails.
+- **`secrets.GITHUB_TOKEN` vs `github.token`.** The two LOOK identical but the secrets-context reference is the documented form; `github.token` is a context-shortcut that can behave differently in reusable workflows or composite actions. Pinned `secrets.GITHUB_TOKEN` to match the action's official examples (docker/login-action README).
+- **Per-product `cache-from` `scope` syntax.** `cache-from: type=gha,scope=${{ matrix.product }}-${{ matrix.role }}` is the canonical shape. Note the comma between `type=gha` and `scope=...` (not a newline or YAML key — it's a single string passed to the action).
+- **GitHub Container Registry permission model.** `packages: write` on `GITHUB_TOKEN` grants push to `ghcr.io/<repo-owner>/*` packages — no PAT, no separate registry credentials. The package's visibility (public/private) is set in the GHCR UI after first push.
+- **Workflow YAML verification recipe (no daemon needed).**
+  ```bash
+  # Parse + matrix-cell count
+  python3 -c "import yaml; wf=yaml.safe_load(open('.github/workflows/test.yml')); print(sum(len(v) for v in wf['jobs']['docker-images-build']['strategy']['matrix'].values() if isinstance(v, list)))"
+  # Permissions check
+  grep -n 'packages:\|security-events:' .github/workflows/test.yml
+  # Push gating check
+  grep -n 'github.ref' .github/workflows/test.yml
+  ```
+  Same shape as the T8 "render-only verification, no daemon" lesson — YAML/CI work stays at the config layer.
