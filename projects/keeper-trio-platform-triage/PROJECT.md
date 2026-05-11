@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-11
 - **Last updated:** 2026-05-11
-- **Status:** ⏳ **EXECUTING — Phase 0 ✅ + Wave 0 ✅ + Wave 1 dispatched 2026-05-11.** Phase 0: Engineer RR (commit `f1940a5`) classified 215 findings → **12 REAL_BUG / 201 DEFENSE_IN_DEPTH / 2 FALSE_POSITIVE**. Wave 0 (parallel × 2, FF-merged 2026-05-11): WW (commit `b76c43f`) shipped `noctusai_lib.sql.service_role_bypass(table, schema)` helper byte-equal to therapy's canonical pattern + 22 tests + KB amend; XX (commit `40269c3`) tuned detectors to skip `.schema(X).table(Y)` chains (−1 FP cleared at `core/admin_llm_usage.py:92`). Wave 1 dispatched (parallel × 4): YY core (billing_events REAL_BUG + 13 tables), ZZ erp (3 REAL_BUGs + 14 tables — longest pole), AAA mailing (6 tables), BBB pf (1 table).
+- **Status:** ✅ **CLOSED 2026-05-11.** All 215 findings (12 REAL_BUG + 201 DEFENSE_IN_DEPTH + 2 FALSE_POSITIVE) resolved across Phase 0 (RR classification) + Wave 0 (WW seed helper + XX detector tuning) + Wave 1 (YY core + ZZ erp + AAA mailing + BBB pf). 6 child projects archived. Post-state: REAL_BUGs eliminated; DEFENSE_IN_DEPTH backfilled across all 4 products; 2 FPs cleared; 9 residual ERP findings are accept-with-rationale (`check_function_search_path_pinned` flags pre-`CREATE OR REPLACE FUNCTION` blocks across migration files — N=2 follow-up `keeper-detector-supersession-tuning` filed).
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `keeper-trio-platform-triage`
 
@@ -88,19 +88,41 @@ OR a single product-walking child for the smaller ones; the bigger products (cor
 - Detector tuning opportunity: `.schema(X).table(Y)` chain support (N=1 today at `core/admin_llm_usage.py:92`; tune now before consumers proliferate).
 - 192 admin_bypass DEFENSE_IN_DEPTH findings consolidate into a single decision: add `service_role_bypass(table)` helper to `noctusai_lib.sql` (mirroring `prelude` + `updated_at_trigger`) — closes 192 findings via one seed addition + per-product backfill.
 
-### Phase 1 — Per-product child dispatches (parallel)
+### Phase 1 — Per-product child dispatches (parallel) ✅ *(2026-05-11)*
 
-- [ ] Dispatch `keeper-trio-core` (149 admin_bypass + 2 unknown_table) — biggest; likely most false positives (admin uses get_admin_client extensively).
-- [ ] Dispatch `keeper-trio-erp` (9 search_path = clearly real; 34 admin_bypass = needs classification).
-- [ ] Dispatch `keeper-trio-mailing` (18 admin_bypass).
-- [ ] Dispatch `keeper-trio-pf` (1 admin_bypass — possibly a 5-min fix; consider inline rather than dispatch).
+Two waves dispatched and merged:
 
-### Phase 2 — Roll up + close
+**Wave 0** (parallel × 2, seed-formalize + detector-tuning prerequisites):
+- [x] `keeper-trio-seed-formalize` (Engineer WW, `b76c43f`) — `noctusai_lib.sql.service_role_bypass(table, schema)` helper byte-equal to therapy's canonical.
+- [x] `keeper-detector-schema-chain-tuning` (Engineer XX, `40269c3`) — `.schema(X).table(Y)` chain skip; −1 FP at `core/admin_llm_usage.py:92`.
 
-- [ ] Each child reports; orchestrator merges all on main.
-- [ ] If detector tuning fired, ship that as well.
-- [ ] KB amend if any new convention emerged.
-- [ ] Archive master + child projects.
+**Wave 1** (parallel × 4, per-product backfill):
+- [x] `keeper-trio-core` (Engineer YY, `0107bee`) — 029_billing_events (REAL_BUG; `public.billing_events`) + 030 backfill (12 tables); 14 tests.
+- [x] `keeper-trio-erp` (Engineer ZZ, `6c40aa2`) — ai.py rewrite (consultas + resultados two-step query), 028_search_path (9 functions), assinaturas.py cross-schema, 029 backfill (14 tables); 45 → 9 issues (9 are accept-with-rationale on detector supersession blindness).
+- [x] `keeper-trio-mailing` (Engineer AAA, `39e8a09`) — 16 policies (extended scope from 6 → all RLS-enabled tables; in-place 001+002+003 amendment).
+- [x] `keeper-trio-pf` (Engineer BBB, `537c2cc`) — 009 + detector regex extension for quoted-dashed schemas.
+
+**Improvements (Phase 1):**
+- Wave 0 prerequisite-merge gating worked structurally — Wave 1 children consumed the helper cleanly with zero adapter code.
+- Engineer BBB found and fixed a Wave 0 regex limitation in-scope (quoted-dashed schema support) — the right move; same philosophy as XX's detector tuning.
+- Scope extension by Engineer AAA (6 → 16 mailing tables) prevented latent N=11 recurrence on new admin callsites.
+- Multiple session-wide recurrences captured: Edit/Write phantom-success (N=6+), MCP write tools no `worktree_path=` (N=3+), keeper cli read-side worktree gap (N=3).
+
+### Phase 2 — Roll up + close ✅ *(2026-05-11)*
+
+- [x] Each child reports; orchestrator merges all on main.
+- [x] If detector tuning fired, ship that as well. **YES — XX (schema-chain) + BBB (quoted-dashed schema regex) shipped.**
+- [x] KB amend if any new convention emerged. **YES — `database-rls.md § Service-role bypass — canonical helper`** added by WW.
+- [x] Archive master + child projects. **8 child projects archived** (Wave 0 × 2 + Wave 1 × 4 + Phase 0 RR's was part of master); master archives with this commit.
+
+**Improvements (Phase 2):**
+- **Filed follow-ups for next session**:
+  - `keeper-detector-supersession-tuning` — detector flags pre-`CREATE OR REPLACE FUNCTION` supersession blocks (N=2: therapy GG 2026-05-10 + ZZ 2026-05-11).
+  - `keeper-cli-worktree-arg` — plumb `--worktree-path` / `--root` through `cli.py --review` (read-side worktree gap).
+  - `mcp-worktree-path-resolution` Phase 4 rollout — extend `worktree_path=` to `lgpd_flag` + `scaffold_migration` (existing project covers).
+  - `noctusai_lib.sql.{service_role_bypass, prelude, updated_at_trigger}` auto-quote dashed schemas (BBB candidate).
+  - `core-test-pollution-sweep` — 6 pre-existing + 5 ordering-dependent failures (YY candidate, same shape as therapy 4F → 0F fix 2026-05-11).
+- **Methodology learnings captured in §11 keeper-trio-platform-triage** — three-way sync to KB / CLAUDE.md / memory deferred to next session per "capture-now-sync-later" cadence.
 
 ## 7. Open questions
 
