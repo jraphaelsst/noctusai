@@ -65,17 +65,24 @@ def _auth(token: str) -> dict:
 
 
 def test_ledger_returns_summary_for_distributor(db_and_client) -> None:
+    """Ledger rows must use the CHECK-valid status vocabulary:
+    ('acumulado', 'resgatado', 'expirado'). Pre-fix this test seeded
+    'liberado'/'utilizado' which the prod CHECK rejects.
+    """
     tc, db = db_and_client
     bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     db.set_table_data("recompensas_acumuladas", [
-        {"id": "a1", "distributor_id": "dist-001", "tipo": "cashback", "valor": 100.0, "status": "liberado"},
-        {"id": "a2", "distributor_id": "dist-001", "tipo": "cashback", "valor": 30.0, "status": "utilizado"},
+        {"id": "a1", "distributor_id": "dist-001", "tipo": "cashback", "valor": 100.0, "status": "acumulado"},
+        {"id": "a2", "distributor_id": "dist-001", "tipo": "cashback", "valor": 30.0, "status": "resgatado"},
     ])
     res = tc.get("/rewards/ledger", headers=_auth(_distributor_token()))
     assert res.status_code == 200, res.text
     body = res.json()
     assert len(body["data"]) == 2
-    assert body["summary"]["cashbackAvailable"] == 70.0
+    # cashbackAvailable now = sum(tipo=cashback, status=acumulado) = 100.0.
+    # cashbackUsed = sum(tipo=cashback, status=resgatado) = 30.0.
+    assert body["summary"]["cashbackAvailable"] == 100.0
+    assert body["summary"]["cashbackUsed"] == 30.0
 
 
 def test_rules_endpoint_lists_active(db_and_client) -> None:
@@ -294,7 +301,10 @@ def test_ledger_carries_source_relatorio_sellout_id(db_and_client) -> None:
             "distributor_id": "dist-001",
             "tipo": "cashback",
             "valor": 50.0,
-            "status": "liberado",
+            # CHECK-valid lifecycle (was 'liberado' which the prod
+            # CHECK rejects — `recompensas_acumuladas.status` is
+            # 'acumulado'/'resgatado'/'expirado').
+            "status": "acumulado",
             "source_pedido_id": None,
             "source_relatorio_sellout_id": "rel-001",
         },

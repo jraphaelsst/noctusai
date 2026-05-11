@@ -165,14 +165,38 @@ def _build_accrual_row(
 ) -> dict[str, Any]:
     pct = float(rule.get("valor") or 0)
     valor = round(valor_total * pct / 100.0, 2)
+    # Translate rule.tipo (regras_recompensa CHECK: cashback_percentual /
+    # cashback_fixo / pontos) to the ledger CHECK vocabulary
+    # (recompensas_acumuladas: cashback / pontos). Cashback rule variants
+    # collapse to a single 'cashback' ledger tipo — the percentual-vs-fixo
+    # distinction is a pricing concern, not a ledger state.
+    rule_tipo = rule.get("tipo") or ""
+    if rule_tipo == "pontos":
+        ledger_tipo = "pontos"
+    elif rule_tipo in ("cashback_percentual", "cashback_fixo", "cashback"):
+        ledger_tipo = "cashback"
+    else:
+        # Unknown rule tipo — default to 'cashback' (safest CHECK-compatible
+        # value) and surface the surprise. No silent error.
+        logger.warning(
+            "rewards._build_accrual_row: rule %s has unknown tipo=%r — "
+            "defaulting ledger tipo to 'cashback'",
+            rule.get("id"),
+            rule_tipo,
+        )
+        ledger_tipo = "cashback"
     payload = {
         "distributor_id": distributor_id,
         "regra_id": rule.get("id"),
-        "tipo": rule.get("tipo") or "cashback",
+        "tipo": ledger_tipo,
         "valor": valor,
         "source_pedido_id": source_pedido_id,
         "source_relatorio_sellout_id": source_relatorio_sellout_id,
-        "status": "pendente",
+        # Schema CHECK: status IN ('acumulado', 'resgatado', 'expirado').
+        # Default per migration is 'acumulado'; we write it explicitly so
+        # the payload self-documents and any downstream readers don't see
+        # a missing field. The previous 'pendente' literal was CHECK-illegal.
+        "status": "acumulado",
         "accrued_at": datetime.now(timezone.utc).isoformat(),
     }
     return payload
@@ -323,21 +347,44 @@ def accrue_for_sellout_approval(
 
 
 def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, float]:
-    """Aggregate ledger rows into the balance summary the frontend renders."""
+    """Aggregate ledger rows into the balance summary the frontend renders.
+    
+    The ledger CHECK enforces:
+      - tipo IN ('cashback', 'pontos')
+      - status IN ('acumulado', 'resgatado', 'expirado')
+    
+    Pre-fix this function read against an invented vocabulary
+    ('liberado'/'utilizado'/'pendente' + 'verba_mkt') that the CHECK rejects,
+    returning 0.0 for every category against real DB rows.
+    
+    Summary key shape is preserved (`cashbackAvailable` / `cashbackPending` /
+    `cashbackUsed` / `verbaMkt*`) so any frontend consumer keeps reading the
+    same keys. Semantic mapping:
+    
+      * `cashbackAvailable` — accrued and not yet redeemed: tipo=cashback, status=acumulado.
+      * `cashbackPending`   — no distinct "pending review" state at the
+                              ledger level; redemption-side pending lives in
+                              resgates_recompensa.status. Always 0.0 here.
+      * `cashbackUsed`      — consumed by a redemption: tipo=cashback, status=resgatado.
+      * `verbaMkt*`         — verba_mkt is NOT a valid ledger tipo (the CHECK
+                              excludes it); always 0.0. The redemption table
+                              carries verba_mkt — surface those via a separate
+                              summarize_resgates() if needed.
+    """
     def _amt(tipo: str, status: str) -> float:
         return float(sum(
             float(r.get("valor") or 0)
             for r in rows
             if r.get("tipo") == tipo and r.get("status") == status
         ))
-
+    
     return {
-        "cashbackAvailable": _amt("cashback", "liberado") - _amt("cashback", "utilizado"),
-        "cashbackPending": _amt("cashback", "pendente"),
-        "cashbackUsed": _amt("cashback", "utilizado"),
-        "verbaMktAvailable": _amt("verba_mkt", "liberado") - _amt("verba_mkt", "utilizado"),
-        "verbaMktPending": _amt("verba_mkt", "pendente"),
-        "verbaMktUsed": _amt("verba_mkt", "utilizado"),
+        "cashbackAvailable": _amt("cashback", "acumulado"),
+        "cashbackPending": 0.0,
+        "cashbackUsed": _amt("cashback", "resgatado"),
+        "verbaMktAvailable": 0.0,
+        "verbaMktPending": 0.0,
+        "verbaMktUsed": 0.0,
     }
 
 

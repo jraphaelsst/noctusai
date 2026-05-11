@@ -15,8 +15,29 @@ from typing import Any, Literal, Optional
 from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 
-RewardType = Literal["cashback", "verba_mkt"]
-AccrualStatus = Literal["pendente", "liberado", "utilizado", "cancelado"]
+# Two disjoint `tipo` vocabularies — they correspond to DIFFERENT tables
+# and DIFFERENT CHECK constraints. Keeping them split prevents the
+# silent-CHECK-violation slip ADCO-REWARDS-STATUS-CHECK fixed (the previous
+# unified `RewardType` allowed `'verba_mkt'` against `recompensas_acumuladas`
+# which only accepts `cashback`/`pontos`, and rejected the migration's actual
+# `'pontos'` ledger value).
+#
+# - `LedgerRewardType` matches `adconnect.recompensas_acumuladas.tipo` CHECK.
+# - `RedemptionRewardType` matches `adconnect.resgates_recompensa.tipo` CHECK
+#   (post migration 003 — NULL allowed; treated here as the documented enum).
+LedgerRewardType = Literal["cashback", "pontos"]
+RedemptionRewardType = Literal["cashback", "verba_mkt"]
+# Back-compat alias — historical name kept so any unqualified external import
+# (no known consumers in-tree, but the field appeared in router schemas)
+# resolves to the redemption-side vocabulary.
+RewardType = RedemptionRewardType
+
+# `recompensas_acumuladas.status` CHECK — schema-defined lifecycle.
+# `acumulado` = accrual created (the default — what previously was written
+#               as `'pendente'`, a value the CHECK never accepted).
+# `resgatado` = consumed by a redemption (was `'utilizado'`).
+# `expirado`  = past expires_at and not yet redeemed.
+AccrualStatus = Literal["acumulado", "resgatado", "expirado"]
 RedemptionStatus = Literal["pendente", "aprovado", "rejeitado", "pago"]
 
 
@@ -24,7 +45,9 @@ class RewardLedgerEntry(StrictHttpModel):
     id: str
     distributor_id: str
     regra_id: Optional[str] = None
-    tipo: RewardType
+    # Ledger uses the recompensas_acumuladas CHECK vocabulary
+    # (cashback/pontos), NOT the redemption vocabulary (cashback/verba_mkt).
+    tipo: LedgerRewardType
     valor: float
     moeda: str = "BRL"
     source_pedido_id: Optional[str] = None
@@ -50,7 +73,9 @@ class RewardRulesListOut(StrictHttpModel):
 
 class RedemptionRequestIn(StrictHttpModel):
     distributor_id: str
-    tipo: RewardType
+    # Redemptions live in `resgates_recompensa` whose CHECK allows
+    # 'cashback' or 'verba_mkt' (the brand can redeem either pool).
+    tipo: RedemptionRewardType
     valor: float
     pedido_ref: Optional[str] = None
 
@@ -74,7 +99,7 @@ class RedemptionOut(StrictHttpModel):
     id: str
     org_id: Optional[str] = None
     distributor_id: str
-    tipo: Optional[RewardType] = None
+    tipo: Optional[RedemptionRewardType] = None
     valor: Optional[float] = None
     pedido_ref: Optional[str] = None
     status: RedemptionStatus
@@ -96,6 +121,8 @@ class RedemptionOut(StrictHttpModel):
 
 __all__ = [
     "RewardType",
+    "LedgerRewardType",
+    "RedemptionRewardType",
     "AccrualStatus",
     "RedemptionStatus",
     "RewardLedgerEntry",

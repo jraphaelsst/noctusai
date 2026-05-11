@@ -124,7 +124,9 @@ def test_accrue_for_sellout_approval_matches_active_rules() -> None:
         assert p["distributor_id"] == DIST
         assert p["source_relatorio_sellout_id"] == "rel-001"
         assert p["source_pedido_id"] is None
-        assert p["status"] == "pendente"
+        # Migration CHECK: status IN ('acumulado', 'resgatado', 'expirado').
+        # Pre-fix wrote 'pendente' which Supabase rejected with CHECK violation.
+        assert p["status"] == "acumulado"
 
 
 def test_accrue_for_sellout_approval_skips_unapproved() -> None:
@@ -456,15 +458,127 @@ def test_payload_excludes_nonexistent_columns() -> None:
 
 
 def test_summarize_ledger_groups_by_type_and_status() -> None:
+    """Summary keys must use the schema-CHECK vocabulary.
+
+    Migration CHECKs on `recompensas_acumuladas`:
+      tipo   IN ('cashback', 'pontos')
+      status IN ('acumulado', 'resgatado', 'expirado')
+
+    Pre-fix this test fed `liberado` / `utilizado` / `pendente` /
+    `verba_mkt` rows that the prod CHECK would have rejected outright,
+    so the test asserted against a vocabulary that doesn't exist on disk.
+    """
     rows = [
-        {"tipo": "cashback", "status": "liberado", "valor": 100.0},
-        {"tipo": "cashback", "status": "utilizado", "valor": 30.0},
-        {"tipo": "cashback", "status": "pendente", "valor": 50.0},
-        {"tipo": "verba_mkt", "status": "liberado", "valor": 20.0},
+        {"tipo": "cashback", "status": "acumulado", "valor": 100.0},
+        {"tipo": "cashback", "status": "resgatado", "valor": 30.0},
+        {"tipo": "cashback", "status": "expirado", "valor": 25.0},
+        # pontos is the other allowed ledger tipo — separate pool, not
+        # surfaced in the cashback*/verbaMkt* summary keys.
+        {"tipo": "pontos", "status": "acumulado", "valor": 500.0},
     ]
     summary = summarize_ledger(rows)
-    assert summary["cashbackAvailable"] == 70.0  # 100 - 30
-    assert summary["cashbackPending"] == 50.0
-    assert summary["cashbackUsed"] == 30.0
-    assert summary["verbaMktAvailable"] == 20.0
+    assert summary["cashbackAvailable"] == 100.0  # only acumulado
+    # Ledger has no "pending" state; redemption-side pending lives in
+    # resgates_recompensa.status. Summary key kept for FE-contract stability.
+    assert summary["cashbackPending"] == 0.0
+    assert summary["cashbackUsed"] == 30.0  # resgatado
+    # verba_mkt is NOT a valid ledger tipo (CHECK forbids it). The keys
+    # stay so the FE contract holds; the values are always 0.0.
+    assert summary["verbaMktAvailable"] == 0.0
     assert summary["verbaMktPending"] == 0.0
+    assert summary["verbaMktUsed"] == 0.0
+
+
+def test_payload_status_and_tipo_match_check_constraints() -> None:
+    """Phase 2 regression: every literal `_build_accrual_row` writes MUST
+    pass the `recompensas_acumuladas` CHECK constraints.
+
+    Migration 001 declares:
+      CREATE TABLE adconnect.recompensas_acumuladas (
+          ...
+          tipo TEXT NOT NULL CHECK (tipo IN ('cashback', 'pontos')),
+          status TEXT NOT NULL DEFAULT 'acumulado'
+              CHECK (status IN ('acumulado', 'resgatado', 'expirado')),
+          ...
+      );
+
+    Pre-fix the service wrote `tipo='cashback_percentual'` (rule-side
+    vocabulary that doesn't pass the ledger CHECK) and
+    `status='pendente'` (a value not in the allowed set). Mock accepted
+    silently; Supabase rejected every INSERT in prod.
+    """
+    ALLOWED_TIPOS = {"cashback", "pontos"}
+    ALLOWED_STATUSES = {"acumulado", "resgatado", "expirado"}
+
+    rules = [
+        # All three rule-side tipos that regras_recompensa.tipo CHECK allows.
+        {
+            "id": "rule-pct",
+            "org_id": ORG,
+            "nome": "5% cashback",
+            "tipo": "cashback_percentual",
+            "valor": 5.0,
+            "aplicavel_categorias": [],
+            "aplicavel_produtos": [],
+            "aplicavel_distribuidores": [],
+            "valor_minimo_pedido": 0,
+            "quantidade_minima": 0,
+            "ativa": True,
+        },
+        {
+            "id": "rule-fixo",
+            "org_id": ORG,
+            "nome": "Fixo R$10",
+            "tipo": "cashback_fixo",
+            "valor": 10.0,
+            "aplicavel_categorias": [],
+            "aplicavel_produtos": [],
+            "aplicavel_distribuidores": [],
+            "valor_minimo_pedido": 0,
+            "quantidade_minima": 0,
+            "ativa": True,
+        },
+        {
+            "id": "rule-pts",
+            "org_id": ORG,
+            "nome": "Pontos",
+            "tipo": "pontos",
+            "valor": 2.0,
+            "aplicavel_categorias": [],
+            "aplicavel_produtos": [],
+            "aplicavel_distribuidores": [],
+            "valor_minimo_pedido": 0,
+            "quantidade_minima": 0,
+            "ativa": True,
+        },
+    ]
+    relatorio = {
+        "id": "rel-checks",
+        "distributor_id": DIST,
+        "submission_mode": "estruturado",
+        "valor_total": 500.0,
+        "quantidade_itens": 1,
+        "items_json": [],
+        "status": "aprovado",
+    }
+    db = _build_db(rules=rules, relatorio=relatorio)
+    accrue_for_sellout_approval(db, relatorio_id="rel-checks")
+    payloads = db.table(LEDGER_TABLE).inserted_payloads
+    assert len(payloads) == 3, "All three rules should match (open filters)"
+
+    for p in payloads:
+        assert p["tipo"] in ALLOWED_TIPOS, (
+            f"recompensas_acumuladas.tipo CHECK violation: "
+            f"{p['tipo']!r} not in {ALLOWED_TIPOS}"
+        )
+        assert p["status"] in ALLOWED_STATUSES, (
+            f"recompensas_acumuladas.status CHECK violation: "
+            f"{p['status']!r} not in {ALLOWED_STATUSES}"
+        )
+
+    # cashback_percentual + cashback_fixo collapse to ledger tipo='cashback'.
+    # Only the pontos rule yields ledger tipo='pontos'.
+    tipo_by_rule = {p["regra_id"]: p["tipo"] for p in payloads}
+    assert tipo_by_rule["rule-pct"] == "cashback"
+    assert tipo_by_rule["rule-fixo"] == "cashback"
+    assert tipo_by_rule["rule-pts"] == "pontos"
