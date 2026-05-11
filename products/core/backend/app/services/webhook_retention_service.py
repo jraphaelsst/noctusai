@@ -19,14 +19,11 @@ etc.). Without this service, `webhook_deliveries` grew unbounded.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict
 
+from noctusai_lib.primitives.timeutil import now_utc_iso
+
 logger = logging.getLogger(__name__)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def find_expired_deliveries(db: Any, limit: int = 1000) -> list[Dict]:
@@ -34,7 +31,7 @@ def find_expired_deliveries(db: Any, limit: int = 1000) -> list[Dict]:
     result = (
         db.table("webhook_deliveries")
         .select("id, retention_until")
-        .lt("retention_until", _now_iso())
+        .lt("retention_until", now_utc_iso())
         .limit(limit)
         .execute()
     )

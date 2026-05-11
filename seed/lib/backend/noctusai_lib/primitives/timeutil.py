@@ -34,6 +34,26 @@ def now_utc() -> datetime:
     return _now_provider()
 
 
+def now_utc_iso() -> str:
+    """Return the current wallclock as an ISO 8601 string with UTC offset.
+
+    Canonical string form of `now_utc()` — composes with `_now_provider`
+    so `frozen_time(...)` pins this too. Used everywhere a service
+    serializes "now" into a payload field (``placed_at``, ``submitted_at``,
+    ``fetched_at``, ``retention_until`` comparisons, …).
+
+    Lifted from N=4 byte-identical product-local helpers (adconnect
+    sellout + orders + financial, core webhook_retention) all defined as
+    ``def _now_iso() -> str: return datetime.now(timezone.utc).isoformat()``.
+
+    Note: includes microseconds. A divergent variant (vista_showcase
+    strips microseconds via ``.replace(microsecond=0)``) is kept
+    product-local — see `accept-with-rationale` catalog if/when it is
+    formalized.
+    """
+    return _now_provider().isoformat()
+
+
 def today_utc() -> date:
     """Return the current wallclock as a UTC `date` (no time, no tz).
 

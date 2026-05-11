@@ -27,11 +27,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
 from noctusai_lib.integrations.email import Digest, send_to_one
+from noctusai_lib.primitives.timeutil import now_utc_iso
 
 from . import cart_service
 from .products_service import get_product
@@ -74,15 +74,6 @@ _TIMESTAMP_FIELD: dict[str, str] = {
 def is_valid_transition(current: str, target: str) -> bool:
     """Pure check — used by tests and `transition_status`."""
     return target in _VALID_TRANSITIONS.get(current, set())
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -205,7 +196,7 @@ def create_pedido_from_cart(
             }
         )
 
-    placed_at = _now_iso()
+    placed_at = now_utc_iso()
     pedido_payload = {
         "distributor_id": distributor_id,
         "cart_id": cart_id,
@@ -324,10 +315,10 @@ def transition_status(
     if new_status not in {"cancelado"} and role != "admin":
         raise OrderError("Apenas brand admin pode avançar o status do pedido")
 
-    payload: dict[str, Any] = {"status": new_status, "updated_at": _now_iso()}
+    payload: dict[str, Any] = {"status": new_status, "updated_at": now_utc_iso()}
     ts_field = _TIMESTAMP_FIELD.get(new_status)
     if ts_field:
-        payload[ts_field] = _now_iso()
+        payload[ts_field] = now_utc_iso()
 
     update_res = (
         db.table(PEDIDOS_TABLE)

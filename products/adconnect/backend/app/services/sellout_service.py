@@ -24,6 +24,7 @@ from typing import Any, Optional, Protocol
 
 from noctusai_lib.integrations.email import Digest, send_to_one
 from noctusai_lib.integrations.storage import FakeStorageBackend, StorageBackend
+from noctusai_lib.primitives.timeutil import now_utc_iso
 
 from .nfe_xml_parser import NFeParseError, parse_nfe_xml
 
@@ -47,10 +48,6 @@ def configure_storage(backend: StorageBackend) -> None:
     """Bind the module-level storage backend (called from app boot)."""
     global _default_storage
     _default_storage = backend
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _gen_storage_key(distributor_id: str, suffix: str) -> str:
@@ -172,7 +169,7 @@ async def submit_estruturado(
         "items_json": items_json,
         "observacoes": observacoes,
         "status": "pendente",
-        "submitted_at": _now_iso(),
+        "submitted_at": now_utc_iso(),
     }
     row = _insert_row(db, payload)
     await _notify_admin_submission(
@@ -222,7 +219,7 @@ async def submit_nfe(
         "observacoes": observacoes,
         "nfe_xml_url": nfe_url,
         "status": "pendente",
-        "submitted_at": _now_iso(),
+        "submitted_at": now_utc_iso(),
         **parsed.as_payload(),
     }
     row = _insert_row(db, payload)
@@ -268,7 +265,7 @@ async def submit_attachment(
         "observacoes": observacoes,
         "attachment_url": attachment_url,
         "status": "pendente",
-        "submitted_at": _now_iso(),
+        "submitted_at": now_utc_iso(),
     }
     row = _insert_row(db, payload)
     await _notify_admin_submission(
@@ -297,8 +294,8 @@ async def review(
         "status": status,
         "review_notes": review_notes,
         "reviewed_by": reviewed_by,
-        "reviewed_at": _now_iso(),
-        "updated_at": _now_iso(),
+        "reviewed_at": now_utc_iso(),
+        "updated_at": now_utc_iso(),
     }
     res = db.table(SELLOUT_TABLE).update(payload).eq("id", relatorio_id).execute()
     if not res.data:

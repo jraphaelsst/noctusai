@@ -44,6 +44,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from noctusai_lib.integrations.email import Digest, send_to_one
+from noctusai_lib.primitives.timeutil import now_utc_iso
 
 from . import nfe_service
 from .nfe_service import (
@@ -67,15 +68,6 @@ DISTRIBUTORS_TABLE = "distributors"
 
 class FinancialError(ValueError):
     """Raised when a financial operation violates a business rule."""
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -446,7 +438,7 @@ def issue_invoice(
             "nfe_status": "rejeitado",
             "nfe_provider": nfe_result.provider,
             "nfe_provider_id": nfe_result.provider_id,
-            "updated_at": _now_iso(),
+            "updated_at": now_utc_iso(),
         }
         _update_fatura(db, fatura_id=fatura_id, payload=update_payload)
         raise FinancialError(
@@ -465,8 +457,8 @@ def issue_invoice(
         "nfe_provider": nfe_result.provider,
         "nfe_provider_id": nfe_result.provider_id,
         "status": "emitida",
-        "issued_at": _now_iso(),
-        "updated_at": _now_iso(),
+        "issued_at": now_utc_iso(),
+        "updated_at": now_utc_iso(),
     }
     if stripe_ids:
         update_payload["stripe_customer_id"] = stripe_ids.get("customer_id")
@@ -552,10 +544,10 @@ def cancel_invoice(
     update_payload = {
         "status": "cancelada",
         "nfe_status": "cancelado" if chave else fatura.get("nfe_status") or "pendente",
-        "canceled_at": _now_iso(),
+        "canceled_at": now_utc_iso(),
         "observacoes": (fatura.get("observacoes") or "")
-        + f"\n[Cancelamento {_now_iso()}]: {justificativa}",
-        "updated_at": _now_iso(),
+        + f"\n[Cancelamento {now_utc_iso()}]: {justificativa}",
+        "updated_at": now_utc_iso(),
     }
     return _update_fatura(db, fatura_id=fatura_id, payload=update_payload)
 
@@ -585,8 +577,8 @@ def mark_paid(
 
     update_payload: dict[str, Any] = {
         "status": "paga",
-        "paid_at": _now_iso(),
-        "updated_at": _now_iso(),
+        "paid_at": now_utc_iso(),
+        "updated_at": now_utc_iso(),
     }
     if stripe_payment_intent_id:
         update_payload["stripe_payment_intent_id"] = stripe_payment_intent_id
@@ -622,7 +614,7 @@ def mark_payment_failed(
         raise FinancialError("Fatura não encontrada")
     update_payload = {
         "status": "vencida",
-        "updated_at": _now_iso(),
+        "updated_at": now_utc_iso(),
     }
     return _update_fatura(db, fatura_id=fatura_id, payload=update_payload)
 

@@ -26,10 +26,12 @@ know about our domain, it goes here.
   `ADMIN_ROLES`, `DEV_ROLES`, `is_dev_or_owner`, etc.). Imported by
   `domain/page_status.py` and `api/` consumers; the placement here
   honors the dep-direction rule.
-- `timeutil.py` — `now_utc()`, `today_utc()`, `current_month_ref()`,
-  `current_day_ref()`, `frozen_time(dt)` context manager. Single
-  source of truth for "current wallclock" / "current period
-  reference" so production + tests agree across UTC midnight.
+- `timeutil.py` — `now_utc()`, `now_utc_iso()`, `today_utc()`,
+  `current_month_ref()`, `current_day_ref()`, `frozen_time(dt)`
+  context manager. Single source of truth for "current wallclock" /
+  "current period reference" so production + tests agree across
+  UTC midnight. `now_utc_iso()` is the canonical ISO-string form,
+  lifted from N=4 byte-identical product-local `_now_iso()` helpers.
 - `tasks.py` — `schedule_coro(coro, *, logger=None, name=None)` +
   `NoRunningLoopError`. Canonical fire-and-forget helper that
   schedules a coroutine on the running loop and logs exceptions

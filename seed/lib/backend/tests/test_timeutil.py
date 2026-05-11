@@ -14,6 +14,7 @@ from noctusai_lib.primitives.timeutil import (
     current_month_ref,
     frozen_time,
     now_utc,
+    now_utc_iso,
     today_utc,
 )
 
@@ -39,6 +40,36 @@ class TestNowUtc:
         # (today is 2026+).
         assert now_utc() != pinned
         assert now_utc().year >= 2026
+
+
+class TestNowUtcIso:
+    def test_returns_str(self):
+        result = now_utc_iso()
+        assert isinstance(result, str)
+
+    def test_format_is_isoformat_with_utc_offset(self):
+        # `datetime.now(timezone.utc).isoformat()` yields a string with
+        # an explicit "+00:00" offset (or "Z" — we never produce "Z";
+        # confirm here so callers can rely on the shape).
+        result = now_utc_iso()
+        assert result.endswith("+00:00")
+
+    def test_roundtrips_through_fromisoformat(self):
+        # The string we emit MUST parse back via `datetime.fromisoformat`
+        # — defends against any future formatting drift.
+        parsed = datetime.fromisoformat(now_utc_iso())
+        assert parsed.tzinfo is not None
+        assert parsed.utcoffset().total_seconds() == 0
+
+    def test_frozen_time_pins_now_utc_iso(self):
+        pinned = datetime(2026, 5, 1, 12, 34, 56, tzinfo=timezone.utc)
+        with frozen_time(pinned):
+            assert now_utc_iso() == "2026-05-01T12:34:56+00:00"
+
+    def test_frozen_time_with_microseconds(self):
+        pinned = datetime(2026, 5, 1, 0, 47, 0, 123456, tzinfo=timezone.utc)
+        with frozen_time(pinned):
+            assert now_utc_iso() == "2026-05-01T00:47:00.123456+00:00"
 
 
 class TestTodayUtc:
