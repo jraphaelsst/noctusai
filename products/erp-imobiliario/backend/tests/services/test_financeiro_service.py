@@ -284,10 +284,13 @@ class TestMarkOverdue:
     @pytest.mark.asyncio
     async def test_marks_overdue_records(self):
         db = MockSupabaseClient()
-        # Bulk update returns the updated rows
+        # Seed `pendente` rows with past `data_vencimento` so the service's
+        # `.eq("status", "pendente").lt("data_vencimento", today)` filter
+        # matches them. The mock's UPDATE then mutates each in place to
+        # `status="atrasado"` and returns them as affected rows.
         db.set_table_data("lancamentos", [
-            {"id": "l1", "status": "atrasado"},
-            {"id": "l2", "status": "atrasado"},
+            {"id": "l1", "status": "pendente", "data_vencimento": yesterday},
+            {"id": "l2", "status": "pendente", "data_vencimento": two_days_ago},
         ])
 
         from app.services.financeiro_service import FinanceiroService

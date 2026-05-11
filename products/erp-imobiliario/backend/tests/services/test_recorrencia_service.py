@@ -263,10 +263,12 @@ class TestVerificarInadimplencia:
         """Pending lancamentos past due should be updated to 'atrasado'."""
         db = MockSupabaseClient()
 
-        # Bulk update returns the updated rows
+        # Seed `pendente` rows with past `data_vencimento` so the service's
+        # `.eq("status", "pendente").lt("data_vencimento", hoje)` filter
+        # matches and the mock UPDATE marks them `atrasado`.
         db.set_table_data("lancamentos", [
-            {"id": "l-1", "status": "atrasado"},
-            {"id": "l-2", "status": "atrasado"},
+            {"id": "l-1", "status": "pendente", "data_vencimento": yesterday},
+            {"id": "l-2", "status": "pendente", "data_vencimento": two_days_ago},
         ])
 
         # parcelas_contrato: no overdue parcelas (bulk update returns empty)
@@ -287,11 +289,12 @@ class TestVerificarInadimplencia:
         # No overdue lancamentos (bulk update returns empty)
         db.set_table_data("lancamentos", [])
 
-        # Bulk update returns the 3 updated parcelas
+        # Seed `pendente` parcelas past due so the service filter matches
+        # them and the mock UPDATE marks them `atrasada`.
         db.set_table_data("parcelas_contrato", [
-            {"id": "p-1", "status": "atrasada"},
-            {"id": "p-2", "status": "atrasada"},
-            {"id": "p-3", "status": "atrasada"},
+            {"id": "p-1", "status": "pendente", "data_vencimento": yesterday},
+            {"id": "p-2", "status": "pendente", "data_vencimento": two_days_ago},
+            {"id": "p-3", "status": "pendente", "data_vencimento": yesterday},
         ])
 
         from app.services.recorrencia_service import RecorrenciaService
@@ -320,14 +323,16 @@ class TestVerificarInadimplencia:
         """Both overdue lancamentos and parcelas are counted."""
         db = MockSupabaseClient()
 
-        # Bulk update returns the updated lancamento
+        # Seed one `pendente` lancamento past due so the service filter matches
+        # and the mock UPDATE marks it `atrasado`.
         db.set_table_data("lancamentos", [
-            {"id": "l-1", "status": "atrasado"},
+            {"id": "l-1", "status": "pendente", "data_vencimento": yesterday},
         ])
 
-        # Bulk update returns the updated parcela
+        # Seed one `pendente` parcela past due so the service filter matches
+        # and the mock UPDATE marks it `atrasada`.
         db.set_table_data("parcelas_contrato", [
-            {"id": "p-1", "status": "atrasada"},
+            {"id": "p-1", "status": "pendente", "data_vencimento": yesterday},
         ])
 
         from app.services.recorrencia_service import RecorrenciaService
