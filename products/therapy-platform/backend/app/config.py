@@ -16,7 +16,7 @@ class TherapySettings(ProductSettings):
     """Therapy Platform specific application settings."""
 
     # CORS — Therapy frontend default port
-    cors_origins: str = "http://localhost:8095,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:therapy-platform"
 
     # AI (global — shared with other products)
     openai_api_key: Optional[str] = None

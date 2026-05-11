@@ -3,7 +3,7 @@ from noctusai_seed import ProductSettings
 
 
 class DailyLifeSettings(ProductSettings):
-    cors_origins: str = "http://localhost:8005,http://localhost:8110,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:daily-life"
 
 
 settings = DailyLifeSettings()

@@ -19,7 +19,7 @@ class SeedSettings(ProductSettings):
     Postgres URL for SQLAlchemy-bound flows (audit hook).
     """
 
-    cors_origins: str = "http://localhost:8096,http://localhost:8130,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:media-scheduling"
 
     # Redis (chatbot buffer + debounce). Empty → worker logs a warning at startup
     # and skips the run-loop; webhook still verifies + parses inbound payloads.

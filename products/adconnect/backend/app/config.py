@@ -10,7 +10,7 @@ from noctusai_seed import ProductSettings
 class SeedSettings(ProductSettings):
     """AdConnect specific settings. No extras — just the framework baseline."""
 
-    cors_origins: str = "http://localhost:8007,http://localhost:8130,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:adconnect"
 
     # Test-only JWT secret. Production auth goes through the seed's
     # `make_get_current_user` factory (Supabase-backed), NOT a custom

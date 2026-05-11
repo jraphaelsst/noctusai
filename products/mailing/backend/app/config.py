@@ -10,7 +10,7 @@ from noctusai_seed import ProductSettings
 class MailingSettings(ProductSettings):
     """Mailing-specific settings."""
 
-    cors_origins: str = "http://localhost:8006,http://localhost:8120,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:mailing"
 
     # Resend
     resend_api_key: str = ""

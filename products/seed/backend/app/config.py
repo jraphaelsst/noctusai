@@ -10,7 +10,7 @@ from noctusai_seed import ProductSettings
 class SeedSettings(ProductSettings):
     """Seed Product specific settings."""
 
-    cors_origins: str = "http://localhost:8004,http://localhost:8100,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:seed"
 
     # ── Webhook receiver (consumed by app/routers/webhook_router.py) ──
     # Empty by default → ``webhook_endpoint(bypass_when_unset=True)``

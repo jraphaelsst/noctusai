@@ -10,7 +10,7 @@ from noctusai_seed import ProductSettings
 class SeedSettings(ProductSettings):
     """YouTube Crawler specific settings. No extras — just the framework baseline."""
 
-    cors_origins: str = "http://localhost:8010,http://localhost:8150,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:youtube-crawler"
 
 
 settings = SeedSettings()

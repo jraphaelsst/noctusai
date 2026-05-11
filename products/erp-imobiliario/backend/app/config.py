@@ -10,7 +10,7 @@ class ERPSettings(ProductSettings):
     """ERP-specific application settings."""
 
     # CORS — ERP frontend default port
-    cors_origins: str = "http://localhost:8080,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:erp-imobiliario"
 
     # AI (optional — graceful degradation if not set)
     openai_api_key: Optional[str] = None
