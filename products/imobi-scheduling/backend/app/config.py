@@ -80,15 +80,26 @@ class ImobiSchedulingSettings(ProductSettings):
     # a model independent of the platform-wide default.
     openai_model: str = "gpt-4o-mini"
 
-    # ── Phase 7 — Scheduling engine knobs (forward-compat stubs) ──
-    # Consumed by `app/services/scheduling.py` (Phase 7) when it builds
-    # `noctusai_lib.domain.scheduling.SchedulingRules`. Empty defaults
-    # mean the engine isn't yet configured.
+    # ── Phase 7 — Scheduling engine knobs (LIVE) ──
+    # Consumed by `app/services/scheduling.py` when it builds
+    # `noctusai_lib.domain.scheduling.SchedulingRules`. Defaults match
+    # Engineer-E's Phase 0 sibling audit:
+    #   morning  09:00-12:00
+    #   lunch    12:00-13:30  (implicit gap between morning_end and afternoon_start)
+    #   afternoon 13:30-16:30
+    #   travel buffer    10 min
+    #   standard slot    90 min
+    #   same-condo slot  60 min  (back-to-back at same location shortens)
+    #   slot grid        30 min  (cursor stride during candidate generation)
     imobi_scheduling_timezone: str = "America/Sao_Paulo"
     imobi_scheduling_morning_start: str = "09:00"
     imobi_scheduling_morning_end: str = "12:00"
     imobi_scheduling_afternoon_start: str = "13:30"
-    imobi_scheduling_afternoon_end: str = "18:00"
+    imobi_scheduling_afternoon_end: str = "16:30"
+    imobi_scheduling_travel_buffer_minutes: int = 10
+    imobi_scheduling_standard_duration_minutes: int = 90
+    imobi_scheduling_same_condo_duration_minutes: int = 60
+    imobi_scheduling_slot_grid_minutes: int = 30
 
 
 settings = ImobiSchedulingSettings()
