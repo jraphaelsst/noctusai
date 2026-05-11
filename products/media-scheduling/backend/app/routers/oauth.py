@@ -15,20 +15,19 @@ Frontend contract (Phase 5 hooks):
   - `GET /oauth/google/callback`   — Google redirects back; we exchange
     code → tokens, persist, redirect to a frontend success page.
 """
-from __future__ import annotations
-
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from app.config import settings
 from app.database import get_supabase_client
 from app.dependencies import get_current_user_org
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +77,8 @@ def _consent_url() -> str:
 
 
 @public_router.get("/init")
-def init_google_oauth_get() -> RedirectResponse:
+@limiter.limit("10/minute")
+def init_google_oauth_get(request: Request) -> RedirectResponse:
     """Browser-redirect flow.
 
     Frontend's `redirectToOAuthInit()` does `window.location.href = '/oauth/google/init'`,
@@ -97,7 +97,8 @@ def init_google_oauth_get() -> RedirectResponse:
 
 
 @public_router.post("/init")
-def init_google_oauth_post() -> dict[str, str]:
+@limiter.limit("10/minute")
+def init_google_oauth_post(request: Request) -> dict[str, str]:
     """Programmatic flow — returns the Google consent URL as JSON.
 
     Per the architect's Phase 3 spec — useful for SPA flows that want to
@@ -120,7 +121,9 @@ def init_google_oauth_post() -> dict[str, str]:
 
 
 @public_router.get("/callback")
+@limiter.limit("10/minute")
 async def google_oauth_callback(
+    request: Request,
     code: str | None = Query(None),
     error: str | None = Query(None),
 ) -> dict[str, Any]:

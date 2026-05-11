@@ -18,7 +18,6 @@
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
 | **YouTube Crawler** | `products/youtube-crawler/` | YouTube Data API v3 + Drive + WAHA + SMTP — quota-aware uploads with Fernet-encrypted refresh tokens (scaffolded 2026-05-05; containerized 2026-05-10 follow-up of `containerization-backlog-closure`) | 8008/8150 | `youtube_crawler` |
 | **Media Scheduling** | `products/media-scheduling/` | Real-estate media-crew scheduling via WhatsApp ↔ OpenAI ↔ Google Calendar (ported 2026-05-04 from sibling repo `whatsapp-google-scheduling/` via `projects/media-scheduling-port/`) | 8096/8140 | `media_scheduling` |
-| **Imobi Scheduling** | `products/imobi-scheduling/` | WhatsApp chatbot scheduling real-estate media crews via OpenAI tool-loop + Google Calendar + Maps travel-time; first chatbot consumer of `noctusai_lib.{integrations.whatsapp,domain.chatbot,domain.scheduling}`; folded 2026-05-11 from sibling repo `whatsapp-google-scheduling/` via `projects/imobi-scheduling-bot-creation/`; single-agency v1, WhatsApp-only (admin UI deferred) | 8011/8160 | `imobi_scheduling` |
 
 > **Port allocation table** of record: `RESERVED_RANGES` in `mcp/noctusai/tools/noctus/dev/scaffold.py`. The `noctus.dev.reserve_port_range` MCP tool consults that list when scaffolding new products; this table mirrors it.
 
@@ -31,19 +30,19 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 28 | 12 | 26 | 0 | 39 | 439 |
+| Core | 28 | 12 | 26 | 0 | 40 | 451 |
 | ERP | 59 | 52 | 67 | 66 | 113 | 1,665 |
 | PF | 15 | 17 | 30 | 16 | 45 | 464 |
-| Therapy | 40 | 45 | 65 | 33 | 78 | 1,095 |
+| Therapy | 40 | 45 | 65 | 33 | 79 | 1,096 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 6 | 7 | 11 | 7 | 14 | 200 |
 | Mailing | 10 | 10 | 21 | 9 | 16 | 192 |
 | AdConnect | 9 | 10 | 16 | 5 | 25 | 216 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 45 |
-| Media Scheduling | 5 | 8 | 10 | 3 | 15 | 78 |
+| Media Scheduling | 5 | 8 | 10 | 3 | 16 | 81 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 13 | 8 | 1 | 22 | 272 |
-| **Total** | **177** | **177** | **275** | **141** | **378** | **4,676** |
+| **Total** | **177** | **177** | **275** | **141** | **381** | **4,692** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

@@ -53,6 +53,22 @@ def pytest_configure(config):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Reset the slowapi limiter between tests.
+
+    slowapi keeps in-memory counters at module scope; without this fixture,
+    decorated endpoints that get hit N+ times across the suite would
+    surface 429s in unrelated tests (auth-rate-limit-rollout 2026-05-11
+    surfaced this in core during the same session).
+    """
+    from app.rate_limit import limiter
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 def _make_client_context(role="therapist", clinic_id=None):
     """Create an AuthClient with mocked auth for a given role.
 

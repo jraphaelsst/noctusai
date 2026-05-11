@@ -6,19 +6,18 @@ POST  /api/sso/validate        — Validate SSO token (called by products)
 GET   /api/sso/launch/{slug}   — Redirect to product with SSO token
 POST  /api/sso/session         — Exchange SSO token for a Supabase session
 """
-from __future__ import annotations
-
 import logging
 import threading
 import time
 from typing import Dict, Optional, Tuple
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.database import get_admin_client, supabase_admin
 from app.dependencies import get_current_user, create_sso_token, verify_sso_token
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sso", tags=["SSO"])
@@ -106,7 +105,8 @@ class SSOValidateRequest(BaseModel):
 
 
 @router.post("/token")
-async def generate_sso_token(body: SSOTokenRequest, authorization: Optional[str] = Header(None)):
+@limiter.limit("20/minute")
+async def generate_sso_token(request: Request, body: SSOTokenRequest, authorization: Optional[str] = Header(None)):
     """Generate a short-lived SSO token to access a product."""
     user, token = await get_current_user(authorization)
     db = get_admin_client()
@@ -144,7 +144,8 @@ async def generate_sso_token(body: SSOTokenRequest, authorization: Optional[str]
 
 
 @router.post("/validate")
-async def validate_sso_token(body: SSOValidateRequest):
+@limiter.limit("20/minute")
+async def validate_sso_token(request: Request, body: SSOValidateRequest):
     """Validate an SSO token. Called by products to verify user access."""
     payload = verify_sso_token(body.token)
     return {
@@ -158,7 +159,8 @@ async def validate_sso_token(body: SSOValidateRequest):
 
 
 @router.get("/launch/{product_slug}")
-async def launch_product(product_slug: str, authorization: Optional[str] = Header(None)):
+@limiter.limit("20/minute")
+async def launch_product(request: Request, product_slug: str, authorization: Optional[str] = Header(None)):
     """Generate SSO token and redirect to the product URL."""
     user, token = await get_current_user(authorization)
     db = get_admin_client()
@@ -377,7 +379,8 @@ def _generate_session(email: str) -> dict:
 
 
 @router.post("/session", response_model=SSOSessionResponse)
-async def sso_session(body: SSOSessionRequest):
+@limiter.limit("20/minute")
+async def sso_session(request: Request, body: SSOSessionRequest):
     """Exchange an SSO token for a Supabase session.
 
     Called by product frontends directly. The Core is the sole owner of

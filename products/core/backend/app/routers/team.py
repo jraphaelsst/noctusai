@@ -26,11 +26,12 @@ POST   /api/team/accept-invite         — Accept invitation by token
 """
 import logging
 from typing import Optional, List
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user
+from app.rate_limit import limiter
 from app.services.permissions import check_permission
 from noctusai_lib.domain.invitations import (
     create_invitation,
@@ -119,7 +120,9 @@ async def listar_membros(authorization: Optional[str] = Header(None)):
 
 
 @router.post("/invite")
+@limiter.limit("30/minute")
 async def convidar_membro(
+    request: Request,
     body: InviteCreate,
     authorization: Optional[str] = Header(None),
 ):
@@ -406,7 +409,9 @@ async def cancelar_convite(
 
 
 @router.post("/accept-invite")
+@limiter.limit("30/minute")
 async def aceitar_convite(
+    request: Request,
     body: AcceptInviteRequest,
     authorization: Optional[str] = Header(None),
 ):

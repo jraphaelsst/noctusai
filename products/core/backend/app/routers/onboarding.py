@@ -12,11 +12,12 @@ PATCH /api/onboarding/complete — Marks a step as completed
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_org_id
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
@@ -44,7 +45,8 @@ class CompanyDetailsUpdate(BaseModel):
 
 
 @router.get("/status")
-async def get_onboarding_status(authorization: Optional[str] = Header(None)):
+@limiter.limit("30/minute")
+async def get_onboarding_status(request: Request, authorization: Optional[str] = Header(None)):
     """Returns onboarding completion state for the current user's organization."""
     user, token = await get_current_user(authorization)
     org_id = await get_org_id(user)
@@ -81,7 +83,9 @@ async def get_onboarding_status(authorization: Optional[str] = Header(None)):
 
 
 @router.patch("/complete")
+@limiter.limit("30/minute")
 async def complete_onboarding_step(
+    request: Request,
     body: StepComplete,
     authorization: Optional[str] = Header(None),
 ):

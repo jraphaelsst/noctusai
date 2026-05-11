@@ -115,7 +115,8 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
 
 
 @router.get("/me")
-async def get_me(authorization: Optional[str] = Header(None)):
+@limiter.limit("30/minute")
+async def get_me(request: Request, authorization: Optional[str] = Header(None)):
     """Get current user info and role-specific profile."""
     user, _ = await get_current_user(authorization)
     admin_db = get_admin_client()

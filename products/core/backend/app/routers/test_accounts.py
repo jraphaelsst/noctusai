@@ -21,11 +21,12 @@ and block checkout/payment flows for test organizations. Test orgs bypass billin
 import logging
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_admin
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/test-accounts", tags=["Test Accounts"])
@@ -39,7 +40,8 @@ class TestAccountCreate(BaseModel):
 
 
 @router.post("")
-async def criar_test_account(body: TestAccountCreate, authorization: Optional[str] = Header(None)):
+@limiter.limit("5/minute")
+async def criar_test_account(request: Request, body: TestAccountCreate, authorization: Optional[str] = Header(None)):
     """Create a test organization with a user, auto-grant all licenses, and unlimited subscription."""
     await get_current_admin(authorization)
     db = get_admin_client()
@@ -131,7 +133,8 @@ async def criar_test_account(body: TestAccountCreate, authorization: Optional[st
 
 
 @router.get("")
-async def listar_test_accounts(authorization: Optional[str] = Header(None)):
+@limiter.limit("5/minute")
+async def listar_test_accounts(request: Request, authorization: Optional[str] = Header(None)):
     """List all test organizations."""
     await get_current_admin(authorization)
     db = get_admin_client()
@@ -141,7 +144,8 @@ async def listar_test_accounts(authorization: Optional[str] = Header(None)):
 
 
 @router.delete("/{org_id}")
-async def desativar_test_account(org_id: str, authorization: Optional[str] = Header(None)):
+@limiter.limit("5/minute")
+async def desativar_test_account(request: Request, org_id: str, authorization: Optional[str] = Header(None)):
     """Deactivate a test organization: revoke licenses, cancel subscription, set category to 'normal'."""
     await get_current_admin(authorization)
     db = get_admin_client()

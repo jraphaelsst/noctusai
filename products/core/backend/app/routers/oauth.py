@@ -14,12 +14,13 @@ The OAuth flow uses Supabase's built-in OAuth:
 import logging
 import re
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.database import get_admin_client, get_supabase_client
 from app.dependencies import get_current_user
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth/oauth", tags=["OAuth"])
@@ -79,7 +80,9 @@ async def list_providers():
 
 
 @router.post("/callback")
+@limiter.limit("10/minute")
 async def oauth_callback(
+    request: Request,
     body: OAuthCallbackBody,
     authorization: Optional[str] = Header(None),
 ):

@@ -296,6 +296,22 @@ def _apply_patches(stack, patches):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Reset the slowapi limiter between tests.
+
+    slowapi keeps in-memory counters at module scope; without this fixture,
+    decorated endpoints that get hit N+ times across the suite would
+    surface 429s in unrelated tests (auth-rate-limit-rollout 2026-05-11
+    surfaced this when the SSO /session endpoint, gated at 20/min, started
+    returning 429 for the 21st-and-onward test that exercises it).
+    """
+    from app.rate_limit import limiter
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 @pytest.fixture
 def mock_user():
     return MockUser()
