@@ -154,19 +154,54 @@ esac
 
 removed=0
 failed=0
+locked_skipped=()
 for wt in "${stale_paths[@]}"; do
-  # Prefer `git worktree remove` (cleans .git/worktrees/<name>/ metadata too).
+  # Try git's safe removal (respects locks + uncommitted-work checks).
   if git worktree remove --force "$wt" 2>/dev/null; then
     removed=$((removed+1))
   else
-    # Fallback for orphans or locked entries: direct rm + prune later.
-    rm -rf "$wt" 2>/dev/null && removed=$((removed+1)) || failed=$((failed+1))
+    # 2026-05-11 incident: THE-P10 engineer's worktree was DESTROYED by an
+    # earlier version of this script that fell back to `rm -rf "$wt"` when
+    # `git worktree remove` refused due to a held lock. The lock meant
+    # "active agent here"; the engineer was mid-verification and lost the
+    # worktree filesystem (branch metadata intact, files gone).
+    #
+    # NEW CONTRACT: if git refuses to remove, we DO NOT bypass with rm -rf.
+    # Locks exist for a reason. Surface the path as a manual-review finding
+    # and let the user decide. Same shape as the mole's "resolve before
+    # sweep" rule (KB § PATTERNS/storage-hygiene.md §2.3).
+    #
+    # For TRUE orphans (path exists but git doesn't know about it — caught
+    # by the second loop at lines 80-86), `git worktree remove` will report
+    # "is not a working tree" and we can safely rm -rf. But locks are NOT
+    # orphans. Distinguish by re-asking git.
+    if git worktree list --porcelain | grep -qF "worktree $wt"; then
+      # Git knows about it → lock held or active. SKIP destructively; surface.
+      locked_skipped+=("$wt")
+      failed=$((failed+1))
+    else
+      # Git doesn't know about it → true orphan, safe to direct-rm.
+      rm -rf "$wt" 2>/dev/null && removed=$((removed+1)) || failed=$((failed+1))
+    fi
   fi
 done
 
 git worktree prune 2>/dev/null || true
 
 echo "✓ Cleanup complete: $removed removed, $failed failed."
-if [ "$failed" -gt 0 ]; then
-  echo "  · Failed entries may need manual `git worktree remove --force <path>`."
+if [ "${#locked_skipped[@]+x}" = "x" ] && [ "${#locked_skipped[@]}" -gt 0 ]; then
+  echo ""
+  echo "─── SKIPPED (locked or active — NEVER auto-destroyed) ───"
+  for wt in "${locked_skipped[@]}"; do
+    echo "  • $wt"
+  done
+  echo ""
+  echo "  These paths are git-registered worktrees whose lock was held"
+  echo "  when removal was attempted. Lock = 'another process is using this'."
+  echo "  DO NOT rm -rf manually — investigate first:"
+  echo "    git worktree list --porcelain | grep -A 2 '<path>'   # see lock reason"
+  echo "    lsof '<path>' 2>/dev/null                            # check for live PID"
+  echo "    cd '<path>' && git status                            # check for uncommitted work"
+  echo "  Only after verifying nothing is using it:"
+  echo "    git worktree unlock '<path>' && git worktree remove '<path>'"
 fi
