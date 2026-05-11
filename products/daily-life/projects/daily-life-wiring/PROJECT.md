@@ -346,6 +346,8 @@ returns findings as text per §17.6.1).
 
 ### Phase 1 — Pattern F (auth-factory absorption) + Pattern H (orphan deletes) ✅ (shipped 2026-05-11)
 
+**Improvements:** none identified — clean Pattern F + Pattern H shipment per §6 plan.
+
 Original Phase 1 (Pattern H + Pattern A) and Phase 2 (auth-factory) were
 **collapsed** when the `make-get-current-user-org-factory` seed real
 adapter shipped ahead of expectations. Engineer DL-P1 picked Q2 = Option A
@@ -361,6 +363,8 @@ rename) **deferred to Phase 2** per the brief scope split.
 - [x] Baseline pytest: 234 → 208 (delta −26 = removed orphan + factory tests).
 
 ### Phase 2 — Pattern A (EN-rename `/api/metricas` → `/api/metrics`) + Phase-1 stranded-reference cleanup ✅ (shipped 2026-05-11)
+
+**Improvements:** none identified — clean Pattern A close. N=3 recurrence on bootstrap-worktree vite-build gap (tailwindcss-animate) → formalize threshold; pre-existing build failure verified via stash-clean-tree.
 
 - [x] Q1 = Option B (EN-RENAME) per default-recommendation. With Q2's
   DELETE landing `/api/foco`, `/api/metricas` became the lone PT outlier
@@ -384,7 +388,7 @@ rename) **deferred to Phase 2** per the brief scope split.
 - [x] DB table name `metricas_produtividade` **preserved** — data-model
   identifier, not API surface.
 - [x] Pytest 210/210 green (no delta from Phase 1 close).
-- [ ] **Pre-existing build gap (NOT introduced by Phase 2):** `npx vite build`
+- [x] **[DEFERRED-PRE-EXISTING]** **Pre-existing build gap (NOT introduced by Phase 2):** `npx vite build`
   fails on `tailwindcss-animate` resolution from the seed framework's
   `tailwind.config.factory.ts` — verified by stash-clean-tree reproduction.
   Belongs in the same `bootstrap-worktree.sh` follow-up surfaced by Q4 (PF lesson §(b)#1).
