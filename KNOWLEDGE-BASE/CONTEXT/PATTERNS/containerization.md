@@ -676,6 +676,24 @@ docker pull aquasec/trivy:0.49.1          # CI image scanning (T9, §11f)
 After this, `./start.sh` works offline (only product layers rebuild
 when product code changes; bases come from cache).
 
+### Frontend deps pre-install (one-time per clone, parallel to the pull recipe)
+
+The dev override bind-mounts the host's `./frontend` directory ON TOP
+of the in-image `node_modules/` (see §11d pitfall) — fresh clones need
+host `node_modules/` populated before `docker compose up` or vite
+crashes with "cannot find package vite". Run once:
+
+```bash
+./scripts/first-time-setup.sh
+```
+
+The script runs `npm install` in `seed/framework/frontend`,
+`seed/lib/frontend`, and every `products/<slug>/frontend/` (driving off
+start.sh's `BEGIN/END_PRODUCTS_REGISTRY` so new products are picked up
+automatically). Idempotent on re-runs (npm install with an unchanged
+`package-lock.json` is a fast no-op). Architectural alternative (skips
+the per-clone install) documented at §11d.
+
 ---
 
 ## 10 · Native vs Docker — which to use when
@@ -1703,11 +1721,16 @@ N=2 today (two `!reset` rounds: HMR Option B's build+command, then 2026-05-11 ex
   same path. The host directory typically has `node_modules/` (from
   local `npm install`) — that one wins. If the host's `node_modules` is
   stale or missing, dev startup fails with "cannot find package vite".
-  Either (a) `npm install` on the host first, OR (b) narrow the
-  bind-mount to `./frontend/src:/app/products/<slug>/frontend/src` so
-  only source is overlaid and the in-image `node_modules` survives.
-  Current shape uses (a); first-time users must run `npm install` per
-  product before `docker compose up`.
+  Workaround: `./scripts/first-time-setup.sh` once per fresh clone;
+  idempotent on re-runs (npm install with existing node_modules + an
+  unchanged package-lock.json is a fast no-op). The script drives off
+  start.sh's `BEGIN/END_PRODUCTS_REGISTRY` sentinels so newly-scaffolded
+  products are auto-covered. Architectural alternative (no per-clone
+  install): narrow the bind-mount to
+  `./frontend/src:/app/products/<slug>/frontend/src` so only source is
+  overlaid and the in-image `node_modules` survives — trade-off is HMR
+  no longer auto-reloads on root-level config edits (vite.config.ts,
+  package.json, tsconfig.json). Current shape uses the install path.
 - **`--host 0.0.0.0` is non-negotiable.** Vite's default `localhost`
   binding inside a container = unreachable from the host. The
   override's `command:` MUST include it. The `dev` stage's default
