@@ -1552,11 +1552,43 @@ The combination of **(a) auto-cleanup on merge** + **(b) pre-flight at bootstrap
 - **Skipping `git worktree prune` after `rm -rf`.** Leaves `.git/worktrees/<name>/` metadata orphans that confuse later `git worktree list` output. The script always invokes it.
 - **Using `--force` interactively without dry-run first.** The first sweep on a heavily-accumulated worktree dir should always start with `--dry-run` to confirm the active-vs-stale classification before committing to removal.
 
-### 19.6 — References
+### 19.6 — Disk-usage monitor (NEW 2026-05-11)
+
+The cleanup mechanism handles RECOVERY. The monitor handles PREVENTION — warns at thresholds long before disk pressure becomes a 100% lockout.
+
+**`scripts/disk-usage-monitor.sh`** — severity-tagged disk health check.
+
+| % used | Severity | Exit code | Action |
+|---|---|---|---|
+| <70% | OK | 0 | No action |
+| 70-79% | CAUTION | 1 | Schedule a sweep soon; orchestrator surfaces note to user |
+| 80-89% | WARNING | 2 | Cleanup REQUIRED before new dispatches; orchestrator pre-dispatch gate fails |
+| 90-100% | CRITICAL | 3 | Harness lockout imminent; immediate manual recovery (cleanup + `docker system prune` + `sudo purge`) |
+
+```bash
+bash scripts/disk-usage-monitor.sh                # status report
+bash scripts/disk-usage-monitor.sh --quiet        # exit code only (cron-friendly)
+bash scripts/disk-usage-monitor.sh --auto-clean   # if ≥70%, automatically run cleanup-stale-worktrees.sh --force
+```
+
+**Invocation triggers**:
+
+| Trigger | Mechanism | Behavior |
+|---|---|---|
+| **Orchestrator startup** | First Bash call in every orchestrator session invokes `--quiet` and reads exit code. ≥70% surfaces a CAUTION note to user (one-line, not blocking). | Surfaces pressure BEFORE engineer dispatches commit disk. |
+| **Pre-dispatch gate** | Before dispatching any new `Agent(isolation: "worktree")` engineer, check exit code. Refuse dispatch at ≥80% (WARNING) — surface to user with cleanup recipe. | Structural prevention of the disk-full lockout. |
+| **`bootstrap-worktree.sh`** | Already invokes `cleanup-stale-worktrees.sh --force` as pre-flight. The monitor adds: if post-cleanup still ≥80%, refuse hydrate. | Engineer-side guard. |
+| **Nightly cron** | `0 3 * * * bash scripts/disk-usage-monitor.sh --auto-clean` | Auto-recovers any session that left stale worktrees behind. |
+| **Manual ops check** | `bash scripts/disk-usage-monitor.sh` ad-hoc. | User-initiated health check. |
+
+**Orchestrator's responsibility (NEW)**: before dispatching, the orchestrator runs `disk-usage-monitor.sh --quiet` and surfaces severity. At CAUTION the dispatch proceeds with a note. At WARNING the dispatch is gated until cleanup. At CRITICAL the orchestrator stops dispatching entirely and surfaces full recovery recipe.
+
+### 19.7 — References
 
 - `scripts/cleanup-stale-worktrees.sh` — the canonical sweep (added 2026-05-11).
+- `scripts/disk-usage-monitor.sh` — severity-tagged monitor + warning thresholds (added 2026-05-11).
 - §16.7 — worktree-base verification (Step 0 — bootstrap; this rule extends Step 0 with cleanup-before-hydrate).
 - §18.4 — Resource-bounded engineer parallelism (this rule reduces the disk dimension of "resource-bounded").
 - `archive/projects/2026-05-11/16-personal-finance-wiring/proposals/phase-7-disk-space-preflight.md` — Engineer FFF's disk-full slip + the bootstrap pre-flight recipe.
 
-**Three-way-synced 2026-05-11**: this subsection (§19) + memory entry `feedback_worktree_auto_cleanup.md` + CLAUDE.md §1 universal-rules pointer (no new bullet — KB pointer suffices since §19 is self-contained methodology).
+**Three-way-synced 2026-05-11**: this subsection (§19) + memory entries `feedback_worktree_auto_cleanup.md` + `feedback_disk_usage_monitor.md` + CLAUDE.md §1 universal-rules pointer (no new bullet — KB pointer suffices since §19 is self-contained methodology).
