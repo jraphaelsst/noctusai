@@ -28,6 +28,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 
 from ..auth_deps import get_current_user
+from ..config import settings
+from ..rate_limit import limiter
 from ..database import _db as _db_module
 from ..schemas.financial import (
     CancelRequest,
@@ -255,6 +257,7 @@ def cancel_invoice(
 
 
 @router.post("/webhook/stripe", status_code=200)
+@limiter.limit(settings.webhook_rate_limit)
 async def stripe_webhook(request: Request) -> dict[str, Any]:
     """Stripe webhook handler — routes invoice.paid + invoice.payment_failed
     events back to faturas.

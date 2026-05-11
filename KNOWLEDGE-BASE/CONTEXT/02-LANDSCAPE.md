@@ -37,12 +37,12 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 7 | 7 | 11 | 7 | 15 | 226 |
 | Mailing | 10 | 10 | 21 | 9 | 16 | 184 |
-| AdConnect | 9 | 10 | 16 | 5 | 25 | 214 |
+| AdConnect | 9 | 10 | 16 | 5 | 25 | 216 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 43 |
 | Media Scheduling | 5 | 8 | 10 | 3 | 13 | 56 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 13 | 8 | 1 | 22 | 272 |
-| **Total** | **178** | **177** | **275** | **141** | **376** | **4,660** |
+| **Total** | **178** | **177** | **275** | **141** | **376** | **4,662** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
