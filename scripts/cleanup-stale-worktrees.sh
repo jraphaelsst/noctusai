@@ -112,8 +112,15 @@ while IFS= read -r d; do
   fi
 done < <(find "$WORKTREE_DIR" -maxdepth 1 -type d -name "agent-*" 2>/dev/null)
 
-# Dedupe stale_paths.
-mapfile -t stale_paths < <(printf '%s\n' "${stale_paths[@]}" | awk '!seen[$0]++')
+# Dedupe stale_paths. Portable for bash 3.x (macOS default) — `mapfile` is bash 4+.
+# The `${arr[@]+"${arr[@]}"}` pattern handles empty arrays under `set -u`.
+_dedup_paths=()
+if [ "${#stale_paths[@]}" -gt 0 ]; then
+  while IFS= read -r _p; do
+    _dedup_paths+=("$_p")
+  done < <(printf '%s\n' "${stale_paths[@]}" | awk '!seen[$0]++')
+fi
+stale_paths=("${_dedup_paths[@]+"${_dedup_paths[@]}"}")
 
 echo "Worktree-cleanup scan:"
 echo "  · main:           $REPO_ROOT"
