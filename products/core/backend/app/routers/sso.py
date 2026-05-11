@@ -13,11 +13,11 @@ from typing import Dict, Optional, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel
 
 from app.database import get_admin_client, supabase_admin
 from app.dependencies import get_current_user, create_sso_token, verify_sso_token
 from app.rate_limit import limiter
+from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOValidateRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sso", tags=["SSO"])
@@ -94,14 +94,6 @@ def invalidate_sso_cache_for_org(db, org_id: str) -> int:
 class _RateLimitError(Exception):
     """Internal signal for Supabase rate limit — caught by the endpoint."""
     pass
-
-
-class SSOTokenRequest(BaseModel):
-    product_slug: str
-
-
-class SSOValidateRequest(BaseModel):
-    token: str
 
 
 @router.post("/token")
@@ -272,17 +264,6 @@ def _enrich_sso_metadata(db, metadata: dict, org_id: str | None, product_slug: s
                     metadata["license_expires_at"] = lic.data[0].get("fim")
         except Exception as exc:
             logger.debug("SSO enrich: license query failed: %s", exc)
-
-
-class SSOSessionRequest(BaseModel):
-    token: str
-
-
-class SSOSessionResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    user_id: str
-    email: str
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:

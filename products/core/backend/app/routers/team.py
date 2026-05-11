@@ -27,12 +27,12 @@ POST   /api/team/accept-invite         — Accept invitation by token
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
 from app.services.permissions import check_permission
+from app.schemas.team import AcceptInviteRequest, InviteCreate, TeamMemberRoleUpdate
 from noctusai_lib.domain.invitations import (
     create_invitation,
     validate_invitation,
@@ -43,24 +43,6 @@ from noctusai_lib.domain.invitations import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/team", tags=["Team"])
-
-
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
-
-class InviteCreate(BaseModel):
-    email: str = Field(..., max_length=255)
-    role: str = Field(default="member", max_length=50)
-
-
-class TeamMemberRoleUpdate(BaseModel):
-    role: str = Field(..., max_length=50)
-
-
-class AcceptInviteRequest(BaseModel):
-    token: str = Field(..., max_length=128)
-    nome: Optional[str] = Field(default=None, max_length=200)
 
 
 # ---------------------------------------------------------------------------
