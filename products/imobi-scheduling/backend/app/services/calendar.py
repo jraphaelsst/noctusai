@@ -415,11 +415,106 @@ def create_calendar_event(
     return module.adapter.create_event(target_calendar, event)
 
 
+# ---------------------------------------------------------------------------
+# Phase 9 — cancel + update wrappers
+# ---------------------------------------------------------------------------
+
+
+def cancel_calendar_event(
+    *,
+    event_id: str,
+    calendar_id: Optional[str] = None,
+) -> None:
+    """Delete a previously-created Calendar event.
+
+    Phase 9 wires this into ``SchedulingService.cancel_appointment`` as the
+    ``calendar_event_canceler`` seam. Failure during deletion is LOGGED but
+    NOT raised back through the service — the DB-side status flip to
+    ``cancelled`` must succeed even when Calendar deletion fails (the user
+    can clean up stale events manually; double-cancellation would leave the
+    DB in an inconsistent state).
+
+    Args:
+        event_id: The Google Calendar event id (``google_calendar_event_id``
+            on the appointment row).
+        calendar_id: Override default; falls back to module's
+            ``default_calendar_id``.
+
+    Raises:
+        RuntimeError: If the module is not configured.
+    """
+    module = get_calendar_module()
+    target_calendar = calendar_id or module.default_calendar_id
+    module.adapter.delete_event(target_calendar, event_id)
+
+
+def update_calendar_event(
+    *,
+    event_id: str,
+    summary: str,
+    start_at: Any,
+    end_at: Any,
+    timezone: str,
+    appointment_request_id: str,
+    description: Optional[str] = None,
+    location: Optional[str] = None,
+    attendee_emails: Optional[list[str]] = None,
+    calendar_id: Optional[str] = None,
+) -> CreatedEvent:
+    """Update a Calendar event (used by reschedule).
+
+    Same ``request_id`` derivation as ``create_calendar_event`` — the
+    seed adapters keep the existing event_id intact and mutate
+    start/end/description/etc. The ``EventInput.request_id`` is stamped on
+    the body so Fake-adapter tests can verify stability.
+
+    Args:
+        event_id: The existing event id to update.
+        summary / start_at / end_at / timezone / appointment_request_id /
+        description / location / attendee_emails: Same as
+        ``create_calendar_event``.
+        calendar_id: Override default; falls back to module's
+            ``default_calendar_id``.
+
+    Returns:
+        The seed's ``CreatedEvent`` value object reflecting the post-update
+        body (event_id + html_link + raw).
+
+    Raises:
+        RuntimeError: If the module is not configured.
+    """
+    module = get_calendar_module()
+    target_calendar = calendar_id or module.default_calendar_id
+
+    request_id = make_request_id(
+        appointment_request_id=appointment_request_id,
+        start_at_iso=start_at.isoformat(),
+    )
+    attendees = (
+        [EventAttendee(email=email) for email in attendee_emails]
+        if attendee_emails
+        else []
+    )
+    event = EventInput(
+        summary=summary,
+        start_at=start_at,
+        end_at=end_at,
+        timezone=timezone,
+        description=description,
+        location=location,
+        attendees=attendees,
+        request_id=request_id,
+    )
+    return module.adapter.update_event(target_calendar, event_id, event)
+
+
 __all__ = [
     "CalendarModule",
     "SupabaseCalendarCredentialResolver",
+    "cancel_calendar_event",
     "configure_calendar_module",
     "create_calendar_event",
     "get_calendar_module",
     "make_request_id",
+    "update_calendar_event",
 ]

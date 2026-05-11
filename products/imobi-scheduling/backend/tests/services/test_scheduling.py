@@ -22,6 +22,7 @@ already covers its math).
 from __future__ import annotations
 
 from datetime import date, datetime, time, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -749,3 +750,578 @@ class TestServiceConfirmAppointmentCalendarFactory:
             p.get("google_calendar_event_id") == "caller-supplied-event-id"
             for p in inserted
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — cancel_appointment
+# ---------------------------------------------------------------------------
+
+
+def _scheduled_appt_row(
+    *,
+    appt_id: str = "aaaaaaa1-0000-0000-0000-000000000001",
+    google_event_id: str | None = "evt-google-001",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    status: str = "scheduled",
+) -> dict:
+    """Stand-in for an existing `appointments` row used by cancel/reschedule fetches."""
+    start = start or datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
+    end = end or datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
+    return {
+        "id": appt_id,
+        "org_id": ORG_ID,
+        "status": status,
+        "google_calendar_event_id": google_event_id,
+        "condominium_id": _condo_id(),
+        "property_id": "ppppppp1-0000-0000-0000-000000000001",
+        "start_at": start.isoformat(),
+        "end_at": end.isoformat(),
+        "appointment_request_id": None,
+        "media_crew_user_id": None,
+    }
+
+
+class TestServiceCancelAppointment:
+    """`SchedulingService.cancel_appointment` Phase 9 flow:
+
+      - flips ``status`` to ``cancelled`` + writes audit columns;
+      - calls the ``calendar_event_canceler`` for rows with a Calendar id;
+      - tolerates Calendar-side failures (DB flip still lands);
+      - idempotent on already-cancelled rows.
+    """
+
+    def test_returns_cancelled_true_and_updates_audit_columns(self):
+        from app.services.scheduling import (
+            CancellationResult,
+            SchedulingService,
+            build_rules,
+        )
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(data=[_scheduled_appt_row(appt_id=appt_id)]),  # fetch
+                MockSupabaseResponse(data=[]),                                       # update
+            ],
+        )
+
+        result = svc.cancel_appointment(
+            appointment_id=appt_id,
+            reason="cliente desistiu",
+        )
+        assert isinstance(result, CancellationResult)
+        assert result.cancelled is True
+        assert result.appointment_id == appt_id
+
+        updated = svc._scoped.table("appointments").updated_payloads
+        assert len(updated) == 1
+        assert updated[0]["status"] == "cancelled"
+        assert updated[0]["cancellation_reason"] == "cliente desistiu"
+        assert updated[0]["cancelled_at"]  # truthy ISO string
+
+    def test_returns_not_found_when_row_missing(self):
+        from app.services.scheduling import SchedulingService, build_rules
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+        )
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [MockSupabaseResponse(data=[])],
+        )
+        result = svc.cancel_appointment(
+            appointment_id="missing-uuid",
+            reason="whatever",
+        )
+        assert result.cancelled is False
+        assert "appointment not found" in (result.reason or "")
+        # No update fired.
+        updated = svc._scoped.table("appointments").updated_payloads
+        assert updated == []
+
+    def test_idempotent_when_already_cancelled(self):
+        """Calling cancel on an already-cancelled row returns cancelled=False
+        with a stable reason (not an exception, not a second flip)."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [MockSupabaseResponse(
+                data=[_scheduled_appt_row(appt_id=appt_id, status="cancelled")]
+            )],
+        )
+        result = svc.cancel_appointment(
+            appointment_id=appt_id,
+            reason="re-cancel",
+        )
+        assert result.cancelled is False
+        assert "'cancelled'" in (result.reason or "")
+        # No update fired (second cancel is a no-op).
+        updated = svc._scoped.table("appointments").updated_payloads
+        assert updated == []
+
+    def test_calls_calendar_canceler_when_wired(self):
+        """Successful DB cancel + a wired canceler → canceler invoked with event_id."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        calls: list[dict] = []
+
+        def _canceler(*, event_id: str) -> None:
+            calls.append({"event_id": event_id})
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+            calendar_event_canceler=_canceler,
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(
+                    data=[_scheduled_appt_row(appt_id=appt_id, google_event_id="evt-zzz")]
+                ),
+                MockSupabaseResponse(data=[]),
+            ],
+        )
+        result = svc.cancel_appointment(
+            appointment_id=appt_id,
+            reason=None,
+        )
+        assert result.cancelled is True
+        assert result.calendar_deleted is True
+        assert calls == [{"event_id": "evt-zzz"}]
+
+    def test_tolerates_calendar_delete_failure(self):
+        """Calendar delete raises → DB cancellation still lands; ``calendar_deleted=False``."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        def _failing_canceler(*, event_id: str) -> None:
+            raise RuntimeError("calendar API down")
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+            calendar_event_canceler=_failing_canceler,
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(
+                    data=[_scheduled_appt_row(appt_id=appt_id, google_event_id="evt-xxx")]
+                ),
+                MockSupabaseResponse(data=[]),
+            ],
+        )
+        result = svc.cancel_appointment(
+            appointment_id=appt_id,
+            reason=None,
+        )
+        assert result.cancelled is True
+        assert result.calendar_deleted is False
+        # DB update still landed.
+        updated = svc._scoped.table("appointments").updated_payloads
+        assert len(updated) == 1
+        assert updated[0]["status"] == "cancelled"
+
+    def test_skips_calendar_when_event_id_absent(self):
+        """Row without a ``google_calendar_event_id`` → canceler is NOT called."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        calls: list[dict] = []
+
+        def _canceler(*, event_id: str) -> None:
+            calls.append({"event_id": event_id})
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+            calendar_event_canceler=_canceler,
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(
+                    data=[_scheduled_appt_row(appt_id=appt_id, google_event_id=None)]
+                ),
+                MockSupabaseResponse(data=[]),
+            ],
+        )
+        result = svc.cancel_appointment(appointment_id=appt_id)
+        assert result.cancelled is True
+        assert result.calendar_deleted is False
+        assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — reschedule_appointment
+# ---------------------------------------------------------------------------
+
+
+class TestServiceRescheduleAppointment:
+    """`SchedulingService.reschedule_appointment` Phase 9 flow:
+
+      - re-validates the new slot against current bookings (excluding the
+        row being moved);
+      - flips ``start_at`` / ``end_at`` + writes audit columns (previous_*,
+        rescheduled_at);
+      - calls the ``calendar_event_updater`` when wired;
+      - rejects conflicts + not-found + invalid state.
+    """
+
+    def test_returns_rescheduled_true_and_audit_columns(self):
+        from app.services.scheduling import (
+            RescheduleResult,
+            SchedulingService,
+            build_rules,
+        )
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
+        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(
+                    data=[_scheduled_appt_row(
+                        appt_id=appt_id, start=old_start, end=old_end,
+                    )]
+                ),
+                # The conflict-revalidation fetches the day's existing rows.
+                # Only the row being moved is in the day; the service filters
+                # it out before applying conflict rules.
+                MockSupabaseResponse(data=[_appt_row(
+                    start=old_start, end=old_end, appt_id=appt_id,
+                )]),
+                MockSupabaseResponse(data=[]),  # update
+            ],
+        )
+
+        result = svc.reschedule_appointment(
+            appointment_id=appt_id,
+            new_start_at="2026-05-15T14:00:00-03:00",
+            new_end_at="2026-05-15T15:30:00-03:00",
+        )
+        assert isinstance(result, RescheduleResult)
+        assert result.rescheduled is True
+        assert result.appointment_id == appt_id
+
+        updated = svc._scoped.table("appointments").updated_payloads
+        assert len(updated) == 1
+        payload = updated[0]
+        assert payload["start_at"] == "2026-05-15T14:00:00-03:00"
+        assert payload["end_at"] == "2026-05-15T15:30:00-03:00"
+        # Previous-slot audit columns capture the old times.
+        assert payload["previous_start_at"] == old_start.isoformat()
+        assert payload["previous_end_at"] == old_end.isoformat()
+        assert payload["rescheduled_at"]  # truthy ISO string
+
+    def test_rejects_new_slot_conflict(self):
+        """A different appointment overlaps the new slot → rescheduled=False."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
+        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
+        # Another booking blocks the new slot.
+        blocker_start = datetime(2026, 5, 15, 14, 0, tzinfo=TZ_BR)
+        blocker_end = datetime(2026, 5, 15, 15, 30, tzinfo=TZ_BR)
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(
+                    data=[_scheduled_appt_row(
+                        appt_id=appt_id, start=old_start, end=old_end,
+                    )]
+                ),
+                MockSupabaseResponse(data=[
+                    _appt_row(start=old_start, end=old_end, appt_id=appt_id),
+                    _appt_row(
+                        start=blocker_start, end=blocker_end,
+                        appt_id="aaaaaaa2-0000-0000-0000-000000000002",
+                    ),
+                ]),
+            ],
+        )
+        result = svc.reschedule_appointment(
+            appointment_id=appt_id,
+            new_start_at="2026-05-15T14:00:00-03:00",
+            new_end_at="2026-05-15T15:30:00-03:00",
+        )
+        assert result.rescheduled is False
+        assert "conflicts" in (result.reason or "")
+        # No DB update fired.
+        updated = svc._scoped.table("appointments").updated_payloads
+        assert updated == []
+
+    def test_returns_not_found_when_row_missing(self):
+        from app.services.scheduling import SchedulingService, build_rules
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+        )
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [MockSupabaseResponse(data=[])],
+        )
+        result = svc.reschedule_appointment(
+            appointment_id="missing-uuid",
+            new_start_at="2026-05-15T14:00:00-03:00",
+            new_end_at="2026-05-15T15:30:00-03:00",
+        )
+        assert result.rescheduled is False
+        assert "appointment not found" in (result.reason or "")
+
+    def test_rejects_end_before_start(self):
+        from app.services.scheduling import SchedulingService, build_rules
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+        )
+        result = svc.reschedule_appointment(
+            appointment_id="any-uuid",
+            new_start_at="2026-05-15T15:30:00-03:00",
+            new_end_at="2026-05-15T14:00:00-03:00",
+        )
+        assert result.rescheduled is False
+        assert "strictly after" in (result.reason or "")
+
+    def test_calls_calendar_updater_when_wired(self):
+        """Successful reschedule + wired updater → updater invoked with event_id + new slot."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        calls: list[dict] = []
+
+        def _updater(**kwargs) -> Any:  # noqa: ANN401 — flexible kwargs accepted.
+            calls.append(kwargs)
+            return {"event_id": kwargs.get("event_id"), "ok": True}
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+            calendar_event_updater=_updater,
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
+        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(
+                    data=[_scheduled_appt_row(
+                        appt_id=appt_id,
+                        start=old_start, end=old_end,
+                        google_event_id="evt-rsv-001",
+                    )]
+                ),
+                MockSupabaseResponse(data=[_appt_row(
+                    start=old_start, end=old_end, appt_id=appt_id,
+                )]),
+                MockSupabaseResponse(data=[]),  # update
+            ],
+        )
+        # The reschedule helper looks up condo + property names for the summary refresh.
+        svc._scoped.set_sequential_responses(
+            "condominiums",
+            [MockSupabaseResponse(data=[_condo_row()])],
+        )
+        svc._scoped.set_sequential_responses(
+            "properties",
+            [MockSupabaseResponse(data=[_property_row()])],
+        )
+
+        result = svc.reschedule_appointment(
+            appointment_id=appt_id,
+            new_start_at="2026-05-15T14:00:00-03:00",
+            new_end_at="2026-05-15T15:30:00-03:00",
+        )
+        assert result.rescheduled is True
+        assert result.calendar_updated is True
+        assert len(calls) == 1
+        assert calls[0]["event_id"] == "evt-rsv-001"
+
+    def test_tolerates_calendar_update_failure(self):
+        """Calendar updater raises → DB-side reschedule still lands; ``calendar_updated=False``."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        def _failing_updater(**kwargs) -> Any:  # noqa: ANN401 — flexible kwargs accepted.
+            raise RuntimeError("calendar quota exhausted")
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+            calendar_event_updater=_failing_updater,
+        )
+        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
+        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
+        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(
+                    data=[_scheduled_appt_row(
+                        appt_id=appt_id,
+                        start=old_start, end=old_end,
+                        google_event_id="evt-fail-001",
+                    )]
+                ),
+                MockSupabaseResponse(data=[_appt_row(
+                    start=old_start, end=old_end, appt_id=appt_id,
+                )]),
+                MockSupabaseResponse(data=[]),
+            ],
+        )
+        svc._scoped.set_sequential_responses(
+            "condominiums",
+            [MockSupabaseResponse(data=[_condo_row()])],
+        )
+        svc._scoped.set_sequential_responses(
+            "properties",
+            [MockSupabaseResponse(data=[_property_row()])],
+        )
+
+        result = svc.reschedule_appointment(
+            appointment_id=appt_id,
+            new_start_at="2026-05-15T14:00:00-03:00",
+            new_end_at="2026-05-15T15:30:00-03:00",
+        )
+        assert result.rescheduled is True
+        assert result.calendar_updated is False
+        # DB update still landed.
+        updated = svc._scoped.table("appointments").updated_payloads
+        assert len(updated) == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — calendar wrappers (cancel + update)
+# ---------------------------------------------------------------------------
+
+
+class TestCalendarCancelAndUpdateWrappers:
+    """`app.services.calendar.cancel_calendar_event` + `update_calendar_event`
+    route through the configured adapter's `delete_event` / `update_event`."""
+
+    def _wire_fake_module(self):
+        from noctusai_lib.integrations.google_calendar import FakeCalendarAdapter
+
+        from app.services import calendar as calendar_module
+
+        calendar_module._reset_for_tests()
+        adapter = FakeCalendarAdapter(supports_attendees=True)
+        calendar_module.configure_calendar_module(
+            admin_client=None,
+            org_id=ORG_ID,
+            default_calendar_id="primary",
+            adapter=adapter,
+        )
+        return adapter, calendar_module
+
+    def test_cancel_calendar_event_removes_from_fake(self):
+        from app.services.calendar import (
+            cancel_calendar_event,
+            create_calendar_event,
+        )
+
+        adapter, calendar_module = self._wire_fake_module()
+        start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
+        end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
+        created = create_calendar_event(
+            summary="Visita técnica",
+            start_at=start,
+            end_at=end,
+            timezone="America/Sao_Paulo",
+            appointment_request_id="req-c-1",
+        )
+        # Event is on the fake before cancellation.
+        assert adapter.get_event("primary", created.event_id) is not None
+
+        cancel_calendar_event(event_id=created.event_id)
+
+        # After deletion, the fake no longer has the event.
+        assert adapter.get_event("primary", created.event_id) is None
+        calendar_module._reset_for_tests()
+
+    def test_update_calendar_event_mutates_start_and_end(self):
+        from app.services.calendar import (
+            create_calendar_event,
+            update_calendar_event,
+        )
+
+        adapter, calendar_module = self._wire_fake_module()
+        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
+        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
+        created = create_calendar_event(
+            summary="Visita técnica — Aurora — AP-2034",
+            start_at=old_start,
+            end_at=old_end,
+            timezone="America/Sao_Paulo",
+            appointment_request_id="req-u-1",
+        )
+
+        new_start = datetime(2026, 5, 15, 14, 0, tzinfo=TZ_BR)
+        new_end = datetime(2026, 5, 15, 15, 30, tzinfo=TZ_BR)
+        updated = update_calendar_event(
+            event_id=created.event_id,
+            summary="Visita técnica — Aurora — AP-2034",
+            start_at=new_start,
+            end_at=new_end,
+            timezone="America/Sao_Paulo",
+            appointment_request_id="req-u-1",
+        )
+        # Event id is preserved across the update.
+        assert updated.event_id == created.event_id
+
+        # The fake's stored body reflects the new times.
+        latest = adapter.get_event("primary", created.event_id)
+        assert latest is not None
+        assert latest.raw["start"]["dateTime"].startswith("2026-05-15T14:00:00")
+        assert latest.raw["end"]["dateTime"].startswith("2026-05-15T15:30:00")
+        calendar_module._reset_for_tests()

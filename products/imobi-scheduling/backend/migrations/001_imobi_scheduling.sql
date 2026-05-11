@@ -458,6 +458,20 @@ CREATE TABLE imobi_scheduling.appointments (
     status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN (
         'scheduled', 'completed', 'cancelled', 'no_show', 'rescheduled'
     )),
+    -- Phase 9 — cancellation + reschedule audit columns.
+    -- ``cancellation_reason`` captures free-text rationale from the user
+    -- (LLM-summarized when long); ``cancelled_at`` + ``cancelled_by`` close
+    -- the LGPD "who/when" trail for the booking lifecycle. Reschedule
+    -- captures ``previous_start_at`` / ``previous_end_at`` so the audit
+    -- shows the slot that was moved away from + the new value (visible
+    -- in ``start_at`` / ``end_at``). ``rescheduled_by`` is the user ID.
+    cancellation_reason TEXT,
+    cancelled_at TIMESTAMPTZ,
+    cancelled_by UUID REFERENCES imobi_scheduling.users(id) ON DELETE SET NULL,
+    rescheduled_at TIMESTAMPTZ,
+    rescheduled_by UUID REFERENCES imobi_scheduling.users(id) ON DELETE SET NULL,
+    previous_start_at TIMESTAMPTZ,
+    previous_end_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (end_at > start_at)

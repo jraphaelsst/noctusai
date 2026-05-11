@@ -63,7 +63,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -91,6 +91,22 @@ from noctusai_lib.domain.scheduling import (
 # ``ConfirmationResult(created=False, reason=...)`` BEFORE writing to DB.
 # Phase 8 wires this from ``app.services.calendar.create_calendar_event``.
 CalendarEventFactory = Callable[..., str]
+
+
+# CalendarEventCanceler: deletes a previously-created Calendar event by id.
+# Phase 9 wires this from ``app.services.calendar.cancel_calendar_event``.
+# Failure to delete is LOGGED but does NOT abort the DB-side cancellation
+# flip — the user-visible "cancelled" state must land even if the Calendar
+# side is unreachable (double-flip on the next retry would corrupt the DB).
+CalendarEventCanceler = Callable[..., None]
+
+
+# CalendarEventUpdater: updates a previously-created Calendar event's
+# start/end + summary metadata. Phase 9 wires this from
+# ``app.services.calendar.update_calendar_event``. On failure the service
+# LOGS + falls back to deleting + re-creating the event id (the consumer
+# decides; this module just routes through the seam).
+CalendarEventUpdater = Callable[..., Any]
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +241,35 @@ class ConfirmationResult:
     reason: Optional[str] = None
 
 
+@dataclass(frozen=True, slots=True)
+class CancellationResult:
+    """Outcome of `cancel_appointment`. `cancelled=False` means the row
+    was not in a cancellable state (already cancelled / completed / not
+    found). ``calendar_deleted`` separates the DB-side flip from the
+    Calendar-side deletion — a True DB flip with False Calendar deletion
+    is reported, not raised (caller logs + user can clean stale event).
+    """
+
+    cancelled: bool
+    appointment_id: Optional[str] = None
+    calendar_deleted: bool = False
+    reason: Optional[str] = None
+
+
+@dataclass(frozen=True, slots=True)
+class RescheduleResult:
+    """Outcome of `reschedule_appointment`. ``rescheduled=False`` means
+    the new slot conflicts, the row was not in a reschedulable state,
+    or the property/lookup failed. ``calendar_updated`` separates the
+    DB-side flip from the Calendar-side update.
+    """
+
+    rescheduled: bool
+    appointment_id: Optional[str] = None
+    calendar_updated: bool = False
+    reason: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # SchedulingService — DB orchestration + tool-call handlers
 # ---------------------------------------------------------------------------
@@ -255,6 +300,8 @@ class SchedulingService:
         extra_conflicts: list[Conflict] | None = None,
         scorer: Scorer | None = None,
         calendar_event_factory: CalendarEventFactory | None = None,
+        calendar_event_canceler: CalendarEventCanceler | None = None,
+        calendar_event_updater: CalendarEventUpdater | None = None,
     ) -> None:
         self._client = admin_client
         self._org_id = str(org_id)
@@ -272,6 +319,13 @@ class SchedulingService:
         # never lands. None preserves the Phase 7 DB-only path used by
         # the existing test suite + early-dev.
         self._calendar_event_factory = calendar_event_factory
+        # Phase 9 seams — wired by lifespan from
+        # ``app.services.calendar.cancel_calendar_event`` +
+        # ``app.services.calendar.update_calendar_event``. When absent
+        # (test paths / pre-Phase-9 wiring), cancellation/reschedule
+        # operate on the DB row only.
+        self._calendar_event_canceler = calendar_event_canceler
+        self._calendar_event_updater = calendar_event_updater
 
     # ------------------------------------------------------------------
     # Tool: lookup_property
@@ -537,6 +591,403 @@ class SchedulingService:
         )
 
     # ------------------------------------------------------------------
+    # Tool: cancel_appointment (Phase 9)
+    # ------------------------------------------------------------------
+
+    def cancel_appointment(
+        self,
+        *,
+        appointment_id: str,
+        reason: str | None = None,
+        requester_user_id: str | None = None,
+    ) -> CancellationResult:
+        """Cancel a previously-confirmed appointment.
+
+        Flow:
+
+          1. Fetch the appointment row by id; validate it's in
+             ``status='scheduled'`` (idempotent — already-cancelled rows
+             return ``cancelled=False`` with reason so the LLM can read
+             back a stable "already cancelled" payload).
+          2. Flip status to ``cancelled``; write cancellation audit columns
+             (``cancellation_reason``, ``cancelled_at``, ``cancelled_by``).
+          3. If the row carries a ``google_calendar_event_id`` AND a
+             ``calendar_event_canceler`` is wired, delete the Calendar
+             event. Failure LOGS but does NOT roll back the DB flip — a
+             stale Calendar event is recoverable; a desynced DB state
+             would corrupt future propose/confirm conflict re-checks.
+
+        Args:
+            appointment_id: UUID of the row to cancel.
+            reason: Free-text cancellation reason from the user.
+            requester_user_id: Optional UUID for the audit trail
+                (``cancelled_by``).
+
+        Returns:
+            `CancellationResult` — ``cancelled=True`` on success,
+            ``cancelled=False`` when row is missing / not in a
+            cancellable state. ``calendar_deleted`` reflects the Calendar
+            side outcome independently.
+        """
+        # Fetch the row to validate state + capture event id.
+        try:
+            response = (
+                self._scoped
+                .table("appointments")
+                .select("id, status, google_calendar_event_id, org_id")
+                .eq("id", appointment_id)
+                .eq("org_id", self._org_id)
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001 — DB fetch surfaced loud.
+            logger.warning(
+                "Cancel fetch failed: appointment_id=%s err=%s",
+                appointment_id, exc,
+            )
+            return CancellationResult(
+                cancelled=False,
+                appointment_id=appointment_id,
+                reason=f"appointment fetch failed: {exc}",
+            )
+
+        rows = response.data or []
+        if not rows:
+            return CancellationResult(
+                cancelled=False,
+                appointment_id=appointment_id,
+                reason=f"appointment not found: {appointment_id!r}",
+            )
+
+        row = rows[0]
+        status = row.get("status")
+        if status != "scheduled":
+            # Idempotent: already-cancelled returns a stable "not cancelled
+            # again" signal; the LLM reads the reason and replies naturally.
+            return CancellationResult(
+                cancelled=False,
+                appointment_id=appointment_id,
+                reason=f"appointment status is {status!r}; only 'scheduled' may be cancelled",
+            )
+
+        google_event_id = row.get("google_calendar_event_id")
+
+        # DB-side flip FIRST. Calendar delete follows + is best-effort.
+        now_iso = _now_utc_iso()
+        update_payload: dict[str, Any] = {
+            "status": "cancelled",
+            "cancellation_reason": reason,
+            "cancelled_at": now_iso,
+        }
+        if requester_user_id:
+            update_payload["cancelled_by"] = requester_user_id
+
+        try:
+            (
+                self._scoped
+                .table("appointments")
+                .update(update_payload)
+                .eq("id", appointment_id)
+                .eq("org_id", self._org_id)
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001 — DB update surfaced loud.
+            logger.warning(
+                "Cancel DB update failed: appointment_id=%s err=%s",
+                appointment_id, exc,
+            )
+            return CancellationResult(
+                cancelled=False,
+                appointment_id=appointment_id,
+                reason=f"appointment update failed: {exc}",
+            )
+
+        # Calendar delete (best-effort). The DB is already flipped — a
+        # failure here leaves a stale Calendar event but the booking is
+        # gone from the user's perspective.
+        calendar_deleted = False
+        if google_event_id and self._calendar_event_canceler is not None:
+            try:
+                self._calendar_event_canceler(event_id=google_event_id)
+                calendar_deleted = True
+            except Exception as exc:  # noqa: BLE001 — best-effort delete.
+                logger.warning(
+                    "Calendar event deletion failed (DB cancellation already landed): "
+                    "appointment_id=%s event_id=%s err=%s",
+                    appointment_id, google_event_id, exc,
+                )
+
+        return CancellationResult(
+            cancelled=True,
+            appointment_id=appointment_id,
+            calendar_deleted=calendar_deleted,
+        )
+
+    # ------------------------------------------------------------------
+    # Tool: reschedule_appointment (Phase 9)
+    # ------------------------------------------------------------------
+
+    def reschedule_appointment(
+        self,
+        *,
+        appointment_id: str,
+        new_start_at: datetime | str,
+        new_end_at: datetime | str,
+        requester_user_id: str | None = None,
+    ) -> RescheduleResult:
+        """Move a confirmed appointment to a new slot.
+
+        Flow:
+
+          1. Fetch the row by id; validate ``status='scheduled'``.
+          2. Re-validate the new slot against current bookings via the
+             same `DefaultConflict` rule used by `confirm_appointment` —
+             a conflict returns ``rescheduled=False`` with reason. The
+             row's OWN appointment is excluded from the conflict-check
+             interval list (otherwise it would conflict with itself).
+          3. Capture ``previous_start_at`` / ``previous_end_at`` for the
+             audit trail; update ``start_at`` / ``end_at`` + audit columns
+             (``rescheduled_at``, ``rescheduled_by``).
+          4. If the row carries a ``google_calendar_event_id`` AND a
+             ``calendar_event_updater`` is wired, update the Calendar
+             event. Same best-effort semantics as cancellation — failure
+             LOGS but does not roll back the DB-side update.
+
+        Args:
+            appointment_id: UUID of the row to reschedule.
+            new_start_at / new_end_at: New slot (tz-aware datetime or
+                ISO-8601 string; naïve strings are localized to the
+                rules timezone).
+            requester_user_id: Optional UUID for the audit trail
+                (``rescheduled_by``).
+
+        Returns:
+            `RescheduleResult` — ``rescheduled=True`` on success;
+            ``rescheduled=False`` on conflict / not-found / wrong-status.
+            ``calendar_updated`` reflects the Calendar side outcome.
+        """
+        new_start = _coerce_aware_datetime(new_start_at, self.rules.timezone)
+        new_end = _coerce_aware_datetime(new_end_at, self.rules.timezone)
+        if new_end <= new_start:
+            return RescheduleResult(
+                rescheduled=False,
+                appointment_id=appointment_id,
+                reason="new_end_at must be strictly after new_start_at",
+            )
+
+        # Fetch the row to validate state + capture event id + condo.
+        try:
+            response = (
+                self._scoped
+                .table("appointments")
+                .select(
+                    "id, status, google_calendar_event_id, condominium_id, "
+                    "property_id, start_at, end_at, appointment_request_id, "
+                    "media_crew_user_id, org_id"
+                )
+                .eq("id", appointment_id)
+                .eq("org_id", self._org_id)
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001 — DB fetch surfaced loud.
+            logger.warning(
+                "Reschedule fetch failed: appointment_id=%s err=%s",
+                appointment_id, exc,
+            )
+            return RescheduleResult(
+                rescheduled=False,
+                appointment_id=appointment_id,
+                reason=f"appointment fetch failed: {exc}",
+            )
+
+        rows = response.data or []
+        if not rows:
+            return RescheduleResult(
+                rescheduled=False,
+                appointment_id=appointment_id,
+                reason=f"appointment not found: {appointment_id!r}",
+            )
+
+        row = rows[0]
+        status = row.get("status")
+        if status != "scheduled":
+            return RescheduleResult(
+                rescheduled=False,
+                appointment_id=appointment_id,
+                reason=f"appointment status is {status!r}; only 'scheduled' may be rescheduled",
+            )
+
+        condo_id = str(row["condominium_id"])
+        google_event_id = row.get("google_calendar_event_id")
+        property_id = row.get("property_id")
+        appointment_request_id = row.get("appointment_request_id")
+
+        # Re-validate the new slot. Fetch existing intervals overlapping
+        # the new date, EXCLUDE the row's own current interval (or it
+        # collides with itself when the new slot overlaps the old one).
+        existing = self._fetch_existing_intervals(new_start.date())
+        # Filter out the row being moved — match by exact start/end + condo.
+        try:
+            current_start = _parse_aware_datetime(row["start_at"], self.rules.timezone)
+            current_end = _parse_aware_datetime(row["end_at"], self.rules.timezone)
+        except (KeyError, ValueError) as exc:
+            logger.warning(
+                "Reschedule could not parse current start/end: appointment_id=%s err=%s",
+                appointment_id, exc,
+            )
+            current_start = current_end = None  # type: ignore[assignment]
+
+        if current_start is not None and current_end is not None:
+            existing = [
+                interval for interval in existing
+                if not (
+                    interval.start == current_start
+                    and interval.end == current_end
+                    and interval.location_id == condo_id
+                )
+            ]
+
+        candidate = Slot(
+            start_at=new_start,
+            end_at=new_end,
+            duration_minutes=int((new_end - new_start).total_seconds() // 60),
+        )
+        ctx = SchedulingContext(
+            target_location_id=condo_id,
+            existing_intervals_sorted=sorted(existing, key=lambda i: i.start),
+            travel_lookup=self.engine.travel_lookup,
+            rules=self.rules,
+        )
+        for rule in self.engine.conflicts:
+            if rule.applies(candidate, ctx):
+                return RescheduleResult(
+                    rescheduled=False,
+                    appointment_id=appointment_id,
+                    reason="new slot conflicts with an existing appointment",
+                )
+
+        # DB-side flip FIRST. Capture previous_* columns for the audit.
+        now_iso = _now_utc_iso()
+        update_payload: dict[str, Any] = {
+            "start_at": new_start.isoformat(),
+            "end_at": new_end.isoformat(),
+            "rescheduled_at": now_iso,
+            "previous_start_at": row["start_at"],
+            "previous_end_at": row["end_at"],
+        }
+        if requester_user_id:
+            update_payload["rescheduled_by"] = requester_user_id
+
+        try:
+            (
+                self._scoped
+                .table("appointments")
+                .update(update_payload)
+                .eq("id", appointment_id)
+                .eq("org_id", self._org_id)
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001 — DB update surfaced loud.
+            logger.warning(
+                "Reschedule DB update failed: appointment_id=%s err=%s",
+                appointment_id, exc,
+            )
+            return RescheduleResult(
+                rescheduled=False,
+                appointment_id=appointment_id,
+                reason=f"appointment update failed: {exc}",
+            )
+
+        # Calendar update (best-effort). The DB is already flipped.
+        calendar_updated = False
+        if google_event_id and self._calendar_event_updater is not None:
+            # Look up property + condo names for a refreshed event body.
+            condo_name = self._lookup_condo_name(condo_id)
+            try:
+                self._calendar_event_updater(
+                    event_id=google_event_id,
+                    summary=_build_calendar_summary_from_strings(
+                        property_code=self._lookup_property_code(property_id),
+                        condo_name=condo_name,
+                        services=None,
+                    ),
+                    start_at=new_start,
+                    end_at=new_end,
+                    timezone=str(self.rules.timezone),
+                    appointment_request_id=appointment_request_id or _fallback_request_id(
+                        property_id, new_start
+                    ),
+                    description=_build_calendar_description_from_strings(
+                        property_code=self._lookup_property_code(property_id),
+                        condo_name=condo_name,
+                        services=None,
+                    ),
+                    location=condo_name,
+                )
+                calendar_updated = True
+            except Exception as exc:  # noqa: BLE001 — best-effort update.
+                logger.warning(
+                    "Calendar event update failed (DB reschedule already landed): "
+                    "appointment_id=%s event_id=%s err=%s",
+                    appointment_id, google_event_id, exc,
+                )
+
+        return RescheduleResult(
+            rescheduled=True,
+            appointment_id=appointment_id,
+            calendar_updated=calendar_updated,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers for Phase 9 calendar refresh
+    # ------------------------------------------------------------------
+
+    def _lookup_condo_name(self, condo_id: str | None) -> Optional[str]:
+        """Best-effort condominium-name lookup for Calendar summary refresh."""
+        if not condo_id:
+            return None
+        try:
+            resp = (
+                self._scoped
+                .table("condominiums")
+                .select("id, name, org_id")
+                .eq("id", condo_id)
+                .eq("org_id", self._org_id)
+                .execute()
+            )
+            rows = resp.data or []
+            if rows:
+                return rows[0].get("name")
+        except Exception as exc:  # noqa: BLE001 — best-effort.
+            logger.warning(
+                "Condo name lookup failed during reschedule: condo_id=%s err=%s",
+                condo_id, exc,
+            )
+        return None
+
+    def _lookup_property_code(self, property_id: str | None) -> str:
+        """Best-effort property-code lookup for Calendar summary refresh."""
+        if not property_id:
+            return "(imóvel)"
+        try:
+            resp = (
+                self._scoped
+                .table("properties")
+                .select("id, code, org_id")
+                .eq("id", property_id)
+                .eq("org_id", self._org_id)
+                .execute()
+            )
+            rows = resp.data or []
+            if rows:
+                return str(rows[0].get("code") or "(imóvel)")
+        except Exception as exc:  # noqa: BLE001 — best-effort.
+            logger.warning(
+                "Property code lookup failed during reschedule: property_id=%s err=%s",
+                property_id, exc,
+            )
+        return "(imóvel)"
+
+    # ------------------------------------------------------------------
     # Internal: fetch existing intervals from the appointments table
     # ------------------------------------------------------------------
 
@@ -676,6 +1127,50 @@ def _build_calendar_description(
     return "\n".join(lines)
 
 
+def _build_calendar_summary_from_strings(
+    *,
+    property_code: str,
+    condo_name: str | None,
+    services: list[str] | None,
+) -> str:
+    """Reschedule-side summary builder.
+
+    The reschedule path doesn't have a `PropertyLookupResult` handy (the
+    property + condo are denormalized on the appointment row), so we accept
+    the raw strings + reuse the same shape ``_build_calendar_summary``
+    emits for `confirm_appointment`.
+    """
+    base = f"Visita técnica — {condo_name or '(condomínio)'} — {property_code}"
+    if services:
+        base = f"{base} ({', '.join(services)})"
+    return base
+
+
+def _build_calendar_description_from_strings(
+    *,
+    property_code: str,
+    condo_name: str | None,
+    services: list[str] | None,
+) -> str:
+    """Reschedule-side description builder. Same shape as ``_build_calendar_description``."""
+    lines = [
+        f"Imóvel: {property_code}",
+        f"Condomínio: {condo_name or '(não definido)'}",
+    ]
+    if services:
+        lines.append(f"Serviços: {', '.join(services)}")
+    lines.append("")
+    lines.append("Reagendado via Imobi Scheduling Bot (WhatsApp).")
+    return "\n".join(lines)
+
+
+def _now_utc_iso() -> str:
+    """Current wall-clock as ISO-8601 UTC. Centralized so tests can monkey-patch
+    a single call site if needed (no test does today; kept tight for the future).
+    """
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
 def _fallback_request_id(property_id: str | None, start: datetime) -> str:
     """Synthesize a stable request-id when no ``appointment_request_id``
     is supplied (Phase 9 will surface it for the full request lifecycle).
@@ -687,10 +1182,14 @@ def _fallback_request_id(property_id: str | None, start: datetime) -> str:
 
 
 __all__ = [
+    "CalendarEventCanceler",
     "CalendarEventFactory",
+    "CalendarEventUpdater",
+    "CancellationResult",
     "ConfirmationResult",
     "ProposedSlot",
     "PropertyLookupResult",
+    "RescheduleResult",
     "SchedulingService",
     "build_engine",
     "build_rules",

@@ -41,8 +41,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 43 |
 | Media Scheduling | 5 | 8 | 10 | 3 | 13 | 56 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
-| Imobi Scheduling | 3 | 8 | 8 | 1 | 16 | 185 |
-| **Total** | **178** | **172** | **275** | **139** | **370** | **4,552** |
+| Imobi Scheduling | 3 | 8 | 8 | 1 | 16 | 199 |
+| **Total** | **178** | **172** | **275** | **139** | **370** | **4,566** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

@@ -191,7 +191,13 @@ class TestProcessorClosure:
         # Tools threaded through.
         assert call_kwargs["tools"] is not None
         tool_names = {t["function"]["name"] for t in call_kwargs["tools"]}
-        assert tool_names == {"lookup_property", "propose_appointment", "confirm_appointment"}
+        assert tool_names == {
+            "lookup_property",
+            "propose_appointment",
+            "confirm_appointment",
+            "cancel_appointment",
+            "reschedule_appointment",
+        }
 
     def test_processor_tool_call_loop_audits_via_supabase(
         self, admin_client, mock_openai_class,

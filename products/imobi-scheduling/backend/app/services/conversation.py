@@ -80,7 +80,12 @@ from noctusai_lib.integrations.redis import (
 from noctusai_lib.primitives.tasks import schedule_coro
 
 from app.config import settings
-from app.services.calendar import create_calendar_event, get_calendar_module
+from app.services.calendar import (
+    cancel_calendar_event,
+    create_calendar_event,
+    get_calendar_module,
+    update_calendar_event,
+)
 from app.services.maps import get_maps_module
 from app.services.scheduling import SchedulingService, build_rules
 from app.services.tool_audit import make_supabase_audit_writer
@@ -264,9 +269,16 @@ def configure_conversation_module(
         )
 
     calendar_factory = None
+    calendar_canceler = None
+    calendar_updater = None
     try:
         get_calendar_module()
         calendar_factory = create_calendar_event
+        # Phase 9 — wire cancel + update seams too. Same module-level check;
+        # all three seams travel together (a configured Calendar module
+        # supports the full create/update/delete trio).
+        calendar_canceler = cancel_calendar_event
+        calendar_updater = update_calendar_event
     except RuntimeError:
         logger.info(
             "Calendar module not configured; SchedulingService.confirm_appointment "
@@ -279,6 +291,8 @@ def configure_conversation_module(
         rules=build_rules(settings),
         travel_lookup=travel_lookup,
         calendar_event_factory=calendar_factory,
+        calendar_event_canceler=calendar_canceler,
+        calendar_event_updater=calendar_updater,
     )
 
     worker = ConversationWorker(

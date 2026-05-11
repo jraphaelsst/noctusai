@@ -22,13 +22,15 @@ from app.services.tool_registry import (
 
 
 class TestRegistryShape:
-    """The Phase 6 initial registry has exactly three tools."""
+    """Phase 9 registry has the five tools (Phase 6 trio + Phase 9 cancel/reschedule)."""
 
-    def test_three_tools_registered(self):
+    def test_five_tools_registered(self):
         assert tool_names() == [
             "lookup_property",
             "propose_appointment",
             "confirm_appointment",
+            "cancel_appointment",
+            "reschedule_appointment",
         ]
 
     def test_descriptors_match_implementations(self):
@@ -136,6 +138,8 @@ class TestParameterSchema:
             ("lookup_property", ["code"]),
             ("propose_appointment", ["property_code", "requested_date", "time_window"]),
             ("confirm_appointment", ["property_code", "services", "start_at", "end_at"]),
+            ("cancel_appointment", ["appointment_id"]),
+            ("reschedule_appointment", ["appointment_id", "new_start_at", "new_end_at"]),
         ],
     )
     def test_required_parameters_present(self, tool_name, required_params):

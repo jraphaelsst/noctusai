@@ -1,8 +1,8 @@
 """LLM tool registry for the Imobi Scheduling bot.
 
-Defines the three initial tools the bot's LLM tool-loop may call (per
-PROJECT.md §6 Phase 6 / Phase 7 — `lookup_property`, `propose_appointment`,
-`confirm_appointment`). Cancellation + reschedule tools land in Phase 9.
+Defines the five tools the bot's LLM tool-loop may call (per PROJECT.md
+§6 Phase 6 → 9): `lookup_property`, `propose_appointment`,
+`confirm_appointment`, `cancel_appointment`, `reschedule_appointment`.
 
 **Wiring.** Each tool is shipped in two halves:
 
@@ -153,6 +153,70 @@ TOOL_DESCRIPTORS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_appointment",
+            "description": (
+                "Cancela um agendamento existente. SÓ chame após o corretor "
+                "confirmar explicitamente o cancelamento (use uma pergunta "
+                "de confirmação como 'Confirma o cancelamento do agendamento "
+                "em <data> <hora>?' ANTES de invocar esta ferramenta). "
+                "Idempotente — agendamentos já cancelados retornam status "
+                "informativo, não erro."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "appointment_id": {
+                        "type": "string",
+                        "description": "UUID do agendamento a ser cancelado.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "Motivo do cancelamento (texto livre vindo do "
+                            "corretor — resumido pelo modelo quando longo)."
+                        ),
+                    },
+                },
+                "required": ["appointment_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reschedule_appointment",
+            "description": (
+                "Reagenda um agendamento existente para uma nova data/hora. "
+                "SÓ chame após o corretor confirmar EXPLICITAMENTE o novo "
+                "horário (use uma pergunta de confirmação como 'Confirma "
+                "mover o agendamento de <antigo> para <novo>?' ANTES de "
+                "invocar). Re-valida o novo horário contra outras reservas "
+                "antes de gravar — se conflitar, retorna conflict e sugere "
+                "chamar propose_appointment novamente."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "appointment_id": {
+                        "type": "string",
+                        "description": "UUID do agendamento a ser reagendado.",
+                    },
+                    "new_start_at": {
+                        "type": "string",
+                        "description": "Novo início (ISO 8601 com timezone — America/Sao_Paulo).",
+                    },
+                    "new_end_at": {
+                        "type": "string",
+                        "description": "Novo fim (ISO 8601 com timezone — America/Sao_Paulo).",
+                    },
+                },
+                "required": ["appointment_id", "new_start_at", "new_end_at"],
+            },
+        },
+    },
 ]
 
 
@@ -210,11 +274,39 @@ def _stub_confirm_appointment(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _stub_cancel_appointment(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Phase 6/7/8 stub. Phase 9 replaces with the real cancellation flow."""
+    logger.info("[stub] cancel_appointment called with %s", arguments)
+    return {
+        "status": "not_implemented",
+        "tool": "cancel_appointment",
+        "message": (
+            "Cancel appointment is not yet wired. Phase 9 lands this."
+        ),
+        "echo": arguments,
+    }
+
+
+def _stub_reschedule_appointment(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Phase 6/7/8 stub. Phase 9 replaces with the real reschedule flow."""
+    logger.info("[stub] reschedule_appointment called with %s", arguments)
+    return {
+        "status": "not_implemented",
+        "tool": "reschedule_appointment",
+        "message": (
+            "Reschedule appointment is not yet wired. Phase 9 lands this."
+        ),
+        "echo": arguments,
+    }
+
+
 # Name → implementation map. Registry of record.
 TOOL_IMPLEMENTATIONS: dict[str, ToolImpl] = {
     "lookup_property": _stub_lookup_property,
     "propose_appointment": _stub_propose_appointment,
     "confirm_appointment": _stub_confirm_appointment,
+    "cancel_appointment": _stub_cancel_appointment,
+    "reschedule_appointment": _stub_reschedule_appointment,
 }
 
 
@@ -361,6 +453,113 @@ def _impl_confirm_appointment(
     }
 
 
+def _impl_cancel_appointment(
+    arguments: dict[str, Any],
+    scheduling_service: "SchedulingService",
+) -> dict[str, Any]:
+    """Live `cancel_appointment` via `SchedulingService.cancel_appointment`.
+
+    The LLM tool-loop calls this AFTER the confirmation step is settled in
+    natural language — the system prompt enforces that requirement so we
+    don't need a separate confirmation seam here. The audit-writer captures
+    the call regardless of outcome.
+    """
+    appointment_id = str(arguments.get("appointment_id", "")).strip()
+    reason = arguments.get("reason")
+    if not appointment_id:
+        return {
+            "status": "failure",
+            "tool": "cancel_appointment",
+            "error": "Missing required argument: appointment_id",
+        }
+
+    result = scheduling_service.cancel_appointment(
+        appointment_id=appointment_id,
+        reason=reason if isinstance(reason, str) else None,
+    )
+    if not result.cancelled:
+        # Distinguish "already cancelled" (idempotent) from "real failure"
+        # by inspecting the reason; the LLM can read the natural-language
+        # hint back to the user.
+        reason_text = (result.reason or "").lower()
+        status = "already_cancelled" if "status is 'cancelled'" in reason_text else (
+            "not_found" if "appointment not found" in reason_text else "failure"
+        )
+        return {
+            "status": status,
+            "tool": "cancel_appointment",
+            "appointment_id": appointment_id,
+            "reason": result.reason or "(unknown)",
+        }
+    return {
+        "status": "success",
+        "tool": "cancel_appointment",
+        "appointment_id": appointment_id,
+        "calendar_deleted": result.calendar_deleted,
+    }
+
+
+def _impl_reschedule_appointment(
+    arguments: dict[str, Any],
+    scheduling_service: "SchedulingService",
+) -> dict[str, Any]:
+    """Live `reschedule_appointment` via `SchedulingService.reschedule_appointment`.
+
+    The system prompt enforces explicit user confirmation BEFORE this is
+    invoked — the LLM should ask "Confirma mover de X para Y?" and only
+    after a yes-response call this tool. Conflict re-validation runs on
+    the new slot (defends against propose→confirm-style races).
+    """
+    appointment_id = str(arguments.get("appointment_id", "")).strip()
+    new_start_at = arguments.get("new_start_at")
+    new_end_at = arguments.get("new_end_at")
+
+    if not appointment_id or not new_start_at or not new_end_at:
+        return {
+            "status": "failure",
+            "tool": "reschedule_appointment",
+            "error": (
+                "Missing required arguments: appointment_id, new_start_at, new_end_at"
+            ),
+        }
+
+    try:
+        result = scheduling_service.reschedule_appointment(
+            appointment_id=appointment_id,
+            new_start_at=new_start_at,
+            new_end_at=new_end_at,
+        )
+    except ValueError as exc:
+        return {
+            "status": "failure",
+            "tool": "reschedule_appointment",
+            "error": str(exc),
+        }
+
+    if not result.rescheduled:
+        reason_text = (result.reason or "").lower()
+        if "conflicts with" in reason_text:
+            status = "conflict"
+        elif "appointment not found" in reason_text:
+            status = "not_found"
+        else:
+            status = "failure"
+        return {
+            "status": status,
+            "tool": "reschedule_appointment",
+            "appointment_id": appointment_id,
+            "reason": result.reason or "(unknown)",
+        }
+    return {
+        "status": "success",
+        "tool": "reschedule_appointment",
+        "appointment_id": appointment_id,
+        "new_start_at": new_start_at,
+        "new_end_at": new_end_at,
+        "calendar_updated": result.calendar_updated,
+    }
+
+
 def build_tool_handler(
     scheduling_service: Optional["SchedulingService"] = None,
 ) -> Callable[[ToolCall], ToolResult]:
@@ -435,6 +634,8 @@ _LIVE_IMPLEMENTATIONS: dict[str, LiveToolImpl] = {
     "lookup_property": _impl_lookup_property,
     "propose_appointment": _impl_propose_appointment,
     "confirm_appointment": _impl_confirm_appointment,
+    "cancel_appointment": _impl_cancel_appointment,
+    "reschedule_appointment": _impl_reschedule_appointment,
 }
 
 
