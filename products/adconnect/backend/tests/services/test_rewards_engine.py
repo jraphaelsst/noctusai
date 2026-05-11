@@ -41,13 +41,13 @@ def test_accrue_for_sellout_approval_matches_active_rules() -> None:
             "org_id": ORG,
             "nome": "Cabo 5%",
             "tipo": "cashback",
-            "cashback_pct": 5.0,
+            "valor": 5.0,
             "aplicavel_categorias": ["Cabos"],
             "aplicavel_produtos": [],
             "aplicavel_distribuidores": [],
             "valor_minimo_pedido": 0,
             "quantidade_minima": 0,
-            "ativo": True,
+            "ativa": True,
             "valido_de": None,
             "valido_ate": None,
         },
@@ -56,13 +56,13 @@ def test_accrue_for_sellout_approval_matches_active_rules() -> None:
             "org_id": ORG,
             "nome": "Geral 1%",
             "tipo": "cashback",
-            "cashback_pct": 1.0,
+            "valor": 1.0,
             "aplicavel_categorias": [],
             "aplicavel_produtos": [],
             "aplicavel_distribuidores": [],
             "valor_minimo_pedido": 0,
             "quantidade_minima": 0,
-            "ativo": True,
+            "ativa": True,
             "valido_de": None,
             "valido_ate": None,
         },
@@ -71,13 +71,13 @@ def test_accrue_for_sellout_approval_matches_active_rules() -> None:
             "org_id": ORG,
             "nome": "Expirada",
             "tipo": "cashback",
-            "cashback_pct": 99.0,
+            "valor": 99.0,
             "aplicavel_categorias": [],
             "aplicavel_produtos": [],
             "aplicavel_distribuidores": [],
             "valor_minimo_pedido": 0,
             "quantidade_minima": 0,
-            "ativo": True,
+            "ativa": True,
             "valido_de": None,
             "valido_ate": (today - timedelta(days=1)).isoformat(),
         },
@@ -104,7 +104,7 @@ def test_accrue_for_sellout_approval_matches_active_rules() -> None:
     assert by_rule["rule-2"] == 10.0  # 1% of 1000
     for p in payloads:
         assert p["distributor_id"] == DIST
-        assert p["source_relatorio_id"] == "rel-001"
+        assert p["source_relatorio_sellout_id"] == "rel-001"
         assert p["source_pedido_id"] is None
         assert p["status"] == "pendente"
 
@@ -116,13 +116,13 @@ def test_accrue_for_sellout_approval_skips_unapproved() -> None:
             "org_id": ORG,
             "nome": "X",
             "tipo": "cashback",
-            "cashback_pct": 5.0,
+            "valor": 5.0,
             "aplicavel_categorias": [],
             "aplicavel_produtos": [],
             "aplicavel_distribuidores": [],
             "valor_minimo_pedido": 0,
             "quantidade_minima": 0,
-            "ativo": True,
+            "ativa": True,
         }
     ]
     relatorio = {
@@ -148,13 +148,13 @@ def test_accrue_thresholds_block_small_orders() -> None:
             "org_id": ORG,
             "nome": "Min",
             "tipo": "cashback",
-            "cashback_pct": 5.0,
+            "valor": 5.0,
             "aplicavel_categorias": [],
             "aplicavel_produtos": [],
             "aplicavel_distribuidores": [],
             "valor_minimo_pedido": 1000.0,
             "quantidade_minima": 0,
-            "ativo": True,
+            "ativa": True,
         }
     ]
     relatorio = {
@@ -178,13 +178,13 @@ def test_accrue_distributor_filter() -> None:
             "org_id": ORG,
             "nome": "Só dist-002",
             "tipo": "cashback",
-            "cashback_pct": 5.0,
+            "valor": 5.0,
             "aplicavel_categorias": [],
             "aplicavel_produtos": [],
             "aplicavel_distribuidores": ["dist-002"],
             "valor_minimo_pedido": 0,
             "quantidade_minima": 0,
-            "ativo": True,
+            "ativa": True,
         }
     ]
     relatorio = {
@@ -208,13 +208,13 @@ def test_accrue_for_pedido_writes_ledger_row() -> None:
             "org_id": ORG,
             "nome": "Geral",
             "tipo": "cashback",
-            "cashback_pct": 2.5,
+            "valor": 2.5,
             "aplicavel_categorias": [],
             "aplicavel_produtos": [],
             "aplicavel_distribuidores": [],
             "valor_minimo_pedido": 0,
             "quantidade_minima": 0,
-            "ativo": True,
+            "ativa": True,
         }
     ]
     pedido = {
@@ -230,7 +230,7 @@ def test_accrue_for_pedido_writes_ledger_row() -> None:
     assert len(payloads) == 1
     assert payloads[0]["valor"] == 5.0  # 2.5% of 200
     assert payloads[0]["source_pedido_id"] == "ped-1"
-    assert payloads[0]["source_relatorio_id"] is None
+    assert payloads[0]["source_relatorio_sellout_id"] is None
     assert len(inserted) == 1
 
 
@@ -242,13 +242,13 @@ def test_accrue_for_pedido_via_explicit_row() -> None:
             "org_id": ORG,
             "nome": "Geral",
             "tipo": "cashback",
-            "cashback_pct": 1.0,
+            "valor": 1.0,
             "aplicavel_categorias": [],
             "aplicavel_produtos": [],
             "aplicavel_distribuidores": [],
             "valor_minimo_pedido": 0,
             "quantidade_minima": 0,
-            "ativo": True,
+            "ativa": True,
         }
     ]
     db = _build_db(rules=rules)

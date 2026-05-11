@@ -89,7 +89,7 @@ def _passes_thresholds(rule: dict[str, Any], *, valor_total: float, quantidade: 
 def _fetch_active_rules(db: Any, org_id: Optional[str]) -> list[dict[str, Any]]:
     """SELECT active rules for the org. Falls back to all-rows when org_id is
     None (test harness convenience)."""
-    builder = db.table(REGRAS_TABLE).select("*").eq("ativo", True)
+    builder = db.table(REGRAS_TABLE).select("*").eq("ativa", True)
     if org_id is not None:
         builder = builder.eq("org_id", org_id)
     res = builder.execute()
@@ -116,9 +116,9 @@ def _build_accrual_row(
     distributor_id: str,
     valor_total: float,
     source_pedido_id: Optional[str],
-    source_relatorio_id: Optional[str],
+    source_relatorio_sellout_id: Optional[str],
 ) -> dict[str, Any]:
-    pct = float(rule.get("cashback_pct") or 0)
+    pct = float(rule.get("valor") or 0)
     valor = round(valor_total * pct / 100.0, 2)
     payload = {
         "org_id": org_id,
@@ -128,7 +128,7 @@ def _build_accrual_row(
         "valor": valor,
         "moeda": "BRL",
         "source_pedido_id": source_pedido_id,
-        "source_relatorio_id": source_relatorio_id,
+        "source_relatorio_sellout_id": source_relatorio_sellout_id,
         "status": "pendente",
         "descricao": f"Acúmulo via regra '{rule.get('nome', '?')}' ({pct}% sobre R$ {valor_total:.2f})",
         "accrued_at": datetime.now(timezone.utc).isoformat(),
@@ -196,7 +196,7 @@ def accrue_for_pedido(
             distributor_id=distributor_id,
             valor_total=valor_total,
             source_pedido_id=pedido_id,
-            source_relatorio_id=None,
+            source_relatorio_sellout_id=None,
         )
         res = db.table(LEDGER_TABLE).insert(payload).execute()
         rid = (res.data or [{}])[0].get("id") if res.data else None
@@ -215,7 +215,7 @@ def accrue_for_sellout_approval(
 
     Args:
         db: Supabase client.
-        relatorio_id: sellout report id; stamped as `source_relatorio_id`.
+        relatorio_id: sellout report id; stamped as `source_relatorio_sellout_id`.
         relatorio_row: report dict — if absent, SELECT from `relatorios_sellout`.
 
     Returns:
@@ -269,7 +269,7 @@ def accrue_for_sellout_approval(
             distributor_id=distributor_id,
             valor_total=valor_total,
             source_pedido_id=None,
-            source_relatorio_id=relatorio_id,
+            source_relatorio_sellout_id=relatorio_id,
         )
         res = db.table(LEDGER_TABLE).insert(payload).execute()
         rid = (res.data or [{}])[0].get("id") if res.data else None

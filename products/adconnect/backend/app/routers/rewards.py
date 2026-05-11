@@ -92,7 +92,7 @@ def get_rules(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any
         db.table(REGRAS_TABLE)
         .select("*")
         .eq("org_id", _user_org(user))
-        .eq("ativo", True)
+        .eq("ativa", True)
         .execute()
     )
     return {"data": list(res.data or [])}

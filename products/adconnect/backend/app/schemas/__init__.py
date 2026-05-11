@@ -38,7 +38,9 @@ from app.schemas.sellout import (  # noqa: F401
     SubmissionMode,
 )
 
-# Rewards (Phase 4)
+# Rewards (Phase 4) — note: `RewardRuleOut` lives in `app.schemas.admin`
+# (single canonical variant; the duplicate in `rewards.py` was deleted
+# 2026-05-11 as R1 of the response-model audit).
 from app.schemas.rewards import (  # noqa: F401
     AccrualStatus,
     RedemptionOut,
@@ -47,7 +49,6 @@ from app.schemas.rewards import (  # noqa: F401
     RedemptionStatus,
     RewardLedgerEntry,
     RewardLedgerOut,
-    RewardRuleOut,
     RewardRulesListOut,
     RewardType,
 )

@@ -83,7 +83,7 @@ def test_rules_endpoint_lists_active(db_and_client) -> None:
     bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
     db.set_table_data("regras_recompensa", [
         {"id": "r1", "org_id": "org-test", "nome": "Cabo 5%", "tipo": "cashback",
-         "cashback_pct": 5.0, "ativo": True,
+         "valor": 5.0, "ativa": True,
          "aplicavel_categorias": [], "aplicavel_produtos": [], "aplicavel_distribuidores": []},
     ])
     res = tc.get("/rewards/rules", headers=_auth(_distributor_token()))
@@ -177,3 +177,132 @@ def test_redeem_rejects_unknown_field_with_422(db_and_client) -> None:
     body = res.json()
     # FastAPI surfaces the offending key name in the `loc` tuple.
     assert any("bogus_field" in str(err.get("loc", "")) for err in body.get("detail", []))
+
+
+# ---------------------------------------------------------------------------
+# Response-model audit regressions — R1 + R3 + R4
+# (projects/adco-response-model-rewards-fix/PROJECT.md)
+# ---------------------------------------------------------------------------
+
+
+def test_rules_serializes_real_db_column_names(db_and_client) -> None:
+    """R1 — `GET /rewards/rules` returns rows with the REAL DB columns
+    (`valor`, `ativa`) intact. Pre-fix, `RewardRulesListOut` held a broken
+    `RewardRuleOut` whose Literal `tipo` excluded the DB's CHECK values and
+    whose `cashback_pct` / `ativo` field names didn't match the table;
+    those rows silently dropped `valor` / `ativa` / `created_at` /
+    `updated_at` from the response. Post-fix `RewardRulesListOut` carries
+    `list[dict[str, Any]]` so the row passes through verbatim.
+    """
+    tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
+    db.set_table_data("regras_recompensa", [
+        {
+            "id": "r1",
+            "org_id": "org-test",
+            "nome": "Cabo 5%",
+            "tipo": "cashback_percentual",  # real DB CHECK value
+            "valor": 5.0,                     # real DB column (was cashback_pct)
+            "ativa": True,                    # real DB column (was ativo)
+            "aplicavel_categorias": [],
+            "aplicavel_produtos": [],
+            "aplicavel_distribuidores": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z",
+        },
+    ])
+    res = tc.get("/rewards/rules", headers=_auth(_distributor_token()))
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert len(body["data"]) == 1
+    row = body["data"][0]
+    # The four columns that pre-fix were dropped MUST now serialize.
+    assert row["valor"] == 5.0
+    assert row["ativa"] is True
+    assert row["tipo"] == "cashback_percentual"
+    assert row["created_at"] == "2026-01-01T00:00:00Z"
+    assert row["updated_at"] == "2026-01-02T00:00:00Z"
+
+
+def test_redemption_response_includes_pre_and_post_migration_columns(db_and_client) -> None:
+    """R3 — `RedemptionOut` covers BOTH the original-migration columns
+    (`valor_total`, `metodo`, `observacoes`, `created_at`, `processed_at`)
+    AND the schema-driven additions landed by migration 003 (`org_id`,
+    `tipo`, `valor`, `pedido_ref`, `review_notes`, `reviewed_by`,
+    `reviewed_at`, `paid_at`, `requested_at`). The response must not
+    silently drop either side.
+    """
+    tc, db = db_and_client
+    bind_adconnect_user(db, role="admin", distributor_id=None, org_id="org-test")
+    # Seed a row that carries every documented column.
+    full_row = {
+        "id": "rd-full",
+        "org_id": "org-test",
+        "distributor_id": "dist-001",
+        "tipo": "cashback",
+        "valor": 25.0,
+        "pedido_ref": "ped-1",
+        "status": "pago",
+        "review_notes": "ok",
+        "reviewed_by": "user-admin",
+        "reviewed_at": "2026-01-02T00:00:00Z",
+        "paid_at": "2026-01-03T00:00:00Z",
+        "requested_at": "2026-01-01T00:00:00Z",
+        "requested_by": "user-distrib",
+        # original-migration columns
+        "valor_total": 25.0,
+        "metodo": "reembolso_pix",
+        "observacoes": "obs",
+        "created_at": "2026-01-01T00:00:00Z",
+        "processed_at": "2026-01-03T00:00:00Z",
+    }
+    # Sequential responses drive the update path: process_redemption issues
+    # a single UPDATE and returns the full row back.
+    db.set_sequential_responses(
+        "resgates_recompensa",
+        [type("R", (), {"data": [full_row]})()],
+    )
+    res = tc.patch(
+        "/rewards/redeem/rd-full/process",
+        json={"status": "pago"},
+        headers=_auth(_admin_token()),
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    # Every documented field must come through — both halves of the audit fix.
+    for key in (
+        # post-003 schema fields
+        "org_id", "tipo", "valor", "pedido_ref", "review_notes",
+        "reviewed_by", "reviewed_at", "paid_at", "requested_at",
+        # original-migration fields
+        "valor_total", "metodo", "observacoes", "created_at", "processed_at",
+    ):
+        assert key in body, f"RedemptionOut dropped {key!r}"
+
+
+def test_ledger_carries_source_relatorio_sellout_id(db_and_client) -> None:
+    """R4 — `RewardLedgerEntry.source_relatorio_sellout_id` matches the
+    DB column name. Pre-fix the schema field was `source_relatorio_id`,
+    so sellout-sourced accruals silently dropped their source-link on
+    the response (frontend couldn't link back to the sellout report).
+    """
+    tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
+    db.set_table_data("recompensas_acumuladas", [
+        {
+            "id": "led-1",
+            "distributor_id": "dist-001",
+            "tipo": "cashback",
+            "valor": 50.0,
+            "status": "liberado",
+            "source_pedido_id": None,
+            "source_relatorio_sellout_id": "rel-001",
+        },
+    ])
+    res = tc.get("/rewards/ledger", headers=_auth(_distributor_token()))
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert len(body["data"]) == 1
+    row = body["data"][0]
+    # The renamed field name must serialize at the new (correct) key.
+    assert row["source_relatorio_sellout_id"] == "rel-001"
