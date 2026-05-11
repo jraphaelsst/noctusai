@@ -1,6 +1,8 @@
 """Contact list management service."""
 import logging
 
+from noctusai_lib.api.crud_safety import delete_or_404
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,11 @@ class ListService:
         return result.data[0] if result.data else None
 
     def delete_list(self, list_id: str):
-        self.db.table("contact_lists").delete().eq("id", list_id).eq("org_id", self.org_id).execute()
+        delete_or_404(
+            self.db, "contact_lists",
+            ("id", list_id), ("org_id", self.org_id),
+            message="Lista nao encontrada",
+        )
         return True
 
     def add_members(self, list_id: str, contact_ids: list[str]):
@@ -43,6 +49,10 @@ class ListService:
         return result.data or []
 
     def remove_members(self, list_id: str, contact_ids: list[str]):
+        # Idempotent bulk membership removal — uses `.in_()` rather than `.eq()`,
+        # so `noctusai_lib.api.crud_safety.delete_or_404` (eq-only) is not the
+        # right shape. Absent members are a no-op by design (caller passes a
+        # whole-set list and wants "ensure these are gone").
         self.db.table("contact_list_members").delete().eq("list_id", list_id).in_("contact_id", contact_ids).execute()
         self._update_count(list_id)
         return True

@@ -2,6 +2,8 @@
 import logging
 from datetime import datetime, timezone
 
+from noctusai_lib.api.crud_safety import delete_or_404
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,7 +43,13 @@ class CampaignService:
         campaign = self.get_campaign(campaign_id)
         if not campaign or campaign["status"] != "rascunho":
             return False
-        self.db.table("campaigns").delete().eq("id", campaign_id).eq("org_id", self.org_id).execute()
+        # Use seed helper for defense-in-depth: re-check existence under RLS,
+        # then delete. Status was already validated above.
+        delete_or_404(
+            self.db, "campaigns",
+            ("id", campaign_id), ("org_id", self.org_id),
+            message="Campanha nao encontrada",
+        )
         return True
 
     def schedule_campaign(self, campaign_id: str, scheduled_at: datetime):

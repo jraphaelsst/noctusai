@@ -2,8 +2,8 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
-from app.dependencies import get_current_user, get_org_id, get_admin_client
+from fastapi import APIRouter, HTTPException, Query, Depends
+from app.dependencies import get_current_user_org, get_org_id, get_admin_client
 from app.schemas.templates import TemplateCreate, TemplateUpdate, TemplatePreviewRequest, TemplateSendTestRequest
 from app.services.template_service import TemplateService
 from noctusai_lib.primitives.responses import success_response
@@ -19,17 +19,16 @@ def _get_service(user) -> TemplateService:
 
 @router.get("")
 async def list_templates(
-    authorization: Optional[str] = Header(None),
-    categoria: Optional[str] = Query(None),
+    auth = Depends(get_current_user_org), categoria: Optional[str] = Query(None),
 ):
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     svc = _get_service(user)
     return success_response(svc.list_templates(categoria=categoria))
 
 
 @router.post("")
-async def create_template(body: TemplateCreate, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def create_template(body: TemplateCreate, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     result = svc.create_template(body.model_dump())
     if not result:
@@ -38,8 +37,8 @@ async def create_template(body: TemplateCreate, authorization: Optional[str] = H
 
 
 @router.get("/{template_id}")
-async def get_template(template_id: str, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def get_template(template_id: str, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     result = svc.get_template(template_id)
     if not result:
@@ -48,8 +47,8 @@ async def get_template(template_id: str, authorization: Optional[str] = Header(N
 
 
 @router.patch("/{template_id}")
-async def update_template(template_id: str, body: TemplateUpdate, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def update_template(template_id: str, body: TemplateUpdate, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     data = body.model_dump(exclude_unset=True)
     result = svc.update_template(template_id, data)
@@ -59,8 +58,8 @@ async def update_template(template_id: str, body: TemplateUpdate, authorization:
 
 
 @router.delete("/{template_id}")
-async def delete_template(template_id: str, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def delete_template(template_id: str, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     svc.delete_template(template_id)
     return {"ok": True, "message": "Template desativado"}
@@ -70,9 +69,8 @@ async def delete_template(template_id: str, authorization: Optional[str] = Heade
 async def preview_template(
     template_id: str,
     body: TemplatePreviewRequest,
-    authorization: Optional[str] = Header(None),
-):
-    user, _ = await get_current_user(authorization)
+    auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     result = svc.preview(template_id, body.variaveis)
     if not result:

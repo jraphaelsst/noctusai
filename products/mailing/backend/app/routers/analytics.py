@@ -1,9 +1,8 @@
 """Analytics router — dashboard metrics, campaign stats, automation funnel."""
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, Header
-from app.dependencies import get_current_user, get_org_id, get_admin_client
+from fastapi import APIRouter, Depends
+from app.dependencies import get_current_user_org, get_org_id, get_admin_client
 from noctusai_lib.primitives.responses import success_response
 
 logger = logging.getLogger(__name__)
@@ -11,9 +10,9 @@ router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
 
 @router.get("/dashboard")
-async def dashboard_metrics(authorization: Optional[str] = Header(None)):
+async def dashboard_metrics(auth = Depends(get_current_user_org)):
     """Overview metrics: total contacts, total sent, open rate, click rate, bounces."""
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     org_id = get_org_id(user)
     db = get_admin_client()
 
@@ -52,9 +51,9 @@ async def dashboard_metrics(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/campaigns/{campaign_id}")
-async def campaign_analytics(campaign_id: str, authorization: Optional[str] = Header(None)):
+async def campaign_analytics(campaign_id: str, auth = Depends(get_current_user_org)):
     """Detailed analytics for a specific campaign."""
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     org_id = get_org_id(user)
     db = get_admin_client()
 

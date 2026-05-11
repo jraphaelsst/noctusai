@@ -1,6 +1,8 @@
 """Contact management service."""
 import logging
 
+from noctusai_lib.api.crud_safety import delete_or_404
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +41,11 @@ class ContactService:
         return result.data[0] if result.data else None
 
     def delete_contact(self, contact_id: str):
-        self.db.table("contacts").delete().eq("id", contact_id).eq("org_id", self.org_id).execute()
+        delete_or_404(
+            self.db, "contacts",
+            ("id", contact_id), ("org_id", self.org_id),
+            message="Contato nao encontrado",
+        )
         return True
 
     def import_contacts(self, contacts: list[dict]):

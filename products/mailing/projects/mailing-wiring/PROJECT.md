@@ -11,8 +11,8 @@
 > Intent = `wiring` per `KB § PATTERNS/project-execution.md §8`.
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 0 ✅ — discovery + gap inventory)
-- **Status:** Phase 0 ✅. Phases 1-7 pending (orchestrator scopes per design-batch decisions in §7).
+- **Last updated:** 2026-05-11 (Phase 1 ✅ — seed-alignment + Tier A fixes + M-1 security hardening)
+- **Status:** Phase 0 ✅, Phase 1 ✅. Phases 2-5 pending (orchestrator scopes per design-batch decisions in §7).
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `products/mailing/MASTER-PROMPT.md` — agent-facing product contract
@@ -372,3 +372,39 @@ python mcp/noctusai/cli.py --scan-helpers --product mailing
   - Confirmed AAA's service_role_bypass policies (19 tables, 3 migrations).
   - Filed §5.1.1 pending seed-lib lifts: factory + delete_or_404 + scheduler standard router.
   - **Verification status**: pytest baseline not run (worktree venv missing apscheduler — install denied by auto-mode permission classifier; deferred to orchestrator). Keeper run blocked on same. Frontend build not run.
+
+- **2026-05-11 — Phase 1 ✅ (Engineer MAI-P1)** — Seed-alignment + Tier A fixes + M-1 security hardening
+  - **Part 1 — Pattern F (auth factory) adoption.** Updated `app/dependencies.py` to bind
+    `make_get_current_user_org` (mirrors yt-crawler shape). Refactored 8 routers via libcst codemod:
+    `lists.py` (8), `campaigns.py` (9), `contacts.py` (6), `templates.py` (6), `automations.py` (14),
+    `settings.py` (4), `analytics.py` (2), `ai.py` (8) = **57 callsites** (54 `user, _` + 3 `user, token`).
+    Imperative `user, _ = await get_current_user(authorization)` → `user, _, org_id = auth`
+    with `auth=Depends(get_current_user_org)` in the param list. Followed up with import cleanup
+    (orphaned `Header` / `Optional` removed).
+  - **Part 2 — `delete_or_404` adoption.** Adopted seed helper in 5 services:
+    `contact_service.delete_contact`, `list_service.delete_list`, `campaign_service.delete_campaign`,
+    `automation_service.delete_automation`, `automation_service.delete_step`. `list_service.remove_members`
+    is `.in_()`-keyed bulk + intentionally idempotent — kept raw with an inline accept-with-rationale
+    comment. Phase 0's "6 of 6" row count corrected: `template_service.delete_template` is a
+    soft-delete (`UPDATE ativa=False`), not a raw delete.
+  - **Part 3 — M-1 defense-in-depth org chain.** Added `_assert_automation_in_org` +
+    `_assert_step_in_automation` private helpers on `AutomationService`. Wired into 5 sub-entity
+    methods: `update_step`, `delete_step`, `reorder_steps`, `enroll_contacts`, `list_enrollments`.
+    Each method now verifies the parent automation belongs to the caller's org BEFORE
+    operating; step operations additionally verify the step→automation link via
+    `automation_id` scoping. Router signatures updated to thread `automation_id` through to
+    `update_step` / `delete_step`.
+  - **Tests added (7 in `TestM1OrgScopingDefenseInDepth` + 1 in `TestDeleteContact::test_raises_404_when_absent`).**
+    Cross-org access to all 5 sub-entity methods raises 404. `update_step` on a non-existent
+    automation raises 404. `delete_step` with a step that belongs to a different parent raises 404.
+    Used `set_sequential_responses` with empty-data responses to model RLS-filtered SELECTs
+    (`MockSelectBuilder` does not evaluate predicates on SELECT — only `MockFilterBuilder` does).
+  - **Test delta**: 204 passed / 1 fail (baseline) → **212 passed / 1 fail**. The 1 failure is
+    the pre-existing `test_e2e_flows.py::TestCampaignLifecycle::test_full_lifecycle` (schedule POST
+    returns 400 — flake / fixture issue unrelated to Phase 1 deltas).
+  - **Keeper**: 0 NEW issues (`cli.py --review --product mailing --worktree-path "$PWD"`).
+  - **Imperative auth callsites**: 57 → 0.
+  - **Phase 0 invalidation**: PROJECT §6 says "Phase 1 blocks on `make_get_current_user_org`
+    factory landing"; WWW had already invalidated that — the factory is in seed at
+    `seed/lib/backend/noctusai_lib/api/auth.py:231-310` (confirmed). Adoption was mechanical
+    via the codemod.

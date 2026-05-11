@@ -126,13 +126,27 @@ class TestUpdateContact:
 
 class TestDeleteContact:
     def test_removes_by_id_and_org(self):
+        # Seed the row so the seed `delete_or_404` existence-check passes.
         db = MockSupabaseClient()
-        db.set_table_data("contacts", [])
+        db.set_table_data("contacts", [{"id": "c1", "org_id": ORG}])
 
         svc = ContactService(db, ORG)
         result = svc.delete_contact("c1")
 
         assert result is True
+
+    def test_raises_404_when_absent(self):
+        # mailing-wiring Phase 1: seed `delete_or_404` now raises HTTPException(404)
+        # instead of silently no-oping when the contact is missing.
+        import pytest
+        from fastapi import HTTPException
+        db = MockSupabaseClient()
+        db.set_table_data("contacts", [])
+
+        svc = ContactService(db, ORG)
+        with pytest.raises(HTTPException) as exc:
+            svc.delete_contact("missing")
+        assert exc.value.status_code == 404
 
 
 # ---------------------------------------------------------------------------

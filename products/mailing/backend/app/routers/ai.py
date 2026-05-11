@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import get_current_user, get_org_id, get_user_client
+from app.dependencies import get_current_user_org, get_org_id, get_user_client
 from app.services import ai_service
 from app.services import segmentation_service
 
@@ -44,11 +44,10 @@ class TranslationRequest(BaseModel):
 @router.post("/subjects")
 async def generate_subjects_endpoint(
     body: SubjectsRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("mailing.subject_gen")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.subject_gen")),
 ):
     """M1 — generate 3–5 subject-line variants with tone labels."""
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     variants = await ai_service.generate_subjects(
         body.campaign_summary, org_id=get_org_id(user)
     )
@@ -58,11 +57,10 @@ async def generate_subjects_endpoint(
 @router.post("/template-draft")
 async def template_draft_endpoint(
     body: TemplateDraftRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("mailing.template_draft")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.template_draft")),
 ):
     """M2 — draft an HTML email body from a prompt."""
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     html = await ai_service.draft_template(body.prompt, org_id=get_org_id(user))
     return success_response({"html": html})
 
@@ -70,11 +68,10 @@ async def template_draft_endpoint(
 @router.post("/reengagement")
 async def reengagement_endpoint(
     body: ReengagementRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("mailing.reengagement_variants")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.reengagement_variants")),
 ):
     """M5 — 3 re-engagement email variants (leve/direto/valor)."""
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     variants = await ai_service.reengagement_variants(body.context, org_id=get_org_id(user))
     return success_response({"variants": variants})
 
@@ -82,11 +79,10 @@ async def reengagement_endpoint(
 @router.post("/deliverability")
 async def deliverability_endpoint(
     body: DeliverabilityRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("mailing.deliverability_review")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.deliverability_review")),
 ):
     """M6 — review HTML for spam/deliverability issues. Returns `{findings: [...]}`."""
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     result = await ai_service.review_deliverability(
         body.html, subject=body.subject, org_id=get_org_id(user)
     )
@@ -96,11 +92,10 @@ async def deliverability_endpoint(
 @router.post("/translate")
 async def translate_endpoint(
     body: TranslationRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("mailing.translate")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.translate")),
 ):
     """M7 — translate PT HTML email to EN/ES/FR preserving template structure."""
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     translated = await ai_service.translate_template(
         body.html, body.target_lang, org_id=get_org_id(user)
     )
@@ -121,14 +116,13 @@ class SegmentRequest(BaseModel):
 @router.post("/segment-contacts")
 async def segment_contacts_endpoint(
     body: SegmentRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("mailing.segment_contacts")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.segment_contacts")),
 ):
     """M3 — embed + cluster contacts, name segments via LLM, persist one
     `<AIIndicator/>` row per contact to `mailing.ai_outputs`. Returns the
     persisted rows so the caller can update the UI immediately.
     """
-    user, token = await get_current_user(authorization)
+    user, token, org_id = auth
     org_id = get_org_id(user)
     db = get_user_client(token)
 
@@ -220,12 +214,11 @@ class CampaignDebriefRequest(BaseModel):
 @router.get("/campaigns/{campaign_id}/debrief")
 async def campaign_debrief_preview_endpoint(
     campaign_id: str,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("mailing.campaign_debrief")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.campaign_debrief")),
 ):
     """M4 — build the post-send debrief for a campaign. Returns body +
     structured summary (no email send). Used by the campaign detail page."""
-    user, token = await get_current_user(authorization)
+    user, token, org_id = auth
     org_id = get_org_id(user)
     db = get_user_client(token)
 
@@ -248,12 +241,11 @@ async def campaign_debrief_preview_endpoint(
 async def campaign_debrief_send_endpoint(
     campaign_id: str,
     body: CampaignDebriefRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("mailing.campaign_debrief")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.campaign_debrief")),
 ):
     """M4 — build + email the post-send debrief. Cron / send-completion
     hook calls this with the campaign creator as recipient."""
-    user, token = await get_current_user(authorization)
+    user, token, org_id = auth
     org_id = get_org_id(user)
     db = get_user_client(token)
 

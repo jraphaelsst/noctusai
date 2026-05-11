@@ -83,12 +83,19 @@ class TestUpdateCampaign:
 # ---------------------------------------------------------------------------
 
 class TestDeleteCampaign:
-    def _setup(self, campaign_data):
+    def _setup(self, campaign_data, *, exists_for_delete=True):
         db = MockSupabaseClient()
-        db.set_sequential_responses("campaigns", [
+        # Sequence: (1) get_campaign select, (2) delete_or_404 existence
+        # re-check select, (3) delete. Status branch returns early before
+        # the extra two calls fire.
+        responses = [
             MockSupabaseResponse(data=[campaign_data] if campaign_data else []),
-            MockSupabaseResponse(data=[]),  # delete response
-        ])
+        ]
+        if campaign_data and campaign_data.get("status") == "rascunho":
+            existence = [campaign_data] if exists_for_delete else []
+            responses.append(MockSupabaseResponse(data=existence))
+            responses.append(MockSupabaseResponse(data=[]))  # delete response
+        db.set_sequential_responses("campaigns", responses)
         return CampaignService(db, ORG)
 
     def test_allows_delete_when_rascunho(self):

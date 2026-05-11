@@ -2,8 +2,8 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
-from app.dependencies import get_current_user, get_org_id, get_admin_client
+from fastapi import APIRouter, HTTPException, Query, Depends
+from app.dependencies import get_current_user_org, get_org_id, get_admin_client
 from app.schemas.campaigns import CampaignCreate, CampaignUpdate, CampaignSchedule
 from app.services.campaign_service import CampaignService
 from app.services.send_service import SendService
@@ -21,17 +21,16 @@ def _get_service(user) -> CampaignService:
 
 @router.get("")
 async def list_campaigns(
-    authorization: Optional[str] = Header(None),
-    status: Optional[str] = Query(None),
+    auth = Depends(get_current_user_org), status: Optional[str] = Query(None),
 ):
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     svc = _get_service(user)
     return success_response(svc.list_campaigns(status=status))
 
 
 @router.post("")
-async def create_campaign(body: CampaignCreate, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def create_campaign(body: CampaignCreate, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     result = svc.create_campaign(body.model_dump(), str(user.id))
     if not result:
@@ -40,8 +39,8 @@ async def create_campaign(body: CampaignCreate, authorization: Optional[str] = H
 
 
 @router.get("/{campaign_id}")
-async def get_campaign(campaign_id: str, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def get_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     result = svc.get_campaign(campaign_id)
     if not result:
@@ -52,8 +51,8 @@ async def get_campaign(campaign_id: str, authorization: Optional[str] = Header(N
 
 
 @router.patch("/{campaign_id}")
-async def update_campaign(campaign_id: str, body: CampaignUpdate, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def update_campaign(campaign_id: str, body: CampaignUpdate, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     data = body.model_dump(exclude_unset=True)
     result = svc.update_campaign(campaign_id, data)
@@ -63,8 +62,8 @@ async def update_campaign(campaign_id: str, body: CampaignUpdate, authorization:
 
 
 @router.delete("/{campaign_id}")
-async def delete_campaign(campaign_id: str, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def delete_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     if not svc.delete_campaign(campaign_id):
         raise HTTPException(status_code=400, detail="Apenas rascunhos podem ser excluidos")
@@ -72,8 +71,8 @@ async def delete_campaign(campaign_id: str, authorization: Optional[str] = Heade
 
 
 @router.post("/{campaign_id}/schedule")
-async def schedule_campaign(campaign_id: str, body: CampaignSchedule, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def schedule_campaign(campaign_id: str, body: CampaignSchedule, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     result = svc.schedule_campaign(campaign_id, body.scheduled_at)
     if not result:
@@ -82,9 +81,9 @@ async def schedule_campaign(campaign_id: str, body: CampaignSchedule, authorizat
 
 
 @router.post("/{campaign_id}/send")
-async def send_campaign(campaign_id: str, authorization: Optional[str] = Header(None)):
+async def send_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
     """Trigger immediate send — queues all recipients and starts sending."""
-    user, _ = await get_current_user(authorization)
+    user, _, org_id = auth
     org_id = get_org_id(user)
     svc = _get_service(user)
 
@@ -101,8 +100,8 @@ async def send_campaign(campaign_id: str, authorization: Optional[str] = Header(
 
 
 @router.post("/{campaign_id}/pause")
-async def pause_campaign(campaign_id: str, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def pause_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     result = svc.pause_campaign(campaign_id)
     if not result:
@@ -111,8 +110,8 @@ async def pause_campaign(campaign_id: str, authorization: Optional[str] = Header
 
 
 @router.post("/{campaign_id}/cancel")
-async def cancel_campaign(campaign_id: str, authorization: Optional[str] = Header(None)):
-    user, _ = await get_current_user(authorization)
+async def cancel_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
+    user, _, org_id = auth
     svc = _get_service(user)
     result = svc.cancel_campaign(campaign_id)
     if not result:
