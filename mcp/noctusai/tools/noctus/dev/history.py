@@ -334,6 +334,7 @@ def history_record(
     repo_root: Path | None = None,
     ledger_path: Path | None = None,
     worktree_path: str | Path | None = None,
+    slug_override: str | None = None,
 ) -> dict:
     """Append a single NDJSON line to ``project-history/ledger.ndjson``.
 
@@ -366,6 +367,16 @@ def history_record(
             omit. Mutually-priority: explicit ``repo_root`` wins, else
             ``worktree_path``, else module-level ``REPO_ROOT``. See
             ``resolve_caller_root``.
+        slug_override: **Backfill / migration use only.** When set, the
+            ledger row uses this slug instead of deriving from the folder
+            name. Use case: archived projects live at
+            ``archive/projects/<date>/NN-<slug>/`` — passing the bare
+            ``<slug>`` strips the ``NN-`` prefix so backfilled rows match
+            the canonical convention used by live close-stamping (which
+            sees ``projects/<slug>/`` BEFORE the git mv). Default ``None``
+            preserves the original folder-name derivation. Do not use for
+            normal close-stamping — the archive caller does the right
+            thing without override.
 
     Returns:
         ``{"ledger_path": str, "line_count": int, "record": <dict>}``
@@ -394,7 +405,9 @@ def history_record(
     else:
         root = REPO_ROOT
     project_dir = _resolve_project_path(project_path, root)
-    slug = _derive_slug(project_dir)
+    slug = slug_override.strip() if slug_override else _derive_slug(project_dir)
+    if not slug:
+        raise ValueError("slug_override resolved to empty string")
 
     # Scope inference — best effort: products/*/projects/* → single-product;
     # core/projects/* → core-control; projects/* at root → cross-product.
@@ -545,6 +558,7 @@ def register(server) -> None:
         dates_closed: str | None = None,
         phases: list[dict] | None = None,
         worktree_path: str | None = None,
+        slug_override: str | None = None,
     ) -> dict:
         return history_record(
             project_path=project_path,
@@ -557,6 +571,7 @@ def register(server) -> None:
             dates_closed=dates_closed,
             phases=phases,
             worktree_path=worktree_path,
+            slug_override=slug_override,
         )
 
 
