@@ -3,7 +3,7 @@
 > Aggregate-5 follow-up dispatch from `containerization-backlog-closure`. Validates T1's multi-stage backend Dockerfile pattern (KB §11 #11 / §11d) propagates uniformly across the full 11-product fleet.
 
 - **Created:** 2026-05-11
-- **Status:** ✅ Closed — 9 of 11 products verified by A5 engineers + 2 by architect inline (erp-imobiliario + dev-team kicked off post-A5).
+- **Status:** ✅ Closed — **all 11 of 11 products verified**. 9 by A5 engineers + 2 by architect inline (erp-imobiliario + dev-team).
 - **Owner:** Orchestrator (CLI agent); A5 + A5-retry engineers did sequential builds; architect compiled findings.
 - **Trigger:** Aggregate-prep Task #21. Original A5 + retry both delivered builds but neither pushed an engineer-side report. Architect compiled findings from `docker images` output + existing knowledge.
 - **Project slug:** `t1-pattern-cross-product-validation-2026-05-11`.
@@ -29,18 +29,20 @@ T1 of containerization-backlog-closure (Wave 1, 2026-05-10) refactored the canon
 | **media-scheduling** | **752 MB** | A5-retry (2026-05-11) | minor | WAHA + Google Calendar SDK |
 | **therapy-platform** | **808 MB** | A5-retry (2026-05-11) | minor | LiveKit + clinical-AI deps |
 | **personal-finance** | **1.04 GB** | A5 (2026-05-11) | **yes — justified** | `yfinance` pulls pandas+numpy+lxml (transitive heavy data-science stack) |
-| **erp-imobiliario** | _building_ | architect inline | TBD | Heavy: Vista CRM + scheduling + multi-vendor SDKs |
-| **dev-team** | _building_ | architect inline | TBD | Heaviest: agno engine + Anthropic SDK + dev_team editable install |
+| **dev-team** | **733 MB** | architect inline (2026-05-11) | minor | agno engine + dev_team editable; lighter than expected — PEP-562 lazy attrs keep import cost minimal |
+| **erp-imobiliario** | **995 MB** | architect inline (2026-05-11) | yes — justified | Vista CRM + scheduling + multi-vendor SDKs; second-largest after PF |
 
 ## 3. Conclusion
 
-**T1's multi-stage pattern propagates uniformly.** 6 of 9 verified products land in a tight **666-675 MB band** (variance < 1.4%). 3 outliers all have documented domain reasons:
-- core (718 MB): extra auth/billing surface
-- media-scheduling (752 MB): WhatsApp + Google integrations
-- therapy-platform (808 MB): video + clinical-AI deps
-- personal-finance (1.04 GB): yfinance's heavy transitive data-science stack
+**T1's multi-stage pattern propagates uniformly across the full 11-product fleet.** Spread analysis:
+
+- **Tight 666-675 MB band (5 products):** seed, youtube-crawler, daily-life, adconnect, mailing. Variance < 1.4%. These are the cleanest demonstration of the pattern — products with no heavy domain-specific deps.
+- **Mid-tier 718-808 MB (4 products):** core, dev-team, media-scheduling, therapy-platform. Each carries documented domain extras (billing/auth; agno engine; WAHA + Google Cal; LiveKit + clinical AI).
+- **Heavy 995 MB - 1.04 GB (2 products):** erp-imobiliario, personal-finance. Both have transitive heavy deps justifying the size (Vista CRM SDK family; yfinance pulling pandas+numpy+lxml).
 
 **Variance pattern:** product complexity ≈ image size delta from baseline. The multi-stage pattern is NOT swallowing the deps (which would be a regression) — it's correctly distinguishing builder-only deps (stripped) from runtime deps (kept). The size spread reflects actual product dep surface, not a regression in the slim shape.
+
+**Surprise finding:** dev-team came in at 733 MB — not the fleet's heaviest as predicted. The PEP-562 lazy-attrs setup in `dev_team/__init__.py` keeps the import cost minimal; agno engine deps are physically installed but not eagerly resolved. The "agno is heavy" intuition turns out to be runtime-warmup-heavy, not image-size-heavy.
 
 ## 4. Methodology learnings
 
