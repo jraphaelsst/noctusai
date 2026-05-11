@@ -44,6 +44,7 @@ from unittest.mock import MagicMock
 
 from noctusai_lib.testing._schema_cache import get_schema_map
 from noctusai_lib.testing.schema_errors import MockSchemaError, MockUnknownTableError
+import copy
 
 logger = logging.getLogger(__name__)
 
@@ -728,18 +729,22 @@ class MockRequestBuilder:
         # insert-side pattern. The list collects every dict passed to
         # `update(...)`, in call order.
         self.updated_payloads: list = []
-        # Materialize the seed data as a fresh mutable list. Callers that
-        # passed a dict (single row), a tuple, or shared a list with
-        # another builder all get a stable, owned-by-this-builder list
-        # — write propagation mutates this exact reference.
+        # Materialize the seed data as a fresh mutable list with deep-copied
+        # rows. Callers that passed a dict (single row), a tuple, or shared a
+        # list with another builder all get a stable, owned-by-this-builder
+        # list — write propagation mutates this exact reference. Deep-copy of
+        # rows isolates module-level test fixtures from in-place mutation by
+        # UPDATE / DELETE / INSERT propagation (closes the 2026-05-11 test-
+        # isolation pollution bug: tests passing SAMPLE_X module dicts into
+        # `set_table_data` were getting them mutated by earlier tests' updates).
         if data is None:
             self._data = []
         elif isinstance(data, dict):
-            self._data = [data]
+            self._data = copy.deepcopy([data])
         elif isinstance(data, list):
-            self._data = list(data)
+            self._data = copy.deepcopy(list(data))
         else:
-            self._data = list(data) if isinstance(data, Iterable) else [data]
+            self._data = copy.deepcopy(list(data) if isinstance(data, Iterable) else [data])
         self._response_queue = None
         self._response_idx = None
         self._validate_schema = validate_schema
