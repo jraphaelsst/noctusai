@@ -776,11 +776,18 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
     Supabase. For offline dev / fully-isolated CI, a `postgres` profile
     serving a local DB (with a schema-init script that mirrors
     migrations) would unlock more scenarios.
-14. **Health endpoint per-product variation.** All products use the
-    seed's `/api/health` — fine, but dev-team's agno engine has
-    deeper health probes (`/api/health/agno`) that the docker
-    healthcheck doesn't surface. Consider per-product healthcheck
-    customization in the scaffolder.
+14. ✅ **Per-product healthcheck override (2026-05-10).** dev-team uses
+    an `agno_ping` readiness_hook on `/_ready` (seed-native seam). Wired
+    via `HealthEndpointConfig(readiness_hooks=[agno_ping])` passed to
+    `create_product_app(...)` in `products/dev-team/backend/app/main.py`;
+    the hook lives at `products/dev-team/backend/app/services/agno_health.py`
+    and probes ANTHROPIC_API_KEY presence + leader model allowlist +
+    `dev_team` package importability. Per-product compose override
+    targets `http://localhost:8009/_ready` with `timeout=10s` +
+    `start_period=30s`. Scaffolder template (`templates/product-seed/
+    docker-compose.yml`) gains a commented healthcheck-override seam so
+    future products can opt-in trivially. Full pattern at **§11c ·
+    Per-product healthcheck override** below.
 15. **No image scanning.** Once images land in a registry, `trivy` /
     `grype` / `docker scout` should be in the loop to catch CVEs in
     base images and pip/npm deps. Pair with #10 (registry strategy).
@@ -1061,6 +1068,109 @@ already handle missing values gracefully).
 - **Don't skip the `.env.example` update.** Out-of-band declaration
   surfaces what the product needs; collaborators shouldn't have to
   grep code to discover required env vars.
+
+---
+
+## 11c · Per-product healthcheck override
+
+**Rule.** Products inherit the seed-default Docker healthcheck which
+hits `/api/health` (a simple liveness probe — "FastAPI is up and
+routing requests"). When a product needs a **deeper readiness probe**
+(API key presence, model allowlist, downstream package importability,
+external service reachability), attach a `HealthCheckHook` to the
+seed's existing `/_ready` endpoint via `HealthEndpointConfig
+(readiness_hooks=[<hook>])` passed to `create_product_app(...)`, then
+override the per-product `docker-compose.yml` healthcheck to target
+`/_ready` (or `/_health` for liveness-only) with timeouts and
+`start_period` tuned for the deeper probe.
+
+**Why prefer `/_ready` over inventing `/api/health/<concern>`.** The
+seed-native `/_ready` endpoint is a NAMED SEAM (per the Seed-First
+rule). Inventing a `/api/health/<concern>` URL shape is a structural
+fork — it duplicates plumbing the seed already provides and creates a
+per-product convention divergence. The `readiness_hooks` list **composes**:
+every hook a product registers contributes a single entry to the
+`/_ready` JSON `checks[]` array; `/_ready` aggregates and returns 503
+when **any** hook reports `ok=False`. Multiple hooks per product, one
+endpoint, one contract.
+
+### dev-team example (concrete reference)
+
+- **Hook**: `products/dev-team/backend/app/services/agno_health.py`
+  defines `agno_ping`. Three sub-100ms local checks (no network):
+  ANTHROPIC_API_KEY env truthy, leader model in known-Anthropic
+  allowlist, `dev_team` package importable + `__version__` readable.
+  Returns `(ok: bool, error_msg: str | None)` matching the seed's
+  `HealthCheckHook` Protocol.
+- **Wiring**: `products/dev-team/backend/app/main.py` passes
+  `health_config=HealthEndpointConfig(readiness_hooks=[agno_ping])` to
+  `create_product_app(...)`. The hook's `__name__` ("agno_ping")
+  surfaces in `/_ready` JSON `checks[]` automatically.
+- **Compose override**: `products/dev-team/docker-compose.yml` carries:
+
+  ```yaml
+  dev-team-backend:
+    # ... build / image / env_file / ports / networks ...
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8009/_ready"]
+      interval: 30s
+      timeout: 10s            # agno_ping is sub-100ms but allow headroom
+      retries: 3
+      start_period: 30s        # agno warmup is genuinely slower
+  ```
+
+- **Why `start_period: 30s`.** dev-team's first import of
+  `dev_team.configs` lazy-loads agno's adapter packages; the cold-start
+  cost lands the first ready response in the 5–10s range on a warm
+  daemon. The seed's default `start_period: 20s` cuts it too close on
+  slower hosts.
+- **Why `timeout: 10s`.** `agno_ping` itself is sub-100ms (all three
+  pins are local lookups), but the override keeps headroom in case
+  `load_config('default')` ever evolves to read more YAML or `dev_team
+  .__init__` adds a heavier lazy attr.
+- **503 contract is preserved.** When ANTHROPIC_API_KEY is unset,
+  `agno_ping` reports `ok=False`; `/_ready` returns 503; Docker flips
+  the container to `unhealthy`. This is correct behavior — the
+  container truthfully reports it cannot dispatch team runs.
+
+### Scaffolder template seam
+
+`templates/product-seed/docker-compose.yml` ships a commented
+override block under the default healthcheck, demonstrating the
+shape for future products. Uncommenting + tweaking is a 30-second
+operation; the discoverability cost of "where do I put this?" is
+paid once by the template, not N times by readers.
+
+### When NOT to override
+
+- The product's actual health surface is "is FastAPI up?" — the
+  seed default `/api/health` is correct and there's nothing deeper
+  to probe.
+- The "deeper" probe would do real I/O (network call, DB query) on
+  every healthcheck interval — that's an anti-pattern. Healthchecks
+  run frequently (every 30s by default); a hook that hits Anthropic
+  per probe would generate cost and rate-limit pressure. Keep
+  readiness hooks cheap and local; let runtime errors surface real
+  network failures.
+
+### Anti-patterns
+
+- **Inventing `/api/health/<concern>` instead of using `/_ready`.**
+  Structural fork; `/_ready` already exists in the seed and composes.
+- **Healthcheck with side effects.** Probes must be read-only. A
+  healthcheck that warms a cache or initializes a connection pool is
+  doing real work on every interval.
+- **Reducing `start_period` to chase faster boot reporting.** The
+  start_period is a grace window — until it elapses, failures don't
+  flip the container `unhealthy`. Too short → first agno warmup
+  flips the container unhealthy → orchestrators restart it → loop.
+- **Forgetting to update both the override AND the registration.**
+  The compose healthcheck and the `readiness_hooks=[...]` list are
+  twin sides of the same change; touching only one leaves either
+  the deeper probe unwired (the readiness hook never runs because
+  Docker's still hitting `/api/health`) or the override blind
+  (Docker hits `/_ready` but no product-specific hooks are
+  registered, so the deeper signal isn't surfaced).
 
 ---
 
