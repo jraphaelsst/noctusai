@@ -235,17 +235,21 @@ sweep_worktrees() {
     bash "$REPO_ROOT/scripts/cleanup-stale-worktrees.sh" --dry-run
   else
     bash "$REPO_ROOT/scripts/cleanup-stale-worktrees.sh" --force
-    # Also double-force any locked stale worktrees.
-    _double_force_locked_stale
+    # Surface locked-stale worktrees as UNRESOLVED findings — never auto-destroy.
+    _report_unresolved_locked_stale
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') worktrees: cleanup invoked" >> "$LOG_FILE"
   fi
 }
 
-# Locked-but-cherry-picked worktrees need `-f -f` (the cleanup script only does single `-f`).
-_double_force_locked_stale() {
+# "Resolve before sweep" — surface locked-stale worktrees for human review.
+# A locked worktree means: another process holds the lock (agent harness, stale lock, etc.).
+# Force-removing a lock could destroy uncommitted work / stashes / inflight artifacts.
+# The mole's contract: report what NEEDS resolution; user decides whether to act.
+_report_unresolved_locked_stale() {
   git fetch origin main --quiet 2>/dev/null || true
   local wt branch in_main empty_lines
-  local -a removed=()
+  local -a unresolved_paths=()
+  local -a unresolved_reasons=()
   while IFS= read -r entry; do
     case "$entry" in
       "worktree "*)   wt="${entry#worktree }" ;;
@@ -253,6 +257,8 @@ _double_force_locked_stale() {
         branch="${entry#branch refs/heads/}"
         # Only consider .claude/worktrees/agent-* paths.
         case "$wt" in "$WORKTREE_DIR/agent-"*) ;; *) continue ;; esac
+        # Skip if the worktree path no longer exists (already cleaned by Phase 1).
+        [ -d "$wt" ] || continue
         # Check if branch is on main by ancestry OR patch-id.
         if git merge-base --is-ancestor "$branch" origin/main 2>/dev/null; then
           in_main=1
@@ -266,16 +272,48 @@ _double_force_locked_stale() {
             in_main=0
           fi
         fi
-        if [ "$in_main" -eq 1 ]; then
-          if git worktree remove --force --force "$wt" 2>/dev/null; then
-            removed+=("$wt")
-          fi
+        # Only surface if branch IS merged (otherwise it's active work — leave alone, NOT a finding).
+        [ "$in_main" -ne 1 ] && continue
+        # Branch IS merged but worktree retained. Diagnose WHY.
+        local dirty stashes reason
+        dirty=$(cd "$wt" 2>/dev/null && git status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo "?")
+        stashes=$(cd "$wt" 2>/dev/null && git stash list 2>/dev/null | wc -l | tr -d ' ' || echo "?")
+        if [ "$dirty" != "0" ] && [ "$dirty" != "?" ]; then
+          reason="$dirty uncommitted file(s) — INVESTIGATE before removing"
+        elif [ "$stashes" != "0" ] && [ "$stashes" != "?" ]; then
+          reason="$stashes stash(es) — recover before removing"
+        else
+          reason="locked (clean dir) — safe to unlock+remove after PID check"
         fi
+        unresolved_paths+=("$wt")
+        unresolved_reasons+=("$reason")
         ;;
     esac
   done < <(git worktree list --porcelain)
-  if [ "${#removed[@]+x}" = "x" ] && [ "${#removed[@]}" -gt 0 ]; then
-    echo "  double-force unlocked + removed: ${#removed[@]} stale-locked worktrees" >&2
+  if [ "${#unresolved_paths[@]+x}" = "x" ] && [ "${#unresolved_paths[@]}" -gt 0 ]; then
+    echo "" >&2
+    echo "─── UNRESOLVED locked-stale worktrees (manual review required) ───" >&2
+    echo "  Branch IS merged to main but worktree retained (lock held by another process)." >&2
+    echo "  The mole NEVER auto-destroys locked dirs — uncommitted work could be lost." >&2
+    echo "" >&2
+    local i=0
+    while [ "$i" -lt "${#unresolved_paths[@]}" ]; do
+      echo "  • ${unresolved_paths[$i]}" >&2
+      echo "      ${unresolved_reasons[$i]}" >&2
+      i=$((i+1))
+    done
+    echo "" >&2
+    echo "  Resolution recipes:" >&2
+    echo "    Clean dir (just locked):" >&2
+    echo "      git worktree unlock <path> && git worktree remove <path>" >&2
+    echo "    Uncommitted work present:" >&2
+    echo "      cd <path> && git status               # inspect what's there" >&2
+    echo "      cd <path> && git stash push -u -m wip # if recoverable" >&2
+    echo "      git worktree unlock <path> && git worktree remove <path>" >&2
+    echo "    Stashes present:" >&2
+    echo "      cd <path> && git stash list           # check what's stashed" >&2
+    echo "      cd <path> && git stash pop / apply    # recover what you need" >&2
+    echo "      git worktree unlock <path> && git worktree remove <path>" >&2
   fi
   git worktree prune 2>/dev/null || true
 }

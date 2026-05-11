@@ -85,12 +85,22 @@ Each agent has **observation-only scan** (default) + **destructive sweep** (gate
 - `git cherry origin/main <branch>` empty `^+` lines ✓ → patch-id merged, safe to remove
 - Both fail → UNMERGED, do NOT remove (active work, cherry-pick pending, or stalled engineer)
 
-**Lock detection**: `git worktree list --porcelain` reports `locked` flag. Cleanup script's `git worktree remove --force` (single force) does NOT break locks; needs `-f -f` (double force) when the agent harness has stale-locked it. The mole handles double-force on stale-merged locked worktrees automatically.
+**Lock detection + "resolve before sweep"**: `git worktree list --porcelain` reports `locked` flag. Cleanup script's `git worktree remove --force` (single force) does NOT break locks. **The mole NEVER auto-`-f -f` past a lock** — locks exist because another process is using the dir (active agent, stale lock, recovery handle). Force-removing a lock could destroy uncommitted work, stashes, or inflight artifacts the agent hadn't yet committed.
+
+**Instead**, the mole **surfaces locked-stale worktrees as UNRESOLVED findings** with a diagnosis (uncommitted-files / stashes / clean-locked) and a per-case resolution recipe. The user (or architect) decides whether to act. The "resolve" step is:
+1. Inspect the worktree (`cd <path> && git status` + `git stash list`)
+2. Recover anything valuable (`git stash push` or `git checkout` what you need)
+3. `git worktree unlock <path>` (only after verifying nothing is using it — `lsof <path>` or PID check)
+4. `git worktree remove <path>` (single force suffices once unlocked)
+
+This matches the **keeper observation-only contract**: detect + report + recommend; never destroy without explicit user action.
 
 **Anti-patterns**:
 - Removing a worktree whose branch has UNMERGED commits — loses the engineer's work
 - Removing the main worktree (the repo root itself)
 - Removing sibling workspaces (paths NOT under `.claude/worktrees/agent-*/`) — those are user-managed seed workspaces
+- **`git worktree remove -f -f` (double force) as automation** — bypasses the lock check that was put there for a reason. Use only after manual verification.
+- **Auto-removing locked-stale worktrees on the assumption that "lock == stale"** — a lock can be active. Always diagnose before destroying.
 
 ---
 
