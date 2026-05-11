@@ -20,8 +20,11 @@ This module pins two invariants per product so future drift fails loudly:
    where ``<frontend_port>`` is the value pinned in ``start.sh PRODUCTS``.
 
 CORE is excluded — it uses ``@registry:all`` (SSO-bridge shape, separate
-test at the bottom of :mod:`test_cors_registry`). PERSONAL-FINANCE is
-excluded — PF-AUTH-MIG owns its config.py edits this session.
+test at the bottom of :mod:`test_cors_registry`).
+
+PERSONAL-FINANCE joined this list 2026-05-11 (PF-CORS-REGISTRY follow-up,
+after PF-AUTH-MIG and CORS-ROLLOUT both merged — PF's config.py was the
+last hand-enumerated holdout).
 
 If a new product joins the fleet, add it to ``PRODUCT_SLUGS`` and the
 suite will enforce the sentinel + resolution pair automatically.
@@ -42,7 +45,8 @@ from noctusai_lib.config.cors_registry import (
 from noctusai_lib.config.settings import BaseAppSettings
 
 
-# Products migrated by CORS-REGISTRY-ROLLOUT (2026-05-11). CORE + PF excluded.
+# Products migrated by CORS-REGISTRY-ROLLOUT (2026-05-11) + PF-CORS-REGISTRY
+# (2026-05-11 follow-up). CORE excluded — uses ``@registry:all``.
 PRODUCT_SLUGS: tuple[str, ...] = (
     "adconnect",
     "daily-life",
@@ -51,6 +55,7 @@ PRODUCT_SLUGS: tuple[str, ...] = (
     "imobi-scheduling",
     "mailing",
     "media-scheduling",
+    "personal-finance",
     "seed",
     "therapy-platform",
     "youtube-crawler",

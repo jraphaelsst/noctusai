@@ -3,7 +3,7 @@ from noctusai_seed import ProductSettings
 
 
 class PFSettings(ProductSettings):
-    cors_origins: str = "http://localhost:8090,http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "@registry:own:personal-finance"
 
 
 settings = PFSettings()
