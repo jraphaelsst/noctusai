@@ -769,18 +769,26 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
    production overlay (`docker-compose.prod.yml`) is T8's scope and is
    loaded via explicit `-f docker-compose.yml -f docker-compose.prod.yml`.
    Full pattern at **§11d · Dev override compose** below.
-9. **CI builds only 4 of 20 images (smoke).** Full-fleet build is
-   ~30 minutes on free GH runners — current job builds core + seed
-   only. Future: matrix strategy with one job per product, or move
-   to a self-hosted runner with disk + cache reuse.
-10. ✅ **Image registry strategy — per-product registries (2026-05-10).**
-    Decision locked: per-product registries (rationale at §11a). Every
-    per-product `docker-compose.yml` `image:` line now points at
-    `ghcr.io/jraphaelsst/noctus-<slug>-<role>:${NOCTUS_IMAGE_TAG:-dev}`
-    so local builds keep working (`:dev` fallback) and CI can set
+9. ✅ **Full-fleet matrix CI build (T9, containerization-backlog-closure
+   Wave 3, 2026-05-10).** Replaced the 4-of-20 smoke build with a GitHub
+   Actions matrix that builds all **20 images** (10 products ×
+   {backend, frontend}). `fail-fast: false` so a single heavy product
+   (e.g. dev-team's agno deps) can't cancel the other 19. Each cell
+   uses `docker/build-push-action@v5` with `type=gha` layer cache
+   (`mode=max`, per-cell `scope`) — cross-PR reuse plus per-product
+   isolation. Full pattern at **§11f · CI workflow — full-fleet matrix
+   + push + scan** below.
+10. ✅ **Image registry strategy + automated push (T5 + T9, 2026-05-10).**
+    T5 (Wave 2) locked the per-product registry pattern (rationale at
+    §11a); every per-product `docker-compose.yml` `image:` line points
+    at `ghcr.io/jraphaelsst/noctus-<slug>-<role>:${NOCTUS_IMAGE_TAG:-dev}`
+    so local builds keep working (`:dev` fallback) and CI sets
     `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` for immutable tags.
-    See **§11a · Image registry strategy** for the full pattern + manual
-    push recipe. T9 (Wave 3) will land the automated push workflow.
+    T9 (Wave 3) landed the automated push workflow: on `main` push, each
+    matrix cell logs in via `docker/login-action@v3` with
+    `secrets.GITHUB_TOKEN` and publishes both `:<short-sha>` and `:latest`
+    after a clean Trivy scan. PR builds verify-only (no push). Full pattern
+    at **§11f · CI workflow — full-fleet matrix + push + scan** below.
 11. **Backend image is fat (600-900MB).** A second pass with
     multi-stage (build deps in one stage, runtime-only in another)
     could shave 200-400MB. Standard pattern; deferred for later. <- please do it
@@ -835,9 +843,17 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
     deeper health probes (`/api/health/agno`) that the docker
     healthcheck doesn't surface. Consider per-product healthcheck
     customization in the scaffolder.
-15. **No image scanning.** Once images land in a registry, `trivy` /
-    `grype` / `docker scout` should be in the loop to catch CVEs in
-    base images and pip/npm deps. Pair with #10 (registry strategy).
+15. ✅ **Image scanning via Trivy (T9, containerization-backlog-closure
+    Wave 3, 2026-05-10).** Every matrix-built image is scanned by
+    `aquasecurity/trivy-action@0.24.0` for `HIGH,CRITICAL` severity CVEs
+    with `exit-code: 1` (vulnerable images fail the build BEFORE the push
+    step runs — they never land in the registry). Scan results upload as
+    SARIF to the GitHub Security tab via `github/codeql-action/upload-sarif@v3`,
+    on every build (PR + main) so findings are visible regardless of
+    whether the build pushed. `ignore-unfixed: true` so we don't fail on
+    CVEs without a fix path. Trivy is **pinned** to `@0.24.0` (not `@master`)
+    so a scanner-engine update can't silently break CI. Full pattern at
+    **§11f · CI workflow — full-fleet matrix + push + scan** below.
 
 ### Anti-patterns to avoid
 
@@ -1622,6 +1638,189 @@ single-line syntax (no override path) until that gap closes.
 
 ---
 
+## 11f · CI workflow — full-fleet matrix + push + scan
+
+Landed T9 of `projects/containerization-backlog-closure/` (Wave 3,
+2026-05-10). Closes backlog items #9 (full-fleet build), #10 CI half
+(automated GHCR push), and #15 (image scanning) in one workflow update.
+Lives in `.github/workflows/test.yml` as the `docker-images-build` job;
+the existing pytest / frontend-build / e2e / compose-validate jobs are
+preserved unchanged.
+
+### Matrix shape
+
+```yaml
+strategy:
+  fail-fast: false
+  matrix:
+    product:
+      - core
+      - erp-imobiliario
+      - personal-finance
+      - therapy-platform
+      - daily-life
+      - mailing
+      - adconnect
+      - dev-team
+      - media-scheduling
+      - seed
+    role: [backend, frontend]
+```
+
+**10 products × 2 roles = 20 matrix cells.** Each cell is one GitHub
+Actions runner. `fail-fast: false` is non-negotiable: dev-team's
+backend (~900MB with the agno engine) is the heaviest build and prone
+to flake; without `fail-fast: false`, a single dev-team-backend failure
+would cancel the other 19 builds and waste 20-30 minutes of compute.
+
+**`youtube-crawler` and `imobi-scheduling` are intentionally absent**
+from the matrix:
+- `youtube-crawler` has no Docker artifacts yet (surfaced T3, tracked
+  as a separate follow-up).
+- `imobi-scheduling` still carries stale `seed-*` literal service
+  names from a pre-T7 scaffold (see §11d carve-out). Add it to the
+  matrix after the rename lands.
+
+### Cache strategy
+
+Every build step uses `docker/build-push-action@v5` with:
+
+```yaml
+cache-from: type=gha,scope=${{ matrix.product }}-${{ matrix.role }}
+cache-to:   type=gha,mode=max,scope=${{ matrix.product }}-${{ matrix.role }}
+```
+
+- **`type=gha`** is the GitHub Actions cache backend — distinct from
+  `actions/cache@v4` and the only cache type `docker/build-push-action`
+  natively supports for buildx.
+- **`mode=max`** keeps every intermediate layer (not just the final
+  image), trading cache size for fastest rebuilds. Without `mode=max`,
+  a one-line `requirements.txt` change re-runs the entire pip install.
+- **Per-cell `scope`** isolates each product+role's cache so adconnect's
+  build never invalidates seed's. Reduces cross-pollination evictions
+  in the LRU.
+- **10GB GHA cache cap per repo** evicts LRU when full. For 20 images ×
+  ~500MB-1GB each, the cache fills; eviction is GHA's responsibility
+  and it's tuned for "warm core, cold fringe" — fine for our cadence.
+
+### Push trigger (main only)
+
+The push step is gated:
+
+```yaml
+- name: Push to GHCR (main only, scan-clean only)
+  if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+```
+
+- **PRs build + scan but never push.** Verification only — image lands
+  in the local daemon, Trivy scans it, SARIF uploads to the GH Security
+  tab. The image is discarded when the runner shuts down.
+- **`main` pushes trigger registry publication.** Both `:<short-sha>`
+  (immutable, deploy-grade) and `:latest` (convenience, never use in
+  production deploys per §11a) are pushed.
+- **Auth via `secrets.GITHUB_TOKEN`** + `docker/login-action@v3`. The
+  default token gets `packages: write` from the job-level `permissions:`
+  block — no PAT setup needed.
+
+### Build → scan → push ordering
+
+The job runs three distinct build-push-action steps:
+
+1. **Build to local daemon** (`load: true, push: false`) — every run.
+2. **Trivy scan** of the local image — every run. `exit-code: 1` fails
+   the job if HIGH or CRITICAL CVEs surface.
+3. **Push to GHCR** (`push: true`) — main only, conditional.
+
+The split exists so **a vulnerable image NEVER lands in the registry**.
+Trivy gates the push: if step 2 fails, step 3 never runs, the SHA never
+publishes. The cache-from in step 3 reuses the layers from step 1 — it
+re-exports rather than re-builds, so the cost is buildx-cache-hit + a
+network push, not a full second build.
+
+### Scan trigger + SARIF upload
+
+```yaml
+- name: Scan image with Trivy (HIGH,CRITICAL — fail on findings)
+  uses: aquasecurity/trivy-action@0.24.0
+  with:
+    image-ref: ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:${{ steps.sha.outputs.short }}
+    format: sarif
+    output: trivy-${{ matrix.product }}-${{ matrix.role }}.sarif
+    severity: HIGH,CRITICAL
+    exit-code: '1'
+    ignore-unfixed: true
+
+- name: Upload Trivy SARIF to GH Security tab
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: trivy-${{ matrix.product }}-${{ matrix.role }}.sarif
+    category: trivy-${{ matrix.product }}-${{ matrix.role }}
+```
+
+- **SARIF upload runs on `if: always()`** so a failed Trivy scan still
+  ships the report — seeing exactly which CVE failed is the value.
+- **Per-cell `category`** prevents SARIF entries from one matrix cell
+  overwriting another in the Security tab (default behavior would merge
+  them by category).
+- **`security-events: write` permission** at the workflow root (also
+  re-declared at the job level for explicitness) — GH's default token
+  lacks this by default.
+- **`ignore-unfixed: true`** so we don't fail on CVEs without an
+  upstream fix. Otherwise CI breaks the moment a base-image package
+  picks up a CVE with no patched version available.
+
+### When to bump Trivy
+
+Pinned to `@0.24.0` deliberately — `@master` is a moving target that
+can change scanner-engine internals between runs. Bump cadence:
+- **Every 3-6 months** review the upstream release notes for new
+  severity classifications, scanner-engine improvements, or new SARIF
+  schema versions.
+- **On a CVE-reporting gap** (a CVE that should fire but doesn't),
+  check if a newer Trivy version covers it.
+- **Treat the bump like any other pinned-action upgrade** — test on a
+  PR before merging to main.
+
+### Cost considerations
+
+- **20 cells × ~5-10 min/cell (with cache) = ~100-200 runner-minutes
+  per CI run.** Cold cache (first run after eviction): ~20-30 min/cell
+  for the heaviest products. Warm cache (typical PR): ~2-5 min/cell.
+- **Free GH runners give 2000 min/month for public repos** — this
+  workflow consumes ~25-50 PR runs/month at warm-cache rates. Watch
+  the budget if PR cadence is high.
+- **Future optimization (§11 #11):** multi-stage backend Dockerfile to
+  shave 200-400MB per backend image. Smaller images → faster pushes →
+  faster scans → cheaper CI.
+- **Self-hosted runners** are an option if the budget tightens — disk
+  reuse across runs makes the cold-cache path cheap.
+
+### Anti-patterns
+
+- **Don't `docker push` from PR builds.** Only `main` push. PRs verify;
+  main publishes. Anything else pollutes the registry with PR-author
+  SHAs that have no permanent meaning.
+- **Don't pin Trivy to `@master`.** `@<semver>` only. Same rule applies
+  to every other action — `@v5` for major-version-pinned actions
+  (build-push-action, login-action, setup-buildx-action) is acceptable
+  because GitHub enforces backward compat within a major; Trivy is a
+  third-party scanner with no such guarantee.
+- **Don't use `${{ github.token }}` for GHCR push.** Use
+  `secrets.GITHUB_TOKEN`. The two LOOK identical but `secrets.GITHUB_TOKEN`
+  is the official secret-context reference; `github.token` is a
+  context-shortcut that can behave differently in reusable workflows.
+- **Don't skip `permissions:` at the workflow OR job level** for
+  `packages: write` + `security-events: write`. GH's default token
+  is read-only on packages and silent-fails on SARIF upload — both
+  failure modes look like "the action ran fine" but produce nothing
+  useful.
+- **Don't combine matrix cells into a single job.** The whole point of
+  the matrix is per-image runner isolation: independent runtimes,
+  independent failure surfaces, independent caches.
+
+---
+
 ## 12 · References
 
 - Root compose: `docker-compose.yml`
@@ -1633,3 +1832,4 @@ single-line syntax (no override path) until that gap closes.
 - Local-postgres generator: `scripts/build-init-local-db.sh`
 - Deploy drill (when user says "put X online"): `KB § GUIDES/deploy-workspace-online.md`
 - Operations: `start.sh`, `stop.sh`
+- CI workflow (matrix build + GHCR push + Trivy scan): `.github/workflows/test.yml`

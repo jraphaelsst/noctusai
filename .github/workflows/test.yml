@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  packages: write
+  security-events: write
 
 jobs:
   erp-backend-tests:
@@ -236,15 +238,122 @@ jobs:
         run: python3 scripts/check-framework-deps.py
 
   docker-images-build:
-    name: Docker Images Build (smoke)
+    # Full-fleet matrix build per KB § PATTERNS/containerization.md §11f.
+    # 10 products × {backend, frontend} = 20 matrix cells. fail-fast: false
+    # so one heavy product (e.g. dev-team) failing doesn't cancel siblings.
+    # On main pushes: build + push + scan. On PRs: build + scan only
+    # (SARIF uploaded to GH Security tab; never pushes to registry).
+    name: Image — ${{ matrix.product }}-${{ matrix.role }}
     runs-on: ubuntu-latest
     needs: docker-compose-validate
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        product:
+          - core
+          - erp-imobiliario
+          - personal-finance
+          - therapy-platform
+          - daily-life
+          - mailing
+          - adconnect
+          - dev-team
+          - media-scheduling
+          - seed
+        role: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Build core + seed images (smoke — full fleet too slow on CI)
-        run: |
-          docker compose build --pull \
-            core-backend core-frontend \
-            seed-backend seed-frontend
+
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        # Only authenticate when we'll actually push (main pushes). On PRs
+        # we never push, so logging in would just waste a call + grant
+        # write:packages where it isn't needed.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image to local daemon (for scan)
+        # First pass: ALWAYS build with `load: true` so the image is in
+        # the local daemon for Trivy to scan. We don't push here — the
+        # `Push to GHCR` step below pushes from the same buildx cache on
+        # main only. Splitting build → scan → push lets Trivy's exit-code
+        # gate the push (vulnerable image never lands in the registry).
+        # `docker/build-push-action@v5` wires the GHA layer cache backend
+        # (`type=gha`). Cache mode=max keeps every intermediate layer,
+        # trading cache size for fastest rebuilds. The 10GB GHA cache cap
+        # evicts LRU; acceptable for a 20-image fleet sharing base layers.
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: products/${{ matrix.product }}/${{ matrix.role }}/Dockerfile
+          load: true
+          push: false
+          build-args: |
+            GIT_SHA=${{ steps.sha.outputs.short }}
+          tags: |
+            ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:${{ steps.sha.outputs.short }}
+            ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:latest
+          cache-from: type=gha,scope=${{ matrix.product }}-${{ matrix.role }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.product }}-${{ matrix.role }}
+
+      - name: Scan image with Trivy (HIGH,CRITICAL — fail on findings)
+        # Pinned to a specific tag instead of @master so a Trivy upstream
+        # change can't surprise CI silently. Bump cadence: review every
+        # 3-6 months for new severities + scanner-engine improvements.
+        # `exit-code: 1` ensures vulnerable images break the build before
+        # the push step gets to run — vulnerable images never publish.
+        # Image is in the local daemon from the build step above.
+        id: scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:${{ steps.sha.outputs.short }}
+          format: sarif
+          output: trivy-${{ matrix.product }}-${{ matrix.role }}.sarif
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF to GH Security tab
+        # SARIF upload runs on every build (PR or main) so security
+        # findings land in the GH Security tab regardless of push gating.
+        # `if: always()` so a failed Trivy scan still uploads the report
+        # — that's the value: see exactly which CVE failed the build.
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.product }}-${{ matrix.role }}.sarif
+          category: trivy-${{ matrix.product }}-${{ matrix.role }}
+
+      - name: Push to GHCR (main only, scan-clean only)
+        # Gated on main push AND a clean Trivy scan: build-push-action's
+        # `cache-from` reuses the layers from the build step above, so
+        # this is a fast cache-hit re-export rather than a second full
+        # build. The image is identical to what Trivy just scanned.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: products/${{ matrix.product }}/${{ matrix.role }}/Dockerfile
+          push: true
+          build-args: |
+            GIT_SHA=${{ steps.sha.outputs.short }}
+          tags: |
+            ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:${{ steps.sha.outputs.short }}
+            ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:latest
+          cache-from: type=gha,scope=${{ matrix.product }}-${{ matrix.role }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.product }}-${{ matrix.role }}
