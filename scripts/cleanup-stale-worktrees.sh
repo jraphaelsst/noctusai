@@ -8,8 +8,14 @@
 #   ~880 MiB each. 75 stale worktrees = 67 GiB unrecoverable until manual cleanup.
 #
 # What "stale" means
-#   An agent worktree whose branch is reachable from `origin/main` (its commit
-#   has been merged). Unmerged work-in-progress worktrees are KEPT.
+#   An agent worktree whose branch is either:
+#     (a) reachable from `origin/main` by SHA ancestry (true merge), OR
+#     (b) all commits already present on `origin/main` by PATCH-ID (cherry-pick).
+#   The cherry-pick check is necessary because our orchestrator FFs branched
+#   work to main via cherry-pick (new SHA, same patch). The plain ancestry
+#   check would leak these branches forever — they accumulate as remote
+#   detritus. `git cherry main <branch>` is the patch-id equivalent.
+#   Unmerged work-in-progress worktrees are KEPT.
 #
 # How to use
 #   bash scripts/cleanup-stale-worktrees.sh           # interactive: list + confirm
@@ -44,6 +50,25 @@ done
 
 cd "$REPO_ROOT"
 
+# Patch-id equivalence check: are all commits on $branch already on origin/main
+# under different SHAs? Used to detect cherry-picked work, which plain
+# `merge-base --is-ancestor` misses because cherry-pick rewrites SHAs.
+#
+# `git cherry origin/main <branch>` lists commits on $branch NOT on origin/main
+# by patch-id. Output prefixes:
+#   `+` = commit not on main (genuinely unmerged)
+#   `-` = commit on main by patch-id (cherry-picked)
+# Empty output OR only `-` lines = branch is fully on main by content.
+_all_commits_cherry_picked_to_main() {
+  local b="$1"
+  local plus_lines
+  plus_lines="$(git cherry origin/main "$b" 2>/dev/null | grep -c '^+' || true)"
+  # The branch must have AT LEAST 1 commit and ZERO `+` lines.
+  local total
+  total="$(git log --oneline "origin/main..$b" 2>/dev/null | wc -l | tr -d ' ')"
+  [ "$total" -gt 0 ] && [ "$plus_lines" = "0" ]
+}
+
 if [ ! -d "$WORKTREE_DIR" ]; then
   echo "No worktree dir at $WORKTREE_DIR — nothing to clean."
   exit 0
@@ -67,6 +92,9 @@ while IFS= read -r line; do
                    elif [[ "$wt" != "$WORKTREE_DIR/agent-"* ]]; then
                      :  # sibling workspace; skip
                    elif git merge-base --is-ancestor "$branch" origin/main 2>/dev/null; then
+                     stale_paths+=("$wt")
+                   elif _all_commits_cherry_picked_to_main "$branch"; then
+                     # Branch commits are already on main by patch-id (cherry-pick).
                      stale_paths+=("$wt")
                    else
                      active_paths+=("$wt")

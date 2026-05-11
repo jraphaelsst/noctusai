@@ -1592,3 +1592,63 @@ bash scripts/disk-usage-monitor.sh --auto-clean   # if ≥70%, automatically run
 - `archive/projects/2026-05-11/16-personal-finance-wiring/proposals/phase-7-disk-space-preflight.md` — Engineer FFF's disk-full slip + the bootstrap pre-flight recipe.
 
 **Three-way-synced 2026-05-11**: this subsection (§19) + memory entries `feedback_worktree_auto_cleanup.md` + `feedback_disk_usage_monitor.md` + CLAUDE.md §1 universal-rules pointer (no new bullet — KB pointer suffices since §19 is self-contained methodology).
+
+---
+
+## 20. Engineer-letter naming convention (NEW 2026-05-11)
+
+### 20.1 — The rule
+
+Every engineer subagent dispatched in this orchestration system gets a short **ALL-CAPS letter code** as their handle — **AUTH-RL**, **PF-AUTH-MIG**, **CORS-ROLLOUT**, **MOCK-SCHEMA**, **LLM-RL-TRIO**, **SEED-FORBID**, **DT-RATELIMIT**, **THE-P10**, **WWW**, **NNN**, **VVV**.
+
+**Format**: 2–4 dashed segments, each 2–6 chars, ALL-CAPS:
+- `<DOMAIN>-<TASK>` — e.g., `AUTH-RL` (auth + rate-limit), `SEED-FORBID` (seed + extra=forbid)
+- `<PRODUCT>-<TASK>` — e.g., `DT-RATELIMIT` (dev-team + rate-limit), `PF-AUTH-MIG` (PF + auth + migration)
+- `<PRODUCT>-<PHASE>` — e.g., `THE-P10` (therapy + Phase 10), `IMB-FIN` (imobi-scheduling + finalization)
+- `<TASK>-<MODIFIER>` — e.g., `LLM-RL-TRIO` (LLM rate-limit + 3-product scope), `CORS-ROLLOUT` (CORS migration sweep)
+- **Triple-letter fallback** — `WWW`, `NNN`, `VVV`, `RRR`, `SSS`, `KKK`, `MMM` — used when no clean acronym fits, or for solo finishers/audit follow-ups that don't map to a domain (e.g., `WWW` for a one-off seed audit, `NNN` for a per-product audit pass).
+
+### 20.2 — Why the letter, not the branch slug
+
+The engineer-letter is the **orchestrator's handle** — short, memorable, easy to track in a continuous-flow conversation when 4–6 engineers are in flight. The **branch slug** (e.g., `auth-rate-limit-rollout-2026-05-11`) is the **engineer's deliverable name** — descriptive, date-stamped, lives forever in git history.
+
+They serve different audiences:
+| Surface | Use the letter | Use the slug |
+|---|---|---|
+| Orchestrator brief headers ("Engineer AUTH-RL, dispatched on...") | ✓ | — |
+| Task tracker rows | ✓ | — |
+| Retrospective summaries ("AUTH-RL just shipped") | ✓ | — |
+| `findings.md` author attribution | ✓ | — |
+| Git branch name | — | ✓ |
+| Commit subject | — | ✓ |
+| `projects/<slug>/PROJECT.md` directory | — | ✓ |
+| PR title (when used) | — | ✓ |
+
+### 20.3 — Allocation rules
+
+- **One letter per dispatch.** Every fresh `Agent()` call gets a fresh code; even if the new engineer is finishing a stalled predecessor (e.g., `KKK-2` continues `KKK`'s work, but is its own subagent invocation).
+- **Numbered continuations**: when a finisher picks up a stalled engineer's work, append `-2`, `-3`, etc. — e.g., `KKK-2` finishes `KKK`'s 8-route rename after watchdog stall.
+- **Never reuse a letter across distinct chunks.** If `AUTH-RL` shipped and a follow-up rate-limit task surfaces, the next engineer is `AUTH-RL-FOLLOWUP` or a new letter combo, not a recycled `AUTH-RL`.
+- **Solo-engineer model assumes solo letters.** Multi-agent dev-team chunks (`noctus.team.*`) get a team-letter (`TEAM-X`) plus per-specialist sub-letters if needed.
+
+### 20.4 — Why the convention works
+
+- **Cognitive compactness**: when 6 engineers are in flight, "AUTH-RL · PF-AUTH-MIG · LLM-RL-TRIO · THE-P10 · CORS-ROLLOUT · MOCK-SCHEMA" reads in one breath. Branch slugs would need 8× the screen width.
+- **Spoken/typed reference**: easy to say "did AUTH-RL ship yet?" — branch slugs become "did auth-rate-limit-rollout-2026-05-11 ship yet?" (unsayable).
+- **Findings attribution**: when a finding mentions "VVV's clinic-portal silent-drop catch", the architect immediately recalls the engineer + context. With branch-slug attribution, the cognitive lookup is much heavier.
+- **Continuous-flow workflow**: with engineers shipping every 5-30 minutes, the orchestrator needs terse handles to track parallel state without scroll-back.
+
+### 20.5 — Anti-patterns
+
+- **Branch-slug everywhere**: dispatching "Engineer auth-rate-limit-rollout-2026-05-11" is verbose and forces 20+ char repetition per mention. Use the letter for ALL orchestrator-side reference; keep the slug for git artifacts.
+- **Memorable-name handles** ("PHOENIX", "STORM"): tempting but break the format pattern. The dashed CAPS convention is the affordance — engineers self-identify with their codes in reports without prompting.
+- **No letter at all**: dispatching nameless engineers leaves the architect with only `Agent` tool's auto-generated IDs (`af3f3478ab471fd36`) — opaque, unspoken, useless for retrospectives.
+- **Letter mismatch between brief and report**: dispatch as `AUTH-RL`, engineer reports as `EngineerRateLimit` — break in continuity. The brief MUST open with `You are **Engineer <LETTER>**, ...` to anchor the engineer's self-identification.
+
+### 20.6 — References
+
+- §18 — Wave-based dispatch (engineers grouped by dependency depth carry letters as wave identifiers).
+- `feedback_engineer_letter_naming.md` (memory) — origin + user-feedback context.
+- KB §17.6 — Engineer-brief Write-authorization template uses `Engineer <LETTER>` as the opening line.
+
+**Three-way-synced 2026-05-11**: this subsection (§20) + memory entry `feedback_engineer_letter_naming.md` + CLAUDE.md §1 universal-rules pointer (no new bullet — KB pointer suffices since §20 is self-contained convention).
