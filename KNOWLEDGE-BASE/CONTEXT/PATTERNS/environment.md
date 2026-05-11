@@ -49,6 +49,30 @@ Secrets live in non-prefixed vars (backend-only).
 
 Current ports: 5173 (Core), 8080 (ERP), 8090 (PF), 8095 (Therapy), 8100 (Seed), 8110 (Daily Life), 8120 (Mailing).
 
+### CORS wildcard+credentials guard — auth-replay defense
+
+`seed/lib/backend/noctusai_lib/api/app_factory.py::configure_app()` **refuses to boot** when `cors_origins='*'` AND `allow_credentials=True`. Browsers reflect ANY `Origin` header and forward credentials (cookies, `Authorization` header) when both flags are mounted — that combination lets any third-party site replay an authenticated user's tokens. **Refuse at boot, not at request time** (boot crash is loud; request-time misconfig is invisible until exploited).
+
+Symptom at startup:
+```
+RuntimeError: CORS misconfiguration: cors_origins='*' is incompatible with
+allow_credentials=True (auth-replay vulnerability). Enumerate cors_origins
+explicitly. Product: <name>. Override for local dev only via
+NOCTUSAI_ALLOW_CORS_WILDCARD_WITH_CREDS=1.
+```
+
+**Fix the configuration, not the guard.** Enumerate the real origins in `CORS_ORIGINS` (e.g. `https://app.example.com,https://admin.example.com`). Public-read APIs that legitimately need `*` must pass `allow_credentials=False` to `configure_app(...)`.
+
+**Escape hatch for local dev only**: `NOCTUSAI_ALLOW_CORS_WILDCARD_WITH_CREDS=1` allows the combination AND emits a LOUD `WARNING` log on every boot. NEVER use in production. The override accepts `1` / `true` / `yes` (any case); any other value still blocks.
+
+Legitimate combinations:
+- enumerated origins + `allow_credentials=True` → production shape ✓
+- `*` + `allow_credentials=False` → public-read API ✓
+- enumerated origins + `allow_credentials=False` → public-read with explicit allowlist ✓
+- `*` + `allow_credentials=True` → **refused at boot** ✗
+
+Tests live in `seed/lib/backend/tests/api/test_cors_wildcard_credentials_guard.py`.
+
 ## Restart rules
 
 - Backend code change → uvicorn `--reload` picks it up.

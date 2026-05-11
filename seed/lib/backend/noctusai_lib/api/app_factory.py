@@ -8,6 +8,7 @@ single configure_app() call.
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +41,8 @@ def configure_app(
     cors_allow_headers: list[str] | None = None,
     cors_expose_headers: list[str] | None = None,
     max_body_bytes: int | None = None,
+    allow_credentials: bool = True,
+    product_name: str | None = None,
 ) -> None:
     """
     Apply shared configuration to a FastAPI app instance.
@@ -66,6 +69,20 @@ def configure_app(
                         `settings.max_body_bytes` when present). Set to a
                         higher value for products that legitimately receive
                         large payloads (file-upload-via-webhook, etc.).
+        allow_credentials: Whether to send credentials in CORS responses.
+                           Defaults to True. Mutually exclusive with a
+                           wildcard `cors_origins='*'` — boot refuses the
+                           combination (see CORS guard below).
+        product_name: Optional product slug surfaced in the CORS guard
+                      error message. When None, falls back to
+                      `settings.product_name` or '<unknown>'.
+
+    Raises:
+        RuntimeError: If `settings.cors_origins_list` contains '*' AND
+                      `allow_credentials=True` AND the override env var
+                      `NOCTUSAI_ALLOW_CORS_WILDCARD_WITH_CREDS` is unset.
+                      Browsers reflect any Origin with credentials in
+                      that combination — an auth-replay vulnerability.
     """
     # -----------------------------------------------------------------------
     # Sentry (optional)
@@ -112,6 +129,41 @@ def configure_app(
             )
 
     # -----------------------------------------------------------------------
+    # CORS wildcard+credentials guard — auth-replay defense.
+    #
+    # Browsers reflect ANY Origin and forward credentials when both
+    # `allow_origins=["*"]` and `allow_credentials=True` are mounted. That
+    # permits cross-site auth-token replay by construction. Refuse to boot.
+    #
+    # Escape hatch for genuine dev scenarios (never in production):
+    #   NOCTUSAI_ALLOW_CORS_WILDCARD_WITH_CREDS=1
+    # Emits a LOUD warning when used.
+    # -----------------------------------------------------------------------
+    _cors_origins = settings.cors_origins_list
+    if "*" in _cors_origins and allow_credentials:
+        _override = os.environ.get(
+            "NOCTUSAI_ALLOW_CORS_WILDCARD_WITH_CREDS", ""
+        ).strip().lower() in ("1", "true", "yes")
+        _product_label = product_name or getattr(
+            settings, "product_name", "<unknown>"
+        )
+        if not _override:
+            raise RuntimeError(
+                "CORS misconfiguration: cors_origins='*' is incompatible with "
+                "allow_credentials=True (auth-replay vulnerability). "
+                "Enumerate cors_origins explicitly. "
+                f"Product: {_product_label}. "
+                "Override for local dev only via "
+                "NOCTUSAI_ALLOW_CORS_WILDCARD_WITH_CREDS=1."
+            )
+        logger.warning(
+            "CORS wildcard+credentials override ACTIVE for product=%s — "
+            "NOCTUSAI_ALLOW_CORS_WILDCARD_WITH_CREDS=1 set. NEVER in production. "
+            "Auth-replay risk: any origin can attach credentialed requests.",
+            _product_label,
+        )
+
+    # -----------------------------------------------------------------------
     # CORS
     # -----------------------------------------------------------------------
     _allow_headers = cors_allow_headers or [
@@ -125,7 +177,7 @@ def configure_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=_allow_headers,
         expose_headers=_expose_headers,
