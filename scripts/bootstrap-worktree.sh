@@ -151,7 +151,18 @@ while IFS= read -r d; do
 done < <(find products -maxdepth 3 -name package.json -not -path "*/node_modules/*" -exec dirname {} \; 2>/dev/null | sort)
 echo ""
 
-# ─── Python recap (informational; venv is shared across worktrees) ───────────
+# ─── Python recap + shared-venv discovery ────────────────────────────────────
+# Worktrees do NOT carry their own Python venv (gitignored + duplication-prone:
+# 15 worktrees × ~300 MB = ~4.5 GiB of redundant site-packages). Instead, the
+# MAIN repo's venv is shared. This block discovers it (same shape as
+# scripts/pre-commit) and probes for the deps engineers need to run
+# `python mcp/noctusai/cli.py --review` (and the pre-commit hook's
+# `--check-phase-state`).
+#
+# N=3 recurrence formalization (2026-05-11 — DL-P2 + MAI-P2 + PF-AUTH-MIG):
+# engineers in worktrees hit `ModuleNotFoundError: pydantic_settings` invoking
+# cli.py because system `python3` lacks the platform's deps. Pointing them at
+# the main venv closes the gap.
 echo "[3/3] Python recap"
 if command -v python3.11 >/dev/null 2>&1; then
   PY="$(command -v python3.11)"
@@ -167,11 +178,43 @@ else
   fi
 fi
 
-if [[ -d "$WORKTREE_ROOT/venv" ]]; then
-  echo "  · venv exists at $WORKTREE_ROOT/venv"
+# Discover the main repo's venv (worktree-aware, mirrors scripts/pre-commit:135-145).
+SHARED_VENV_PY=""
+if [[ -x "$WORKTREE_ROOT/venv/bin/python" ]]; then
+  # In-tree venv (this worktree is itself the main checkout).
+  SHARED_VENV_PY="$WORKTREE_ROOT/venv/bin/python"
+  echo "  · in-tree venv at $WORKTREE_ROOT/venv"
 else
-  echo "  · no $WORKTREE_ROOT/venv  (shared venv lives at the parent worktree;"
-  echo "    if PYTHONPATH issues surface, see KB § PATTERNS/branching-and-merging.md §16)"
+  MAIN_REPO_GITDIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [[ -n "$MAIN_REPO_GITDIR" ]]; then
+    MAIN_REPO_ROOT="$(dirname "$MAIN_REPO_GITDIR")"
+    if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
+      SHARED_VENV_PY="$MAIN_REPO_ROOT/venv/bin/python"
+      echo "  · shared venv at $MAIN_REPO_ROOT/venv  (no per-worktree venv — by design)"
+    else
+      echo "  · ⚠️  no shared venv found at $MAIN_REPO_ROOT/venv"
+      echo "    run from the main checkout: python3.11 -m venv venv && venv/bin/pip install -r mcp/noctusai/requirements.txt -e seed/lib/backend"
+    fi
+  fi
+fi
+
+# Probe the shared venv for the deps cli.py needs (pydantic_settings via
+# noctusai_lib.config; noctusai_lib itself for logging_config; mcp for the
+# stdio server). Reports missing deps + the one-line fix.
+if [[ -n "$SHARED_VENV_PY" ]]; then
+  MISSING_DEPS=""
+  for mod in noctusai_lib pydantic_settings mcp; do
+    if ! "$SHARED_VENV_PY" -c "import $mod" 2>/dev/null; then
+      MISSING_DEPS="$MISSING_DEPS $mod"
+    fi
+  done
+  if [[ -n "$MISSING_DEPS" ]]; then
+    echo "  · ⚠️  shared venv missing modules:$MISSING_DEPS"
+    echo "    fix (from the main checkout):"
+    echo "      $SHARED_VENV_PY -m pip install -r mcp/noctusai/requirements.txt -e seed/lib/backend"
+  else
+    echo "  · shared venv has noctusai_lib + pydantic_settings + mcp  (cli.py --review ready)"
+  fi
 fi
 echo ""
 
@@ -208,6 +251,12 @@ if [[ $CHECK_ONLY -eq 1 ]]; then
   fi
 else
   echo "✓ Worktree env hydrated. Suggested next steps:"
-  echo "    export PYTHONPATH=\"$WORKTREE_ROOT/seed/lib/backend\""
+  if [[ -n "${SHARED_VENV_PY:-}" ]]; then
+    echo "    # Run cli.py / pre-commit checks via the shared venv:"
+    echo "    $SHARED_VENV_PY mcp/noctusai/cli.py --review"
+    echo "    # (or alias:  export NOC_PY=\"$SHARED_VENV_PY\"  &&  \$NOC_PY mcp/noctusai/cli.py --review )"
+  else
+    echo "    export PYTHONPATH=\"$WORKTREE_ROOT/seed/lib/backend\"   # shared venv not found"
+  fi
   echo "    cd products/<slug>/frontend && npm run build   # smoke"
 fi
