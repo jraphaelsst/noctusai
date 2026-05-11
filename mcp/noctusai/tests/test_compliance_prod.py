@@ -293,6 +293,106 @@ class TestCheckFunctionSearchPathPinned:
         (root / "backend").mkdir(parents=True)
         assert check_function_search_path_pinned(root) == []
 
+    def test_later_or_replace_supersedes_earlier_block(self):
+        """A bare `CREATE FUNCTION foo` lacking SET search_path that is
+        followed by a later `CREATE OR REPLACE FUNCTION foo SET search_path = ...`
+        is NOT flagged — the live runtime is the fixed version.
+
+        Pins the N=2 keeper-detector-supersession-tuning slip (therapy GG
+        2026-05-10 + ZZ 2026-05-11). Before the fix, the earlier block
+        kept getting flagged even though `pg_proc` reflected the later
+        definition, producing 9 residual ERP findings that had to be
+        accept-with-rationale.
+        """
+        product = _mk_product(
+            migrations={
+                "001_init.sql": (
+                    "CREATE FUNCTION therapy.gcal_authorization_is_fresh("
+                    "authorized_at TIMESTAMPTZ)\n"
+                    "RETURNS BOOLEAN LANGUAGE sql IMMUTABLE\n"
+                    "AS $$ SELECT authorized_at IS NOT NULL; $$;\n"
+                ),
+                "011_fix_search_path.sql": (
+                    "CREATE OR REPLACE FUNCTION therapy.gcal_authorization_is_fresh("
+                    "authorized_at TIMESTAMPTZ)\n"
+                    "RETURNS BOOLEAN LANGUAGE sql IMMUTABLE\n"
+                    "SET search_path = therapy, public\n"
+                    "AS $$ SELECT authorized_at IS NOT NULL; $$;\n"
+                ),
+            }
+        )
+        assert check_function_search_path_pinned(product) == []
+
+    def test_later_or_replace_still_unpinned_flagged_at_latest_block(self):
+        """When the LATEST definition is the broken one, only that block is
+        flagged (not the earlier one — even if the earlier one was also
+        broken; the earlier one is superseded so reporting it is noise).
+        """
+        product = _mk_product(
+            migrations={
+                "001_init.sql": (
+                    "CREATE FUNCTION therapy.f()\n"
+                    "RETURNS int LANGUAGE sql IMMUTABLE\n"
+                    "SET search_path = therapy, public\n"
+                    "AS $$ SELECT 1; $$;\n"
+                ),
+                "012_regress.sql": (
+                    "CREATE OR REPLACE FUNCTION therapy.f()\n"
+                    "RETURNS int LANGUAGE sql IMMUTABLE\n"
+                    "AS $$ SELECT 2; $$;\n"
+                ),
+            }
+        )
+        issues = check_function_search_path_pinned(product)
+        assert len(issues) == 1
+        # Reports against the LATEST broken file, not the earlier clean one.
+        assert "012_regress.sql" in issues[0]["file"]
+        assert "001_init.sql" not in issues[0]["file"]
+
+    def test_multiple_functions_supersession_independent(self):
+        """Two distinct functions; one superseded clean, one still broken
+        in its only definition → only the broken one flagged."""
+        product = _mk_product(
+            migrations={
+                "001.sql": (
+                    "CREATE FUNCTION therapy.alpha()\n"
+                    "RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;\n"
+                    "CREATE FUNCTION therapy.beta()\n"
+                    "RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;\n"
+                ),
+                "020.sql": (
+                    "CREATE OR REPLACE FUNCTION therapy.alpha()\n"
+                    "RETURNS int LANGUAGE sql\n"
+                    "SET search_path = therapy, public\n"
+                    "AS $$ SELECT 1; $$;\n"
+                ),
+            }
+        )
+        issues = check_function_search_path_pinned(product)
+        assert len(issues) == 1
+        assert issues[0]["function"].endswith("beta")
+
+    def test_supersession_same_file_only_latest_flagged(self):
+        """Both definitions in the SAME migration — only the LAST flagged.
+        Mirrors the in-file rewrite shape the seed migration prelude
+        sometimes produces (initial CREATE FUNCTION then a CREATE OR
+        REPLACE patch later in the same file).
+        """
+        product = _mk_product(
+            migrations={
+                "001.sql": (
+                    "CREATE FUNCTION therapy.g()\n"
+                    "RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;\n"
+                    "\n"
+                    "CREATE OR REPLACE FUNCTION therapy.g()\n"
+                    "RETURNS int LANGUAGE sql\n"
+                    "SET search_path = therapy, public\n"
+                    "AS $$ SELECT 2; $$;\n"
+                ),
+            }
+        )
+        assert check_function_search_path_pinned(product) == []
+
 
 class TestCheckAdminEndpointServiceRoleBypass:
     """Detector for admin-client `.table("T")` callsites where T lacks a

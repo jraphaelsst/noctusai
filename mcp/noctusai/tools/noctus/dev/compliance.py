@@ -2289,8 +2289,15 @@ _CREATE_TABLE_RE = re.compile(
 # `SET` clauses outside the body). Instead the detector walks each match and
 # finds the body terminator by locating the closing dollar quote — see
 # `_function_block_text`.
+#
+# `or_replace` capture: distinguishes `CREATE FUNCTION ...` (no replace —
+# duplicate name would error at apply time, so this is always the FIRST and
+# ONLY block for that name) vs `CREATE OR REPLACE FUNCTION ...` (supersedes
+# prior blocks of the same name). Used by
+# `check_function_search_path_pinned` to flag only the LATEST surviving
+# block when a function is redefined across migrations.
 _CREATE_FUNCTION_START_RE = re.compile(
-    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+"
+    r"\bCREATE\s+(?P<or_replace>OR\s+REPLACE\s+)?FUNCTION\s+"
     r"(?P<qualified>(?:[A-Za-z_][A-Za-z0-9_]*\.)?"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*))"
     r"\s*\(",
@@ -2576,6 +2583,25 @@ def check_function_search_path_pinned(product_path: Path) -> list[dict]:
     advisor flags it anyway because the static guarantee is weaker than the
     pinned-clause guarantee).
 
+    **Supersession tuning (2026-05-11):** when a function is redefined
+    across migrations via `CREATE OR REPLACE FUNCTION foo()`, only the
+    LATEST definition is what Postgres actually runs — earlier blocks are
+    overwritten at apply time. The detector accumulates all blocks per
+    qualified-name in lexical-file order and reports against the LAST one
+    only, eliminating false positives on superseded earlier blocks (N=2
+    therapy GG 2026-05-10 + ZZ 2026-05-11; cleared 9 residual ERP findings
+    that were accept-with-rationale because of this).
+
+    Heuristic for "superseded":
+      - A later `CREATE OR REPLACE FUNCTION <same_name>` supersedes an
+        earlier block (any earlier shape — `CREATE FUNCTION` or
+        `CREATE OR REPLACE`). Postgres would reject a later bare
+        `CREATE FUNCTION` of an existing name (duplicate-object error)
+        AND the migration apply would fail, so that shape is treated as a
+        non-supersession (each `CREATE FUNCTION` is the only definition).
+      - When no later block exists, the block is the LATEST by definition
+        and is flagged if it lacks `SET search_path`.
+
     Severity `warning`. False-positive shape: a function legitimately
     relying on caller search_path (very rare in our codebase, none in any
     existing migration). Accept-with-rationale + comment would shut the
@@ -2587,7 +2613,11 @@ def check_function_search_path_pinned(product_path: Path) -> list[dict]:
     if not migrations_dir.exists():
         return issues
 
-    seen: set[tuple[str, str, int, str]] = set()
+    # Pass 1: collect every CREATE FUNCTION block across all migrations in
+    # lexical filename order. The list per qualified-name preserves order,
+    # so the LAST entry is the one Postgres actually executes after the
+    # full migration sweep applies.
+    blocks_by_fn: dict[str, list[dict]] = {}
     for sql_file in sorted(migrations_dir.glob("*.sql")):
         try:
             content = sql_file.read_text(encoding="utf-8")
@@ -2601,36 +2631,43 @@ def check_function_search_path_pinned(product_path: Path) -> list[dict]:
 
         for m in _CREATE_FUNCTION_START_RE.finditer(content):
             fn_qualified = m.group("qualified")
+            is_or_replace = bool(m.group("or_replace"))
             block_text, _end = _function_block_text(content, m.start())
-            # `SET search_path = ...` can appear anywhere in the block
-            # (header before AS, inside the body, after the body) — match
-            # the whole text. Use a tolerant regex: any whitespace, then
-            # SET, then search_path with optional schema/identifier list.
-            if re.search(
+            has_search_path = bool(re.search(
                 r"\bSET\s+search_path\b",
                 block_text,
                 re.IGNORECASE,
-            ):
-                continue
-            # Locate line number of the CREATE FUNCTION header.
+            ))
             lineno = content[:m.start()].count("\n") + 1
-            key = (name, rel, lineno, fn_qualified)
-            if key in seen:
-                continue
-            seen.add(key)
-            issues.append({
-                "product": name,
+            blocks_by_fn.setdefault(fn_qualified, []).append({
                 "file": rel,
                 "line": lineno,
-                "function": fn_qualified,
-                "issue": (
-                    f"{rel}:{lineno} `CREATE FUNCTION {fn_qualified}` "
-                    f"does not pin `SET search_path = ...`. Supabase "
-                    f"advisor 0011 flags this. See KB § PATTERNS/"
-                    f"testing.md § Production-correctness keeper detectors."
-                ),
-                "severity": "warning",
+                "is_or_replace": is_or_replace,
+                "has_search_path": has_search_path,
             })
+
+    # Pass 2: for each function, evaluate the LATEST definition. We walk
+    # the per-fn list and find the last block that survives supersession.
+    # A later `CREATE OR REPLACE` supersedes any earlier block. A bare
+    # `CREATE FUNCTION` after an earlier definition would be a Postgres
+    # apply error (not our problem here — flag the latest block as-is).
+    for fn_qualified, blocks in blocks_by_fn.items():
+        latest = blocks[-1]
+        if latest["has_search_path"]:
+            continue
+        issues.append({
+            "product": name,
+            "file": latest["file"],
+            "line": latest["line"],
+            "function": fn_qualified,
+            "issue": (
+                f"{latest['file']}:{latest['line']} `CREATE FUNCTION "
+                f"{fn_qualified}` does not pin `SET search_path = ...`. "
+                f"Supabase advisor 0011 flags this. See KB § PATTERNS/"
+                f"testing.md § Production-correctness keeper detectors."
+            ),
+            "severity": "warning",
+        })
     return issues
 
 

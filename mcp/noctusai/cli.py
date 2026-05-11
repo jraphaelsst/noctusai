@@ -105,8 +105,45 @@ def main():
     parser.add_argument("--outline-python", metavar="PATH", help="Return a Python file's symbol tree (classes / functions / methods / constants / imports) without bodies. Makes the narrow-read rule ergonomic — read structure first, fetch bodies on demand. Stdlib `ast` (no extra deps).")
     parser.add_argument("--outline-typescript", metavar="PATH", help="Return a TS / TSX file's symbol tree (classes, interfaces, types, functions, arrow-fn consts, methods, constants, imports). Same shape as --outline-python. Regex-based (no Node spawn, no npm install) — see `mcp/noctusai/tools/outline_typescript.py` for the design tradeoff.")
     parser.add_argument("--product", help="Scope to one product")
+    parser.add_argument(
+        "--worktree-path",
+        "--root",
+        dest="worktree_path",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Override the repo root the CLI walks. Use from inside a git worktree "
+            "(e.g. `.claude/worktrees/agent-<hex>/`) so --review / --validate / scan / "
+            "improvements / status / etc. read the worktree's products/ tree instead of "
+            "the canonical noc clone the file-relative resolver would pick. Defaults to "
+            "the marker-resolved workspace (`get_noctusai_home()`)."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
+
+    # If the caller passed an explicit worktree path, override the module-level
+    # `settings.REPO_ROOT` / `settings.PRODUCTS_DIR` BEFORE any `tools.*` module
+    # is lazily imported. Every tool that does `from settings import REPO_ROOT,
+    # PRODUCTS_DIR` snapshots the value at import time — so the override has to
+    # land before those imports fire. Tool imports are guarded by the
+    # `elif args.<flag>:` branches below, so they happen after this block.
+    #
+    # Engineers calling from a worktree (`python mcp/noctusai/cli.py --review
+    # --product P --worktree-path /path/to/worktree`) used to need to symlink
+    # or shell out to `run_review(products_dir=...)` directly. This closes the
+    # gap surfaced by Engineers AAA + BBB + ZZ during keeper-trio Wave 1.
+    if args.worktree_path:
+        wt = Path(args.worktree_path).expanduser().resolve()
+        if not wt.is_dir():
+            print(f"  {RED}Error:{RESET} --worktree-path is not a directory: {wt}")
+            sys.exit(2)
+        import settings as _settings_mod
+        _settings_mod.REPO_ROOT = wt
+        _settings_mod.PRODUCTS_DIR = wt / "products"
+        # Surface the override loudly — every later command reports against the
+        # worktree, not noc; the operator should see exactly what was rebound.
+        print(f"  {YELLOW}worktree override:{RESET} REPO_ROOT={wt}")
 
     print(f"\n{BOLD}╔══════════════════════════════════════════════════════════╗{RESET}")
     print(f"{BOLD}║                NoctusAI Dev Toolkit                      ║{RESET}")
@@ -357,7 +394,19 @@ def main():
     elif args.review:
         from tools.noctus.dev.review import run_review
         mode = "evaluate" if args.evaluate else ("headless" if args.headless else "agent")
-        result = run_review(product_slug=args.product, mode=mode, model=args.model)
+        # When --worktree-path is given the settings rebind above already
+        # routes PRODUCTS_DIR; we also pass `products_dir=` explicitly to
+        # `run_review` so the override is REDUNDANT-but-explicit (closes the
+        # gap if a future refactor relinks review.py to anything that isn't
+        # `from settings import PRODUCTS_DIR`).
+        run_kwargs = {
+            "product_slug": args.product,
+            "mode": mode,
+            "model": args.model,
+        }
+        if args.worktree_path:
+            run_kwargs["products_dir"] = Path(args.worktree_path).expanduser().resolve() / "products"
+        result = run_review(**run_kwargs)
         print(f"  {BOLD}Mode:{RESET} {mode}  |  Issues found: {result['issues_found']}")
 
         if mode == "agent":
