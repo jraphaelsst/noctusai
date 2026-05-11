@@ -128,13 +128,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         org_id = deps.get_org_id(user)
         admin = deps.get_admin_client()
         invite = create_invitation(
-            db=admin,
-            schema=deps._db.schema,
-            email=body["email"],
-            org_id=org_id,
-            role=body.get("role", "member"),
-            invited_by=str(user.id),
-        )
+            admin, f"{deps._db.schema}.invitations", email=body["email"], org_id=org_id, role=body.get("role", "member"), invited_by=str(user.id))
         inviter_name = (user.user_metadata or {}).get("name", "Um administrador")
         org_name = (user.user_metadata or {}).get("org_name", "sua organizacao")
         role_label = ORG_ROLE_LABELS.get(body.get("role", "member"), body.get("role", "member"))
@@ -153,7 +147,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
     @router.get("/accept/validate")
     async def validate_invite(token: str = Query(...)):
         admin = deps.get_admin_client()
-        result = validate_invitation(db=admin, schema=deps._db.schema, token=token)
+        result = validate_invitation(admin, f"{deps._db.schema}.invitations", token)
         if not result:
             raise HTTPException(status_code=400, detail="Convite invalido ou expirado")
         return {"data": result}
@@ -161,18 +155,10 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
     @router.post("/accept")
     async def accept_invite(body: dict):
         admin = deps.get_admin_client()
-        result = accept_invitation(
-            db=admin,
-            schema=deps._db.schema,
-            token=body["token"],
-            user_id=body.get("user_id"),
-            email=body["email"],
-            password=body.get("password"),
-            name=body.get("name"),
-        )
-        if not result:
-            raise HTTPException(status_code=400, detail="Erro ao aceitar convite")
-        return {"data": result}
+        table = f"{deps._db.schema}.invitations"
+        inv = validate_invitation(admin, table, body["token"])
+        accept_invitation(admin, table, inv["id"])
+        return {"data": inv}
 
     @router.get("/invitations")
     async def list_invitations(authorization: Optional[str] = Header(None)):
@@ -182,7 +168,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
             raise HTTPException(status_code=403, detail="Sem permissao")
         org_id = deps.get_org_id(user)
         admin = deps.get_admin_client()
-        result = list_pending_invitations(db=admin, schema=deps._db.schema, org_id=org_id)
+        result = list_pending_invitations(admin, f"{deps._db.schema}.invitations", org_id)
         return {"data": result}
 
     @router.delete("/invitations/{invitation_id}")
@@ -192,7 +178,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         if role not in ("platform_admin", "owner", "admin"):
             raise HTTPException(status_code=403, detail="Sem permissao")
         admin = deps.get_admin_client()
-        cancel_invitation(db=admin, schema=deps._db.schema, invitation_id=invitation_id)
+        cancel_invitation(admin, f"{deps._db.schema}.invitations", invitation_id)
         return {"ok": True}
 
     @router.delete("/{user_id}")
