@@ -6,10 +6,11 @@ from __future__ import annotations
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class WhatsAppSendCreate(BaseModel):
+class WhatsAppSendCreate(StrictHttpModel):
     """Send a WhatsApp message via WAHA."""
 
     appointment_id: Optional[UUID] = None
@@ -18,7 +19,7 @@ class WhatsAppSendCreate(BaseModel):
     conteudo: str = Field(..., min_length=1, max_length=4096)
 
 
-class ReminderScheduleCreate(BaseModel):
+class ReminderScheduleCreate(StrictHttpModel):
     """Configure automatic appointment reminders."""
 
     tipo: Literal["lembrete", "confirmacao"]

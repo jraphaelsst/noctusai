@@ -4,14 +4,15 @@ Scheduling Schemas — Pydantic models for availability, appointments, recurring
 from __future__ import annotations
 
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
 # ---------------------------------------------------------------------------
 # Availability Slots
 # ---------------------------------------------------------------------------
 
-class AvailabilitySlotCreate(BaseModel):
+class AvailabilitySlotCreate(StrictHttpModel):
     day_of_week: int = Field(..., ge=0, le=6, description="0=Sunday … 6=Saturday")
     start_time: str = Field(..., pattern=r"^\d{2}:\d{2}$", description="HH:MM")
     end_time: str = Field(..., pattern=r"^\d{2}:\d{2}$", description="HH:MM")
@@ -20,13 +21,13 @@ class AvailabilitySlotCreate(BaseModel):
     is_blocked: bool = False
 
 
-class AvailabilitySlotUpdate(BaseModel):
+class AvailabilitySlotUpdate(StrictHttpModel):
     start_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
     end_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
     is_blocked: Optional[bool] = None
 
 
-class BlockDatesRequest(BaseModel):
+class BlockDatesRequest(StrictHttpModel):
     start_date: str = Field(..., description="YYYY-MM-DD")
     end_date: str = Field(..., description="YYYY-MM-DD")
     reason: Optional[str] = None
@@ -36,14 +37,14 @@ class BlockDatesRequest(BaseModel):
 # Appointments
 # ---------------------------------------------------------------------------
 
-class AppointmentCreate(BaseModel):
+class AppointmentCreate(StrictHttpModel):
     therapist_id: str
     scheduled_start: str = Field(..., description="ISO 8601 datetime")
     scheduled_end: Optional[str] = Field(None, description="ISO 8601 datetime")
     notes: Optional[str] = None
 
 
-class AppointmentCancel(BaseModel):
+class AppointmentCancel(StrictHttpModel):
     reason: Optional[str] = None
 
 
@@ -51,7 +52,7 @@ class AppointmentCancel(BaseModel):
 # Recurring Schedules
 # ---------------------------------------------------------------------------
 
-class RecurringScheduleCreate(BaseModel):
+class RecurringScheduleCreate(StrictHttpModel):
     therapist_id: str
     patient_id: str
     frequency: Literal["weekly", "biweekly", "monthly", "custom"]
@@ -65,7 +66,7 @@ class RecurringScheduleCreate(BaseModel):
     end_on_date: Optional[str] = None
 
 
-class RecurringScheduleUpdate(BaseModel):
+class RecurringScheduleUpdate(StrictHttpModel):
     frequency: Optional[Literal["weekly", "biweekly", "monthly", "custom"]] = None
     day_of_week: Optional[int] = Field(None, ge=0, le=6)
     start_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
@@ -75,7 +76,7 @@ class RecurringScheduleUpdate(BaseModel):
     end_on_date: Optional[str] = None
 
 
-class RecurringChangeRequest(BaseModel):
+class RecurringChangeRequest(StrictHttpModel):
     new_day_of_week: Optional[int] = Field(None, ge=0, le=6)
     new_start_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
     new_frequency: Optional[Literal["weekly", "biweekly", "monthly", "custom"]] = None

@@ -4,10 +4,11 @@ Review and rating schemas — therapist reviews, clinic reviews, responses, flag
 from __future__ import annotations
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class ReviewCreate(BaseModel):
+class ReviewCreate(StrictHttpModel):
     """Create a review for a therapist."""
 
     therapist_id: str
@@ -16,7 +17,7 @@ class ReviewCreate(BaseModel):
     tags: Optional[list[str]] = None
 
 
-class ReviewUpdate(BaseModel):
+class ReviewUpdate(StrictHttpModel):
     """Update an existing review."""
 
     star_rating: Optional[int] = Field(default=None, ge=1, le=5)
@@ -24,7 +25,7 @@ class ReviewUpdate(BaseModel):
     tags: Optional[list[str]] = None
 
 
-class ClinicReviewCreate(BaseModel):
+class ClinicReviewCreate(StrictHttpModel):
     """Create a review for a clinic."""
 
     clinic_id: str
@@ -33,13 +34,13 @@ class ClinicReviewCreate(BaseModel):
     tags: Optional[list[str]] = None
 
 
-class ReviewResponseCreate(BaseModel):
+class ReviewResponseCreate(StrictHttpModel):
     """Therapist/clinic reply to a review."""
 
     response_text: str = Field(..., min_length=1, max_length=2000)
 
 
-class ReviewFlagRequest(BaseModel):
+class ReviewFlagRequest(StrictHttpModel):
     """Flag a review for moderation."""
 
     reason: str = Field(..., min_length=5, max_length=500)

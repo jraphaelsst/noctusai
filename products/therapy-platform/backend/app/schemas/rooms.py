@@ -7,14 +7,15 @@ from datetime import date, time
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
 # ---------------------------------------------------------------------------
 # Rooms
 # ---------------------------------------------------------------------------
 
-class RoomCreate(BaseModel):
+class RoomCreate(StrictHttpModel):
     """Create a physical room in a clinic."""
 
     nome: str = Field(..., min_length=1, max_length=200)
@@ -22,7 +23,7 @@ class RoomCreate(BaseModel):
     capacidade: int = Field(default=1, ge=1)
 
 
-class RoomUpdate(BaseModel):
+class RoomUpdate(StrictHttpModel):
     """Partial update for a room."""
 
     nome: Optional[str] = Field(default=None, min_length=1, max_length=200)
@@ -35,7 +36,7 @@ class RoomUpdate(BaseModel):
 # Room Bookings
 # ---------------------------------------------------------------------------
 
-class RoomBookingCreate(BaseModel):
+class RoomBookingCreate(StrictHttpModel):
     """Book a room for an appointment time slot."""
 
     room_id: UUID

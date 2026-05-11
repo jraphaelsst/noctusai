@@ -1,8 +1,9 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class AtivoCreate(BaseModel):
+class AtivoCreate(StrictHttpModel):
     carteira_id: str
     ticker: str = Field(..., min_length=1, max_length=20)
     nome: Optional[str] = Field(default=None, max_length=255)
@@ -10,13 +11,13 @@ class AtivoCreate(BaseModel):
     setor: Optional[str] = Field(default=None, max_length=100)
 
 
-class AtivoUpdate(BaseModel):
+class AtivoUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, max_length=255)
     tipo: Optional[str] = Field(default=None, pattern="^(acao|etf|fii|bdr|renda_fixa|tesouro_direto|fundo|crypto|cdb|lci_lca|debenture|outro)$")
     setor: Optional[str] = Field(default=None, max_length=100)
 
 
-class OperacaoCreate(BaseModel):
+class OperacaoCreate(StrictHttpModel):
     carteira_id: str
     ativo_id: Optional[str] = None
     ticker: str = Field(..., min_length=1, max_length=20)

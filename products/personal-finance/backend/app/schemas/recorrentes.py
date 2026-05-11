@@ -1,8 +1,9 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class RecorrenteCreate(BaseModel):
+class RecorrenteCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=255)
     valor: float = Field(..., gt=0)
     conta_id: Optional[str] = None
@@ -16,7 +17,7 @@ class RecorrenteCreate(BaseModel):
     lembrete_dias: Optional[int] = Field(default=3, ge=0, le=30)
 
 
-class RecorrenteUpdate(BaseModel):
+class RecorrenteUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     valor: Optional[float] = Field(default=None, gt=0)
     conta_id: Optional[str] = None

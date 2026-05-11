@@ -9,14 +9,15 @@ from datetime import date
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
 # ---------------------------------------------------------------------------
 # Mood Entries
 # ---------------------------------------------------------------------------
 
-class MoodEntryCreate(BaseModel):
+class MoodEntryCreate(StrictHttpModel):
     """Record a mood/emotional state entry."""
 
     rating: int = Field(..., ge=1, le=10, description="Mood rating from 1 (worst) to 10 (best)")
@@ -28,14 +29,14 @@ class MoodEntryCreate(BaseModel):
 # Journal Entries
 # ---------------------------------------------------------------------------
 
-class JournalEntryCreate(BaseModel):
+class JournalEntryCreate(StrictHttpModel):
     """Create a journal entry."""
 
     titulo: Optional[str] = Field(default=None, max_length=300)
     conteudo: str = Field(..., min_length=1, max_length=50000)
 
 
-class JournalEntryUpdate(BaseModel):
+class JournalEntryUpdate(StrictHttpModel):
     """Partial update for a journal entry."""
 
     titulo: Optional[str] = Field(default=None, max_length=300)
@@ -47,7 +48,7 @@ class JournalEntryUpdate(BaseModel):
 # Homework Assignments
 # ---------------------------------------------------------------------------
 
-class HomeworkAssignCreate(BaseModel):
+class HomeworkAssignCreate(StrictHttpModel):
     """Therapist assigns homework to a patient."""
 
     patient_id: UUID
@@ -56,13 +57,13 @@ class HomeworkAssignCreate(BaseModel):
     data_limite: Optional[date] = None
 
 
-class HomeworkSubmitCreate(BaseModel):
+class HomeworkSubmitCreate(StrictHttpModel):
     """Patient submits their homework response."""
 
     resposta_paciente: str = Field(..., min_length=1, max_length=20000)
 
 
-class HomeworkReviewCreate(BaseModel):
+class HomeworkReviewCreate(StrictHttpModel):
     """Therapist reviews submitted homework."""
 
     feedback_terapeuta: str = Field(..., min_length=1, max_length=10000)

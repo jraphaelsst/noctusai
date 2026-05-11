@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class MatchRequest(BaseModel):
+class MatchRequest(StrictHttpModel):
     """Request therapist matches for a patient."""
 
     patient_id: UUID

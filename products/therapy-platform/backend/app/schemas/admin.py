@@ -4,10 +4,11 @@ Admin-specific schemas — approvals, commission overrides, patient assignments.
 from __future__ import annotations
 
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class ApprovalAction(BaseModel):
+class ApprovalAction(StrictHttpModel):
     """Approve or reject an entity (therapist or clinic)."""
 
     action: Literal["approve", "reject"]
@@ -18,7 +19,7 @@ class ApprovalAction(BaseModel):
     )
 
 
-class CommissionOverrideCreate(BaseModel):
+class CommissionOverrideCreate(StrictHttpModel):
     """Set a platform-level commission override for a clinic or therapist."""
 
     target_type: Literal["clinic", "therapist"]
@@ -26,7 +27,7 @@ class CommissionOverrideCreate(BaseModel):
     custom_commission_pct: float = Field(..., ge=0, le=100)
 
 
-class PatientAssignment(BaseModel):
+class PatientAssignment(StrictHttpModel):
     """Admin-assign a patient to a therapist and/or clinic."""
 
     patient_id: str

@@ -9,14 +9,15 @@ from datetime import date
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
+from noctusai_lib.api import StrictHttpModel
 
 
 # ---------------------------------------------------------------------------
 # Anamnese
 # ---------------------------------------------------------------------------
 
-class AnamneseCreate(BaseModel):
+class AnamneseCreate(StrictHttpModel):
     """Initial clinical anamnesis for a patient."""
 
     queixa_principal: str = Field(..., min_length=1, max_length=5000, description="Queixa principal do paciente")
@@ -26,7 +27,7 @@ class AnamneseCreate(BaseModel):
     observacoes: Optional[str] = Field(default=None, max_length=10000)
 
 
-class AnamneseUpdate(BaseModel):
+class AnamneseUpdate(StrictHttpModel):
     """Partial update for anamnesis."""
 
     queixa_principal: Optional[str] = Field(default=None, min_length=1, max_length=5000)
@@ -40,7 +41,7 @@ class AnamneseUpdate(BaseModel):
 # Treatment Plans
 # ---------------------------------------------------------------------------
 
-class TreatmentPlanCreate(BaseModel):
+class TreatmentPlanCreate(StrictHttpModel):
     """Create a treatment plan for a patient."""
 
     titulo: str = Field(..., min_length=1, max_length=300)
@@ -49,7 +50,7 @@ class TreatmentPlanCreate(BaseModel):
     data_revisao: Optional[date] = None
 
 
-class TreatmentPlanUpdate(BaseModel):
+class TreatmentPlanUpdate(StrictHttpModel):
     """Partial update for treatment plan."""
 
     titulo: Optional[str] = Field(default=None, min_length=1, max_length=300)
@@ -63,14 +64,14 @@ class TreatmentPlanUpdate(BaseModel):
 # Goals
 # ---------------------------------------------------------------------------
 
-class GoalCreate(BaseModel):
+class GoalCreate(StrictHttpModel):
     """Create a therapeutic goal within a treatment plan."""
 
     descricao: str = Field(..., min_length=1, max_length=2000)
     prazo: Optional[date] = None
 
 
-class GoalUpdate(BaseModel):
+class GoalUpdate(StrictHttpModel):
     """Partial update for a goal."""
 
     descricao: Optional[str] = Field(default=None, min_length=1, max_length=2000)
@@ -82,7 +83,7 @@ class GoalUpdate(BaseModel):
 # Evolution Notes (SOAP or free-form)
 # ---------------------------------------------------------------------------
 
-class EvolutionNoteCreate(BaseModel):
+class EvolutionNoteCreate(StrictHttpModel):
     """Create an evolution note for a session.
 
     If formato='soap', at least subjetivo is required.
@@ -108,7 +109,7 @@ class EvolutionNoteCreate(BaseModel):
         return self
 
 
-class EvolutionNoteUpdate(BaseModel):
+class EvolutionNoteUpdate(StrictHttpModel):
     """Partial update for an evolution note."""
 
     subjetivo: Optional[str] = Field(default=None, max_length=10000)

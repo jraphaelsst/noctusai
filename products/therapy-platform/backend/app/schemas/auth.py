@@ -7,10 +7,11 @@ plus login and Google OAuth flows.
 from __future__ import annotations
 
 from typing import Optional
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import Field, EmailStr
+from noctusai_lib.api import StrictHttpModel
 
 
-class PatientRegister(BaseModel):
+class PatientRegister(StrictHttpModel):
     """Patient registration payload."""
 
     nome: str = Field(..., min_length=2, max_length=200)
@@ -19,7 +20,7 @@ class PatientRegister(BaseModel):
     phone: Optional[str] = Field(default=None, max_length=20)
 
 
-class TherapistRegister(BaseModel):
+class TherapistRegister(StrictHttpModel):
     """Therapist registration payload."""
 
     nome: str = Field(..., min_length=2, max_length=200)
@@ -33,7 +34,7 @@ class TherapistRegister(BaseModel):
     default_session_price: float = Field(..., ge=0, le=100000, description="Preço padrão da sessão")
 
 
-class ClinicRegister(BaseModel):
+class ClinicRegister(StrictHttpModel):
     """Clinic admin registration payload."""
 
     nome: str = Field(..., min_length=2, max_length=200)
@@ -46,20 +47,20 @@ class ClinicRegister(BaseModel):
     phone: str = Field(..., max_length=20)
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(StrictHttpModel):
     """Email + password login."""
 
     email: EmailStr
     password: str = Field(..., min_length=1)
 
 
-class GoogleAuthRequest(BaseModel):
+class GoogleAuthRequest(StrictHttpModel):
     """Google OAuth token exchange."""
 
     token: str = Field(..., min_length=1, description="Google OAuth ID token")
 
 
-class ForgotPasswordRequest(BaseModel):
+class ForgotPasswordRequest(StrictHttpModel):
     """Trigger password reset email."""
 
     email: EmailStr

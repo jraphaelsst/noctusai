@@ -6,36 +6,37 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class WalletTopUpRequest(BaseModel):
+class WalletTopUpRequest(StrictHttpModel):
     """Patient loads credits into wallet via Stripe."""
 
     amount: Decimal = Field(..., ge=Decimal("1.00"), description="Valor em reais")
     payment_method_id: str = Field(..., min_length=1, description="Stripe payment method ID")
 
 
-class WithdrawalRequest(BaseModel):
+class WithdrawalRequest(StrictHttpModel):
     """Request withdrawal from wallet to bank account."""
 
     amount: Decimal = Field(..., ge=Decimal("10.00"), description="Valor mínimo configurável via platform_settings")
 
 
-class CardValidationRequest(BaseModel):
+class CardValidationRequest(StrictHttpModel):
     """Phantom charge to validate a card."""
 
     payment_method_id: str = Field(..., min_length=1, description="Stripe payment method ID")
 
 
-class PaymentMethodAdd(BaseModel):
+class PaymentMethodAdd(StrictHttpModel):
     """Attach a Stripe payment method to the user."""
 
     stripe_payment_method_id: str = Field(..., min_length=1)
     is_default: bool = False
 
 
-class ClinicTransferRequest(BaseModel):
+class ClinicTransferRequest(StrictHttpModel):
     """Voluntary transfer from clinic wallet to therapist wallet."""
 
     therapist_id: str = Field(..., min_length=1)
@@ -43,7 +44,7 @@ class ClinicTransferRequest(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500)
 
 
-class CommissionOverrideRequest(BaseModel):
+class CommissionOverrideRequest(StrictHttpModel):
     """Set/update a platform commission override for a clinic or therapist."""
 
     target_type: Literal["clinic", "therapist"]
@@ -51,7 +52,7 @@ class CommissionOverrideRequest(BaseModel):
     custom_commission_pct: Decimal = Field(..., ge=Decimal("0"), le=Decimal("100"))
 
 
-class CommissionOverrideInput(BaseModel):
+class CommissionOverrideInput(StrictHttpModel):
     """Frontend-shape commission override embedded in
     :class:`CommissionConfigRequest`. Mirrors the ``CommissionOverride`` type
     declared in ``frontend/src/types/financial.ts``."""
@@ -61,7 +62,7 @@ class CommissionOverrideInput(BaseModel):
     rate_pct: Decimal = Field(..., ge=Decimal("0"), le=Decimal("100"))
 
 
-class CommissionConfigRequest(BaseModel):
+class CommissionConfigRequest(StrictHttpModel):
     """POST ``/api/admin/financials/commissions`` body.
 
     Accepts EITHER the new shape (``global_rate_pct`` and/or ``override``) OR
@@ -100,14 +101,14 @@ class CommissionConfigRequest(BaseModel):
             )
 
 
-class RefundRequestCreate(BaseModel):
+class RefundRequestCreate(StrictHttpModel):
     """Patient submits a refund request."""
 
     transaction_id: str = Field(..., min_length=1)
     reason: str = Field(..., min_length=10, max_length=2000)
 
 
-class RefundReviewRequest(BaseModel):
+class RefundReviewRequest(StrictHttpModel):
     """Admin reviews (approves/denies) a refund request."""
 
     action: Literal["approve", "deny"]
@@ -118,7 +119,7 @@ class RefundReviewRequest(BaseModel):
     )
 
 
-class TransactionFilters(BaseModel):
+class TransactionFilters(StrictHttpModel):
     """Filters for listing transactions."""
 
     status: Optional[str] = None

@@ -1,8 +1,9 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class CategoriaCreate(BaseModel):
+class CategoriaCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=100)
     tipo: str = Field(..., pattern="^(receita|despesa|transferencia)$")
     categoria_pai_id: Optional[str] = None
@@ -12,7 +13,7 @@ class CategoriaCreate(BaseModel):
     ordem: Optional[int] = Field(default=0, ge=0)
 
 
-class CategoriaUpdate(BaseModel):
+class CategoriaUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=100)
     tipo: Optional[str] = Field(default=None, pattern="^(receita|despesa|transferencia)$")
     categoria_pai_id: Optional[str] = None

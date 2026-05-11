@@ -9,20 +9,21 @@ and revoked independently. See `therapy.consent_records` + migration
 from __future__ import annotations
 
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
 ConsentScope = Literal["recording", "transcription", "ai_summary", "longitudinal"]
 
 
-class ConsentGrantRequest(BaseModel):
+class ConsentGrantRequest(StrictHttpModel):
     appointment_id: str
     scope: ConsentScope
     policy_version: str = Field(..., min_length=1, max_length=64)
     purpose_text: str = Field(..., min_length=1)
 
 
-class ConsentRevokeRequest(BaseModel):
+class ConsentRevokeRequest(StrictHttpModel):
     appointment_id: str
     scope: ConsentScope
     reason: Optional[str] = Field(None, max_length=500)

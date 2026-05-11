@@ -1,8 +1,9 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class MetaCreate(BaseModel):
+class MetaCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=255)
     tipo: str = Field(..., pattern="^(poupanca|quitar_divida|investimento|fundo_emergencia|personalizado)$")
     valor_alvo: float = Field(..., gt=0)
@@ -14,7 +15,7 @@ class MetaCreate(BaseModel):
     cor: Optional[str] = Field(default=None, max_length=7)
 
 
-class MetaUpdate(BaseModel):
+class MetaUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     tipo: Optional[str] = Field(default=None, pattern="^(poupanca|quitar_divida|investimento|fundo_emergencia|personalizado)$")
     valor_alvo: Optional[float] = Field(default=None, gt=0)
@@ -27,7 +28,7 @@ class MetaUpdate(BaseModel):
     cor: Optional[str] = Field(default=None, max_length=7)
 
 
-class ContribuicaoCreate(BaseModel):
+class ContribuicaoCreate(StrictHttpModel):
     valor: float = Field(..., gt=0)
     data: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     fonte: Optional[str] = Field(default="manual", pattern="^(manual|automatica|transacao)$")

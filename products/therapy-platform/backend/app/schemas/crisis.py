@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from noctusai_lib.api import StrictHttpModel
 
 
-class CrisisAlertReview(BaseModel):
+class CrisisAlertReview(StrictHttpModel):
     """Review a crisis alert."""
 
     status: Literal["revisado", "falso_positivo", "encaminhado"]

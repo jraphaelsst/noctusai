@@ -4,10 +4,11 @@ Clinic schemas — profile, settings, therapist config, invitations.
 from __future__ import annotations
 
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import EmailStr, Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class ClinicUpdate(BaseModel):
+class ClinicUpdate(StrictHttpModel):
     """Fields a clinic admin can update on the clinic profile."""
 
     name: Optional[str] = Field(default=None, min_length=2, max_length=300)
@@ -21,7 +22,7 @@ class ClinicUpdate(BaseModel):
     specialties_offered: Optional[list[str]] = None
 
 
-class ClinicResponse(BaseModel):
+class ClinicResponse(StrictHttpModel):
     """Clinic profile detail response."""
 
     id: str
@@ -39,7 +40,7 @@ class ClinicResponse(BaseModel):
     is_active: bool = True
 
 
-class ClinicSettingsUpdate(BaseModel):
+class ClinicSettingsUpdate(StrictHttpModel):
     """Clinic financial & notification settings."""
 
     bank_name: Optional[str] = Field(default=None, max_length=100)
@@ -51,7 +52,7 @@ class ClinicSettingsUpdate(BaseModel):
     default_commission_pct_therapist_sourced: Optional[float] = Field(default=None, ge=0, le=100)
 
 
-class ClinicTherapistConfigUpdate(BaseModel):
+class ClinicTherapistConfigUpdate(StrictHttpModel):
     """Per-therapist configuration within a clinic."""
 
     pricing_policy: Optional[str] = Field(default=None, description="clinic_sets | therapist_sets")
@@ -60,7 +61,7 @@ class ClinicTherapistConfigUpdate(BaseModel):
     clinic_set_default_price: Optional[float] = Field(default=None, ge=0, le=100000)
 
 
-class TherapistInvite(BaseModel):
+class TherapistInvite(StrictHttpModel):
     """Invite a therapist to join the clinic."""
 
     email: EmailStr

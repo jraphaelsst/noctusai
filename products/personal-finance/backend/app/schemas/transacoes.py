@@ -1,8 +1,9 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class TransacaoCreate(BaseModel):
+class TransacaoCreate(StrictHttpModel):
     conta_id: str
     categoria_id: Optional[str] = None
     conta_destino_id: Optional[str] = None
@@ -15,7 +16,7 @@ class TransacaoCreate(BaseModel):
     tags: Optional[List[str]] = None
 
 
-class TransacaoUpdate(BaseModel):
+class TransacaoUpdate(StrictHttpModel):
     conta_id: Optional[str] = None
     categoria_id: Optional[str] = None
     conta_destino_id: Optional[str] = None

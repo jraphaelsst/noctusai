@@ -8,17 +8,18 @@ edit them through the generic `PlatformSettingUpdate` body via PATCH /platform.
 from __future__ import annotations
 
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class PlatformSettingUpdate(BaseModel):
+class PlatformSettingUpdate(StrictHttpModel):
     """Update a single platform-level setting (admin only)."""
 
     key: str
     value: str
 
 
-class ClinicBrandingUpdate(BaseModel):
+class ClinicBrandingUpdate(StrictHttpModel):
     """Update clinic visual branding (clinic admin)."""
 
     primary_color: Optional[str] = None
@@ -27,7 +28,7 @@ class ClinicBrandingUpdate(BaseModel):
     favicon_url: Optional[str] = None
 
 
-class TherapistSettingsUpdate(BaseModel):
+class TherapistSettingsUpdate(StrictHttpModel):
     """Update therapist-specific settings (bank, keys, notifications)."""
 
     bank_name: Optional[str] = None
@@ -38,7 +39,7 @@ class TherapistSettingsUpdate(BaseModel):
     notification_email_to: Optional[str] = None
 
 
-class PatientSettingsUpdate(BaseModel):
+class PatientSettingsUpdate(StrictHttpModel):
     """Update patient preferences."""
 
     phone: Optional[str] = None
@@ -46,7 +47,7 @@ class PatientSettingsUpdate(BaseModel):
     notification_preferences: Optional[dict] = None
 
 
-class DataDeletionRequest(BaseModel):
+class DataDeletionRequest(StrictHttpModel):
     """LGPD data deletion confirmation. Must type exact phrase."""
 
     confirmation: Literal["CONFIRMAR EXCLUSAO"] = Field(

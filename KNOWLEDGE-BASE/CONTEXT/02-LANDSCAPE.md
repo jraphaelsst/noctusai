@@ -33,8 +33,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 |---------|---------|----------|-------|-------|-----------|---------|
 | Core | 28 | 12 | 26 | 0 | 40 | 451 |
 | ERP | 59 | 52 | 67 | 66 | 113 | 1,665 |
-| PF | 15 | 17 | 30 | 16 | 45 | 466 |
-| Therapy | 40 | 45 | 65 | 33 | 80 | 1,097 |
+| PF | 15 | 17 | 30 | 16 | 46 | 467 |
+| Therapy | 40 | 45 | 65 | 33 | 81 | 1,098 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 6 | 7 | 11 | 7 | 15 | 201 |
 | Mailing | 10 | 10 | 21 | 9 | 17 | 193 |
@@ -43,7 +43,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Media Scheduling | 5 | 8 | 10 | 3 | 16 | 82 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 13 | 8 | 1 | 22 | 273 |
-| **Total** | **177** | **177** | **275** | **141** | **384** | **4,701** |
+| **Total** | **177** | **177** | **275** | **141** | **386** | **4,703** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

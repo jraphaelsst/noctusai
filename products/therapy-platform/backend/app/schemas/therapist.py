@@ -4,10 +4,11 @@ Therapist profile schemas.
 from __future__ import annotations
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class TherapistProfileUpdate(BaseModel):
+class TherapistProfileUpdate(StrictHttpModel):
     """Fields a therapist can update on their own profile."""
 
     bio: Optional[str] = Field(default=None, max_length=2000)
@@ -18,7 +19,7 @@ class TherapistProfileUpdate(BaseModel):
     session_duration_minutes: Optional[int] = Field(default=None, ge=15, le=240)
 
 
-class TherapistProfileResponse(BaseModel):
+class TherapistProfileResponse(StrictHttpModel):
     """Therapist profile detail response."""
 
     user_id: str
@@ -35,7 +36,7 @@ class TherapistProfileResponse(BaseModel):
     is_active: bool = True
 
 
-class TherapistDirectoryFilters(BaseModel):
+class TherapistDirectoryFilters(StrictHttpModel):
     """Query filters for therapist directory listing."""
 
     specialty: Optional[str] = None

@@ -1,9 +1,10 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 from datetime import datetime
 
 
-class ContaCreate(BaseModel):
+class ContaCreate(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=255)
     tipo: str = Field(..., pattern="^(corrente|poupanca|cartao_credito|investimento|carteira|emprestimo|outro)$")
     instituicao: Optional[str] = Field(default=None, max_length=255)
@@ -13,7 +14,7 @@ class ContaCreate(BaseModel):
     icone: Optional[str] = Field(default=None, max_length=10)
 
 
-class ContaUpdate(BaseModel):
+class ContaUpdate(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     tipo: Optional[str] = Field(default=None, pattern="^(corrente|poupanca|cartao_credito|investimento|carteira|emprestimo|outro)$")
     instituicao: Optional[str] = Field(default=None, max_length=255)

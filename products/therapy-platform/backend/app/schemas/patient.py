@@ -4,17 +4,18 @@ Patient profile schemas.
 from __future__ import annotations
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class PatientProfileUpdate(BaseModel):
+class PatientProfileUpdate(StrictHttpModel):
     """Fields a patient can update on their own profile."""
 
     phone: Optional[str] = Field(default=None, max_length=20)
     photo_url: Optional[str] = None
 
 
-class PatientProfileResponse(BaseModel):
+class PatientProfileResponse(StrictHttpModel):
     """Patient profile detail response."""
 
     user_id: str
