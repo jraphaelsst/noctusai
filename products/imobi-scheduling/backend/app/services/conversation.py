@@ -80,6 +80,7 @@ from noctusai_lib.integrations.redis import (
 from noctusai_lib.primitives.tasks import schedule_coro
 
 from app.config import settings
+from app.services.scheduling import SchedulingService, build_rules
 from app.services.tool_audit import make_supabase_audit_writer
 from app.services.tool_registry import TOOL_DESCRIPTORS, build_tool_handler
 
@@ -168,6 +169,7 @@ class ConversationModule:
     dispatcher: LLMDispatcher
     worker: ConversationWorker
     audit_writer: Any  # Callable[[ToolCall, ToolResult], None]
+    scheduling_service: SchedulingService
     worker_task: Optional[asyncio.Task] = field(default=None)
 
 
@@ -236,9 +238,21 @@ def configure_conversation_module(
         org_id=org_id,
     )
 
+    # Phase 7 — scheduling-engine wiring. SchedulingService owns the
+    # SchedulingEngine instance + DB orchestration; the tool handler
+    # routes `lookup_property` / `propose_appointment` /
+    # `confirm_appointment` through it when wired.
+    scheduling_service = SchedulingService(
+        admin_client=admin_client,
+        org_id=org_id,
+        rules=build_rules(settings),
+    )
+
     worker = ConversationWorker(
         buffer_service=buffer,
-        processor=_build_processor(buffer, dispatcher, audit_writer),
+        processor=_build_processor(
+            buffer, dispatcher, audit_writer, scheduling_service,
+        ),
         idle_processor=None,  # Phase 6 wires only the due-conversation path.
     )
 
@@ -247,6 +261,7 @@ def configure_conversation_module(
         dispatcher=dispatcher,
         worker=worker,
         audit_writer=audit_writer,
+        scheduling_service=scheduling_service,
     )
 
     logger.info(
@@ -276,25 +291,28 @@ def _build_processor(
     buffer: ConversationBufferService,
     dispatcher: LLMDispatcher,
     audit_writer: Any,
+    scheduling_service: SchedulingService,
 ):
     """Build the per-conversation processor the worker invokes.
 
-    Closure captures the buffer / dispatcher / audit_writer. The worker
-    invokes `processor(conversation_id, memory)` for each due
-    conversation. The processor:
+    Closure captures the buffer / dispatcher / audit_writer /
+    scheduling_service. The worker invokes
+    `processor(conversation_id, memory)` for each due conversation. The
+    processor:
 
       1. Composes the messages list (system prompt + memory turns).
       2. Calls `dispatcher.reply(messages=..., tools=..., tool_handler=...,
          audit_writer=...)` — the dispatcher loops through tool calls,
          persisting audit rows per call.
-      3. Logs the reply text (Phase 6 stops here — Phase 7 will queue
-         the outbound back to WAHA via the WhatsApp client).
+      3. Logs the reply text (Phase 7 stops here — outbound emission to
+         WAHA is wired in a follow-up phase together with full inbound
+         draining).
 
     Returns:
         `Callable[[str, list[dict]], None]` matching
         `noctusai_lib.domain.chatbot.ConversationProcessor`.
     """
-    handler = build_tool_handler()
+    handler = build_tool_handler(scheduling_service=scheduling_service)
     system_prompt = build_system_prompt()
 
     def _process(conversation_id: str, memory: list[dict[str, Any]]) -> None:
