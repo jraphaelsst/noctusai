@@ -1,0 +1,78 @@
+# youtube-crawler per-product compose fragment.
+#
+# Generated from the canonical pattern at products/seed/docker-compose.yml.
+# Use standalone (this product only) or orchestrated by repo-root compose
+# (all products together — root file uses `include:` to pull this in).
+#
+# Build context is `../..` so seed/ + product code are both reachable.
+
+services:
+  youtube-crawler-backend:
+    build:
+      context: ../..
+      dockerfile: products/youtube-crawler/backend/Dockerfile
+    container_name: noctus-youtube-crawler-backend
+    image: ghcr.io/jraphaelsst/noctus-youtube-crawler-backend:${NOCTUS_IMAGE_TAG:-dev}
+    env_file:
+      - ../../.env
+    ports:
+      - "8008:8008"
+    networks:
+      - noctus-net
+      - youtube-crawler-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8008/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  youtube-crawler-frontend:
+    build:
+      context: ../..
+      dockerfile: products/youtube-crawler/frontend/Dockerfile
+      # VITE_* build-arg contract — see KB § PATTERNS/containerization.md
+      # § VITE_* build-arg contract. Every VITE_* in code must be both ARG
+      # (in Dockerfile) and args: (here), sourced from `.env` via ${...}.
+      args:
+        VITE_CORE_URL: ${VITE_CORE_URL:-}
+    container_name: noctus-youtube-crawler-frontend
+    image: ghcr.io/jraphaelsst/noctus-youtube-crawler-frontend:${NOCTUS_IMAGE_TAG:-dev}
+    ports:
+      - "8150:8150"
+    depends_on:
+      youtube-crawler-backend:
+        condition: service_healthy
+    networks:
+      - youtube-crawler-net
+    restart: unless-stopped
+
+
+  youtube-crawler-tunnel:
+    # Cloudflare quick-tunnel — ephemeral *.trycloudflare.com URL pointing
+    # at this product's backend. Profile-gated so it's opt-in (cost: one
+    # extra container; benefit: webhook/OAuth callback testing without a
+    # full deploy). Pattern from noctusai-youtube-crawler.
+    image: cloudflare/cloudflared:latest
+    container_name: noctus-youtube-crawler-tunnel
+    # `--protocol http2` forces TCP from the start — see core/docker-compose.yml
+    # tunnel block for the full rationale (UDP/QUIC fails behind NATs after
+    # ~5min and cannot re-register the quick-tunnel hostname).
+    command: tunnel --no-autoupdate --protocol http2 --url http://youtube-crawler-backend:8008
+    depends_on:
+      youtube-crawler-backend:
+        condition: service_healthy
+    networks:
+      - youtube-crawler-net
+    restart: unless-stopped
+    profiles:
+      - tunnel-youtube-crawler
+      - tunnel-all
+
+networks:
+  noctus-net:
+    name: noctus-net
+    driver: bridge
+  youtube-crawler-net:
+    driver: bridge

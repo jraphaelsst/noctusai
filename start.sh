@@ -52,6 +52,7 @@ PRODUCTS=(
   "dev-team:Dev Team:8009:8123"
   "media-scheduling:Media Scheduling:8096:8140"
   "imobi-scheduling:Imobi Scheduling:8011:8160"
+  "youtube-crawler:YouTube Crawler:8008:8150"
 )
 # END_PRODUCTS_REGISTRY
 

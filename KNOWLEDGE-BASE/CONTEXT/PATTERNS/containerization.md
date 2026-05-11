@@ -87,7 +87,8 @@ noctusai/
     ├── mailing/           ← (8006 / 8120)
     ├── adconnect/         ← (8007 / 8130)
     ├── dev-team/          ← (8009 / 8123) + extra: /opt/dev_team editable install
-    └── media-scheduling/  ← (8096 / 8140)
+    ├── media-scheduling/  ← (8096 / 8140)
+    └── youtube-crawler/   ← (8008 / 8150)
 ```
 
 **`products/seed/` is the canonical source.** When the pattern needs
