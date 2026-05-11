@@ -1,0 +1,25 @@
+# Dev override compose — auto-merged by `docker compose up` (no -f).
+# See KB § PATTERNS/containerization.md §11d for the full pattern.
+
+services:
+  media-scheduling-backend:
+    volumes:
+      - ./backend:/app/products/media-scheduling/backend
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8096"
+      - --reload
+      - --app-dir
+      - products/media-scheduling/backend
+    restart: "no"
+
+  media-scheduling-frontend:
+    volumes:
+      - ./frontend:/app/products/media-scheduling/frontend
+    environment:
+      NODE_ENV: development
+    restart: "no"

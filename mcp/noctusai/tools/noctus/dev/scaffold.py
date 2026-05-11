@@ -1051,7 +1051,14 @@ def _register_in_root_compose(*, slug: str, repo_root: Path) -> dict:
         }
 
     head, body, tail = match.group(1), match.group(2), match.group(3)
-    entry = f"  - products/{slug}/docker-compose.yml"
+    # Multi-line `path:` block: extended include syntax so the per-product
+    # `docker-compose.override.yml` is auto-merged at root. See
+    # KB § PATTERNS/containerization.md §11d "Dev override compose".
+    entry = (
+        f"  - path:\n"
+        f"      - products/{slug}/docker-compose.yml\n"
+        f"      - products/{slug}/docker-compose.override.yml"
+    )
 
     # Idempotency — match any line whose path segment ends with /<slug>/.
     slug_token = f"/{slug}/docker-compose.yml"
@@ -1098,13 +1105,37 @@ def _unregister_from_root_compose(*, slug: str, repo_root: Path) -> dict:
 
     head, body, tail = match.group(1), match.group(2), match.group(3)
     slug_token = f"/{slug}/docker-compose.yml"
+    slug_override_token = f"/{slug}/docker-compose.override.yml"
+    # Two shapes to remove:
+    #   (a) Legacy single-line:    - products/<slug>/docker-compose.yml
+    #   (b) Extended path block:   - path:
+    #                                  - products/<slug>/docker-compose.yml
+    #                                  - products/<slug>/docker-compose.override.yml
+    # Strategy: walk the body, drop the matching slug's lines + any
+    # contiguous `path:` parent + sibling override line.
+    lines = body.splitlines()
     kept_lines: list[str] = []
     removed_entry: str | None = None
-    for line in body.splitlines():
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
         if slug_token in line and removed_entry is None:
-            removed_entry = line.strip()
+            removed_entry = stripped
+            # Look back: was the prior kept line `- path:`? If so, drop
+            # it (the path: parent is exclusively ours).
+            if kept_lines and kept_lines[-1].strip() == "- path:":
+                kept_lines.pop()
+            # Look ahead: is the next line our sibling override entry?
+            # If so, skip it too.
+            j = i + 1
+            if j < len(lines) and slug_override_token in lines[j]:
+                i = j + 1
+                continue
+            i += 1
             continue
         kept_lines.append(line)
+        i += 1
 
     if removed_entry is None:
         return {"skipped": f"slug '{slug}' not found in root docker-compose include:"}

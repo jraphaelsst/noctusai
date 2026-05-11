@@ -23,16 +23,43 @@
 
 include:
   # BEGIN_PRODUCTS_INCLUDE
-  - products/core/docker-compose.yml
-  - products/erp-imobiliario/docker-compose.yml
-  - products/personal-finance/docker-compose.yml
-  - products/therapy-platform/docker-compose.yml
-  - products/seed/docker-compose.yml
-  - products/daily-life/docker-compose.yml
-  - products/mailing/docker-compose.yml
-  - products/adconnect/docker-compose.yml
-  - products/dev-team/docker-compose.yml
-  - products/media-scheduling/docker-compose.yml
+  # Each entry uses the extended `path:` list syntax so the per-product
+  # `docker-compose.override.yml` is auto-merged on top of its compose.
+  # Compose's normal auto-load only covers the override sibling of the
+  # invoked file; nested includes do NOT auto-pull their own overrides
+  # (verified empirically — see KB § PATTERNS/containerization.md §11d).
+  # imobi-scheduling has no override file yet (still on a stale "seed-"
+  # service-name shape; tracked as a pre-existing gap — see findings).
+  - path:
+      - products/core/docker-compose.yml
+      - products/core/docker-compose.override.yml
+  - path:
+      - products/erp-imobiliario/docker-compose.yml
+      - products/erp-imobiliario/docker-compose.override.yml
+  - path:
+      - products/personal-finance/docker-compose.yml
+      - products/personal-finance/docker-compose.override.yml
+  - path:
+      - products/therapy-platform/docker-compose.yml
+      - products/therapy-platform/docker-compose.override.yml
+  - path:
+      - products/seed/docker-compose.yml
+      - products/seed/docker-compose.override.yml
+  - path:
+      - products/daily-life/docker-compose.yml
+      - products/daily-life/docker-compose.override.yml
+  - path:
+      - products/mailing/docker-compose.yml
+      - products/mailing/docker-compose.override.yml
+  - path:
+      - products/adconnect/docker-compose.yml
+      - products/adconnect/docker-compose.override.yml
+  - path:
+      - products/dev-team/docker-compose.yml
+      - products/dev-team/docker-compose.override.yml
+  - path:
+      - products/media-scheduling/docker-compose.yml
+      - products/media-scheduling/docker-compose.override.yml
   - products/imobi-scheduling/docker-compose.yml
   # END_PRODUCTS_INCLUDE
 

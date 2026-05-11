@@ -1,0 +1,32 @@
+# Dev override compose — auto-merged by `docker compose up` (no -f).
+# See KB § PATTERNS/containerization.md §11d for the full pattern.
+#
+# dev-team caveat — `--reload` works here, but every code save re-runs
+# the agno engine warmup (the readiness_hook re-imports `dev_team`,
+# re-probes ANTHROPIC_API_KEY, re-validates the leader allowlist). Cold
+# reload typically takes 10-20s on a warm Anthropic API connection.
+# If iteration speed becomes painful, drop `--reload` here and use
+# `docker compose restart dev-team-backend` after edits (manual reload).
+
+services:
+  dev-team-backend:
+    volumes:
+      - ./backend:/app/products/dev-team/backend
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8009"
+      - --reload
+      - --app-dir
+      - products/dev-team/backend
+    restart: "no"
+
+  dev-team-frontend:
+    volumes:
+      - ./frontend:/app/products/dev-team/frontend
+    environment:
+      NODE_ENV: development
+    restart: "no"

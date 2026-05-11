@@ -1,0 +1,25 @@
+# Dev override compose — auto-merged by `docker compose up` (no -f).
+# See KB § PATTERNS/containerization.md §11d for the full pattern.
+
+services:
+  adconnect-backend:
+    volumes:
+      - ./backend:/app/products/adconnect/backend
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8007"
+      - --reload
+      - --app-dir
+      - products/adconnect/backend
+    restart: "no"
+
+  adconnect-frontend:
+    volumes:
+      - ./frontend:/app/products/adconnect/frontend
+    environment:
+      NODE_ENV: development
+    restart: "no"

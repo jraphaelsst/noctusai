@@ -759,11 +759,16 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
 
 ### 🟡 Soon — quality lifts
 
-8. **No `docker-compose.override.yml` for dev.** Today the same compose
-   shape is used for dev and (would-be) prod. Splitting into
-   `docker-compose.yml` (production-shape: no volume binds, no
-   reload) + `docker-compose.override.yml` (dev: bind product source
-   for hot-reload) is the standard pattern.
+8. ✅ **Dev override compose (T7, containerization-backlog-closure
+   Wave 2, 2026-05-10).** Each per-product `docker-compose.yml` now has
+   a sibling `docker-compose.override.yml` that bind-mounts the product
+   source for hot-reload and swaps the production CMD for
+   `uvicorn --reload`. Root `docker-compose.override.yml` auto-enables
+   the `redis` profile in dev and drops `restart:` on shared services.
+   `docker compose up` (no -f flags) auto-merges every override; the
+   production overlay (`docker-compose.prod.yml`) is T8's scope and is
+   loaded via explicit `-f docker-compose.yml -f docker-compose.prod.yml`.
+   Full pattern at **§11d · Dev override compose** below.
 9. **CI builds only 4 of 20 images (smoke).** Full-fleet build is
    ~30 minutes on free GH runners — current job builds core + seed
    only. Future: matrix strategy with one job per product, or move
@@ -1311,6 +1316,163 @@ raw psycopg2/asyncpg — out of scope for T4. The local DB is shipped
 today as a **schema + data substrate** for ad-hoc psql / pgcli /
 direct-SQL workflows; a follow-up (or per-product carve-out) wires
 runtime read/write through.
+
+---
+
+## 11d · Dev override compose
+
+**Locked 2026-05-10** (T7 of `projects/containerization-backlog-closure/`,
+Wave 2). Closes §11 backlog item #8.
+
+Standard Docker pattern: split a single `docker-compose.yml` into a
+production-shape base file + a `docker-compose.override.yml` that flips
+runtime behavior toward dev. `docker compose up` (no `-f` flags) auto-
+merges the override on top; production deployment uses an explicit
+`-f docker-compose.yml -f docker-compose.prod.yml` combo (the prod
+overlay — T8's scope — does NOT inherit the dev override).
+
+### Rule
+
+Per-product `docker-compose.override.yml` is auto-loaded by
+`docker compose up` when no `-f` flags are given. Each override file
+carries three flips relative to the base compose:
+
+1. **Bind-mount the product source.** `./backend:/app/products/<slug>/backend`
+   + `./frontend:/app/products/<slug>/frontend`. Edits propagate without
+   rebuild — uvicorn's `--reload` watches the bind-mounted tree via
+   `watchfiles` (bundled with `uvicorn[standard]`).
+2. **`uvicorn --reload`.** The override replaces the production CMD
+   (which runs without `--reload`) with a list-form `command:` that
+   adds `--reload` while keeping the same `--host` / `--port` /
+   `--app-dir` invocation. Required because the production Dockerfile
+   CMD is the no-reload form (matches how it ships).
+3. **`restart: "no"`.** Production carries `restart: unless-stopped` so
+   container crashes auto-recover. In dev that hides the crash in logs
+   between restart loops; flipping to `"no"` makes failures visible.
+4. **`NODE_ENV=development`.** Frontend container env so any build-time
+   conditional routes to the dev path. Note: the production frontend
+   serves a pre-built nginx-static bundle, so bind-mount alone doesn't
+   give hot-reload — that requires the vite dev server, which is a
+   separate dev-server compose service (out of T7's scope; deferred).
+
+### When the override applies
+
+Two paths auto-load the override:
+
+```bash
+# Path A: standalone (one product at a time)
+cd products/seed && docker compose up
+# auto-finds docker-compose.yml + docker-compose.override.yml siblings.
+
+# Path B: orchestrated (full fleet from root)
+docker compose up
+# root docker-compose.yml's `include:` uses extended `path:` syntax to
+# pull each per-product compose + override as a 2-file list, so the
+# override merges per product. See "How the root-compose merge works"
+# below.
+```
+
+Production deployment uses an explicit flag combo that excludes the
+override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+```
+
+`start.sh` continues to work in dev — it shells out to `docker compose
+up` with no `-f`, so the override auto-loads.
+
+### How the root-compose merge works
+
+Critical detail discovered empirically (2026-05-10, T7): Docker
+Compose's auto-load of `docker-compose.override.yml` ONLY applies to
+the override sibling of the invoked file. Files pulled in via
+`include:` do NOT auto-pull their own overrides. Without intervention,
+`docker compose up` at root would NOT apply per-product overrides.
+
+The fix: root `docker-compose.yml`'s `include:` block uses the extended
+`path:` list syntax (compose v2.20+) so each entry loads both the base
+compose AND the override:
+
+```yaml
+include:
+  # BEGIN_PRODUCTS_INCLUDE
+  - path:
+      - products/core/docker-compose.yml
+      - products/core/docker-compose.override.yml
+  - path:
+      - products/seed/docker-compose.yml
+      - products/seed/docker-compose.override.yml
+  # ... etc per product
+  # END_PRODUCTS_INCLUDE
+```
+
+The scaffolder's `_register_in_root_compose` emits this multi-line
+shape for new products; `_unregister_from_root_compose` removes the
+whole 4-line block (path: parent + base + override) on delete.
+
+### Common pitfalls
+
+- **Bind-mount must NOT clobber `/opt/venv`.** The backend Dockerfile
+  installs the virtualenv at `/opt/venv` (outside `/app`); the bind
+  only replaces source under `/app/products/<slug>/backend`. If a
+  future Dockerfile moves the venv into `/app`, the override needs an
+  anonymous volume to protect it.
+- **`--reload` requires `uvicorn[standard]`.** Every product's
+  `requirements.txt` pins `uvicorn[standard]==0.30.6` which bundles
+  watchfiles. Confirmed across all 10 products (T7 audit).
+- **Don't override `image:` in the override.** Image tag stays shared
+  with prod (the `ghcr.io/jraphaelsst/...` line from §11a). The
+  override only changes runtime behavior (bind-mounts, command, env),
+  not the built artifact.
+- **Don't add `restart: unless-stopped` in the override.** Dev wants
+  visible crashes.
+- **dev-team agno warmup.** `--reload` works but every backend save
+  re-runs the agno engine warmup (re-imports `dev_team/`, re-probes
+  ANTHROPIC_API_KEY, re-validates the leader allowlist). Cold reload
+  takes 10-20s on a warm Anthropic connection. If iteration becomes
+  painful, drop `--reload` from `products/dev-team/docker-compose.override.yml`
+  and use `docker compose restart dev-team-backend` for manual reload.
+  Documented inline at the dev-team override.
+
+### Root override
+
+The root `docker-compose.override.yml` covers the shared platform
+services (`redis`, `waha`, `postgres`):
+
+- **Redis profile auto-on in dev.** `profiles: !reset []` clears the
+  `[redis, full]` gate from the base file so `docker compose up`
+  (no `--profile redis`) brings Redis up automatically. Many products
+  use it (chatbot buffer, WhatsApp router, scheduling queues); having
+  it default-on in dev is a usability win. Production excludes this
+  override → profile gating returns → redis stays opt-in.
+- **Redis verbose logging.** `redis-server --loglevel verbose` for dev
+  command-level visibility (vs default `notice`).
+- **`waha` stays gated** even in dev — heavy, only needed by chatbot
+  products.
+- **`restart: "no"`** on all shared services so dev crashes are visible.
+
+### Scaffolder template
+
+`templates/product-seed/docker-compose.override.yml` mirrors the
+per-product pattern with `{{PRODUCT_SLUG}}` / `{{BACKEND_PORT}}`
+placeholders. `scripts/sync-seed-template.sh` substitutes literal
+`seed-*` service names + `products/seed/` paths in compose files into
+`{{PRODUCT_SLUG}}` during sync, so the seed override at
+`products/seed/docker-compose.override.yml` (literal `seed-backend`)
+correctly mirrors to the template (`{{PRODUCT_SLUG}}-backend`) for
+downstream scaffold consumption.
+
+### imobi-scheduling carve-out
+
+`products/imobi-scheduling/docker-compose.yml` still carries stale
+literal `seed-*` service names (a pre-existing scaffold artifact, not
+T7's regression). T7 deliberately did NOT author an override for
+imobi-scheduling because the override would have to match the stale
+service names (e.g. `seed-backend`) rather than the slug. Tracked as
+a follow-up: rename imobi-scheduling's service names + add the
+override. The compose `include:` keeps imobi-scheduling on the legacy
+single-line syntax (no override path) until that gap closes.
 
 ---
 

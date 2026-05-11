@@ -1,0 +1,25 @@
+# Dev override compose — auto-merged by `docker compose up` (no -f).
+# See KB § PATTERNS/containerization.md §11d for the full pattern.
+
+services:
+  erp-imobiliario-backend:
+    volumes:
+      - ./backend:/app/products/erp-imobiliario/backend
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --reload
+      - --app-dir
+      - products/erp-imobiliario/backend
+    restart: "no"
+
+  erp-imobiliario-frontend:
+    volumes:
+      - ./frontend:/app/products/erp-imobiliario/frontend
+    environment:
+      NODE_ENV: development
+    restart: "no"

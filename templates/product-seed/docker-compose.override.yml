@@ -1,0 +1,44 @@
+# Dev override compose — auto-merged by `docker compose up` when no -f
+# flags are given. Mirrors the production-shape carried by
+# `docker-compose.yml`; this file flips runtime behavior toward dev:
+#
+# - bind-mounts the product source so edits flow into the running
+#   container without rebuild (uvicorn --reload picks up the change),
+# - swaps the production CMD for `uvicorn --reload` (watches the bind-
+#   mounted source tree via uvicorn[standard] → watchfiles),
+# - drops `restart: unless-stopped` (in dev you want to SEE the crash,
+#   not auto-recover and hide the error in logs),
+# - sets `NODE_ENV=development` on the frontend so any build-time
+#   conditionals route to the dev path.
+#
+# Production deployment NEVER applies this file — it runs
+# `docker compose -f docker-compose.yml -f docker-compose.prod.yml up`
+# (the prod overlay is T8's scope). See
+# KB § PATTERNS/containerization.md §11d "Dev override compose".
+#
+# Bind-mount NEVER clobbers /opt/venv — the backend Dockerfile installs
+# the venv outside /app, so the bind only replaces source under
+# /app/products/<slug>/backend.
+
+services:
+  {{PRODUCT_SLUG}}-backend:
+    volumes:
+      - ./backend:/app/products/{{PRODUCT_SLUG}}/backend
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "{{BACKEND_PORT}}"
+      - --reload
+      - --app-dir
+      - products/{{PRODUCT_SLUG}}/backend
+    restart: "no"
+
+  {{PRODUCT_SLUG}}-frontend:
+    volumes:
+      - ./frontend:/app/products/{{PRODUCT_SLUG}}/frontend
+    environment:
+      NODE_ENV: development
+    restart: "no"

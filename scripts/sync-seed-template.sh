@@ -137,6 +137,27 @@ if [ "$DRY_RUN" != "--dry" ]; then
         perl -pi -e 's/\b8004\b/{{BACKEND_PORT}}/g' "$file" 2>/dev/null || true
         perl -pi -e 's/\b8100\b/{{FRONTEND_PORT}}/g' "$file" 2>/dev/null || true
 
+        # compose-specific: service names + container names + bind-mount
+        # paths + network names all need the product slug. Compose files
+        # carry `seed-backend`, `seed-frontend`, `noctus-seed-backend`,
+        # `seed-net`, `/app/products/seed/...`, `products/seed/backend`,
+        # and `http://seed-backend:8004` patterns that scaffold needs to
+        # rewrite to {{PRODUCT_SLUG}}. Earlier sync left these as literal
+        # `seed-*` which forced per-product compose files to be hand-
+        # authored. With `{{PRODUCT_SLUG}}` placeholders in the template,
+        # scaffold.py's mechanical substitution pass handles them.
+        if [[ "$file" == *docker-compose*.yml ]]; then
+            perl -pi -e 's/noctus-seed-/noctus-{{PRODUCT_SLUG}}-/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/\bseed-backend\b/{{PRODUCT_SLUG}}-backend/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/\bseed-frontend\b/{{PRODUCT_SLUG}}-frontend/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/\bseed-tunnel\b/{{PRODUCT_SLUG}}-tunnel/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/\bseed-net\b/{{PRODUCT_SLUG}}-net/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/\btunnel-seed\b/tunnel-{{PRODUCT_SLUG}}/g' "$file" 2>/dev/null || true
+            perl -pi -e 's|products/seed/|products/{{PRODUCT_SLUG}}/|g' "$file" 2>/dev/null || true
+            perl -pi -e 's|noctus-seed-backend|noctus-{{PRODUCT_SLUG}}-backend|g' "$file" 2>/dev/null || true
+            perl -pi -e 's|noctus-seed-frontend|noctus-{{PRODUCT_SLUG}}-frontend|g' "$file" 2>/dev/null || true
+        fi
+
         # SQL-specific: bare schema refs (e.g. CREATE SCHEMA seed; seed.table;
         # SET search_path = seed, public). \bseed\b only — won't match identifiers
         # like idx_seed_invitations_org (underscore is a word char, no boundary).
