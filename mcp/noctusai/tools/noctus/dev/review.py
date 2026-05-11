@@ -84,6 +84,7 @@ def _detect(
         check_unknown_table_references,
         check_function_search_path_pinned,
         check_admin_endpoint_service_role_bypass,
+        check_slowapi_with_pep563,
     )
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
@@ -105,6 +106,7 @@ def _detect(
         issues.extend(check_unknown_table_references(product_path))
         issues.extend(check_function_search_path_pinned(product_path))
         issues.extend(check_admin_endpoint_service_role_bypass(product_path))
+        issues.extend(check_slowapi_with_pep563(product_path))
     # Global repo-root sweep — only when not scoped to a single product.
     if product_slug is None:
         issues.extend(check_out_of_contract_trees())

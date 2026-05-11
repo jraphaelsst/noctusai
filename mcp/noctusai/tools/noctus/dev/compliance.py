@@ -2831,6 +2831,167 @@ def check_admin_endpoint_service_role_bypass(product_path: Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_slowapi_with_pep563` — flags the slowapi `@limiter.limit` +
+# `from __future__ import annotations` (PEP 563) combination that crashes
+# products at app import via `PydanticUndefinedAnnotation`.
+#
+# Background — N=3 recurrence formalization (2026-05-11):
+#   slowapi wraps the decorated function via `@functools.wraps`, which copies
+#   `__module__`/`__name__`/`__qualname__`/`__doc__` but NOT `__globals__`.
+#   Under PEP 563, all annotations are strings; when FastAPI/Pydantic later
+#   `eval()`s them to inspect the route signature, the name lookup happens in
+#   slowapi's module namespace — not the route module's. Any locally-declared
+#   model (e.g. `RunRequest`, `SSOTokenRequest`, `SubjectsRequest`) becomes
+#   unresolvable → `PydanticUndefinedAnnotation` at import time → product
+#   fails to boot. Three prior incidents this session: AUTH-RL (core/sso.py +
+#   media-scheduling/oauth.py), LLM-RL-TRIO (mailing/routers/ai.py),
+#   DT-FORWARD-REF (dev-team/api/run.py).
+# ---------------------------------------------------------------------------
+
+
+def _file_has_pep563_future_import(tree: ast.Module) -> bool:
+    """True iff the module has `from __future__ import annotations` at top.
+
+    PEP 563 is a *module-level* opt-in; `__future__` imports MUST be at the
+    top of the file (Python enforces this — they're not legal mid-module),
+    so we only need to inspect top-level `ImportFrom` nodes.
+    """
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            for alias in node.names:
+                if alias.name == "annotations":
+                    return True
+    return False
+
+
+def _file_has_limiter_limit_decorator(tree: ast.Module) -> tuple[bool, int]:
+    """Return (found, first_decorator_lineno). Walks every Function/AsyncFunction
+    in the tree and inspects its decorator list for `@limiter.limit(...)`.
+
+    Accepts the canonical shape `@limiter.limit("10/minute")` (an `ast.Call`
+    whose `func` is `ast.Attribute(value=ast.Name(id="limiter"), attr="limit")`)
+    and the rare bare `@limiter.limit` shape (an `ast.Attribute` without a
+    surrounding Call) — defensive coverage; slowapi requires the call form.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for deco in node.decorator_list:
+            # @limiter.limit(...)  — the canonical shape
+            if isinstance(deco, ast.Call):
+                func = deco.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "limit"
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "limiter"
+                ):
+                    return True, deco.lineno
+            # @limiter.limit  — bare attribute (uncommon but defensive)
+            elif isinstance(deco, ast.Attribute):
+                if (
+                    deco.attr == "limit"
+                    and isinstance(deco.value, ast.Name)
+                    and deco.value.id == "limiter"
+                ):
+                    return True, deco.lineno
+    return False, 0
+
+
+def check_slowapi_with_pep563(product_path: Path) -> list[dict]:
+    """Detect files that combine `@limiter.limit` (slowapi) with
+    `from __future__ import annotations` (PEP 563).
+
+    This combination crashes the product at app import time:
+      * PEP 563 makes every function/class annotation a string.
+      * slowapi's `@limiter.limit` wraps the route via `@functools.wraps`,
+        which copies `__module__`/`__name__`/`__qualname__`/`__doc__` but
+        NOT `__globals__`.
+      * FastAPI/Pydantic resolves annotations via `eval()` — the lookup
+        happens in slowapi's module namespace, where the route's local
+        models (`RunRequest`, `SSOTokenRequest`, ...) don't exist.
+      * Result: `PydanticUndefinedAnnotation` at import → product fails
+        to boot.
+
+    Scope: `<product>/backend/app/routers/*.py` + `<product>/backend/app/api/*.py`.
+    All four known incidents (AUTH-RL × 2, LLM-RL-TRIO, DT-FORWARD-REF) fall
+    in this surface — no other backend directory hosts decorated FastAPI
+    routes in the platform.
+
+    Severity: high — app fails to boot, no graceful degradation.
+
+    N=3 recurrence formalization, 2026-05-11. Per CLAUDE.md "DRY — the
+    recurrence rule" + KB § PATTERNS/testing.md § Regression-test-the-detector.
+    """
+    issues: list[dict] = []
+    if not product_path.exists():
+        return issues
+
+    product_slug = product_path.name
+    candidate_dirs = [
+        product_path / "backend" / "app" / "routers",
+        product_path / "backend" / "app" / "api",
+    ]
+
+    for base in candidate_dirs:
+        if not base.exists():
+            continue
+        for path in base.glob("*.py"):
+            if path.name == "__init__.py":
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError) as exc:
+                logger.warning(
+                    "compliance: cannot read %s (%s), skipping", path, exc,
+                )
+                continue
+            try:
+                tree = ast.parse(content, filename=str(path))
+            except SyntaxError as exc:
+                logger.warning(
+                    "compliance: cannot parse %s (%s), skipping", path, exc,
+                )
+                continue
+
+            if not _file_has_pep563_future_import(tree):
+                continue
+            has_limiter, line_no = _file_has_limiter_limit_decorator(tree)
+            if not has_limiter:
+                continue
+
+            try:
+                relative = str(path.relative_to(product_path.parent.parent))
+            except ValueError:
+                relative = str(path)
+
+            issues.append({
+                "product": product_slug,
+                "file": relative,
+                "issue": (
+                    f"`{relative}` combines `from __future__ import annotations` "
+                    f"with `@limiter.limit` (first occurrence at line {line_no}). "
+                    f"PEP 563 turns all annotations into strings; slowapi's "
+                    f"`@functools.wraps` copies `__module__`/`__name__` but NOT "
+                    f"`__globals__`, so FastAPI/Pydantic `eval()` of forward-refs "
+                    f"(e.g. `RunRequest`, `SSOTokenRequest`) resolves in slowapi's "
+                    f"module namespace → `PydanticUndefinedAnnotation` at app "
+                    f"import time → product fails to boot. FIX: drop "
+                    f"`from __future__ import annotations` from this file "
+                    f"(safe if no PEP 604 `X | Y` annotations are used) OR "
+                    f"move the rate-limited endpoint(s) to a sibling module "
+                    f"without the future import. Three prior incidents this "
+                    f"session: AUTH-RL (core/sso.py + media-scheduling/oauth.py), "
+                    f"LLM-RL-TRIO (mailing/routers/ai.py), DT-FORWARD-REF "
+                    f"(dev-team/api/run.py). N=3 formalized 2026-05-11."
+                ),
+                "severity": "high",
+            })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -3101,6 +3262,7 @@ def check_all_products() -> tuple[int, list]:
             + check_unknown_table_references(d)
             + check_function_search_path_pinned(d)
             + check_admin_endpoint_service_role_bypass(d)
+            + check_slowapi_with_pep563(d)
         )
         all_issues.extend(issues)
         penalties = {"critical": 25, "high": 10, "warning": 3}
