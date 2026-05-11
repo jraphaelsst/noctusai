@@ -1,0 +1,74 @@
+name: Seed Typecheck
+
+# Gate the seed-boundary type contract.
+#
+# Cross-product type contracts live in two seed-boundary packages:
+#   - @noctusai/lib   (seed/lib/frontend/)
+#   - @noctusai/seed  (seed/framework/frontend/)
+#
+# Both export source .ts directly (no build step) so the strict-quality
+# of the seed's types propagates to all consumers via raw-source import.
+# This workflow runs `tsc --noEmit` on both packages on every PR that
+# touches them and on every push to main.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "seed/lib/frontend/**"
+      - "seed/framework/frontend/**"
+      - ".github/workflows/seed-typecheck.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "seed/lib/frontend/**"
+      - "seed/framework/frontend/**"
+      - ".github/workflows/seed-typecheck.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lib-typecheck:
+    name: Lib Typecheck (@noctusai/lib)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: seed/lib/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: seed/lib/frontend
+        run: npm ci
+
+      - name: Type-check (tsc --noEmit, strict)
+        working-directory: seed/lib/frontend
+        run: npm run check
+
+  framework-typecheck:
+    name: Framework Typecheck (@noctusai/seed)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: seed/framework/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: seed/framework/frontend
+        run: npm ci
+
+      - name: Type-check (tsc --noEmit, strict)
+        working-directory: seed/framework/frontend
+        run: npm run check

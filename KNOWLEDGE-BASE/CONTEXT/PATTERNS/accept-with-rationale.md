@@ -253,6 +253,14 @@ shape just changes when the decision moves.
 - **Revisit trigger:** N/A — this entry is now historical context, kept per the catalog's append-only-ish convention.
 - **Recorded by:** `projects/side-projects-batch/` Phase 1.c (originating accept) + `projects/seed-side-scheduler-primitive/` (formalization ship, 2026-05-03).
 
+### Per-product TS strict mode is opt-in over time
+- **Subject:** TypeScript `"strict": true` in each product frontend's `products/<product>/frontend/tsconfig.json`. Today every product frontend ships `strict: false` (or inherits a non-strict base).
+- **Decision:** per-product TS strict mode is **opt-in over time, NOT a coordinated campaign**. Strict-quality types are enforced at the seed boundary only (`seed/lib/frontend/` + `seed/framework/frontend/`, both `strict: true`, gated by `.github/workflows/seed-typecheck.yml` — see `KB § 03-SEED-ARCHITECTURE.md § Seed Contract § 5. Contract enforcement § 1`).
+- **Reason:** 8 product frontends × ~2-3h each ≈ 16-24h of mostly mechanical `!`-non-null-assertion fixes that *mask* the same null risk rather than removing it. The high-leverage subset — cross-product type contracts in `@noctusai/lib` + `@noctusai/seed` — already lands at the seed boundary and propagates to every consumer via raw-source `.ts` import (no build step, no `.d.ts` emission, so the strict-quality of seed types directly affects what each product sees). Per-product strict adds quality-of-life inside each product but does not tighten any cross-product contract. The per-product flip is the kind of work an individual maintainer can opt into when they're touching a frontend deeply — not a platform-wide deliverable that pays off the coordination cost.
+- **Scope:** `products/{core,erp-imobiliario,personal-finance,therapy-platform,daily-life,mailing,seed,dev-team}/frontend/tsconfig.json`.
+- **Revisit trigger:** a product team **independently** flips `strict: true` in their `tsconfig.json` and closes the resulting errors at their own pace — that's the per-product happy path and doesn't change this catalog. Recurrence fires (flip toward **FORMALIZED**) when **3+ product frontends** end up at `strict: true` on their own (signals a coordinated push is warranted) OR a **real null-safety incident** in production is traced to a non-strict product file (signals the seed-boundary gate isn't catching enough).
+- **Recorded by:** `projects/strict-mode-migration/PROJECT.md` Phase 5 close (2026-05-10). Original 8-frontend campaign drafted 2026-04-27 was retired here after the 2026-05-03 cost/leverage audit; seed-boundary gate shipped Phases 1-4 of the same project.
+
 ---
 
 ## How to add a new entry
