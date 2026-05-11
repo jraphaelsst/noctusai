@@ -69,10 +69,13 @@ include:
   - path:
       - products/media-scheduling/docker-compose.yml
       - products/media-scheduling/docker-compose.prod.yml
+  - path:
+      - products/youtube-crawler/docker-compose.yml
+      - products/youtube-crawler/docker-compose.prod.yml
   # END_PRODUCTS_INCLUDE_PROD
 
 services:
-  # ─── Per-product frontend dev-override resets ───────────────────────
+  # ─── Per-product dev-override resets (top-level, per KB §11d) ────────
   # The root `docker-compose.yml`'s `include:` block uses path-list
   # syntax to auto-merge each product's `docker-compose.override.yml`
   # (dev shape) on top of its base compose. Compose's `!reset` cannot
@@ -81,47 +84,45 @@ services:
   # because the override was merged inside the ROOT base's include tree
   # (a separate merge operation).
   #
-  # The fix: declare top-level frontend service entries here that clear
-  # the dev override's `build.target: dev` + `command: ["npm", "run",
-  # "dev", ...]` via `!reset null`. Without these resets, the prod
-  # render would carry `command: npm run dev` against an nginx-only
-  # image (no node binary) and prod containers would crash on start.
+  # The fix: declare top-level service entries here that clear EVERY
+  # runtime-affecting key the dev override sets. Today's dev override
+  # (T7 + HMR Option B) sets:
+  #   - backend:  volumes + command (uvicorn --reload) + restart
+  #   - frontend: build.target + volumes + command (npm run dev) + restart + environment
+  #
+  # Without these resets, prod render would carry:
+  #   - bind-mounts pointing at host source paths that don't exist in prod
+  #   - uvicorn --reload (not desired in prod; gunicorn or single-shot uvicorn)
+  #   - npm run dev against an nginx-only image (would crash on start)
+  #   - restart: "no" (overriding per-product prod overlay's restart: always)
   #
   # See KB § PATTERNS/containerization.md §11d "Dev/prod target split"
-  # for the multi-stage Dockerfile design that introduced this need.
-  core-frontend:
-    build: !reset null
-    command: !reset null
-  erp-imobiliario-frontend:
-    build: !reset null
-    command: !reset null
-  personal-finance-frontend:
-    build: !reset null
-    command: !reset null
-  therapy-platform-frontend:
-    build: !reset null
-    command: !reset null
-  seed-frontend:
-    build: !reset null
-    command: !reset null
-  daily-life-frontend:
-    build: !reset null
-    command: !reset null
-  mailing-frontend:
-    build: !reset null
-    command: !reset null
-  adconnect-frontend:
-    build: !reset null
-    command: !reset null
-  dev-team-frontend:
-    build: !reset null
-    command: !reset null
-  media-scheduling-frontend:
-    build: !reset null
-    command: !reset null
-  youtube-crawler-frontend:
-    build: !reset null
-    command: !reset null
+  # for the multi-stage Dockerfile design + the recurrence rule
+  # ("override gains runtime-affecting key → prod needs matching reset").
+  # ── Backends ────────────────────────────────────────────────────────
+  core-backend:        { volumes: !reset null, command: !reset null }
+  erp-imobiliario-backend:    { volumes: !reset null, command: !reset null }
+  personal-finance-backend:   { volumes: !reset null, command: !reset null }
+  therapy-platform-backend:   { volumes: !reset null, command: !reset null }
+  seed-backend:        { volumes: !reset null, command: !reset null }
+  daily-life-backend:  { volumes: !reset null, command: !reset null }
+  mailing-backend:     { volumes: !reset null, command: !reset null }
+  adconnect-backend:   { volumes: !reset null, command: !reset null }
+  dev-team-backend:    { volumes: !reset null, command: !reset null }
+  media-scheduling-backend:   { volumes: !reset null, command: !reset null }
+  youtube-crawler-backend:    { volumes: !reset null, command: !reset null }
+  # ── Frontends ───────────────────────────────────────────────────────
+  core-frontend:       { build: !reset null, volumes: !reset null, command: !reset null }
+  erp-imobiliario-frontend:   { build: !reset null, volumes: !reset null, command: !reset null }
+  personal-finance-frontend:  { build: !reset null, volumes: !reset null, command: !reset null }
+  therapy-platform-frontend:  { build: !reset null, volumes: !reset null, command: !reset null }
+  seed-frontend:       { build: !reset null, volumes: !reset null, command: !reset null }
+  daily-life-frontend: { build: !reset null, volumes: !reset null, command: !reset null }
+  mailing-frontend:    { build: !reset null, volumes: !reset null, command: !reset null }
+  adconnect-frontend:  { build: !reset null, volumes: !reset null, command: !reset null }
+  dev-team-frontend:   { build: !reset null, volumes: !reset null, command: !reset null }
+  media-scheduling-frontend:  { build: !reset null, volumes: !reset null, command: !reset null }
+  youtube-crawler-frontend:   { build: !reset null, volumes: !reset null, command: !reset null }
 
   redis:
     restart: always
