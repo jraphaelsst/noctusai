@@ -603,3 +603,149 @@ class TestServiceConfirmAppointment:
         )
         assert result.created is False
         assert "slot conflicts" in (result.reason or "")
+
+
+class TestServiceConfirmAppointmentCalendarFactory:
+    """Phase 8 — `SchedulingService.confirm_appointment` composes the
+    Calendar `create_event` BEFORE the DB insert when a
+    ``calendar_event_factory`` is injected at construction time."""
+
+    def test_calendar_event_id_stamped_onto_db_payload(self):
+        """Successful Calendar create → event_id flows into the
+        ``google_calendar_event_id`` column of the inserted row."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        calls: list[dict] = []
+
+        def _fake_factory(**kwargs) -> str:
+            calls.append(kwargs)
+            return "evt-google-abc-001"
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+            calendar_event_factory=_fake_factory,
+        )
+        new_id = "aaaaaaa9-0000-0000-0000-000000000099"
+        svc._scoped.set_sequential_responses(
+            "properties", [MockSupabaseResponse(data=[_property_row()])],
+        )
+        svc._scoped.set_sequential_responses(
+            "condominiums", [MockSupabaseResponse(data=[_condo_row()])],
+        )
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(data=[]),                     # re-validation
+                MockSupabaseResponse(data=[{"id": new_id}]),       # insert
+            ],
+        )
+
+        result = svc.confirm_appointment(
+            property_code="AP-2034",
+            start_at="2026-05-15T10:00:00-03:00",
+            end_at="2026-05-15T11:30:00-03:00",
+            services=["photos"],
+            appointment_request_id="req-xyz",
+        )
+        assert result.created is True
+
+        # Factory was invoked once with the expected logical inputs.
+        assert len(calls) == 1
+        assert calls[0]["appointment_request_id"] == "req-xyz"
+        assert "Visita técnica" in calls[0]["summary"]
+
+        # The DB insert payload carried the event id.
+        inserted = svc._scoped.table("appointments").inserted_payloads
+        assert any(
+            p.get("google_calendar_event_id") == "evt-google-abc-001"
+            for p in inserted
+        )
+
+    def test_calendar_create_failure_aborts_db_insert(self):
+        """Calendar create raises → no DB insert → ConfirmationResult is
+        ``created=False`` with a reason that surfaces the failure."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        def _raises(**kwargs) -> str:
+            raise RuntimeError("calendar quota exceeded")
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+            calendar_event_factory=_raises,
+        )
+        svc._scoped.set_sequential_responses(
+            "properties", [MockSupabaseResponse(data=[_property_row()])],
+        )
+        svc._scoped.set_sequential_responses(
+            "condominiums", [MockSupabaseResponse(data=[_condo_row()])],
+        )
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [MockSupabaseResponse(data=[])],  # re-validation only — no insert
+        )
+
+        result = svc.confirm_appointment(
+            property_code="AP-2034",
+            start_at="2026-05-15T10:00:00-03:00",
+            end_at="2026-05-15T11:30:00-03:00",
+        )
+        assert result.created is False
+        assert "calendar event creation failed" in (result.reason or "")
+        # No DB insert landed — appointments table received no inserts.
+        inserted = svc._scoped.table("appointments").inserted_payloads
+        assert inserted == []
+
+    def test_caller_supplied_event_id_skips_factory(self):
+        """When the caller passes ``google_calendar_event_id`` directly
+        (because they pre-created the event), the factory is skipped —
+        the caller has already taken responsibility for idempotency."""
+        from app.services.scheduling import SchedulingService, build_rules
+
+        called = []
+
+        def _factory(**kwargs) -> str:
+            called.append(kwargs)
+            return "should-not-be-used"
+
+        db = MockSupabaseClient(data=[])
+        svc = SchedulingService(
+            admin_client=db,
+            org_id=ORG_ID,
+            rules=build_rules(_settings_stub()),
+            calendar_event_factory=_factory,
+        )
+        svc._scoped.set_sequential_responses(
+            "properties", [MockSupabaseResponse(data=[_property_row()])],
+        )
+        svc._scoped.set_sequential_responses(
+            "condominiums", [MockSupabaseResponse(data=[_condo_row()])],
+        )
+        new_id = "aaaaaaa9-0000-0000-0000-000000000099"
+        svc._scoped.set_sequential_responses(
+            "appointments",
+            [
+                MockSupabaseResponse(data=[]),
+                MockSupabaseResponse(data=[{"id": new_id}]),
+            ],
+        )
+
+        result = svc.confirm_appointment(
+            property_code="AP-2034",
+            start_at="2026-05-15T10:00:00-03:00",
+            end_at="2026-05-15T11:30:00-03:00",
+            google_calendar_event_id="caller-supplied-event-id",
+        )
+        assert result.created is True
+        assert called == []  # factory skipped
+
+        inserted = svc._scoped.table("appointments").inserted_payloads
+        assert any(
+            p.get("google_calendar_event_id") == "caller-supplied-event-id"
+            for p in inserted
+        )

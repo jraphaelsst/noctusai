@@ -64,7 +64,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -82,6 +82,15 @@ from noctusai_lib.domain.scheduling import (
     WorkingWindow,
     ZeroTravelLookup,
 )
+
+
+# CalendarEventFactory: receives the kwargs needed to build a calendar
+# event (summary/description/attendees come from the consumer's domain
+# knowledge — the service is data-only) and returns the event_id string.
+# On failure it MUST raise; ``confirm_appointment`` translates that into
+# ``ConfirmationResult(created=False, reason=...)`` BEFORE writing to DB.
+# Phase 8 wires this from ``app.services.calendar.create_calendar_event``.
+CalendarEventFactory = Callable[..., str]
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +254,7 @@ class SchedulingService:
         travel_lookup: TravelLookup | None = None,
         extra_conflicts: list[Conflict] | None = None,
         scorer: Scorer | None = None,
+        calendar_event_factory: CalendarEventFactory | None = None,
     ) -> None:
         self._client = admin_client
         self._org_id = str(org_id)
@@ -256,6 +266,12 @@ class SchedulingService:
             extra_conflicts=extra_conflicts,
             scorer=scorer,
         )
+        # Phase 8 seam — when provided, ``confirm_appointment`` calls this
+        # AFTER conflict re-validation but BEFORE the DB insert. Failure
+        # to create the Calendar event aborts the booking — the DB row
+        # never lands. None preserves the Phase 7 DB-only path used by
+        # the existing test suite + early-dev.
+        self._calendar_event_factory = calendar_event_factory
 
     # ------------------------------------------------------------------
     # Tool: lookup_property
@@ -379,12 +395,24 @@ class SchedulingService:
 
         Phase 7 ships the DB insert path + a final overlap re-check
         (engine `DefaultConflict.applies` against current `appointments`
-        rows for the date). Google Calendar event creation lands at
-        Phase 8 — this method accepts a pre-created `google_calendar_event_id`
-        argument so the Phase 8 wiring can pass it through.
+        rows for the date).
+
+        Phase 8 — when ``calendar_event_factory`` is wired into the
+        service (via constructor injection), this method calls it AFTER
+        conflict re-validation but BEFORE the DB insert. A failure in
+        the calendar factory aborts the booking (no DB row written) so
+        the user can't see "scheduled" status while the Calendar event
+        is missing. The resulting Calendar event_id is persisted as
+        ``google_calendar_event_id`` on the row.
+
+        Callers may also pre-create the Calendar event themselves and
+        pass ``google_calendar_event_id=...`` — in that case the
+        factory is skipped (the caller has already handled idempotency).
 
         Returns `created=False` on:
           - property lookup miss,
+          - calendar event creation failure (when factory is wired and
+            no caller-provided ``google_calendar_event_id``),
           - DB insert failure,
           - re-validation conflict (slot taken between propose + confirm).
         """
@@ -422,6 +450,40 @@ class SchedulingService:
                 return ConfirmationResult(
                     created=False,
                     reason="slot conflicts with an existing appointment",
+                )
+
+        # Phase 8 — create the Calendar event BEFORE the DB insert. If
+        # the factory is configured and the create_event call fails, the
+        # appointment row is NOT inserted (compensation is preferable to
+        # double-booking: a failed Calendar create with a successful DB
+        # row would mask the user-visible failure mode "I don't see it
+        # on my Calendar"). The factory is consumer-injected (Phase 8
+        # wires ``app.services.calendar.create_calendar_event``); when
+        # absent (test path / pre-Phase-8 wiring), the path skips and
+        # ``google_calendar_event_id`` is whatever the caller passed
+        # (typically None).
+        if self._calendar_event_factory is not None and not google_calendar_event_id:
+            try:
+                google_calendar_event_id = self._calendar_event_factory(
+                    summary=_build_calendar_summary(prop, services),
+                    start_at=start,
+                    end_at=end,
+                    timezone=str(self.rules.timezone),
+                    appointment_request_id=appointment_request_id or _fallback_request_id(
+                        prop.property_id, start
+                    ),
+                    description=_build_calendar_description(prop, services),
+                    location=prop.condominium_name,
+                )
+            except Exception as exc:  # noqa: BLE001 — surface loud + abort booking.
+                logger.warning(
+                    "Calendar event creation failed; aborting confirm: "
+                    "property=%s start=%s err=%s",
+                    property_code, start.isoformat(), exc,
+                )
+                return ConfirmationResult(
+                    created=False,
+                    reason=f"calendar event creation failed: {exc}",
                 )
 
         payload: dict[str, Any] = {
@@ -582,7 +644,50 @@ def _parse_aware_datetime(value: Any, tz: ZoneInfo) -> datetime:
     return _coerce_aware_datetime(str(value), tz)
 
 
+def _build_calendar_summary(
+    prop: "PropertyLookupResult",
+    services: list[str] | None,
+) -> str:
+    """Compose a Calendar event summary string.
+
+    Format: ``"Visita técnica — <condo_name> — <property_code>"`` with a
+    services-suffix when present. Localized pt-BR per the bot's primary
+    language; the prose isn't user-tunable today.
+    """
+    base = f"Visita técnica — {prop.condominium_name or '(condomínio)'} — {prop.code}"
+    if services:
+        base = f"{base} ({', '.join(services)})"
+    return base
+
+
+def _build_calendar_description(
+    prop: "PropertyLookupResult",
+    services: list[str] | None,
+) -> str:
+    """Compose a Calendar event description (multi-line)."""
+    lines = [
+        f"Imóvel: {prop.code}",
+        f"Condomínio: {prop.condominium_name or '(não definido)'}",
+    ]
+    if services:
+        lines.append(f"Serviços: {', '.join(services)}")
+    lines.append("")
+    lines.append("Agendado via Imobi Scheduling Bot (WhatsApp).")
+    return "\n".join(lines)
+
+
+def _fallback_request_id(property_id: str | None, start: datetime) -> str:
+    """Synthesize a stable request-id when no ``appointment_request_id``
+    is supplied (Phase 9 will surface it for the full request lifecycle).
+
+    Combines property + start to remain stable across retries of the
+    same logical confirmation.
+    """
+    return f"adhoc-{property_id or 'unknown'}-{start.isoformat()}"
+
+
 __all__ = [
+    "CalendarEventFactory",
     "ConfirmationResult",
     "ProposedSlot",
     "PropertyLookupResult",

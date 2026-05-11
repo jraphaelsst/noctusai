@@ -33,13 +33,16 @@ from __future__ import annotations
 
 import logging
 
+from app.config import settings
 from app.dependencies import coerce_org_uuid, get_admin_client
 from app.routers.whatsapp_router import SINGLE_AGENCY_ORG_KEY
+from app.services.calendar import configure_calendar_module
 from app.services.conversation import (
     configure_conversation_module,
     start_worker,
     stop_worker,
 )
+from app.services.maps import configure_maps_module, load_condominium_coords
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,22 @@ async def on_startup() -> None:
         return
 
     org_uuid = coerce_org_uuid(SINGLE_AGENCY_ORG_KEY)
+
+    # Phase 8 — wire Calendar + Maps before the conversation module so
+    # the scheduling service can compose them.
+    configure_calendar_module(
+        admin_client=admin,
+        org_id=org_uuid,
+        default_calendar_id=settings.google_calendar_default_calendar_id,
+        oauth_client_id=settings.google_calendar_oauth_client_id,
+        oauth_client_secret=settings.google_calendar_oauth_client_secret,
+    )
+    coords = load_condominium_coords(admin, org_id=str(org_uuid))
+    configure_maps_module(
+        api_key=settings.google_maps_api_key,
+        location_coords=coords,
+    )
+
     configure_conversation_module(admin_client=admin, org_id=org_uuid)
     start_worker()
     logger.info("Imobi Scheduling lifespan startup: conversation module ready.")

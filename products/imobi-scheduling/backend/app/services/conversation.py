@@ -80,6 +80,8 @@ from noctusai_lib.integrations.redis import (
 from noctusai_lib.primitives.tasks import schedule_coro
 
 from app.config import settings
+from app.services.calendar import create_calendar_event, get_calendar_module
+from app.services.maps import get_maps_module
 from app.services.scheduling import SchedulingService, build_rules
 from app.services.tool_audit import make_supabase_audit_writer
 from app.services.tool_registry import TOOL_DESCRIPTORS, build_tool_handler
@@ -242,10 +244,41 @@ def configure_conversation_module(
     # SchedulingEngine instance + DB orchestration; the tool handler
     # routes `lookup_property` / `propose_appointment` /
     # `confirm_appointment` through it when wired.
+    #
+    # Phase 8 — Calendar + Maps composition. The Maps `travel_lookup` is
+    # consumed by the scheduling engine's `Scorer` + `Conflict` rules; the
+    # Calendar `create_calendar_event` is consumed by `confirm_appointment`
+    # BEFORE the DB insert (compensation rule: failed Calendar create
+    # aborts the booking). Both modules are configured by lifespan
+    # startup and read via their respective `get_*_module()` getters.
+    # When their lifespan-startup wasn't run (test paths that skip the
+    # full lifespan), the getters raise — we tolerate by reaching for
+    # the module's getter with a try/except that drops to Phase-7 defaults.
+    travel_lookup = None
+    try:
+        travel_lookup = get_maps_module().travel_lookup
+    except RuntimeError:
+        logger.info(
+            "Maps module not configured; SchedulingService falling back to "
+            "ZeroTravelLookup (Phase 7 default)."
+        )
+
+    calendar_factory = None
+    try:
+        get_calendar_module()
+        calendar_factory = create_calendar_event
+    except RuntimeError:
+        logger.info(
+            "Calendar module not configured; SchedulingService.confirm_appointment "
+            "will skip Calendar event creation (Phase 7 DB-only path)."
+        )
+
     scheduling_service = SchedulingService(
         admin_client=admin_client,
         org_id=org_id,
         rules=build_rules(settings),
+        travel_lookup=travel_lookup,
+        calendar_event_factory=calendar_factory,
     )
 
     worker = ConversationWorker(
