@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
-from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
+from noctusai_lib.domain.ai import consent_required, safe_persist_indicator
 
 from app.dependencies import get_current_user, get_user_client, get_org_id
 from app.responses import success_response
@@ -15,29 +15,6 @@ from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
-
-
-def _persist_indicator(db, ref_type: str, ref_id: str, out: dict) -> dict:
-    """Wrap an AIOutput-shaped service dict into AIOutput + persist to erp.ai_outputs."""
-    output = AIOutput(
-        ref_type=ref_type,
-        ref_id=ref_id,
-        kind=out["kind"],
-        label=out["label"],
-        score=out.get("score"),
-        chip=out.get("chip"),
-        explanation=out.get("explanation"),
-        confidence=out.get("confidence"),
-        model_version=out.get("model_version"),
-        prompt_version=out.get("prompt_version"),
-    )
-    try:
-        return persist_output(db, schema="erp", output=output)
-    except Exception as e:
-        # Persist failure is non-fatal — the indicator just won't show until
-        # next run. Log loudly so it surfaces.
-        logger.warning("erp.ai.persist_indicator failed for %s/%s: %s", ref_type, ref_id, e)
-        return {**output.to_insert_payload(), "id": None, "persist_error": str(e)}
 
 
 def _require_openai(org_id):
@@ -318,7 +295,7 @@ async def whatsapp_intent(
         cliente_nome=body.cliente_nome,
         org_id=get_org_id(user),
     )
-    persisted = _persist_indicator(db, "cliente", body.cliente_id, out)
+    persisted = safe_persist_indicator(db, schema="erp", ref_type="cliente", ref_id=body.cliente_id, out=out, logger=logger)
     return success_response(persisted)
 
 
@@ -379,7 +356,7 @@ async def certidoes_score(
         certidoes=certidoes,
         org_id=get_org_id(user),
     )
-    persisted = _persist_indicator(db, "cliente", cliente_id, out)
+    persisted = safe_persist_indicator(db, schema="erp", ref_type="cliente", ref_id=cliente_id, out=out, logger=logger)
     return success_response(persisted)
 
 
@@ -403,7 +380,7 @@ async def metas_coach_tip(
         eventos_recentes=body.eventos_recentes,
         org_id=get_org_id(user),
     )
-    persisted = _persist_indicator(db, "user_metas", body.user_id, out)
+    persisted = safe_persist_indicator(db, schema="erp", ref_type="user_metas", ref_id=body.user_id, out=out, logger=logger)
     return success_response(persisted)
 
 
@@ -442,7 +419,7 @@ async def photo_compliance(
         fotos=fotos,
         org_id=get_org_id(user),
     )
-    persisted = _persist_indicator(db, "ativo", imovel_id, out)
+    persisted = safe_persist_indicator(db, schema="erp", ref_type="ativo", ref_id=imovel_id, out=out, logger=logger)
     return success_response(persisted)
 
 
@@ -477,5 +454,5 @@ async def search_relevance(
         imovel_data=imovel_res.data,
         org_id=get_org_id(user),
     )
-    persisted = _persist_indicator(db, "ativo", body.imovel_id, out)
+    persisted = safe_persist_indicator(db, schema="erp", ref_type="ativo", ref_id=body.imovel_id, out=out, logger=logger)
     return success_response(persisted)

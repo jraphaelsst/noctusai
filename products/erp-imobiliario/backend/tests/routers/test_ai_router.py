@@ -435,9 +435,14 @@ class TestFollowUpDraft:
 @pytest.fixture
 def _stub_persist():
     """Stub persist_output so the integration test doesn't depend on the
-    erp.ai_outputs table being seeded into the mock."""
+    erp.ai_outputs table being seeded into the mock.
+
+    Patches `noctusai_lib.domain.ai.outputs.persist_output` — the canonical
+    seed-side function called by `safe_persist_indicator` (Phase 2 absorption:
+    local `_persist_indicator` retired in favor of the seed wrapper).
+    """
     with patch(
-        "app.routers.ai.persist_output",
+        "noctusai_lib.domain.ai.outputs.persist_output",
         side_effect=lambda db, schema, output: {
             **output.to_insert_payload(),
             "id": "ai-out-1",

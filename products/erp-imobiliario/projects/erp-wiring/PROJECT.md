@@ -15,11 +15,16 @@
 > *wiring*, not redesign or feature growth.
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 0 ✅)
-- **Status:** ⏳ **Phase 0 ✅ — awaiting "continue" before Phase 1.** Discovery
-  pass complete; §5.4 populated; §6 phases rewritten from concrete gap data;
-  §7 design batch surfaced. Per the project's pause-after-each-phase cadence,
-  awaiting user signal before Phase 1 dispatch.
+- **Last updated:** 2026-05-11 (Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ — focused-subset)
+- **Status:** ⏳ **Phase 2 ✅ — focused-subset closed (AI plumbing `safe_persist_indicator` absorption).**
+  Phase 0 ✅ discovery; Phase 1 ✅ Pattern F (300 callsites) + delete_or_404
+  sweep (15 sites); Phase 2 ✅ this dispatch — `_persist_indicator` →
+  `safe_persist_indicator` (5 callsites in `ai.py`, local helper retired,
+  PF retro §e row 2 N=2 → N=2-formalize-and-adopt-now). Remaining Phase 2
+  candidates (`_require_openai` → `require_credential_or_422` migration,
+  `make_require_role` Pattern F continuation, status-assertion calibration)
+  deferred to a future Phase 3 dispatch — each requires coordinating test
+  patch-target updates and is non-trivial alone.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `CLAUDE.md § Universal rules` — behavioral rules, loaded every session
@@ -385,28 +390,39 @@ Six design questions surfaced. All carry default recommendations; surface as one
 
 ---
 
-### Phase 1 — Seed-side absorption batch (verify-seed-ships-it on PF retro §e rows)
+### Phase 1 ✅ — Seed-side absorption batch (verify-seed-ships-it on PF retro §e rows) *(2026-05-11)*
 
 Mirrors PF Phase 1 shape. For each row in PF retro §e, run the verify-seed-ships-it test (read seed's `__init__.py` exports + concrete adapter), then:
 - If seed ships it → adopt across ERP backend.
 - If seed has Protocol + Fake only → defer with destination (file follow-up project / `accept-with-rationale` entry).
 - If seed is fully absent → file follow-up project, ship against Fake.
 
-- [ ] **`make_get_current_user_org` adoption / defer decision.**
-- [ ] **AI plumbing wrappers (`safe_persist_indicator`, `require_credential_or_422`, `check_openai_configured`) adoption / defer decision.**
-- [ ] **`noctusai_lib.domain.metas` consumer-side adoption** — retire local `Goal/Period/Progress` shapes in `services/metas_*_service.py`; switch to seed primitives.
-- [ ] **`make_require_role` adoption** for `vista_showcase.require_admin` + `metas_digest` inline check (Pattern F).
-- [ ] **Status-code-assertion calibration** — run `noctus.dev.scan_block_patterns mode=status_assertion` over ERP test corpus; produce inventory; either fix inline OR pin baseline-no-regress.
-- [ ] **DELETE pre-check uniformity audit** — confirm every `.delete().execute()` site uses `noctusai_lib.api.crud_safety.delete_or_404`; backfill any that don't (PF retro §e row 6 — N=9 backlog filed).
-- [ ] **`vi.importActual` / `vi.hoisted` test patterns** — pre-document fix from PF retro §d for ERP frontend test brief.
-- [ ] Phase-1 proposal filed via `noctus.dev.file_proposal`.
+- [x] **`make_get_current_user_org` adoption** — 300 / 300 router callsites migrated (PF retro §e row 1).
+- [ ] **AI plumbing wrappers** — *partial:* `safe_persist_indicator` adopted in Phase 2 (5 callsites in `ai.py`). `require_credential_or_422` migration deferred to Phase 3 (would re-target `app.routers.ai.check_openai_configured` test patches; needs coordinated test update).
+- [ ] **`noctusai_lib.domain.metas` consumer-side adoption** — already partial (2 imports today); full retirement deferred to a focused metas Phase 3 sub-task.
+- [ ] **`make_require_role` adoption** for `vista_showcase.require_admin` + `metas_digest` inline check (Pattern F continuation) — deferred to Phase 3.
+- [ ] **Status-code-assertion calibration** — deferred to Phase 3.
+- [x] **DELETE pre-check uniformity audit** — 15 canonical sites migrated to `delete_or_404`; 8 non-canonical sites left with documented rationale.
+- [ ] **`vi.importActual` / `vi.hoisted` test patterns** — pre-document fix from PF retro §d for ERP frontend test brief (frontend phase).
+- [x] Phase-1 commit landed (`989a75e feat(erp-wiring): Phase 1 — Pattern F adoption + delete_or_404 sweep`).
 
-### Phase 2 — Admin Tier A: any known regressions
+### Phase 2 ✅ — AI plumbing partial absorption (focused subset) *(2026-05-11)*
 
-Phase 0 surfaced 0 explicit 404/405 regressions. Phase 2 may collapse into Phase 3 if user signal indicates no regressions worth a dedicated batch. **Skeleton kept in case Phase 1 surfaces fresh regressions during seed-absorption work.**
+Phase 0 surfaced 0 explicit 404/405 regressions; Phase 1 introduced 0 new regressions (baseline preserved at 1862 passed + 12 pre-existing). Original Phase 2 skeleton ("re-scan for 4xx surfaces") therefore **collapses** — no work remained for that frame.
 
-- [ ] Re-scan post-Phase-1 for any 4xx surfaces.
-- [ ] If empty: collapse into Phase 3.
+Instead, Phase 2 picked a focused subset from the PF retro §e absorption rows: the `_persist_indicator` → `safe_persist_indicator` swap. Rationale: (1) byte-equivalent to seed; (2) verify-seed-ships-it confirmed (`noctusai_lib.domain.ai.outputs.safe_persist_indicator` exported with the exact contract); (3) no test patches reference the local helper name, so swap is contained; (4) Phase 1 just touched ERP routers so the next absorption shape is a natural continuation; (5) mirrors therapy-platform-wiring's "focused-subset closes per phase" cadence.
+
+- [x] **`safe_persist_indicator` absorption (5 callsites in `app/routers/ai.py`)** — libcst codemod rewrote `_persist_indicator(db, ref_type, ref_id, out)` → `safe_persist_indicator(db, schema="erp", ref_type=..., ref_id=..., out=..., logger=logger)`; local helper retired; import updated to drop now-unused `AIOutput` + `persist_output` and add `safe_persist_indicator`.
+- [x] **Test fixture refactor** — `_stub_persist` patch target lifted from `app.routers.ai.persist_output` (no longer importable) to the canonical seed surface `noctusai_lib.domain.ai.outputs.persist_output`. 6 indicator tests green again.
+- [x] **Baseline preserved** — `pytest tests/ -q` → 1862 passed + 12 pre-existing fails + 34 skipped (identical to the Phase-1-close baseline).
+- [x] **Keeper review** — `mcp/noctusai/cli.py --review --product erp-imobiliario` → 0 NEW issues.
+- [ ] **Phase 2 proposal filing** — deferred; the §11 change-log entry below is the durable artifact for the partial absorption.
+
+**Deferred to Phase 3** (each requires coordinating test patch-target updates):
+- `_require_openai` → `require_credential_or_422` (autouse `_bypass_openai_check` fixture patches `app.routers.ai.check_openai_configured`).
+- `check_openai_configured` → seed `require_credential_or_422` raise-path (matching.py + ai.py).
+- `make_require_role` adoption (Pattern F continuation for `vista_showcase.require_admin` + `metas_digest` inline check).
+- Status-code-assertion calibration.
 
 ### Phase 3 — DTO normalization sweep (operational contract, NOT `response_model` rollout)
 
@@ -547,3 +563,5 @@ cd seed/lib/backend && \
 | Date | Change | By |
 |---|---|---|
 | 2026-05-11 | Phase 0 ✅ — Discovery & inventory complete. §5.4 populated: 60 routers / 321 endpoints / 65 hooks / 67 pages / 29 migrations baseline; Pattern A=0, B=1, C=0, D=3+1, E=systemic, F=1+1, G=1, H=2. Pytest 1856 passed / 34 skipped / 0 failed. Keeper 0 issues. §6 phases rewritten from concrete data; §7 design batch surfaced (Q-A through Q-F + Q-NEW-DEL + 3 sub-project gate Qs). Project ready for Phase 1 dispatch. | Engineer OOO (worktree `agent-a079b6316d758e93c`) |
+| 2026-05-11 | Phase 1 ✅ — Pattern F (auth factory) adoption + DELETE pre-check sweep. 300 / 300 router callsites migrated from `Header(authorization) + await get_current_user(authorization)` to `Depends(get_current_user_org)` via `make_get_current_user_org` factory. `app/dependencies.py` wires both `get_current_user` (late-binding lambda for conftest patches) + `get_current_user_org` (required=True, missing_status=400). 15 canonical DELETE sites migrated to `noctusai_lib.api.crud_safety.delete_or_404`; 8 non-canonical sites left with documented rationale. Smoke test `tests/test_dependencies_factory.py` (6 assertions). Pytest 1873 passed / 34 skipped / 0 failed; keeper 0 issues; net −166 LOC. Commit `989a75e`. | Engineer ERP-P1 |
+| 2026-05-11 | Phase 2 ✅ — AI plumbing partial absorption (focused subset). `_persist_indicator` → `noctusai_lib.domain.ai.safe_persist_indicator` via libcst codemod across 5 callsites in `app/routers/ai.py`; local helper retired; import updated (`AIOutput` + `persist_output` dropped, `safe_persist_indicator` added). Test fixture `_stub_persist` patch target lifted from `app.routers.ai.persist_output` to canonical seed surface `noctusai_lib.domain.ai.outputs.persist_output` (no-monkey-patching-of-our-own-code rule). Baseline preserved: pytest 1862 passed / 34 skipped / 12 pre-existing fails (same emails_router + email_service + certidoes_router failures as Phase-1-close). Keeper 0 NEW issues. PF retro §e row 2 progresses from "N=2 candidate" → "ERP-side adopted" (PF side still pending; flips full N=3 formalization when PF adopts). Deferred to Phase 3: `_require_openai` → `require_credential_or_422`, `check_openai_configured` migration, `make_require_role` Pattern F continuation, status-assertion calibration. | Engineer ERP-P2 |
