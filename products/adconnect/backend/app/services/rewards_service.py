@@ -87,13 +87,59 @@ def _passes_thresholds(rule: dict[str, Any], *, valor_total: float, quantidade: 
 
 
 def _fetch_active_rules(db: Any, org_id: Optional[str]) -> list[dict[str, Any]]:
-    """SELECT active rules for the org. Falls back to all-rows when org_id is
-    None (test harness convenience)."""
-    builder = db.table(REGRAS_TABLE).select("*").eq("ativa", True)
-    if org_id is not None:
-        builder = builder.eq("org_id", org_id)
+    if not org_id:
+        logger.warning(
+            "rewards._fetch_active_rules: refusing to fetch with falsy org_id; returning []"
+        )
+        return []
+    builder = db.table(REGRAS_TABLE).select("*").eq("ativa", True).eq("org_id", org_id)
     res = builder.execute()
     return list(res.data or [])
+
+
+def _resolve_org_id(db: Any, distributor_id: str) -> Optional[str]:
+    """Resolve a distributor's owning brand org via the distributors table.
+
+    Replaces the previous (broken) practice of reading `org_id` directly from
+    `relatorios_sellout` / `pedidos` rows — those tables don't have an
+    `org_id` column at all, so the read returned None in prod and the rule
+    fetch fell back to "all rows" (cross-tenant leak).
+
+    Returns the brand `org_id` or None if the distributor is missing /
+    lacks an `org_id` (caller MUST treat None as a hard refusal).
+    """
+    if not distributor_id:
+        return None
+    try:
+        res = (
+            db.table("distributors")
+            .select("org_id")
+            .eq("id", distributor_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning(
+            "rewards._resolve_org_id: distributors lookup failed for %s (%s)",
+            distributor_id,
+            exc,
+        )
+        return None
+    rows = list(res.data or [])
+    if not rows:
+        logger.warning(
+            "rewards._resolve_org_id: no distributor row for id=%s - refusing accrual",
+            distributor_id,
+        )
+        return None
+    org_id = rows[0].get("org_id")
+    if not org_id:
+        logger.warning(
+            "rewards._resolve_org_id: distributor %s has falsy org_id - refusing accrual",
+            distributor_id,
+        )
+        return None
+    return str(org_id)
 
 
 def _items_categories_products(items: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
@@ -112,7 +158,6 @@ def _items_categories_products(items: list[dict[str, Any]]) -> tuple[list[str], 
 def _build_accrual_row(
     *,
     rule: dict[str, Any],
-    org_id: Optional[str],
     distributor_id: str,
     valor_total: float,
     source_pedido_id: Optional[str],
@@ -121,16 +166,13 @@ def _build_accrual_row(
     pct = float(rule.get("valor") or 0)
     valor = round(valor_total * pct / 100.0, 2)
     payload = {
-        "org_id": org_id,
         "distributor_id": distributor_id,
         "regra_id": rule.get("id"),
         "tipo": rule.get("tipo") or "cashback",
         "valor": valor,
-        "moeda": "BRL",
         "source_pedido_id": source_pedido_id,
         "source_relatorio_sellout_id": source_relatorio_sellout_id,
         "status": "pendente",
-        "descricao": f"Acúmulo via regra '{rule.get('nome', '?')}' ({pct}% sobre R$ {valor_total:.2f})",
         "accrued_at": datetime.now(timezone.utc).isoformat(),
     }
     return payload
@@ -174,7 +216,9 @@ def accrue_for_pedido(
         logger.warning("rewards.accrue_for_pedido: pedido %s lacks distributor_id", pedido_id)
         return []
 
-    org_id = pedido_row.get("org_id")
+    org_id = _resolve_org_id(db, distributor_id)
+    if org_id is None:
+        return []
     valor_total = float(pedido_row.get("valor_total") or pedido_row.get("total") or 0)
     items = list(pedido_row.get("items") or pedido_row.get("itens") or [])
     quantidade = sum(int(i.get("quantidade") or i.get("quantity") or 0) for i in items)
@@ -192,7 +236,6 @@ def accrue_for_pedido(
             continue
         payload = _build_accrual_row(
             rule=rule,
-            org_id=org_id,
             distributor_id=distributor_id,
             valor_total=valor_total,
             source_pedido_id=pedido_id,
@@ -247,7 +290,9 @@ def accrue_for_sellout_approval(
         )
         return []
 
-    org_id = relatorio_row.get("org_id")
+    org_id = _resolve_org_id(db, distributor_id)
+    if org_id is None:
+        return []
     valor_total = float(relatorio_row.get("valor_total") or 0)
     items = list(relatorio_row.get("items_json") or [])
     quantidade = int(relatorio_row.get("quantidade_itens") or len(items))
@@ -265,7 +310,6 @@ def accrue_for_sellout_approval(
             continue
         payload = _build_accrual_row(
             rule=rule,
-            org_id=org_id,
             distributor_id=distributor_id,
             valor_total=valor_total,
             source_pedido_id=None,
