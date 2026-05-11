@@ -14,7 +14,7 @@
 
 - **Created:** 2026-05-02
 - **Last updated:** 2026-05-10
-- **Status:** ⏳ EXECUTING — §7 Q1-Q4 ✅ resolved (orchestrator defaults stamped); §6 drafted 2026-05-10; Phase 0 ✅ shipped 2026-05-10 (scaffold + tokenizer smoke-test green); Phase 1 ✅ shipped 2026-05-10 (MCP tool `noctus.dev.history_record` + Pydantic schemas + 30 unit tests green + N=2 tokenizer absorption via `tools/_tokens.py`); Phase 2 (close-workflow integration) pending dispatch.
+- **Status:** ⏳ EXECUTING — §7 Q1-Q4 ✅ resolved (orchestrator defaults stamped); §6 drafted 2026-05-10; Phase 0 ✅ shipped 2026-05-10 (scaffold + tokenizer smoke-test green); Phase 1 ✅ shipped 2026-05-10 (MCP tool `noctus.dev.history_record` + Pydantic schemas + 30 unit tests green + N=2 tokenizer absorption via `tools/_tokens.py`); Phase 2 ✅ shipped 2026-05-10 (close-workflow integration — `archive` stamps ledger before git mv; default-on; `skip_history` opt-out; 13 new tests green; KB § 11.2 + memory updated); Phase 3 (renderer) pending dispatch.
 - **Owner / stakeholders:** Raphael · future zero-context execution agent
 - **Related docs:** `CLAUDE.md`; `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`; `templates/PROJECT-TEMPLATE.md`; **interlocks with** `projects/methodology-extraction/PROJECT.md` Phase 5 (which currently uses rough token estimates — this project's token-tracking tool would let Phase 5 measure precisely); **interlocks with** `projects/methodology-mirror-and-workspaces/PROJECT.md` (which would feed measured per-workspace token cost into the ledger if and when it ships).
 - **Project slug:** `project-history-ledger` — cross-product / platform-infra scope, lives at root `projects/`.
@@ -275,11 +275,20 @@ numbers.
 - **`tiktoken` import is implicit via `_tokens.py`** — no module-level import in `history.py` itself. The helper module gates `ImportError` and returns `None` from `get_default_encoder()`, falling through to the chars/4 approximation. This means the tool works on a fresh clone before `pip install -r mcp/noctusai/requirements.txt` runs (with degraded precision), instead of crashing at import. The cascade also means a future Anthropic-tokenizer swap doesn't need to touch `history.py`.
 - **Phase 0's deferred "Anthropic tokenizer v2 swap" is still deferred** — Phase 1 doesn't address it (rightly so, single dispatch). Surface it in Phase 5 close: the encoding choice is encapsulated in `tools/_tokens.py::get_default_encoder()`, swap is local.
 
-### Phase 2 — Close-workflow integration
+### Phase 2 — Close-workflow integration ✅ (2026-05-10)
 
-- [ ] Amend `noctus.dev.archive` to **optionally** call `noctus.dev.history_record` first (when invoked with `mode="project"`, default-on; can opt-out with flag). Order: stamp ledger → then git-mv to archive/.
-- [ ] Update `KB § PATTERNS/project-execution.md § 11.2` to mention the ledger-stamp side-effect.
-- [ ] Update `feedback_archive_system.md` memory entry to mention the ledger.
+- [x] Amend `noctus.dev.archive` to **optionally** call `noctus.dev.history_record` first (when invoked with `mode="project"`, default-on; can opt-out with flag). Order: stamp ledger → then git-mv to archive/.
+- [x] Update `KB § PATTERNS/project-execution.md § 11.2` to mention the ledger-stamp side-effect.
+- [x] Update `feedback_archive_system.md` memory entry to mention the ledger.
+
+**Improvements:**
+
+- **Default `status_at_close="shipped"` is the right ergonomics** — archive's most common trigger is project close. Forcing every archive caller to specify status would generate friction on the happy path; explicit override (e.g. `status_at_close="abandoned"`) is the one-line addition for the minority case. Tests cover both code paths.
+- **Default summary derivation skips headings + blockquotes** — `_derive_default_summary` walks PROJECT.md line-by-line skipping `#` (headings) and `>` (blockquotes — PROJECT.md uses these for status notes near the top), stripping leading bullet prefixes. Lands on the first sentence of `## 1 Context & Purpose` in practice. Fallback string `"(no summary available)"` rather than raising — archive should not block on a missing summary; the human-precision summary lives in `review_md` (defaulting to full PROJECT.md body) anyway.
+- **Fault-injection test uses real validation path, not monkey-patching** — initial draft patched `tools.noctus.dev.archive.history_record` to a `_boom` lambda. Caught by the no-monkey-patching-of-our-own-code rule. Refactored to pass an invalid `status_at_close="not-a-valid-status"` which triggers `history_record`'s own `ValueError` validation — the real error path the production code takes. Same assertion (source folder untouched after raise) survives, and the test now exercises the actual contract.
+- **`history_result` surfaced in archive's return dict** — `{"archived_to": ..., "mode": ..., "next_NN": ..., "history": <dict|None>}`. Lets callers (Phase 5 close, future renderers) verify the stamp happened without re-reading ledger.ndjson. `None` when `skip_history=True` or mode≠project — makes the conditional explicit.
+- **No silent skip on stamp failure** — `history_record(...)` is invoked unconditionally for project archives; if it raises, the `git mv` never runs. Source folder stays in place; caller sees the original error. Aligns with the no-silent-errors rule. Test `test_stamp_failure_aborts_archive_no_git_mv` pins this with the real validation path.
+- **Phase 3 renderer can now produce the human view** — `project-history/ledger.ndjson` is no longer hypothetical; every project archive produces one well-formed line. The dev-team or a follow-up engineer can build the renderer against real data from the moment Phase 5 stamps this very project.
 
 ### Phase 3 — Renderer
 
