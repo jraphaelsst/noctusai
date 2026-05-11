@@ -107,7 +107,7 @@ async def update_anamnese(
 
     # Verify existence and ownership
     existing = first_or_none(
-        db.table("anamneses")
+        db.table("anamnese")
         .select("id, therapist_id")
         .eq("id", anamnese_id)
         .execute()

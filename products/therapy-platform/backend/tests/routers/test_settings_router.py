@@ -1,5 +1,12 @@
 """
-Tests for the Settings Router — platform settings, AI prompts, branding, therapist/patient prefs.
+Tests for the Settings Router — platform settings, branding, therapist/patient prefs.
+
+AI prompts are stored as `platform_settings` rows with `ai_prompt_*` keys;
+admins edit them through the generic PATCH /platform endpoint, which is
+exercised by `TestPlatformSettings::test_update_platform_setting`. The
+prior dedicated /platform/ai-prompts* endpoints (referencing phantom
+`ai_prompt_settings` / `ai_prompt_history` tables) were removed by
+`therapy-platform-drift-sweep` on 2026-05-11.
 """
 import pytest
 
@@ -11,27 +18,7 @@ import pytest
 SAMPLE_PLATFORM_SETTINGS = [
     {"key": "global_commission_rate", "value": "15.0"},
     {"key": "app_name", "value": "NoctusAI Therapy"},
-]
-
-SAMPLE_AI_PROMPT = {
-    "prompt_key": "session_summary",
-    "prompt_text": "Resuma a sessão terapêutica com foco nos pontos-chave discutidos.",
-    "updated_by": "test-user-123",
-}
-
-SAMPLE_AI_PROMPT_HISTORY = [
-    {
-        "prompt_key": "session_summary",
-        "prompt_text": "Versão anterior do prompt de resumo.",
-        "changed_by": "test-user-123",
-        "created_at": "2026-03-01T10:00:00Z",
-    },
-    {
-        "prompt_key": "session_summary",
-        "prompt_text": "Versão mais antiga.",
-        "changed_by": "test-user-123",
-        "created_at": "2026-02-01T10:00:00Z",
-    },
+    {"key": "ai_prompt_base_summary", "value": "Resuma a sessao..."},
 ]
 
 SAMPLE_THERAPIST_SETTINGS = {
@@ -70,7 +57,10 @@ class TestPlatformSettings:
         resp = admin_client.get("/api/settings/platform")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert len(data) == 2
+        # Includes ai_prompt_* keys (stored as platform_settings rows).
+        assert len(data) == len(SAMPLE_PLATFORM_SETTINGS)
+        keys = {row["key"] for row in data}
+        assert "ai_prompt_base_summary" in keys
 
     def test_get_platform_settings_as_therapist_forbidden(self, client):
         resp = client.get("/api/settings/platform")
@@ -85,11 +75,9 @@ class TestPlatformSettings:
         assert resp.status_code == 401
 
     def test_update_platform_setting(self, admin_client):
+        # `prior` snapshot read (single row) then upsert response.
         admin_client._mock_supabase.set_table_data("platform_settings", [
-            {"key": "global_commission_rate", "value": "20.0"},
-        ])
-        admin_client._mock_supabase.set_table_data("settings_history", [
-            {"setting_type": "platform", "setting_key": "global_commission_rate"},
+            {"key": "global_commission_rate", "value": "15.0"},
         ])
         resp = admin_client.patch("/api/settings/platform", json={
             "key": "global_commission_rate",
@@ -98,6 +86,43 @@ class TestPlatformSettings:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["key"] == "global_commission_rate"
+
+    def test_update_platform_setting_writes_history_row(self, admin_client):
+        """Verify the history-row insert uses the canonical column shape
+        (setting_key / old_value / new_value / changed_by_admin_id)."""
+        admin_client._mock_supabase.set_table_data("platform_settings", [
+            {"key": "global_commission_rate", "value": "15.0"},
+        ])
+        resp = admin_client.patch("/api/settings/platform", json={
+            "key": "global_commission_rate",
+            "value": "20.0",
+        })
+        assert resp.status_code == 200
+        history_payloads = (
+            admin_client._mock_supabase.table("platform_settings_history").inserted_payloads
+        )
+        assert len(history_payloads) == 1
+        row = history_payloads[0]
+        assert row["setting_key"] == "global_commission_rate"
+        assert row["new_value"] == "20.0"
+        assert "changed_by_admin_id" in row
+        # Older legacy columns must NOT appear.
+        assert "setting_type" not in row
+        assert "changed_by" not in row
+
+    def test_update_ai_prompt_via_platform_endpoint(self, admin_client):
+        """AI prompts edit through the generic /platform PATCH — confirms
+        the unified surface works for keys like `ai_prompt_base_summary`."""
+        admin_client._mock_supabase.set_table_data("platform_settings", [
+            {"key": "ai_prompt_base_summary", "value": "old prompt"},
+        ])
+        resp = admin_client.patch("/api/settings/platform", json={
+            "key": "ai_prompt_base_summary",
+            "value": "Novo prompt para resumo de sessao terapeutica.",
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["key"] == "ai_prompt_base_summary"
 
     def test_update_platform_setting_as_therapist_forbidden(self, client):
         resp = client.patch("/api/settings/platform", json={
@@ -110,65 +135,6 @@ class TestPlatformSettings:
         resp = client._tc.patch(
             "/api/settings/platform",
             json={"key": "test", "value": "val"},
-        )
-        assert resp.status_code == 401
-
-
-# ---------------------------------------------------------------------------
-# AI Prompts (Admin only)
-# ---------------------------------------------------------------------------
-
-class TestAIPrompts:
-    def test_get_ai_prompts_as_admin(self, admin_client):
-        admin_client._mock_supabase.set_table_data(
-            "ai_prompt_settings", [SAMPLE_AI_PROMPT],
-        )
-        resp = admin_client.get("/api/settings/platform/ai-prompts")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert len(data) == 1
-        assert data[0]["prompt_key"] == "session_summary"
-
-    def test_get_ai_prompts_as_therapist_forbidden(self, client):
-        resp = client.get("/api/settings/platform/ai-prompts")
-        assert resp.status_code == 403
-
-    def test_update_ai_prompt(self, admin_client):
-        admin_client._mock_supabase.set_table_data("ai_prompt_settings", [
-            SAMPLE_AI_PROMPT,
-        ])
-        admin_client._mock_supabase.set_table_data("ai_prompt_history", [
-            {"prompt_key": "session_summary", "prompt_text": SAMPLE_AI_PROMPT["prompt_text"]},
-        ])
-        resp = admin_client.patch("/api/settings/platform/ai-prompts", json={
-            "prompt_key": "session_summary",
-            "prompt_text": "Novo prompt atualizado para resumo de sessão terapêutica.",
-        })
-        assert resp.status_code == 200
-
-    def test_update_ai_prompt_too_short(self, admin_client):
-        resp = admin_client.patch("/api/settings/platform/ai-prompts", json={
-            "prompt_key": "session_summary",
-            "prompt_text": "Curto",
-        })
-        assert resp.status_code == 422
-
-    def test_get_ai_prompt_history(self, admin_client):
-        admin_client._mock_supabase.set_table_data(
-            "ai_prompt_history", SAMPLE_AI_PROMPT_HISTORY,
-        )
-        resp = admin_client.get(
-            "/api/settings/platform/ai-prompts/history",
-            params={"prompt_key": "session_summary"},
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert len(data) == 2
-
-    def test_get_ai_prompt_history_no_auth(self, client):
-        resp = client._tc.get(
-            "/api/settings/platform/ai-prompts/history",
-            params={"prompt_key": "session_summary"},
         )
         assert resp.status_code == 401
 

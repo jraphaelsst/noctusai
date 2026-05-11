@@ -1,5 +1,5 @@
 """
-Settings Router — Platform settings, AI prompts, clinic branding, therapist/patient preferences.
+Settings Router — Platform settings, clinic branding, therapist/patient preferences.
 
 Platform-level endpoints require platform_admin role.
 Clinic branding requires clinic_admin role.
@@ -9,10 +9,20 @@ Role enforcement uses ``Depends(require_role(...))`` from
 ``noctusai_lib.api.auth.make_require_role`` (bound in ``app/dependencies.py``).
 Replaces the prior inline ``_require_admin(user)`` / ``_require_role(user, *roles)``
 helpers — same 403 behavior, fewer round-trips through manual auth code.
+
+**AI prompts** live as `platform_settings` rows with `ai_prompt_*` keys
+(see migration 001_therapy_platform.sql:1466-1471 + `_get_prompt` consumers
+in `summary_service.py` / `longitudinal_service.py`). Admins read/write them
+via the generic GET/PATCH ``/platform`` endpoints below. The prior dedicated
+``/platform/ai-prompts*`` endpoints referenced phantom tables
+(`ai_prompt_settings` + `ai_prompt_history`) and were removed by
+`therapy-platform-drift-sweep` on 2026-05-11. If per-prompt edit history
+becomes a requirement, expose it as `platform_settings_history` filtered by
+`setting_key LIKE 'ai_prompt_%'`.
 """
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import (
     first_or_none,
@@ -22,7 +32,6 @@ from app.dependencies import (
 )
 from app.responses import success_response
 from app.schemas.settings import (
-    AIPromptUpdate,
     ClinicBrandingUpdate,
     PatientSettingsUpdate,
     PlatformSettingUpdate,
@@ -38,7 +47,11 @@ router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
 @router.get("/platform")
 async def get_platform_settings(auth=Depends(require_role("platform_admin"))):
-    """Get all platform settings (admin only)."""
+    """Get all platform settings (admin only).
+
+    Includes `ai_prompt_*` keys (AI prompt templates are stored in
+    `platform_settings`; see module docstring).
+    """
     db = get_admin_client()
     result = db.table("platform_settings").select("*").execute()
     return success_response(result.data or [])
@@ -49,86 +62,42 @@ async def update_platform_setting(
     body: PlatformSettingUpdate,
     auth=Depends(require_role("platform_admin")),
 ):
-    """Update a single platform setting (admin only)."""
+    """Update a single platform setting (admin only).
+
+    Also writes a row to `platform_settings_history` with the canonical
+    `setting_key` / `old_value` / `new_value` / `changed_by_admin_id`
+    columns (per migration 001_therapy_platform.sql therapy.platform_settings_history).
+    """
     user, _token, _role = auth
     admin_id = user.id
     db = get_admin_client()
 
+    # Snapshot prior value so the history row can carry `old_value`.
+    prior = (
+        db.table("platform_settings")
+        .select("value")
+        .eq("key", body.key)
+        .execute()
+    )
+    prior_value = (first_or_none(prior) or {}).get("value")
+
     result = (
         db.table("platform_settings")
-        .upsert({"key": body.key, "value": body.value, "updated_by": admin_id})
+        .upsert({"key": body.key, "value": body.value})
         .execute()
     )
 
-    # Create history entry
-    db.table("settings_history").insert({
-        "setting_type": "platform",
+    # History entry — canonical column names per
+    # 001_therapy_platform.sql therapy.platform_settings_history schema.
+    db.table("platform_settings_history").insert({
         "setting_key": body.key,
+        "old_value": prior_value,
         "new_value": body.value,
-        "changed_by": admin_id,
+        "changed_by_admin_id": admin_id,
     }).execute()
 
     row = first_or_none(result)
     return success_response(row or {"key": body.key, "value": body.value})
-
-
-# ── AI Prompts (Admin) ──────────────────────────────────────────────
-
-@router.get("/platform/ai-prompts")
-async def get_ai_prompts(auth=Depends(require_role("platform_admin"))):
-    """Get all AI prompt settings (admin only)."""
-    db = get_admin_client()
-    result = (
-        db.table("ai_prompt_settings")
-        .select("*")
-        .order("prompt_key")
-        .execute()
-    )
-    return success_response(result.data or [])
-
-
-@router.patch("/platform/ai-prompts")
-async def update_ai_prompt(
-    body: AIPromptUpdate,
-    auth=Depends(require_role("platform_admin")),
-):
-    """Update an AI prompt template (admin only, versioned)."""
-    user, _token, _role = auth
-    admin_id = user.id
-    db = get_admin_client()
-
-    result = (
-        db.table("ai_prompt_settings")
-        .upsert({"prompt_key": body.prompt_key, "prompt_text": body.prompt_text, "updated_by": admin_id})
-        .execute()
-    )
-
-    # Version history
-    db.table("ai_prompt_history").insert({
-        "prompt_key": body.prompt_key,
-        "prompt_text": body.prompt_text,
-        "changed_by": admin_id,
-    }).execute()
-
-    row = first_or_none(result)
-    return success_response(row or {"prompt_key": body.prompt_key, "prompt_text": body.prompt_text})
-
-
-@router.get("/platform/ai-prompts/history")
-async def get_ai_prompt_history(
-    prompt_key: str = Query(...),
-    auth=Depends(require_role("platform_admin")),
-):
-    """Get version history for a specific AI prompt (admin only)."""
-    db = get_admin_client()
-    result = (
-        db.table("ai_prompt_history")
-        .select("*")
-        .eq("prompt_key", prompt_key)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return success_response(result.data or [])
 
 
 # ── Therapist Settings ──────────────────────────────────────────────

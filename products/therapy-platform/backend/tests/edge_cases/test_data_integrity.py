@@ -41,12 +41,12 @@ class TestReviewValidation:
     def test_star_rating_1_accepted(self, patient_client):
         """star_rating=1 -> passes schema validation (minimum valid rating)."""
         sb = patient_client._mock_supabase
-        sb.set_table_data("sessions", [
+        sb.set_table_data("appointments", [
             {"id": "sess-001", "patient_id": "test-user-123",
              "therapist_id": "therapist-001", "status": "completed"},
         ])
         # therapist_reviews: empty for existing-check, but insert returns this row
-        sb.set_table_data("therapist_reviews", [
+        sb.set_table_data("reviews", [
             {"id": "rev-new", "patient_id": "test-user-123",
              "therapist_id": "therapist-001", "star_rating": 1},
         ])
@@ -350,11 +350,17 @@ class TestSettingsRoleRestrictions:
         resp = client.get("/api/settings/platform")
         assert resp.status_code == 403
 
-    def test_therapist_cannot_update_ai_prompts(self, client):
-        """Therapist PATCH /api/settings/platform/ai-prompts -> 403."""
-        resp = client.patch("/api/settings/platform/ai-prompts", json={
-            "prompt_key": "summary_v1",
-            "prompt_text": "New prompt text that is at least 10 chars",
+    def test_therapist_cannot_update_ai_prompts_via_platform(self, client):
+        """Therapist PATCH /api/settings/platform with `ai_prompt_*` key -> 403.
+
+        AI prompts are `platform_settings` rows; the dedicated
+        /platform/ai-prompts surface was removed by
+        `therapy-platform-drift-sweep` (2026-05-11) — non-admins are
+        rejected by the role guard on the generic /platform endpoint.
+        """
+        resp = client.patch("/api/settings/platform", json={
+            "key": "ai_prompt_base_summary",
+            "value": "Novo prompt para resumo (>=10 caracteres).",
         })
         assert resp.status_code == 403
 

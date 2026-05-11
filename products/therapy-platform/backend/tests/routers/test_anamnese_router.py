@@ -24,7 +24,7 @@ class TestCreateAnamnese:
 
     def test_create_anamnese_duplicate_returns_409(self, client):
         """Creating anamnese for existing pair returns 409."""
-        client._mock_supabase.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        client._mock_supabase.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         resp = client.post("/api/anamnese", json={
             "patient_id": "patient-001",
             "queixa_principal": "Ansiedade generalizada",
@@ -61,7 +61,7 @@ class TestListAnamneses:
 
     def test_list_anamneses(self, client):
         """Therapist lists their anamneses."""
-        client._mock_supabase.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        client._mock_supabase.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         resp = client.get("/api/anamnese")
         assert resp.status_code == 200
         body = resp.json()
@@ -78,7 +78,7 @@ class TestGetAnamneseForPatient:
 
     def test_get_anamnese_for_patient(self, client):
         """Therapist gets anamnese for a patient."""
-        client._mock_supabase.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        client._mock_supabase.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         resp = client.get("/api/anamnese/paciente/patient-001")
         assert resp.status_code == 200
         body = resp.json()
@@ -93,7 +93,7 @@ class TestGetAnamneseForPatient:
         """Platform admin cannot view anamneses — clinical content is
         therapist-only per Q2 of `compliance-audit-reconciliation` 2026-04-22.
         """
-        admin_client._mock_supabase.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        admin_client._mock_supabase.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         resp = admin_client.get("/api/anamnese/paciente/patient-001")
         assert resp.status_code == 403
 
@@ -103,7 +103,7 @@ class TestUpdateAnamnese:
 
     def test_update_anamnese(self, client):
         """Therapist updates their own anamnese."""
-        client._mock_supabase.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        client._mock_supabase.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         resp = client.patch("/api/anamnese/anamnese-001", json={
             "queixa_principal": "Depressão e ansiedade",
         })
@@ -111,7 +111,7 @@ class TestUpdateAnamnese:
 
     def test_update_anamnese_not_found(self, client):
         """Non-existent anamnese returns 404."""
-        client._mock_supabase.set_table_data("anamneses", [])
+        client._mock_supabase.set_table_data("anamnese", [])
         resp = client.patch("/api/anamnese/nonexistent", json={
             "queixa_principal": "Depressão",
         })
@@ -120,7 +120,7 @@ class TestUpdateAnamnese:
     def test_update_anamnese_not_owner(self, client):
         """Therapist cannot update another therapist's anamnese."""
         other_anamnese = {**SAMPLE_ANAMNESE, "therapist_id": "other-therapist-999"}
-        client._mock_supabase.set_table_data("anamneses", [other_anamnese])
+        client._mock_supabase.set_table_data("anamnese", [other_anamnese])
         resp = client.patch("/api/anamnese/anamnese-001", json={
             "queixa_principal": "Depressão",
         })

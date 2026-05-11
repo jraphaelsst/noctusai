@@ -23,7 +23,7 @@ class TestGenerateInvoice:
 
     def test_generate_invoice_duplicate(self, client):
         """Generating duplicate invoice returns 409."""
-        client._mock_supabase.set_table_data("financial_transactions", [
+        client._mock_supabase.set_table_data("transactions", [
             {"id": "tx-001", "amount": 250.00, "description": "Sessão individual"},
         ])
         # Mock returns existing invoice -> duplicate check fails

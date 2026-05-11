@@ -73,7 +73,7 @@ class TestUpdateJournalEntry:
 
     def test_update_entry(self, patient_client):
         """Patient updates their own entry."""
-        patient_client._mock_supabase.set_table_data("therapeutic_journal", [SAMPLE_ENTRY])
+        patient_client._mock_supabase.set_table_data("journal_entries", [SAMPLE_ENTRY])
         patient_client._mock_supabase.set_table_data("journal_entries", [SAMPLE_ENTRY])
         resp = patient_client.patch("/api/diario/journal-001", json={
             "conteudo": "Conteúdo atualizado com novas reflexões.",
@@ -82,7 +82,7 @@ class TestUpdateJournalEntry:
 
     def test_update_entry_not_found(self, patient_client):
         """Non-existent entry returns 404."""
-        patient_client._mock_supabase.set_table_data("therapeutic_journal", [])
+        patient_client._mock_supabase.set_table_data("journal_entries", [])
         resp = patient_client.patch("/api/diario/nonexistent", json={
             "conteudo": "Teste",
         })
@@ -91,7 +91,7 @@ class TestUpdateJournalEntry:
     def test_update_entry_not_owner(self, patient_client):
         """Patient cannot update another patient's entry."""
         other_entry = {**SAMPLE_ENTRY, "patient_id": "other-patient-999"}
-        patient_client._mock_supabase.set_table_data("therapeutic_journal", [other_entry])
+        patient_client._mock_supabase.set_table_data("journal_entries", [other_entry])
         resp = patient_client.patch("/api/diario/journal-001", json={
             "conteudo": "Teste",
         })
@@ -110,7 +110,7 @@ class TestDeleteJournalEntry:
 
     def test_delete_entry(self, patient_client):
         """Patient deletes their own entry."""
-        patient_client._mock_supabase.set_table_data("therapeutic_journal", [SAMPLE_ENTRY])
+        patient_client._mock_supabase.set_table_data("journal_entries", [SAMPLE_ENTRY])
         patient_client._mock_supabase.set_table_data("journal_entries", [SAMPLE_ENTRY])
         resp = patient_client.delete("/api/diario/journal-001")
         assert resp.status_code == 200
@@ -118,14 +118,14 @@ class TestDeleteJournalEntry:
 
     def test_delete_entry_not_found(self, patient_client):
         """Non-existent entry returns 404."""
-        patient_client._mock_supabase.set_table_data("therapeutic_journal", [])
+        patient_client._mock_supabase.set_table_data("journal_entries", [])
         resp = patient_client.delete("/api/diario/nonexistent")
         assert resp.status_code == 404
 
     def test_delete_entry_not_owner(self, patient_client):
         """Patient cannot delete another patient's entry."""
         other_entry = {**SAMPLE_ENTRY, "patient_id": "other-patient-999"}
-        patient_client._mock_supabase.set_table_data("therapeutic_journal", [other_entry])
+        patient_client._mock_supabase.set_table_data("journal_entries", [other_entry])
         resp = patient_client.delete("/api/diario/journal-001")
         assert resp.status_code == 403
 

@@ -130,7 +130,7 @@ class TestGoalCRUD:
     def test_add_goal(self, client):
         """Therapist adds a goal to their plan."""
         client._mock_supabase.set_table_data("treatment_plans", [SAMPLE_PLAN])
-        client._mock_supabase.set_table_data("goals", [SAMPLE_GOAL])
+        client._mock_supabase.set_table_data("treatment_plan_goals", [SAMPLE_GOAL])
         resp = client.post("/api/planos-tratamento/plan-001/metas", json={
             "descricao": "Praticar respiração diafragmática",
         })
@@ -155,7 +155,7 @@ class TestGoalCRUD:
         """Therapist updates a goal."""
         client._mock_supabase.set_table_data("treatment_plan_goals", [SAMPLE_GOAL])
         client._mock_supabase.set_table_data("treatment_plans", [SAMPLE_PLAN])
-        client._mock_supabase.set_table_data("goals", [SAMPLE_GOAL])
+        client._mock_supabase.set_table_data("treatment_plan_goals", [SAMPLE_GOAL])
         resp = client.patch("/api/planos-tratamento/metas/goal-001", json={
             "status": "em_andamento",
         })
@@ -173,7 +173,7 @@ class TestGoalCRUD:
         """Therapist deletes a goal."""
         client._mock_supabase.set_table_data("treatment_plan_goals", [SAMPLE_GOAL])
         client._mock_supabase.set_table_data("treatment_plans", [SAMPLE_PLAN])
-        client._mock_supabase.set_table_data("goals", [SAMPLE_GOAL])
+        client._mock_supabase.set_table_data("treatment_plan_goals", [SAMPLE_GOAL])
         resp = client.delete("/api/planos-tratamento/metas/goal-001")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True

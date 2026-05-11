@@ -219,7 +219,7 @@ async def configure_reminders(
         "antecedencia_horas": body.get("antecedencia_horas", 24),
         "is_active": body.get("is_active", True),
     }
-    result = db.table("reminder_configs").upsert(record).execute()
+    result = db.table("reminder_schedules").upsert(record).execute()
     return first_or_none(result) or record
 
 
@@ -229,7 +229,7 @@ async def list_reminder_configs(
 ) -> list:
     """List reminder configurations for a therapist."""
     result = (
-        db.table("reminder_configs")
+        db.table("reminder_schedules")
         .select("*")
         .eq("therapist_id", therapist_id)
         .execute()

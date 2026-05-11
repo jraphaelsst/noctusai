@@ -764,7 +764,35 @@ class MockRequestBuilder:
             "strict_unknown_tables": self._strict_unknown_tables,
         }
 
+    def _check_table_known(self, op: str) -> None:
+        """When `strict_unknown_tables=True`, raise `MockUnknownTableError`
+        if the bound table is absent from the migration-derived schema cache.
+
+        Runs regardless of `_validate_schema` — orthogonal to column
+        validation. This lets a product opt in to *table-existence*
+        checking even while it carries known column-level drift that
+        keeps `validate_schema` off. Used by `therapy-platform-drift-sweep`
+        (2026-05-11) to guard against re-introducing the 11 phantom
+        table names the sweep removed.
+        """
+        if not self._strict_unknown_tables:
+            return
+        # Empty cache (no migrations loaded) → no-op; otherwise we'd raise
+        # on every table for products that don't ship migrations under the
+        # auto-discovered roots. Tier 1.5 G4 contract.
+        cache = get_schema_map()
+        if not cache:
+            return
+        qualified = f"{(self._schema or 'public').lower()}.{(self._table or '').lower()}"
+        if qualified not in cache:
+            raise MockUnknownTableError(
+                schema=self._schema or "public",
+                table=self._table or "",
+                operation=op,
+            )
+
     def select(self, cols="*", *a, **k):
+        self._check_table_known("select")
         if self._validate_schema and isinstance(cols, str):
             _validate_select_cols(
                 self._schema, self._table, cols,
@@ -814,6 +842,7 @@ class MockRequestBuilder:
         `set_table_data(name, [...])` controls SELECT seeding only — it does
         NOT influence insert response (use the queue for that).
         """
+        self._check_table_known("insert")
         if self._validate_schema:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="insert",
@@ -863,6 +892,7 @@ class MockRequestBuilder:
         )
 
     def update(self, data=None, *a, **k):
+        self._check_table_known("update")
         if self._validate_schema:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="update",
@@ -901,6 +931,7 @@ class MockRequestBuilder:
         )
 
     def upsert(self, data=None, *a, **k):
+        self._check_table_known("upsert")
         if self._validate_schema:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="upsert",
@@ -919,6 +950,7 @@ class MockRequestBuilder:
         )
 
     def delete(self, *a, **k):
+        self._check_table_known("delete")
         return MockFilterBuilder(
             self._data,
             response_queue=self._response_queue,

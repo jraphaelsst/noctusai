@@ -26,7 +26,7 @@ async def create_review(
 
     # Verify patient has completed session with therapist
     session_check = (
-        db.table("sessions")
+        db.table("appointments")
         .select("id")
         .eq("patient_id", patient_id)
         .eq("therapist_id", therapist_id)
@@ -42,7 +42,7 @@ async def create_review(
 
     # Check for existing review
     existing = (
-        db.table("therapist_reviews")
+        db.table("reviews")
         .select("id")
         .eq("patient_id", patient_id)
         .eq("therapist_id", therapist_id)
@@ -61,7 +61,7 @@ async def create_review(
         "review_text": data.get("review_text"),
         "tags": data.get("tags", []),
     }
-    result = db.table("therapist_reviews").insert(review_data).execute()
+    result = db.table("reviews").insert(review_data).execute()
     row = first_or_none(result)
     if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar avaliação")
@@ -85,7 +85,7 @@ async def update_review(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
     result = (
-        db.table("therapist_reviews")
+        db.table("reviews")
         .update(update_data)
         .eq("id", review_id)
         .eq("patient_id", patient_id)
@@ -105,7 +105,7 @@ async def list_therapist_reviews(
 ) -> Tuple[List[Dict], int]:
     """List reviews for a therapist, newest first."""
     query = (
-        db.table("therapist_reviews")
+        db.table("reviews")
         .select("*", count="exact")
         .eq("therapist_id", therapist_id)
         .order("created_at", desc=True)
@@ -143,7 +143,7 @@ async def create_clinic_review(
 
     # Check if patient has completed session with any clinic therapist
     session_check = (
-        db.table("sessions")
+        db.table("appointments")
         .select("id")
         .eq("patient_id", patient_id)
         .in_("therapist_id", therapist_ids)
@@ -220,7 +220,7 @@ async def create_review_response(
     """
     # Verify the review exists and belongs to this therapist
     review = (
-        db.table("therapist_reviews")
+        db.table("reviews")
         .select("id, therapist_id")
         .eq("id", review_id)
         .execute()
@@ -237,7 +237,7 @@ async def create_review_response(
 
     # Update the review with the response
     result = (
-        db.table("therapist_reviews")
+        db.table("reviews")
         .update({
             "therapist_response": response_text,
         })
@@ -263,14 +263,14 @@ async def flag_review(
     Therapists can flag reviews on their profiles.
     Clinic admins can flag clinic reviews.
     """
-    # Try therapist_reviews first
+    # Try therapist reviews first (canonical table: `reviews`).
     review = (
-        db.table("therapist_reviews")
+        db.table("reviews")
         .select("id")
         .eq("id", review_id)
         .execute()
     )
-    table_name = "therapist_reviews"
+    table_name = "reviews"
 
     if not review.data:
         # Try clinic_reviews
@@ -306,7 +306,7 @@ async def flag_review(
 async def get_therapist_rating_stats(therapist_id: str, db: Any) -> Dict:
     """Get avg rating and review count for a therapist."""
     result = (
-        db.table("therapist_reviews")
+        db.table("reviews")
         .select("star_rating")
         .eq("therapist_id", therapist_id)
         .execute()
@@ -351,7 +351,7 @@ async def get_clinic_rating_stats(clinic_id: str, db: Any) -> Dict:
     therapist_avg = None
     if therapist_ids:
         all_reviews = (
-            db.table("therapist_reviews")
+            db.table("reviews")
             .select("star_rating")
             .in_("therapist_id", therapist_ids)
             .execute()

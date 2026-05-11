@@ -59,15 +59,28 @@ def _make_client_context(role="therapist", clinic_id=None):
     Returns a context manager that keeps patches alive for the duration
     of the test.
     """
-    # validate_schema intentionally False — therapy has ~20 known schema-drift
-    # points tracked by `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`.
-    # Flipping validation on surfaces all of them (appointment_id on session_audio_segments/
-    # session_interruptions; patient_id/therapist_id on session_records; user_id on
-    # therapist_settings; rating vs star_rating on reviews; therapist_id on whatsapp_messages;
-    # etc.). Those belong in the reconciliation project, not in the mock-supabase close.
-    # Once that project lands, flip this to validate_schema=True (+schema="therapy" when
-    # using product-scoped tables).
-    mock_sb = MockSupabaseClient(validate_schema=False, schema="therapy")
+    # `validate_schema` intentionally False — therapy has ~20 known
+    # column-level schema-drift points tracked by
+    # `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`.
+    # Flipping column validation on surfaces all of them (appointment_id on
+    # session_audio_segments / session_interruptions; patient_id/therapist_id
+    # on session_records; user_id on therapist_settings; rating vs star_rating
+    # on reviews; therapist_id on whatsapp_messages; etc.). Those belong in the
+    # reconciliation project, not in the mock-supabase close. Once that project
+    # lands, flip this to validate_schema=True.
+    #
+    # `strict_unknown_tables=True` is **orthogonal** to validate_schema (added
+    # 2026-05-11 by `therapy-platform-drift-sweep`). It raises
+    # `MockUnknownTableError` if a test exercises a table absent from the
+    # migration-derived schema cache — guards against regressing the 11
+    # phantom-table references the sweep eliminated. Works regardless of
+    # `validate_schema`. See `noctusai_lib.testing.mocks.MockRequestBuilder.
+    # _check_table_known`.
+    mock_sb = MockSupabaseClient(
+        validate_schema=False,
+        schema="therapy",
+        strict_unknown_tables=True,
+    )
     mock_user = MockUser(role=role, clinic_id=clinic_id)
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(mock_user))
 

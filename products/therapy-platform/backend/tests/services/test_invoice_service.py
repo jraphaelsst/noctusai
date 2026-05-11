@@ -37,7 +37,7 @@ class TestGenerateInvoice:
 
         def phased_table(name):
             call_count["n"] += 1
-            if name == "financial_transactions":
+            if name == "transactions":
                 return MockRequestBuilder([SAMPLE_TRANSACTION])
             if name == "invoices":
                 if call_count["n"] == 2:
@@ -61,7 +61,7 @@ class TestGenerateInvoice:
     @pytest.mark.asyncio
     async def test_generate_invoice_transaction_not_found(self):
         db = MockSupabaseClient()
-        db.set_table_data("financial_transactions", [])
+        db.set_table_data("transactions", [])
         with pytest.raises(Exception) as exc_info:
             await invoice_service.generate_invoice(
                 transaction_id="nonexistent",
@@ -75,7 +75,7 @@ class TestGenerateInvoice:
     async def test_generate_invoice_duplicate(self):
         """Cannot generate a second invoice for the same transaction."""
         db = MockSupabaseClient()
-        db.set_table_data("financial_transactions", [SAMPLE_TRANSACTION])
+        db.set_table_data("transactions", [SAMPLE_TRANSACTION])
         # Invoice already exists for this transaction
         db.set_table_data("invoices", [SAMPLE_INVOICE])
         with pytest.raises(Exception) as exc_info:
