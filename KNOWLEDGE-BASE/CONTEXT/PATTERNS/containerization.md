@@ -866,7 +866,7 @@ all items are applied as of the closure.
     + `01-schemas.sql` + `02-migrations.sql` (last two regenerated from
     each product's first migration by `scripts/build-init-local-db.sh`).
     `./start.sh local-db` activates the profile alongside the fleet. See
-    §11b below for the full mental model + caveats.
+    §11g below for the full mental model + caveats.
 14. ✅ **Health endpoint per-product variation (T6 + T6-A + T6-B,
     containerization-backlog-closure Wave 1, 2026-05-10).** **First**
     documented pause-on-dependency event (E1). T6 brief assumed
@@ -1369,7 +1369,7 @@ audited.
 ### What's intentionally absent
 
 - **`postgres` service in the prod overlay.** Prod talks to managed
-  Supabase / RDS / Cloud SQL. The `postgres` profile (§11b) is for
+  Supabase / RDS / Cloud SQL. The `postgres` profile (§11g) is for
   offline dev; bringing it up in prod is a misuse.
 - **Cloudflared tunnels.** Prod uses real DNS + named tunnels (or
   the platform's hosting front-door); the `trycloudflare.com`
