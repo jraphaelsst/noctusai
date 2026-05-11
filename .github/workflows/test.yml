@@ -237,6 +237,72 @@ jobs:
       - name: FRAMEWORK_DEPS coverage (every product lists every dep that vite dedupe expects)
         run: python3 scripts/check-framework-deps.py
 
+  prod-render-clean:
+    # Codifies KB § PATTERNS/containerization.md §11d "Prod-overlay
+    # dev-reset discipline" as a CI gate. The dev override
+    # (docker-compose.override.yml) MUST stay fully neutralized when the
+    # prod overlay is applied. Any future override change that
+    # re-introduces a runtime-affecting key without a matching
+    # top-level !reset in docker-compose.prod.yml fails this step before
+    # merge — closes the "discipline lives only in prose" gap that
+    # surfaced 2026-05-11.
+    name: Prod-render clean (no dev-override leaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seed .env from example (compose env_file requires the file to exist)
+        run: cp .env.example .env
+      - name: Render prod compose config
+        run: |
+          NOCTUS_IMAGE_TAG=ci docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.prod.yml \
+            config > /tmp/prod-render.yaml
+      - name: Assert NO dev-override leaks (negative gates)
+        # grep -c returns exit 1 when count is 0 → the `|| true` keeps
+        # the step from failing for the WRONG reason. Patterns are
+        # single-quoted so bash doesn't interpret the `--` or `"`.
+        run: |
+          set -e
+          fail=0
+          for pattern in 'type: bind' '\--reload' 'npm run dev' 'restart: "no"'; do
+            count=$(grep -c "$pattern" /tmp/prod-render.yaml || true)
+            if [ "$count" -gt 0 ]; then
+              echo "FAIL: prod render has $count occurrence(s) of '$pattern' (dev-override leak)"
+              fail=1
+            else
+              echo "OK:   '$pattern' → 0"
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "Per KB § PATTERNS/containerization.md §11d, every runtime-affecting"
+            echo "key the dev override sets that is NOT also set by the per-product"
+            echo "prod overlay needs an explicit '!reset null' at the top-level of"
+            echo "docker-compose.prod.yml. A leaked key above means a recent dev-override"
+            echo "change skipped the recurrence-rule trigger."
+            exit 1
+          fi
+      - name: Assert prod intent preserved (positive gates)
+        # Confirms the reset wasn't over-aggressive — per-product prod
+        # overlays must still apply restart: always + NODE_ENV: production.
+        # Thresholds match today's fleet: 22 always-restarts, 11 prod NODE_ENVs
+        # (set conservatively at >20 and >10 to absorb single-product churn).
+        run: |
+          set -e
+          always_count=$(grep -c 'restart: always' /tmp/prod-render.yaml || true)
+          nodeenv_count=$(grep -c 'NODE_ENV: production' /tmp/prod-render.yaml || true)
+          echo "restart: always → $always_count (expected >20)"
+          echo "NODE_ENV: production → $nodeenv_count (expected >10)"
+          if [ "$always_count" -le 20 ]; then
+            echo "FAIL: per-product prod overlays no longer apply restart: always — over-reset trap"
+            exit 1
+          fi
+          if [ "$nodeenv_count" -le 10 ]; then
+            echo "FAIL: per-product prod overlays no longer apply NODE_ENV: production — over-reset trap"
+            exit 1
+          fi
+
   docker-images-build:
     # Full-fleet matrix build per KB § PATTERNS/containerization.md §11f.
     # 10 products × {backend, frontend} = 20 matrix cells. fail-fast: false
