@@ -1,5 +1,26 @@
 # Creating a New Product
 
+> **⚠️ Trigger-phrase contract (read this FIRST).**
+>
+> When the user says any of:
+> - "**create a new noc product**"
+> - "**create a new product**"
+> - "**add a new product**"
+> - "**scaffold a product**" / "**scaffold a new product**"
+> - "**absorb a product**" (in-noc) / "**absorb new product**"
+> - "**new noc product**" / "**new noc product called X**"
+>
+> The **implicit contract** is:
+> 1. **Seed-first.** The product MUST use `create_product_app()` (backend) + `createProductApp()` (frontend). No custom app factory, no custom JWT auth, no custom seed-bypass.
+> 2. **Use `noctus.dev.scaffold_product`.** Do NOT hand-author the product tree. The MCP tool emits the canonical surfaces (mandatory files §9-14 below) + auto-substitutes Docker artifacts + emits the `core/migrations/NNN_seed_<slug>_product.sql` seed-row migration.
+> 3. **Verify scaffold completeness** against the mandatory-files list (§9-14) before declaring the product created.
+>
+> If the user describes a product that fundamentally CANNOT use the seed (custom auth provider, non-FastAPI backend, multi-region edge runtime), surface that conflict EXPLICITLY and ask before deviating. The default routing is seed-first; deviation requires explicit user OK.
+>
+> **Why this contract is enforced**: hand-authoring a product without `scaffold_product` produces custom code that diverges from the seed conventions. Later, a `<product>-migration` project is needed to retrofit seed-first — which is the shape of the `adconnect-migration` project (Tier 5 of `main-core-migrations-batch`). The migration project is **heavy rework that the trigger-phrase contract avoids**. Captured in memory `feedback_new_product_implies_seed_first.md` (2026-05-11 methodology fix).
+
+---
+
 Products are born from the seed. The backend `main.py` imports `create_product_app()` from `noctusai_seed`. The frontend `App.tsx` imports `createProductApp()` from `@noctusai/seed`. Products only add domain-specific routers, services, pages, and components.
 
 ## Reference implementation
