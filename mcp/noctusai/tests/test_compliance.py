@@ -35,20 +35,20 @@ class TestSeedCompliance:
     def test_all_products_compliant(self):
         """Platform-wide compliance health gate.
 
-        Score floor adjusted from 100 → 96 on 2026-05-11 to accommodate the
-        slowapi+PEP563 baseline (4 high-severity findings on 4 products
-        surfaced by the N=3 formalization). Each baseline finding costs
-        10 points → 4 products at score 90 + 7 at 100 + therapy-platform
-        at 97 averages to 96.4 → round 96. Restore the strict
-        ``score == 100`` gate once the 4 baseline files drop
-        ``from __future__ import annotations``. The exact baseline list
-        is pinned in
+        Restored to ``score == 100`` on 2026-05-11 after the
+        slowapi-baseline-cleanup project dropped
+        ``from __future__ import annotations`` from the 4 PEP 563
+        baseline files (adconnect/financial, imobi-scheduling +
+        media-scheduling + seed webhook routers). The residual
+        therapy-platform ``ai_pipeline.py`` warning (3-point penalty)
+        averages out across 12 products to 100 after rounding.
+        Baseline pin lives in
         ``TestCheckSlowapiWithPep563.test_real_repo_baseline_known_cases``.
         """
         score, issues = check_all_products()
-        assert score >= 96, (
-            f"Platform score {score} below the known floor (96 with "
-            f"slowapi+PEP563 baseline). Issues: {issues}"
+        assert score == 100, (
+            f"Platform score {score} below the strict 100 gate. "
+            f"Issues: {issues}"
         )
 
     def test_detects_boilerplate_router(self):
@@ -296,13 +296,8 @@ class TestAIFeatureCompleteness:
         verifies the detector doesn't false-positive on the actually-shipped
         Tier 1 features.
 
-        Score floor adjusted from 100 → 96 on 2026-05-11 to accommodate the
-        slowapi+PEP563 baseline (4 high-severity findings on 4 products
-        surfaced by the N=3 formalization). Each baseline finding costs
-        10 points → 4 products at score 90 + 7 at 100 + therapy-platform
-        at 97 averages to 96.4 → round 96. Restore the strict
-        ``score == 100`` gate once the 4 baseline files drop
-        ``from __future__ import annotations``. See
+        Restored to ``score == 100`` on 2026-05-11 after the
+        slowapi-baseline-cleanup project. See
         ``TestCheckSlowapiWithPep563.test_real_repo_baseline_known_cases``.
         """
         score, issues = check_all_products()
@@ -318,13 +313,10 @@ class TestAIFeatureCompleteness:
         assert ai_feature_issues == [], (
             f"AI feature completeness issues: {ai_feature_issues}"
         )
-        # The broad intent: platform health stays at or above the known
-        # floor. Tightening this number when the 4 baseline files get
-        # fixed is part of the cleanup contract.
-        assert score >= 96, (
-            f"Platform score {score} below the known floor (96 with "
-            f"slowapi+PEP563 baseline). New violations introduced "
-            f"elsewhere — investigate before lowering this floor."
+        # The broad intent: platform health stays at the strict 100 gate.
+        assert score == 100, (
+            f"Platform score {score} below the strict 100 gate. "
+            f"New violations introduced — investigate."
         )
 
 
@@ -1390,27 +1382,21 @@ class TestCheckSlowapiWithPep563:
         assert issue["severity"] == "high"
 
     def test_real_repo_baseline_known_cases(self):
-        """Baseline: the detector surfaced FOUR cases the original
-        AUTH-RL + LLM-RL-TRIO + DT-FORWARD-REF audits missed (their
-        grep filtered ``head -5`` and overlooked imports below
-        docstrings):
+        """Baseline: zero. The original 4 baseline cases dropped
+        ``from __future__ import annotations`` on 2026-05-11 via the
+        slowapi-baseline-cleanup project:
 
           1. ``products/adconnect/backend/app/routers/financial.py``
           2. ``products/imobi-scheduling/backend/app/routers/webhook_router.py``
           3. ``products/media-scheduling/backend/app/routers/webhooks.py``
           4. ``products/seed/backend/app/routers/webhook_router.py``
+          5. ``templates/product-seed/backend/app/routers/webhook_router.py``
+             (template mirror — same body as seed)
 
-        These files have BOTH ``from __future__ import annotations`` AND
-        ``@limiter.limit``. They do not currently crash at app import
-        because their route signatures use ONLY externally-imported
-        types (``Request``, ``VerifiedWebhook``) — but the file is in
-        the gotcha-prone state: the moment someone adds a locally
-        declared ``class Foo(BaseModel)`` to the route signature, app
-        import will fail with ``PydanticUndefinedAnnotation``.
-
-        The follow-up cleanup is filed via the engineer's report
-        (architect to triage). This test pins the CURRENT baseline so
-        a NEW case 5+ trips the assertion loudly.
+        Any NEW occurrence (a rate-limited route in a file that also has
+        ``from __future__ import annotations``) trips this assertion
+        loudly. The fix shape is: drop the future-import from the file,
+        OR move the rate-limited endpoint(s) to a sibling module.
         """
         products_dir = REPO_ROOT / "products"
         all_issues: list[dict] = []
@@ -1418,12 +1404,7 @@ class TestCheckSlowapiWithPep563:
             if not product_dir.is_dir() or product_dir.name.startswith("."):
                 continue
             all_issues.extend(check_slowapi_with_pep563(product_dir))
-        known_baseline = {
-            "products/adconnect/backend/app/routers/financial.py",
-            "products/imobi-scheduling/backend/app/routers/webhook_router.py",
-            "products/media-scheduling/backend/app/routers/webhooks.py",
-            "products/seed/backend/app/routers/webhook_router.py",
-        }
+        known_baseline: set[str] = set()
         seen = {i["file"] for i in all_issues}
         new_cases = seen - known_baseline
         assert not new_cases, (
@@ -1433,9 +1414,8 @@ class TestCheckSlowapiWithPep563:
             f"annotations` from the file, or (b) move the rate-limited "
             f"endpoint(s) to a sibling module."
         )
-        # Inverse pin: a known case getting silently fixed (good!) should
-        # also fail this test so we explicitly shrink the baseline set
-        # rather than letting it drift.
+        # Inverse pin: if known_baseline is non-empty, a fixed case here
+        # forces an explicit shrink (no silent drift).
         missing = known_baseline - seen
         assert not missing, (
             f"Known-baseline case(s) appear to be fixed: {sorted(missing)}. "

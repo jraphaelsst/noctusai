@@ -16,7 +16,6 @@ Wires the seed surfaces end-to-end:
 Frontend contract (unchanged from Phase 5 hooks): NONE — this is the
 WAHA inbound surface, not a frontend-facing route.
 """
-from __future__ import annotations
 
 import json
 import logging

@@ -19,7 +19,6 @@ NEVER `router.prefix = ...` post-construction — registers as no-op.
 NF-e + Stripe orchestration lives in `financial_service`. The router is a
 thin auth + serialization shim.
 """
-from __future__ import annotations
 
 import logging
 import os

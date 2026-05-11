@@ -42,7 +42,6 @@ log-and-return placeholder body with the real event dispatch.
 
 See ``KB § PATTERNS/webhook-signatures.md`` for the full pattern doc.
 """
-from __future__ import annotations
 
 import json
 import logging
