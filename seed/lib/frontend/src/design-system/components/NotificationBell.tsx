@@ -24,16 +24,16 @@ interface PaginatedResponse {
   pagination?: unknown;
 }
 
-interface MutationResult {
-  mutate: (arg?: unknown) => void;
+interface MutationResult<TVariables = void> {
+  mutate: (variables: TVariables) => void;
   isPending: boolean;
 }
 
 export interface NotificationHooks {
   useNotificacoes: (page?: number, pageSize?: number) => { data: PaginatedResponse | undefined };
   useContagemNaoLidas: () => { data: { nao_lidas: number } | undefined };
-  useMarcarComoLida: () => MutationResult;
-  useMarcarTodasComoLidas: () => MutationResult;
+  useMarcarComoLida: () => MutationResult<string>;
+  useMarcarTodasComoLidas: () => MutationResult<void>;
 }
 
 export interface NotificationBellProps {

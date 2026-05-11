@@ -240,22 +240,29 @@ Goal: zero `tsc --noEmit -p .` errors in lib's current `strict: false` state.
 - **Latest-version drift:** Initial install of `tailwindcss` resolved to v4 (current latest) which would have been a major-version mismatch against framework's `^0.462.0` Lucide and Tailwind v3 ecosystem. Re-installed with explicit `tailwindcss@^3.4.0` / `lucide-react@^0.462.0` / `vitest@^2.1.8` / `typescript@^5.8.3` etc. to match the framework. **Lesson:** for workspace-cross packages, peer-dep installs should explicitly pin to the major versions used by the other workspace packages.
 - **Architectural inconsistency caught:** `seed/framework/frontend/package.json` `exports` block does not declare `./infra`, yet `seed/lib/frontend/src/design-system/ai/*` imports `@noctusai/seed/infra`. This currently works at runtime only because product Vite resolvers fall through to file paths; a stricter consumer (TypeScript without path-mapping; modern bundlers using export-conditions strictly) would break. **Recommend Phase 3 add `"./infra": "./src/infra.tsx"` to framework's exports block** so the package's public surface matches its consumers' imports.
 
-### Phase 2 — Lib: flip strict + fix errors
+### Phase 2 — Lib: flip strict + fix errors ✅ (executed 2026-05-10)
 
 Goal: zero `tsc --noEmit -p .` errors with `strict: true`.
 
-- [ ] Flip `tsconfig.json`: `"strict": true` (replace `"strict": false`).
-- [ ] Run `tsc --noEmit -p .` — capture the actual strict-mode error count (now measurable).
-- [ ] Fix errors per principle 3.4. Common categories expected:
-  - **Implicit any** — function params without types, untyped destructuring → add explicit types.
-  - **Null/undefined** — `user?.email` where TS now requires the optional-chain to be exhaustive → add real null guards.
-  - **Missing return types on exported functions** → add explicit return types (lib exports — these are part of the public surface, deserve explicit signatures).
-  - **Index signature** — Supabase client generics returning `unknown` → tighten to real generics where possible; cast at boundaries.
-- [ ] Verify zero errors.
+- [x] Flip `tsconfig.json`: `"strict": true` (replace `"strict": false`).
+- [x] Run `tsc --noEmit -p .` — capture the actual strict-mode error count (now measurable). **Captured: 1 error (TS2322 in framework/frontend/src/infra.tsx assigning `createNotificationHooks` return to lib's `NotificationHooks` type).**
+- [x] Fix errors per principle 3.4. Common categories expected:
+  - **Implicit any** — none surfaced.
+  - **Null/undefined** — none surfaced.
+  - **Missing return types on exported functions** — none surfaced.
+  - **Index signature** — none surfaced.
+  - **Type contract mismatch (the actual category):** lib's `NotificationHooks.useMarcarComoLida: () => MutationResult` had `MutationResult.mutate: (arg?: unknown) => void`, which is contravariant-incompatible with react-query's `UseMutateFunction<TData, TError, TVariables>` (variables is `string`, not `unknown`). **Fix:** generic-parameterize `interface MutationResult<TVariables = void>` with `mutate: (variables: TVariables) => void`; tighten `useMarcarComoLida: () => MutationResult<string>` and `useMarcarTodasComoLidas: () => MutationResult<void>`. The defaulted type parameter keeps backward compatibility for any unknown consumer; the parameterized return tightens the seed contract to match the actual react-query hook signatures. Applied via ts-morph codemod (Engineer A pattern in `/tmp/strict-mode/`).
+- [x] Verify zero errors. **`npm run check` exits 0.**
 
-**Improvements (capture live):**
-- One bullet per non-trivial fix decision — what was changed, why this fix vs. an alternative.
-- Any `!` non-null assertion introduced gets one line with the upstream invariant that justifies it. If no good justification, fix differently.
+**Improvements / findings:**
+- **Pre-strict-flip error count:** 0 (Phase 1 baseline, confirmed by `npm run check` before the flip).
+- **Post-flip / pre-fix error count:** 1 (one TS2322 in `seed/framework/frontend/src/infra.tsx` line 81 — the `<SharedNotificationBell hooks={notificationHooks} />` site, because `notificationHooks` is built from `createNotificationHooks(...)`'s react-query mutation hooks whose `UseMutateFunction<TData, TError, TVariables>` couldn't unify with the lib's narrower `(arg?: unknown) => void`). The error fires in framework/, but its ROOT is in the lib's NotificationHooks type contract — fixing in lib closes both. (Note: framework/frontend has no tsconfig yet — Phase 3 — so this error only surfaces from the lib's tsc reach via `paths` mapping. Once Phase 3 adds framework's own tsconfig, no additional fix needed here.)
+- **Post-fix error count:** 0.
+- **No `!` non-null assertions introduced.** Fix was purely a generic-parameterization on an interface.
+- **Why generic-parameterize rather than widen the consumer:** The alternative was `mutate: (arg?: string) => void` directly on the un-parameterized interface, but `useMarcarTodasComoLidas` mutates with no variables, so a single hard-coded signature can't fit both. Parameterizing (`MutationResult<TVariables = void>`) makes the seed contract carry the variables-type discriminator that react-query already uses — keeping the seed type generic where the underlying SDK is generic. Defaulted to `void` so an unparameterized reference behaves the same as the old narrow shape (mutate with no args).
+- **Why fix in lib rather than framework:** Both consumers (framework's infra.tsx + future product wiring) build their hooks via `createNotificationHooks` returned from the lib. Tightening the lib's contract once propagates to every consumer; widening only the framework would leave the same gap open for any future direct consumer.
+- **AST-first compliance:** Codemod in `/tmp/strict-mode/fix-mutation-result.ts` using ts-morph (added `TypeParameter`, updated `mutate` property type, retyped two `NotificationHooks` members). No sed/regex on TS. Pattern mirrors Engineer A's Phase 1 codemod approach.
+- **Test infra gap (out of scope, surfaced for Phase 3+ or follow-up):** `npm test` fails with `Cannot find package 'jsdom'` because vitest's jsdom environment is referenced in `vitest.config.ts` but `jsdom` isn't installed as a devDep. The strict-mode work doesn't depend on this (gate is `npm run check`, which is green), but Phase 1 missed it. Suggest follow-up: add `jsdom` to devDependencies of `seed/lib/frontend` so `npm test` runs from a clean install.
 
 ### Phase 3 — Framework: add tsconfig + strict from day 1
 
@@ -393,3 +400,4 @@ bash scripts/verify-kb-sync.sh
 |---|---|---|
 | 2026-04-27 | Original 54-line PROJECT.md drafted as TS strict-mode migration across all 8 frontends (~16-24h, never executed). | (prior session) |
 | 2026-05-03 | **Re-scope to seed-boundary + Phase 0 ✅.** Parent batch `main-core-migrations-batch` Phase 2.a §7 round surfaced honest cost/leverage tradeoff; user picked narrower scope ("strict the fw + lib") then accepted Option C (full fw + lib + CI gate scope) and asked for the project to be filed standalone for separate execution. Doc rewritten to PROJECT-TEMPLATE.md format. Phase 0 audit fired and surfaced 3 findings: (1) lib has never been tsc-checked standalone (24 TS2307 errors from missing peer-dep types — strict-mode errors are masked by resolution failures and can't be measured yet); (2) framework has no tsconfig.json at all; (3) lib + framework export source `.ts` directly so strict tightens types at source-import boundary, propagating to all 8 products via inheritance without per-product migration. Honest re-estimate: 4-8 hours (vs. originally quoted 2-4h). Original 8-frontend ambition retired and slated for accept-with-rationale paperwork in Phase 5. **Status: 📋 READY FOR EXECUTION** — Phases 1-4 ready for fresh-session agent. | Claude Opus 4.7 |
+| 2026-05-10 | **Phase 2 ✅.** Flipped `seed/lib/frontend/tsconfig.json` `strict: false → strict: true`. Single TS2322 error fired in `framework/frontend/src/infra.tsx:81` (contravariance: lib's `MutationResult.mutate: (arg?: unknown) => void` couldn't unify with react-query's `UseMutateFunction<TData, TError, TVariables>` where `TVariables = string` for `useMarcarComoLida`). **Fix:** generic-parameterize `interface MutationResult<TVariables = void>` in `seed/lib/frontend/src/design-system/components/NotificationBell.tsx`, retype `useMarcarComoLida: () => MutationResult<string>` + `useMarcarTodasComoLidas: () => MutationResult<void>`. **Tooling:** ts-morph codemod in `/tmp/strict-mode/fix-mutation-result.ts` (Engineer A pattern). **`!` non-null assertions added:** 0. **`any` added:** 0. **Files touched:** 2 (`tsconfig.json`, `NotificationBell.tsx`). **Verification:** `cd seed/lib/frontend && npm run check` exits 0. **Out-of-scope finding surfaced:** `npm test` fails on missing `jsdom` devDep (Phase 1 gap; doesn't block Phase 2 gate). | Engineer (strict-mode Phase 2 subagent) |
