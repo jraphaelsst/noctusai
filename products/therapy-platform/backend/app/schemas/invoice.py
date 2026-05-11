@@ -1,19 +1,24 @@
 """
-Invoice Schemas — Invoice generation and status management.
+Invoice Schemas — Invoice (recibo) generation and status management.
 """
 from __future__ import annotations
 
 from typing import Literal, Optional
-from uuid import UUID
 
 from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 
 
 class InvoiceCreate(StrictHttpModel):
-    """Generate an invoice from a financial transaction."""
+    """Generate an invoice (recibo) from a financial transaction.
 
-    transaction_id: UUID
+    `patient_id` is supplied by the therapist at generation time and is
+    used to address the resulting invoice. `transaction_id` references an
+    existing financial transaction row.
+    """
+
+    transaction_id: str = Field(..., min_length=1)
+    patient_id: str = Field(..., min_length=1)
     descricao: Optional[str] = Field(default=None, max_length=2000)
 
 

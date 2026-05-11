@@ -15,6 +15,7 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import success_response
+from app.schemas.portal import MoodEntryCreate
 from app.services import mood_service
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/api/mood", tags=["Mood"])
 
 @router.post("")
 async def create_mood_entry(
-    body: dict,
+    body: MoodEntryCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Create a mood entry (patient only)."""
@@ -35,7 +36,7 @@ async def create_mood_entry(
     db = get_user_client(token)
     data = await mood_service.create_entry(
         patient_id=user.id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)

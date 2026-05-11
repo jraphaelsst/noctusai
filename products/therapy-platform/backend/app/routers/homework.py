@@ -16,6 +16,11 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import paginated_response, success_response
+from app.schemas.portal import (
+    HomeworkAssignCreate,
+    HomeworkReviewCreate,
+    HomeworkSubmitCreate,
+)
 from app.services import homework_service
 
 logger = logging.getLogger(__name__)
@@ -24,7 +29,7 @@ router = APIRouter(prefix="/api/homework", tags=["Homework"])
 
 @router.post("")
 async def assign_homework(
-    body: dict,
+    body: HomeworkAssignCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Assign homework to a patient (therapist only)."""
@@ -36,7 +41,7 @@ async def assign_homework(
     db = get_user_client(token)
     data = await homework_service.assign(
         therapist_id=user.id,
-        data=body,
+        data=body.model_dump(mode="json", exclude_unset=True),
         db=db,
     )
     return success_response(data)
@@ -103,7 +108,7 @@ async def get_homework(
 @router.post("/{homework_id}/submit")
 async def submit_homework(
     homework_id: str,
-    body: dict,
+    body: HomeworkSubmitCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Patient submits a response to a homework assignment."""
@@ -128,7 +133,7 @@ async def submit_homework(
 
     data = await homework_service.submit(
         assignment_id=homework_id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)
@@ -137,7 +142,7 @@ async def submit_homework(
 @router.post("/{homework_id}/review")
 async def review_homework(
     homework_id: str,
-    body: dict,
+    body: HomeworkReviewCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Therapist reviews a homework submission."""
@@ -162,7 +167,7 @@ async def review_homework(
 
     data = await homework_service.review(
         assignment_id=homework_id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)

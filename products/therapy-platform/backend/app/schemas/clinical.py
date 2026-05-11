@@ -72,10 +72,15 @@ class GoalCreate(StrictHttpModel):
 
 
 class GoalUpdate(StrictHttpModel):
-    """Partial update for a goal."""
+    """Partial update for a goal.
+
+    Valid `status` values mirror the DB enum
+    `treatment_plan_goals.status` — `em_andamento` (note: spelled
+    "em_andamento", not "em_progresso") aligns with the column literal.
+    """
 
     descricao: Optional[str] = Field(default=None, min_length=1, max_length=2000)
-    status: Optional[Literal["pendente", "em_progresso", "concluido", "cancelado"]] = None
+    status: Optional[Literal["pendente", "em_andamento", "concluido", "cancelado"]] = None
     observacoes: Optional[str] = Field(default=None, max_length=5000)
 
 
@@ -117,3 +122,52 @@ class EvolutionNoteUpdate(StrictHttpModel):
     avaliacao: Optional[str] = Field(default=None, max_length=10000)
     plano: Optional[str] = Field(default=None, max_length=10000)
     conteudo_livre: Optional[str] = Field(default=None, max_length=20000)
+
+
+# ---------------------------------------------------------------------------
+# Anamnese — write payloads carry `patient_id` to address the patient.
+# ---------------------------------------------------------------------------
+
+class AnamneseCreateWithPatient(AnamneseCreate):
+    """`AnamneseCreate` shape plus the addressed `patient_id`.
+
+    The therapist supplies `patient_id` at the HTTP boundary; uniqueness
+    is enforced server-side per `(patient_id, therapist_id)` pair.
+    """
+
+    patient_id: str = Field(..., min_length=1)
+
+
+# ---------------------------------------------------------------------------
+# Treatment plans — write payload carries `patient_id`.
+# ---------------------------------------------------------------------------
+
+class TreatmentPlanCreateWithPatient(TreatmentPlanCreate):
+    """`TreatmentPlanCreate` shape plus `patient_id`."""
+
+    patient_id: str = Field(..., min_length=1)
+
+
+# ---------------------------------------------------------------------------
+# Evolution notes — write payload carries `patient_id`.
+# ---------------------------------------------------------------------------
+
+class EvolutionNoteCreateWithPatient(EvolutionNoteCreate):
+    """`EvolutionNoteCreate` shape plus `patient_id`."""
+
+    patient_id: str = Field(..., min_length=1)
+
+
+# ---------------------------------------------------------------------------
+# Crisis Alert review
+# ---------------------------------------------------------------------------
+
+class CrisisAlertReview(StrictHttpModel):
+    """Therapist or admin reviews a crisis alert.
+
+    `status` is the post-review verdict; `notas_revisao` is an optional
+    review note captured for audit / patient-care continuity.
+    """
+
+    status: Literal["revisado", "falso_positivo", "encaminhado"]
+    notas_revisao: Optional[str] = Field(default=None, max_length=10000)

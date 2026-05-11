@@ -48,8 +48,14 @@ class TestSendMessage:
         assert resp.status_code == 403
 
     def test_send_message_401(self, client):
-        """No auth returns 401."""
+        """No auth returns 401.
+
+        Body MUST be a complete + valid `WhatsAppSendCreate` so the
+        request reaches the auth dependency (otherwise Pydantic 422
+        short-circuits before auth fires).
+        """
         resp = client._tc.post("/api/whatsapp/enviar", json={
+            "patient_id": "patient-001",
             "message": "Teste",
         })
         assert resp.status_code == 401

@@ -16,6 +16,7 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import ok_response, paginated_response, success_response
+from app.schemas.portal import JournalEntryCreate, JournalEntryUpdate
 from app.services import journal_service
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/diary", tags=["Therapeutic Journal"])
 
 @router.post("")
 async def create_journal_entry(
-    body: dict,
+    body: JournalEntryCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Create a journal entry (patient only)."""
@@ -36,7 +37,7 @@ async def create_journal_entry(
     db = get_user_client(token)
     data = await journal_service.create_entry(
         patient_id=user.id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)
@@ -67,7 +68,7 @@ async def list_journal_entries(
 @router.patch("/{entry_id}")
 async def update_journal_entry(
     entry_id: str,
-    body: dict,
+    body: JournalEntryUpdate,
     authorization: Optional[str] = Header(None),
 ):
     """Update a journal entry (patient only, must be owner)."""
@@ -92,7 +93,7 @@ async def update_journal_entry(
 
     data = await journal_service.update_entry(
         entry_id=entry_id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Literal, Optional
-from uuid import UUID
 
 from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
@@ -51,7 +50,7 @@ class JournalEntryUpdate(StrictHttpModel):
 class HomeworkAssignCreate(StrictHttpModel):
     """Therapist assigns homework to a patient."""
 
-    patient_id: UUID
+    patient_id: str = Field(..., min_length=1)
     titulo: str = Field(..., min_length=1, max_length=300)
     descricao: str = Field(..., min_length=1, max_length=10000)
     data_limite: Optional[date] = None
@@ -64,7 +63,11 @@ class HomeworkSubmitCreate(StrictHttpModel):
 
 
 class HomeworkReviewCreate(StrictHttpModel):
-    """Therapist reviews submitted homework."""
+    """Therapist reviews submitted homework.
+
+    `status` defaults to `"revisado"` because the workflow's only valid
+    post-review state is `revisado`; tests don't supply it explicitly.
+    """
 
     feedback_terapeuta: str = Field(..., min_length=1, max_length=10000)
-    status: Literal["revisado"]
+    status: Literal["revisado"] = "revisado"

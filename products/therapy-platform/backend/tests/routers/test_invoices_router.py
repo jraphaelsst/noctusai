@@ -43,9 +43,15 @@ class TestGenerateInvoice:
         assert resp.status_code == 403
 
     def test_generate_invoice_401(self, client):
-        """No auth returns 401."""
+        """No auth returns 401.
+
+        Body MUST be a complete + valid `InvoiceCreate` so the request
+        reaches the auth dependency (otherwise Pydantic 422
+        short-circuits before auth fires).
+        """
         resp = client._tc.post("/api/invoices", json={
             "transaction_id": "tx-001",
+            "patient_id": "patient-001",
         })
         assert resp.status_code == 401
 

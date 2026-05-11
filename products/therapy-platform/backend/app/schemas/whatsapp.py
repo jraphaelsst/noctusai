@@ -1,28 +1,36 @@
 """
-WhatsApp Schemas — Message sending and reminder scheduling.
+WhatsApp Therapy Schemas — Direct messaging, reminders, and reminder configuration.
+
+Therapy product addresses messages by `patient_id` (the patient phone is
+looked up server-side from `patient_profiles`). For per-appointment
+reminders the appointment row is fetched server-side too — clients send
+only `appointment_id`.
 """
 from __future__ import annotations
-
-from typing import Literal, Optional
-from uuid import UUID
 
 from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 
 
 class WhatsAppSendCreate(StrictHttpModel):
-    """Send a WhatsApp message via WAHA."""
+    """Send a direct WhatsApp message to a patient (therapist only)."""
 
-    appointment_id: Optional[UUID] = None
-    destinatario_telefone: str = Field(..., min_length=10, max_length=20)
-    tipo: Literal["lembrete", "confirmacao", "cancelamento", "personalizado"]
-    conteudo: str = Field(..., min_length=1, max_length=4096)
+    patient_id: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1, max_length=4096)
 
 
-class ReminderScheduleCreate(StrictHttpModel):
-    """Configure automatic appointment reminders."""
+class WhatsAppReminderCreate(StrictHttpModel):
+    """Trigger an appointment-reminder send via WhatsApp."""
 
-    tipo: Literal["lembrete", "confirmacao"]
-    horas_antes: int = Field(..., ge=1, le=168, description="Hours before appointment")
-    mensagem_template: Optional[str] = Field(default=None, max_length=4096)
+    appointment_id: str = Field(..., min_length=1)
+
+
+class ReminderScheduleConfigure(StrictHttpModel):
+    """Configure automatic appointment-reminder schedule (therapist only).
+
+    `antecedencia_horas` — how many hours before the appointment the
+    reminder fires (1..168). `is_active` enables/disables the schedule.
+    """
+
+    antecedencia_horas: int = Field(default=24, ge=1, le=168)
     is_active: bool = True

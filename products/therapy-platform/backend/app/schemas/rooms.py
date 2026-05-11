@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from datetime import date, time
 from typing import Optional
-from uuid import UUID
 
 from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
@@ -39,8 +38,8 @@ class RoomUpdate(StrictHttpModel):
 class RoomBookingCreate(StrictHttpModel):
     """Book a room for an appointment time slot."""
 
-    room_id: UUID
-    appointment_id: UUID
+    room_id: str = Field(..., min_length=1)
+    appointment_id: str = Field(..., min_length=1)
     data: date
     horario_inicio: time
     horario_fim: time

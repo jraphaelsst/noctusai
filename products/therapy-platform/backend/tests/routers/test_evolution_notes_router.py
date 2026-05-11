@@ -71,9 +71,16 @@ class TestCreateEvolutionNote:
         assert resp.status_code == 403
 
     def test_create_note_401(self, client):
-        """No auth returns 401."""
+        """No auth returns 401.
+
+        Body MUST be a complete + valid `EvolutionNoteCreateWithPatient`
+        so the request reaches the auth dependency (otherwise Pydantic
+        422 short-circuits before auth fires).
+        """
         resp = client._tc.post("/api/evolution-notes", json={
+            "patient_id": "patient-001",
             "formato": "soap",
+            "subjetivo": "Paciente relata melhora",
         })
         assert resp.status_code == 401
 

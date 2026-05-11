@@ -17,6 +17,7 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import paginated_response, success_response
+from app.schemas.clinical import CrisisAlertReview
 from app.services import crisis_service
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ async def get_alert(
 @router.patch("/{alert_id}/review")
 async def review_alert(
     alert_id: str,
-    body: dict,
+    body: CrisisAlertReview,
     authorization: Optional[str] = Header(None),
 ):
     """Review a crisis alert (therapist or admin)."""
@@ -112,7 +113,7 @@ async def review_alert(
     data = await crisis_service.review_alert(
         alert_id=alert_id,
         reviewer_id=user.id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)

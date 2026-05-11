@@ -17,6 +17,7 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import ok_response, success_response
+from app.schemas.rooms import RoomBookingCreate, RoomCreate, RoomUpdate
 from app.services import room_service
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
 
 @router.post("")
 async def create_room(
-    body: dict,
+    body: RoomCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Create a room (clinic_admin only)."""
@@ -41,7 +42,7 @@ async def create_room(
     db = get_user_client(token)
     data = await room_service.create_room(
         clinic_id=clinic_id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)
@@ -70,7 +71,7 @@ async def list_rooms(
 @router.patch("/{room_id}")
 async def update_room(
     room_id: str,
-    body: dict,
+    body: RoomUpdate,
     authorization: Optional[str] = Header(None),
 ):
     """Update a room (clinic_admin only)."""
@@ -99,7 +100,7 @@ async def update_room(
 
     data = await room_service.update_room(
         room_id=room_id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)
@@ -107,7 +108,7 @@ async def update_room(
 
 @router.post("/bookings")
 async def create_booking(
-    body: dict,
+    body: RoomBookingCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Create a room booking."""
@@ -118,7 +119,7 @@ async def create_booking(
 
     db = get_user_client(token)
     data = await room_service.create_booking(
-        data=body,
+        data=body.model_dump(mode="json", exclude_unset=True),
         db=db,
     )
     return success_response(data)

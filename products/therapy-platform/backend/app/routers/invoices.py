@@ -16,6 +16,7 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import paginated_response, success_response
+from app.schemas.invoice import InvoiceCreate
 from app.services import invoice_service
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/invoices", tags=["Invoices"])
 
 @router.post("")
 async def generate_invoice(
-    body: dict,
+    body: InvoiceCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Generate an invoice from a transaction (therapist only)."""
@@ -35,9 +36,9 @@ async def generate_invoice(
 
     db = get_user_client(token)
     data = await invoice_service.generate_invoice(
-        transaction_id=body.get("transaction_id", ""),
+        transaction_id=str(body.transaction_id),
         therapist_id=user.id,
-        patient_id=body.get("patient_id", ""),
+        patient_id=str(body.patient_id),
         db=db,
     )
     return success_response(data)

@@ -16,6 +16,12 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import ok_response, paginated_response, success_response
+from app.schemas.clinical import (
+    GoalCreate,
+    GoalUpdate,
+    TreatmentPlanCreateWithPatient,
+    TreatmentPlanUpdate,
+)
 from app.services import clinical_records_service
 
 logger = logging.getLogger(__name__)
@@ -24,7 +30,7 @@ router = APIRouter(prefix="/api/treatment-plans", tags=["Treatment Plans"])
 
 @router.post("")
 async def create_treatment_plan(
-    body: dict,
+    body: TreatmentPlanCreateWithPatient,
     authorization: Optional[str] = Header(None),
 ):
     """Create a treatment plan for a patient (therapist only)."""
@@ -34,10 +40,11 @@ async def create_treatment_plan(
         raise HTTPException(status_code=403, detail="Apenas terapeutas podem criar planos de tratamento")
 
     db = get_user_client(token)
+    payload = body.model_dump(mode="json", exclude_unset=True)
     data = await clinical_records_service.create_treatment_plan(
-        patient_id=body.get("patient_id", ""),
+        patient_id=str(body.patient_id),
         therapist_id=user.id,
-        data=body,
+        data=payload,
         db=db,
     )
     return success_response(data)
@@ -96,7 +103,7 @@ async def get_treatment_plan(
 @router.patch("/{plan_id}")
 async def update_treatment_plan(
     plan_id: str,
-    body: dict,
+    body: TreatmentPlanUpdate,
     authorization: Optional[str] = Header(None),
 ):
     """Update a treatment plan (therapist only)."""
@@ -121,7 +128,7 @@ async def update_treatment_plan(
 
     data = await clinical_records_service.update_treatment_plan(
         plan_id=plan_id,
-        data=body,
+        data=body.model_dump(mode="json", exclude_unset=True),
         db=db,
     )
     return success_response(data)
@@ -130,7 +137,7 @@ async def update_treatment_plan(
 @router.post("/{plan_id}/metas")
 async def add_goal(
     plan_id: str,
-    body: dict,
+    body: GoalCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Add a goal (meta) to a treatment plan (therapist only)."""
@@ -155,7 +162,7 @@ async def add_goal(
 
     data = await clinical_records_service.create_goal(
         plan_id=plan_id,
-        data=body,
+        data=body.model_dump(mode="json", exclude_unset=True),
         db=db,
     )
     return success_response(data)
@@ -164,7 +171,7 @@ async def add_goal(
 @router.patch("/metas/{goal_id}")
 async def update_goal(
     goal_id: str,
-    body: dict,
+    body: GoalUpdate,
     authorization: Optional[str] = Header(None),
 ):
     """Update a goal (therapist only)."""
@@ -196,7 +203,7 @@ async def update_goal(
 
     data = await clinical_records_service.update_goal(
         goal_id=goal_id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)

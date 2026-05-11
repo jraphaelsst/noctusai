@@ -16,6 +16,7 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import paginated_response, success_response
+from app.schemas.clinical import EvolutionNoteCreateWithPatient, EvolutionNoteUpdate
 from app.services import clinical_records_service
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/evolution-notes", tags=["Evolution Notes"])
 
 @router.post("")
 async def create_evolution_note(
-    body: dict,
+    body: EvolutionNoteCreateWithPatient,
     authorization: Optional[str] = Header(None),
 ):
     """Create an evolution note for a patient (therapist only)."""
@@ -34,10 +35,11 @@ async def create_evolution_note(
         raise HTTPException(status_code=403, detail="Apenas terapeutas podem criar notas de evolução")
 
     db = get_user_client(token)
+    payload = body.model_dump(mode="json", exclude_unset=True)
     data = await clinical_records_service.create_evolution_note(
-        patient_id=body.get("patient_id", ""),
+        patient_id=str(body.patient_id),
         therapist_id=user.id,
-        data=body,
+        data=payload,
         db=db,
     )
     return success_response(data)
@@ -101,7 +103,7 @@ async def get_evolution_note(
 @router.patch("/{note_id}")
 async def update_evolution_note(
     note_id: str,
-    body: dict,
+    body: EvolutionNoteUpdate,
     authorization: Optional[str] = Header(None),
 ):
     """Update an evolution note (therapist only)."""
@@ -126,7 +128,7 @@ async def update_evolution_note(
 
     data = await clinical_records_service.update_evolution_note(
         note_id=note_id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)

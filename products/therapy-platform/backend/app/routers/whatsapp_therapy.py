@@ -16,6 +16,11 @@ from app.dependencies import (
 )
 from app.rate_limit import limiter
 from app.responses import paginated_response, success_response
+from app.schemas.whatsapp import (
+    ReminderScheduleConfigure,
+    WhatsAppReminderCreate,
+    WhatsAppSendCreate,
+)
 from app.services import whatsapp_therapy_service
 
 logger = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ router = APIRouter(prefix="/api/whatsapp", tags=["WhatsApp"])
 @limiter.limit("30/minute")
 async def send_message(
     request: Request,
-    body: dict,
+    body: WhatsAppSendCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Send a WhatsApp message to a patient (therapist only)."""
@@ -38,7 +43,7 @@ async def send_message(
     db = get_user_client(token)
     data = await whatsapp_therapy_service.send_message(
         therapist_id=user.id,
-        body=body,
+        body=body.model_dump(mode="json", exclude_unset=True),
         db=db,
     )
     return success_response(data)
@@ -48,7 +53,7 @@ async def send_message(
 @limiter.limit("30/minute")
 async def send_reminder(
     request: Request,
-    body: dict,
+    body: WhatsAppReminderCreate,
     authorization: Optional[str] = Header(None),
 ):
     """Send an appointment reminder via WhatsApp."""
@@ -59,15 +64,15 @@ async def send_reminder(
 
     db = get_user_client(token)
     # Fetch appointment for the reminder
-    appointment_id = body.get("appointment_id")
-    appt = None
-    if appointment_id:
-        from app.dependencies import first_or_none
-        appt = first_or_none(
-            db.table("appointments").select("*").eq("id", appointment_id).execute()
-        )
+    appointment_id = str(body.appointment_id)
+    from app.dependencies import first_or_none
+    appt = first_or_none(
+        db.table("appointments").select("*").eq("id", appointment_id).execute()
+    )
     if not appt:
-        appt = body  # Fallback: use body as appointment data
+        # Provide a minimal appointment shape so the service layer can
+        # still log + skip cleanly when the appointment row is missing.
+        appt = {"id": appointment_id}
     data = await whatsapp_therapy_service.send_reminder(
         appointment=appt,
         db=db,
@@ -102,7 +107,7 @@ async def message_history(
 
 @router.post("/configurar-lembretes")
 async def configure_reminders(
-    body: dict,
+    body: ReminderScheduleConfigure,
     authorization: Optional[str] = Header(None),
 ):
     """Configure automated reminder schedules (therapist only)."""
@@ -114,7 +119,7 @@ async def configure_reminders(
     db = get_user_client(token)
     data = await whatsapp_therapy_service.configure_reminders(
         therapist_id=user.id,
-        body=body,
+        body=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)

@@ -49,9 +49,17 @@ class TestAssignHomework:
         assert resp.status_code == 403
 
     def test_assign_homework_401(self, client):
-        """No auth returns 401."""
+        """No auth returns 401.
+
+        Body MUST be a complete + valid `HomeworkAssignCreate` so the
+        request reaches the auth dependency (otherwise Pydantic 422
+        short-circuits before auth fires — see KB §
+        `PATTERNS/testing.md` 401-before-422 ordering).
+        """
         resp = client._tc.post("/api/homework", json={
+            "patient_id": "patient-001",
             "titulo": "Teste",
+            "descricao": "Anotar 3 pensamentos automáticos por dia",
         })
         assert resp.status_code == 401
 

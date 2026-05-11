@@ -16,6 +16,7 @@ from app.dependencies import (
     get_user_role,
 )
 from app.responses import paginated_response, success_response
+from app.schemas.clinical import AnamneseCreateWithPatient, AnamneseUpdate
 from app.services import clinical_records_service
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/anamnese", tags=["Anamnese"])
 
 @router.post("")
 async def create_anamnese(
-    body: dict,
+    body: AnamneseCreateWithPatient,
     authorization: Optional[str] = Header(None),
 ):
     """Create an anamnese for a patient (therapist only)."""
@@ -34,10 +35,11 @@ async def create_anamnese(
         raise HTTPException(status_code=403, detail="Apenas terapeutas podem criar anamneses")
 
     db = get_user_client(token)
+    payload = body.model_dump(mode="json", exclude_unset=True)
     data = await clinical_records_service.create_anamnese(
-        patient_id=body.get("patient_id", ""),
+        patient_id=str(body.patient_id),
         therapist_id=user.id,
-        data=body,
+        data=payload,
         db=db,
     )
     return success_response(data)
@@ -94,7 +96,7 @@ async def get_anamnese_for_patient(
 @router.patch("/{anamnese_id}")
 async def update_anamnese(
     anamnese_id: str,
-    body: dict,
+    body: AnamneseUpdate,
     authorization: Optional[str] = Header(None),
 ):
     """Update an existing anamnese (therapist only)."""
@@ -119,7 +121,7 @@ async def update_anamnese(
 
     data = await clinical_records_service.update_anamnese(
         anamnese_id=anamnese_id,
-        data=body,
+        data=body.model_dump(exclude_unset=True),
         db=db,
     )
     return success_response(data)
