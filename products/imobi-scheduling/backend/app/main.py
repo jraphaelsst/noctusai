@@ -27,6 +27,7 @@ from app.config import settings
 from app.rate_limit import limiter
 from app.routers.example_router import router as example_router
 from app.routers.webhook_router import router as webhook_router
+from app.routers.whatsapp_router import router as whatsapp_router
 
 app = create_product_app(
     name="Imobi Scheduling",
@@ -39,7 +40,13 @@ app = create_product_app(
     # skeletons — rename + extend per the TODO(new-product) markers in
     # ``app/routers/example_router.py`` (CRUD shape) and
     # ``app/routers/webhook_router.py`` (signed-receiver shape).
-    routers=[example_router, webhook_router],
+    # ``whatsapp_router`` consumes the seed factory
+    # ``noctusai_lib.integrations.whatsapp.create_whatsapp_webhook_router``
+    # — mount via ``routers=[...]`` (option b) because
+    # ``whatsapp_webhook`` is not yet in
+    # ``noctusai_seed.routers._STANDARD_ROUTERS``. Promotion to standard-
+    # router shape deferred until N=2 (mailing / therapy needing WhatsApp).
+    routers=[example_router, webhook_router, whatsapp_router],
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):

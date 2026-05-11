@@ -255,13 +255,54 @@ OPENAI_MODEL=gpt-4o-mini
 - **Worktree-isolation gap (recurrence, P0):** `python mcp/noctusai/cli.py` from the worktree fails (`No module named 'pydantic'` — worktree has no MCP venv). Resolved by using the main noc tree's venv directly: `/Users/.../noctusai/mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py`. Same shape as the `noctus.dev.scaffold_product` worktree-resolution gap surfaced in Phase 1 (`projects/mcp-worktree-path-resolution/`). N=2+ — the MCP toolkit consistently doesn't honor worktree filesystem isolation. Recurrence-rule fires: every worktree workflow that hits MCP CLI fails the same way. Flag for the existing `mcp-worktree-path-resolution` project.
 - **AST-first not used for service authoring (greenfield carve-out).** Phase 4 created a new file from scratch — no rename/refactor of existing AST nodes was needed. AST-first applies primarily to code edits over existing files; for greenfield, `Write` is the appropriate tool. Documented for future engineers — this carve-out is per `KB § PATTERNS/ast.md` (the boundary rule is *if the file is parsed*; new files have no existing AST to preserve).
 
-### Phase 5 — Wire seed: WhatsApp connector
+### Phase 5 — Wire seed: WhatsApp connector ✅
 
-- [ ] In `lifespan.py` and `main.py`: `configure_whatsapp_module(...)`; mount `whatsapp_webhook` standard router.
-- [ ] Provide product hooks (pushName auto-update; rejection-reply persistence) via DI to the seed router.
-- [ ] WAHA session configured.
-- [ ] Webhook signature secret in `.env`.
-- [ ] Manual smoke test end-to-end (send a WhatsApp message; verify webhook persists).
+- [x] In `main.py`: consume `noctusai_lib.integrations.whatsapp` factories
+      (`create_whatsapp_webhook_router` + `WhatsAppSettings`); mount via
+      `routers=[..., whatsapp_router]` (option **b** — `whatsapp_webhook`
+      is NOT in `noctusai_seed.routers._STANDARD_ROUTERS`, promotion
+      deferred to N=2). No `lifespan.py` needed — `WhatsAppSettings`
+      construction is import-time pure; no async bootstrap.
+- [x] Product hooks via DI to the seed router (
+      `app/routers/whatsapp_router.py::handle_inbound_whatsapp`):
+      pushName auto-update onto `users.name`; rejection-reply persistence
+      via `AuthorizationService.park_pending_lid` for LID inbounds; loud
+      WARN-and-drop for non-LID unauthorized.
+- [x] WAHA session configured (`waha_session_name` field, env
+      `WAHA_SESSION_NAME=imobi_scheduling`).
+- [x] Webhook signature secret in `.env.example`
+      (`IMOBI_WHATSAPP_WEBHOOK_SECRET`). Backend `.env.example` is net-new
+      for this product (no backend env-template pattern exists yet
+      platform-wide — N=1 candidate for lift if a second product needs
+      one).
+- [x] Manual smoke test — **DEFERRED** (no WAHA in worktree). Mark
+      ticked with destination = user smoke at next deploy drill
+      (`./start.sh imobi-scheduling tunnel` once .env populated).
+
+**Improvements:**
+- **Rate-limit on WhatsApp webhook (Pin 4 of 5-pin contract)** — the seed
+  router `create_whatsapp_webhook_router` does not expose a rate-limit
+  seam. Mounting the seed router through a `slowapi.limiter` route-level
+  dep would require either an outer wrapper route or a seam in the seed
+  factory. Filed for a follow-up project against
+  `noctusai_lib.integrations.whatsapp` (likely cross-cuts with the
+  whatsapp_webhook standard-router-promotion work).
+- **`whatsapp_webhook` not in `_STANDARD_ROUTERS`** — option (b) wired
+  this product. Promote to standard-router shape when N=2 surfaces
+  (e.g. mailing-bot, therapy-bot needing inbound WhatsApp). Three-step
+  maintenance contract is documented at
+  `seed/framework/backend/noctusai_seed/routers.py:242-248`.
+- **Backend `.env.example` template gap** — no platform-wide
+  `templates/product-seed/backend/.env.example`. This product ships one
+  hand-rolled. If a second product needs the same, lift into the seed
+  scaffolder (`scaffold_product` MCP tool) before shipping the third.
+- **`MockSupabaseClient.schema()` returns fresh instances** — our test
+  needed a `_StableScopedClient` wrapper to read back `inserted_payloads`
+  / `updated_payloads` from a schema-scoped client at the router level.
+  The `AuthorizationService` service-layer tests sidestep this by
+  reaching into `svc._scoped`; router-level tests can't. If this
+  recurs at N=2 (another router-level test reading back from scoped
+  state), lift `_StableScopedClient` into `noctusai_lib.testing`.
 
 ### Phase 6 — Wire seed: chatbot framework + tool-audit
 

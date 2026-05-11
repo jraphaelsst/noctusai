@@ -37,15 +37,25 @@ class ImobiSchedulingSettings(ProductSettings):
     # schema-scoped helpers consume those directly; no per-product field
     # needed here.
 
-    # ── Phase 5 — WhatsApp / WAHA wiring (forward-compat stubs) ──
-    # The connector lives at `noctusai_lib.integrations.whatsapp` and is
-    # configured at app startup via `configure_whatsapp_module(...)`.
-    # Defaults are empty so the schema is valid pre-Phase-5; the connector
-    # remains unwired until populated.
+    # ── Phase 5 — WhatsApp / WAHA wiring (LIVE) ──
+    # The connector lives at `noctusai_lib.integrations.whatsapp`. The
+    # product mounts the seed factory ``create_whatsapp_webhook_router``
+    # via ``app/routers/whatsapp_router.py``. Defaults stay empty so the
+    # schema is valid in early-dev — empty ``waha_base_url`` means the
+    # factory ``get_whatsapp_client()`` returns the in-memory FakeWahaClient
+    # per `KB § PATTERNS/seed-fake-real-adapter.md`. Empty
+    # ``imobi_whatsapp_webhook_secret`` engages signature-bypass mode at
+    # the seed router (logs WARNING; pin 3 of the 5-pin contract).
     waha_base_url: Optional[str] = None
     waha_api_key: Optional[str] = None
-    waha_session: str = "imobi_scheduling"
-    waha_webhook_hmac_secret: Optional[str] = None
+    waha_session_name: str = "imobi_scheduling"
+    """WAHA session name (env: WAHA_SESSION_NAME). Defaults to the
+    product slug — single-session per deployment in v1."""
+    imobi_whatsapp_webhook_secret: Optional[str] = None
+    """HMAC-SHA256 hex secret WAHA signs inbound webhooks with
+    (env: IMOBI_WHATSAPP_WEBHOOK_SECRET). When None, the seed router
+    skips signature verification + logs a WARNING. Set in ``.env``
+    to enforce pins 1-3 of the webhook 5-pin compliance contract."""
     conversation_memory_ttl_seconds: int = 3600
     message_debounce_seconds: int = 8
 
