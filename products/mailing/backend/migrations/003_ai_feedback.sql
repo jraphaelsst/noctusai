@@ -31,5 +31,8 @@ CREATE POLICY "ai_feedback_own_org" ON mailing.ai_feedback
         AND user_id = (SELECT auth.uid())
     );
 
+-- Service role bypass — canonical shape per noctusai_lib.sql.service_role_bypass
+CREATE POLICY "service_role_bypass" ON mailing.ai_feedback FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 COMMENT ON TABLE mailing.ai_feedback IS
     'Per-output AI feedback. Read+written by /api/ai/feedback standard router.';

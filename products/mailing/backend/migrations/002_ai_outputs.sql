@@ -48,5 +48,8 @@ CREATE POLICY "ai_outputs_own_org" ON mailing.ai_outputs
     USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid)
     WITH CHECK (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
 
+-- Service role bypass — canonical shape per noctusai_lib.sql.service_role_bypass
+CREATE POLICY "service_role_bypass" ON mailing.ai_outputs FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 COMMENT ON TABLE mailing.ai_outputs IS
     'Per-entity AI inferences (M3 contact segmentation + future). Read by /api/ai/outputs standard router; written by mailing services via noctusai_lib.ai.persist_output.';

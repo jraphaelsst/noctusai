@@ -394,3 +394,25 @@ INSERT INTO mailing.status_pagina (nome_pagina, status) VALUES
     ('settings', 'producao'),
     ('equipe', 'producao')
 ON CONFLICT (nome_pagina) DO NOTHING;
+
+-- ============================================================================
+-- Service role bypass on all RLS-enabled mailing tables
+-- Backend handles authorization in Python; service_role JWT bypasses RLS.
+-- Canonical shape per therapy/001_therapy_platform.sql:846+.
+-- Generated via noctusai_lib.sql.service_role_bypass(table, schema='mailing').
+-- ============================================================================
+
+CREATE POLICY "service_role_bypass" ON mailing.status_pagina FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.invitations FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.contacts FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.contact_lists FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.contact_list_members FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.templates FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.campaigns FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.automations FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.automation_steps FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.automation_enrollments FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.send_logs FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.link_clicks FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.unsubscribes FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON mailing.sender_domains FOR ALL TO service_role USING (true) WITH CHECK (true);
