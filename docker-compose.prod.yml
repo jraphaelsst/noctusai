@@ -72,6 +72,57 @@ include:
   # END_PRODUCTS_INCLUDE_PROD
 
 services:
+  # ─── Per-product frontend dev-override resets ───────────────────────
+  # The root `docker-compose.yml`'s `include:` block uses path-list
+  # syntax to auto-merge each product's `docker-compose.override.yml`
+  # (dev shape) on top of its base compose. Compose's `!reset` cannot
+  # cross include boundaries — a reset inside `<slug>/docker-compose.prod.yml`
+  # (itself loaded via this file's `include:`) does NOT see the override
+  # because the override was merged inside the ROOT base's include tree
+  # (a separate merge operation).
+  #
+  # The fix: declare top-level frontend service entries here that clear
+  # the dev override's `build.target: dev` + `command: ["npm", "run",
+  # "dev", ...]` via `!reset null`. Without these resets, the prod
+  # render would carry `command: npm run dev` against an nginx-only
+  # image (no node binary) and prod containers would crash on start.
+  #
+  # See KB § PATTERNS/containerization.md §11d "Dev/prod target split"
+  # for the multi-stage Dockerfile design that introduced this need.
+  core-frontend:
+    build: !reset null
+    command: !reset null
+  erp-imobiliario-frontend:
+    build: !reset null
+    command: !reset null
+  personal-finance-frontend:
+    build: !reset null
+    command: !reset null
+  therapy-platform-frontend:
+    build: !reset null
+    command: !reset null
+  seed-frontend:
+    build: !reset null
+    command: !reset null
+  daily-life-frontend:
+    build: !reset null
+    command: !reset null
+  mailing-frontend:
+    build: !reset null
+    command: !reset null
+  adconnect-frontend:
+    build: !reset null
+    command: !reset null
+  dev-team-frontend:
+    build: !reset null
+    command: !reset null
+  media-scheduling-frontend:
+    build: !reset null
+    command: !reset null
+  youtube-crawler-frontend:
+    build: !reset null
+    command: !reset null
+
   redis:
     restart: always
     logging:

@@ -18,8 +18,24 @@ services:
     restart: "no"
 
   media-scheduling-frontend:
+    build:
+      # `target: dev` picks the vite-dev-server stage from the multi-stage
+      # frontend Dockerfile. See KB § PATTERNS/containerization.md §11d.
+      target: dev
     volumes:
       - ./frontend:/app/products/media-scheduling/frontend
+    # `--host 0.0.0.0` is non-negotiable — vite's default `localhost`
+    # binding inside a container = unreachable from the host. `--port`
+    # MUST match the compose `ports:` mapping (8140:8140).
+    command:
+      - npm
+      - run
+      - dev
+      - --
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8140"
     environment:
       NODE_ENV: development
     restart: "no"

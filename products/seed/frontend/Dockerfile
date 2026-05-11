@@ -61,6 +61,38 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY products/seed/frontend ./
 RUN npm run build
 
+# ─── Dev stage: vite dev server with HMR ────────────────────────────────
+# Selected by `docker-compose.override.yml` via `build.target: dev` (auto-
+# loaded on `docker compose up` with no `-f` flags). Same first-two layers
+# as `build` (seed packages installed + product manifest installed) — we
+# stop short of `COPY products/seed/frontend ./` + `npm run build` because
+# the dev override bind-mounts product source on top at runtime and vite
+# runs `npm run dev` to watch it via HMR WebSocket.
+#
+# Default target is the nginx runtime stage below (production unchanged);
+# the dev stage is only built when target is explicit. See
+# KB § PATTERNS/containerization.md §11d "Dev/prod target split".
+FROM node:20-alpine AS dev
+WORKDIR /app
+COPY seed/framework/frontend ./seed/framework/frontend
+COPY seed/lib/frontend ./seed/lib/frontend
+WORKDIR /app/seed/framework/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund --include=peer
+WORKDIR /app/seed/lib/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund --include=peer
+WORKDIR /app
+COPY products/seed/frontend/package*.json ./products/seed/frontend/
+WORKDIR /app/products/seed/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund
+# NO `npm run build` — vite dev server runs at runtime via the override's
+# `command:`. `--host 0.0.0.0` is non-negotiable so the published port
+# reaches the container (vite's default `localhost` binding doesn't).
+EXPOSE 8100
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
 # ─── Runtime stage: nginx serves the static bundle ──────────────────────
 FROM nginx:alpine
 

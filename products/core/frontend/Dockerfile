@@ -42,6 +42,28 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY products/core/frontend ./
 RUN npm run build
 
+# Dev stage: vite dev server with HMR. Selected by docker-compose.override.yml
+# via `build.target: dev`. Same first-two layers as `build` (no source COPY,
+# no `npm run build`) — dev override bind-mounts product source at runtime
+# and vite runs `npm run dev`. See KB § PATTERNS/containerization.md §11d.
+FROM node:20-alpine AS dev
+WORKDIR /app
+COPY seed/framework/frontend ./seed/framework/frontend
+COPY seed/lib/frontend ./seed/lib/frontend
+WORKDIR /app/seed/framework/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund --include=peer
+WORKDIR /app/seed/lib/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund --include=peer
+WORKDIR /app
+COPY products/core/frontend/package*.json ./products/core/frontend/
+WORKDIR /app/products/core/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
 # Runtime: nginx serves the static bundle.
 FROM nginx:alpine
 

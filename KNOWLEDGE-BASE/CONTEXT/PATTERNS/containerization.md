@@ -1550,10 +1550,17 @@ carries three flips relative to the base compose:
    container crashes auto-recover. In dev that hides the crash in logs
    between restart loops; flipping to `"no"` makes failures visible.
 4. **`NODE_ENV=development`.** Frontend container env so any build-time
-   conditional routes to the dev path. Note: the production frontend
-   serves a pre-built nginx-static bundle, so bind-mount alone doesn't
-   give hot-reload — that requires the vite dev server, which is a
-   separate dev-server compose service (out of T7's scope; deferred).
+   conditional routes to the dev path.
+5. **`build.target: dev` + vite dev server `command:` (frontend).** The
+   override picks the `dev` stage from the multi-stage frontend
+   Dockerfile (node + deps installed, no `npm run build`) and runs
+   `npm run dev -- --host 0.0.0.0 --port <fp>` so vite watches the
+   bind-mounted source for HMR. Production (`docker-compose.prod.yml`
+   overlay) bypasses this override → default Dockerfile target = the
+   nginx runtime stage, serving the pre-built static bundle as before.
+   **The `--host 0.0.0.0` flag is non-negotiable** — vite's default
+   `localhost` binding inside a container is unreachable from the host.
+   Closes the HMR gap T7 deferred. See "Dev/prod target split" below.
 
 ### When the override applies
 
@@ -1611,6 +1618,45 @@ The scaffolder's `_register_in_root_compose` emits this multi-line
 shape for new products; `_unregister_from_root_compose` removes the
 whole 4-line block (path: parent + base + override) on delete.
 
+### Dev/prod target split
+
+**Locked 2026-05-11** (follow-up dispatch from T7). Closes the HMR gap
+the original T7 deferred. The canonical frontend Dockerfile is now
+three-stage:
+
+1. **`build`** stage (existing) — node + deps installed + `npm run
+   build` produces `/app/products/<slug>/frontend/dist`.
+2. **`dev`** stage (NEW) — node + deps installed, no `npm run build`.
+   Default `CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]` lets
+   `docker run` without compose still work; the dev override supplies
+   the actual `command:` with `--port <fp>` so the published port
+   matches the compose mapping.
+3. **`nginx:alpine`** runtime stage (existing, unchanged) — `COPY
+   --from=build .../dist` + nginx. **This is the default target** —
+   `docker build` with no `--target` flag builds production-shape
+   unchanged. T8's prod overlay continues to consume this image as-is.
+
+Selection is per-environment:
+
+```bash
+# Dev — auto-loads override → frontend builds `dev` stage → vite dev server
+docker compose up
+# (root) or
+cd products/seed && docker compose up
+
+# Prod — explicit overlay bypasses override → frontend builds default
+# (nginx) stage → serves static bundle, unchanged
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+```
+
+The `dev` stage adds image build time + image size, but only when
+explicitly built (target=dev). Production images are untouched.
+
+**Vite-in-docker is optional.** If you prefer running vite locally (`cd
+products/<slug>/frontend && npm run dev`), the dev-in-docker shape is
+opt-in. Both paths produce the same HMR experience; the docker shape
+is for "I want the full fleet up in one command."
+
 ### Common pitfalls
 
 - **Bind-mount must NOT clobber `/opt/venv`.** The backend Dockerfile
@@ -1618,6 +1664,28 @@ whole 4-line block (path: parent + base + override) on delete.
   only replaces source under `/app/products/<slug>/backend`. If a
   future Dockerfile moves the venv into `/app`, the override needs an
   anonymous volume to protect it.
+- **Frontend bind-mount overlays node_modules.** The `dev` stage
+  installs npm deps inside the image at
+  `/app/products/<slug>/frontend/node_modules`; the dev override
+  bind-mounts the product's host `./frontend` directory ON TOP at the
+  same path. The host directory typically has `node_modules/` (from
+  local `npm install`) — that one wins. If the host's `node_modules` is
+  stale or missing, dev startup fails with "cannot find package vite".
+  Either (a) `npm install` on the host first, OR (b) narrow the
+  bind-mount to `./frontend/src:/app/products/<slug>/frontend/src` so
+  only source is overlaid and the in-image `node_modules` survives.
+  Current shape uses (a); first-time users must run `npm install` per
+  product before `docker compose up`.
+- **`--host 0.0.0.0` is non-negotiable.** Vite's default `localhost`
+  binding inside a container = unreachable from the host. The
+  override's `command:` MUST include it. The `dev` stage's default
+  `CMD` does too as a safety fallback.
+- **`--port <fp>` must match the compose port mapping.** Compose
+  `ports: ["<fp>:<fp>"]` publishes the container port to host. Vite's
+  `--port <fp>` flag tells vite which port to bind inside the
+  container. They MUST match — HMR WebSocket rides on the same port,
+  and a mismatch shows up as "WebSocket connection failed" in the
+  browser console.
 - **`--reload` requires `uvicorn[standard]`.** Every product's
   `requirements.txt` pins `uvicorn[standard]==0.30.6` which bundles
   watchfiles. Confirmed across all 10 products (T7 audit).

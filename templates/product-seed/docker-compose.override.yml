@@ -37,8 +37,27 @@ services:
     restart: "no"
 
   {{PRODUCT_SLUG}}-frontend:
+    build:
+      # `target: dev` picks the vite-dev-server stage from the multi-stage
+      # frontend Dockerfile (production target stays nginx — `prod.yml`
+      # bypasses this override). See KB § PATTERNS/containerization.md
+      # §11d "Dev/prod target split".
+      target: dev
     volumes:
       - ./frontend:/app/products/{{PRODUCT_SLUG}}/frontend
+    # `--host 0.0.0.0` is non-negotiable — vite's default `localhost`
+    # binding inside a container = unreachable from the host. `--port`
+    # MUST match the compose `ports:` mapping ({{FRONTEND_PORT}}:{{FRONTEND_PORT}}). HMR WebSocket
+    # rides on the same port.
+    command:
+      - npm
+      - run
+      - dev
+      - --
+      - --host
+      - 0.0.0.0
+      - --port
+      - "{{FRONTEND_PORT}}"
     environment:
       NODE_ENV: development
     restart: "no"
