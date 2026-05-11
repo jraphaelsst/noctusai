@@ -1,3 +1,7 @@
+// accept-with-rationale: Equipe.tsx direct-fetch on seed `team` standard router (Pattern D)
+// — see KB § PATTERNS/accept-with-rationale.md. /api/team* endpoints are seed-owned (standard
+// router); a per-product useTeam hook wrapper would be code-for-the-sake-of-code at N=1
+// consumer within mailing. When seed ships cross-product team hooks, refactor mechanically.
 import { useEffect, useState } from "react";
 import { useAuthStore, api } from '@noctusai/seed/infra';
 import { toast } from "sonner";

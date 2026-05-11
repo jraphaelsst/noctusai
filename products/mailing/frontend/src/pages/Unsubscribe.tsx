@@ -1,3 +1,7 @@
+// accept-with-rationale: Unsubscribe.tsx direct-fetch on public /api/unsubscribe/{token}
+// (Pattern D) — see KB § PATTERNS/accept-with-rationale.md. Public route (no auth, single
+// use), bypasses standard hook plumbing for legitimate reasons. Refactor only if a second
+// public unsubscribe-shape page appears, or if cache state becomes relevant.
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from '@noctusai/seed/infra';

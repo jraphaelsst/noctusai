@@ -527,6 +527,46 @@ state change, not a removal.
 
 ---
 
+## Entries from `mailing-wiring` Phase 2 (filed 2026-05-11)
+
+### Settings/verify `GET /api/settings/domains/{id}/verify` is mutation-shaped (idempotent re-verify)
+
+- **Subject:** `useSettings.useVerifyDomain` hook performs `api.get(`/api/settings/domains/${id}/verify`)`, backend `routers/settings.py:48` GET endpoint triggers a domain DNS verification side effect.
+- **Decision:** keep the GET verb; do not refactor to POST.
+- **Reason:** domain verification is idempotent — re-running it any number of times produces the same outcome (DNS lookup against an external provider, mutation only happens if the verified state changes). The verb-quirk is a minor REST-purity divergence (mutations should be POST/PATCH), but the operation matches HTTP GET's safe/idempotent semantics in practice. Tag has `@limiter.limit` applied, so abuse is bounded. Refactoring would require frontend + backend + tests + downstream call sites (none currently); cost > benefit at N=1.
+- **Scope:** `products/mailing/frontend/src/hooks/useSettings.ts::useVerifyDomain` + `products/mailing/backend/app/routers/settings.py:48` (GET `/api/settings/domains/{id}/verify`).
+- **Revisit trigger:** **a second similar verb-quirk surfaces** (e.g. another `/verify` / `/refresh` / `/sync` endpoint in mailing or any other product using GET for a side-effect operation) — at N=2 the formalize is a seed-wide convention call (POST for any operation with side effects, regardless of idempotence) recorded in `KB § PATTERNS/backend.md § HTTP verb conventions`. OR the verification gains non-idempotent behavior (e.g. logs a verification attempt audit row each call) — at that point the GET is wrong and refactor wins.
+- **Recorded by:** `products/mailing/projects/mailing-wiring/PROJECT.md` Phase 0 §5.2.3 Q4 (2026-05-11), executed in Phase 2 (this entry).
+
+### `Equipe.tsx` direct-fetch on seed `team` standard router (Pattern D — N=1 mailing page)
+
+- **Subject:** `products/mailing/frontend/src/pages/Equipe.tsx` calls `api.get`/`api.post`/`api.delete` directly against `/api/team*` endpoints (5 callsites). Does not consume a `useTeam` hook.
+- **Decision:** keep direct-fetch shape; do not extract a `useTeam` hook for mailing.
+- **Reason:** the `team` endpoints come from the seed `team` standard router (mounted via `create_product_app(..., standard_routers=["team"])`); they are not mailing-product-owned. No other mailing page calls them, so a per-product hook wrapper would be code-for-the-sake-of-code. PF and ERP made the same call at their wiring phase (Pattern D accept). When the `team` surface needs typed hook ergonomics, the right destination is `seed/frontend/src/hooks/useTeam.ts` (cross-product seed hook), not per-product hooks.
+- **Scope:** `products/mailing/frontend/src/pages/Equipe.tsx` only. Other mailing pages use product-owned hooks.
+- **Revisit trigger:** **seed ships `useTeam` cross-product hooks** (e.g. as part of `seed/frontend/src/hooks/`) — at that point Equipe.tsx adopts the seed hook in a mechanical refactor and this entry retires. OR **a second mailing page needs team data** — at N=2 (within mailing) a product-local `useTeam.ts` hook becomes worth the wrap.
+- **Recorded by:** `products/mailing/projects/mailing-wiring/PROJECT.md` Phase 0 §5.2.3 Q-equipe (2026-05-11), executed in Phase 2 (this entry).
+
+### `Unsubscribe.tsx` direct-fetch on public `/api/unsubscribe/{token}` (Pattern D — public route, no auth)
+
+- **Subject:** `products/mailing/frontend/src/pages/Unsubscribe.tsx` calls `api.get`/`api.post` directly against `/api/unsubscribe/{token}` (1 GET + 1 POST callsite). Does not consume a hook.
+- **Decision:** keep direct-fetch shape; do not extract a `useUnsubscribe` hook.
+- **Reason:** the unsubscribe surface is a public route (no auth, no org scoping) — it bypasses every standard frontend auth interceptor that hooks rely on. The page is also single-use: a recipient lands on it once, confirms, and never returns. A hook wrapping a one-off public POST adds React-Query plumbing (cache key, invalidation, retry) for a request that doesn't benefit from any of it. Same shape as Equipe.tsx Pattern D (seed-owned endpoints OR public routes → direct-fetch ok).
+- **Scope:** `products/mailing/frontend/src/pages/Unsubscribe.tsx` only.
+- **Revisit trigger:** **a second public unsubscribe-shaped page appears** (e.g. preference center, re-subscribe confirmation, double-opt-in landing) — at N=2 within mailing the public-route pattern justifies a `useUnsubscribeAPI` hook OR a thin `publicAPI` wrapper at seed. OR the unsubscribe operation gains cache-relevant state (e.g. the recipient sees their previous preferences) — at that point the hook ergonomics pay off.
+- **Recorded by:** `products/mailing/projects/mailing-wiring/PROJECT.md` Phase 0 §5.2.3 Q-unsubscribe (2026-05-11), executed in Phase 2 (this entry).
+
+### Mailing orphan routes (5) kept for planned UI work (scaffolded-ahead-of-UI)
+
+- **Subject:** five mailing backend routes ship without a frontend caller — `PATCH /api/lists/{id}`, `PATCH /api/automations/{id}`, `PATCH /api/automations/{automation_id}/steps/{step_id}`, `POST /api/automations/{automation_id}/steps/reorder`, `DELETE /api/lists/{list_id}/members`, `GET /api/analytics/campaigns/{campaign_id}`, `POST /api/ai/campaigns/{id}/debrief/send`. All have backend tests; all have service-layer org-scoping (M-1 hardened in Phase 1).
+- **Decision:** keep all orphan routes; do not delete.
+- **Reason:** each route maps to a planned UI feature (lists rename, automations rename, step-edit drawer, step-reorder drag-and-drop, list member removal, per-campaign analytics drilldown, manual debrief send). Deleting them now means re-adding identical code when the UI lands — pure churn. The routes are correctly org-scoped (Phase 1 M-1 hardening) and tested; the only "cost" of keeping them is a few unused public-API entries on the OpenAPI schema, which is information rather than risk. Symmetric with the orphan-hook accept rationale: backend route + future-UI > delete-and-readd-cycle.
+- **Scope:** `products/mailing/backend/app/routers/{lists,automations,analytics,ai}.py` (the 6 routes named above).
+- **Revisit trigger:** **a route stays orphan for 6 months past mailing's first GA cut** (no UI feature lands consuming it) → cleanup pass deletes it OR documents the deferred feature explicitly. OR **the UI feature design lands and the route shape doesn't match** → adjust route + re-add corresponding hook (Phase 2 already deleted 5 test-only AI hooks; the 6 above are the symmetric backend keep). OR **the recurrence rule fires** (a 6th product accumulates >5 orphan routes from the same "scaffolded UI lagging" cause) → file a methodology project on the scaffold-ahead-of-UI pattern.
+- **Recorded by:** `products/mailing/projects/mailing-wiring/PROJECT.md` Phase 0 §5.2.3 Q2 (2026-05-11), executed in Phase 2 (this entry).
+
+---
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.

@@ -28,6 +28,9 @@ export function useAddDomain() {
 }
 
 export function useVerifyDomain() {
+  // accept-with-rationale: Settings/verify GET-as-mutation is idempotent re-verify
+  // (KB § PATTERNS/accept-with-rationale.md). DNS verify is safe to repeat; verb
+  // mismatch is documented divergence, not a bug.
   return useMutation({
     mutationFn: (id: string) => api.get(`/api/settings/domains/${id}/verify`),
   });

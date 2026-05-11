@@ -11,8 +11,8 @@
 > Intent = `wiring` per `KB § PATTERNS/project-execution.md §8`.
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 1 ✅ — seed-alignment + Tier A fixes + M-1 security hardening)
-- **Status:** Phase 0 ✅, Phase 1 ✅. Phases 2-5 pending (orchestrator scopes per design-batch decisions in §7).
+- **Last updated:** 2026-05-11 (Phase 2 ✅ — orphan-hook/orphan-route triage + accept-with-rationale catalog entries + LLM-audit follow-up project filed)
+- **Status:** Phase 0 ✅, Phase 1 ✅, Phase 2 ✅. Phases 3-5 pending (orchestrator scopes per design-batch decisions in §7).
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `products/mailing/MASTER-PROMPT.md` — agent-facing product contract
@@ -408,3 +408,61 @@ python mcp/noctusai/cli.py --scan-helpers --product mailing
     factory landing"; WWW had already invalidated that — the factory is in seed at
     `seed/lib/backend/noctusai_lib/api/auth.py:231-310` (confirmed). Adoption was mechanical
     via the codemod.
+
+- **2026-05-11 — Phase 2 ✅ (Engineer MAI-P2)** — Orphan-hook / orphan-route triage + accept-with-rationale catalog entries + stale-proposal triage + LLM-audit follow-up project filed
+  - **Focused-subset scope.** §7 default-recommendations applied: Q1 (5 AI orphan hooks → DELETE),
+    Q2 (orphan routes → KEEP via accept-with-rationale, symmetric with hooks-kept-for-UI), Q4
+    (settings/verify GET-as-mutation → accept-with-rationale), Q-equipe / Q-unsubscribe →
+    accept-with-rationale (Pattern D direct-fetch), Q7 → cross-product follow-up project filed.
+    Phases 3-5 left to subsequent orchestrator scopes.
+  - **Part 1 — DELETE 5 AI orphan hooks (Q1).** Removed `useGenerateSubjects`, `useDraftTemplate`,
+    `useReengagementVariants`, `useDeliverabilityReview`, `useTranslateTemplate` from
+    `frontend/src/hooks/useAI.ts` (52 LOC removed). Kept `useCampaignDebrief` (wired by
+    `CampaignDebriefSection.tsx`) + `useSegmentContacts` (wired by `Contacts.tsx:81`).
+    Updated `frontend/src/hooks/__tests__/useAI.test.ts` — dropped 7 test blocks for the
+    5 deleted hooks (110 LOC removed); kept the 1 `useSegmentContacts` test block. Backend
+    routes preserved per Q2 (planned UI work).
+  - **Part 2 — Orphan-route KEEP-with-rationale (Q2).** 5 orphan routes (`PATCH /api/lists/{id}`,
+    `PATCH /api/automations/{id}`, `PATCH /api/automations/{id}/steps/{step_id}`,
+    `POST /api/automations/{id}/steps/reorder`, `DELETE /api/lists/{id}/members`,
+    `GET /api/analytics/campaigns/{id}`, `POST /api/ai/campaigns/{id}/debrief/send`) all
+    kept; new accept-with-rationale catalog entry (`Mailing orphan routes (5) kept for
+    planned UI work`) documents the deferred-feature pattern with revisit triggers
+    (6-month staleness, design-shape mismatch, or N=6 cross-product recurrence).
+  - **Part 3 — Verb-quirk accept-with-rationale (Q4).** `useVerifyDomain` GET-as-mutation
+    documented in catalog (`Settings/verify GET-as-mutation is idempotent re-verify`).
+    Inline wayfinder comment added at `frontend/src/hooks/useSettings.ts:30`.
+  - **Part 4 — Pattern D accept-with-rationale (Q-equipe / Q-unsubscribe).** Two catalog
+    entries (`Equipe.tsx direct-fetch on seed team standard router`, `Unsubscribe.tsx
+    direct-fetch on public /api/unsubscribe/{token}`). Inline wayfinder comments added
+    at the top of `pages/Equipe.tsx` + `pages/Unsubscribe.tsx`.
+  - **Part 5 — LLM-audit follow-up project filed (Q7).** New `projects/llm-tool-audit-rollout/`
+    folder with full PROJECT.md scoping the M-4 cross-product gap (mailing 7 calls + therapy/
+    ERP/PF TBD). Project provisionally designed; Phase 0 discovery pending. Out of mailing-wiring
+    scope as recommended in §7 Q7.
+  - **Part 6 — Stale-proposal triage (3 files at `proposals/evaluations/20260419-014952-mailing/`).**
+    Created `STATUS.md` in the eval folder with triage table. Both health-endpoint-removal
+    proposals are **APPLIED-elsewhere** — `app/main.py:41` already mounts the framework
+    health router via `create_product_app(..., standard_routers=["health", ...])`; no
+    product-level `health.py` exists. Eval folder preserved per `comparison.md` §4
+    recommendation (worked example of agent-vs-headless authoring comparison).
+  - **Test delta**: 214 passed / 1 fail (Phase 1 baseline) → **214 passed / 1 fail** (no
+    backend touch in Phase 2; same pre-existing `test_e2e_flows.py::TestCampaignLifecycle::test_full_lifecycle`
+    flake from Phase 1). Frontend test count drop is expected (5 hook test blocks → 1
+    blocks); vitest verification pending orchestrator-side merge gate.
+  - **Files touched (12)**: `frontend/src/hooks/useAI.ts` (delete 5 hooks),
+    `frontend/src/hooks/__tests__/useAI.test.ts` (drop 7 test blocks),
+    `frontend/src/hooks/useSettings.ts` (wayfinder comment),
+    `frontend/src/pages/Equipe.tsx` (wayfinder comment),
+    `frontend/src/pages/Unsubscribe.tsx` (wayfinder comment),
+    `KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md` (+4 entries under new
+    `Entries from mailing-wiring Phase 2` section),
+    `projects/llm-tool-audit-rollout/PROJECT.md` (new file),
+    `products/mailing/proposals/evaluations/20260419-014952-mailing/STATUS.md` (new file),
+    `products/mailing/projects/mailing-wiring/PROJECT.md` (this update).
+  - **Decisions surfaced (proposals triage)**:
+    | Proposal | Disposition |
+    |---|---|
+    | `openai-gpt-4o-mini-20260419-015001-remove-custom-health-endpoint-in-mailing-product.md` | APPLIED-elsewhere (seed framework `standard_routers=["health"]`) |
+    | `claude-opus-4-7-20260419-015135-remove-product-level-health.py-in-mailing-—-delega.md` | APPLIED-elsewhere (same — seed pattern absorbed) |
+    | `comparison.md` | KEEP as eval-methodology reference |

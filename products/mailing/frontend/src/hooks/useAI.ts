@@ -2,6 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
 // AI feature hooks — ai-expansion Phase 14 (Mailing M1, M2, M5, M6, M7) + Phase 8 (M3) + Phase 12 (M4 debrief).
+//
+// Phase 2 (2026-05-11, mailing-wiring) orphan-hook triage:
+// Deleted 5 test-only AI hooks: useGenerateSubjects / useDraftTemplate /
+// useReengagementVariants / useDeliverabilityReview / useTranslateTemplate.
+// Each had backend route + test coverage but ZERO UI consumers — corresponding
+// backend routes are KEPT per Q2 (planned UI work). Re-add the hook surface
+// when the designs land; backend contract is unchanged.
 
 /** M4 — campaign debrief narrative. Read-only; calls AI service via consent guard. */
 export interface CampaignDebriefResponse {
@@ -22,72 +29,6 @@ export function useCampaignDebrief(campaignId: string | null | undefined) {
     // Debrief content is stable per campaign; long stale window keeps cache warm.
     staleTime: 1000 * 60 * 30,
     retry: false,
-  });
-}
-
-export interface SubjectVariant {
-  text: string;
-  tone: string;
-}
-
-export interface ReengagementVariant {
-  tone: string;
-  subject: string;
-  body_html: string;
-}
-
-export interface DeliverabilityFinding {
-  code: string;
-  severity: "info" | "warning" | "error";
-  message: string;
-}
-
-export function useGenerateSubjects() {
-  return useMutation<SubjectVariant[], Error, { campaign_summary: string }>({
-    mutationFn: async (body) => {
-      const { data } = await api.post("/api/ai/subjects", body);
-      return data?.variants ?? [];
-    },
-  });
-}
-
-export function useDraftTemplate() {
-  return useMutation<string, Error, { prompt: string }>({
-    mutationFn: async (body) => {
-      const { data } = await api.post("/api/ai/template-draft", body);
-      return data?.html ?? "";
-    },
-  });
-}
-
-export function useReengagementVariants() {
-  return useMutation<ReengagementVariant[], Error, { context: string }>({
-    mutationFn: async (body) => {
-      const { data } = await api.post("/api/ai/reengagement", body);
-      return data?.variants ?? [];
-    },
-  });
-}
-
-export function useDeliverabilityReview() {
-  return useMutation<
-    { findings: DeliverabilityFinding[] },
-    Error,
-    { html: string; subject?: string }
-  >({
-    mutationFn: async (body) => {
-      const { data } = await api.post("/api/ai/deliverability", body);
-      return { findings: data?.findings ?? [] };
-    },
-  });
-}
-
-export function useTranslateTemplate() {
-  return useMutation<string, Error, { html: string; target_lang: "en" | "es" | "fr" }>({
-    mutationFn: async (body) => {
-      const { data } = await api.post("/api/ai/translate", body);
-      return data?.html ?? body.html;
-    },
   });
 }
 
