@@ -15,12 +15,13 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 ToolCallStatus = Literal["success", "failure", "unknown_tool"]
 
 
-class ToolCallAuditOut(BaseModel):
+class ToolCallAuditOut(StrictHttpModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int

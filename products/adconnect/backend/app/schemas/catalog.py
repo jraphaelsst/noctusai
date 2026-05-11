@@ -22,7 +22,8 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # ---------------------------------------------------------------------------
 
 
-class CategoriaIn(BaseModel):
+class CategoriaIn(StrictHttpModel):
     """Payload for creating/updating a category."""
 
     nome: str = Field(min_length=1, max_length=128)
@@ -39,7 +40,7 @@ class CategoriaIn(BaseModel):
     ativa: bool = True
 
 
-class CategoriaOut(BaseModel):
+class CategoriaOut(StrictHttpModel):
     """Read-side category row."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -59,7 +60,7 @@ class CategoriaOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ProductIn(BaseModel):
+class ProductIn(StrictHttpModel):
     """Payload for creating/updating a product."""
 
     sku: str = Field(min_length=1, max_length=64)
@@ -73,7 +74,7 @@ class ProductIn(BaseModel):
     ativo: bool = True
 
 
-class ProductOut(BaseModel):
+class ProductOut(StrictHttpModel):
     """Read-side product row.
 
     The `effective_price` field is populated by the service layer when the
@@ -105,7 +106,7 @@ class ProductOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PrecoDistribuidorIn(BaseModel):
+class PrecoDistribuidorIn(StrictHttpModel):
     """Payload for setting a per-distributor preferential price."""
 
     product_id: UUID
@@ -115,7 +116,7 @@ class PrecoDistribuidorIn(BaseModel):
     valido_ate: Optional[datetime] = None
 
 
-class PrecoDistribuidorOut(BaseModel):
+class PrecoDistribuidorOut(StrictHttpModel):
     """Read-side preferential price row."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -135,7 +136,7 @@ class PrecoDistribuidorOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PromoIn(BaseModel):
+class PromoIn(StrictHttpModel):
     """Payload for creating/updating a promotional rule.
 
     Per the `adconnect.promos` CHECK constraint, exactly one of
@@ -154,7 +155,7 @@ class PromoIn(BaseModel):
     aplicavel_distribuidores: list[UUID] = Field(default_factory=list)
 
 
-class PromoOut(BaseModel):
+class PromoOut(StrictHttpModel):
     """Read-side promo row."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -179,7 +180,7 @@ class PromoOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class DistributorOut(BaseModel):
+class DistributorOut(StrictHttpModel):
     """Read-side distributor row."""
 
     model_config = ConfigDict(from_attributes=True)

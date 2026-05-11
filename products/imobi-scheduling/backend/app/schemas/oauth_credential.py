@@ -9,10 +9,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class OAuthCredentialCreate(BaseModel):
+class OAuthCredentialCreate(StrictHttpModel):
     provider: str = Field(..., min_length=1, max_length=40)
     account_email: str = Field(..., min_length=1, max_length=255)
     # Encrypted at-rest by the application layer before INSERT.
@@ -22,14 +23,14 @@ class OAuthCredentialCreate(BaseModel):
     scopes: str = Field(..., min_length=1)
 
 
-class OAuthCredentialUpdate(BaseModel):
+class OAuthCredentialUpdate(StrictHttpModel):
     refresh_token: str | None = Field(None, min_length=1)
     access_token: str | None = None
     access_token_expires_at: datetime | None = None
     scopes: str | None = None
 
 
-class OAuthCredentialOut(BaseModel):
+class OAuthCredentialOut(StrictHttpModel):
     """Response shape — refresh_token redacted at the API boundary.
 
     Routers SHOULD strip ``refresh_token`` from any list/detail response;

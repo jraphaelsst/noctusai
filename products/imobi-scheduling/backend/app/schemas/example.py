@@ -11,10 +11,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class ExampleCreate(BaseModel):
+class ExampleCreate(StrictHttpModel):
     """Request body for ``POST /api/example``.
 
     TODO(new-product): rename + extend with the real domain fields.
@@ -23,7 +24,7 @@ class ExampleCreate(BaseModel):
     description: str | None = Field(None, max_length=2000)
 
 
-class ExampleOut(BaseModel):
+class ExampleOut(StrictHttpModel):
     """Response body for list / detail / create.
 
     TODO(new-product): rename + extend with the real domain fields.
@@ -37,7 +38,7 @@ class ExampleOut(BaseModel):
     created_at: datetime
 
 
-class ExampleListResponse(BaseModel):
+class ExampleListResponse(StrictHttpModel):
     """Cursor-paginated list response.
 
     Mirrors the shape used in production routers (e.g.

@@ -11,7 +11,8 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
+from noctusai_lib.api import StrictHttpModel
 
 AppointmentRequestStatus = Literal[
     "collecting_details",
@@ -30,7 +31,7 @@ AppointmentStatus = Literal[
 ]
 
 
-class AppointmentRequestCreate(BaseModel):
+class AppointmentRequestCreate(StrictHttpModel):
     requester_user_id: UUID
     property_id: UUID | None = None
     condominium_id: UUID | None = None
@@ -40,7 +41,7 @@ class AppointmentRequestCreate(BaseModel):
     notes: str | None = None
 
 
-class AppointmentRequestUpdate(BaseModel):
+class AppointmentRequestUpdate(StrictHttpModel):
     property_id: UUID | None = None
     condominium_id: UUID | None = None
     requested_date: date | None = None
@@ -49,7 +50,7 @@ class AppointmentRequestUpdate(BaseModel):
     notes: str | None = None
 
 
-class AppointmentRequestOut(BaseModel):
+class AppointmentRequestOut(StrictHttpModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -65,7 +66,7 @@ class AppointmentRequestOut(BaseModel):
     updated_at: datetime
 
 
-class AppointmentCreate(BaseModel):
+class AppointmentCreate(StrictHttpModel):
     appointment_request_id: UUID | None = None
     property_id: UUID
     condominium_id: UUID
@@ -83,7 +84,7 @@ class AppointmentCreate(BaseModel):
         return self
 
 
-class AppointmentUpdate(BaseModel):
+class AppointmentUpdate(StrictHttpModel):
     media_crew_user_id: UUID | None = None
     route_group_id: UUID | None = None
     google_calendar_event_id: str | None = Field(None, max_length=255)
@@ -98,7 +99,7 @@ class AppointmentUpdate(BaseModel):
         return self
 
 
-class AppointmentOut(BaseModel):
+class AppointmentOut(StrictHttpModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID

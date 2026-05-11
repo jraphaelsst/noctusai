@@ -4,10 +4,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 
-class PropertyCreate(BaseModel):
+class PropertyCreate(StrictHttpModel):
     condominium_id: UUID
     code: str = Field(..., min_length=1, max_length=32)
     unit: str | None = Field(None, max_length=80)
@@ -15,14 +16,14 @@ class PropertyCreate(BaseModel):
     active: bool = True
 
 
-class PropertyUpdate(BaseModel):
+class PropertyUpdate(StrictHttpModel):
     code: str | None = Field(None, min_length=1, max_length=32)
     unit: str | None = Field(None, max_length=80)
     address_notes: str | None = None
     active: bool | None = None
 
 
-class PropertyOut(BaseModel):
+class PropertyOut(StrictHttpModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID

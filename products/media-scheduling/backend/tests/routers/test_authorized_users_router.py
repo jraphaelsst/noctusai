@@ -111,6 +111,33 @@ def test_create_authorized_user_rejects_missing_phone(client):
     assert resp.status_code in (400, 422)
 
 
+def test_create_authorized_user_rejects_unknown_field_with_422(client):
+    """StrictHttpModel migration guard — unknown keys 422 (was silently dropped).
+
+    Pre-migration (`pydantic.BaseModel`, `extra="ignore"`) silently dropped
+    `bogus_field`. Post-migration (`StrictHttpModel`, `extra="forbid"`) the
+    schema rejects with 422 and names the offending `loc`. Defends against
+    the silent-drop misroute class (`KB § PATTERNS/pydantic-strict-http.md`).
+    """
+    mock = MockSupabaseClient()
+    mock.set_table_data("authorized_users", [])
+
+    with _patch_authorized_users_db(mock):
+        resp = client.post(
+            "/api/authorized-users",
+            json={
+                "name": "Bob",
+                "phone_number": "+5511999990002",
+                "role": "real_estate_agent",
+                "bogus_field": "should-422",
+            },
+        )
+
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert any("bogus_field" in str(err.get("loc", "")) for err in body.get("detail", []))
+
+
 def test_get_authorized_user_detail_returns_wired_row(client):
     """200 + is_active wire-shape on detail route.
 

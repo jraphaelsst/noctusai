@@ -11,26 +11,27 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 PendingChatStatus = Literal["pending", "resolved", "rejected"]
 
 
-class PendingChatIdentityCreate(BaseModel):
+class PendingChatIdentityCreate(StrictHttpModel):
     chat_id: str = Field(..., min_length=1, max_length=128)
     push_name: str | None = Field(None, max_length=120)
     phone_hint: str | None = Field(None, max_length=32)
     status: PendingChatStatus = "pending"
 
 
-class PendingChatIdentityResolve(BaseModel):
+class PendingChatIdentityResolve(StrictHttpModel):
     """Admin action: bind a pending chat to a real user (or reject it)."""
 
     status: PendingChatStatus
     resolved_to_user_id: UUID | None = None
 
 
-class PendingChatIdentityOut(BaseModel):
+class PendingChatIdentityOut(StrictHttpModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID

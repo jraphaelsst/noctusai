@@ -5,12 +5,13 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 RouteGroupStatus = Literal["not_started", "pending", "optimized", "failed"]
 
 
-class RouteGroupCreate(BaseModel):
+class RouteGroupCreate(StrictHttpModel):
     date: date
     media_crew_user_id: UUID | None = None
     office_start_location: str | None = Field(None, max_length=255)
@@ -18,14 +19,14 @@ class RouteGroupCreate(BaseModel):
     optimization_status: RouteGroupStatus = "not_started"
 
 
-class RouteGroupUpdate(BaseModel):
+class RouteGroupUpdate(StrictHttpModel):
     media_crew_user_id: UUID | None = None
     office_start_location: str | None = Field(None, max_length=255)
     office_end_location: str | None = Field(None, max_length=255)
     optimization_status: RouteGroupStatus | None = None
 
 
-class RouteGroupOut(BaseModel):
+class RouteGroupOut(StrictHttpModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -39,7 +40,7 @@ class RouteGroupOut(BaseModel):
     updated_at: datetime
 
 
-class RouteCacheUpsert(BaseModel):
+class RouteCacheUpsert(StrictHttpModel):
     """Cache an origin→destination routing result from Google Maps."""
 
     origin_place_id: str = Field(..., min_length=1)
@@ -53,7 +54,7 @@ class RouteCacheUpsert(BaseModel):
     expires_at: datetime | None = None
 
 
-class RouteOut(BaseModel):
+class RouteOut(StrictHttpModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID

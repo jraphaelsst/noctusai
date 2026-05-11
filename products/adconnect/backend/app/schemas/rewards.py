@@ -6,14 +6,15 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 RewardType = Literal["cashback", "verba_mkt"]
 AccrualStatus = Literal["pendente", "liberado", "utilizado", "cancelado"]
 RedemptionStatus = Literal["pendente", "aprovado", "rejeitado", "pago"]
 
 
-class RewardRuleOut(BaseModel):
+class RewardRuleOut(StrictHttpModel):
     id: str
     org_id: Optional[str] = None
     nome: str
@@ -30,7 +31,7 @@ class RewardRuleOut(BaseModel):
     valido_ate: Optional[date] = None
 
 
-class RewardLedgerEntry(BaseModel):
+class RewardLedgerEntry(StrictHttpModel):
     id: str
     distributor_id: str
     regra_id: Optional[str] = None
@@ -44,29 +45,30 @@ class RewardLedgerEntry(BaseModel):
     accrued_at: Optional[datetime] = None
 
 
-class RewardLedgerOut(BaseModel):
+class RewardLedgerOut(StrictHttpModel):
     data: list[RewardLedgerEntry] = Field(default_factory=list)
     summary: dict[str, float] = Field(default_factory=dict)
 
 
-class RewardRulesListOut(BaseModel):
+class RewardRulesListOut(StrictHttpModel):
     data: list[RewardRuleOut] = Field(default_factory=list)
 
 
-class RedemptionRequestIn(BaseModel):
+class RedemptionRequestIn(StrictHttpModel):
     distributor_id: str
     tipo: RewardType
     valor: float
     pedido_ref: Optional[str] = None
 
 
-class RedemptionProcessIn(BaseModel):
+class RedemptionProcessIn(StrictHttpModel):
     status: Literal["aprovado", "rejeitado", "pago"]
     review_notes: Optional[str] = None
 
 
-class RedemptionOut(BaseModel):
+class RedemptionOut(StrictHttpModel):
     id: str
+    org_id: Optional[str] = None
     distributor_id: str
     tipo: RewardType
     valor: float

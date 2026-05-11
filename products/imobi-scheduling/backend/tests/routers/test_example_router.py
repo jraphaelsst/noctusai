@@ -44,6 +44,22 @@ class TestExampleRouterValidation:
         resp = client.get("/api/example?limit=999")
         assert resp.status_code == 422
 
+    def test_create_with_unknown_field_returns_422(self, client):
+        """StrictHttpModel migration guard — unknown keys 422 (was silently dropped).
+
+        Pre-migration (`pydantic.BaseModel`, `extra="ignore"`) silently dropped
+        `bogus_field`. Post-migration (`StrictHttpModel`, `extra="forbid"`) the
+        schema rejects with 422 and names the offending `loc`. Defends against
+        the silent-drop misroute class (`KB § PATTERNS/pydantic-strict-http.md`).
+        """
+        resp = client.post(
+            "/api/example",
+            json={"title": "valid title", "bogus_field": "should-422"},
+        )
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert any("bogus_field" in str(err.get("loc", "")) for err in body.get("detail", []))
+
 
 # NOTE: There are NO list/create body tests yet because
 # ``ExampleService.list`` / ``.create`` raise NotImplementedError on

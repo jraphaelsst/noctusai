@@ -22,7 +22,8 @@ import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 from app.database import get_supabase_client
 from app.dependencies import get_current_user_org
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/authorized-users", tags=["AuthorizedUsers"])
 
 
-class AuthorizedUserCreate(BaseModel):
+class AuthorizedUserCreate(StrictHttpModel):
     """POST shape — frontend may send is_active, name, phone_number, role,
     email, optional notes. `notes` persisted as-is (column added in
     migration 007)."""
@@ -45,7 +46,7 @@ class AuthorizedUserCreate(BaseModel):
     notes: Optional[str] = Field(default=None)
 
 
-class AuthorizedUserUpdate(BaseModel):
+class AuthorizedUserUpdate(StrictHttpModel):
     name: Optional[str] = None
     phone_number: Optional[str] = None
     role: Optional[str] = None

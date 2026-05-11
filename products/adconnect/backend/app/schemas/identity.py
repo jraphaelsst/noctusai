@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import EmailStr, Field
+from noctusai_lib.api import StrictHttpModel
 
 DistributorStatus = Literal["ativo", "pendente", "suspenso", "inativo"]
 DistributorTier = Literal["STARTER", "INSIDER", "MASTER", "SMARTER"]
@@ -19,7 +20,7 @@ MembershipRole = Literal[
 ]
 
 
-class DistributorIn(BaseModel):
+class DistributorIn(StrictHttpModel):
     """Brand-admin payload to register a new distributor."""
 
     cnpj: str = Field(..., min_length=14, max_length=18)
@@ -45,7 +46,7 @@ class DistributorOut(DistributorIn):
     updated_at: Optional[str] = None
 
 
-class MembershipIn(BaseModel):
+class MembershipIn(StrictHttpModel):
     """Brand-admin payload to grant a user membership to a distributor."""
 
     user_id: str
@@ -58,7 +59,7 @@ class MembershipOut(MembershipIn):
     created_at: Optional[str] = None
 
 
-class AcceptDistributorInviteIn(BaseModel):
+class AcceptDistributorInviteIn(StrictHttpModel):
     """Payload for `/api/auth/accept-distributor-invite` (Phase 1).
 
     The brand admin invites a user via the seed's `team` standard router

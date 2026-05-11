@@ -154,3 +154,26 @@ def test_process_redemption_marks_paid(db_and_client) -> None:
     updates = db.table("resgates_recompensa").updated_payloads
     assert updates[0]["status"] == "pago"
     assert "paid_at" in updates[0]
+
+
+def test_redeem_rejects_unknown_field_with_422(db_and_client) -> None:
+    """StrictHttpModel migration guard — payloads with unknown keys 422.
+
+    Pre-migration (`pydantic.BaseModel`, `extra="ignore"`) silently dropped
+    `bogus_field`. Post-migration (`StrictHttpModel`, `extra="forbid"`) the
+    schema rejects with 422 and names the offending `loc`. Defends against
+    the silent-drop misroute class (`KB § PATTERNS/pydantic-strict-http.md`).
+    """
+    tc, db = db_and_client
+    bind_adconnect_user(db, role="customer", distributor_id="dist-001", org_id="org-test")
+    payload = {
+        "distributor_id": "dist-001",
+        "tipo": "cashback",
+        "valor": 50.0,
+        "bogus_field": "should-422",
+    }
+    res = tc.post("/rewards/redeem", json=payload, headers=_auth(_distributor_token()))
+    assert res.status_code == 422, res.text
+    body = res.json()
+    # FastAPI surfaces the offending key name in the `loc` tuple.
+    assert any("bogus_field" in str(err.get("loc", "")) for err in body.get("detail", []))

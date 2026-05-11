@@ -10,13 +10,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 SubmissionMode = Literal["estruturado", "nfe_xml", "attachment"]
 SelloutStatus = Literal["pendente", "aprovado", "rejeitado"]
 
 
-class SelloutEstruturadoIn(BaseModel):
+class SelloutEstruturadoIn(StrictHttpModel):
     """Estruturado-mode submission — distributor fills structured fields directly."""
 
     distributor_id: str
@@ -29,7 +30,7 @@ class SelloutEstruturadoIn(BaseModel):
     observacoes: Optional[str] = None
 
 
-class SelloutAttachmentIn(BaseModel):
+class SelloutAttachmentIn(StrictHttpModel):
     """Form-fields piece of an attachment submission. The actual file bytes
     are uploaded as multipart `file` and stored via `storage` integration."""
 
@@ -38,12 +39,12 @@ class SelloutAttachmentIn(BaseModel):
     observacoes: Optional[str] = None
 
 
-class SelloutReviewIn(BaseModel):
+class SelloutReviewIn(StrictHttpModel):
     status: Literal["aprovado", "rejeitado"]
     review_notes: Optional[str] = None
 
 
-class SelloutOut(BaseModel):
+class SelloutOut(StrictHttpModel):
     id: str
     org_id: Optional[str] = None
     distributor_id: str
@@ -66,7 +67,7 @@ class SelloutOut(BaseModel):
     submitted_by: Optional[str] = None
 
 
-class SelloutListOut(BaseModel):
+class SelloutListOut(StrictHttpModel):
     data: list[SelloutOut] = Field(default_factory=list)
 
 

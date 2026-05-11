@@ -16,7 +16,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 FaturaStatus = Literal[
     "rascunho",
@@ -40,7 +41,7 @@ NFeStatus = Literal[
 # ---------------------------------------------------------------------------
 
 
-class FaturaIn(BaseModel):
+class FaturaIn(StrictHttpModel):
     """Body for `POST /financial/invoices` — creates a draft invoice for a pedido.
 
     Phase 5 wires this from the order-confirmed lifecycle: when admin
@@ -54,7 +55,7 @@ class FaturaIn(BaseModel):
     observacoes: Optional[str] = None
 
 
-class FaturaOut(BaseModel):
+class FaturaOut(StrictHttpModel):
     id: str
     distributor_id: str
     pedido_id: Optional[str] = None
@@ -83,24 +84,24 @@ class FaturaOut(BaseModel):
     updated_at: Optional[datetime] = None
 
 
-class FaturaListOut(BaseModel):
+class FaturaListOut(StrictHttpModel):
     data: list[FaturaOut] = Field(default_factory=list)
 
 
-class IssueRequest(BaseModel):
+class IssueRequest(StrictHttpModel):
     """Body for `POST /financial/invoices/{id}/issue` — admin issues NF-e + Stripe invoice."""
 
     # Optional override of due_date when issuing.
     due_date: Optional[date] = None
 
 
-class CancelRequest(BaseModel):
+class CancelRequest(StrictHttpModel):
     """Body for `POST /financial/invoices/{id}/cancel` — requires justificativa per NF-e regulation."""
 
     justificativa: str = Field(min_length=15, max_length=255)
 
 
-class WebhookEvent(BaseModel):
+class WebhookEvent(StrictHttpModel):
     """Stripe webhook event envelope (subset we care about)."""
 
     id: str

@@ -5,12 +5,13 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 MessageDirection = Literal["inbound", "outbound", "system"]
 
 
-class ConversationMessageCreate(BaseModel):
+class ConversationMessageCreate(StrictHttpModel):
     """A persisted WhatsApp message (inbound from user, outbound from bot, or system note)."""
 
     provider_message_id: str | None = Field(None, max_length=255)
@@ -21,7 +22,7 @@ class ConversationMessageCreate(BaseModel):
     structured_payload: dict[str, Any] | None = None
 
 
-class ConversationMessageOut(BaseModel):
+class ConversationMessageOut(StrictHttpModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -35,7 +36,7 @@ class ConversationMessageOut(BaseModel):
     created_at: datetime
 
 
-class ConversationSummaryCreate(BaseModel):
+class ConversationSummaryCreate(StrictHttpModel):
     # ``model_used`` collides with pydantic's protected ``model_`` namespace
     # but is a domain-justified field name (which OpenAI model labeled the
     # summary). Disable the namespace guard for these summary schemas only.
@@ -51,7 +52,7 @@ class ConversationSummaryCreate(BaseModel):
     ended_at: datetime
 
 
-class ConversationSummaryOut(BaseModel):
+class ConversationSummaryOut(StrictHttpModel):
     # See note on ConversationSummaryCreate — protected_namespaces=() lets
     # ``model_used`` round-trip without a pydantic warning.
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())

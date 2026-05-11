@@ -14,7 +14,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 from app.schemas.identity import DistributorIn
 
@@ -29,14 +30,14 @@ InvoiceStatus = Literal[
 # ---------------------------------------------------------------------------
 
 
-class DashboardCounts(BaseModel):
+class DashboardCounts(StrictHttpModel):
     """Counts/aggregations bucket — keeps the dashboard payload self-describing."""
 
     total: int = 0
     by_status: dict[str, int] = Field(default_factory=dict)
 
 
-class DashboardMetricsOut(BaseModel):
+class DashboardMetricsOut(StrictHttpModel):
     """Single-call dashboard payload for the brand admin landing.
 
     Aggregates across distributors + pedidos (this calendar month) + sellout +
@@ -56,7 +57,7 @@ class DashboardMetricsOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class DistributorMetrics(BaseModel):
+class DistributorMetrics(StrictHttpModel):
     """Per-distributor aggregations the admin list view surfaces."""
 
     last_pedido_at: Optional[datetime] = None
@@ -65,14 +66,18 @@ class DistributorMetrics(BaseModel):
     invoices_pending: int = 0
 
 
-class DistributorWithMetricsOut(BaseModel):
+class DistributorWithMetricsOut(StrictHttpModel):
     """Distributor row + per-row aggregations.
 
     Mirrors `DistributorOut` shape from `app.schemas.identity`, plus `metrics`.
-    Kept loose (`extra='allow'` via no-config) so unexpected DB columns surface
-    in the response without a schema error — admin V2 can lock this down once
-    the UI shape is final.
+    Deliberate carve-out from `StrictHttpModel` strictness: keeps `extra="allow"`
+    so unexpected DB columns surface in the response without a 422 — admin V2
+    can lock this down once the UI shape is final. The carve-out is the
+    canonical example referenced in `seed/lib/backend/noctusai_lib/api/schemas.py`.
     """
+
+    # Explicit opt-out from the StrictHttpModel parent default of extra="forbid".
+    model_config = ConfigDict(extra="allow")
 
     id: str
     org_id: str
@@ -93,7 +98,7 @@ class DistributorWithMetricsOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RewardRuleIn(BaseModel):
+class RewardRuleIn(StrictHttpModel):
     """Brand-admin payload to create or update a reward rule.
 
     Mirrors `adconnect.regras_recompensa` columns. The router fills `org_id`
@@ -121,7 +126,7 @@ class RewardRuleOut(RewardRuleIn):
     updated_at: Optional[datetime] = None
 
 
-class RewardRuleListOut(BaseModel):
+class RewardRuleListOut(StrictHttpModel):
     """Loose list-shape — DB-row dicts pass through verbatim. Strict
     `RewardRuleOut` validation lives at the create/update endpoints where
     the response always carries the full shape; at list-time we keep the
@@ -135,7 +140,7 @@ class RewardRuleListOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class AdminInvoiceFilters(BaseModel):
+class AdminInvoiceFilters(StrictHttpModel):
     """Query-string filters for `GET /api/admin/invoices`.
 
     Kept on a Pydantic model rather than as bare router kwargs so the same
@@ -150,15 +155,15 @@ class AdminInvoiceFilters(BaseModel):
     due_to: Optional[str] = None
 
 
-class AdminDistributorListOut(BaseModel):
+class AdminDistributorListOut(StrictHttpModel):
     data: list[DistributorWithMetricsOut] = Field(default_factory=list)
 
 
-class AdminInvoiceListOut(BaseModel):
+class AdminInvoiceListOut(StrictHttpModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class AdminSelloutQueueOut(BaseModel):
+class AdminSelloutQueueOut(StrictHttpModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -168,7 +173,7 @@ class AdminDistributorCreateIn(DistributorIn):
     POST. V1 keeps creation only; the membership/invite step is a follow-up."""
 
 
-class AdminDistributorPatchIn(BaseModel):
+class AdminDistributorPatchIn(StrictHttpModel):
     """Brand-admin patch payload — every field optional, only provided fields
     update. Mirrors the columns brand admin V1 surfaces; locked fields (id,
     org_id, created_at) are excluded."""

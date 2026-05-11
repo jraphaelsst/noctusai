@@ -15,7 +15,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
 
 CartStatus = Literal["ativo", "abandonado", "convertido"]
 OrderStatus = Literal[
@@ -33,20 +34,20 @@ OrderStatus = Literal[
 # ---------------------------------------------------------------------------
 
 
-class CartItemIn(BaseModel):
+class CartItemIn(StrictHttpModel):
     """Body for `POST /cart/items` — add a line item (or upsert quantity)."""
 
     product_id: str
     quantidade: int = Field(gt=0)
 
 
-class CartItemUpdateIn(BaseModel):
+class CartItemUpdateIn(StrictHttpModel):
     """Body for `PATCH /cart/items/{id}` — change a line's quantity."""
 
     quantidade: int = Field(gt=0)
 
 
-class CartItemOut(BaseModel):
+class CartItemOut(StrictHttpModel):
     id: str
     cart_id: str
     product_id: str
@@ -58,7 +59,7 @@ class CartItemOut(BaseModel):
     created_at: Optional[datetime] = None
 
 
-class CartOut(BaseModel):
+class CartOut(StrictHttpModel):
     id: str
     distributor_id: str
     created_by: Optional[str] = None
@@ -74,7 +75,7 @@ class CartOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class OrderItemOut(BaseModel):
+class OrderItemOut(StrictHttpModel):
     id: str
     pedido_id: str
     product_id: str
@@ -86,7 +87,7 @@ class OrderItemOut(BaseModel):
     created_at: Optional[datetime] = None
 
 
-class OrderOut(BaseModel):
+class OrderOut(StrictHttpModel):
     id: str
     distributor_id: str
     cart_id: Optional[str] = None
@@ -103,17 +104,17 @@ class OrderOut(BaseModel):
     items: list[OrderItemOut] = Field(default_factory=list)
 
 
-class OrderListOut(BaseModel):
+class OrderListOut(StrictHttpModel):
     data: list[OrderOut] = Field(default_factory=list)
 
 
-class OrderCheckoutIn(BaseModel):
+class OrderCheckoutIn(StrictHttpModel):
     """Body for `POST /cart/checkout` — convert active cart to a pedido."""
 
     observacoes: Optional[str] = None
 
 
-class OrderStatusTransitionIn(BaseModel):
+class OrderStatusTransitionIn(StrictHttpModel):
     """Body for `PATCH /orders/{id}/status` — brand admin transitions order."""
 
     status: OrderStatus

@@ -14,12 +14,13 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+from noctusai_lib.api import StrictHttpModel
 
 UserRole = Literal["real_estate_agent", "media_crew", "admin"]
 
 
-class UserCreate(BaseModel):
+class UserCreate(StrictHttpModel):
     """Request body for ``POST /api/users`` (admin-only)."""
 
     name: str = Field(..., min_length=1, max_length=120)
@@ -30,7 +31,7 @@ class UserCreate(BaseModel):
     active: bool = True
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(StrictHttpModel):
     """Patch body for ``PATCH /api/users/{id}`` (admin-only)."""
 
     name: str | None = Field(None, min_length=1, max_length=120)
@@ -40,7 +41,7 @@ class UserUpdate(BaseModel):
     active: bool | None = None
 
 
-class UserOut(BaseModel):
+class UserOut(StrictHttpModel):
     """Response body for user list / detail."""
 
     model_config = ConfigDict(from_attributes=True)
