@@ -1857,6 +1857,37 @@ can change scanner-engine internals between runs. Bump cadence:
   the matrix is per-image runner isolation: independent runtimes,
   independent failure surfaces, independent caches.
 
+### First-push grace period — playbook (NEW 2026-05-11)
+
+**The problem.** The first time the matrix-build-push-scan workflow runs against `main`, Trivy will almost certainly flag CVEs against the existing dependency surface (Python 3.11-slim base, FastAPI versions, transitive npm deps). Many have no available fix yet (handled by `ignore-unfixed: true`), but a non-trivial subset will be HIGH/CRITICAL with available patches — and `exit-code: 1` fails the build, blocking the first push.
+
+This is **expected** + **temporary** — the gate exists to keep new CVEs from accumulating, not to retroactively gate the first deploy. Below is the playbook for the grace window between "first push fires CVEs" and "team has investigated + patched."
+
+**Three recovery paths (architect picks):**
+
+1. **Patch to green** (preferred — long-term right shape). Read the SARIF findings (GH Security tab) or workflow logs; patch each actionable CVE. Bump Python base image to a CVE-clean patch tag if needed; update vulnerable npm deps in `seed/{framework,lib}/frontend/package.json`. Re-push; CI passes. Time cost: usually a few hours, depends on findings.
+2. **Temporary grace flag** (medium-term, with explicit expiry). Add `continue-on-error: true` to the Trivy step:
+   ```yaml
+   - name: Trivy scan
+     uses: aquasecurity/trivy-action@0.24.0
+     continue-on-error: true   # GRACE: remove by 2026-06-15 once first-push CVE backlog cleared
+     with:
+       severity: HIGH,CRITICAL
+       ...
+   ```
+   Scan still runs + surfaces findings to GH Security tab; build proceeds + push happens. Time cost: 1-line change + a calendar reminder. Use when the team needs to deploy before patching (time-sensitive release).
+3. **Severity bump-down** (last resort). Change `severity: HIGH,CRITICAL` → `severity: CRITICAL` only. Reduces gate strictness without disabling it. Re-tighten once HIGH backlog is patched. Risk: HIGH-severity CVEs can land silently during the bump-down window.
+
+**Order to try them.** (1) first — actually fixing is the right shape. (2) only if (1) blocks an urgent push. (3) only if (2) doesn't unblock (rare).
+
+**Anti-patterns.**
+
+- **Permanent `continue-on-error: true`.** That's not a grace; that's removing the gate. If the grace is becoming permanent, decide intentionally whether the gate is wrong (remove it explicitly) or whether the team is avoiding the work (escalate the CVE backlog).
+- **Removing the Trivy step entirely.** Same shape — looks like a quick fix; actually drops the gate.
+- **`exit-code: 0`.** Hides the intent. Use `continue-on-error: true` if you want failures allowed; don't fake-zero the exit code.
+
+**When to remove the grace.** Once the first-push CVE backlog is at zero (or all remaining are documented accept-with-rationale entries), remove `continue-on-error: true` + the date-comment. CI is back to hard-gate.
+
 ---
 
 ## 12 · References
