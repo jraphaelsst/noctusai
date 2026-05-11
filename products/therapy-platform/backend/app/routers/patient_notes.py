@@ -7,7 +7,7 @@ and clinic admins have no access to patient notes.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 
 from app.dependencies import (
     first_or_none,
@@ -16,6 +16,7 @@ from app.dependencies import (
     get_user_client,
     get_user_role,
 )
+from app.rate_limit import limiter
 from app.responses import success_response
 from app.schemas.session import PatientNoteCreate, PatientNoteUpdate
 from app.services import ai_pipeline
@@ -25,7 +26,9 @@ router = APIRouter(prefix="/api/patient-notes", tags=["Patient Notes"])
 
 
 @router.post("")
+@limiter.limit("30/minute")
 async def create_patient_note(
+    request: Request,
     body: PatientNoteCreate,
     background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),
@@ -103,7 +106,9 @@ async def get_patient_notes(
 
 
 @router.patch("/{note_id}")
+@limiter.limit("30/minute")
 async def update_patient_note(
+    request: Request,
     note_id: str,
     body: PatientNoteUpdate,
     background_tasks: BackgroundTasks,

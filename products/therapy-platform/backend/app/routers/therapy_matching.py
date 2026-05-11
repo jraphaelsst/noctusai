@@ -7,7 +7,7 @@ specialties, approaches, preferences, and availability.
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.dependencies import (
@@ -15,6 +15,7 @@ from app.dependencies import (
     get_user_client,
     get_user_role,
 )
+from app.rate_limit import limiter
 from app.responses import success_response
 from app.services import matching_service, therapy_embedding_service
 
@@ -35,7 +36,9 @@ class EmbedProfileBody(BaseModel):
 
 
 @router.post("/embed")
+@limiter.limit("30/minute")
 async def embed_profile(
+    request: Request,
     body: EmbedProfileBody = Body(default_factory=EmbedProfileBody),
     authorization: Optional[str] = Header(None),
 ):
@@ -95,7 +98,9 @@ async def embed_profile(
 
 
 @router.post("/embed-terapeuta", deprecated=True)
+@limiter.limit("30/minute")
 async def embed_therapist_profile(
+    request: Request,
     authorization: Optional[str] = Header(None),
 ):
     """Deprecated — use ``POST /api/matching/embed`` with ``{"role":"terapeuta"}``.
@@ -119,7 +124,9 @@ async def embed_therapist_profile(
 
 
 @router.post("/embed-paciente", deprecated=True)
+@limiter.limit("30/minute")
 async def embed_patient_profile(
+    request: Request,
     authorization: Optional[str] = Header(None),
 ):
     """Deprecated — use ``POST /api/matching/embed`` with ``{"role":"paciente"}``.

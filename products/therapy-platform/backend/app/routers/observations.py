@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 
 from app.dependencies import (
     first_or_none,
@@ -17,6 +17,7 @@ from app.dependencies import (
     get_user_client,
     get_user_role,
 )
+from app.rate_limit import limiter
 from app.responses import success_response
 from app.schemas.session import ObservationCreate, ObservationUpdate
 from app.services import ai_pipeline
@@ -62,7 +63,9 @@ def _should_regenerate(session_record_id: str, db) -> bool:
 
 
 @router.post("")
+@limiter.limit("30/minute")
 async def create_observation(
+    request: Request,
     body: ObservationCreate,
     background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),
@@ -159,7 +162,9 @@ async def list_observations(
 
 
 @router.patch("/{observation_id}")
+@limiter.limit("30/minute")
 async def update_observation(
+    request: Request,
     observation_id: str,
     body: ObservationUpdate,
     background_tasks: BackgroundTasks,
@@ -213,7 +218,9 @@ async def update_observation(
 
 
 @router.delete("/{observation_id}")
+@limiter.limit("30/minute")
 async def delete_observation(
+    request: Request,
     observation_id: str,
     background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),

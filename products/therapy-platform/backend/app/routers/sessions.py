@@ -7,7 +7,7 @@ AI pipeline is triggered in the background after session end.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Request
 
 from app.dependencies import (
     get_admin_client,
@@ -15,6 +15,7 @@ from app.dependencies import (
     get_user_client,
     get_user_role,
 )
+from app.rate_limit import limiter
 from app.responses import success_response
 from app.schemas.session import SessionEndRequest, SessionPauseRequest, SessionStartRequest
 from app.services import ai_pipeline, consent_service, livekit_service, session_service
@@ -111,7 +112,9 @@ async def resume_session(
 
 
 @router.post("/{appointment_id}/end")
+@limiter.limit("10/minute")
 async def end_session(
+    request: Request,
     appointment_id: str,
     background_tasks: BackgroundTasks,
     body: SessionEndRequest = SessionEndRequest(),

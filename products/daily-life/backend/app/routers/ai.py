@@ -2,19 +2,22 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from noctusai_lib.domain.ai import consent_required
 from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import get_user_client, get_current_user_org
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
 
 
 @router.get("/weekly-review")
+@limiter.limit("30/minute")
 async def weekly_review_endpoint(
+    request: Request,
     period_days: int = 7,
     auth: tuple = Depends(get_current_user_org),
     _consent: None = Depends(consent_required("daily_life.weekly_review")),
@@ -47,7 +50,9 @@ async def weekly_review_endpoint(
 
 
 @router.get("/daily-brief")
+@limiter.limit("30/minute")
 async def daily_brief_endpoint(
+    request: Request,
     auth: tuple = Depends(get_current_user_org),
     _consent: None = Depends(consent_required("daily_life.daily_brief")),
 ):

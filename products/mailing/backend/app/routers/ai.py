@@ -1,17 +1,17 @@
 """Mailing AI wrappers router — M1/M2/M5/M6/M7 from ai-expansion Phase 14
 and M3 contact segmentation from Phase 8."""
-from __future__ import annotations
 
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import get_current_user_org, get_org_id, get_user_client
+from app.rate_limit import limiter
 from app.services import ai_service
 from app.services import segmentation_service
 
@@ -42,7 +42,9 @@ class TranslationRequest(BaseModel):
 
 
 @router.post("/subjects")
+@limiter.limit("30/minute")
 async def generate_subjects_endpoint(
+    request: Request,
     body: SubjectsRequest,
     auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.subject_gen")),
 ):
@@ -55,7 +57,9 @@ async def generate_subjects_endpoint(
 
 
 @router.post("/template-draft")
+@limiter.limit("30/minute")
 async def template_draft_endpoint(
+    request: Request,
     body: TemplateDraftRequest,
     auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.template_draft")),
 ):
@@ -66,7 +70,9 @@ async def template_draft_endpoint(
 
 
 @router.post("/reengagement")
+@limiter.limit("30/minute")
 async def reengagement_endpoint(
+    request: Request,
     body: ReengagementRequest,
     auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.reengagement_variants")),
 ):
@@ -77,7 +83,9 @@ async def reengagement_endpoint(
 
 
 @router.post("/deliverability")
+@limiter.limit("30/minute")
 async def deliverability_endpoint(
+    request: Request,
     body: DeliverabilityRequest,
     auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.deliverability_review")),
 ):
@@ -90,7 +98,9 @@ async def deliverability_endpoint(
 
 
 @router.post("/translate")
+@limiter.limit("30/minute")
 async def translate_endpoint(
+    request: Request,
     body: TranslationRequest,
     auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.translate")),
 ):
@@ -114,7 +124,9 @@ class SegmentRequest(BaseModel):
 
 
 @router.post("/segment-contacts")
+@limiter.limit("10/minute")
 async def segment_contacts_endpoint(
+    request: Request,
     body: SegmentRequest,
     auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.segment_contacts")),
 ):
@@ -212,7 +224,9 @@ class CampaignDebriefRequest(BaseModel):
 
 
 @router.get("/campaigns/{campaign_id}/debrief")
+@limiter.limit("30/minute")
 async def campaign_debrief_preview_endpoint(
+    request: Request,
     campaign_id: str,
     auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.campaign_debrief")),
 ):
@@ -238,7 +252,9 @@ async def campaign_debrief_preview_endpoint(
 
 
 @router.post("/campaigns/{campaign_id}/debrief/send")
+@limiter.limit("30/minute")
 async def campaign_debrief_send_endpoint(
+    request: Request,
     campaign_id: str,
     body: CampaignDebriefRequest,
     auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.campaign_debrief")),
