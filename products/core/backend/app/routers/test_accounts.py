@@ -22,21 +22,14 @@ import logging
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_admin
 from app.rate_limit import limiter
+from app.schemas.test_accounts import TestAccountCreate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/test-accounts", tags=["Test Accounts"])
-
-
-class TestAccountCreate(BaseModel):
-    nome: str = Field(..., max_length=200, description="Nome do usuário de teste")
-    email: str = Field(..., description="Email do usuário de teste")
-    password: str = Field(..., min_length=6, description="Senha do usuário de teste")
-    empresa: str = Field(..., max_length=200, description="Nome da organização de teste")
 
 
 @router.post("")

@@ -14,19 +14,15 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from noctusai_lib.integrations.llm.budget import compute_status
 
 from app.database import get_admin_client
 from app.dependencies import get_current_admin
+from app.schemas.admin_llm_spend import BudgetUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/llm-spend", tags=["Admin · LLM Spend"])
-
-
-class BudgetUpdate(BaseModel):
-    monthly_brl: float = Field(..., ge=0, le=1_000_000)
 
 
 @router.get("/{org_id}")

@@ -15,12 +15,12 @@ import logging
 import re
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.database import get_admin_client, get_supabase_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
+from app.schemas.oauth import OAuthCallbackBody
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth/oauth", tags=["OAuth"])
@@ -38,11 +38,6 @@ PROVIDERS = [
         "enabled": True,
     },
 ]
-
-
-class OAuthCallbackBody(BaseModel):
-    """Body for the OAuth callback — used to pass info for profile creation."""
-    provider: str = Field(..., description="OAuth provider (google, azure)")
 
 
 def _slugify(text: str) -> str:

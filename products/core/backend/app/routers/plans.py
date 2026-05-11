@@ -12,40 +12,13 @@ Schema is defined in products/core/backend/migrations/001_noctusai_core.sql.
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin
+from app.schemas.plans import PlanCreate, PlanUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/plans", tags=["Plans"])
-
-
-class PlanCreate(BaseModel):
-    nome: str = Field(..., max_length=100)
-    slug: str = Field(..., max_length=50)
-    descricao: Optional[str] = None
-    price_monthly: float = Field(default=0, ge=0)
-    price_yearly: float = Field(default=0, ge=0)
-    max_users: int = Field(default=-1)
-    max_products: int = Field(default=-1)
-    features: dict = Field(default_factory=dict)
-    is_custom: bool = False
-    stripe_price_id_monthly: Optional[str] = None
-    stripe_price_id_yearly: Optional[str] = None
-
-
-class PlanUpdate(BaseModel):
-    nome: Optional[str] = Field(default=None, max_length=100)
-    descricao: Optional[str] = None
-    price_monthly: Optional[float] = Field(default=None, ge=0)
-    price_yearly: Optional[float] = Field(default=None, ge=0)
-    max_users: Optional[int] = None
-    max_products: Optional[int] = None
-    features: Optional[dict] = None
-    is_custom: Optional[bool] = None
-    stripe_price_id_monthly: Optional[str] = None
-    stripe_price_id_yearly: Optional[str] = None
 
 
 @router.get("")

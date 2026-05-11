@@ -41,25 +41,14 @@ GET    /api/settings/resolve/{key}     — Resolve: org → platform → None
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
+from app.schemas.settings import OrgSettingBody, PlatformSettingBody
 from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
-
-
-class PlatformSettingBody(BaseModel):
-    value: str = Field(..., min_length=1)
-    description: Optional[str] = None
-    is_secret: bool = False
-
-
-class OrgSettingBody(BaseModel):
-    value: str = Field(..., min_length=1)
-    is_secret: bool = False
 
 
 def _mask_value(value: str) -> str:

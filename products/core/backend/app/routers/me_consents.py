@@ -13,7 +13,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
 
 from noctusai_lib.domain.ai.consent import (
     get_feature,
@@ -23,13 +22,10 @@ from noctusai_lib.domain.ai.consent import (
 )
 
 from app.dependencies import get_current_user, get_org_id, get_user_client
+from app.schemas.me_consents import ConsentToggle
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["AI Consent"])
-
-
-class ConsentToggle(BaseModel):
-    granted: bool
 
 
 @router.get("/api/me/consents")

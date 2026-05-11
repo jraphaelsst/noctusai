@@ -13,22 +13,15 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
+from app.schemas.admin_cache import FlushBody
 from noctusai_lib.integrations.llm import get_llm_config
 from noctusai_lib.integrations.llm.cache import flush_for_model
 from noctusai_lib.integrations.llm.models import all_providers, models_for
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/llm-cache", tags=["Admin · LLM Cache"])
-
-
-class FlushBody(BaseModel):
-    """Flush target — all fields required to avoid accidentally wiping everything."""
-    product: str = Field(..., description="Product slug (e.g. 'erp-imobiliario')")
-    provider: str = Field(..., description="Provider name (e.g. 'openai')")
-    model: str = Field(..., description="Model ID (e.g. 'gpt-4o-mini')")
 
 
 async def _require_platform_admin(authorization: Optional[str]) -> None:

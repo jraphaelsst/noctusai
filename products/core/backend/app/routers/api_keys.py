@@ -37,25 +37,13 @@ import hashlib
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
+from app.schemas.api_keys import ApiKeyCreate, ApiKeyUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["API Keys"])
-
-
-class ApiKeyCreate(BaseModel):
-    name: str = Field(..., max_length=100)
-    scopes: List[str] = Field(default=["read"])
-    expires_at: Optional[str] = None
-
-
-class ApiKeyUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=100)
-    scopes: Optional[List[str]] = None
-    expires_at: Optional[str] = None
 
 
 def _generate_api_key() -> tuple[str, str, str]:
