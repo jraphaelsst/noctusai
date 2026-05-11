@@ -242,6 +242,86 @@ If you need to land the detector before the test (rare — usually because the d
 
 ---
 
+## Production-correctness keeper detectors — the three-detector trio
+
+**The trio.** Three keeper detectors flag latent production bugs that pass against `MockSupabase` mocks but fail at runtime against real Supabase. Surfaced 2026-05-10 by Engineer GG's `therapy-platform-wiring` Phase 4 audit (commit `a56a39e`) which discovered an N=12 migration drift case that had been silently green for 7+ days.
+
+| Detector | What it catches | Severity |
+|---|---|---|
+| `check_unknown_table_references` | `<X>.table("name")` where `name` is not declared by any `CREATE TABLE` in `products/<p>/backend/migrations/*.sql`. MockSupabase WARN+skip returns empty results, production fails. | `warning` |
+| `check_function_search_path_pinned` | `CREATE [OR REPLACE] FUNCTION ...` blocks without `SET search_path = ...`. Supabase advisor 0011 flags it; per-function risk analysis is cheaper to skip if a detector enforces. | `warning` |
+| `check_admin_endpoint_service_role_bypass` | `get_admin_client().table("T")` (chained or bound-var) where `T` has no `CREATE POLICY "service_role_bypass" ... ON <schema>.T` in migrations. Bypass silently fails. | `warning` |
+
+**The slip pattern.** Tests against `MockSupabase` are HAPPY-PATH biased — the mock answers a query against any table name with an empty result-set (WARN+skip mode, default since 2026-04-24). When code drifts (rename, table never landed, schema typo), the test stays green; production fails the moment a real Supabase responds. The three-detector trio uses migrations + AST as the static oracle to close this gap.
+
+**AST shape — `check_unknown_table_references`.**
+
+- Walks every `.py` under `products/<p>/backend/app/` (excludes tests + migrations + caches).
+- Matches any `<expr>.table("X")` call where `"X"` is a `Constant[str]` (skips f-strings + name references — false-positive avoidance).
+- Diffs against the unqualified table-name set extracted from `CREATE TABLE [IF NOT EXISTS] [<schema>.]<name>` in every `products/<p>/backend/migrations/*.sql`.
+- Allowlists Supabase-managed `auth.users` + core-bootstrap `products` / `organizations` / `user_org_roles` to suppress cross-cutting false positives.
+- Short-circuits when the product has no migrations directory.
+
+**Regex shape — `check_function_search_path_pinned`.**
+
+- For each `products/<p>/backend/migrations/*.sql`, finds every `CREATE [OR REPLACE] FUNCTION [<schema>.]<name>(` start.
+- Walks forward through the dollar-quoted body (`$tag$ ... $tag$` with any tag, including empty) to find the block's end terminator.
+- Asserts `\bSET\s+search_path\b` appears somewhere in the block. Missing → warning.
+- Anywhere-in-block placement is accepted (the clause may sit in the function header BEFORE `AS`, or in `WITH (SET ...)` style — match is permissive).
+
+**AST + regex hybrid — `check_admin_endpoint_service_role_bypass`.**
+
+- AST-finds local-variable bindings of `get_admin_client()` return values: `admin_db = get_admin_client()` and `db: SomeType = get_admin_client()`.
+- AST-walks every `.table("X")` call; flags those where the receiver is either a bound admin-client variable OR the chained shape `get_admin_client().table("X")`.
+- Diffs against the table set extracted by regex from `CREATE POLICY "service_role_bypass" ... ON [<schema>.]<table>` across all migration files.
+- Same external-tables allowlist as the unknown-table detector.
+
+**False-positive design.** All three detectors are configured for FALSE NEGATIVES over false positives:
+
+1. Non-`Constant[str]` table arguments are skipped (the detector can't resolve runtime-built strings statically; a dataflow pass would be a much larger lift for marginal gain).
+2. Cross-product schema references that legitimately live in another product's migrations would false-flag — accept-with-rationale + comment is the escape.
+3. Tables accessed via admin client for cross-tenant reads where RLS is intentionally not bypassed (foreign-key tenant-id enforcement) would false-flag — same accept-with-rationale path.
+
+**Worked example — therapy-platform N=12 drift.** Running the trio against `products/therapy-platform/` on 2026-05-11 surfaces:
+
+```
+check_unknown_table_references: 37 issues
+  distinct tables flagged: ai_prompt_history, ai_prompt_settings, anamneses,
+    clinic_therapist_configs, financial_transactions, goals, notifications,
+    reminder_configs, sessions, settings_history, therapeutic_journal,
+    therapist_reviews                                    # ← exact GG N=12 + 1
+check_function_search_path_pinned: 1 issue
+  functions flagged: therapy.gcal_authorization_is_fresh # ← exact GG case
+check_admin_endpoint_service_role_bypass: 5 issues
+  distinct tables flagged: ai_prompt_history, ai_prompt_settings,
+    settings_history
+```
+
+The detector catch matches GG's manual audit case-for-case. The detectors close the silent-fail vector that allowed the drift to ship for 7+ days.
+
+**Adopters.** Run on every product; current platform-wide counts (2026-05-11):
+
+| Product | unknown_table | search_path | admin_bypass |
+|---|---|---|---|
+| adconnect | 0 | 0 | 0 |
+| core | 2 | 0 | 149 |
+| daily-life | 0 | 0 | 0 |
+| dev-team | 0 | 0 | 0 |
+| erp-imobiliario | 2 | 9 | 34 |
+| imobi-scheduling | 0 | 0 | 0 |
+| mailing | 0 | 0 | 18 |
+| media-scheduling | 0 | 0 | 0 |
+| personal-finance | 0 | 0 | 1 |
+| seed | 0 | 0 | 0 |
+| therapy-platform | 37 | 1 | 5 |
+| youtube-crawler | 0 | 0 | 0 |
+
+The numbers are the to-be-triaged backlog — `cli.py --review` authors proposals per finding for explicit accept/refactor decisions.
+
+**Why warning, not high.** All three findings reflect real production gaps but the false-positive risk is non-zero (cross-product schema references, intentionally-not-bypassed admin reads, functions deliberately relying on caller search_path). `warning` lets the trio surface every candidate without blocking validation gates; the accept-with-rationale path handles the legitimate carve-outs.
+
+---
+
 ## Status-code-assertion rule — pin the code, not just the body
 
 **The rule.** Every pytest test method that asserts on response BODY (`<resp>.text`, `<resp>.json()`, `<resp>.content`) MUST also assert on response STATUS CODE (`<resp>.status_code <op> <val>`) **in the same method body**. Body-only assertions can go green for the wrong reason.
