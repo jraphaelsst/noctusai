@@ -1,12 +1,14 @@
 """
 Standard routers that NoctusAI products can opt into.
 
-Five bundled routers live here:
+Bundled routers live here:
   - "health"       → `/api/health`
   - "notificacoes" → `/api/notificacoes` (proxy to core `public.notifications`)
   - "team"         → `/api/team` (invitations, members)
   - "llm"          → `/api/llm/providers|models|preferences`
   - "ai_outputs"   → `/api/ai/outputs` (per-entity AI-output lookup; P1 pattern)
+  - "ai_feedback"  → `/api/ai/feedback` (thumbs feedback on AI outputs; P1)
+  - "scheduler"    → `/api/scheduler/jobs[/{job_id}]` (read-only APScheduler view)
 
 Products declare which ones they want via the `standard_routers=[...]` kwarg
 on `create_product_app()`. `build_standard_routers()` resolves that list
@@ -229,6 +231,14 @@ def _build_ai_feedback_router(deps, settings, product_name: str, version: str) -
     return create_ai_feedback_router(deps)
 
 
+def _build_scheduler_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Deferred import — keeps `noctusai_lib.api.scheduler` (which pulls
+    # APScheduler at module import time) out of the hot path for
+    # products that don't run background jobs.
+    from noctusai_seed.scheduler_router import create_scheduler_router
+    return create_scheduler_router(deps)
+
+
 # Maintenance contract for _STANDARD_ROUTERS:
 # Adding a new standard router requires all three of:
 #   (a) adding an entry to this registry,
@@ -244,6 +254,7 @@ _STANDARD_ROUTERS = {
     "llm":          _build_llm_router,
     "ai_outputs":   _build_ai_outputs_router,
     "ai_feedback":  _build_ai_feedback_router,
+    "scheduler":    _build_scheduler_router,
 }
 
 

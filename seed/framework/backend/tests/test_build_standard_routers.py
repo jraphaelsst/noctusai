@@ -18,7 +18,7 @@ from noctusai_seed.routers import (
 )
 
 
-_ALL_NAMES = ["health", "notificacoes", "team", "llm", "ai_outputs", "ai_feedback"]
+_ALL_NAMES = ["health", "notificacoes", "team", "llm", "ai_outputs", "ai_feedback", "scheduler"]
 
 
 def _paths(routers) -> set[str]:
