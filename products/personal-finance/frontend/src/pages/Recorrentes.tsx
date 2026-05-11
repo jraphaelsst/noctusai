@@ -20,7 +20,10 @@ function isProxima(dataStr?: string): boolean {
   return dias >= 0 && dias <= 7;
 }
 
-function RecorrenteRow({ item, onEdit, onDelete, onExecute }: { item: Recorrente; onEdit: () => void; onDelete: () => void; onExecute: () => void }) {
+// Exported for unit testing the scheduler-banner sub-task of Phase 5 PF-5.
+// Note: not part of the public page API — kept as a named export for the
+// __tests__ neighbour and nothing else.
+export function RecorrenteRow({ item, onEdit, onDelete, onExecute }: { item: Recorrente; onEdit: () => void; onDelete: () => void; onExecute: () => void }) {
   const isReceita = item.tipo === "receita";
   const proxima = isProxima(item.proxima_data);
 
@@ -40,6 +43,16 @@ function RecorrenteRow({ item, onEdit, onDelete, onExecute }: { item: Recorrente
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium truncate">{item.nome}</p>
             {proxima && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+            {item.is_automatico && (
+              <span
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0"
+                title="Esta recorrência será executada automaticamente pelo agendador"
+                data-testid="recorrente-auto-badge"
+              >
+                <Zap className="w-2.5 h-2.5" />
+                Auto
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>{FREQUENCIA_LABELS[item.frequencia] || item.frequencia}</span>
@@ -53,6 +66,14 @@ function RecorrenteRow({ item, onEdit, onDelete, onExecute }: { item: Recorrente
               <>
                 <span className="text-muted-foreground/40">|</span>
                 <span>{item.conta.nome}</span>
+              </>
+            )}
+            {item.is_automatico && item.proxima_data && (
+              <>
+                <span className="text-muted-foreground/40">|</span>
+                <span data-testid="recorrente-next-run">
+                  Próxima execução automática: {formatDate(item.proxima_data)}
+                </span>
               </>
             )}
           </div>
