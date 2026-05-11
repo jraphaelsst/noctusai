@@ -93,6 +93,14 @@ shape just changes when the decision moves.
 
 ## Active decisions
 
+### PF `Equipe.tsx` direct-fetch retained (no `useTeam` hook extraction)
+- **Subject:** `products/personal-finance/frontend/src/pages/Equipe.tsx` makes 5 direct `api.get/post/delete` calls to the seed `team` standard router instead of going through a `useTeam` hook layer (Pattern D in the PF wiring §5.2.2 systemic-findings classification).
+- **Decision:** Equipe.tsx keeps the 5 direct-fetch callsites; no `hooks/useTeam.ts` is created.
+- **Reason:** One-off admin page; the 5 callsites are tight to this single component (member list + invitations list + invite + remove + cancel). A hook layer would add indirection without amortization. Other PF data surfaces have multiple consumers (Dashboard + Transacoes + Carteira all reading transacoes, for example) which is when the hook layer pays off. Equipe has exactly one consumer of each of its 5 endpoints.
+- **Scope:** `products/personal-finance/frontend/src/pages/Equipe.tsx` — the 5 callsites against `/api/team`, `/api/team/invitations`, `/api/team/invite`, `/api/team/{id}`, `/api/team/invitations/{id}`.
+- **Revisit trigger:** (a) a second product page consumes any of these endpoints (N=2 fires → extract `useTeam` hook in `seed/lib/frontend/src/hooks/useTeam.ts` for cross-product reuse, since `team` is a seed standard router), OR (b) Equipe grows beyond 5 callsites (e.g. role-edit-in-place, bulk-invite, member-detail expansion).
+- **Recorded by:** PF wiring Phase 6 engineer (worktree-agent-a0ae8b7bce8e0cd0f, 2026-05-11) — design-batch question Q-equipe resolved.
+
 ### ERP metas digest does NOT use `noctusai_lib.domain.digest`
 - **Subject:** `KB § 04-SHARED-LIBRARY.md § domain/digest` shared library used by `core` audit-digest, `personal-finance` monthly narrative, `daily-life` weekly review, `mailing` campaign debrief — but NOT ERP metas digest.
 - **Decision:** ERP metas digest keeps its own `metas_digest_service.py` shape; does not consume the seed-lib `domain/digest` contract.
