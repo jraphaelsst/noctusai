@@ -37,13 +37,18 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 7 | 7 | 11 | 7 | 15 | 226 |
 | Mailing | 10 | 10 | 21 | 9 | 16 | 184 |
-| **Total** | **161** | **144** | **222** | **128** | **307** | **4,016** |
+| AdConnect | 9 | 10 | 16 | 5 | 25 | 214 |
+| Dev Team | 0 | 2 | 6 | 0 | 3 | 43 |
+| Media Scheduling | 5 | 8 | 10 | 3 | 13 | 56 |
+| YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
+| Imobi Scheduling | 3 | 2 | 8 | 1 | 9 | 97 |
+| **Total** | **178** | **166** | **269** | **137** | **360** | **4,426** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas (7):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed`.
+- **Schemas (12):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed` + `adconnect` + `dev_team` + `media_scheduling` + `youtube_crawler` + `imobi_scheduling`.
 - **Tables: 310** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
