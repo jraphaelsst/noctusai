@@ -269,8 +269,9 @@ the new arg through. Tests calling the function directly omit
 `worktree_path`; engineers in worktrees pass it; architects on main
 omit it.
 
-**Adopters** (current state, 2026-05-10):
+**Adopters** (current state, 2026-05-11 — Phase 4 closed):
 
+Wave 1 — Engineer K Phase 1-2 (2026-05-10):
 - `noctus.dev.scaffold_product` / `noctus.dev.delete_product` / `noctus.dev.available_ports`
 - `noctus.dev.scaffold_migration`
 - `noctus.dev.archive`
@@ -278,11 +279,22 @@ omit it.
 - `noctus.dev.lgpd_flag` / `noctus.dev.lgpd_list`
 - `noctus.dev.history_record`
 
-**Deferred rollout (follow-up project):**
-`master_prompts.py` / `improvements.py` / `review.py` /
-`seed/absorb_file.py` / `promotion.py` / `build.py` /
-`catalog.py` / `three_way_sync.py`. Same shape, mechanical
-extension.
+Wave 2 — Engineer M Phase 4 rollout (2026-05-10):
+- `noctus.dev.verify_master_prompt`
+- `noctus.dev.improvements`
+- `noctus.dev.review`
+- `noctus.seed.absorb_file`
+- `noctus.dev.promote_from_seed_workspace` / `noctus.dev.list_promotions`
+- `noctus.dev.build_products`
+- `noctus.dev.catalog`
+- `noctus.dev.check_three_way_sync`
+
+Wave 3 — Engineer RRR Phase 4 close (2026-05-11, recurrence N=7+ this session):
+- `noctus.dev.set_proposal_status` (residual write-tool gap)
+
+**18 total write tools adopt the pattern.** Phase 4 rollout complete.
+
+**Documented exemption:** `phase_learnings.py` (log_learning / query_learnings / consume_learning) writes to a centralized gitignored SQLite at `mcp/noctusai/data/phase_learnings.db` — by design local-only / per-machine. The Fake-vs-Real exemption test applies: a fake here would not exercise different code than the real, and the data store is intentionally session-local.
 
 **No silent fallback.** Passing an invalid `worktree_path`
 (non-directory, missing `.git`, missing `.noctusai-workspace`) MUST
@@ -293,7 +305,9 @@ guard.
 **Regression tests live in** `mcp/noctusai/tests/test_workspace.py`
 (`TestResolveCallerRoot`) + per-tool test files
 (`TestWorktreeAwarePathResolution` in `test_scaffold.py`,
-`test_archive.py`, `test_scaffold_migration.py`).
+`test_archive.py`, `test_scaffold_migration.py`) +
+`test_worktree_rollout_phase4.py` (30 tests covering all
+Wave 2 + Wave 3 adopters).
 
 ---
 

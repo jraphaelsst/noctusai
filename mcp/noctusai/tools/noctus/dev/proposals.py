@@ -603,24 +603,55 @@ def list_proposals(agent=None, product=None):
     return results
 
 
-def update_proposal_status(filename, status, reason="", product=None):
+def update_proposal_status(
+    filename,
+    status,
+    reason="",
+    product=None,
+    *,
+    products_dir: Path | None = None,
+    worktree_path: str | Path | None = None,
+):
     """Update a proposal's status to accepted/rejected.
 
     When ``product`` is given, looks in ``products/<product>/proposals/``.
     Otherwise searches all ``products/*/proposals/`` for the file.
+
+    Args:
+        products_dir: Override the products directory (test seam). When set,
+            wins over ``worktree_path``.
+        worktree_path: **Caller-aware path resolution.** When set, resolves
+            against the caller's worktree (`<root>/products`). MCP write tools
+            require this because the server boots with a fixed cwd; see
+            ``resolve_caller_root`` in ``mcp/noctusai/workspace.py``.
+
+    3-tier priority: explicit ``products_dir`` > ``worktree_path`` > module
+    default (``PRODUCTS_DIR``).
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        git worktree root (handled by ``resolve_caller_root``).
     """
+    if products_dir is not None:
+        base_products = products_dir
+    elif worktree_path is not None:
+        base_products = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products = PRODUCTS_DIR
+
     filepath = None
     if product:
-        candidate = _product_proposals_dir(product) / filename
+        candidate = base_products / product / "proposals" / filename
         if candidate.exists():
             filepath = candidate
     else:
         # Search across all products
-        for d in sorted(PRODUCTS_DIR.glob("*/proposals")):
-            candidate = d / filename
-            if candidate.exists():
-                filepath = candidate
-                break
+        if base_products.is_dir():
+            for d in sorted(base_products.glob("*/proposals")):
+                candidate = d / filename
+                if candidate.exists():
+                    filepath = candidate
+                    break
     if filepath is None:
         return {"error": "Proposal not found"}
     content = filepath.read_text()
@@ -690,11 +721,22 @@ def register(server) -> None:
 
     @server.tool(
         name="noctus.dev.set_proposal_status",
-        description="Accept or reject a proposal. status='accepted' or 'rejected'.",
+        description=(
+            "Accept or reject a proposal. status='accepted' or 'rejected'. "
+            "Pass `worktree_path` when called from inside a git worktree so "
+            "the file path resolves under the caller's worktree, not the MCP "
+            "server's startup workspace."
+        ),
     )
     def _set_status(
-        filename: str, status: str, reason: str = "", product: str | None = None,
+        filename: str,
+        status: str,
+        reason: str = "",
+        product: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
         if status not in {"accepted", "rejected"}:
             return {"error": f"invalid status {status!r}; valid: accepted / rejected"}
-        return update_proposal_status(filename, status, reason, product=product)
+        return update_proposal_status(
+            filename, status, reason, product=product, worktree_path=worktree_path,
+        )

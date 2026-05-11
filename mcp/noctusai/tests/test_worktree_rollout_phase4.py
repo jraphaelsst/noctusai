@@ -36,6 +36,7 @@ from tools.noctus.dev.catalog import generate_catalog
 from tools.noctus.dev.improvements import generate_improvements
 from tools.noctus.dev.master_prompts import verify_master_prompt
 from tools.noctus.dev.promotion import list_promotions, promote_from_seed_workspace
+from tools.noctus.dev.proposals import update_proposal_status
 from tools.noctus.dev.review import run_review
 from tools.noctus.dev.three_way_sync import check_three_way_sync
 from tools.noctus.seed.absorb_file import absorb_file
@@ -404,3 +405,100 @@ class TestPromotionWorktreePath:
         # Explicit workspace_root wins over the worktree's walk-up result.
         result = list_promotions(workspace_root=sink_ws, worktree_path=wt)
         assert result["workspace"] == str(sink_ws)
+
+
+# ─── update_proposal_status (Phase 4 close — residual gap) ─────────────
+
+
+class TestUpdateProposalStatusWorktreePath:
+    """``update_proposal_status`` (MCP ``set_proposal_status``) honors ``worktree_path``.
+
+    The residual write-tool gap closed by Engineer RRR's Phase 4 dispatch
+    (2026-05-11). Mirrors the 3-tier pattern (explicit seam > worktree_path >
+    module default) and the no-silent-fallback rule used by every other
+    adopting tool in this file.
+    """
+
+    def _seed_proposal(self, products_dir: Path, product: str, filename: str) -> Path:
+        """Build a fake proposal under ``<products_dir>/<product>/proposals/``."""
+        proposals = products_dir / product / "proposals"
+        proposals.mkdir(parents=True, exist_ok=True)
+        path = proposals / filename
+        path.write_text(
+            "# Proposal: example\n\n**Status:** pending\n\n"
+            "**Reject** — with reason: ___\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_worktree_path_updates_file_in_worktree(self, tmp_path):
+        wt = _make_fake_worktree(tmp_path / "wt")
+        products_dir = wt / "products"
+        proposal = self._seed_proposal(products_dir, "demo", "rrr-2026-05-11-x.md")
+
+        result = update_proposal_status(
+            "rrr-2026-05-11-x.md",
+            "accepted",
+            product="demo",
+            worktree_path=wt,
+        )
+        assert result == {"updated": True, "status": "accepted"}, result
+        # Status flipped in the worktree's copy.
+        content = proposal.read_text()
+        assert "**Status:** accepted" in content
+        assert "**Status:** pending" not in content
+
+    def test_worktree_path_search_across_all_products(self, tmp_path):
+        """When ``product`` is None, search across all products under the worktree."""
+        wt = _make_fake_worktree(tmp_path / "wt")
+        products_dir = wt / "products"
+        # Two products; only product-b has the proposal.
+        (products_dir / "product-a" / "proposals").mkdir(parents=True)
+        proposal_b = self._seed_proposal(products_dir, "product-b", "rrr-find-me.md")
+
+        result = update_proposal_status(
+            "rrr-find-me.md",
+            "rejected",
+            reason="not aligned",
+            worktree_path=wt,
+        )
+        assert result == {"updated": True, "status": "rejected"}, result
+        content = proposal_b.read_text()
+        assert "**Status:** rejected" in content
+        assert "not aligned" in content
+
+    def test_explicit_products_dir_overrides_worktree_path(self, tmp_path):
+        wt = _make_fake_worktree(tmp_path / "wt")
+        (wt / "products").mkdir()  # worktree's products dir is empty
+        sink_products = tmp_path / "sink-products"
+        proposal = self._seed_proposal(sink_products, "demo", "rrr-sink.md")
+
+        result = update_proposal_status(
+            "rrr-sink.md",
+            "accepted",
+            product="demo",
+            products_dir=sink_products,
+            worktree_path=wt,
+        )
+        assert result == {"updated": True, "status": "accepted"}, result
+        content = proposal.read_text()
+        assert "**Status:** accepted" in content
+
+    def test_invalid_worktree_path_raises(self, tmp_path):
+        bad = tmp_path / "not-a-worktree"
+        bad.mkdir()
+        with pytest.raises(ValueError, match=r"missing \.git|not a directory"):
+            update_proposal_status(
+                "x.md", "accepted", worktree_path=bad,
+            )
+
+    def test_worktree_path_none_preserves_default_behavior(self, tmp_path):
+        """When ``worktree_path`` is None and no explicit seam, the call resolves
+        against the module-default ``PRODUCTS_DIR``. With a nonexistent filename
+        the existing 'Proposal not found' contract holds."""
+        result = update_proposal_status(
+            "rrr-does-not-exist-on-disk-anywhere.md",
+            "accepted",
+            product="demo",
+        )
+        assert result == {"error": "Proposal not found"}, result
