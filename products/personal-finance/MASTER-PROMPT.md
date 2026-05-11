@@ -78,7 +78,32 @@ Dashboard, Contas, ContaDetalhes, Categorias, Operacoes, Orcamentos, OrcamentoDe
 cd products/personal-finance/backend && pytest
 ```
 
-584 passed + 10 skipped (locked baseline post-org-scoping migration 2026-05-03).
+595 passed + 10 skipped (Phase 7 close 2026-05-11; +11 from 2026-05-03 baseline of 584 — Phases 1-6 added 6 (5 keeper/Phase-6 tests + 1 carry-forward); Phase 7 adds 5 mount-smoke tests for the seed standard routers).
+
+## Standard Routers Mounted
+
+PF opts into 5 seed standard routers via `app/main.py § standard_routers=`:
+`health` | `notificacoes` | `team` | `ai_outputs` | `ai_feedback`. The `health`
+router auto-mounts `/api/health` (unauthenticated); `ai_outputs` provides
+`GET /api/ai/outputs?ref_type=&ref_id=`; `ai_feedback` provides
+`GET|POST /api/ai/feedback` keyed on `output_ref` (NOT `ref_type`/`ref_id`).
+`SSOCallback` is seed-factory-mounted at `/sso` (no per-product file).
+
+## Contract Notes (Phase 0-7 — 2026-05-03 to 2026-05-11)
+
+- **`created_by` rename**: post-migration `008_org_scoping`, every PF op table now
+  uses `created_by UUID NULL` (replaces the legacy `user_id` column). DTOs in
+  `frontend/src/types/` follow the rename — references to `user_id` in older
+  code are stale and should be migrated to `created_by` opportunistically.
+- **`fonte` field on `transacoes`**: present on `005_transacoes_metadata.sql`;
+  identifies the origin of the transaction (`manual`, `recorrente`, `import`,
+  `categorize_ai`). Used by AI categorization to distinguish suggested-vs-final.
+- **Scheduler standard router**: NOT shipped this project (Phase 5 deferred —
+  PF-5 in §5.2.6). Scheduler artifacts surface via per-product `/api/recorrentes/proximas`
+  + `/executar` endpoints. Cross-product `scheduler` standard router is a follow-up.
+- **Backend orphans** (Phase 7 verification): `GET /api/operacoes/{id}` and
+  `GET /api/orcamentos/{id}/itens` have no frontend consumer; marked for
+  delete-on-touch (keep for now per §5.2.7 cheap-to-keep policy).
 
 ## Dependencies
 
