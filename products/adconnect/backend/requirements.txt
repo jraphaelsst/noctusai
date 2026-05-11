@@ -1,6 +1,6 @@
 -e seed/lib/backend
 -e seed/framework/backend
-fastapi==0.115.0
+fastapi==0.115.5
 uvicorn[standard]==0.30.6
 supabase==2.9.1
 pydantic==2.9.0
