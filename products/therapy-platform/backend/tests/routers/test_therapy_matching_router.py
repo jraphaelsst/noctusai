@@ -124,3 +124,66 @@ class TestGetSuggestions:
         """No auth returns 401."""
         resp = patient_client._tc.get("/api/matching/sugestoes")
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Unified embed endpoint  (Phase 7.c)
+# ---------------------------------------------------------------------------
+
+class TestEmbedProfileUnified:
+    """``POST /api/matching/embed`` — unified replacement for the split routes."""
+
+    def test_embed_unified_patient_no_api_key(self, patient_client):
+        """Patient calls /embed with no body; backend infers ``role=paciente``
+        and proceeds to embed — raises ValueError downstream (no API key)."""
+        patient_client._mock_supabase.set_table_data("patient_profiles", [
+            {"user_id": "test-user-123", "preferred_specialties": ["ansiedade"]},
+        ])
+        with pytest.raises(Exception):
+            patient_client.post("/api/matching/embed", json={})
+
+    def test_embed_unified_therapist_no_api_key(self, client):
+        """Therapist calls /embed; backend infers ``role=terapeuta``."""
+        client._mock_supabase.set_table_data("therapist_profiles", [
+            {"user_id": "test-user-123", "specialties": ["ansiedade"]},
+        ])
+        with pytest.raises(Exception):
+            client.post("/api/matching/embed", json={})
+
+    def test_embed_unified_admin_requires_explicit_role(self, admin_client):
+        """Platform admin must send an explicit ``role`` (not inferable)."""
+        resp = admin_client.post("/api/matching/embed", json={})
+        assert resp.status_code == 400
+
+    def test_embed_unified_admin_with_role_terapeuta(self, admin_client):
+        admin_client._mock_supabase.set_table_data("therapist_profiles", [
+            {"user_id": "test-user-123", "specialties": ["ansiedade"]},
+        ])
+        with pytest.raises(Exception):
+            admin_client.post("/api/matching/embed", json={"role": "terapeuta"})
+
+    def test_embed_unified_admin_with_role_paciente(self, admin_client):
+        admin_client._mock_supabase.set_table_data("patient_profiles", [
+            {"user_id": "test-user-123", "preferred_specialties": ["ansiedade"]},
+        ])
+        with pytest.raises(Exception):
+            admin_client.post("/api/matching/embed", json={"role": "paciente"})
+
+    def test_embed_unified_patient_role_mismatch_forbidden(self, patient_client):
+        """Patient explicitly requesting ``role=terapeuta`` is forbidden."""
+        resp = patient_client.post("/api/matching/embed", json={"role": "terapeuta"})
+        assert resp.status_code == 403
+
+    def test_embed_unified_therapist_role_mismatch_forbidden(self, client):
+        """Therapist explicitly requesting ``role=paciente`` is forbidden."""
+        resp = client.post("/api/matching/embed", json={"role": "paciente"})
+        assert resp.status_code == 403
+
+    def test_embed_unified_invalid_role_422(self, patient_client):
+        """Body ``role`` outside the enum returns 422."""
+        resp = patient_client.post("/api/matching/embed", json={"role": "stranger"})
+        assert resp.status_code == 422
+
+    def test_embed_unified_no_auth(self, client):
+        resp = client._tc.post("/api/matching/embed", json={})
+        assert resp.status_code == 401

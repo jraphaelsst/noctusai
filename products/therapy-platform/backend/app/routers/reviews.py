@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.dependencies import (
+    get_admin_client,
     get_current_user,
     get_user_client,
     get_user_role,
@@ -124,6 +125,68 @@ async def list_clinic_reviews(
         db=db,
     )
     return paginated_response(data, total, page, page_size)
+
+
+@router.get("/patient/{patient_id}")
+async def list_patient_reviews(
+    patient_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """List reviews authored by a patient + completed-but-unreviewed CTAs.
+
+    Returns the patient-portal `usePatientReviews` shape — the union of the
+    caller's therapist and clinic reviews, each enriched with `entity_name` +
+    `entity_type`, plus a `pending` list of completed appointments without
+    reviews. Patients can only read their own reviews; admins can read any.
+    """
+    user, token = await get_current_user(authorization)
+    role = get_user_role(user)
+    if role == "patient" and user.id != patient_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Sem permissão para acessar avaliações de outro paciente",
+        )
+    if role not in ("patient", "platform_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Sem permissão para acessar avaliações de paciente",
+        )
+
+    db = get_user_client(token)
+    admin_db = get_admin_client()
+    payload = await review_service.list_patient_reviews(
+        patient_id=patient_id,
+        db=db,
+        admin_db=admin_db,
+    )
+    return payload
+
+
+@router.delete("/{review_id}")
+async def delete_review(
+    review_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Delete own review (patient only).
+
+    Looks across `reviews` and `clinic_reviews`; patient ownership is enforced
+    by the row's `patient_id` column matching the caller.
+    """
+    user, token = await get_current_user(authorization)
+    role = get_user_role(user)
+    if role != "patient":
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas pacientes podem remover suas próprias avaliações",
+        )
+
+    db = get_user_client(token)
+    result = await review_service.delete_review(
+        review_id=review_id,
+        patient_id=user.id,
+        db=db,
+    )
+    return success_response(result)
 
 
 @router.post("/{review_id}/respond")

@@ -371,3 +371,163 @@ class TestFlagReview:
             "reason": "No auth attempt",
         })
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Patient: list own reviews + pending CTAs  (Phase 7.b)
+# ---------------------------------------------------------------------------
+
+class TestListPatientReviews:
+    """``GET /api/reviews/patient/{patient_id}`` — used by ``usePatientReviews``."""
+
+    def test_list_patient_reviews_empty(self, patient_client):
+        """No reviews + no completed appointments → empty data + empty pending."""
+        patient_client._mock_supabase.set_table_data("reviews", [])
+        patient_client._mock_supabase.set_table_data("clinic_reviews", [])
+        patient_client._mock_supabase.set_table_data("appointments", [])
+        resp = patient_client.get("/api/reviews/patient/test-user-123")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"] == []
+        assert body["pending"] == []
+
+    def test_list_patient_reviews_returns_therapist_and_clinic_shape(self, patient_client):
+        """Union of therapist + clinic reviews, each shaped with entity_name + entity_type."""
+        patient_client._mock_supabase.set_table_data("reviews", [
+            {
+                "id": "review-001",
+                "patient_id": "test-user-123",
+                "therapist_id": "therapist-target",
+                "star_rating": 5,
+                "review_text": "Excelente",
+                "created_at": "2026-04-01T10:00:00Z",
+            },
+        ])
+        patient_client._mock_supabase.set_table_data("clinic_reviews", [
+            {
+                "id": "clinic-review-001",
+                "patient_id": "test-user-123",
+                "clinic_id": "clinic-001",
+                "star_rating": 4,
+                "review_text": "Boa clínica",
+                "created_at": "2026-03-15T10:00:00Z",
+            },
+        ])
+        patient_client._mock_supabase.set_table_data("clinics", [
+            {"id": "clinic-001", "name": "Clinic A"},
+        ])
+        patient_client._mock_supabase.set_table_data("appointments", [])
+        resp = patient_client.get("/api/reviews/patient/test-user-123")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Two rows: one therapist, one clinic, both shaped with nota + comentario.
+        assert len(body["data"]) == 2
+        types = {row["entity_type"] for row in body["data"]}
+        assert types == {"therapist", "clinic"}
+        for row in body["data"]:
+            assert "nota" in row
+            assert "comentario" in row
+            assert "entity_name" in row
+            assert "entity_type" in row
+            assert "created_at" in row
+
+    def test_list_patient_reviews_pending_excludes_reviewed(self, patient_client):
+        """Completed appointments WITHOUT a review surface as pending CTAs;
+        appointments whose therapist is already reviewed are filtered out."""
+        patient_client._mock_supabase.set_table_data("reviews", [
+            {
+                "id": "review-001",
+                "patient_id": "test-user-123",
+                "therapist_id": "therapist-reviewed",
+                "star_rating": 4,
+                "review_text": None,
+                "created_at": "2026-04-01T10:00:00Z",
+            },
+        ])
+        patient_client._mock_supabase.set_table_data("clinic_reviews", [])
+        patient_client._mock_supabase.set_table_data("appointments", [
+            {
+                "id": "appt-1",
+                "patient_id": "test-user-123",
+                "therapist_id": "therapist-reviewed",
+                "status": "completed",
+                "scheduled_at": "2026-03-25T10:00:00Z",
+            },
+            {
+                "id": "appt-2",
+                "patient_id": "test-user-123",
+                "therapist_id": "therapist-pending",
+                "status": "completed",
+                "scheduled_at": "2026-03-30T10:00:00Z",
+            },
+        ])
+        resp = patient_client.get("/api/reviews/patient/test-user-123")
+        assert resp.status_code == 200
+        body = resp.json()
+        pending_appt_ids = [p["appointment_id"] for p in body["pending"]]
+        assert "appt-2" in pending_appt_ids
+        assert "appt-1" not in pending_appt_ids  # already reviewed
+
+    def test_list_patient_reviews_other_patient_forbidden(self, patient_client):
+        """Patient cannot read another patient's reviews."""
+        resp = patient_client.get("/api/reviews/patient/other-patient-999")
+        assert resp.status_code == 403
+
+    def test_list_patient_reviews_admin_allowed(self, admin_client):
+        """Platform admin can read any patient's reviews (LGPD review surface)."""
+        admin_client._mock_supabase.set_table_data("reviews", [])
+        admin_client._mock_supabase.set_table_data("clinic_reviews", [])
+        admin_client._mock_supabase.set_table_data("appointments", [])
+        resp = admin_client.get("/api/reviews/patient/some-patient-id")
+        assert resp.status_code == 200
+
+    def test_list_patient_reviews_therapist_forbidden(self, client):
+        """Therapist role is not authorized on the patient list endpoint."""
+        resp = client.get("/api/reviews/patient/test-user-123")
+        assert resp.status_code == 403
+
+    def test_list_patient_reviews_no_auth(self, client):
+        resp = client._tc.get("/api/reviews/patient/test-user-123")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Patient: delete own review  (Phase 7.b)
+# ---------------------------------------------------------------------------
+
+class TestDeleteReview:
+    """``DELETE /api/reviews/{review_id}`` — used by ``useDeleteReview``."""
+
+    def test_delete_review_success(self, patient_client):
+        patient_client._mock_supabase.set_table_data("reviews", [
+            {**SAMPLE_REVIEW, "patient_id": "test-user-123"},
+        ])
+        resp = patient_client.delete("/api/reviews/review-001")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["id"] == "review-001"
+
+    def test_delete_clinic_review_success(self, patient_client):
+        """Falls back to ``clinic_reviews`` when the row isn't in ``reviews``."""
+        patient_client._mock_supabase.set_table_data("reviews", [])
+        patient_client._mock_supabase.set_table_data("clinic_reviews", [
+            {**SAMPLE_CLINIC_REVIEW, "patient_id": "test-user-123"},
+        ])
+        resp = patient_client.delete("/api/reviews/clinic-review-001")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["id"] == "clinic-review-001"
+
+    def test_delete_review_not_owned_404(self, patient_client):
+        """Row owned by a different patient should not be deletable."""
+        patient_client._mock_supabase.set_table_data("reviews", [])
+        patient_client._mock_supabase.set_table_data("clinic_reviews", [])
+        resp = patient_client.delete("/api/reviews/review-not-mine")
+        assert resp.status_code == 404
+
+    def test_delete_review_as_therapist_forbidden(self, client):
+        resp = client.delete("/api/reviews/review-001")
+        assert resp.status_code == 403
+
+    def test_delete_review_no_auth(self, client):
+        resp = client._tc.delete("/api/reviews/review-001")
+        assert resp.status_code == 401

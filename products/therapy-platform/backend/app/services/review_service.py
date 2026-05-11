@@ -8,7 +8,13 @@ from typing import Any, Dict, List, Tuple
 
 from fastapi import HTTPException
 
+from noctusai_lib.integrations.supabase_identity import (
+    UserIdentity,
+    fetch_user_identities,
+)
+
 from app.dependencies import first_or_none
+from app.services._bulk import bulk_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -368,3 +374,169 @@ async def get_clinic_rating_stats(clinic_id: str, db: Any) -> Dict:
         "clinic_review_count": clinic_count,
         "therapist_aggregate_avg": therapist_avg,
     }
+
+
+async def list_patient_reviews(
+    patient_id: str,
+    db: Any,
+    admin_db: Any,
+) -> Dict[str, List[Dict]]:
+    """List a patient's reviews + pending review CTAs.
+
+    Returns a `{"data": [...], "pending": [...]}` shape consumed by
+    ``usePatientReviews`` (see `frontend/src/hooks/usePatientReviews.ts`).
+
+    `data` is the union of the patient's therapist-reviews and clinic-reviews,
+    each enriched with `entity_name` + `entity_type` for direct rendering on
+    the patient portal. Field renames (`star_rating` → `nota`,
+    `review_text` → `comentario`) match the page's render contract.
+
+    `pending` is the set of `completed` appointments without a corresponding
+    therapist review, surfaced as a CTA on the patient portal Reviews tab.
+
+    Args:
+        patient_id: Owning patient user id.
+        db: User-scoped Supabase client (RLS-respecting).
+        admin_db: Admin-scoped Supabase client for `auth.users` identity
+            lookups via :func:`fetch_user_identities`.
+    """
+    # ----- Patient's therapist reviews ------------------------------------
+    therapist_reviews_q = (
+        db.table("reviews")
+        .select("*")
+        .eq("patient_id", patient_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    therapist_rows = therapist_reviews_q.data or []
+    reviewed_therapist_ids = {r["therapist_id"] for r in therapist_rows if r.get("therapist_id")}
+
+    # ----- Patient's clinic reviews ---------------------------------------
+    clinic_reviews_q = (
+        db.table("clinic_reviews")
+        .select("*")
+        .eq("patient_id", patient_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    clinic_rows = clinic_reviews_q.data or []
+
+    # ----- Bulk identity + clinic-name resolution -------------------------
+    therapist_ids_for_lookup = [r["therapist_id"] for r in therapist_rows if r.get("therapist_id")]
+    identities = fetch_user_identities(admin_db, therapist_ids_for_lookup) if therapist_ids_for_lookup else {}
+
+    clinic_ids_for_lookup = [r["clinic_id"] for r in clinic_rows if r.get("clinic_id")]
+    clinic_name_map: Dict[str, str] = {}
+    if clinic_ids_for_lookup:
+        raw_map = bulk_lookup(db, "clinics", clinic_ids_for_lookup, value_cols="name")
+        clinic_name_map = {k: (v or "") for k, v in raw_map.items()}
+
+    # ----- Shape the union list -------------------------------------------
+    out: List[Dict] = []
+    for r in therapist_rows:
+        tid = r.get("therapist_id") or ""
+        identity = identities.get(tid, UserIdentity(user_id=tid))
+        out.append({
+            "id": r.get("id"),
+            "nota": r.get("star_rating"),
+            "comentario": r.get("review_text"),
+            "entity_name": identity.display_name,
+            "entity_type": "therapist",
+            "created_at": r.get("created_at"),
+            "updated_at": r.get("updated_at") or r.get("created_at"),
+        })
+    for r in clinic_rows:
+        cid = r.get("clinic_id") or ""
+        out.append({
+            "id": r.get("id"),
+            "nota": r.get("star_rating"),
+            "comentario": r.get("review_text"),
+            "entity_name": clinic_name_map.get(cid, ""),
+            "entity_type": "clinic",
+            "created_at": r.get("created_at"),
+            "updated_at": r.get("updated_at") or r.get("created_at"),
+        })
+    # Newest-first across both flavors (rows already individually ordered).
+    out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+
+    # ----- Pending: completed appointments lacking a therapist review -----
+    appts_q = (
+        db.table("appointments")
+        .select("id, therapist_id, scheduled_at, status")
+        .eq("patient_id", patient_id)
+        .eq("status", "completed")
+        .order("scheduled_at", desc=True)
+        .execute()
+    )
+    appt_rows = appts_q.data or []
+
+    pending_therapist_ids = [
+        a["therapist_id"]
+        for a in appt_rows
+        if a.get("therapist_id") and a["therapist_id"] not in reviewed_therapist_ids
+    ]
+    pending_identities = (
+        fetch_user_identities(admin_db, pending_therapist_ids) if pending_therapist_ids else {}
+    )
+
+    pending: List[Dict] = []
+    seen_pending_therapists: set[str] = set()
+    for appt in appt_rows:
+        tid = appt.get("therapist_id") or ""
+        if not tid or tid in reviewed_therapist_ids or tid in seen_pending_therapists:
+            continue
+        seen_pending_therapists.add(tid)
+        identity = pending_identities.get(tid, UserIdentity(user_id=tid))
+        pending.append({
+            "appointment_id": appt.get("id"),
+            "therapist_name": identity.display_name,
+            "session_date": appt.get("scheduled_at"),
+        })
+
+    return {"data": out, "pending": pending}
+
+
+async def delete_review(
+    review_id: str,
+    patient_id: str,
+    db: Any,
+) -> Dict:
+    """Patient deletes one of their own reviews.
+
+    Looks across `reviews` and `clinic_reviews` so the same endpoint serves
+    both flavors (mirrors `flag_review` table-fallback). Patient ownership is
+    enforced by filtering both the row id and `patient_id`. Returns the
+    deleted row (or raises 404 if not found / not owned).
+    """
+    # Try therapist-reviews table first.
+    target_table = "reviews"
+    existing = (
+        db.table("reviews")
+        .select("id, patient_id")
+        .eq("id", review_id)
+        .eq("patient_id", patient_id)
+        .execute()
+    )
+    if not existing.data:
+        target_table = "clinic_reviews"
+        existing = (
+            db.table("clinic_reviews")
+            .select("id, patient_id")
+            .eq("id", review_id)
+            .eq("patient_id", patient_id)
+            .execute()
+        )
+
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Avaliação não encontrada")
+
+    result = (
+        db.table(target_table)
+        .delete()
+        .eq("id", review_id)
+        .eq("patient_id", patient_id)
+        .execute()
+    )
+    row = first_or_none(result) or {"id": review_id, "patient_id": patient_id}
+    logger.info("Review deleted: review=%s patient=%s table=%s", review_id, patient_id, target_table)
+    return row

@@ -24,8 +24,11 @@ export function useMatchResults(patientId?: string) {
 export function useEmbedProfile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { patient_id: string }) => {
-      return api.post('/api/matching/embed', data);
+    // The unified backend endpoint (POST /api/matching/embed) infers identity
+    // + role from the JWT; `role` is only required for admin invocations. The
+    // patient onboarding flow leaves the body empty.
+    mutationFn: async (body?: { role?: 'terapeuta' | 'paciente' }) => {
+      return api.post('/api/matching/embed', body ?? {});
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEYS.all });
