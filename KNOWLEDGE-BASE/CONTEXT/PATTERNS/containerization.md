@@ -663,12 +663,14 @@ When you're on a stable connection, prime the local cache so future
 builds don't need Docker Hub at all:
 
 ```bash
-docker pull docker/dockerfile:1.7   # BuildKit syntax frontend
-docker pull python:3.11-slim        # backend base
-docker pull node:20-alpine          # frontend build base
-docker pull nginx:alpine            # frontend runtime base
-docker pull redis:7-alpine          # redis profile
-docker pull cloudflare/cloudflared:latest  # tunnel profile
+docker pull docker/dockerfile:1.7         # BuildKit syntax frontend
+docker pull python:3.11-slim              # backend base (T1 multi-stage: builder + runtime)
+docker pull node:20-alpine                # frontend base (used by build, dev, and HMR stages)
+docker pull nginx:alpine                  # frontend runtime base (production target)
+docker pull redis:7-alpine                # redis profile
+docker pull postgres:16-alpine            # local-postgres profile (T4, §11g)
+docker pull cloudflare/cloudflared:latest # tunnel profile
+docker pull aquasec/trivy:0.49.1          # CI image scanning (T9, §11f)
 ```
 
 After this, `./start.sh` works offline (only product layers rebuild
