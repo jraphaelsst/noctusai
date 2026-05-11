@@ -8,22 +8,24 @@ Frontend contract (Phase 5 hooks `useAuthorizedUsers.ts`):
   - DELETE /api/authorized-users/{id}      → `{ok: true}`
 
 Wire-shape note: the frontend hook surfaces `is_active` (camelCase-ish
-boolean alias of the DB column `active`) and an optional `notes` field
-that does NOT exist in the schema (`002_initial_schema.sql`). We honor
-the active alias both directions; `notes` is silently dropped (forwarded
-as a no-op attribute the DB ignores). Surface in Phase 3 improvements
-so the schema/hook drift gets resolved at Phase 6 verification.
+boolean alias of the DB column `active`). We honor the active alias both
+directions.
+
+`notes`: optional TEXT column added in migration 007 (Phase 1 —
+media-scheduling-wiring). Persisted as-is on insert/update and returned
+on every read. Tracks phantom-field-on-write slip surfaced at Phase 0
+audit; closed at the layer of the cause (schema), not the consumer.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.database import get_supabase_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_org
 from app.services.lid_auth import normalize_phone_number
 
 logger = logging.getLogger(__name__)
@@ -32,14 +34,15 @@ router = APIRouter(prefix="/api/authorized-users", tags=["AuthorizedUsers"])
 
 class AuthorizedUserCreate(BaseModel):
     """POST shape — frontend may send is_active, name, phone_number, role,
-    email, optional notes. `notes` not in schema → dropped (see module
-    docstring)."""
+    email, optional notes. `notes` persisted as-is (column added in
+    migration 007)."""
 
     name: str = Field(..., min_length=1, max_length=120)
     phone_number: str = Field(..., min_length=1, max_length=32)
     role: str = Field(default="real_estate_agent", max_length=40)
     email: Optional[str] = Field(default=None, max_length=255)
     is_active: bool = Field(default=True)
+    notes: Optional[str] = Field(default=None)
 
 
 class AuthorizedUserUpdate(BaseModel):
@@ -48,6 +51,7 @@ class AuthorizedUserUpdate(BaseModel):
     role: Optional[str] = None
     email: Optional[str] = None
     is_active: Optional[bool] = None
+    notes: Optional[str] = None
 
 
 def _wire(row: dict[str, Any]) -> dict[str, Any]:
@@ -59,7 +63,11 @@ def _wire(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _persistable(payload: dict[str, Any]) -> dict[str, Any]:
-    """Translate wire-shape → DB shape (is_active → active; normalize phone)."""
+    """Translate wire-shape → DB shape (is_active → active; normalize phone).
+
+    ``notes`` is forwarded as-is to the DB column added in migration 007.
+    Pre-007 the field was silently dropped — a phantom-field-on-write
+    slip surfaced at Phase 0 and closed at the schema layer."""
     out: dict[str, Any] = {}
     if "name" in payload and payload["name"] is not None:
         out["name"] = payload["name"]
@@ -71,14 +79,15 @@ def _persistable(payload: dict[str, Any]) -> dict[str, Any]:
         out["phone_number"] = normalize_phone_number(payload["phone_number"])
     if "is_active" in payload and payload["is_active"] is not None:
         out["active"] = bool(payload["is_active"])
+    if "notes" in payload:
+        out["notes"] = payload["notes"]
     return out
 
 
 @router.get("")
 async def list_authorized_users(
-    authorization: Optional[str] = Header(None),
+    auth=Depends(get_current_user_org),
 ) -> dict[str, Any]:
-    await get_current_user(authorization)
     db = get_supabase_client()
     result = (
         db.table("authorized_users")
@@ -93,9 +102,8 @@ async def list_authorized_users(
 @router.post("")
 async def create_authorized_user(
     body: AuthorizedUserCreate,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(get_current_user_org),
 ) -> dict[str, Any]:
-    await get_current_user(authorization)
     db = get_supabase_client()
     payload = _persistable(body.model_dump(exclude_unset=True))
     if not payload.get("phone_number"):
@@ -114,9 +122,8 @@ async def create_authorized_user(
 @router.get("/{user_id}")
 async def get_authorized_user(
     user_id: str,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(get_current_user_org),
 ) -> dict[str, Any]:
-    await get_current_user(authorization)
     db = get_supabase_client()
     result = (
         db.table("authorized_users")
@@ -135,9 +142,8 @@ async def get_authorized_user(
 async def update_authorized_user(
     user_id: str,
     body: AuthorizedUserUpdate,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(get_current_user_org),
 ) -> dict[str, Any]:
-    await get_current_user(authorization)
     db = get_supabase_client()
     payload = _persistable(body.model_dump(exclude_unset=True))
     if not payload:
@@ -161,9 +167,8 @@ async def update_authorized_user(
 @router.delete("/{user_id}")
 async def delete_authorized_user(
     user_id: str,
-    authorization: Optional[str] = Header(None),
+    auth=Depends(get_current_user_org),
 ) -> dict[str, Any]:
-    await get_current_user(authorization)
     db = get_supabase_client()
     db.table("authorized_users").delete().eq("id", user_id).execute()
     return {"ok": True}

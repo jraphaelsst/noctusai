@@ -11,12 +11,12 @@ the contract simple.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_supabase_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_org
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/condominiums", tags=["Condominiums"])
@@ -24,9 +24,8 @@ router = APIRouter(prefix="/api/condominiums", tags=["Condominiums"])
 
 @router.get("")
 async def list_condominiums(
-    authorization: Optional[str] = Header(None),
+    auth=Depends(get_current_user_org),
 ) -> dict[str, Any]:
-    await get_current_user(authorization)
     db = get_supabase_client()
     try:
         result = (

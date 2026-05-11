@@ -23,12 +23,12 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from app.config import settings
 from app.database import get_supabase_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_org
 
 logger = logging.getLogger(__name__)
 
@@ -235,17 +235,16 @@ async def google_oauth_callback(
 
 @admin_router.get("/status")
 async def google_oauth_status(
-    authorization: str | None = Header(None),
+    auth=Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Return `{connected, expires_at, account_email, last_error}`.
 
     Connected when at least one `oauth_credentials` row with provider=google
     exists. We surface the most recent row (by `updated_at desc`) — single-
     account flow today, so "most recent" === "current".
-    """
-    # Admin gate — admin frontend reads this; reject if no SSO user.
-    await get_current_user(authorization)
 
+    Admin gate via the seed-canonical ``get_current_user_org`` factory.
+    """
     db = get_supabase_client()
     result = (
         db.table("oauth_credentials")
