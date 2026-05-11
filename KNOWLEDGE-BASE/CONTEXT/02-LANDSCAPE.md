@@ -18,6 +18,7 @@
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
 | **YouTube Crawler** | `products/youtube-crawler/` | YouTube Data API v3 + Drive + WAHA + SMTP — quota-aware uploads with Fernet-encrypted refresh tokens (scaffolded 2026-05-05; containerized 2026-05-10 follow-up of `containerization-backlog-closure`) | 8008/8150 | `youtube_crawler` |
 | **Media Scheduling** | `products/media-scheduling/` | Real-estate media-crew scheduling via WhatsApp ↔ OpenAI ↔ Google Calendar (ported 2026-05-04 from sibling repo `whatsapp-google-scheduling/` via `projects/media-scheduling-port/`) | 8096/8140 | `media_scheduling` |
+| **Imobi Scheduling** | `products/imobi-scheduling/` | WhatsApp chatbot scheduling real-estate media crews via OpenAI tool-loop + Google Calendar + Maps travel-time; first chatbot consumer of `noctusai_lib.{integrations.whatsapp,domain.chatbot,domain.scheduling}`; folded 2026-05-11 from sibling repo `whatsapp-google-scheduling/` via `projects/imobi-scheduling-bot-creation/`; single-agency v1, WhatsApp-only (admin UI deferred) | 8011/8160 | `imobi_scheduling` |
 
 > **Port allocation table** of record: `RESERVED_RANGES` in `mcp/noctusai/tools/noctus/dev/scaffold.py`. The `noctus.dev.reserve_port_range` MCP tool consults that list when scaffolding new products; this table mirrors it.
 

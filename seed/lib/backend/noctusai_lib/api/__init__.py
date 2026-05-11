@@ -20,6 +20,7 @@ contributes to a product's HTTP layer".
 - `rate_limit.py` — slowapi configuration helpers
 - `app_factory.py` — `create_product_app(...)` companion shim
 - `crud_safety.py` — `delete_with_existence_check` + `delete_or_404` (replaces the unreliable `.delete()` + `if not result.data` 404 shape)
+- `schemas.py` — `StrictHttpModel` base (Pydantic `extra="forbid"`) for HTTP-boundary request/response shapes; defends against silent-drop misroutes (see `KB § PATTERNS/pydantic-strict-http.md`).
 
 (`roles.py` was originally planned here, but it's pure constants +
 predicates — no FastAPI, no IO. Moved to `primitives/roles.py` during
@@ -28,3 +29,6 @@ dep-direction rule.)
 
 See `KB § PATTERNS/seed-lib-layout.md` for the full layer model.
 """
+from noctusai_lib.api.schemas import StrictHttpModel
+
+__all__ = ["StrictHttpModel"]
