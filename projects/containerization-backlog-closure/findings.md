@@ -8,11 +8,17 @@
 
 - **(2026-05-10, T3, smoke-build)** `docker compose config --quiet` failed on every per-product file with `env file .env not found`. Cause: the `env_file: ../../.env` directive on the backend service hard-requires the file to exist (even for config validation, before build). Workaround: `touch .env` at repo root before running validation. Not a T3-introduced regression; the same failure would happen on any fresh clone. Surface to project: should the seed compose use `env_file: required: false` or should `.env` be created as a side-effect of `start.sh`? Filed under §11 backlog (no-op for T3 scope).
 
+- **(T4, 2026-05-10) `psql -v ON_ERROR_STOP=1` aborts the whole init file on first failure.** The default postgres docker entrypoint runs every `.sql` in `/docker-entrypoint-initdb.d/` with `ON_ERROR_STOP=1`. When one product's migration referenced `cron.schedule()` (Supabase-only), psql aborted, the entrypoint exited non-zero, and the entire database was effectively discarded — all 17 CREATE TABLEs that ran successfully before the cron line were rolled back when postgres restarted and found the data dir in an inconsistent state. **Fix:** explicit `\set ON_ERROR_STOP off` at the top of the generated `02-migrations.sql` so a per-product `BEGIN;...COMMIT;` failure only rolls back that product's block; subsequent products still apply.
+- **(T4, 2026-05-10) `cron.schedule()` shim's `jobname` parameter shadowed the table column.** Initial cron stub used `jobname TEXT` as both the parameter name and an `ON CONFLICT (jobname)` reference, triggering `ERROR: column reference "jobname" is ambiguous`. Renamed to `p_jobname` prefix. Lesson: name function params with a prefix when they could collide with column names of tables the function writes to.
+
 ---
 
 ## Mistakes / slips
 
 _(none — T3 work landed without re-applies or rollbacks.)_
+
+- **(T4, 2026-05-10) Initial slip: built only the cross-product schemas, missed the role/shim layer.** First pass installed extensions + schemas + migrations and called it done — verification showed 0 tables in any schema because every product migration GRANTed to `anon`/`authenticated`/`service_role` (Supabase roles, not installed in plain postgres). Added `00a-supabase-shims.sql` shipping the roles + `auth.{jwt,uid,role,email}()` no-op functions + `extensions`/`storage`/`cron` schemas + minimal `auth.users` table. Lesson: a Supabase migration is NOT pure SQL — it's SQL + a thick Supabase runtime contract. Offline-dev profiles need to shim the contract.
+- **(T4, 2026-05-10) Slip: forgot `core` must run before products that FK to `public.organizations`.** Default alphabetical sort put `adconnect` (FK target: `public.organizations`) BEFORE `core` (creator of that table). Generator reordered to put `core` first; rest stay alphabetical. Lesson: cross-product schema dependencies in migrations have a topological order that's often distinct from product slug order.
 
 ---
 
@@ -22,6 +28,9 @@ _(none — T3 work landed without re-applies or rollbacks.)_
 - **(2026-05-10, T3)** `define:` in `vite.config.factory.ts` is a compile-time substitution — it bypasses both `.env` and the build-arg path. Vars in the factory's `define:` block (today: `VITE_BACKEND_API_URL`, `VITE_PRODUCT_SCHEMA`) do NOT need ARG/args declarations because their values are written into the bundle as string literals during build. A contract that says "every VITE_* needs ARG+args" must carve out factory-injected vars or it becomes wrong-but-harmless paperwork. Captured in the KB section's "Carve-out" paragraph.
 - **(2026-05-10, T3)** The `${VITE_FOO:-}` fallback (vs bare `${VITE_FOO}`) matters for validation hygiene. Without `:-`, `docker compose config` emits "WARN VITE_FOO not set" on every fresh clone, which is noisy and easy to misread as an actual config error. With `:-`, it's silent and aligns with the in-code `import.meta.env.VITE_FOO || "default"` patterns products already use. Captured in the KB anti-patterns.
 
+- **(T4, 2026-05-10) Docker volume init runs ONCE — verification must include the teardown-and-reup cycle.** The postgres-official-image init scripts only fire when the data directory is empty. A "looks green" first run can mask a slip that only surfaces on a fresh volume. Every postgres-init verification should explicitly `down -v` + `up` again to exercise the cold path. Captured as a §11b caveat.
+- **(T4, 2026-05-10) Shim layer > skip-broken-statements in generated SQL.** When the first attempt hit `cron.schedule does not exist`, the easy fix was to grep-strip cron lines from the generated migrations. The better fix was to expose `cron` as a stub schema/function in `00a-supabase-shims.sql` — the migrations stay byte-identical to production, the local image carries the compatibility surface. Generated artifacts should never silently diverge from their source.
+
 ---
 
 ## Interesting findings (surprises, discoveries)
@@ -29,6 +38,10 @@ _(none — T3 work landed without re-applies or rollbacks.)_
 - **(2026-05-10, T3)** Of 11 products with VITE_* usage in their `frontend/src/`, **only 10 have Docker artifacts**. `products/youtube-crawler/` references `VITE_CORE_URL` and `VITE_BACKEND_API_URL` in its frontend code but has neither a `frontend/Dockerfile` nor a `docker-compose.yml`. Per §18.1 (surface dependencies, don't absorb), skipped from this T3 brief — the gap needs its own follow-up (likely T6-or-later: "scaffold youtube-crawler Docker artifacts from the seed canonical"). The VITE_* contract pre-applies for the day someone scaffolds it.
 - **(2026-05-10, T3)** `VITE_BACKEND_API_URL` audit hit shows up across 9 products, but the factory's `define:` block already substitutes it at build time per-product (computed from each product's port). That means it has zero coupling to the build-arg path — adding ARG/args for it would be silent dead code. Worth knowing because a literal reading of the brief ("every VITE_* referenced in code") would include it. The contract is more precisely: "every VITE_* referenced in code, EXCEPT those in `vite.config.factory.ts`'s `define:` block".
 - **(2026-05-10, T3)** The audit table is asymmetric: only `core` and `erp-imobiliario` use `VITE_CORE_API_URL`; the other 9 products only use `VITE_CORE_URL` (and reach the backend via the factory-injected `VITE_BACKEND_API_URL`). This suggests `VITE_CORE_API_URL` is core-specific (core itself hosting the API) — worth a future audit pass to see if erp-imobiliario actually needs it or inherited it by copy-paste.
+
+- **(T4, 2026-05-10) dev-team uses 4-digit `0001_` prefix while every other product uses 3-digit `001_`.** The generator's initial glob (`001_*.sql`) silently missed dev-team. Switched to per-product "lexically-first numeric-prefixed `.sql`" discovery. Lesson: migration naming conventions across products are not yet standardized; the seed-first scaffolder writes 3-digit but dev-team predates that. Candidate for a separate normalization project.
+- **(T4, 2026-05-10) `core` doesn't declare its own schema — it lives in `public`.** Of all 10 products, only core's migration omits `CREATE SCHEMA IF NOT EXISTS <slug>`. Its tables live in `public` directly. The `\dn` output thus shows 9 product schemas + `public` (with core's tables) — not 10 product schemas as the brief expected. Documented in §11b.
+- **(T4, 2026-05-10) ERP's migration is the only one that uses Supabase extensions that alpine doesn't bundle.** `pg_cron`, `pg_net`, `vector` are all in ERP's `001_erp_imobiliario.sql` `CREATE EXTENSION ... WITH SCHEMA extensions` block. Offline-dev posture: accept ERP empty in local-db mode (cataloged in §11b caveat); production still uses Supabase.
 
 ---
 
@@ -53,6 +66,11 @@ _(none — T3 work landed without re-applies or rollbacks.)_
 `VITE_BACKEND_API_URL` + `VITE_PRODUCT_SCHEMA` are factory-injected via `define:` in `seed/framework/frontend/vite.config.factory.ts` — they don't need the ARG/args bridge.
 
 ### Pause-on-dependency event log
+
+- **The Supabase compatibility shim layer.** For offline-dev with plain Postgres, you need MORE than just extensions — Supabase migrations bake in: 3 roles (`anon`/`authenticated`/`service_role`), the `auth` schema with `auth.jwt()`/`auth.uid()`/`auth.role()`/`auth.email()` STABLE functions, an `extensions` schema, a `storage` schema (sometimes referenced by RLS), an `auth.users` table (FK target), and on some products a `cron.schedule()` stub. The full shim is at `scripts/init-local-db/00a-supabase-shims.sql` and serves as the canonical "Supabase compatibility surface" reference for any future tool that needs to apply real migrations against plain Postgres (CI integration tests, schema-diff tooling, etc.).
+- **`BEGIN; product-migration; COMMIT;` blocks + `\set ON_ERROR_STOP off` is the right shape for concatenating per-product migrations.** Each block atomically applies-or-rolls-back; psql continues to the next block on failure; cascade errors ("current transaction is aborted") in failed blocks fill the logs but don't poison neighbors. Generated by `scripts/build-init-local-db.sh`.
+
+
 
 - **Pause-on-dependency event log shape.** Each pause-and-resume gets a row here:
   - **Event:** _(none yet)_
