@@ -184,6 +184,37 @@ See also `CLAUDE.md → MCP migrations mirror the file` and `CONTEXT/01-PHILOSOP
 
 **Anti-pattern:** silently switching a per-user-scoped table to org-scoped without re-validating that "user A's row visible to user B in same org" is acceptable. The RLS-scoping switch is a design change, not a refactor.
 
+## Cross-schema reach via `get_core_client()` — 2026-05-11
+
+**Problem shape.** A product-schema service needs a row from `public.*` (e.g. `organizations`, `noctus_users`, `product_licenses`, `notifications`). The product's `db` argument is a Supabase client with `search_path = "<product-schema>", public`. PostgREST resolves `db.table("organizations")` against the FIRST schema in `search_path` — the product schema — where the relation does NOT exist. Result at runtime: **PGRST205 "relation organizations not found in schema <product-schema>"**.
+
+**Slip shape — the bug masker.** Services that wrap the read in `or {fallback}` swallow the PGRST205 row-side (data ends up `None` → fallback dict wins) and never raise. Tests don't seed organizations rows, so the fallback always wins, false-green. Real bug only manifests in production once a real org row exists.
+
+**Original sighting.** PF `monthly_narrative_service._fetch_window` (commit `15bea72`, Engineer W's PF Phase 4 close). Fixed by switching to `get_core_client()` (a Supabase client rooted in `public` schema).
+
+**The canonical seam.** `get_core_client()` from `app.database` — every product re-exports it. The seed module ships it as `seed/framework/backend/noctusai_seed/database.py::DatabaseModule.get_core_client`.
+
+```python
+# BEFORE — product-schema client; PGRST205 at runtime, masked by fallback.
+org_res = db.table("organizations").select("id, nome").eq("id", org_id).single().execute()
+org_record = org_res.data or {"id": org_id, "nome": "Você"}
+
+# AFTER — public-schema client; runtime-correct.
+from app.database import get_core_client
+core = get_core_client()
+org_res = core.table("organizations").select("id, nome").eq("id", org_id).single().execute()
+org_record = org_res.data or {"id": org_id, "nome": "Você"}
+```
+
+**When to reach for `get_core_client()`.** Any product-side read/write of a `public.*` table — `organizations`, `noctus_users`, `product_licenses`, `user_org_memberships`, `notifications`, `audit_log` (when surfaced cross-product). Adjacent product schemas use `.schema("<other-product>")` — also valid cross-schema but distinct from the public-shape reach this section addresses.
+
+**Methodology amendment — `or {fallback}` after a DB read requires a non-fallback-path test.** When authoring code with shape `record = res.data or {default...}`:
+1. Write at least one test that **seeds the row** and asserts the service consumes it (not the fallback).
+2. The seeded-path test is the one that exercises the table-name + schema choice — the fallback-path test does not.
+3. Without (1), PGRST205 (or any read-side error) is invisible to the test suite.
+
+**2026-05-11 cross-schema-organization-audit.** Audit across all 11 non-core products surfaced exactly 0 REAL_BUG, 0 WORKS_BY_LUCK after the PF fix. Only one digest-shape service (PF `monthly_narrative`) fetched `organizations`; sister digest services (daily-life `weekly_review`, mailing `campaign_debrief`, ERP `metas_digest`, core `audit_digest`) either don't reach `organizations` (their digests are product-data-only) or live in core and therefore correctly default to public. Therapy `ai_pipeline.py` was already using the explicit-DI `core_db` shape pre-audit. Per-product code count for the cross-schema-reach concern remains 0 outside the natural call sites.
+
 ## Provisioning
 
 Trigger `on_license_change` fires when `public.product_licenses` changes. Auto-provisions product defaults (initial teams, seed rows, roles) in the product's schema.

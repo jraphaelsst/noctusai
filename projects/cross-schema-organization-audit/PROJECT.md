@@ -3,8 +3,8 @@
 > **This is a living document, not a rigid checklist.**
 
 - **Created:** 2026-05-10
-- **Last updated:** 2026-05-10
-- **Status:** 📋 **READY FOR EXECUTION.** Filed under user signal "create projects for deferrals/parks that happen along the way." Engineer W's `personal-finance-wiring` Phase 4 close (commit `15bea72`) caught a runtime bug — `monthly_narrative_service` reached `public.organizations` via product-schema client, would raise PGRST205. Bug masked by fixture-fallback. Likely repeats in ERP / therapy / daily-life sister services.
+- **Last updated:** 2026-05-11
+- **Status:** ✅ **CLOSED — Phase 0/1/2 complete.** Audit across all 11 non-core products surfaced 0 REAL_BUG and 0 WORKS_BY_LUCK. The PF Engineer W fix (`monthly_narrative_service` → `get_core_client()`) was 1-of-1 — no sister-service repeats. Therapy `ai_pipeline.py` already uses explicit-DI `core_db`. Sister digest services (daily-life `weekly_review`, mailing `campaign_debrief`, ERP `metas_digest`, core `audit_digest`) don't reach `public.organizations` from a product-schema client. KB pattern + methodology amendment shipped.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `cross-schema-organization-audit`
 - **Related docs:**
@@ -82,22 +82,49 @@ result = core_db.table("organizations").select(...).execute()
 
 ## 6. Implementation phases
 
-### Phase 0 — Audit
+### Phase 0 — Audit ✅
 
-- [ ] Grep across all products for the suspect shape (recipe in §5).
-- [ ] Catalog each hit: file:line, current client, target table, fallback shape if any.
-- [ ] Classify: REAL_BUG (would raise PGRST205) / WORKS_BY_LUCK (search_path includes public) / OK (already uses get_core_client).
+- [x] Grep across all products for the suspect shape (recipe in §5).
+- [x] Catalog each hit: file:line, current client, target table, fallback shape if any.
+- [x] Classify: REAL_BUG / WORKS_BY_LUCK / OK.
 
-### Phase 1 — Fix REAL_BUGs
+**Catalog (non-core products only — core OWNS the public schema, its calls are correctly rooted):**
 
-- [ ] For each REAL_BUG: switch to `get_core_client()`. Add test that exercises the non-fallback path (seed the org row, assert the service consumes it).
-- [ ] AST-first (libcst). NEVER sed/regex.
+| File:line | Table | Client | Classification | Notes |
+|---|---|---|---|---|
+| `products/personal-finance/backend/app/services/monthly_narrative_service.py:154` | `organizations` | `core` (from `get_core_client()`) | OK | Engineer W's post-fix shape — already canonical |
+| `products/therapy-platform/backend/app/services/ai_pipeline.py:138` | `notifications` | `core_db` (DI default `get_core_client()`) | OK | Explicit DI shape with optional override |
+| `products/imobi-scheduling/backend/app/services/authorization.py:259,273,300` | `users` | `self._scoped` (imobi_scheduling-rooted) | OK | `imobi_scheduling.users` — same-schema |
+| `products/imobi-scheduling/backend/app/routers/whatsapp_router.py:207` | `users` | `admin.schema(AuthorizationService.SCHEMA).table(...)` | OK | Explicit `.schema("imobi_scheduling")` |
+| `products/therapy-platform/backend/app/services/messaging_service.py:509,519,539,549,563` | `user_blocks` | `db` (therapy-rooted) | OK | `therapy.user_blocks` — same-schema |
+| `products/therapy-platform/backend/app/services/admin_service.py:1161` | `user_blocks` | `db` (therapy-rooted) | OK | Same |
+| `products/erp-imobiliario/backend/**/*.py` (multiple `profiles` hits) | `profiles` | product-schema | OK | `erp.profiles` lives in ERP schema (migration `003_schema_separation.sql` moved it) |
 
-### Phase 2 — Document WORKS_BY_LUCK + close
+Sister digest services audited and **do not reach `public.organizations` from a product-schema client**:
+- `products/daily-life/backend/app/services/weekly_review_service.py` — only daily-life tables in `_fetch_window`.
+- `products/erp-imobiliario/backend/app/services/metas_digest_service.py` — only erp tables in `_fetch_context`.
+- `products/mailing/backend/app/services/campaign_debrief_service.py` — only mailing tables in `_fetch_window`.
+- `products/core/backend/app/services/audit_digest_service.py` — lives in core; its `db.table("organizations")` is correctly rooted in public.
 
-- [ ] For each WORKS_BY_LUCK: add a code comment explaining the search_path dependency OR switch to `get_core_client()` for safety.
-- [ ] KB pattern doc: `KB § PATTERNS/cross-schema-reach.md` (or expand `KB § PATTERNS/database-rls.md` with a "cross-schema reach via `get_core_client()`" section).
-- [ ] Methodology amendment: when authoring code, `or {fallback}` after a DB read requires at least one test exercising the non-fallback path.
+**Classification totals: 0 REAL_BUG · 0 WORKS_BY_LUCK · all hits OK.**
+
+### Phase 1 — Fix REAL_BUGs ✅
+
+- [x] No REAL_BUGs found; nothing to switch.
+- [x] AST-first guard upheld — no code edits made; would have used libcst.
+
+### Phase 2 — Document WORKS_BY_LUCK + close ✅
+
+- [x] No WORKS_BY_LUCK hits to document.
+- [x] KB pattern doc — added "Cross-schema reach via `get_core_client()` — 2026-05-11" section to `KNOWLEDGE-BASE/CONTEXT/PATTERNS/database-rls.md`.
+- [x] Methodology amendment — added rule to `CLAUDE/backend.md`: "Cross-schema reach goes through `get_core_client()`; `or {fallback}` after a DB read requires a non-fallback-path test."
+
+**Improvements (in-scope, applied):**
+- KB pattern doc captures the slip shape (PGRST205 + fallback masker) for future readers.
+- `CLAUDE/backend.md` gets the authoring-rule pointer (three-way sync — KB depth + topical rule).
+
+**Deferred / accept-with-rationale:**
+- None. The audit closed clean.
 
 ## 7. Open questions
 
@@ -109,10 +136,10 @@ result = core_db.table("organizations").select(...).execute()
 
 ## 9. Success criteria
 
-- [ ] Zero REAL_BUG instances remaining across all products.
-- [ ] KB pattern doc shipped.
-- [ ] Methodology guard documented.
-- [ ] All affected products' pytest green.
+- [x] Zero REAL_BUG instances remaining across all products — **audit confirmed clean before any code changes were needed**.
+- [x] KB pattern doc shipped — `KB § PATTERNS/database-rls.md § Cross-schema reach via get_core_client()`.
+- [x] Methodology guard documented — `CLAUDE/backend.md` + KB section above.
+- [x] All affected products' pytest green — no products were modified (audit was code-read-only); methodology + doc layer only.
 
 ## 10. How to use this plan
 
@@ -123,6 +150,7 @@ Single-engineer dispatch. Audit + grep heavy; mechanical fixes once shape is loc
 | Date | Change | By |
 |---|---|---|
 | 2026-05-10 | **Filed under user signal "create projects for deferrals/parks that happen along the way."** Engineer W's PF Phase 4 close (commit `15bea72`) caught real runtime bug in `monthly_narrative_service._fetch_window` (PGRST205 masked by fixture-fallback). Likely repeats in sister products. Mechanical audit + fix. | claude-opus-4-7 |
+| 2026-05-11 | **Phase 0/1/2 executed in single engineer dispatch.** Audit grep + extended grep (admin client, `.schema(...)` indirections, all 138 unique tables in non-core services) surfaced 0 REAL_BUG / 0 WORKS_BY_LUCK across 11 non-core products. PF was the lone occurrence; Engineer W's fix was sufficient. Phase 1 had no work (nothing to fix). Phase 2 shipped: (a) `KB § PATTERNS/database-rls.md § Cross-schema reach via get_core_client()` documenting the slip shape + canonical fix + audit result; (b) `CLAUDE/backend.md` rule "Cross-schema reach goes through `get_core_client()`; `or {fallback}` after a DB read requires a non-fallback-path test." | engineer-cross-schema |
 
 ## 12. No-leftovers constraint
 
