@@ -40,10 +40,10 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Mailing | 10 | 10 | 21 | 9 | 17 | 194 |
 | AdConnect | 9 | 10 | 16 | 5 | 25 | 234 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Media Scheduling | 5 | 8 | 10 | 3 | 16 | 82 |
+| Media Scheduling | 5 | 8 | 10 | 3 | 17 | 86 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 13 | 8 | 1 | 22 | 273 |
-| **Total** | **177** | **177** | **275** | **141** | **390** | **4,773** |
+| **Total** | **177** | **177** | **275** | **141** | **391** | **4,777** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

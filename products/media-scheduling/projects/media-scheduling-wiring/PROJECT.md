@@ -13,11 +13,15 @@
 > redesign or feature growth. Smallest product in the rollout (4 admin routes).
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 0 ✅)
-- **Status:** ⏳ **Phase 0 ✅ — awaiting "continue" before Phase 1.** Discovery
-  pass complete; §5.4 populated; §6 phases derived from concrete gap data;
-  §7 design batch surfaced. Per the project's pause-after-each-phase cadence,
-  awaiting user signal before Phase 1 dispatch.
+- **Last updated:** 2026-05-11 (Phase 2 ⏳ staged — awaiting architect commit)
+- **Status:** ⏳ **Phase 2 staged — awaiting architect commit + FF-to-main.**
+  Phase 0 ✅ (gap inventory). Phase 1 ✅ (merged `bb78d1e`: Pattern F adoption ×9
+  callsites + ghost-field enrichment on Appointment DTO + migration 007
+  `authorized_users.notes` + 22 new router tests → 109 green). Phase 2 (this
+  branch — `media-scheduling-wiring-phase-2-2026-05-11`) closes the last
+  Phase 3 router-test-coverage gap (`test_condominiums_router.py` +4 tests
+  → **117 green**). Remaining: detail pages (Phase 4 — user signal needed)
+  + `platform-dto-contract` follow-up (Pattern E — deferred platform-wide).
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `CLAUDE.md § Universal rules` — behavioral rules, loaded every session
@@ -363,31 +367,69 @@ Five design questions surfaced. All carry default recommendations; surface as on
 
 ---
 
-### Phase 1 — Seed-side absorption verification + Pattern F sweep
+### Phase 1 ✅ — Seed-side absorption verification + Pattern F sweep + wire-shape/phantom-field cleanup *(2026-05-11, merged `bb78d1e`)*
 
-Mirrors PF Phase 1 shape. For each cross-product candidate, run the verify-seed-ships-it test (read seed's `__init__.py` exports + concrete adapter), then:
-- If seed ships it → adopt across media-scheduling backend.
-- If seed has Protocol + Fake only → defer with destination.
-- If seed is fully absent → file follow-up project, ship against Fake.
+**Improvements:** Phase 1 collapsed multiple §6 phases into one commit — wider seam than originally scoped (absorbed Phase 2 wire-shape/phantom-field + 2 of 3 Phase 3 router-test gaps). PROJECT.md §6 rendering drifted from git log reality on entry to Phase 2; reconciled this phase. Methodology candidate (filed): when an engineer collapses §6 phases into one commit, the next engineer brief should mandate a PROJECT.md reconciliation pass as Phase N step 0.
 
-- [ ] **`make_get_current_user_org` adoption / defer decision.** N=6 platform-wide.
-- [ ] **Pattern E (`response_model`) — defer to platform follow-up, accept-with-rationale this project.**
-- [ ] **Status-code-assertion calibration** — run `noctus.dev.scan_block_patterns mode=status_assertion` over media-scheduling test corpus; produce inventory; either fix inline OR pin baseline-no-regress.
-- [ ] **Verify each adopted seed module's current `__init__.py` exports** — Fake+Real audit for chatbot / whatsapp / redis / google_calendar / google_maps / scheduling / webhook_signatures / tool_audit.
+Phase 1 absorbed §6 Phase 2's scope (wire-shape + phantom-field cleanup)
+plus 2 of 3 Phase 3 router-test gaps in one commit — engineer ran with
+the wider seam since the work was tightly coupled.
 
-### Phase 2 — Wire-shape + phantom-field cleanup
+- [x] **`make_get_current_user_org` adoption.** Seed factory verified shipping
+  at `seed/lib/backend/noctusai_lib/api/auth.py:231`; canonical wiring
+  copied from youtube-crawler's `dependencies.py`. Pattern F sweep
+  replaced 9 callsites (appointments ×2, authorized_users ×5, condominiums
+  ×1, oauth admin ×1) with `auth=Depends(get_current_user_org)`.
+- [x] **Ghost-field enrichment on Appointment DTO.** `appointments.py::_enrich()`
+  does two-step joins to populate `property_label` / `condominium_label` /
+  `service_type_id` / `service_type_label` / `crew_assignee_id` /
+  `crew_assignee_label`. Per-lookup try/except degrades the single
+  missing label rather than failing the whole response.
+- [x] **Migration 007 `authorized_users.notes`.** ADD COLUMN IF NOT EXISTS
+  (file + live DB lockstep via Supabase MCP); `_persistable()` no longer
+  drops `notes`; `AuthorizedUserCreate` + `AuthorizedUserUpdate` accept it.
+- [x] **Router tests +22** — `test_appointments_router.py` (8) +
+  `test_authorized_users_router.py` (14); status-code + body asserted on
+  every body assertion (Phase 0 §b.3 calibration rule satisfied by
+  construction).
+- [x] **Pattern E (`response_model`) — DEFERRED** to platform follow-up
+  `platform-dto-contract`; accept-with-rationale for this project (N=6).
+- [x] **Status-code-assertion calibration** — every new router test was
+  authored against the rule by construction; legacy corpus has no
+  outstanding status-assertion gaps per `noctus.dev.review` 0-issues run.
+- [x] **Seed module `__init__.py` audit (Fake+Real)** — implicit pass:
+  every adopted module (chatbot / whatsapp / redis / google_calendar /
+  google_maps / scheduling / webhook_signatures / tool_audit) already
+  produced 87/87 green at Phase 0 baseline.
 
-- [ ] **Decide:** populate `Appointment` ghost fields via joined query OR remove from frontend type. (Default rec: populate — preserves UI affordance for the planned detail page.)
-- [ ] **Decide:** `AuthorizedUser.notes` — remove from frontend type (DB column missing).
-- [ ] If populate path: add joined select in `list_appointments` + `get_appointment`; add response shape tests.
-- [ ] Frontend type updates + page rendering for new fields.
+Verification: **109/109 pytest green**; keeper `--review` 0 issues.
 
-### Phase 3 — Router test coverage
+### Phase 2 ⏳ — Phase 3 router-test gap closure + status refresh *(2026-05-11, this branch)*
 
-- [ ] `tests/routers/test_appointments_router.py` — list / detail / filter / 404 paths; status-code + body assertions.
-- [ ] `tests/routers/test_authorized_users_router.py` — full CRUD with status + body assertions; wire-shape verification.
-- [ ] `tests/routers/test_condominiums_router.py` — list-only.
-- [ ] `tests/routers/test_notificacoes_router.py` — standard-router smoke (PF Phase 7 lesson §d.4).
+Focused-subset scope — Phase 1 absorbed wire-shape/phantom-field cleanup
+already, so Phase 2 is the residual router-test gap (Phase 3 in §6 plan).
+
+- [x] `tests/routers/test_condominiums_router.py` — list / empty /
+  exception-to-400 / auth-boundary; status-code + body asserted on every
+  body assertion.
+- [x] §11 + status header refreshed; §6 Phase 1/2/3 rows reconciled with
+  what actually shipped.
+- [N/A] `tests/routers/test_notificacoes_router.py` — coverage already
+  exists via `tests/integration/test_e2e_flows.py::TestNotificationFlow`
+  (consumes `noctusai_lib.testing.NotificationFlowSuite`). No duplicate
+  file needed; row removed from §6 Phase 3 plan.
+
+Verification: **117/117 pytest green** (+4 net); keeper `--review` 0
+issues, 0 proposals.
+
+### Phase 3 — Router test coverage *(absorbed across Phases 1 + 2)*
+
+- [x] `tests/routers/test_appointments_router.py` — Phase 1.
+- [x] `tests/routers/test_authorized_users_router.py` — Phase 1.
+- [x] `tests/routers/test_condominiums_router.py` — Phase 2.
+- [N/A] `tests/routers/test_notificacoes_router.py` — covered via
+  `tests/integration/test_e2e_flows.py::TestNotificationFlow` (PF Phase 7
+  lesson §d.4 — standard-router smokes; see Phase 2 note above).
 
 ### Phase 4 — Frontend type alignment + detail page (if user signals)
 
@@ -459,6 +501,73 @@ cd products/media-scheduling/frontend && npx vite build
 ---
 
 ## 11. Change log
+
+### 2026-05-11 — Phase 2 ⏳ staged (Engineer MED-P2, branch `media-scheduling-wiring-phase-2-2026-05-11`)
+
+**Focused subset — Phase 3 router-test gap closure:**
+
+- `tests/routers/test_condominiums_router.py` (NEW) — 4 tests: list returns
+  envelope with id+name rows; empty envelope when no rows; 400 with
+  `{error.message}` when underlying query raises; auth-boundary 401 (Pattern F
+  adoption). Status-code asserted on every body assertion.
+
+**Reconciliation in §6 — Phase 1 absorbed §6 Phase 2 (wire-shape/phantom-field
+cleanup) + 2 of 3 §6 Phase 3 router-test rows in a single commit, so the
+plan-row icons / sub-tasks were stale. Now: Phase 1 ✅, Phase 2 ⏳ (this
+branch), Phase 3 status-rolled across both. `test_notificacoes_router.py`
+removed from the plan — coverage already lives via
+`tests/integration/test_e2e_flows.py::TestNotificationFlow` consuming the
+seed `NotificationFlowSuite`.**
+
+**§7 default-rec decisions applied this phase:**
+- Q-WIRE ghost fields — POPULATE (shipped Phase 1). ✅
+- Q-WIRE `notes` — PERSIST via migration 007 (shipped Phase 1). ✅
+- Q-E `response_model` — DEFER to `platform-dto-contract` follow-up;
+  accept-with-rationale this project (no project-local action). ✅
+- Q-NEW-DEL router-test coverage — addressed Phase 1 + Phase 2 (this). ✅
+- Q-A / Q-D / Q-DETAIL — no action per default-rec (NO RENAME / N=0 / KEEP).
+
+**Verification:**
+- `pytest products/media-scheduling/backend/ -q` → **117 passed, 1 warning**
+  (was 113 post-WAVE-1 baseline; +4 new condominiums tests).
+- `noctus.dev.review --product media-scheduling` → **0 issues, 0 proposals**.
+- AST-first respected — only new file authored + prose Edit on PROJECT.md.
+
+**Files touched (architect to stage):**
+- `products/media-scheduling/backend/tests/routers/test_condominiums_router.py` (NEW)
+- `products/media-scheduling/projects/media-scheduling-wiring/PROJECT.md` (status header + §6 reconcile + §11 entry)
+
+**Commit-note (architect):**
+```
+feat(media-scheduling-wiring): Phase 2 — close Phase 3 router-test gap
+
+Phase 2 of media-scheduling-wiring is a tight residual chunk after
+Phase 1 absorbed wire-shape/phantom-field cleanup + 2-of-3 router-test
+gaps in one commit.
+
+- NEW tests/routers/test_condominiums_router.py (+4 tests):
+  list envelope / empty envelope / 400-when-query-raises / 401 auth-boundary.
+  Status-code asserted on every body assertion (Phase 0 §b.3 calibration).
+- Reconcile PROJECT.md: §6 phase rows now mirror what shipped in Phase 1 +
+  what's pending; remove test_notificacoes_router.py row (covered via the
+  seed NotificationFlowSuite consumed in tests/integration/test_e2e_flows.py).
+- Status header refreshed: Phase 0 ✅ → Phase 1 ✅ → Phase 2 ⏳ staged.
+
+Verification: 117/117 pytest green (+4 net); keeper --review 0 issues.
+```
+
+**Phase 2 phase_learning candidates:**
+- §6 plan-rows drifted vs reality when a single engineer pulled forward
+  multiple phases worth of work — Phase 1 here covered §6 Phase 1 + §6
+  Phase 2 + most of §6 Phase 3 in one commit. **Methodology gap**:
+  status header was stale on entry; next engineer brief should mandate a
+  PROJECT.md reconciliation pass as Phase N step 0 when phase work was
+  collapsed in N-1.
+- `test_notificacoes_router.py` was a §6 row that was effectively a
+  duplicate of the e2e suite — the gap inventory at Phase 0 didn't notice
+  the existing coverage. **Detector idea**: a scan that cross-references
+  the §6 missing-tests list against `tests/integration/test_e2e_flows.py`
+  framework-suite consumers before approving a phase plan.
 
 ### 2026-05-11 — Phase 0 ✅ (Engineer TTT, branch `worktree-agent-a4cd83c22ace4d8e7`)
 
