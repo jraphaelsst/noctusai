@@ -61,7 +61,7 @@ class TestCreateAnamnese:
         """Uses a two-phase mock: empty for uniqueness check, data for insert."""
         db = MockSupabaseClient()
         # First call (select for uniqueness) returns empty, second (insert) returns data
-        db.set_table_data("anamneses", [])
+        db.set_table_data("anamnese", [])
 
         # Patch the service to skip the uniqueness check result and succeed on insert
         from unittest.mock import patch as _patch
@@ -69,7 +69,7 @@ class TestCreateAnamnese:
         original_table = db.table
 
         def phased_table(name):
-            if name == "anamneses":
+            if name == "anamnese":
                 call_count["n"] += 1
                 if call_count["n"] == 1:
                     # Uniqueness check: no existing record
@@ -94,7 +94,7 @@ class TestCreateAnamnese:
         """Creating a second anamnese for the same pair raises 409."""
         db = MockSupabaseClient()
         # Existing anamnese found — uniqueness check returns data
-        db.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        db.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         with pytest.raises(Exception) as exc_info:
             await clinical_records_service.create_anamnese(
                 patient_id="patient-001",
@@ -107,7 +107,7 @@ class TestCreateAnamnese:
     @pytest.mark.asyncio
     async def test_get_anamnese(self):
         db = MockSupabaseClient()
-        db.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        db.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         result = await clinical_records_service.get_anamnese(
             patient_id="patient-001",
             therapist_id="therapist-001",
@@ -118,7 +118,7 @@ class TestCreateAnamnese:
     @pytest.mark.asyncio
     async def test_get_anamnese_not_found(self):
         db = MockSupabaseClient()
-        db.set_table_data("anamneses", [])
+        db.set_table_data("anamnese", [])
         result = await clinical_records_service.get_anamnese(
             patient_id="patient-001",
             therapist_id="therapist-001",
@@ -131,7 +131,7 @@ class TestUpdateAnamnese:
     @pytest.mark.asyncio
     async def test_update_anamnese(self):
         db = MockSupabaseClient()
-        db.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        db.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         result = await clinical_records_service.update_anamnese(
             anamnese_id="anamnese-001",
             data={"queixa_principal": "Depressão e ansiedade"},
@@ -142,7 +142,7 @@ class TestUpdateAnamnese:
     @pytest.mark.asyncio
     async def test_update_anamnese_not_found(self):
         db = MockSupabaseClient()
-        db.set_table_data("anamneses", [])
+        db.set_table_data("anamnese", [])
         with pytest.raises(Exception) as exc_info:
             await clinical_records_service.update_anamnese(
                 anamnese_id="nonexistent",
@@ -155,7 +155,7 @@ class TestUpdateAnamnese:
     async def test_update_anamnese_empty_fields(self):
         """Update with no valid fields raises 400."""
         db = MockSupabaseClient()
-        db.set_table_data("anamneses", [SAMPLE_ANAMNESE])
+        db.set_table_data("anamnese", [SAMPLE_ANAMNESE])
         with pytest.raises(Exception) as exc_info:
             await clinical_records_service.update_anamnese(
                 anamnese_id="anamnese-001",
@@ -230,7 +230,7 @@ class TestGoalLifecycle:
     async def test_create_goal(self):
         db = MockSupabaseClient()
         db.set_table_data("treatment_plans", [SAMPLE_PLAN])
-        db.set_table_data("goals", [SAMPLE_GOAL])
+        db.set_table_data("treatment_plan_goals", [SAMPLE_GOAL])
         result = await clinical_records_service.create_goal(
             plan_id="plan-001",
             data={"descricao": "Nova meta"},
@@ -253,7 +253,7 @@ class TestGoalLifecycle:
     @pytest.mark.asyncio
     async def test_update_goal(self):
         db = MockSupabaseClient()
-        db.set_table_data("goals", [SAMPLE_GOAL])
+        db.set_table_data("treatment_plan_goals", [SAMPLE_GOAL])
         result = await clinical_records_service.update_goal(
             goal_id="goal-001",
             data={"status": "em_andamento"},
@@ -264,7 +264,7 @@ class TestGoalLifecycle:
     @pytest.mark.asyncio
     async def test_update_goal_not_found(self):
         db = MockSupabaseClient()
-        db.set_table_data("goals", [])
+        db.set_table_data("treatment_plan_goals", [])
         with pytest.raises(Exception) as exc_info:
             await clinical_records_service.update_goal(
                 goal_id="nonexistent",
@@ -276,13 +276,13 @@ class TestGoalLifecycle:
     @pytest.mark.asyncio
     async def test_delete_goal(self):
         db = MockSupabaseClient()
-        db.set_table_data("goals", [SAMPLE_GOAL])
+        db.set_table_data("treatment_plan_goals", [SAMPLE_GOAL])
         await clinical_records_service.delete_goal(goal_id="goal-001", db=db)
 
     @pytest.mark.asyncio
     async def test_delete_goal_not_found(self):
         db = MockSupabaseClient()
-        db.set_table_data("goals", [])
+        db.set_table_data("treatment_plan_goals", [])
         with pytest.raises(Exception) as exc_info:
             await clinical_records_service.delete_goal(goal_id="nonexistent", db=db)
         assert exc_info.value.status_code == 404

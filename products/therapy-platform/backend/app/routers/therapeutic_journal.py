@@ -80,7 +80,7 @@ async def update_journal_entry(
 
     # Verify existence and ownership
     existing = first_or_none(
-        db.table("therapeutic_journal")
+        db.table("journal_entries")
         .select("id, patient_id")
         .eq("id", entry_id)
         .execute()
@@ -113,7 +113,7 @@ async def delete_journal_entry(
 
     # Verify existence and ownership
     existing = first_or_none(
-        db.table("therapeutic_journal")
+        db.table("journal_entries")
         .select("id, patient_id")
         .eq("id", entry_id)
         .execute()

@@ -327,7 +327,7 @@ class TestClinicSettings:
 class TestTherapistConfig:
     def test_get_therapist_config(self, clinic_admin_client):
         clinic_admin_client._mock_supabase.set_table_data(
-            "clinic_therapist_configs", [SAMPLE_THERAPIST_CONFIG]
+            "clinic_therapist_config", [SAMPLE_THERAPIST_CONFIG]
         )
         resp = clinic_admin_client.get(
             "/api/clinics/therapists/therapist-in-clinic/config"
@@ -336,7 +336,7 @@ class TestTherapistConfig:
 
     def test_get_therapist_config_defaults(self, clinic_admin_client):
         """When no config exists, should return defaults."""
-        clinic_admin_client._mock_supabase.set_table_data("clinic_therapist_configs", [])
+        clinic_admin_client._mock_supabase.set_table_data("clinic_therapist_config", [])
         resp = clinic_admin_client.get(
             "/api/clinics/therapists/therapist-in-clinic/config"
         )
@@ -348,7 +348,7 @@ class TestTherapistConfig:
         clinic_admin_client._mock_supabase.set_table_data("therapist_profiles", [
             {"user_id": "therapist-in-clinic", "clinic_id": "test-clinic-123"},
         ])
-        clinic_admin_client._mock_supabase.set_table_data("clinic_therapist_configs", [
+        clinic_admin_client._mock_supabase.set_table_data("clinic_therapist_config", [
             {**SAMPLE_THERAPIST_CONFIG, "pricing_policy": "clinic_sets"},
         ])
         resp = clinic_admin_client.patch(

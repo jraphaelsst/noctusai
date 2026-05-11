@@ -110,7 +110,7 @@ class TestGetTherapist:
         client._mock_supabase.set_table_data(
             "therapist_profiles", [SAMPLE_THERAPIST]
         )
-        client._mock_supabase.set_table_data("therapist_reviews", [])
+        client._mock_supabase.set_table_data("reviews", [])
         client._mock_supabase.set_table_data("therapist_settings", [
             {"therapist_id": "test-user-123", "session_duration_minutes": 50},
         ])
@@ -124,7 +124,7 @@ class TestGetTherapist:
         client._mock_supabase.set_table_data(
             "therapist_profiles", [SAMPLE_THERAPIST]
         )
-        client._mock_supabase.set_table_data("therapist_reviews", [
+        client._mock_supabase.set_table_data("reviews", [
             {"star_rating": 5, "therapist_id": "test-user-123"},
             {"star_rating": 4, "therapist_id": "test-user-123"},
         ])

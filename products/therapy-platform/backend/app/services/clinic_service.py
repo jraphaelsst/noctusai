@@ -251,7 +251,7 @@ async def update_therapist_config(
         **update_data,
     }
     result = (
-        db.table("clinic_therapist_configs")
+        db.table("clinic_therapist_config")
         .upsert(config_data, on_conflict="clinic_id,therapist_id")
         .execute()
     )
@@ -268,7 +268,7 @@ async def get_therapist_config(
 ) -> Dict:
     """Get per-therapist configuration within a clinic."""
     result = (
-        db.table("clinic_therapist_configs")
+        db.table("clinic_therapist_config")
         .select("*")
         .eq("clinic_id", clinic_id)
         .eq("therapist_id", therapist_id)

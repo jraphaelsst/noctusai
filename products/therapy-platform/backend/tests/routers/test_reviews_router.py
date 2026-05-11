@@ -54,11 +54,11 @@ class TestCreateReview:
         """Pattern 3: seed a completed session and an empty existing-review
         list; real `create_review` validates eligibility, finds no duplicate,
         inserts via `MockSupabaseClient` (auto-id) and returns the row."""
-        patient_client._mock_supabase.set_table_data("sessions", [
+        patient_client._mock_supabase.set_table_data("appointments", [
             {"id": "s-1", "patient_id": "test-user-123",
              "therapist_id": "therapist-target", "status": "completed"},
         ])
-        patient_client._mock_supabase.set_table_data("therapist_reviews", [])
+        patient_client._mock_supabase.set_table_data("reviews", [])
         resp = patient_client.post("/api/reviews", json={
             "therapist_id": "therapist-target",
             "star_rating": 5,
@@ -72,10 +72,10 @@ class TestCreateReview:
 
     def test_create_review_duplicate(self, patient_client):
         """Mock returns existing review data, triggering 409 conflict."""
-        patient_client._mock_supabase.set_table_data("sessions", [
+        patient_client._mock_supabase.set_table_data("appointments", [
             {"id": "s-1", "patient_id": "test-user-123", "therapist_id": "therapist-target", "status": "completed"},
         ])
-        patient_client._mock_supabase.set_table_data("therapist_reviews", [
+        patient_client._mock_supabase.set_table_data("reviews", [
             {**SAMPLE_REVIEW, "patient_id": "test-user-123", "therapist_id": "therapist-target"},
         ])
         resp = patient_client.post("/api/reviews", json={
@@ -114,7 +114,7 @@ class TestCreateReview:
 
     def test_create_review_no_session(self, patient_client):
         """Cannot review a therapist without a completed session."""
-        patient_client._mock_supabase.set_table_data("sessions", [])
+        patient_client._mock_supabase.set_table_data("appointments", [])
         resp = patient_client.post("/api/reviews", json={
             "therapist_id": "therapist-no-session",
             "star_rating": 4,
@@ -136,7 +136,7 @@ class TestCreateReview:
 class TestUpdateReview:
     def test_update_review_success(self, patient_client):
         updated = {**SAMPLE_REVIEW, "star_rating": 4, "patient_id": "test-user-123"}
-        patient_client._mock_supabase.set_table_data("therapist_reviews", [updated])
+        patient_client._mock_supabase.set_table_data("reviews", [updated])
         resp = patient_client.patch("/api/reviews/review-001", json={
             "star_rating": 4,
         })
@@ -145,7 +145,7 @@ class TestUpdateReview:
 
     def test_update_review_text(self, patient_client):
         updated = {**SAMPLE_REVIEW, "review_text": "Atualizado", "patient_id": "test-user-123"}
-        patient_client._mock_supabase.set_table_data("therapist_reviews", [updated])
+        patient_client._mock_supabase.set_table_data("reviews", [updated])
         resp = patient_client.patch("/api/reviews/review-001", json={
             "review_text": "Atualizado",
         })
@@ -170,7 +170,7 @@ class TestUpdateReview:
 
 class TestListTherapistReviews:
     def test_list_reviews_returns_data(self, client):
-        client._mock_supabase.set_table_data("therapist_reviews", [
+        client._mock_supabase.set_table_data("reviews", [
             SAMPLE_REVIEW,
             {**SAMPLE_REVIEW, "id": "review-002", "star_rating": 4},
         ])
@@ -181,13 +181,13 @@ class TestListTherapistReviews:
         assert "pagination" in body
 
     def test_list_reviews_empty(self, client):
-        client._mock_supabase.set_table_data("therapist_reviews", [])
+        client._mock_supabase.set_table_data("reviews", [])
         resp = client.get("/api/reviews/therapist/test-user-123")
         assert resp.status_code == 200
         assert resp.json()["data"] == []
 
     def test_list_reviews_pagination(self, client):
-        client._mock_supabase.set_table_data("therapist_reviews", [SAMPLE_REVIEW])
+        client._mock_supabase.set_table_data("reviews", [SAMPLE_REVIEW])
         resp = client.get("/api/reviews/therapist/test-user-123?page=1&page_size=5")
         assert resp.status_code == 200
         assert resp.json()["pagination"]["page_size"] == 5
@@ -209,7 +209,7 @@ class TestCreateClinicReview:
         patient_client._mock_supabase.set_table_data("therapist_profiles", [
             SAMPLE_THERAPIST_IN_CLINIC,
         ])
-        patient_client._mock_supabase.set_table_data("sessions", [
+        patient_client._mock_supabase.set_table_data("appointments", [
             {"id": "s-1", "patient_id": "test-user-123",
              "therapist_id": "therapist-in-clinic", "status": "completed"},
         ])
@@ -229,7 +229,7 @@ class TestCreateClinicReview:
         patient_client._mock_supabase.set_table_data("therapist_profiles", [
             SAMPLE_THERAPIST_IN_CLINIC,
         ])
-        patient_client._mock_supabase.set_table_data("sessions", [
+        patient_client._mock_supabase.set_table_data("appointments", [
             {"id": "s-1", "patient_id": "test-user-123", "therapist_id": "therapist-in-clinic", "status": "completed"},
         ])
         patient_client._mock_supabase.set_table_data("clinic_reviews", [
@@ -293,7 +293,7 @@ class TestListClinicReviews:
 class TestRespondToReview:
     def test_respond_success(self, client):
         """Therapist responds to a review on their profile."""
-        client._mock_supabase.set_table_data("therapist_reviews", [
+        client._mock_supabase.set_table_data("reviews", [
             {**SAMPLE_REVIEW, "therapist_response": "Obrigado!"},
         ])
         resp = client.post("/api/reviews/review-001/respond", json={
@@ -324,7 +324,7 @@ class TestRespondToReview:
 
 class TestFlagReview:
     def test_flag_review_as_therapist(self, client):
-        client._mock_supabase.set_table_data("therapist_reviews", [
+        client._mock_supabase.set_table_data("reviews", [
             {**SAMPLE_REVIEW, "is_flagged": True, "flag_reason": "Conteúdo ofensivo"},
         ])
         resp = client.post("/api/reviews/review-001/flag", json={
@@ -333,7 +333,7 @@ class TestFlagReview:
         assert resp.status_code == 200
 
     def test_flag_review_as_clinic_admin(self, clinic_admin_client):
-        clinic_admin_client._mock_supabase.set_table_data("therapist_reviews", [
+        clinic_admin_client._mock_supabase.set_table_data("reviews", [
             {**SAMPLE_REVIEW, "is_flagged": True},
         ])
         resp = clinic_admin_client.post("/api/reviews/review-001/flag", json={
@@ -342,7 +342,7 @@ class TestFlagReview:
         assert resp.status_code == 200
 
     def test_flag_review_as_admin(self, admin_client):
-        admin_client._mock_supabase.set_table_data("therapist_reviews", [
+        admin_client._mock_supabase.set_table_data("reviews", [
             {**SAMPLE_REVIEW, "is_flagged": True},
         ])
         resp = admin_client.post("/api/reviews/review-001/flag", json={

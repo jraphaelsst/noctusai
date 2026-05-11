@@ -29,7 +29,7 @@ async def create_anamnese(
     """Create an anamnesis record. One per patient-therapist pair."""
     # Check uniqueness
     existing = (
-        db.table("anamneses")
+        db.table("anamnese")
         .select("id")
         .eq("patient_id", patient_id)
         .eq("therapist_id", therapist_id)
@@ -50,7 +50,7 @@ async def create_anamnese(
         "medicacoes": data.get("medicacoes"),
         "observacoes": data.get("observacoes"),
     }
-    result = db.table("anamneses").insert(record).execute()
+    result = db.table("anamnese").insert(record).execute()
     row = first_or_none(result)
     if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar anamnese")
@@ -64,7 +64,7 @@ async def update_anamnese(
     db: Any,
 ) -> Dict:
     """Update an existing anamnesis record."""
-    check = db.table("anamneses").select("id").eq("id", anamnese_id).execute()
+    check = db.table("anamnese").select("id").eq("id", anamnese_id).execute()
     if not check.data:
         raise HTTPException(status_code=404, detail="Anamnese não encontrada")
 
@@ -72,7 +72,7 @@ async def update_anamnese(
     if not update_fields:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("anamneses").update(update_fields).eq("id", anamnese_id).execute()
+    result = db.table("anamnese").update(update_fields).eq("id", anamnese_id).execute()
     return first_or_none(result) or {}
 
 
@@ -83,7 +83,7 @@ async def get_anamnese(
 ) -> Optional[Dict]:
     """Get anamnesis for a specific patient-therapist pair."""
     result = (
-        db.table("anamneses")
+        db.table("anamnese")
         .select("*")
         .eq("patient_id", patient_id)
         .eq("therapist_id", therapist_id)
@@ -98,7 +98,7 @@ async def list_anamnese_by_therapist(
 ) -> List[Dict]:
     """List all anamneses created by a therapist (all patients)."""
     result = (
-        db.table("anamneses")
+        db.table("anamnese")
         .select("*")
         .eq("therapist_id", therapist_id)
         .order("created_at", desc=True)
@@ -189,7 +189,7 @@ async def create_goal(
         "prazo": data.get("prazo"),
         "status": "pendente",
     }
-    result = db.table("goals").insert(record).execute()
+    result = db.table("treatment_plan_goals").insert(record).execute()
     row = first_or_none(result)
     if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar meta")
@@ -203,7 +203,7 @@ async def update_goal(
     db: Any,
 ) -> Dict:
     """Update a goal."""
-    check = db.table("goals").select("id").eq("id", goal_id).execute()
+    check = db.table("treatment_plan_goals").select("id").eq("id", goal_id).execute()
     if not check.data:
         raise HTTPException(status_code=404, detail="Meta não encontrada")
 
@@ -211,7 +211,7 @@ async def update_goal(
     if not update_fields:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-    result = db.table("goals").update(update_fields).eq("id", goal_id).execute()
+    result = db.table("treatment_plan_goals").update(update_fields).eq("id", goal_id).execute()
     return first_or_none(result) or {}
 
 
@@ -220,11 +220,11 @@ async def delete_goal(
     db: Any,
 ) -> None:
     """Delete a goal."""
-    check = db.table("goals").select("id").eq("id", goal_id).execute()
+    check = db.table("treatment_plan_goals").select("id").eq("id", goal_id).execute()
     if not check.data:
         raise HTTPException(status_code=404, detail="Meta não encontrada")
 
-    db.table("goals").delete().eq("id", goal_id).execute()
+    db.table("treatment_plan_goals").delete().eq("id", goal_id).execute()
     logger.info("Goal %s deleted", goal_id)
 
 

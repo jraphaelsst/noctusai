@@ -23,7 +23,7 @@ async def generate_invoice(
     """Generate an invoice record from a financial transaction."""
     # Verify transaction exists
     tx_check = (
-        db.table("financial_transactions")
+        db.table("transactions")
         .select("id, amount, description")
         .eq("id", transaction_id)
         .execute()

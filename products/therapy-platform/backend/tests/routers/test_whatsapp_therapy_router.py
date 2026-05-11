@@ -114,7 +114,7 @@ class TestConfigureReminders:
 
     def test_configure_reminders(self, client):
         """Therapist configures reminders."""
-        client._mock_supabase.set_table_data("reminder_configs", [SAMPLE_REMINDER_CONFIG])
+        client._mock_supabase.set_table_data("reminder_schedules", [SAMPLE_REMINDER_CONFIG])
         resp = client.post("/api/whatsapp/configurar-lembretes", json={
             "antecedencia_horas": 24,
             "is_active": True,
@@ -134,7 +134,7 @@ class TestListReminderConfigs:
 
     def test_list_reminder_configs(self, client):
         """Therapist lists their reminder configs."""
-        client._mock_supabase.set_table_data("reminder_configs", [SAMPLE_REMINDER_CONFIG])
+        client._mock_supabase.set_table_data("reminder_schedules", [SAMPLE_REMINDER_CONFIG])
         resp = client.get("/api/whatsapp/lembretes")
         assert resp.status_code == 200
 

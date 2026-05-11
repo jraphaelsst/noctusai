@@ -1,5 +1,9 @@
 """
-Settings schemas — platform settings, AI prompts, branding, therapist/patient preferences, LGPD.
+Settings schemas — platform settings, branding, therapist/patient preferences, LGPD.
+
+Note: AI prompts are stored as `platform_settings` rows with `ai_prompt_*`
+keys (see migration 001_therapy_platform.sql). No dedicated schema; admins
+edit them through the generic `PlatformSettingUpdate` body via PATCH /platform.
 """
 from __future__ import annotations
 
@@ -12,13 +16,6 @@ class PlatformSettingUpdate(BaseModel):
 
     key: str
     value: str
-
-
-class AIPromptUpdate(BaseModel):
-    """Update an AI prompt template (admin only, versioned)."""
-
-    prompt_key: str
-    prompt_text: str = Field(..., min_length=10)
 
 
 class ClinicBrandingUpdate(BaseModel):

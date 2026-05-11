@@ -155,7 +155,7 @@ async def get_therapist_with_stats(user_id: str, db: Any) -> Dict:
 
     # Fetch rating stats
     reviews_result = (
-        db.table("therapist_reviews")
+        db.table("reviews")
         .select("star_rating")
         .eq("therapist_id", user_id)
         .execute()
