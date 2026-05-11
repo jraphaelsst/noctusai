@@ -31,6 +31,7 @@ import shutil
 from pathlib import Path
 
 from settings import PRODUCTS_DIR, REPO_ROOT
+from workspace import resolve_caller_root
 
 from ._filewalk import walk_files
 
@@ -66,6 +67,7 @@ def absorb_file(
     source_product: str | None = None,
     delete_other_products: bool = True,
     rewrite_imports: list[tuple[str, str]] | None = None,
+    worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
     repo_root: Path | None = None,
 ) -> dict:
@@ -90,7 +92,17 @@ def absorb_file(
             substitutions to apply across every product's source. Each
             tuple is a literal ``str.replace`` (no regex). Run AFTER
             the move + delete pass. None / [] skips the rewrite.
-        products_dir / repo_root: Test seams; default to platform paths.
+        worktree_path: **Caller-aware path resolution.** When set, both
+            the source ``products/`` scan and the seed destination land
+            under the caller's worktree instead of the MCP server's
+            startup workspace. Engineers calling from inside a
+            ``git worktree add`` MUST pass their worktree root. See
+            ``resolve_caller_root`` for the contract.
+        products_dir / repo_root: Test seams. When either is set, it
+            wins over the corresponding ``worktree_path`` slot.
+
+    3-tier priority per slot: explicit seam > ``worktree_path`` >
+    module default.
 
     Returns:
         ``{
@@ -101,9 +113,30 @@ def absorb_file(
           "next_steps": [...],
         }``
         OR ``{"error": "<reason>"}`` when refused; nothing changes on disk.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract).
     """
-    base_products_dir = products_dir if products_dir is not None else PRODUCTS_DIR
-    base_repo_root = repo_root if repo_root is not None else REPO_ROOT
+    # Resolve caller's worktree root once; reused for whichever of
+    # products_dir / repo_root is not explicitly seamed.
+    caller_root: Path | None = None
+    if worktree_path is not None:
+        caller_root = resolve_caller_root(worktree_path)
+
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif caller_root is not None:
+        base_products_dir = caller_root / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
+
+    if repo_root is not None:
+        base_repo_root = repo_root
+    elif caller_root is not None:
+        base_repo_root = caller_root
+    else:
+        base_repo_root = REPO_ROOT
 
     if not base_products_dir.is_dir():
         return {"error": f"products_dir not found: {base_products_dir}"}
@@ -266,7 +299,10 @@ def register(server) -> None:
             "Always pair with audit_drift afterwards to push the template "
             "forward — the absorbed shape (re-export shim / factory call) "
             "should become the new template canonical so future scaffolds "
-            "inherit it."
+            "inherit it. Pass `worktree_path` when called from inside a "
+            "git worktree so the source scan + seed write land in the "
+            "worktree, NOT the MCP server's startup workspace. See "
+            "KB § PATTERNS/mcp-tool-conventions.md."
         ),
     )
     def _absorb(
@@ -275,6 +311,7 @@ def register(server) -> None:
         source_product: str | None = None,
         delete_other_products: bool = True,
         rewrite_imports: list[list[str]] | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
         # MCP serializes tuples as lists; normalize back to tuple-pairs.
         normalized: list[tuple[str, str]] | None = None
@@ -286,4 +323,5 @@ def register(server) -> None:
             source_product=source_product,
             delete_other_products=delete_other_products,
             rewrite_imports=normalized,
+            worktree_path=worktree_path,
         )

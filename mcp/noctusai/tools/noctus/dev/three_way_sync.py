@@ -37,6 +37,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT  # noqa: E402  (path constant)
+from workspace import resolve_caller_root  # noqa: E402
 
 
 def _resolve_memory_dir() -> Path | None:
@@ -141,8 +142,23 @@ def _claude_md_has_keyword(claude_md_content: str, name: str) -> bool:
     return any(kw in haystack for kw in keywords[:3])
 
 
-def check_three_way_sync(repo_root: Path | None = None) -> dict:
+def check_three_way_sync(
+    repo_root: Path | None = None,
+    *,
+    worktree_path: str | Path | None = None,
+) -> dict:
     """Walk memory + KB + CLAUDE.md and report parity issues.
+
+    Args:
+        repo_root: repo root override (test seam). When set, wins over
+            ``worktree_path``.
+        worktree_path: **Caller-aware path resolution.** When set, the
+            check reads CLAUDE.md from the caller's worktree instead of
+            the MCP server's startup workspace. Engineers calling from
+            inside a ``git worktree add`` MUST pass their worktree root.
+            See ``resolve_caller_root`` for the contract.
+            3-tier priority: explicit ``repo_root`` > ``worktree_path``
+            > module default ``REPO_ROOT``.
 
     Returns:
         ```
@@ -158,8 +174,18 @@ def check_three_way_sync(repo_root: Path | None = None) -> dict:
           }
         }
         ```
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract). No
+        silent fallback — misuse surfaces loudly.
     """
-    root = repo_root or REPO_ROOT
+    if repo_root is not None:
+        root = repo_root
+    elif worktree_path is not None:
+        root = resolve_caller_root(worktree_path)
+    else:
+        root = REPO_ROOT
     issues: list[dict] = []
 
     memory_dir = _resolve_memory_dir()
@@ -280,8 +306,10 @@ def register(server) -> None:
             "Verify KB ↔ CLAUDE.md ↔ memory parity. Closes the gap that "
             "`verify-kb-sync.sh` cannot cover (memory directory lives outside the repo). "
             "Reports missing index entries, dangling links, missing KB anchors, and "
-            "CLAUDE.md keyword mismatches per the three-way-sync rule."
+            "CLAUDE.md keyword mismatches per the three-way-sync rule. Pass "
+            "`worktree_path` when called from inside a git worktree so CLAUDE.md is "
+            "read from the worktree's copy, NOT the MCP server's startup workspace."
         ),
     )
-    def _check_three_way_sync() -> dict:
-        return check_three_way_sync()
+    def _check_three_way_sync(worktree_path: str | None = None) -> dict:
+        return check_three_way_sync(worktree_path=worktree_path)

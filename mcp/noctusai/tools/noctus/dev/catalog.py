@@ -75,17 +75,39 @@ class CatalogOutput(BaseModel):
     duplicate_candidates: list[dict[str, Any]] = PydField(default_factory=list)
 
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
+from workspace import resolve_caller_root  # noqa: E402
 
 # Map of import-path prefix → filesystem root. Update when the namespace
 # is renamed (e.g. "noctusai_lib" → "noctusai.lib"). Currently these are
 # flat top-level packages; for dotted names (PEP 420 namespace packages)
 # the key must be the full dotted prefix as it appears in import statements.
+#
+# These module-level defaults bind to the MCP server's startup workspace
+# (noc main). When a caller passes ``worktree_path``, ``_resolve_roots()``
+# rebuilds the per-call equivalents under the worktree root and threads
+# them through the catalog pipeline. See ``generate_catalog``.
 LIB_ROOTS: dict[str, Path] = {
     "noctusai_lib": REPO_ROOT / "seed" / "lib" / "backend" / "noctusai_lib",
     "noctusai_seed": REPO_ROOT / "seed" / "framework" / "backend" / "noctusai_seed",
 }
 
 CATALOG_OUTPUT = REPO_ROOT / "mcp" / "noctusai" / "catalog.md"
+
+
+def _resolve_roots(root: Path) -> tuple[dict[str, Path], Path, Path]:
+    """Build per-call (LIB_ROOTS, PRODUCTS_DIR, CATALOG_OUTPUT) under ``root``.
+
+    Used to route the catalog pipeline at a non-default repo root —
+    typically a caller's git worktree (per ``resolve_caller_root``).
+    """
+    return (
+        {
+            "noctusai_lib": root / "seed" / "lib" / "backend" / "noctusai_lib",
+            "noctusai_seed": root / "seed" / "framework" / "backend" / "noctusai_seed",
+        },
+        root / "products",
+        root / "mcp" / "noctusai" / "catalog.md",
+    )
 
 
 # ── Data model ────────────────────────────────────────────────────────
@@ -185,7 +207,11 @@ def _module_name(pkg_prefix: str, pkg_root: Path, file_path: Path) -> str:
 
 # ── Supply side: scan lib roots for public symbols ────────────────────
 
-def scan_lib_symbols() -> list[Symbol]:
+def scan_lib_symbols(
+    *,
+    lib_roots: dict[str, Path] | None = None,
+    repo_root: Path | None = None,
+) -> list[Symbol]:
     """
     Collect only *source-defined* public symbols (def, async def, class,
     uppercase module-level const).
@@ -194,11 +220,19 @@ def scan_lib_symbols() -> list[Symbol]:
     they're handled by the re-export resolution map instead, which threads
     import attribution back to the source definition. Emitting them as
     Symbols would double-count and pollute the orphan list.
+
+    Args:
+        lib_roots: Override the module-level :data:`LIB_ROOTS` mapping
+            (used to scope the scan to a caller's worktree).
+        repo_root: Override the module-level :data:`REPO_ROOT` (used to
+            render symbol locations relative to the caller's worktree).
     """
     symbols: list[Symbol] = []
     seen_source_defs: set[str] = set()
+    eff_lib_roots = lib_roots if lib_roots is not None else LIB_ROOTS
+    eff_repo_root = repo_root if repo_root is not None else REPO_ROOT
 
-    for prefix, root in LIB_ROOTS.items():
+    for prefix, root in eff_lib_roots.items():
         if not root.exists():
             continue
         for py in sorted(root.rglob("*.py")):
@@ -208,7 +242,7 @@ def scan_lib_symbols() -> list[Symbol]:
             if not tree:
                 continue
             module = _module_name(prefix, root, py)
-            location_rel = py.relative_to(REPO_ROOT)
+            location_rel = py.relative_to(eff_repo_root)
             is_init = py.name == "__init__.py"
 
             for node in tree.body:
@@ -287,16 +321,24 @@ def scan_lib_symbols() -> list[Symbol]:
 
 # ── Re-export resolution map ──────────────────────────────────────────
 
-def build_reexport_map() -> dict[str, str]:
+def build_reexport_map(
+    *,
+    lib_roots: dict[str, Path] | None = None,
+) -> dict[str, str]:
     """
     Map `{module}.{alias}` → `{source_module}.{source_name}` by parsing every
     `__init__.py` in each lib root.
 
     When a product writes `from noctusai_lib import AppException`, the catalog
     must credit `noctusai_lib.primitives.exceptions.AppException` — not orphan the source.
+
+    Args:
+        lib_roots: Override the module-level :data:`LIB_ROOTS` mapping
+            (used to scope the scan to a caller's worktree).
     """
     rmap: dict[str, str] = {}
-    for prefix, root in LIB_ROOTS.items():
+    eff_lib_roots = lib_roots if lib_roots is not None else LIB_ROOTS
+    for prefix, root in eff_lib_roots.items():
         if not root.exists():
             continue
         for init_py in root.rglob("__init__.py"):
@@ -325,15 +367,22 @@ def build_reexport_map() -> dict[str, str]:
 
 # ── Demand side: scan products + lib roots for lib-symbol imports ────
 
-def _iter_products() -> Iterable[tuple[str, Path]]:
-    if not PRODUCTS_DIR.exists():
+def _iter_products(
+    products_dir: Path | None = None,
+) -> Iterable[tuple[str, Path]]:
+    eff_products_dir = products_dir if products_dir is not None else PRODUCTS_DIR
+    if not eff_products_dir.exists():
         return
-    for d in sorted(PRODUCTS_DIR.iterdir()):
+    for d in sorted(eff_products_dir.iterdir()):
         if d.is_dir() and not d.name.startswith("."):
             yield d.name, d
 
 
-def _iter_consumers() -> Iterable[tuple[str, Path, Optional[str]]]:
+def _iter_consumers(
+    *,
+    lib_roots: dict[str, Path] | None = None,
+    products_dir: Path | None = None,
+) -> Iterable[tuple[str, Path, Optional[str]]]:
     """
     Every code tree that may import from a lib root.
 
@@ -341,27 +390,41 @@ def _iter_consumers() -> Iterable[tuple[str, Path, Optional[str]]]:
     non-None when the consumer is itself a lib root (needed to resolve
     relative imports like `from .auth import ...`).
     """
-    for slug, product_path in _iter_products():
+    eff_lib_roots = lib_roots if lib_roots is not None else LIB_ROOTS
+    for slug, product_path in _iter_products(products_dir=products_dir):
         backend = product_path / "backend"
         if backend.exists():
             yield slug, backend, None
-    for prefix, root in LIB_ROOTS.items():
+    for prefix, root in eff_lib_roots.items():
         if root.exists():
             yield f"lib:{prefix}", root, prefix
 
 
-def scan_importers(reexport_map: dict[str, str]) -> dict[str, dict[str, int]]:
+def scan_importers(
+    reexport_map: dict[str, str],
+    *,
+    lib_roots: dict[str, Path] | None = None,
+    products_dir: Path | None = None,
+) -> dict[str, dict[str, int]]:
     """
     Returns: {qualified_symbol_name: {consumer_label: import_count}}
 
     Re-exports are resolved to their source symbol so `from noctusai_lib import
     AppException` credits `noctusai_lib.primitives.exceptions.AppException`, not an orphan.
     Internal lib-to-lib imports show up as `lib:noctusai_seed` (etc.).
+
+    Args:
+        reexport_map: Map produced by :func:`build_reexport_map`.
+        lib_roots: Override the module-level :data:`LIB_ROOTS` mapping.
+        products_dir: Override the module-level :data:`PRODUCTS_DIR`.
     """
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    lib_prefixes = tuple(LIB_ROOTS.keys())
+    eff_lib_roots = lib_roots if lib_roots is not None else LIB_ROOTS
+    lib_prefixes = tuple(eff_lib_roots.keys())
 
-    for consumer_label, scan_root, owning_prefix in _iter_consumers():
+    for consumer_label, scan_root, owning_prefix in _iter_consumers(
+        lib_roots=eff_lib_roots, products_dir=products_dir,
+    ):
         for py in scan_root.rglob("*.py"):
             if "__pycache__" in py.parts or ".backup" in py.parts:
                 continue
@@ -372,7 +435,7 @@ def scan_importers(reexport_map: dict[str, str]) -> dict[str, dict[str, int]]:
             # Package path of the file being scanned — used to resolve `from .foo import ...`.
             file_pkg: Optional[str] = None
             if owning_prefix:
-                rel = py.relative_to(LIB_ROOTS[owning_prefix]).with_suffix("")
+                rel = py.relative_to(eff_lib_roots[owning_prefix]).with_suffix("")
                 parts = [owning_prefix] + list(rel.parts)
                 if parts[-1] == "__init__":
                     parts = parts[:-1]
@@ -440,18 +503,31 @@ _IGNORE_DUP_NAMES: set[str] = {
 }
 
 
-def scan_duplicate_candidates(lib_symbols: list[Symbol]) -> list[DuplicateCandidate]:
+def scan_duplicate_candidates(
+    lib_symbols: list[Symbol],
+    *,
+    products_dir: Path | None = None,
+    repo_root: Path | None = None,
+) -> list[DuplicateCandidate]:
     """
     Walk every product's `backend/app/services/` and `backend/app/routers/`
     and collect top-level function/class names. If a name appears in 2+
     products AND is not exported by any lib root, it's a candidate for
     absorption into the shared library.
+
+    Args:
+        lib_symbols: Output of :func:`scan_lib_symbols` (used to drop
+            names already present in the lib).
+        products_dir: Override the module-level :data:`PRODUCTS_DIR`.
+        repo_root: Override the module-level :data:`REPO_ROOT` (used to
+            render occurrence file paths relative to the caller's worktree).
     """
     lib_names = {s.name for s in lib_symbols}
+    eff_repo_root = repo_root if repo_root is not None else REPO_ROOT
 
     # name → [(product, file, line, kind)]
     occurrences: dict[str, list[dict]] = defaultdict(list)
-    for slug, product_path in _iter_products():
+    for slug, product_path in _iter_products(products_dir=products_dir):
         for sub in ("services", "routers", "dependencies.py", "database.py"):
             target = product_path / "backend" / "app" / sub
             files = [target] if target.is_file() else (
@@ -461,7 +537,7 @@ def scan_duplicate_candidates(lib_symbols: list[Symbol]) -> list[DuplicateCandid
                 tree = _parse(py)
                 if not tree:
                     continue
-                rel = py.relative_to(REPO_ROOT)
+                rel = py.relative_to(eff_repo_root)
                 for node in tree.body:
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                         if not _is_public(node.name):
@@ -496,20 +572,41 @@ def scan_duplicate_candidates(lib_symbols: list[Symbol]) -> list[DuplicateCandid
 
 # ── Top-level builder ─────────────────────────────────────────────────
 
-def build_catalog() -> CatalogReport:
-    symbols = scan_lib_symbols()
-    reexport_map = build_reexport_map()
-    import_counts = scan_importers(reexport_map)
+def build_catalog(
+    *,
+    lib_roots: dict[str, Path] | None = None,
+    products_dir: Path | None = None,
+    repo_root: Path | None = None,
+) -> CatalogReport:
+    """Build a CatalogReport.
+
+    Args:
+        lib_roots / products_dir / repo_root: Override the module-level
+            defaults — set by callers that need to scope the scan to a
+            different repo root (typically a caller's git worktree). When
+            ``None``, the module-level :data:`LIB_ROOTS` / :data:`PRODUCTS_DIR`
+            / :data:`REPO_ROOT` apply.
+    """
+    eff_lib_roots = lib_roots if lib_roots is not None else LIB_ROOTS
+    eff_repo_root = repo_root if repo_root is not None else REPO_ROOT
+
+    symbols = scan_lib_symbols(lib_roots=eff_lib_roots, repo_root=eff_repo_root)
+    reexport_map = build_reexport_map(lib_roots=eff_lib_roots)
+    import_counts = scan_importers(
+        reexport_map, lib_roots=eff_lib_roots, products_dir=products_dir,
+    )
     _attach_importers(symbols, import_counts)
 
-    products = [slug for slug, _ in _iter_products()]
-    duplicates = scan_duplicate_candidates(symbols)
+    products = [slug for slug, _ in _iter_products(products_dir=products_dir)]
+    duplicates = scan_duplicate_candidates(
+        symbols, products_dir=products_dir, repo_root=eff_repo_root,
+    )
 
     orphans = [s for s in symbols if s.import_count == 0]
     single_consumer = [s for s in symbols if len(s.importers) == 1]
 
     return CatalogReport(
-        lib_roots={k: str(v.relative_to(REPO_ROOT)) for k, v in LIB_ROOTS.items()},
+        lib_roots={k: str(v.relative_to(eff_repo_root)) for k, v in eff_lib_roots.items()},
         products_scanned=products,
         symbols=symbols,
         orphans=orphans,
@@ -611,18 +708,53 @@ def render_markdown(report: CatalogReport) -> str:
 
 # ── Public entry points ───────────────────────────────────────────────
 
-def generate_catalog(write: bool = True) -> dict:
+def generate_catalog(
+    write: bool = True,
+    *,
+    worktree_path: str | Path | None = None,
+) -> dict:
     """
     Build the catalog, optionally write the markdown artifact, return a
     structured dict suitable for CLI/MCP output.
+
+    Args:
+        write: Persist the rendered markdown to ``CATALOG_OUTPUT``.
+        worktree_path: **Caller-aware path resolution.** When set, the
+            catalog scans the caller's worktree (its ``seed/lib`` /
+            ``seed/framework`` / ``products/`` trees) and writes its
+            output to the worktree's ``mcp/noctusai/catalog.md``.
+            Engineers calling from inside a ``git worktree add`` MUST
+            pass their worktree root. See ``resolve_caller_root``.
+            3-tier priority: this is the only override path — there is
+            no explicit-seam param at the public API (callers wanting
+            the test seams use the internal ``build_catalog`` directly).
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract). No
+        silent fallback — misuse surfaces loudly.
     """
-    report = build_catalog()
+    if worktree_path is not None:
+        root = resolve_caller_root(worktree_path)
+        eff_lib_roots, eff_products_dir, eff_output = _resolve_roots(root)
+        eff_repo_root = root
+    else:
+        eff_lib_roots = LIB_ROOTS
+        eff_products_dir = PRODUCTS_DIR
+        eff_output = CATALOG_OUTPUT
+        eff_repo_root = REPO_ROOT
+
+    report = build_catalog(
+        lib_roots=eff_lib_roots,
+        products_dir=eff_products_dir,
+        repo_root=eff_repo_root,
+    )
     md = render_markdown(report)
     output_path = None
     if write:
-        CATALOG_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-        CATALOG_OUTPUT.write_text(md, encoding="utf-8")
-        output_path = str(CATALOG_OUTPUT.relative_to(REPO_ROOT))
+        eff_output.parent.mkdir(parents=True, exist_ok=True)
+        eff_output.write_text(md, encoding="utf-8")
+        output_path = str(eff_output.relative_to(eff_repo_root))
     return {
         "output_path": output_path,
         "markdown": md if not write else None,
@@ -634,11 +766,14 @@ def register(server) -> None:
     desc = (
         "Regenerate the shared-library catalog: every lib symbol, its importers, "
         "orphans (zero consumers), and duplication candidates (same name in 2+ "
-        "products, not in lib). Writes mcp/noctusai/catalog.md."
+        "products, not in lib). Writes mcp/noctusai/catalog.md. Pass "
+        "`worktree_path` when called from inside a git worktree — the scan + "
+        "the output land in the worktree, NOT the MCP server's startup "
+        "workspace. See KB § PATTERNS/mcp-tool-conventions.md."
     )
 
-    def _catalog(write: bool = True) -> dict:
-        return generate_catalog(write=write)
+    def _catalog(write: bool = True, worktree_path: str | None = None) -> dict:
+        return generate_catalog(write=write, worktree_path=worktree_path)
 
     server.tool(
         name="noctus.dev.catalog",

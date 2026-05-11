@@ -27,6 +27,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
+from workspace import resolve_caller_root  # noqa: E402
 
 # Products that don't have a frontend (backend-only). Skip in build sweeps
 # to avoid noisy "no package.json" errors. Empty today; populate if a
@@ -183,6 +184,7 @@ def build_products(
     *,
     changed_only: bool = False,
     repo_root: Path | None = None,
+    worktree_path: str | Path | None = None,
     parallel: int = 4,
     timeout: int = 300,
 ) -> dict:
@@ -193,7 +195,15 @@ def build_products(
             uses `changed_only` filter).
         changed_only: when True + `slugs` is None, scope to products with
             changes since HEAD.
-        repo_root: repo root; defaults to the package's resolved root.
+        repo_root: repo root override (test seam). When set, wins over
+            ``worktree_path``.
+        worktree_path: **Caller-aware path resolution.** When set, the
+            build sweep targets the caller's worktree (its ``products/``
+            tree, its ``git diff`` for changed-detection). Engineers
+            calling from inside a ``git worktree add`` MUST pass their
+            worktree root. See ``resolve_caller_root`` for the contract.
+            3-tier priority: explicit ``repo_root`` seam > ``worktree_path``
+            > module default ``REPO_ROOT``.
         parallel: max concurrent subprocess workers (default 4 — keeps
             CPU + npm cache contention reasonable).
         timeout: per-product timeout in seconds (default 300 = 5min).
@@ -201,8 +211,18 @@ def build_products(
     Returns:
         `{"requested": [slug, ...], "results": [{...BuildResult.to_dict()},
           ...], "total_duration_seconds": ..., "all_green": bool}`.
+
+    Raises:
+        ValueError: ``worktree_path`` is given but does not look like a
+        valid worktree root (per ``resolve_caller_root`` contract). No
+        silent fallback — misuse surfaces loudly.
     """
-    root = repo_root or REPO_ROOT
+    if repo_root is not None:
+        root = repo_root
+    elif worktree_path is not None:
+        root = resolve_caller_root(worktree_path)
+    else:
+        root = REPO_ROOT
     if slugs is None:
         targets = _detect_changed_products(root) if changed_only else _list_all_product_slugs(root)
     else:
@@ -249,12 +269,20 @@ def register(server) -> None:
             "Parallel + scoped supersedes the legacy sequential "
             "`noctus.dev.build_all_frontends`. `slugs=[...]` builds specific products; "
             "`changed_only=True` uses `git diff --name-only HEAD` to scope to affected "
-            "products only (perf)."
+            "products only (perf). Pass `worktree_path` when called from inside a "
+            "git worktree so the build scopes to the worktree's products/ tree, NOT "
+            "the MCP server's startup workspace. See KB § PATTERNS/mcp-tool-conventions.md."
         ),
     )
     def _build_parallel(
         slugs: list[str] | None = None,
         changed_only: bool = False,
         parallel: int = 4,
+        worktree_path: str | None = None,
     ) -> dict:
-        return build_products(slugs=slugs, changed_only=changed_only, parallel=parallel)
+        return build_products(
+            slugs=slugs,
+            changed_only=changed_only,
+            parallel=parallel,
+            worktree_path=worktree_path,
+        )
