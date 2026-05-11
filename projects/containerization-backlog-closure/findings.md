@@ -45,6 +45,24 @@ _(none — T3 work landed without re-applies or rollbacks.)_
 
 ---
 
+## T1 runtime verification — completed post-Wave-2 (2026-05-10)
+
+**Headline:** seed-backend image size **981MB → 672MB = −309MB (−31.5%)**. Right in the middle of T1's predicted 200-400MB delta range. Multi-stage builder/runtime split works as designed.
+
+**OCI labels verified** (`docker inspect noctus-seed-backend:slim --format '{{json .Config.Labels}}'`):
+```json
+{
+  "org.opencontainers.image.revision": "4559977ce802db9183819fee3ef9d2c7179c5334",
+  "org.opencontainers.image.source": "https://github.com/jraphaelsst/noctusai"
+}
+```
+
+GIT_SHA build-arg stamped the revision correctly. The label is populated with the actual commit SHA at build time — exactly what T9's CI workflow (in Wave 3) will rely on for image SHA-traceability.
+
+**Methodology validation.** T1 originally hit pause-on-environment (Docker BuildKit failed under 6+ concurrent parallel-agent builds; structural-confidence merge per §18.4 carve-out). Architect retried the single sequential build after Wave 2 closed; daemon was idle; build completed in ~12 min producing the verified slim image. **Demonstrates the §18.4 protocol working end-to-end:** structural merge unblocks downstream waves; runtime verification runs out-of-band when resource recovers; the deferred check completes without blocking the project's critical path.
+
+---
+
 ## Knowledge pieces (durable patterns)
 
 ### T3 audit table (final, 2026-05-10)
