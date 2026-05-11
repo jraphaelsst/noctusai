@@ -5,10 +5,16 @@ DDL conventions used elsewhere in the platform. Helpers live at
 `noctusai_lib.domain.sql_templates` (`set_search_path`, `updated_at_function`,
 `updated_at_trigger`, `rls_subquery_policy`). The bundled `001_seed.sql`
 template uses placeholders that resolve to schema-correct SQL on scaffold;
-the regression tests at `tests/test_scaffold.py` (TestSqlTemplatesIntegration)
+at scaffold time the file is renamed to `001_<slug>.sql` and its header
+is replaced with `noctusai_lib.sql.prelude(schema)` output by
+``_canonicalize_seed_migration`` so every new product ships from a single
+source of truth (closes the N=3 filename + N=10 hand-rolled-prelude
+recurrence Engineer U surfaced in the imobi P2 close, 2026-05-10).
+The regression tests at `tests/test_scaffold.py` (TestSqlTemplatesIntegration)
 assert the scaffolded migration's `SET search_path` line + RLS policy line
-match the helpers' output, so future drift is caught at CI rather than
-discovered via a broken migration.
+match the helpers' output AND that the header is the canonical prelude AND
+that the file lands at `001_<slug>.sql` — so future drift is caught at CI
+rather than discovered via a broken migration.
 
 **Two-phase scaffold (post-2026-05-05):**
 
@@ -43,6 +49,7 @@ import subprocess
 from pathlib import Path
 
 from workspace import get_noctusai_home, get_workspace_root, resolve_caller_root
+from noctusai_lib.sql import prelude
 
 logger = logging.getLogger(__name__)
 
@@ -455,6 +462,75 @@ _BINARY_SUFFIXES: frozenset[str] = frozenset({
 })
 
 
+def _canonicalize_seed_migration(target: Path, slug: str, schema: str) -> dict:
+    """Rename `001_seed.sql` → `001_<slug>.sql` and inject `prelude(schema)`.
+
+    Runs immediately after the template `shutil.copytree(...)` and BEFORE
+    the mechanical placeholder-substitution loop. The hand-rolled migration
+    header in the template (a comment block + `SET search_path = ...` line)
+    is replaced with the canonical `prelude(schema)` output so every new
+    product starts from a single source of truth (vs. the N=10 hand-rolled
+    preludes the audit on 2026-05-09 surfaced).
+
+    Idempotent on the canonical body: if the expected header is not found
+    (template was edited to a non-canonical shape), the file is left as-is
+    and the return dict surfaces the skip — never silent-error.
+
+    Args:
+        target: The product folder just copied from `templates/product-seed/`.
+        slug: Product slug — used for the new filename `001_<slug>.sql`.
+        schema: Schema name — passed verbatim to `prelude(schema)`.
+
+    Returns:
+        ``{renamed: bool, path: str, prelude_injected: bool}`` — used by the
+        scaffold result for downstream verification.
+    """
+    migrations_dir = target / "backend" / "migrations"
+    source = migrations_dir / "001_seed.sql"
+    if not source.exists():
+        return {"renamed": False, "skipped": f"{source} does not exist"}
+
+    body = source.read_text(encoding="utf-8")
+    # The template's hand-rolled header runs from the very top through the
+    # first `SET search_path = ..., public;` line + its trailing blank line.
+    # Match conservatively: drop everything up to and including the first
+    # blank line that follows the `SET search_path` directive. If the shape
+    # doesn't match, leave the body alone and surface the skip.
+    canonical_prelude = prelude(schema)
+    lines = body.splitlines()
+    cut_index: int | None = None
+    for idx, line in enumerate(lines):
+        if line.startswith("SET search_path"):
+            # Drop the SET line + the blank line after (if present).
+            cut_index = idx + 1
+            if cut_index < len(lines) and lines[cut_index].strip() == "":
+                cut_index += 1
+            break
+
+    if cut_index is None:
+        prelude_injected = False
+        new_body = body
+    else:
+        remainder = "\n".join(lines[cut_index:])
+        # `prelude(schema)` already ends with a trailing newline; join with
+        # a single blank line before the domain body.
+        new_body = canonical_prelude + "\n" + remainder
+        if not new_body.endswith("\n"):
+            new_body += "\n"
+        prelude_injected = True
+
+    dest = migrations_dir / f"001_{slug}.sql"
+    dest.write_text(new_body, encoding="utf-8")
+    if dest != source:
+        source.unlink()
+
+    return {
+        "renamed": True,
+        "path": str(dest),
+        "prelude_injected": prelude_injected,
+    }
+
+
 def scaffold_product(
     name: str,
     slug: str,
@@ -527,6 +603,12 @@ def scaffold_product(
 
     # ─── 1. Copy template (skeleton, not content) ───────────────────────
     shutil.copytree(base_template_dir, target, ignore=shutil.ignore_patterns("node_modules", "__pycache__", ".backup", "*.egg-info"))
+    # ─── 1.b. Canonicalize the seed migration (rename + prelude swap) ─
+    # The template ships `001_seed.sql` with a hand-rolled prelude. At
+    # scaffold time the file gets renamed to `001_<slug>.sql` and its
+    # header is replaced with the canonical `prelude(schema)` output
+    # so every new product starts from a single source of truth.
+    canonical_migration = _canonicalize_seed_migration(target, slug, schema)
 
     # ─── 2. Write the brief FIRST (durable record before any prose edit)
     # Per user rule (2026-05-05): the brief survives any subsequent failure
@@ -687,6 +769,7 @@ def scaffold_product(
         "mechanical_substitution": mechanical_status,
         "llm_rewrite": llm_rewrite,
         "seed_row_migration": seed_row_migration,
+        "canonical_migration": canonical_migration,
         "start_sh_registration": start_sh_registration,
         "docker_patch": docker_patch,
         "root_compose_registration": root_compose_registration,
