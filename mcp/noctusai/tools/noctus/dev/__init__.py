@@ -42,6 +42,7 @@ def register_all(server) -> None:
     from . import scan_unified
     from . import session_review
     from . import status
+    from . import supabase_advisors
     from . import testing
     from . import three_way_sync
 
@@ -75,6 +76,7 @@ def register_all(server) -> None:
     scan_unified.register(server)
     session_review.register(server)
     status.register(server)
+    supabase_advisors.register(server)
     testing.register(server)
     three_way_sync.register(server)
 
