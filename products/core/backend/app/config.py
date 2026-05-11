@@ -17,11 +17,16 @@ class Settings(ProductSettings):
     jwt_expiration_minutes: int = 60 * 24  # 24h
     sso_token_expiration_minutes: int = 5  # short-lived
 
-    # CORS — enumerated union of every product frontend (core hosts the SSO bridge).
-    # See `projects/core-cors-origins-enumeration/PROJECT.md` for the origin map.
+    # CORS — registry-driven union of every product frontend (core hosts the SSO bridge).
+    # `@registry:all` resolves at property-read time via
+    # `noctusai_lib.config.cors_registry.derive_cors_origins(include_all_frontends=True)`,
+    # parsing `start.sh PRODUCTS` between BEGIN/END_PRODUCTS_REGISTRY sentinels.
+    # New product added to `start.sh` → automatically allowed here. See
+    # `KB § PATTERNS/environment.md § CORS_ORIGINS cascade`. Replaces the
+    # hand-enumerated 13-origin string from CORE-ORIGINS (commit 04534f7).
     # Wildcard `"*"` is forbidden here: seed factory wires allow_credentials=True,
     # and `*` + credentials is the MDN-documented auth-replay anti-pattern.
-    cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost:8080,http://localhost:8090,http://localhost:8095,http://localhost:8100,http://localhost:8110,http://localhost:8120,http://localhost:8123,http://localhost:8130,http://localhost:8140,http://localhost:8150,http://localhost:8160"
+    cors_origins: str = "@registry:all"
 
     # Stripe
     stripe_secret_key: str = ""

@@ -50,9 +50,44 @@ class BaseAppSettings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list[str]:
-        if self.cors_origins == "*":
+        """Resolve `cors_origins` into a concrete list of origin strings.
+
+        Recognized forms (checked in order):
+
+        - ``"*"``                          → ``["*"]`` (legacy; only valid
+          when ``allow_credentials`` is OFF — see MDN auth-replay
+          anti-pattern).
+        - ``"@registry:all"``              → every product frontend from
+          ``start.sh PRODUCTS`` + localhost alts. SSO-bridge shape.
+        - ``"@registry:own:<slug>"``       → that product's frontend +
+          localhost alts. Single-product shape.
+        - plain comma-separated string     → ``[s.strip() for s in split(",")]``.
+
+        See :mod:`noctusai_lib.config.cors_registry`.
+        """
+        raw = self.cors_origins
+        if raw == "*":
             return ["*"]
-        return [origin.strip() for origin in self.cors_origins.split(",")]
+        if raw.startswith("@registry:"):
+            # Lazy import — keeps the public surface of `noctusai_lib.config`
+            # narrow and avoids a circular hop during settings bootstrap.
+            from noctusai_lib.config.cors_registry import derive_cors_origins
+
+            spec = raw.split(":", 2)  # ["@registry", "<mode>", "<slug?>"]
+            mode = spec[1] if len(spec) >= 2 else ""
+            if mode == "all":
+                return derive_cors_origins(include_all_frontends=True)
+            if mode == "own" and len(spec) == 3 and spec[2]:
+                return derive_cors_origins(
+                    include_all_frontends=False,
+                    own_slug=spec[2],
+                )
+            # Unknown sentinel — fall back to localhost alts only (no crash).
+            return derive_cors_origins(
+                include_all_frontends=False,
+                own_slug=None,
+            )
+        return [origin.strip() for origin in raw.split(",")]
 
     @property
     def is_production(self) -> bool:

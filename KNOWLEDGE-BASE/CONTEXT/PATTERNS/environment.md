@@ -45,9 +45,27 @@ Secrets live in non-prefixed vars (backend-only).
 
 `CORS_ORIGINS` in root `.env` overrides each product's `ProductSettings.cors_origins` default (pydantic-settings precedence).
 
-**When adding a new product**, add its frontend port to `CORS_ORIGINS` in root `.env`. Otherwise, the product's frontend will hit CORS errors hitting its own backend.
+**Three resolution modes**, handled inside `BaseAppSettings.cors_origins_list`:
 
-Current ports: 5173 (Core), 8080 (ERP), 8090 (PF), 8095 (Therapy), 8100 (Seed), 8110 (Daily Life), 8120 (Mailing).
+1. **Plain comma-separated** — `"http://localhost:5173,http://localhost:8080"`.
+   Split on `,`, strip whitespace. Backward-compatible default.
+2. **`"*"` wildcard** — returns `["*"]`. **Forbidden when `allow_credentials=True`** (MDN auth-replay anti-pattern). Seed `app_factory.py` enforces a guard at mount time.
+3. **`"@registry:<mode>"` sentinel** — resolves at property-read time against the platform `start.sh PRODUCTS` registry (single source of truth for product → port mapping). See `noctusai_lib.config.cors_registry`.
+
+   - `"@registry:all"` → every product frontend + localhost alts (`5173`, `3000`). SSO-bridge shape — use for products that accept inbound XHR from every frontend (currently CORE).
+   - `"@registry:own:<slug>"` → that product's own frontend + localhost alts. Single-product shape.
+
+**Why the sentinel exists.** When a new product joins `start.sh PRODUCTS`, the platform-wide CORS list MUST auto-grow. Hardcoded enumerations don't. The sentinel keeps the per-product code count for "what frontends exist" at **0**.
+
+**When adding a new product**, no `.env` edit needed — just add the product to `start.sh PRODUCTS=(...)` between the `BEGIN_PRODUCTS_REGISTRY` / `END_PRODUCTS_REGISTRY` sentinels (`noctus.dev.scaffold_product` does this for you). Every consumer with `cors_origins = "@registry:all"` picks up the new frontend automatically.
+
+**Manual override.** Setting `CORS_ORIGINS=...` in `.env` still wins (pydantic-settings precedence) — useful for one-off testing or pinning to a specific subset.
+
+**Adopters:**
+- `products/core/backend/app/config.py` → `cors_origins = "@registry:all"` (SSO-bridge).
+- Other products still carry hardcoded enumerations — per-product migration deferred until the seam is exercised on N=2 consumers. File a follow-up project when surfacing.
+
+Current ports (auto-derived from `start.sh`): 5173 (Core), 8080 (ERP), 8090 (PF), 8095 (Therapy), 8100 (Seed), 8110 (Daily Life), 8120 (Mailing), 8123 (Dev Team), 8130 (AdConnect), 8140 (Media Scheduling), 8150 (YouTube Crawler), 8160 (Imobi Scheduling) — plus `3000` (Next/React default) as a universal localhost alt.
 
 ### CORS wildcard+credentials guard — auth-replay defense
 
