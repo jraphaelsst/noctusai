@@ -335,3 +335,54 @@ is its depth pointer.
   the new name as a dual registration, migrate every consumer surface,
   then delete the old registration. No "rename + retire in one commit"
   for in-use names.
+
+---
+
+## 9. Filter-proxy tools — dodging external tool-result caps
+
+Some external MCP servers (notably Supabase MCP) return responses that
+overflow Anthropic's tool-result cap on real product data — a typical
+`get_advisors` call on an active schema lands 138KB-393KB on the wire,
+and the caller can't even see the result. Wrapping the external call
+inside a noc-side MCP tool that **filters server-side before returning**
+is the cap-dodge pattern.
+
+**Canonical adopter:** `noctus.dev.supabase_advisors` — wraps Supabase
+MCP `get_advisors` with `schema=` / `severity=` / `type=` filters. Shrinks
+real-world dumps ~30x by dropping rows the caller doesn't need, returning
+≤10KB even for big-product schemas.
+
+**Design rule.** A filter-proxy tool does NOT recursively call another
+MCP server — noc has no MCP-to-MCP client infrastructure, and adding
+one for a single tool inverts the cost/value. Instead the proxy accepts
+the raw dump as input (two shapes):
+
+- `<dump>_jsonl_path=` — caller saves the upstream output to disk first
+  (via shell pipe `mcp__claude_ai_X__get_Y | tee file`), then calls the
+  proxy with the file path. The dump traverses the filesystem rather
+  than the tool-result channel.
+- `<dump>_raw=` — inline list[dict] for direct programmatic use (smoke
+  tests, fixtures, future MCP-from-MCP wiring if it ever lands).
+
+**Required contract:**
+- Exactly one of the two input shapes — `ValueError` if both/neither.
+- All filters fire **server-side before serializing the return value**.
+- Per-row tolerance — malformed rows log + skip, don't kill the batch.
+- `worktree_path=` for relative file-path inputs (same shape as the
+  caller-root resolution in §5).
+- Pydantic-validated output dict per row, never raw upstream shape (the
+  whole point is normalization + scope-tightening).
+
+**When NOT to use this pattern.** When the upstream response is already
+small (<20KB) — wrapping a tiny call just adds dispatch surface. The
+trigger is **observed overflow** (Engineer Z's 138KB+393KB on imobi P3),
+not theoretical concern.
+
+**Adopters** (current state, 2026-05-10):
+
+- `noctus.dev.supabase_advisors` — Supabase MCP `get_advisors`.
+
+Future candidates: any upstream MCP whose typical response exceeds the
+tool-result cap on real data. File a filter-proxy follow-up project when
+an in-flight project hits the cap (the symmetric of how
+`projects/noctus-supabase-advisors-proxy/` was filed).
