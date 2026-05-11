@@ -693,11 +693,21 @@ agree on what exists; they differ only in how it runs.
 
 ---
 
-## 11 · Known limits + improvement backlog
+## 11 · Known limits + improvement backlog — CLOSED 2026-05-10
 
-Captured during the 2026-05-10 containerization rollout. ✅ = applied
-this session; 🟡 = pending. Some are "flag and continue" — not blockers
-— but worth recording so they don't go silent.
+> **Closure note (2026-05-10).** The backlog is fully closed via
+> `projects/containerization-backlog-closure/` orchestration: 3 waves,
+> 9 engineer dispatches (T1, T2, T3, T4, T5, T6, T6-A, T6-B, T7, T8, T9),
+> 1 pause-on-dependency event (E1: T6 → T6-A → T6-B), 3 pause-on-environment
+> events (T6-A, T6-B, T1 — Docker BuildKit overload under concurrent
+> parallel-agent build pressure). Methodology amendments shipped: KB §18
+> (wave-based dispatch + pause-on-dependency + scoped-team economics) +
+> KB §18.4 (resource-bounded engineer parallelism). Every backlog item
+> below is ✅ Applied. Historical record preserved; future improvements
+> filed as separate projects.
+
+Captured during the 2026-05-10 containerization rollout. ✅ = applied;
+all items are applied as of the closure.
 
 ### ✅ Applied 2026-05-10
 
@@ -745,17 +755,24 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
    product compose+Dockerfile pairs updated (youtube-crawler has
    no Docker artifacts — surfaced as a separate gap). Full contract:
    `KB § PATTERNS/containerization.md § VITE_* build-arg contract`.
-6. **`@noctusai/seed` is missing from product `package.json`
-   `dependencies`.** It's resolved purely by Vite alias — works at
-   build time, but `npm install` doesn't know about it. If anyone
-   ever runs `npm install` outside of the build (typecheck, IDE), it
-   could miss. Either add as `file:../../../seed/framework/frontend`
-   (npm workspaces) or document the alias as the only resolution.
-7. **OCI image labels.** Standard practice missing:
-   `LABEL org.opencontainers.image.source=...`,
-   `LABEL org.opencontainers.image.revision=$(git rev-parse HEAD)`.
-   Cheap traceability — image → commit. Update canonical seed,
-   propagate.
+6. ✅ **`@noctusai/seed` in product `package.json` (T2, containerization-
+   backlog-closure Wave 1, 2026-05-10).** Added `@noctusai/seed` +
+   `@noctusai/lib` as `file:../../../seed/{framework,lib}/frontend` paths
+   to every product's `package.json` `dependencies` block (10 products +
+   template). Vite alias still wins at build time (path-shape unchanged);
+   the `file:` dep makes npm aware so external `npm install` (IDE,
+   typecheck, lint hooks) doesn't break. Verified: `npm install` outside
+   Docker succeeds; `vite build` green on seed + core; alias precedence
+   preserved.
+7. ✅ **OCI image labels (T1 + T2 + T9, containerization-backlog-closure
+   Wave 1 + Wave 3, 2026-05-10).** Every backend Dockerfile (T1) AND
+   frontend Dockerfile (T2) ships `LABEL org.opencontainers.image.source=
+   "https://github.com/jraphaelsst/noctusai"` + `LABEL org.opencontainers.
+   image.revision="${GIT_SHA}"` in the runtime stage. `ARG GIT_SHA=dev`
+   default lets standalone `docker build` work; CI (T9) passes
+   `--build-arg GIT_SHA=$(git rev-parse --short HEAD)` for SHA-traceable
+   images. Verified on T1's slim image: `docker inspect noctus-seed-backend:slim`
+   showed the labels populated with the actual commit SHA at build time.
 
 ### 🟡 Soon — quality lifts
 
@@ -789,9 +806,20 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
     `secrets.GITHUB_TOKEN` and publishes both `:<short-sha>` and `:latest`
     after a clean Trivy scan. PR builds verify-only (no push). Full pattern
     at **§11f · CI workflow — full-fleet matrix + push + scan** below.
-11. **Backend image is fat (600-900MB).** A second pass with
-    multi-stage (build deps in one stage, runtime-only in another)
-    could shave 200-400MB. Standard pattern; deferred for later. <- please do it
+11. ✅ **Backend image multi-stage slim (T1, containerization-backlog-closure
+    Wave 1, 2026-05-10).** All 11 backend Dockerfiles (seed canonical + 9
+    product mirrors + template) refactored to multi-stage builder + runtime.
+    Builder retains dev libs (build-essential, libffi-dev, libpq-dev,
+    libcairo2-dev, libgirepository1.0-dev, libpango1.0-dev, libgdk-pixbuf-
+    2.0-dev, git, pkg-config) for wheel compilation; runtime keeps only
+    shared-object versions (libffi8, libpq5, libcairo2, libpango-1.0-0,
+    libpangocairo-1.0-0, libgdk-pixbuf-2.0-0, libgirepository-1.0-1) +
+    curl for healthcheck. Editable installs (`pip install -e ./seed/...`)
+    preserved via explicit `COPY --from=builder /app/seed /app/seed` in
+    runtime stage (`.egg-link` files contain absolute paths that must
+    resolve). dev-team gets a 3rd-editable carve-out for `/opt/dev_team`
+    (agno engine). **Measured size delta:** seed-backend `981MB → 672MB
+    = −309MB (−31.5%)` — right in the predicted 200-400MB range.
 
 ### 🟢 Later — strategic
 
@@ -838,11 +866,20 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
     each product's first migration by `scripts/build-init-local-db.sh`).
     `./start.sh local-db` activates the profile alongside the fleet. See
     §11b below for the full mental model + caveats.
-14. **Health endpoint per-product variation.** All products use the
-    seed's `/api/health` — fine, but dev-team's agno engine has
-    deeper health probes (`/api/health/agno`) that the docker
-    healthcheck doesn't surface. Consider per-product healthcheck
-    customization in the scaffolder.
+14. ✅ **Health endpoint per-product variation (T6 + T6-A + T6-B,
+    containerization-backlog-closure Wave 1, 2026-05-10).** **First**
+    documented pause-on-dependency event (E1). T6 brief assumed
+    `/api/health/agno` existed in dev-team — it didn't. T6 engineer
+    correctly STOPPED rather than absorbing endpoint creation; surfaced
+    a seed-native alternative (`HealthEndpointConfig(readiness_hooks=[...])`
+    mounted on `/_ready`). Architect dispatched T6-A to author `agno_ping`
+    via the seed-native seam (not a new path-shape). T6-B resumed +
+    wired Docker compose `healthcheck:` AND Dockerfile `HEALTHCHECK`
+    directive (twin-sided change — T6-B's catch) targeting `/_ready` with
+    `timeout=10s` + `start_period=30s` for agno warmup. KB §11c documents
+    the rule; scaffolder template carries a commented healthcheck-override
+    seam. Pause-resume loop closed cleanly — full reference for KB §18.1
+    methodology.
 15. ✅ **Image scanning via Trivy (T9, containerization-backlog-closure
     Wave 3, 2026-05-10).** Every matrix-built image is scanned by
     `aquasecurity/trivy-action@0.24.0` for `HIGH,CRITICAL` severity CVEs
