@@ -25,8 +25,27 @@ services:
     restart: "no"
 
   dev-team-frontend:
+    build:
+      # `target: dev` picks the vite-dev-server stage from the multi-stage
+      # frontend Dockerfile. See KB § PATTERNS/containerization.md §11d.
+      # dev-team's frontend port (8123) is off-pattern but its
+      # vite.config.ts also pins port: 8123, so `--port 8123` aligns
+      # config + CLI flag.
+      target: dev
     volumes:
       - ./frontend:/app/products/dev-team/frontend
+    # `--host 0.0.0.0` is non-negotiable — vite's default `localhost`
+    # binding inside a container = unreachable from the host. `--port`
+    # MUST match the compose `ports:` mapping (8123:8123).
+    command:
+      - npm
+      - run
+      - dev
+      - --
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8123"
     environment:
       NODE_ENV: development
     restart: "no"
