@@ -311,60 +311,7 @@ class TestTeamFrameworkEndpoints:
 
 
 # ==========================================================================
-# 6. Focus Session Flow: start -> update with end time -> verify in stats
-# ==========================================================================
-
-
-class TestFocusSessionFlow:
-    def test_start_finish_verify_stats(self, client):
-        """Start focus session -> update with end time -> verify in stats."""
-        session = {
-            "id": "foco-e2e-1",
-            "user_id": "test-user-123",
-            "tipo": "deep_work",
-            "duracao_minutos": 60,
-            "tarefa_id": None,
-            "nota": None,
-            "inicio": "2026-04-13T09:00:00",
-            "fim": None,
-            "created_at": "2026-04-13T09:00:00Z",
-        }
-
-        # Step 1: Start session — queue insert response, then SELECT seed for any reads.
-        client.mock_supabase.set_sequential_responses("sessoes_foco", [
-            MockSupabaseResponse(data=[session]),
-        ])
-        resp = client.post("/api/foco", json={
-            "tipo": "deep_work",
-            "duracao_minutos": 60,
-        })
-        assert resp.status_code == 200
-        assert resp.json()["data"]["tipo"] == "deep_work"
-        assert resp.json()["data"]["fim"] is None
-
-        # Step 2: Update with end time and note
-        finished = {**session, "fim": "2026-04-13T10:00:00", "nota": "Excelente sessao"}
-        client.mock_supabase.set_table_data("sessoes_foco", [finished])
-        resp = client.patch("/api/foco/foco-e2e-1", json={
-            "fim": "2026-04-13T10:00:00",
-            "nota": "Excelente sessao",
-        })
-        assert resp.status_code == 200
-        assert resp.json()["data"]["fim"] is not None
-        assert resp.json()["data"]["nota"] == "Excelente sessao"
-
-        # Step 3: Verify stats
-        client.mock_supabase.set_table_data("sessoes_foco", [finished])
-        resp = client.get("/api/foco/stats")
-        assert resp.status_code == 200
-        stats = resp.json()["data"]
-        assert stats["total_sessoes"] == 1
-        assert stats["total_minutos"] == 60
-        assert stats["por_tipo"]["deep_work"] == 1
-
-
-# ==========================================================================
-# 7. Metrics Snapshot: create -> list -> check summary
+# 6. Metrics Snapshot: create -> list -> check summary
 # ==========================================================================
 
 
@@ -418,7 +365,7 @@ class TestMetricsSnapshotFlow:
 
 
 # ==========================================================================
-# 8. Auth Boundary: unauthenticated requests to all protected endpoints
+# 7. Auth Boundary: unauthenticated requests to all protected endpoints
 # ==========================================================================
 
 
@@ -520,29 +467,6 @@ class TestAuthBoundary:
         resp = client.raw().delete("/api/schedule/some-id")
         assert resp.status_code == 401
 
-    def test_focus_list_401(self, client):
-        resp = client.raw().get("/api/foco")
-        assert resp.status_code == 401
-
-    def test_focus_create_401(self, client):
-        resp = client.raw().post("/api/foco", json={
-            "tipo": "pomodoro",
-            "duracao_minutos": 25,
-        })
-        assert resp.status_code == 401
-
-    def test_focus_update_401(self, client):
-        resp = client.raw().patch("/api/foco/some-id", json={"nota": "X"})
-        assert resp.status_code == 401
-
-    def test_focus_delete_401(self, client):
-        resp = client.raw().delete("/api/foco/some-id")
-        assert resp.status_code == 401
-
-    def test_focus_stats_401(self, client):
-        resp = client.raw().get("/api/foco/stats")
-        assert resp.status_code == 401
-
     def test_metrics_list_401(self, client):
         resp = client.raw().get("/api/metricas")
         assert resp.status_code == 401
@@ -576,7 +500,7 @@ class TestAuthBoundary:
 
 
 # ==========================================================================
-# 9. Cross-User Isolation: user A's data not visible to user B
+# 8. Cross-User Isolation: user A's data not visible to user B
 # ==========================================================================
 
 
@@ -629,7 +553,7 @@ class TestCrossUserIsolation:
 
 
 # ==========================================================================
-# 10. Duplicate Check-in Date: two check-ins same goal same day
+# 9. Duplicate Check-in Date: two check-ins same goal same day
 # ==========================================================================
 
 

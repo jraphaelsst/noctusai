@@ -8,10 +8,10 @@ import logging
 from typing import Optional
 from datetime import date
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_user_client
+from app.dependencies import get_user_client, get_current_user_org
 from noctusai_lib.primitives.responses import success_response, paginated_response
 from noctusai_lib.api.auth import first_or_none
 
@@ -39,11 +39,11 @@ class MetricCreate(BaseModel):
 
 @router.get("/resumo")
 async def resumo_metricas(
-    authorization: Optional[str] = Header(None),
+    auth: tuple = Depends(get_current_user_org),
     dias: int = Query(30, ge=1, le=365),
 ):
     """Get a productivity summary: average score, streak, and trend."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     result = (
@@ -90,14 +90,14 @@ async def resumo_metricas(
 
 @router.get("")
 async def listar_metricas(
-    authorization: Optional[str] = Header(None),
+    auth: tuple = Depends(get_current_user_org),
     data_inicio: Optional[str] = Query(None, description="ISO date filter start"),
     data_fim: Optional[str] = Query(None, description="ISO date filter end"),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
 ):
     """List productivity metrics with optional date range filter."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     query = (
@@ -120,9 +120,9 @@ async def listar_metricas(
 
 
 @router.post("")
-async def criar_metrica(body: MetricCreate, authorization: Optional[str] = Header(None)):
+async def criar_metrica(body: MetricCreate, auth: tuple = Depends(get_current_user_org)):
     """Create a daily metric snapshot."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     result = db.table("metricas_produtividade").insert({

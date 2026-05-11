@@ -8,10 +8,10 @@ import logging
 from typing import Optional
 from datetime import date
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_org_id, get_user_client
+from app.dependencies import get_user_client, get_current_user_org
 from app.services.goals_service import register_checkin
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
 from noctusai_lib.api.auth import first_or_none
@@ -60,14 +60,14 @@ class HabitCheckIn(BaseModel):
 
 @router.get("")
 async def listar_metas(
-    authorization: Optional[str] = Header(None),
+    auth: tuple = Depends(get_current_user_org),
     tipo: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     """List user goals/habits with optional filters."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     query = db.table("metas").select("*", count="exact").eq("user_id", str(user.id))
@@ -86,10 +86,9 @@ async def listar_metas(
 
 
 @router.post("")
-async def criar_meta(body: GoalCreate, authorization: Optional[str] = Header(None)):
+async def criar_meta(body: GoalCreate, auth: tuple = Depends(get_current_user_org)):
     """Create a new goal or habit."""
-    user, token = await get_current_user(authorization)
-    org_id = get_org_id(user)
+    user, token, org_id = auth
     db = get_user_client(token)
 
     result = db.table("metas").insert({
@@ -115,9 +114,9 @@ async def criar_meta(body: GoalCreate, authorization: Optional[str] = Header(Non
 
 
 @router.get("/{goal_id}")
-async def obter_meta(goal_id: str, authorization: Optional[str] = Header(None)):
+async def obter_meta(goal_id: str, auth: tuple = Depends(get_current_user_org)):
     """Get a single goal or habit by ID."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     result = (
@@ -135,9 +134,9 @@ async def obter_meta(goal_id: str, authorization: Optional[str] = Header(None)):
 
 
 @router.patch("/{goal_id}")
-async def atualizar_meta(goal_id: str, body: GoalUpdate, authorization: Optional[str] = Header(None)):
+async def atualizar_meta(goal_id: str, body: GoalUpdate, auth: tuple = Depends(get_current_user_org)):
     """Update an existing goal or habit."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     updates = body.model_dump(exclude_none=True)
@@ -162,9 +161,9 @@ async def atualizar_meta(goal_id: str, body: GoalUpdate, authorization: Optional
 
 
 @router.delete("/{goal_id}")
-async def deletar_meta(goal_id: str, authorization: Optional[str] = Header(None)):
+async def deletar_meta(goal_id: str, auth: tuple = Depends(get_current_user_org)):
     """Delete a goal or habit."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     delete_or_404(db, "metas", ("id", goal_id), ("user_id", str(user.id)), message="Meta nao encontrada")
@@ -177,9 +176,9 @@ async def deletar_meta(goal_id: str, authorization: Optional[str] = Header(None)
 # ---------------------------------------------------------------------------
 
 @router.post("/{goal_id}/checkin")
-async def registrar_checkin(goal_id: str, body: HabitCheckIn, authorization: Optional[str] = Header(None)):
+async def registrar_checkin(goal_id: str, body: HabitCheckIn, auth: tuple = Depends(get_current_user_org)):
     """Register a daily check-in for a habit."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     row = register_checkin(
@@ -197,12 +196,12 @@ async def registrar_checkin(goal_id: str, body: HabitCheckIn, authorization: Opt
 @router.get("/{goal_id}/checkins")
 async def listar_checkins(
     goal_id: str,
-    authorization: Optional[str] = Header(None),
+    auth: tuple = Depends(get_current_user_org),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
 ):
     """List check-ins for a specific goal/habit."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     query = (

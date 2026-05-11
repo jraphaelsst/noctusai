@@ -8,10 +8,10 @@ import logging
 from typing import Optional
 from datetime import date
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_org_id, get_user_client
+from app.dependencies import get_user_client, get_current_user_org
 from app.services.tasks_service import get_prioridade_ordem, compute_task_stats
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
 from noctusai_lib.api.auth import first_or_none
@@ -47,7 +47,7 @@ class TaskUpdate(BaseModel):
 
 @router.get("")
 async def listar_tarefas(
-    authorization: Optional[str] = Header(None),
+    auth: tuple = Depends(get_current_user_org),
     status: Optional[str] = Query(None),
     prioridade: Optional[str] = Query(None),
     categoria: Optional[str] = Query(None),
@@ -55,7 +55,7 @@ async def listar_tarefas(
     page_size: int = Query(20, ge=1, le=100),
 ):
     """List user tasks with optional filters."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     query = db.table("tarefas").select("*", count="exact").eq("user_id", str(user.id))
@@ -76,10 +76,9 @@ async def listar_tarefas(
 
 
 @router.post("")
-async def criar_tarefa(body: TaskCreate, authorization: Optional[str] = Header(None)):
+async def criar_tarefa(body: TaskCreate, auth: tuple = Depends(get_current_user_org)):
     """Create a new task."""
-    user, token = await get_current_user(authorization)
-    org_id = get_org_id(user)
+    user, token, org_id = auth
     db = get_user_client(token)
 
     result = db.table("tarefas").insert({
@@ -102,9 +101,9 @@ async def criar_tarefa(body: TaskCreate, authorization: Optional[str] = Header(N
 
 
 @router.get("/{task_id}")
-async def obter_tarefa(task_id: str, authorization: Optional[str] = Header(None)):
+async def obter_tarefa(task_id: str, auth: tuple = Depends(get_current_user_org)):
     """Get a single task by ID."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     result = (
@@ -122,9 +121,9 @@ async def obter_tarefa(task_id: str, authorization: Optional[str] = Header(None)
 
 
 @router.patch("/{task_id}")
-async def atualizar_tarefa(task_id: str, body: TaskUpdate, authorization: Optional[str] = Header(None)):
+async def atualizar_tarefa(task_id: str, body: TaskUpdate, auth: tuple = Depends(get_current_user_org)):
     """Update an existing task."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     updates = body.model_dump(exclude_none=True)
@@ -152,9 +151,9 @@ async def atualizar_tarefa(task_id: str, body: TaskUpdate, authorization: Option
 
 
 @router.delete("/{task_id}")
-async def deletar_tarefa(task_id: str, authorization: Optional[str] = Header(None)):
+async def deletar_tarefa(task_id: str, auth: tuple = Depends(get_current_user_org)):
     """Delete a task."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     result = (
@@ -171,9 +170,9 @@ async def deletar_tarefa(task_id: str, authorization: Optional[str] = Header(Non
 
 
 @router.get("/stats/resumo")
-async def resumo_tarefas(authorization: Optional[str] = Header(None)):
+async def resumo_tarefas(auth: tuple = Depends(get_current_user_org)):
     """Get task statistics for the current user."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     result = db.table("tarefas").select("status", count="exact").eq("user_id", str(user.id)).execute()

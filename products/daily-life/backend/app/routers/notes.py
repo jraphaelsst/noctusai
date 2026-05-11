@@ -6,14 +6,14 @@ Simple text notes with tags and categories for personal knowledge management.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from noctusai_lib.domain.ai import consent_required
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
 from noctusai_lib.api.auth import first_or_none
 
-from app.dependencies import get_current_user, get_org_id, get_user_client
+from app.dependencies import get_user_client, get_current_user_org
 from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
@@ -46,14 +46,14 @@ class NoteUpdate(BaseModel):
 
 @router.get("")
 async def listar_notas(
-    authorization: Optional[str] = Header(None),
+    auth: tuple = Depends(get_current_user_org),
     categoria: Optional[str] = Query(None),
     busca: Optional[str] = Query(None, description="Search in title and content"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     """List user notes with optional filters."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     query = db.table("notas").select("*", count="exact").eq("user_id", str(user.id))
@@ -72,10 +72,9 @@ async def listar_notas(
 
 
 @router.post("")
-async def criar_nota(body: NoteCreate, authorization: Optional[str] = Header(None)):
+async def criar_nota(body: NoteCreate, auth: tuple = Depends(get_current_user_org)):
     """Create a new note."""
-    user, token = await get_current_user(authorization)
-    org_id = get_org_id(user)
+    user, token, org_id = auth
     db = get_user_client(token)
 
     result = db.table("notas").insert({
@@ -96,9 +95,9 @@ async def criar_nota(body: NoteCreate, authorization: Optional[str] = Header(Non
 
 
 @router.get("/{note_id}")
-async def obter_nota(note_id: str, authorization: Optional[str] = Header(None)):
+async def obter_nota(note_id: str, auth: tuple = Depends(get_current_user_org)):
     """Get a single note by ID."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     result = db.table("notas").select("*").eq("id", note_id).eq("user_id", str(user.id)).execute()
@@ -110,9 +109,9 @@ async def obter_nota(note_id: str, authorization: Optional[str] = Header(None)):
 
 
 @router.patch("/{note_id}")
-async def atualizar_nota(note_id: str, body: NoteUpdate, authorization: Optional[str] = Header(None)):
+async def atualizar_nota(note_id: str, body: NoteUpdate, auth: tuple = Depends(get_current_user_org)):
     """Update an existing note."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     updates = body.model_dump(exclude_none=True)
@@ -134,9 +133,9 @@ async def atualizar_nota(note_id: str, body: NoteUpdate, authorization: Optional
 
 
 @router.delete("/{note_id}")
-async def deletar_nota(note_id: str, authorization: Optional[str] = Header(None)):
+async def deletar_nota(note_id: str, auth: tuple = Depends(get_current_user_org)):
     """Delete a note."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     delete_or_404(db, "notas", ("id", note_id), ("user_id", str(user.id)), message="Nota nao encontrada")
@@ -147,7 +146,7 @@ async def deletar_nota(note_id: str, authorization: Optional[str] = Header(None)
 @router.post("/{note_id}/extract-tasks")
 async def extract_tasks(
     note_id: str,
-    authorization: Optional[str] = Header(None),
+    auth: tuple = Depends(get_current_user_org),
     _consent: None = Depends(consent_required("daily_life.note_extract")),
 ):
     """D4 — extract actionable tasks from a note (ai-expansion Phase 16).
@@ -156,7 +155,7 @@ async def extract_tasks(
     returns the list for the user to review. Does NOT create task records —
     the UI confirms each item before it becomes a real task.
     """
-    user, token = await get_current_user(authorization)
+    user, token, org_id = auth
     db = get_user_client(token)
 
     result = (
@@ -171,5 +170,5 @@ async def extract_tasks(
         raise HTTPException(status_code=404, detail="Nota nao encontrada")
 
     from app.services.ai_service import extract_tasks_from_note
-    tasks = await extract_tasks_from_note(row.get("conteudo") or "", org_id=get_org_id(user))
+    tasks = await extract_tasks_from_note(row.get("conteudo") or "", org_id=org_id)
     return success_response({"tasks": tasks})

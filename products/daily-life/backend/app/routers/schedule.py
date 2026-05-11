@@ -7,10 +7,10 @@ import logging
 from typing import Optional
 from datetime import date, datetime
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user, get_org_id, get_user_client
+from app.dependencies import get_user_client, get_current_user_org
 from app.services.schedule_service import expandir_recorrencias
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
 from noctusai_lib.api.auth import first_or_none
@@ -59,7 +59,7 @@ class EventUpdate(BaseModel):
 
 @router.get("")
 async def listar_eventos(
-    authorization: Optional[str] = Header(None),
+    auth: tuple = Depends(get_current_user_org),
     data_inicio: Optional[str] = Query(None, description="ISO date filter start"),
     data_fim: Optional[str] = Query(None, description="ISO date filter end"),
     categoria: Optional[str] = Query(None),
@@ -67,7 +67,7 @@ async def listar_eventos(
     page_size: int = Query(50, ge=1, le=200),
 ):
     """List user calendar events with optional date range and category filters."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     query = db.table("eventos").select("*", count="exact").eq("user_id", str(user.id))
@@ -88,10 +88,9 @@ async def listar_eventos(
 
 
 @router.post("")
-async def criar_evento(body: EventCreate, authorization: Optional[str] = Header(None)):
+async def criar_evento(body: EventCreate, auth: tuple = Depends(get_current_user_org)):
     """Create a new calendar event."""
-    user, token = await get_current_user(authorization)
-    org_id = get_org_id(user)
+    user, token, org_id = auth
     db = get_user_client(token)
 
     result = db.table("eventos").insert({
@@ -119,9 +118,9 @@ async def criar_evento(body: EventCreate, authorization: Optional[str] = Header(
 
 
 @router.get("/{event_id}")
-async def obter_evento(event_id: str, authorization: Optional[str] = Header(None)):
+async def obter_evento(event_id: str, auth: tuple = Depends(get_current_user_org)):
     """Get a single event by ID."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     result = db.table("eventos").select("*").eq("id", event_id).eq("user_id", str(user.id)).execute()
@@ -133,9 +132,9 @@ async def obter_evento(event_id: str, authorization: Optional[str] = Header(None
 
 
 @router.patch("/{event_id}")
-async def atualizar_evento(event_id: str, body: EventUpdate, authorization: Optional[str] = Header(None)):
+async def atualizar_evento(event_id: str, body: EventUpdate, auth: tuple = Depends(get_current_user_org)):
     """Update an existing event."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     updates = body.model_dump(exclude_none=True)
@@ -164,9 +163,9 @@ async def atualizar_evento(event_id: str, body: EventUpdate, authorization: Opti
 
 
 @router.delete("/{event_id}")
-async def deletar_evento(event_id: str, authorization: Optional[str] = Header(None)):
+async def deletar_evento(event_id: str, auth: tuple = Depends(get_current_user_org)):
     """Delete a calendar event."""
-    user, token = await get_current_user(authorization)
+    user, token, _org_id = auth
     db = get_user_client(token)
 
     delete_or_404(db, "eventos", ("id", event_id), ("user_id", str(user.id)), message="Evento nao encontrado")

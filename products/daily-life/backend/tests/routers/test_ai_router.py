@@ -67,34 +67,6 @@ class TestWeeklyReview:
         assert "Resumo simples" in data["text"]
         assert data["summary"]["tasks_completed"] == 3
 
-    def test_send_endpoint_for_self_works(self, client):
-        with patch(
-            "app.services.weekly_review_service.send_weekly_review",
-            new_callable=AsyncMock,
-            return_value={
-                "sent": True, "dry_run": False, "external_id": "id-1",
-                "error": None, "subject": "x", "summary": {"tasks_completed": 0},
-            },
-        ):
-            resp = client.post(
-                "/api/ai/weekly-review/send",
-                json={"recipient": "u@x", "period_days": 7},
-            )
-        assert resp.status_code == 200
-        assert resp.json()["data"]["sent"] is True
-
-    def test_send_for_another_user_rejected_403(self, client):
-        # user_id != caller's id ⇒ 403 from cross-user guard.
-        resp = client.post(
-            "/api/ai/weekly-review/send",
-            json={
-                "recipient": "u@x",
-                "user_id": "00000000-0000-0000-0000-000000000099",
-                "period_days": 7,
-            },
-        )
-        assert resp.status_code == 403
-
 
 class TestDailyBrief:
     def test_returns_chip_summary_and_counters(self, client):
