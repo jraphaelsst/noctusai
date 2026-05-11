@@ -114,7 +114,7 @@ class TestUpdateApiKey:
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("api_keys", [
-            {"id": "key-1", "name": "Updated Key", "scopes": ["read", "write"]},
+            {"id": "key-1", "org_id": "org-1", "name": "Updated Key", "scopes": ["read", "write"]},
         ])
 
         resp = client.patch("/api/api-keys/key-1", json={
@@ -150,7 +150,7 @@ class TestRevokeApiKey:
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("api_keys", [
-            {"id": "key-1", "is_active": False},
+            {"id": "key-1", "org_id": "org-1", "is_active": False},
         ])
 
         resp = client.delete("/api/api-keys/key-1")

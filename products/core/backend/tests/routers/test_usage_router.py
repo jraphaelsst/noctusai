@@ -45,7 +45,7 @@ class TestGetMyUsage:
 
     def test_user_can_see_own_usage(self, client):
         client.mock_supabase.set_table_data("product_usage", [
-            {"id": "u1", "org_id": "test-org-123", "metric": "active_users_30d", "value": 3},
+            {"id": "u1", "org_id": "org-1", "metric": "active_users_30d", "value": 3},
         ])
         resp = client.get("/api/usage/me")
         assert resp.status_code == 200

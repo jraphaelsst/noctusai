@@ -91,7 +91,7 @@ class TestUpdateWebhook:
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("webhook_endpoints", [
-            {"id": "wh-1", "url": "https://updated.com/hook", "is_active": True},
+            {"id": "wh-1", "org_id": "org-1", "url": "https://updated.com/hook", "is_active": True},
         ])
 
         resp = client.patch("/api/webhooks/wh-1", json={

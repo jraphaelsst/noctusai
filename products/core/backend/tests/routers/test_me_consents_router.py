@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from noctusai_lib.domain.ai.consent import (
+    _CATALOG,
     register_feature,
     reset_catalog_for_test,
 )
@@ -11,6 +12,13 @@ from noctusai_lib.domain.ai.consent import (
 
 @pytest.fixture(autouse=True)
 def _isolate_catalog():
+    # Snapshot the catalog so we can restore it on teardown — preserves
+    # any features registered at app boot (e.g. `core.audit_digest`) for
+    # subsequent tests that depend on them. Reset+register-only-our-features
+    # is intentional for this file's tests (assert exact catalog membership)
+    # but the teardown MUST restore, not clear, to avoid cross-file
+    # pollution. Surfaced by core-test-pollution-sweep 2026-05-11.
+    saved = dict(_CATALOG)
     reset_catalog_for_test()
     register_feature(
         "erp.lead_score",
@@ -26,7 +34,8 @@ def _isolate_catalog():
         default_granted=True,
     )
     yield
-    reset_catalog_for_test()
+    _CATALOG.clear()
+    _CATALOG.update(saved)
 
 
 class TestListMyConsents:

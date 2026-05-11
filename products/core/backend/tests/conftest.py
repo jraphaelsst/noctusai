@@ -332,7 +332,7 @@ def client():
         return False
 
     async def _mock_get_org_id(user):
-        return "test-org-123"
+        return "org-1"
 
     patches = _build_patches(
         mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
@@ -377,7 +377,7 @@ def admin_client():
         return True
 
     async def _mock_get_org_id(user):
-        return "test-org-123"
+        return "org-1"
 
     patches = _build_patches(
         mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
@@ -415,7 +415,7 @@ def unauth_client():
         return False
 
     async def _mock_get_org_id(user):
-        return "test-org-123"
+        return "org-1"
 
     patches = _build_patches(
         mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,

@@ -30,7 +30,7 @@ class TestGetOnboardingStatus:
         resp = client.get("/api/onboarding/status")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["org_id"] == "test-org-123"
+        assert data["org_id"] == "org-1"
         assert data["onboarding_completed"] is False
         assert data["progress"]["completed"] == 1
         assert data["progress"]["total"] == 4

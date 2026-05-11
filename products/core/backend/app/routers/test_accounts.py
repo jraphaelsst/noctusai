@@ -106,7 +106,7 @@ async def criar_test_account(body: TestAccountCreate, authorization: Optional[st
         licenses_created += 1
 
     # 5. Create unlimited subscription (find or use the highest plan)
-    plans_result = db.table("plans").select("id").eq("is_active", True).order(
+    plans_result = db.table("plans").select("id").eq("ativo", True).order(
         "price_monthly", desc=True
     ).execute()
     if plans_result.data:
