@@ -7,6 +7,8 @@ across all products via the root .env file.
 """
 from typing import Optional
 
+from pydantic import AliasChoices, Field
+
 from noctusai_seed import ProductSettings
 
 
@@ -33,9 +35,21 @@ class TherapySettings(ProductSettings):
     therapy_livekit_api_key: Optional[str] = None
     therapy_livekit_api_secret: Optional[str] = None
 
-    # Google OAuth + Calendar (product-specific)
-    therapy_google_client_id: Optional[str] = None
-    therapy_google_client_secret: Optional[str] = None
+    # Google OAuth + Calendar.
+    # Dev convention (2026-05-11): platform-wide creds live at root `.env` as
+    # `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — one personal
+    # account reused across all products. Per-product `THERAPY_GOOGLE_CLIENT_ID`
+    # env var overrides the global value for production scoping (future).
+    # AliasChoices makes pydantic try product-prefix first, then fall back to
+    # the global key.
+    therapy_google_client_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("THERAPY_GOOGLE_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID"),
+    )
+    therapy_google_client_secret: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("THERAPY_GOOGLE_CLIENT_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET"),
+    )
 
     # Scheduler — daily audio-retention sweep + future therapy retention jobs.
     # Default ON in prod; the FastAPI TestClient skips lifespan unless used as

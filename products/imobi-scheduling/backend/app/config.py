@@ -13,6 +13,8 @@ forcing the operator to populate them before they're wired.
 """
 from typing import Optional
 
+from pydantic import AliasChoices, Field
+
 from noctusai_seed import ProductSettings
 
 
@@ -59,20 +61,39 @@ class ImobiSchedulingSettings(ProductSettings):
     conversation_memory_ttl_seconds: int = 3600
     message_debounce_seconds: int = 8
 
-    # ── Phase 8 — Google Calendar wiring (forward-compat stubs) ──
-    # Adapter shape: OAuth client + service-account JSON path + Fake.
-    # Picked up by `configure_calendar_module(...)`. See `KB §
-    # PATTERNS/whatsapp-chatbot-seed.md` for the wiring recipe.
-    google_calendar_oauth_client_id: Optional[str] = None
-    google_calendar_oauth_client_secret: Optional[str] = None
+    # ── Phase 8 — Google Calendar wiring ──
+    # Dev convention (2026-05-11): platform-wide creds at root `.env` as
+    # `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — one personal
+    # account reused across products. Per-product `IMOBI_GOOGLE_CALENDAR_*`
+    # overrides honored for future prod scoping via AliasChoices.
+    google_calendar_oauth_client_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IMOBI_GOOGLE_CALENDAR_OAUTH_CLIENT_ID",
+            "GOOGLE_CALENDAR_OAUTH_CLIENT_ID",
+            "GOOGLE_OAUTH_CLIENT_ID",
+        ),
+    )
+    google_calendar_oauth_client_secret: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IMOBI_GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET",
+            "GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET",
+            "GOOGLE_OAUTH_CLIENT_SECRET",
+        ),
+    )
     google_calendar_service_account_file: Optional[str] = None
-    google_calendar_default_calendar_id: Optional[str] = None
+    google_calendar_default_calendar_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("IMOBI_GOOGLE_CALENDAR_ID", "GOOGLE_CALENDAR_ID"),
+    )
 
-    # ── Phase 8 — Google Maps wiring (forward-compat stubs) ──
-    # Routes / Distance Matrix + static-routing fallback live at
-    # `noctusai_lib.integrations.google_maps`; configured via
-    # `configure_maps_module(...)`.
-    google_maps_api_key: Optional[str] = None
+    # ── Phase 8 — Google Maps wiring ──
+    # Same dev-global / per-product-override scheme as Calendar above.
+    google_maps_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("IMOBI_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_API_KEY"),
+    )
 
     # ── Phase 6 — OpenAI / LLM tool-loop (forward-compat) ──
     # The default LLM config is wired automatically by
