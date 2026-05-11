@@ -10,6 +10,7 @@ Run with: uvicorn app.main:app --reload --port 8009
 from noctusai_seed import HealthEndpointConfig, create_product_app
 
 from app.config import settings
+from app.rate_limit import limiter
 from app.api import agents, metrics, run, configs
 from app.services.agno_health import agno_ping
 
@@ -31,4 +32,5 @@ app = create_product_app(
     # pins (ANTHROPIC_API_KEY presence / known-Anthropic leader model /
     # dev_team package importable).
     health_config=HealthEndpointConfig(readiness_hooks=[agno_ping]),
+    limiter=limiter,
 )

@@ -4,10 +4,11 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_org_id
+from app.rate_limit import limiter
 from app.services import dev_team_proxy
 from noctusai_lib.primitives.responses import success_response
 
@@ -23,7 +24,8 @@ class RunRequest(BaseModel):
 
 
 @router.post("")
-async def run_team(body: RunRequest, authorization: Optional[str] = Header(None)):
+@limiter.limit("10/minute")
+async def run_team(request: Request, body: RunRequest, authorization: Optional[str] = Header(None)):
     """Fire the team.
 
     The engine returns one of:

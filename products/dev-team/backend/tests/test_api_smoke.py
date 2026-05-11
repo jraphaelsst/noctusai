@@ -252,6 +252,62 @@ def test_configs_require_auth(client):
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# Rate-limit guard on POST /api/run (LLM-spend perimeter)
+# --------------------------------------------------------------------------
+
+
+def test_run_team_under_limit_returns_200(client):
+    """A single POST /api/run well below the 10/minute limit returns 200.
+
+    Sanity check that the @limiter.limit("10/minute") decorator does NOT
+    short-circuit healthy traffic.
+    """
+    fake_envelope = {
+        "status": "switch-not-flipped",
+        "summary": "ANTHROPIC_API_KEY is not set...",
+        "task": "ping",
+    }
+    with patch(
+        "app.services.dev_team_proxy.run_team",
+        return_value=fake_envelope,
+    ):
+        resp = client.post("/api/run", json={"task": "ping"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["status"] == "switch-not-flipped"
+
+
+def test_run_team_over_limit_returns_429(client):
+    """Exceeding 10 POST /api/run requests/minute returns 429 from slowapi.
+
+    Drives 11 calls in a tight loop against the in-memory limiter (the
+    TestClient hits a single IP). The 11th must trip the limit. Asserts
+    on .status_code per the status-code-assertion rule.
+    """
+    fake_envelope = {
+        "status": "switch-not-flipped",
+        "summary": "ANTHROPIC_API_KEY is not set...",
+        "task": "spam",
+    }
+    # Reset limiter state to isolate this test from any prior call within
+    # this client fixture's lifetime. The limiter is module-level.
+    from app.rate_limit import limiter
+    limiter.reset()
+
+    with patch(
+        "app.services.dev_team_proxy.run_team",
+        return_value=fake_envelope,
+    ):
+        statuses = []
+        for _ in range(11):
+            resp = client.post("/api/run", json={"task": "spam"})
+            statuses.append(resp.status_code)
+
+    # First 10 should succeed, 11th should be 429.
+    assert statuses[:10] == [200] * 10, f"first 10 expected 200, got {statuses[:10]}"
+    assert statuses[10] == 429, f"11th call expected 429, got {statuses[10]}"
+
+
 @pytest.mark.parametrize(
     "filename",
     ["0001_init_telemetry_events.sql", "0002_init_agent_config_overrides.sql"],
