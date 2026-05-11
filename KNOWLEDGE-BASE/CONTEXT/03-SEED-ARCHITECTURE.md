@@ -588,9 +588,10 @@ Rows marked 🔧 are **mechanical-inheritance** items — the physics that makes
 
 ### 5. Contract enforcement
 
-The contract is validated at three layers:
+The contract is validated at four layers:
 
-1. **Compliance check** (`python mcp/noctusai/cli.py --review`) — deterministic detectors in `mcp/noctusai/tools/compliance.py`:
+1. **Type-checking the seed boundary** (CI gate, formalized 2026-05-10 by `strict-mode-migration`). Cross-product type contracts live in `seed/lib/frontend/` (`@noctusai/lib`) and `seed/framework/frontend/` (`@noctusai/seed`). Both packages export `src/*.ts` directly (no build step), so the strict-quality of the seed's types propagates to every product consumer via raw-source import. Both tsconfigs run with `"strict": true`; `npm run check` (= `tsc --noEmit`) is the gate. The workflow `.github/workflows/seed-typecheck.yml` runs both checks in parallel on every PR touching `seed/lib/frontend/**` or `seed/framework/frontend/**` and on every push to main — *type-checking the seed boundary is part of the contract.* Per-product `tsconfig.json` strict mode is **opt-in over time, not a campaign** (see `KB § PATTERNS/accept-with-rationale.md § Per-product TS strict mode is opt-in over time`).
+2. **Compliance check** (`python mcp/noctusai/cli.py --review`) — deterministic detectors in `mcp/noctusai/tools/compliance.py`:
    - `check_seed_compliance` — `create_product_app` presence, editable installs, no boilerplate routers on products that opt in, frontend wiring. Control-plane-aware via `CONTROL_PLANE_PRODUCTS = {"core"}` — core legitimately owns `team.py` / `notifications.py` / custom `Layout.tsx` (identity source), so those warnings are suppressed for it.
    - `check_path_references` — catches stale `shared/*` paths that should be `seed/*`.
    - `check_standard_routers_audit` — cross-audits `standard_routers=[...]` opt-in vs real frontend usage via signal map. **Self-provision v2** (AST): parses `routers=[<mod>.router, ...]` in `main.py` to detect actually-wired routers; a file-on-disk that isn't wired no longer counts (would 404). Falls back to filename-based when AST is unparseable.
@@ -598,8 +599,8 @@ The contract is validated at three layers:
    - `check_config_extends_product_settings` — AST-walks `backend/app/config.py` and asserts every class extending `BaseAppSettings` also extends `ProductSettings`. Direct `BaseAppSettings` extension is a structural fork: the product duplicates env_file resolution and loses the seed's `parents[4] / .env` math. Added 2026-04-25 by the `keeper-config-inheritance-audit` project (shipped + folder deleted per clean-folder rule; detector code lives at `mcp/noctusai/tools/compliance.py`). Origin: same-day `core-seed-wiring` Phase 6 regression (`parents[3]`-vs-`parents[4]` bug → silent `supabase_url=""` → 500 on login). Severity `critical`.
    - `check_frontend_config_paths` — regex-extracts every quoted relative path containing `seed/` from `frontend/vite.config.ts`, `frontend/tailwind.config.ts`, and `frontend/postcss.config.js`; resolves each against the config file's location (with TS module-resolution fallback for extensionless imports + glob-prefix resolution for tailwind content arrays); flags any path that doesn't resolve to an existing target. Added 2026-04-25 by the `keeper-frontend-config-paths-audit` project (shipped + folder deleted per clean-folder rule; detector code lives at `mcp/noctusai/tools/compliance.py`). Origin: 2026-04-20 seed-relocation broke core's frontend (`../../seed/` → `../../../seed/`). Severity `critical`.
    - `check_out_of_contract_trees` — global repo-root sweep; flags any product-shaped directory (has `backend/app/main.py` or `frontend/src/main.tsx`) that lives outside `products/*/`. Remediation pointer: migrate via `<name>-seed-wiring` project OR delete if legacy.
-2. **Runtime propagation check** (planned, `seed-inheritance-hardening` Phase 3) — `__seed_version__` instrumentation; each product's boot path reports the version; keeper detects drift.
-3. **Audit command** (see § Compliance check below) — bash grep for missing wiring across all products.
+3. **Runtime propagation check** (planned, `seed-inheritance-hardening` Phase 3) — `__seed_version__` instrumentation; each product's boot path reports the version; keeper detects drift.
+4. **Audit command** (see § Compliance check below) — bash grep for missing wiring across all products.
 
 Failing any layer → contract violation → either remediate via a `<product>-seed-wiring` project OR formalize the divergence via Phase 4 of `seed-inheritance-hardening`.
 

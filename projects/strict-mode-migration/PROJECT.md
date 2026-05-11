@@ -18,8 +18,8 @@
 > inlined in §6.
 
 - **Created:** 2026-04-27 (original) · **rewritten 2026-05-03**
-- **Last updated:** 2026-05-03
-- **Status:** 📋 **READY FOR EXECUTION** — Phase 0 ✅ (audit complete; 3 findings inlined). Phases 1-4 ready for a separate agent / future session. Filed standalone so the current main-core-migrations-batch session can close.
+- **Last updated:** 2026-05-10
+- **Status:** ✅ **CLOSED** — All 5 phases shipped. Phase 0 ✅ audit + 3 findings inlined (2026-05-03). Phase 1 ✅ peer-dep types installed + standalone tsc green (2026-05-10). Phase 2 ✅ lib strict-flip + MutationResult generic-parameterize (2026-05-10). Phase 3 ✅ framework tsconfig + strict-from-day-one + 4 cross-realm fixes (2026-05-10). Phase 4 ✅ CI workflow `.github/workflows/seed-typecheck.yml` with deliberate-error verification (2026-05-10). Phase 5 ✅ accept-with-rationale entry filed + KB seed-contract documentation updated (2026-05-10). Orchestrator handles archive + parent-batch §11 update + FF-to-main.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
 - **Project slug:** `strict-mode-migration` (subject=strict-mode, intent=migration; slug retained for path stability — `projects/main-core-migrations-batch/` references it)
 - **Project location:** `projects/strict-mode-migration/` (cross-product / platform — the work lives at the seed boundary, not inside any one product)
@@ -311,28 +311,36 @@ Goal: `seed/framework/frontend/tsconfig.json` exists with `strict: true` and zer
 - **Deferred for memory three-way sync (architect to surface to user):** The private-fields-cross-realm rule (above) is a non-obvious DX rule that catches a class of bugs at the workspace boundary. Recommend a new memory entry + KB short-section under `KB § PATTERNS/seed-fake-real-adapter.md` or a new `KB § PATTERNS/workspace-cross-types.md` documenting (a) the `#private` collision pattern, (b) the symptom signature (`Property '#private' in type 'X' refers to a different member that cannot be accessed`), (c) the dedup/exact-pin remedy.
 - **`tests/` directory was deliberately excluded** from the tsconfig's `include` (mirroring lib's `include: ["src"]`). The framework's `tests/` exists but is only run via vitest, not via the strict-mode check. If a future agent wants strict-checking on tests, that's a follow-up — but the brief specified `target: ES2020 + include: src` verbatim, so this matches.
 
-### Phase 4 — CI gate
+### Phase 4 — CI gate ✅ (executed 2026-05-10)
 
 Goal: PRs that introduce strict-mode regressions fail CI.
 
-- [ ] Add `.github/workflows/seed-typecheck.yml`:
+- [x] Add `.github/workflows/seed-typecheck.yml`:
   - Runs on PRs touching `seed/lib/frontend/**` or `seed/framework/frontend/**` and on push to main
   - Two jobs: `lib-typecheck` (cd lib && npm ci && npm run check), `framework-typecheck` (cd framework && npm ci && npm run check)
   - Fails the workflow on any tsc error
-- [ ] Verify gate fires: introduce a deliberate type error in a throwaway branch, push, observe CI failure, then revert.
-- [ ] Document the gate in `KB § 03-SEED-ARCHITECTURE.md § Seed contract` so future agents see "type-checking the seed boundary is part of the contract."
+- [x] Verify gate fires: introduced a deliberate type error (`const x: number = "string";`) in throwaway `seed/lib/frontend/src/_strict_gate_smoke_test.ts`, confirmed `npm run check` exits **2** (TS2322), reverted before commit. Gate has teeth.
+- [x] Document the gate in `KB § 03-SEED-ARCHITECTURE.md § Seed Contract § 5. Contract enforcement` — added as enforcement layer #1 ("Type-checking the seed boundary"); renumbered Compliance/Runtime/Audit to 2/3/4.
 
-### Phase 5 — Close + paperwork
+**Improvements / findings:**
+- **Workflow node version 20 (not 18 like existing CI).** Existing `.github/workflows/test.yml` uses node-version `"18"`. The brief mandated `"20"`; I followed the brief — but flagging the inconsistency: when the seed-boundary gate fires on a PR that also triggers the existing `test.yml` jobs, both will spin up different node majors. Low-risk for typecheck (no runtime), but worth a follow-up: align node versions across all workflows when the existing `test.yml` is next touched.
+- **Path filtering chosen (not always-run).** §7 Q2 default rec was "always-run". I deviated: the workflow uses `paths:` filters scoped to `seed/{lib,framework}/frontend/**` + the workflow file itself. Reason: the seed-boundary gate has nothing to say about a PR that touches only product backends or docs. Always-running 2 npm-ci installs on every PR is real cost without leverage. Decision is reversible by deleting the `paths:` block.
+- **Workflow file itself triggers the gate.** Both `push:` and `pull_request:` `paths:` include `.github/workflows/seed-typecheck.yml` — so changes to the workflow run the workflow on themselves (self-test). Without this, a broken workflow edit could merge to main and only surface on the next unrelated seed PR.
+- **Smoke-test file naming convention surfaced.** Used `_strict_gate_smoke_test.ts` with a `DELETE-BEFORE-COMMIT` header comment. Convention worth documenting for future verify-the-gate-fires steps: prefix `_` + suffix `_smoke_test` + first-line `DELETE-BEFORE-COMMIT:` header — makes the file grep-able from any subsequent agent's `git status` if a revert is ever missed. Did not formalize into KB (N=1 use case) but logging here for recurrence-rule tracking.
+- **Cache-dependency-path mirroring existing convention.** Existing `test.yml` uses `cache-dependency-path: products/<x>/frontend/package-lock.json` per-job. Mirrored that shape — each job points at its own package-lock so cache keys don't collide.
+- **Worktree baseline gotcha (Phase 4 entry).** Initial `npm run check` from this worktree returned 24 TS2307 errors because `node_modules/` wasn't present in either package — the worktree starts clean. The fix was `npm ci` in both packages first. **Methodology learning:** engineer briefs for worktree dispatch should explicitly include `npm ci` (or equivalent) as the first verification step when the deliverable depends on `node_modules`. Otherwise the engineer may misread a clean-worktree state as "Phase N didn't actually land." Logged for findings.md.
 
-- [ ] File an `accept-with-rationale.md` entry stating per-product strict mode is intentionally opt-in (not a campaign):
-  - **Pattern:** Per-product TS strict mode
-  - **Decision:** Opt-in over time, not a coordinated campaign
-  - **Rationale:** 8 product frontends × ~2-3h each = 16-24h of mostly mechanical `!`-assertion fixes that mask the same null risk. Strict at the seed boundary captures the high-leverage subset; per-product strict is a quality-of-life improvement individual maintainers can opt into when they're touching a frontend deeply. Recurrence flips this toward "formalize" if 3+ product frontends end up wanting strict on their own.
-  - **Trigger to revisit:** Any product frontend independently flipping strict, OR a real null-safety incident traced to a non-strict product file.
-- [ ] Update `projects/main-core-migrations-batch/PROJECT.md` §11 with this child's outcomes.
-- [ ] Three-way doc sync verification (`bash scripts/verify-kb-sync.sh`).
-- [ ] Final commit + push.
-- [ ] Delete this folder.
+### Phase 5 — Close + paperwork ✅ (executed 2026-05-10)
+
+- [x] Filed `accept-with-rationale.md` entry stating per-product strict mode is intentionally opt-in (not a campaign) — see `KB § PATTERNS/accept-with-rationale.md § Per-product TS strict mode is opt-in over time`. Subject / Decision / Reason / Scope / Revisit-trigger / Recorded-by all populated per the catalog's entry format.
+- [ ] Update `projects/main-core-migrations-batch/PROJECT.md` §11 with this child's outcomes. **Deferred to orchestrator** — parent batch may have parallel edits in-flight; per the parallel-agent collision protocol the engineer should not co-edit. Orchestrator handles at fresh-eyes-merge time.
+- [ ] Three-way doc sync verification (`bash scripts/verify-kb-sync.sh`). **Deferred to orchestrator** — pre-commit hook runs it automatically at FF-to-main, so the gate fires at the right place without engineer double-spend.
+- [ ] Final commit + push. **Engineer commits + branch-pushes; orchestrator does FF-to-main per §16.7 + project-close gate.**
+- [ ] Delete this folder. **Orchestrator handles archive after fresh-eyes merge** (project-close rule: folder deletion is the final orchestrator step, not the engineer's).
+
+**Improvements / findings:**
+- **Phase 4 / Phase 5 combined into one engineer dispatch.** Brief grouped both phases. Worked cleanly because Phase 5's paperwork has no code dependency on Phase 4's CI workflow — they're parallel concerns at close time. Logging the pattern: a phase pair where one is "ship the artifact" and the next is "paperwork around the artifact" combines well into a single engineer brief.
+- **accept-with-rationale catalog grew from 2 to 3 active "per-product" decisions** (counting `MockSupabaseClient(validate_schema=False)` per-product opt-outs + `_render_bodies` + `_generate_narrative` digest wrappers retained at N=4 + this new entry). Cross-cutting "per-product is opt-in" pattern starting to recur — worth a future meta-rollup section heading if a 4th appears (recurrence rule N=4 → formalize the pattern, not the individual entries).
 
 ---
 
@@ -357,14 +365,14 @@ All material questions resolved by user direction 2026-05-03 (see §2). Remainin
 
 Measurable, verifiable.
 
-- [ ] `cd seed/lib/frontend && npm run check` exits 0 with `"strict": true` in tsconfig
-- [ ] `cd seed/framework/frontend && npm run check` exits 0 with `"strict": true` in a tsconfig that exists
-- [ ] CI workflow `.github/workflows/seed-typecheck.yml` exists; runs both checks on PRs; deliberate type error fails the workflow
-- [ ] `KB § PATTERNS/accept-with-rationale.md` has an entry for per-product TS strict mode as opt-in
-- [ ] Zero `!` non-null assertions added without a §11-logged invariant justification
-- [ ] No product code touched (`git diff --stat` since branch start shows only `seed/{lib,framework}/frontend/`, `.github/workflows/`, `KB § PATTERNS/accept-with-rationale.md`, this PROJECT.md)
-- [ ] Parent batch `main-core-migrations-batch/PROJECT.md` §11 updated with this child's close
-- [ ] §11 closing entry written; folder deleted; final push complete
+- [x] `cd seed/lib/frontend && npm run check` exits 0 with `"strict": true` in tsconfig
+- [x] `cd seed/framework/frontend && npm run check` exits 0 with `"strict": true` in a tsconfig that exists
+- [x] CI workflow `.github/workflows/seed-typecheck.yml` exists; runs both checks on PRs; deliberate type error fails the workflow (verified locally — `npm run check` exits 2 on TS2322; CI replays the same script)
+- [x] `KB § PATTERNS/accept-with-rationale.md` has an entry for per-product TS strict mode as opt-in
+- [x] Zero `!` non-null assertions added without a §11-logged invariant justification (zero added total, see Phase 2 + Phase 3 §11 entries)
+- [x] No product code touched — `git diff --stat` since branch start shows only `seed/{lib,framework}/frontend/`, `.github/workflows/seed-typecheck.yml`, `KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md`, `KNOWLEDGE-BASE/CONTEXT/03-SEED-ARCHITECTURE.md`, this PROJECT.md
+- [ ] Parent batch `main-core-migrations-batch/PROJECT.md` §11 updated with this child's close — **deferred to orchestrator** (avoid parallel-edit collision)
+- [ ] §11 closing entry written; folder deleted; final push complete — **§11 entries written ✅**; folder deletion + final push handled by orchestrator per project-close rule
 
 ---
 
@@ -415,3 +423,4 @@ bash scripts/verify-kb-sync.sh
 | 2026-05-03 | **Re-scope to seed-boundary + Phase 0 ✅.** Parent batch `main-core-migrations-batch` Phase 2.a §7 round surfaced honest cost/leverage tradeoff; user picked narrower scope ("strict the fw + lib") then accepted Option C (full fw + lib + CI gate scope) and asked for the project to be filed standalone for separate execution. Doc rewritten to PROJECT-TEMPLATE.md format. Phase 0 audit fired and surfaced 3 findings: (1) lib has never been tsc-checked standalone (24 TS2307 errors from missing peer-dep types — strict-mode errors are masked by resolution failures and can't be measured yet); (2) framework has no tsconfig.json at all; (3) lib + framework export source `.ts` directly so strict tightens types at source-import boundary, propagating to all 8 products via inheritance without per-product migration. Honest re-estimate: 4-8 hours (vs. originally quoted 2-4h). Original 8-frontend ambition retired and slated for accept-with-rationale paperwork in Phase 5. **Status: 📋 READY FOR EXECUTION** — Phases 1-4 ready for fresh-session agent. | Claude Opus 4.7 |
 | 2026-05-10 | **Phase 2 ✅.** Flipped `seed/lib/frontend/tsconfig.json` `strict: false → strict: true`. Single TS2322 error fired in `framework/frontend/src/infra.tsx:81` (contravariance: lib's `MutationResult.mutate: (arg?: unknown) => void` couldn't unify with react-query's `UseMutateFunction<TData, TError, TVariables>` where `TVariables = string` for `useMarcarComoLida`). **Fix:** generic-parameterize `interface MutationResult<TVariables = void>` in `seed/lib/frontend/src/design-system/components/NotificationBell.tsx`, retype `useMarcarComoLida: () => MutationResult<string>` + `useMarcarTodasComoLidas: () => MutationResult<void>`. **Tooling:** ts-morph codemod in `/tmp/strict-mode/fix-mutation-result.ts` (Engineer A pattern). **`!` non-null assertions added:** 0. **`any` added:** 0. **Files touched:** 2 (`tsconfig.json`, `NotificationBell.tsx`). **Verification:** `cd seed/lib/frontend && npm run check` exits 0. **Out-of-scope finding surfaced:** `npm test` fails on missing `jsdom` devDep (Phase 1 gap; doesn't block Phase 2 gate). | Engineer (strict-mode Phase 2 subagent) |
 | 2026-05-10 | **Phase 3 ✅.** Created `seed/framework/frontend/tsconfig.json` with `strict: true` from day 1 (template per §6 Phase 3 verbatim + path-mapping for `@noctusai/lib*` and self-`@noctusai/seed/infra`). Pre-tsc error count after `npm install` + tsconfig only: **74 errors** (almost all TS2307 from lib's path-mapped source-imports never resolved cross-realm before). After installing the four missing peer deps in framework (`clsx@^2.1.1`, `tailwind-merge@^3.5.0`, `zustand@^5.0.11`, `@radix-ui/react-hover-card@^1.1.15`, pinned to lib's majors per worktree-cross peer-dep rule) and installing `@types/react@^18.3.23` + `@types/react-dom@^18.3.7` in `seed/lib/frontend/devDependencies` (Phase 1 oversight — closed inline) and exact-version-pinning `@tanstack/react-query@5.100.9` in **both** lib and framework, **4 distinct errors remained**: (1) `QueryClient` cross-realm collision (`#private` field nominal-typing breaks across two `@tanstack/query-core` installs even at same `^` range — required exact pin); (2) `@/lib/utils` stale path alias in `src/components/ui/textarea.tsx` (every other ui file uses canonical `@noctusai/lib/utils`); (3-4) `csstype` cross-realm collision on lib's `AIFeedbackButtons.tsx` (resolved by adding `@types/react` to lib so the type walk stops at lib's realm, not `/Users/rapha/node_modules`). **Fix tooling:** ts-morph codemod in `/tmp/strict-mode/fix-textarea-import.ts`. **`!` non-null assertions added:** 0. **`any` added:** 0. **Files touched (auth-authored):** 6 — `seed/framework/frontend/{tsconfig.json,package.json,package-lock.json,src/components/ui/textarea.tsx}` + `seed/lib/frontend/{package.json,package-lock.json}`. **Phase 1 finding `./infra` exports gap closed inline.** **Verification:** `cd seed/framework/frontend && npm run check` exits 0; `cd seed/lib/frontend && npm run check` still exits 0 (no regression). **Methodology learning surfaced:** **private-fields nominal typing breaks workspace-cross unification** — `^` range pinning is insufficient when classes use ES `#private` for nominal typing; sibling workspace packages must pin to *exact resolved version* or deduplicate. Recommend memory entry + KB pattern entry under `KB § PATTERNS/workspace-cross-types.md` (new). | Engineer (strict-mode Phase 3 subagent) |
+| 2026-05-10 | **Phase 4 + Phase 5 ✅ (project close).** Phase 4 — created `.github/workflows/seed-typecheck.yml` with two parallel jobs (`lib-typecheck` + `framework-typecheck`), node-version `"20"` per brief, `paths:` filtered to `seed/{lib,framework}/frontend/**` + self-trigger on workflow edits. Verified gate has teeth: deliberate `const x: number = "string";` in throwaway `seed/lib/frontend/src/_strict_gate_smoke_test.ts` made `npm run check` exit **2** (TS2322); reverted pre-commit. YAML validated via Ruby (`ruby -ryaml`) since the worktree has no python-yaml. Documented the gate in `KB § 03-SEED-ARCHITECTURE.md § Seed Contract § 5. Contract enforcement` — added as enforcement layer #1; renumbered Compliance/Runtime/Audit to 2/3/4. Phase 5 — filed `KB § PATTERNS/accept-with-rationale.md § Per-product TS strict mode is opt-in over time` per the catalog's entry format. **No regressions:** both `npm run check` invocations still exit 0 in `seed/lib/frontend` and `seed/framework/frontend`. **Worktree start state required `npm ci`** before either package returned its real green baseline — logged as a worktree-dispatch methodology learning. **Files touched (engineer-authored):** 4 — `.github/workflows/seed-typecheck.yml` (new), `KNOWLEDGE-BASE/CONTEXT/03-SEED-ARCHITECTURE.md`, `KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md`, `projects/strict-mode-migration/PROJECT.md`. **Deferred to orchestrator:** parent batch §11 update, `verify-kb-sync.sh` (pre-commit hook runs it), FF-to-main + folder archive. | Engineer (strict-mode Phase 4+5 subagent) |
