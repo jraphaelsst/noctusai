@@ -5,18 +5,8 @@ import { Input } from '@noctusai/seed/components/ui/input';
 import { Button } from '@noctusai/seed/components/ui/button';
 import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Avatar, AvatarFallback } from '@noctusai/seed/components/ui/avatar';
-import { useAuthStore, api } from '@noctusai/seed/infra';
-import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-
-interface ClinicPatient {
-  id: string;
-  nome: string;
-  email?: string;
-  terapeuta_nome?: string;
-  session_count?: number;
-  origin?: string;
-}
+import { useClinicPatients } from '@/hooks/useClinicPatients';
 
 const ORIGIN_BADGE: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' }> = {
   direct: { label: 'Direto', variant: 'default' },
@@ -29,16 +19,12 @@ function getInitials(name: string) {
 }
 
 export default function ClinicPatients() {
-  const { user } = useAuthStore();
   const navigate = useNavigate();
   const [busca, setBusca] = useState('');
 
-  const { data, isLoading } = useQuery<{ data: ClinicPatient[] }>({
-    queryKey: ['clinic', 'patients'],
-    queryFn: async () => api.get('/api/clinic/patients'),
-    enabled: !!user,
-    staleTime: 60 * 1000,
-  });
+  // Server-side busca filtering supported by `/api/patients?busca=…`;
+  // we keep the local filter as a defensive layer over the returned page.
+  const { data, isLoading } = useClinicPatients(busca);
 
   const patients = data?.data ?? [];
 
@@ -46,7 +32,7 @@ export default function ClinicPatients() {
     if (!busca.trim()) return patients;
     const q = busca.toLowerCase();
     return patients.filter(p =>
-      p.nome.toLowerCase().includes(q) ||
+      (p.nome ?? '').toLowerCase().includes(q) ||
       (p.email?.toLowerCase().includes(q))
     );
   }, [patients, busca]);
@@ -103,10 +89,10 @@ export default function ClinicPatients() {
                   <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto_auto_auto] gap-3 items-center">
                     <div className="flex items-center gap-3">
                       <Avatar className="h-9 w-9">
-                        <AvatarFallback className="text-xs">{getInitials(p.nome)}</AvatarFallback>
+                        <AvatarFallback className="text-xs">{getInitials(p.nome ?? 'PA')}</AvatarFallback>
                       </Avatar>
                       <div>
-                        <p className="font-medium text-sm">{p.nome}</p>
+                        <p className="font-medium text-sm">{p.nome ?? 'Paciente'}</p>
                         {p.email && <p className="text-xs text-muted-foreground">{p.email}</p>}
                       </div>
                     </div>

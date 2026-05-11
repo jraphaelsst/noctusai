@@ -119,13 +119,50 @@ export function useUpdateTherapistSettings() {
 
 // ── Clinic Branding ────────────────────────────────────────
 
+/**
+ * Clinic branding DTO — mirrors `app/schemas/settings.py::ClinicBrandingUpdate`
+ * plus the read-side `clinic_id` field returned by `branding_service.get_clinic_branding`.
+ *
+ * NOTE (Phase 8.d): the response includes `clinic_id` only on the persisted-row
+ * branch; the defaults-branch returns `{...DEFAULT_BRANDING, clinic_id}`. Both
+ * branches set `clinic_id`. See `app/services/branding_service.py`.
+ */
+export interface ClinicBranding {
+  clinic_id?: string;
+  primary_color?: string | null;
+  secondary_color?: string | null;
+  logo_url?: string | null;
+  favicon_url?: string | null;
+}
+
+/**
+ * Update payload — strict subset of read-side fields (no `clinic_id` write).
+ * Mirrors `ClinicBrandingUpdate` Pydantic schema.
+ *
+ * NOTE (Phase 8.b/d): the mutation `mutationFn` signature stays `Record<string, unknown>`
+ * because today `pages/clinic/Settings.tsx` calls `updateBranding.mutate()` with
+ * Profile/Bank/Commission payloads that aren't branding fields — those are
+ * silently dropped by the backend Pydantic `ClinicBrandingUpdate` schema (
+ * unknown-field exclusion is Pydantic default). Tightening to `ClinicBrandingUpdate`
+ * here surfaces 3 TS errors in Settings.tsx that reflect REAL clinic-portal
+ * misrouting bugs (Profile → `/api/clinics/:id` PATCH; Bank/Commission →
+ * `/api/clinics/settings` PATCH). Filed as the `therapy-clinic-settings-misrouting`
+ * follow-up; the read-side typing is the safer-to-tighten win.
+ */
+export interface ClinicBrandingUpdate {
+  primary_color?: string;
+  secondary_color?: string;
+  logo_url?: string;
+  favicon_url?: string;
+}
+
 export function useClinicBranding() {
   const { user } = useAuthStore();
-  return useQuery({
+  return useQuery<ClinicBranding>({
     queryKey: KEYS.clinicBranding,
     queryFn: async () => {
       const res = await api.get('/api/settings/clinic/branding');
-      return res.data ?? res;
+      return (res.data ?? res) as ClinicBranding;
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
@@ -135,6 +172,8 @@ export function useClinicBranding() {
 export function useUpdateClinicBranding() {
   const qc = useQueryClient();
   return useMutation({
+    // Intentionally NOT `ClinicBrandingUpdate` — see ClinicBrandingUpdate
+    // JSDoc above. Follow-up: `therapy-clinic-settings-misrouting`.
     mutationFn: async (data: Record<string, unknown>) => {
       return api.patch('/api/settings/clinic/branding', data);
     },

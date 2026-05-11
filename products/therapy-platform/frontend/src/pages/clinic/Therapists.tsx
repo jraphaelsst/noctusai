@@ -10,36 +10,19 @@ import { Input } from '@noctusai/seed/components/ui/input';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@noctusai/seed/components/ui/dialog';
-import { useAuthStore, api } from '@noctusai/seed/infra';
-import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-
-interface ClinicTherapist {
-  id: string;
-  nome: string;
-  crp: string;
-  commission_pct?: number;
-  session_count?: number;
-  status: 'ativo' | 'inativo';
-  nota_media?: number;
-}
+import { useClinicTherapists } from '@/hooks/useClinicTherapists';
 
 function getInitials(name: string) {
   return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
 }
 
 export default function ClinicTherapists() {
-  const { user } = useAuthStore();
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
 
-  const { data, isLoading } = useQuery<{ data: ClinicTherapist[] }>({
-    queryKey: ['clinic', 'therapists'],
-    queryFn: async () => api.get('/api/clinic/therapists'),
-    enabled: !!user,
-    staleTime: 60 * 1000,
-  });
+  const { data, isLoading } = useClinicTherapists();
 
   const therapists = data?.data ?? [];
 
@@ -88,21 +71,23 @@ export default function ClinicTherapists() {
         </Card>
       ) : (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {therapists.map(t => (
+          {therapists.map(t => {
+            const status = t.status ?? 'ativo';
+            return (
             <Card key={t.id} className="hover:shadow-md transition-shadow">
               <CardContent className="p-5">
                 <div className="flex items-start gap-4">
                   <Avatar className="h-12 w-12">
-                    <AvatarFallback>{getInitials(t.nome)}</AvatarFallback>
+                    <AvatarFallback>{getInitials(t.nome ?? 'TE')}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold truncate">{t.nome}</span>
-                      <Badge variant={t.status === 'ativo' ? 'default' : 'secondary'}>
-                        {t.status === 'ativo' ? 'Ativo' : 'Inativo'}
+                      <span className="font-semibold truncate">{t.nome ?? 'Terapeuta'}</span>
+                      <Badge variant={status === 'ativo' ? 'default' : 'secondary'}>
+                        {status === 'ativo' ? 'Ativo' : 'Inativo'}
                       </Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground">CRP: {t.crp}</p>
+                    <p className="text-sm text-muted-foreground">CRP: {t.crp ?? '—'}</p>
                     {t.nota_media != null && (
                       <div className="flex items-center gap-1 mt-1">
                         <Star className="h-3.5 w-3.5 text-yellow-500 fill-yellow-500" />
@@ -121,16 +106,17 @@ export default function ClinicTherapists() {
                     <SettingsIcon className="h-3.5 w-3.5 mr-1" /> Configurar
                   </Button>
                   <Button
-                    variant={t.status === 'ativo' ? 'outline' : 'default'}
+                    variant={status === 'ativo' ? 'outline' : 'default'}
                     size="sm"
                   >
                     <Power className="h-3.5 w-3.5 mr-1" />
-                    {t.status === 'ativo' ? 'Desativar' : 'Ativar'}
+                    {status === 'ativo' ? 'Desativar' : 'Ativar'}
                   </Button>
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 
