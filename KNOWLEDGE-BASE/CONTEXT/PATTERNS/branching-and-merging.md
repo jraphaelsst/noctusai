@@ -1177,6 +1177,31 @@ Per the recurrence rule, **N=3+ MUST formalize**. The brief-clause approach has 
 
 **Three-way-synced 2026-05-10**: this subsection (§17.6.1) + memory `feedback_findings_md_return_as_text.md` + CLAUDE/projects.md (no new pointer needed; existing §17.6 pointer in CLAUDE/projects.md covers the subsection by reference).
 
+#### 17.6.2 Brief-template commit recipe — explicit-path `git add`, never `-A` (NEW 2026-05-10)
+
+**The slip.** Engineer briefs frequently include a commit recipe at the end:
+
+```bash
+git add -A          # ← VIOLATION
+git commit -m "..."
+git push -u origin "$BRANCH"
+```
+
+The `git add -A` form violates CLAUDE.md universal rule: *"Stage only files YOU authored this session — explicit-path `git add` does NOT validate authorship."* Engineer worktrees, despite isolation, can pick up stray edits from parallel-agent activity OR pre-commit hooks (sync-seed-template, KB count refresh, seed-version stamp). `git add -A` sweeps those in, producing commits that mix engineer-authored work with peer/automatic edits.
+
+**Engineer-side catch confirmed (youtube-crawler containerization, 2026-05-10).** Engineer explicitly flagged: *"The brief's `git add -A` instruction conflicts with the universal 'never `git add .` / `-A`' rule. I used explicit-path staging instead. The brief author may want to update the dispatch template to use explicit paths."* — engineer correctly substituted explicit paths in their own execution. The brief was the source of the bad instruction.
+
+**The rule for brief templates.** Every dispatch brief's commit recipe MUST use explicit `git add <path1> <path2> ...` listing the exact files in scope. The recipe section should reference the brief's "Files in scope" list directly. The engineer staging step is then auditable (it matches the scope).
+
+**Architect protocol.** When drafting an engineer brief:
+1. List "Files in scope" explicitly (already standard).
+2. In the commit recipe section, **copy the same paths into `git add`** — no shortcuts.
+3. If a brief expects engineers to create files not yet known (e.g., they decide names at execution time), give them a glob like `git add products/<slug>/docker-compose*.yml` but **NEVER bare `-A`**.
+
+**Engineer protocol.** If a brief contains `git add -A` (legacy template), substitute explicit-path staging using the brief's "Files in scope" list. Flag the violation in your report so the architect updates the template.
+
+**Sibling.** This rule composes with the existing CLAUDE.md universal authorship-discipline rule: it tells the architect HOW to make the brief obey that rule. Without this sub-rule, briefs paraphrase the recipe and accidentally encourage the violation engineers are supposed to catch.
+
 ### 17.7 Read-bodies-before-dispatch — the absorption-brief discipline (NEW 2026-05-10)
 
 **The slip pattern.** Three engineers in the 2026-05-10 parallel dispatch (`seed-test-suites-absorption`, `seed-migration-prelude`, `seed-digest-base-class`) independently surfaced the same root cause: scan-tool output (`scan_cross_product_helpers`, `scan_recurrence`, `scan_block_patterns`, `scan_migration_patterns`) flags **NAMES + SHAPES + LINES**, not BODIES. The architect dispatched absorption briefs based on scan signals alone:
