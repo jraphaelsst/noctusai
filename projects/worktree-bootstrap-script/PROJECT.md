@@ -99,6 +99,8 @@ echo "  export PYTHONPATH=$WORKTREE_ROOT/seed/lib/backend"
 - [x] KB §16.7 amended with new "Step 0 — environment hydration" paragraph; references `scripts/bootstrap-worktree.sh` + idempotency timing + N=5+ origin + skip-rule (purely-backend briefs).
 - [x] Memory entry update routed to orchestrator per engineer/architect role split (engineer doesn't edit `MEMORY.md`). Surfaced in findings.
 
+**Improvements (Phase 1):** none identified — KB amend is a single paragraph at a known location; no design decisions surfaced.
+
 ### Phase 2 — Close ✅
 
 - [x] Smoke: this worktree was fresh (all 14 frontends started without `node_modules/`); script hydrated 12 via `npm ci`, then 2 via `npm install` fallback, all green on retry. Verified `npx vite build` on `products/seed/frontend` → green in 3.4s. Idempotent `--check` re-run confirms 0 stale.
