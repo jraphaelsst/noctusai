@@ -9,6 +9,7 @@ See METAS-PLAN §5, §6 (cascade enforcement).
 from __future__ import annotations
 
 from typing import Any
+from noctusai_lib.api.crud_safety import delete_with_existence_check
 
 DEFAULT_CATEGORIA = "vgv"
 
@@ -83,9 +84,7 @@ def upsert_meta_equipe(db, *, periodo_id: str, equipe_id: str, valor_meta: float
 
 
 def deletar_meta_equipe(db, meta_id: str) -> None:
-    result = db.table("metas_equipe").delete().eq("id", meta_id).execute()
-    if not result.data:
-        raise LookupError("Meta de equipe não encontrada")
+    delete_with_existence_check(db, "metas_equipe", ("id", meta_id), not_found_exc=lambda: LookupError("Meta de equipe não encontrada"))
 
 
 def resumo_cascata_equipe(db, *, equipe_id: str, periodo_id: str,

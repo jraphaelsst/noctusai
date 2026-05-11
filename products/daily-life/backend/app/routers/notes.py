@@ -14,6 +14,7 @@ from noctusai_lib.primitives.responses import success_response, paginated_respon
 from noctusai_lib.api.auth import first_or_none
 
 from app.dependencies import get_current_user, get_org_id, get_user_client
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notes", tags=["Notes"])
@@ -138,9 +139,7 @@ async def deletar_nota(note_id: str, authorization: Optional[str] = Header(None)
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    result = db.table("notas").delete().eq("id", note_id).eq("user_id", str(user.id)).execute()
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Nota nao encontrada")
+    delete_or_404(db, "notas", ("id", note_id), ("user_id", str(user.id)), message="Nota nao encontrada")
 
     return ok_response("Nota removida")
 
