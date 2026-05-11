@@ -27,7 +27,7 @@ services:
       context: ../..
       dockerfile: products/seed/backend/Dockerfile
     container_name: noctus-seed-backend
-    image: noctus-seed-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-seed-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -42,6 +42,19 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    # Per-product healthcheck override — uncomment + customize for products
+    # with deeper readiness probes (e.g. dev-team wires `agno_ping` via
+    # HealthEndpointConfig(readiness_hooks=[...]) and targets /_ready here).
+    # The seed-native `/_ready` endpoint aggregates every registered
+    # readiness_hook; prefer composing hooks over inventing new paths.
+    # See KB § PATTERNS/containerization.md §11c · Per-product healthcheck
+    # override.
+    # healthcheck:
+    #   test: ["CMD", "curl", "-fsS", "http://localhost:{{BACKEND_PORT}}/_ready"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
 
   seed-frontend:
     build:
@@ -60,7 +73,7 @@ services:
       args:
         VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-seed-frontend
-    image: noctus-seed-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-seed-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "{{FRONTEND_PORT}}:{{FRONTEND_PORT}}"
     depends_on:

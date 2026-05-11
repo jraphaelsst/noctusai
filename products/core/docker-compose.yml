@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/core/backend/Dockerfile
     container_name: noctus-core-backend
-    image: noctus-core-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-core-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -38,7 +38,7 @@ services:
       args:
         VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
     container_name: noctus-core-frontend
-    image: noctus-core-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-core-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "5173:5173"
     depends_on:

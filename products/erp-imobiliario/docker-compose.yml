@@ -12,7 +12,7 @@ services:
       context: ../..
       dockerfile: products/erp-imobiliario/backend/Dockerfile
     container_name: noctus-erp-imobiliario-backend
-    image: noctus-erp-imobiliario-backend:dev
+    image: ghcr.io/jraphaelsst/noctus-erp-imobiliario-backend:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
@@ -39,7 +39,7 @@ services:
         VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
         VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-erp-imobiliario-frontend
-    image: noctus-erp-imobiliario-frontend:dev
+    image: ghcr.io/jraphaelsst/noctus-erp-imobiliario-frontend:${NOCTUS_IMAGE_TAG:-dev}
     ports:
       - "8080:8080"
     depends_on:

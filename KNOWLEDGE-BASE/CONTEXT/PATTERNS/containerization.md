@@ -754,10 +754,14 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
    ~30 minutes on free GH runners — current job builds core + seed
    only. Future: matrix strategy with one job per product, or move
    to a self-hosted runner with disk + cache reuse.
-10. **No image registry strategy.** Local builds only today. For
-    deploy, images need to land in a registry (GHCR, ECR, etc.).
-    Decision needed: monorepo registry with prefix, or per-product
-    registries. <- human decision: per-product registries.
+10. ✅ **Image registry strategy — per-product registries (2026-05-10).**
+    Decision locked: per-product registries (rationale at §11a). Every
+    per-product `docker-compose.yml` `image:` line now points at
+    `ghcr.io/jraphaelsst/noctus-<slug>-<role>:${NOCTUS_IMAGE_TAG:-dev}`
+    so local builds keep working (`:dev` fallback) and CI can set
+    `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` for immutable tags.
+    See **§11a · Image registry strategy** for the full pattern + manual
+    push recipe. T9 (Wave 3) will land the automated push workflow.
 11. **Backend image is fat (600-900MB).** A second pass with
     multi-stage (build deps in one stage, runtime-only in another)
     could shave 200-400MB. Standard pattern; deferred for later. <- please do it
@@ -772,11 +776,18 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
     Supabase. For offline dev / fully-isolated CI, a `postgres` profile
     serving a local DB (with a schema-init script that mirrors
     migrations) would unlock more scenarios.
-14. **Health endpoint per-product variation.** All products use the
-    seed's `/api/health` — fine, but dev-team's agno engine has
-    deeper health probes (`/api/health/agno`) that the docker
-    healthcheck doesn't surface. Consider per-product healthcheck
-    customization in the scaffolder.
+14. ✅ **Per-product healthcheck override (2026-05-10).** dev-team uses
+    an `agno_ping` readiness_hook on `/_ready` (seed-native seam). Wired
+    via `HealthEndpointConfig(readiness_hooks=[agno_ping])` passed to
+    `create_product_app(...)` in `products/dev-team/backend/app/main.py`;
+    the hook lives at `products/dev-team/backend/app/services/agno_health.py`
+    and probes ANTHROPIC_API_KEY presence + leader model allowlist +
+    `dev_team` package importability. Per-product compose override
+    targets `http://localhost:8009/_ready` with `timeout=10s` +
+    `start_period=30s`. Scaffolder template (`templates/product-seed/
+    docker-compose.yml`) gains a commented healthcheck-override seam so
+    future products can opt-in trivially. Full pattern at **§11c ·
+    Per-product healthcheck override** below.
 15. **No image scanning.** Once images land in a registry, `trivy` /
     `grype` / `docker scout` should be in the loop to catch CVEs in
     base images and pip/npm deps. Pair with #10 (registry strategy).
@@ -796,6 +807,126 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
   once the scaffolder is wired).
 
 ---
+
+## 11a · Image registry strategy
+
+**Per-product registries** — locked 2026-05-10 (T5 of
+`projects/containerization-backlog-closure/`). Each product gets its
+own GHCR namespace; the platform does **not** ship a single monorepo
+registry with a `noctus-<slug>` prefix.
+
+### Rationale
+
+- **Per-product access control.** A read/write PAT scoped to one
+  product's package can be handed to a per-product deploy pipeline
+  without granting blast-radius on the rest of the fleet.
+- **Per-product image lifecycle.** Older immutable tags can be pruned
+  per product without affecting siblings (e.g. ERP keeps 30 days of
+  SHA tags, mailing keeps 7 days — independent retention policies).
+- **Per-product publication cadence.** When a product ships at a
+  different rhythm (e.g. core every PR, daily-life weekly), the
+  registry view stays clean — no interleaved cross-product noise.
+- **Per-product ownership.** Aligns with the product-folder boundary
+  used everywhere else in the repo (`products/<slug>/{backend,frontend}`,
+  per-product `docker-compose.yml`, per-product start.sh registration).
+  Same boundary, same registry slot.
+
+### Tag pattern
+
+```
+ghcr.io/jraphaelsst/noctus-<slug>-<role>:<tag>
+```
+
+Where:
+- `<slug>` is the product slug (matches `products/<slug>/` dir name).
+- `<role>` is `backend` or `frontend`.
+- `<tag>` is one of:
+  - `dev` — local development build. Default fallback when
+    `NOCTUS_IMAGE_TAG` is unset. Local `docker compose build` produces
+    images at this tag.
+  - `<git-sha>` — 7-char short SHA, immutable per commit. CI builds
+    set `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` to produce
+    these. Deploys reference these for reproducibility.
+  - `latest` — the most recent CI build on `main`. Moves on every push
+    to main. Convenience tag for "pull whatever just shipped"; never
+    use in production deploys (race-prone).
+  - `<semver>` — tagged releases (e.g. `v1.4.2`). Future; reserved for
+    when products start cutting versioned releases.
+
+### How the compose plumbing works
+
+Every per-product `docker-compose.yml` carries:
+
+```yaml
+services:
+  <slug>-backend:
+    image: ghcr.io/jraphaelsst/noctus-<slug>-backend:${NOCTUS_IMAGE_TAG:-dev}
+  <slug>-frontend:
+    image: ghcr.io/jraphaelsst/noctus-<slug>-frontend:${NOCTUS_IMAGE_TAG:-dev}
+```
+
+`${NOCTUS_IMAGE_TAG:-dev}` is shell-style interpolation that Docker
+Compose evaluates natively at compose-parse time. Three modes:
+
+1. **Local build (no env).** `docker compose build` produces images
+   tagged `ghcr.io/jraphaelsst/noctus-<slug>-<role>:dev`. The registry
+   path is just a canonical image name on the local Docker daemon —
+   no push, no registry contact. This is exactly the old `:dev` flow,
+   just with a longer name.
+2. **CI build (per-commit).** Pipeline exports
+   `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` before
+   `docker compose build`. Images get tagged with the short SHA;
+   `docker push` lands them at GHCR; deploys reference the exact SHA.
+3. **Manual override.** Anyone can `NOCTUS_IMAGE_TAG=test123 docker compose up`
+   to swap which tag the compose pulls/builds — useful for testing a
+   pre-built image without rebuilding locally.
+
+### Manual push recipe
+
+When you need to push a single image by hand (one-off deploys, debug,
+pre-CI sanity):
+
+```bash
+# 1. Build locally (defaults to :dev tag)
+cd products/core && docker compose build
+
+# 2. Authenticate to GHCR
+#    Use a fine-scoped PAT with write:packages (and read:packages).
+echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
+# 3. Push the dev tag
+docker push ghcr.io/jraphaelsst/noctus-core-backend:dev
+
+# 4. (Optional) re-tag for a specific SHA and push that too
+docker tag ghcr.io/jraphaelsst/noctus-core-backend:dev \
+           ghcr.io/jraphaelsst/noctus-core-backend:$(git rev-parse --short HEAD)
+docker push ghcr.io/jraphaelsst/noctus-core-backend:$(git rev-parse --short HEAD)
+```
+
+`GHCR_USERNAME` + `GHCR_TOKEN` are declared (commented) in the root
+`.env.example`. Local devs typically leave them unset.
+
+### Container names are unchanged
+
+`container_name: noctus-<slug>-<role>` (no registry path) stays the
+same — that's the friendly local-docker name used by `docker ps`,
+inter-service DNS within the compose network, and start.sh's
+healthcheck logic. Only `image:` carries the registry path.
+
+### What still has to happen
+
+- **T9 (Wave 3) — automated push workflow.** A GitHub Actions workflow
+  that on every `main` push:
+    - builds all per-product images,
+    - tags them `${short-sha}` + `latest`,
+    - logs in to GHCR via `GITHUB_TOKEN`,
+    - pushes both tags per product.
+  Pairs with §11 #15 (image scanning via trivy/grype) once the images
+  are in the registry.
+- **Per-product retention policies.** Once images start landing in
+  GHCR, configure per-package retention (e.g. keep last 30 SHA tags,
+  always keep `latest` + `dev`). Done in the GHCR UI; future
+  improvement to script via the API.
 
 ## 11b · `VITE_*` build-arg contract
 
@@ -937,6 +1068,109 @@ already handle missing values gracefully).
 - **Don't skip the `.env.example` update.** Out-of-band declaration
   surfaces what the product needs; collaborators shouldn't have to
   grep code to discover required env vars.
+
+---
+
+## 11c · Per-product healthcheck override
+
+**Rule.** Products inherit the seed-default Docker healthcheck which
+hits `/api/health` (a simple liveness probe — "FastAPI is up and
+routing requests"). When a product needs a **deeper readiness probe**
+(API key presence, model allowlist, downstream package importability,
+external service reachability), attach a `HealthCheckHook` to the
+seed's existing `/_ready` endpoint via `HealthEndpointConfig
+(readiness_hooks=[<hook>])` passed to `create_product_app(...)`, then
+override the per-product `docker-compose.yml` healthcheck to target
+`/_ready` (or `/_health` for liveness-only) with timeouts and
+`start_period` tuned for the deeper probe.
+
+**Why prefer `/_ready` over inventing `/api/health/<concern>`.** The
+seed-native `/_ready` endpoint is a NAMED SEAM (per the Seed-First
+rule). Inventing a `/api/health/<concern>` URL shape is a structural
+fork — it duplicates plumbing the seed already provides and creates a
+per-product convention divergence. The `readiness_hooks` list **composes**:
+every hook a product registers contributes a single entry to the
+`/_ready` JSON `checks[]` array; `/_ready` aggregates and returns 503
+when **any** hook reports `ok=False`. Multiple hooks per product, one
+endpoint, one contract.
+
+### dev-team example (concrete reference)
+
+- **Hook**: `products/dev-team/backend/app/services/agno_health.py`
+  defines `agno_ping`. Three sub-100ms local checks (no network):
+  ANTHROPIC_API_KEY env truthy, leader model in known-Anthropic
+  allowlist, `dev_team` package importable + `__version__` readable.
+  Returns `(ok: bool, error_msg: str | None)` matching the seed's
+  `HealthCheckHook` Protocol.
+- **Wiring**: `products/dev-team/backend/app/main.py` passes
+  `health_config=HealthEndpointConfig(readiness_hooks=[agno_ping])` to
+  `create_product_app(...)`. The hook's `__name__` ("agno_ping")
+  surfaces in `/_ready` JSON `checks[]` automatically.
+- **Compose override**: `products/dev-team/docker-compose.yml` carries:
+
+  ```yaml
+  dev-team-backend:
+    # ... build / image / env_file / ports / networks ...
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8009/_ready"]
+      interval: 30s
+      timeout: 10s            # agno_ping is sub-100ms but allow headroom
+      retries: 3
+      start_period: 30s        # agno warmup is genuinely slower
+  ```
+
+- **Why `start_period: 30s`.** dev-team's first import of
+  `dev_team.configs` lazy-loads agno's adapter packages; the cold-start
+  cost lands the first ready response in the 5–10s range on a warm
+  daemon. The seed's default `start_period: 20s` cuts it too close on
+  slower hosts.
+- **Why `timeout: 10s`.** `agno_ping` itself is sub-100ms (all three
+  pins are local lookups), but the override keeps headroom in case
+  `load_config('default')` ever evolves to read more YAML or `dev_team
+  .__init__` adds a heavier lazy attr.
+- **503 contract is preserved.** When ANTHROPIC_API_KEY is unset,
+  `agno_ping` reports `ok=False`; `/_ready` returns 503; Docker flips
+  the container to `unhealthy`. This is correct behavior — the
+  container truthfully reports it cannot dispatch team runs.
+
+### Scaffolder template seam
+
+`templates/product-seed/docker-compose.yml` ships a commented
+override block under the default healthcheck, demonstrating the
+shape for future products. Uncommenting + tweaking is a 30-second
+operation; the discoverability cost of "where do I put this?" is
+paid once by the template, not N times by readers.
+
+### When NOT to override
+
+- The product's actual health surface is "is FastAPI up?" — the
+  seed default `/api/health` is correct and there's nothing deeper
+  to probe.
+- The "deeper" probe would do real I/O (network call, DB query) on
+  every healthcheck interval — that's an anti-pattern. Healthchecks
+  run frequently (every 30s by default); a hook that hits Anthropic
+  per probe would generate cost and rate-limit pressure. Keep
+  readiness hooks cheap and local; let runtime errors surface real
+  network failures.
+
+### Anti-patterns
+
+- **Inventing `/api/health/<concern>` instead of using `/_ready`.**
+  Structural fork; `/_ready` already exists in the seed and composes.
+- **Healthcheck with side effects.** Probes must be read-only. A
+  healthcheck that warms a cache or initializes a connection pool is
+  doing real work on every interval.
+- **Reducing `start_period` to chase faster boot reporting.** The
+  start_period is a grace window — until it elapses, failures don't
+  flip the container `unhealthy`. Too short → first agno warmup
+  flips the container unhealthy → orchestrators restart it → loop.
+- **Forgetting to update both the override AND the registration.**
+  The compose healthcheck and the `readiness_hooks=[...]` list are
+  twin sides of the same change; touching only one leaves either
+  the deeper probe unwired (the readiness hook never runs because
+  Docker's still hitting `/api/health`) or the override blind
+  (Docker hits `/_ready` but no product-specific hooks are
+  registered, so the deeper signal isn't surfaced).
 
 ---
 

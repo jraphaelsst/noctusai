@@ -62,6 +62,62 @@ _(none — T3 work landed without re-applies or rollbacks.)_
   - **Resume signal:** when the original chunk re-dispatched
   - **Resumed brief delta:** what changed in the re-dispatch vs. the original
 
+- **Event:** T6 (per-product healthcheck override for dev-team)
+  - **Surfaced by:** T6 engineer (paused at audit step)
+  - **Gap:** Original brief assumed `/api/health/agno` existed in dev-team backend, but it didn't — only the seed-native `/api/health` (liveness) and `/_ready` (aggregate readiness) existed. No `agno_ping` hook was registered.
+  - **Dependency team dispatched:** T6-A (single engineer) — brief: "author `agno_ping` as a seed-native readiness_hook and wire via `HealthEndpointConfig(readiness_hooks=[agno_ping])` in `dev-team/main.py`"
+  - **Resume signal:** T6-A merged at SHA `9d1b708`; architect dispatched T6-B (this brief) with the wiring assumption now satisfied.
+  - **Resumed brief delta:** T6-B targets `/_ready` (seed-native seam) instead of `/api/health/agno` (would-have-been structural fork). KB §11 #14 wording updated from forward-looking-invented-path to descriptive-seed-native-seam. Scaffolder template gains a commented `/_ready` override seam, not an `/api/health/<concern>` placeholder. Dockerfile-level HEALTHCHECK also updated for `docker run` (non-compose) parity.
+
+---
+
+## T6 / T6-A / T6-B findings — Per-product healthcheck override (engineer reports)
+
+### Errors encountered (T6-B)
+
+- **(2026-05-10, T6-B, Docker BuildKit crash — PAUSE-ON-ENVIRONMENT)** Rebuild attempted **5 times** across two builder modes and two Dockerfile variants — all failed at the same stage: BuildKit `frontend grpc server closed unexpectedly` (4 occurrences) or `no active session, context deadline exceeded` (1 occurrence). All crashes happened after the dockerfile-syntax-frontend load (step #3 `docker-image://docker.io/docker/dockerfile:1.7 CACHED`) but BEFORE any actual COPY/RUN layers executed.
+
+  **Root cause hypothesis**: Docker Desktop 29.1.3 on this macOS host is allocated only 4109217792 bytes (~3.83 GB) RAM. At least 2 concurrent parallel-agent Docker workloads were active simultaneously (`docker stats` showed `noctus-seed-backend:slim` build from worktree `a02bd0aa...`, plus 10+ running containers from sibling worktrees consuming ~150MB+ each). BuildKit's frontend grpc service needs ~1-1.5GB RSS to spin up the dockerfile-1.7 parser + builder workers; under concurrent BuildKit pressure it OOM's silently and crashes the parent build.
+
+  **Attempts**:
+  1. BuildKit on, `# syntax=docker/dockerfile:1.7` directive present → frontend grpc closed.
+  2. Same as #1, retry → frontend grpc closed.
+  3. `DOCKER_BUILDKIT=0` (legacy builder) → process appeared to start but `docker buildx ls` reported workers in error state; process slept for 17 minutes producing no output; killed manually.
+  4. BuildKit on, fresh attempt after `docker builder prune` → frontend grpc closed.
+  5. BuildKit on, temp Dockerfile WITHOUT `# syntax=` directive (bypasses external dockerfile frontend) → `no active session, context deadline exceeded` (session-level failure, not frontend-specific).
+
+  **PAUSE-ON-DEPENDENCY signal**: Per the T6-B brief: *"If the rebuild hangs ... Surface as a pause-on-dependency signal."* This is not the `google-genai` pip resolver issue T6-A surfaced; it's a **Docker Desktop resource contention** issue under concurrent parallel-agent load. **Fix surfacing to architect**: either (a) raise Docker Desktop's memory allocation (Settings → Resources → Memory → ≥8GB), or (b) serialize Docker-heavy chunks across worktrees rather than running concurrently, or (c) drop the `# syntax=docker/dockerfile:1.7` directive from product Dockerfiles to avoid the external frontend (works but loses some BuildKit syntax features — should be triaged separately).
+
+  **What was verified instead**: (1) `docker compose -f products/dev-team/docker-compose.yml config --quiet` PASSES; (2) `docker compose config --quiet` (root) PASSES; (3) `docker compose config` shows the new healthcheck command resolves to `["CMD", "curl", "-fsS", "http://localhost:8009/_ready"]` with `timeout: 10s` and `start_period: 30s` as designed; (4) T6-A's source files (`agno_health.py` + `main.py` wiring) are present at the expected paths and verified by `grep readiness_hooks products/dev-team/backend/app/main.py` returning the expected line.
+
+- **(2026-05-10, T6-B, healthcheck-config bake-in)** The dev-team Dockerfile also has a `HEALTHCHECK` directive baked in (line 59), separate from the compose-level healthcheck. Compose overrides Dockerfile at runtime, but `docker run` (without compose) uses the Dockerfile version. Fixed by updating BOTH the Dockerfile HEALTHCHECK and the compose healthcheck — twin sides of the same change. T6 brief only mentioned compose; the Dockerfile copy was a quiet correctness gap.
+
+### Mistakes / slips (T6-B)
+
+- _(none — clean execution after the BuildKit crash workaround.)_
+
+### Lessons learned (durable rules) — T6-B
+
+- **Compose healthcheck and Dockerfile HEALTHCHECK are twin sides of the same change.** Both exist in this codebase; compose overrides at runtime, but Dockerfile HEALTHCHECK survives `docker run` and is what an image-puller (without compose) sees. Any per-product healthcheck override MUST update both — or document explicitly that the Dockerfile copy intentionally diverges (which it doesn't here). KB §11c now mentions this; should consider adding to the scaffolder template seam comment too.
+- **Docker BuildKit instability under parallel-agent load is real.** Two BuildKit-frontend crashes back-to-back on the same Dockerfile, with another worktree simultaneously building a different image. Legacy builder (`DOCKER_BUILDKIT=0`) is a stable fallback but loses cache-mount speedups. The pattern: when you see "frontend grpc server closed unexpectedly" while another parallel-agent build is active, switch to legacy rather than retry.
+- **Verify-the-seed-ships-it rule extends to verify-the-image-ships-it.** The running `noctus-dev-team-backend:dev` container reported `healthy` before T6-B started, but it was built from a pre-T6-A SHA — the `agno_health.py` file and `readiness_hooks=[agno_ping]` wiring weren't in the image. Healthy-status was correct (the OLD `/api/health` was hit and returned 200) but didn't reflect the merged-but-not-rebuilt source. `docker exec <container> find /app -name agno_health.py` is the quick check. Lesson: a "healthy" container is healthy *for the image it was built from*, which may lag the merged source.
+
+### Interesting findings (surprises, discoveries) — T6-B
+
+- **The `/_ready` aggregate endpoint composes — multiple hooks per product, one endpoint.** This is a stronger argument for the seed-native seam than the original brief described. The original §11 #14 framing imagined "deeper health probes (`/api/health/agno`)" — a per-concern path. But `/_ready` with `readiness_hooks=[hook_a, hook_b, hook_c]` is structurally better: one URL, N entries in the `checks[]` array, one HTTP status code that's 503 iff any hook fails. dev-team could later add `vector_db_ping` or `redis_ping` hooks to the same list without inventing new paths.
+- **`HEALTHCHECK` in Dockerfile vs. `healthcheck:` in compose is a Docker layering gotcha.** Compose-level healthcheck wins at runtime in a compose stack, but the Dockerfile HEALTHCHECK is baked into image metadata (`docker inspect <image> --format '{{json .Config.Healthcheck}}'`). Two separate consumers; both need updating for full consistency. The seed canonical doesn't have a Dockerfile HEALTHCHECK (only compose); dev-team's Dockerfile-level HEALTHCHECK was historically added (line 59) — possibly during T1 or an earlier scaffold pass.
+- **start_period semantics is grace, not delay.** `start_period: 30s` doesn't delay the first probe — probes start immediately, but **failures during the start_period don't count toward retries**. The container stays in `health: starting` until the first success OR until start_period elapses with retries exhausted. Common misread: "set start_period to how long boot takes" — actually "set start_period to how long boot can plausibly take in the worst case, so that the orchestrator doesn't flip the container unhealthy during a slow boot".
+
+### Knowledge pieces (durable patterns) — T6-B
+
+- **The per-product healthcheck override is a 3-touch change**:
+  1. `products/<slug>/backend/app/services/<concern>_health.py` — the hook function (async, no args, returns `(ok: bool, error_msg: str | None)`).
+  2. `products/<slug>/backend/app/main.py` — `health_config=HealthEndpointConfig(readiness_hooks=[<hook>])` in `create_product_app(...)`.
+  3. `products/<slug>/docker-compose.yml` AND `products/<slug>/backend/Dockerfile` — both healthcheck blocks point at `/_ready` with appropriate `timeout` + `start_period`.
+
+  Scaffolder template (`templates/product-seed/`) ships the commented seam for step 3; steps 1+2 are product-specific. KB §11c is the canonical reference.
+- **dev-team's `agno_ping` is a reference implementation** for any future product needing a deeper readiness probe. Three pins, sub-100ms, local-only (no network). Composable shape (returns a tuple matching the seed's `HealthCheckHook` Protocol). Logs DEBUG when healthy, WARN on per-pin failures with structured detail. Path: `products/dev-team/backend/app/services/agno_health.py`.
+
 ---
 
 ## Wave-by-wave speed-gain log (per `feedback_TEMP_methodology_validation_in_progress.md`)
@@ -74,3 +130,26 @@ _(none — T3 work landed without re-applies or rollbacks.)_
 | **Cumulative** | **9** | **pending** | **pending** | **pending** | **pending** | First orchestration under §18 wave-dispatch methodology |
 
 This is the first orchestration under the new §18 methodology. Track diligently for the validation log.
+
+---
+
+## T5 findings — Per-product registry strategy (engineer report, 2026-05-10)
+
+### Errors encountered
+- _(none — clean execution)_
+
+### Mistakes / slips
+- **Initial template `image:` substitution used `{{PRODUCT_SLUG}}`, corrected to literal `seed`.** First edit on `templates/product-seed/docker-compose.yml` put `{{PRODUCT_SLUG}}` into the image path, breaking the template's existing convention (every other identifier in that file uses literal `seed` — `seed-backend` service name, `noctus-seed-backend` container_name, `seed-net` network, `products/seed/backend/Dockerfile` path). Reverted to `noctus-seed-backend` to match the convention. Lesson: when editing a template, audit ALL substitution markers in the file FIRST — the existing pattern dictates the right placeholder.
+
+### Lessons learned (durable rules)
+- **Worktree HEAD drift between worktree-add and engineer dispatch.** The Agent tool's `isolation:"worktree"` was supposed to create from main, but this worktree started at a non-base SHA (`2f2a1b4` — recent unrelated merges from personal-finance/strict-mode-migration). Required an explicit `git fetch origin containerization-backlog-closure && git reset --hard` to align to the expected base. Confirms the §16.7 preamble's value — verify HEAD on every dispatch. Architect should consider whether to push-first when there's any chance the orchestrator's branch advanced after the worktree was carved.
+- **`.env.example` did not exist at repo root yet.** Per-product `docker-compose.yml` files reference `env_file: ../../.env`, but noc never shipped a root `.env.example` template. T5 created it as part of in-scope work (brief authorized it explicitly) — the slot for `GHCR_USERNAME` / `GHCR_TOKEN` motivated the file but it now also documents the Supabase/LLM/WAHA/Vite slots. Could be flagged as a future small lift: make `.env.example` the canonical contract for what every product expects in `.env`.
+
+### Interesting findings (surprises, discoveries)
+- **Template-side `image:` doesn't need `{{PRODUCT_SLUG}}` substitution.** Even though `scaffold.py` knows how to substitute `{{PRODUCT_SLUG}}`, the template uses literal `seed` in `image:` paths and relies on a downstream tool/manual edit for the `seed → <slug>` swap (visible in how `core/docker-compose.yml` exists with `core-backend` everywhere). The same convention applies to my new registry-path edit — kept literal `seed`, will be swapped by whatever mechanism handles the rest.
+- **`sync-seed-template.sh` only touches `templates/product-seed/`, not `products/seed/`.** The pre-commit hook syncs `products/seed/ → templates/product-seed/` (script step 1 of pre-commit). My edits to both `products/seed/docker-compose.yml` AND `templates/product-seed/docker-compose.yml` are parity-aligned so the sync is a no-op.
+
+### Knowledge pieces (durable patterns)
+- **`${NOCTUS_IMAGE_TAG:-dev}` shell-style interpolation in Compose.** Docker Compose evaluates `${VAR:-default}` at compose-parse time (not at runtime). Means: locally, `docker compose build` with `NOCTUS_IMAGE_TAG` unset produces a `:dev`-tagged image; in CI, exporting `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` produces a SHA-tagged image. No runtime cost, no Dockerfile changes, no compose-file-per-environment.
+- **Per-product registries chosen over monorepo with prefix.** User decision locked at §11 #10 annotation: each product gets its own GHCR namespace (`ghcr.io/jraphaelsst/noctus-<slug>-<role>`). Rationale: per-product access control, per-product retention policies, per-product publication cadence, aligns with the product-folder boundary used everywhere else. Documented at KB § PATTERNS/containerization.md §11a.
+- **Container_name preservation discipline.** The brief explicitly called out "Don't change `container_name:`" as a common pitfall — and confirmed by the changes: only the `image:` line moves to the registry path; `container_name: noctus-<slug>-<role>` stays as the friendly local-docker name. Two separate identifiers serve two separate purposes (registry tagging vs local docker daemon name).

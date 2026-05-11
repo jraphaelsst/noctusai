@@ -56,8 +56,16 @@ USER noctus
 
 EXPOSE 8009
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8009/api/health || exit 1
+# Per-product healthcheck override — see KB § PATTERNS/containerization.md
+# §11c · Per-product healthcheck override. dev-team registers an
+# `agno_ping` readiness_hook via HealthEndpointConfig in app/main.py;
+# probe targets the seed-native `/_ready` aggregate endpoint. Tuned
+# timeout=10s + start_period=30s for agno warmup. The per-product
+# docker-compose.yml healthcheck block overrides this at runtime; the
+# Dockerfile copy is kept in sync so `docker run` (without compose)
+# still gets the deeper probe.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -fsS http://localhost:8009/_ready || exit 1
 
 CMD ["uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
