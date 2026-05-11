@@ -14,6 +14,7 @@ from app.dependencies import get_current_user, get_org_id, get_user_client
 from app.services.schedule_service import expandir_recorrencias
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
 from noctusai_lib.api.auth import first_or_none
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/schedule", tags=["Schedule"])
@@ -168,8 +169,6 @@ async def deletar_evento(event_id: str, authorization: Optional[str] = Header(No
     user, token = await get_current_user(authorization)
     db = get_user_client(token)
 
-    result = db.table("eventos").delete().eq("id", event_id).eq("user_id", str(user.id)).execute()
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Evento nao encontrado")
+    delete_or_404(db, "eventos", ("id", event_id), ("user_id", str(user.id)), message="Evento nao encontrado")
 
     return ok_response("Evento removido")

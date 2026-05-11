@@ -77,8 +77,19 @@ def delete_with_existence_check(
 
     Raises:
         Whatever `not_found_exc()` returns when the existence check fails.
+
+    Note:
+        The existence-check SELECT uses the FIRST predicate column as the
+        projection column (e.g. `select("id")` when the first predicate is
+        `("id", x)`; `select("key")` for `platform_settings` keyed on `key`).
+        This avoids hardcoding `"id"` for tables whose primary key is named
+        differently. The column is guaranteed to exist because the caller is
+        already filtering by it.
     """
-    check = db.table(table).select("id")
+    if not predicates:
+        raise ValueError("delete_with_existence_check requires at least one predicate")
+    projection_col = predicates[0][0]
+    check = db.table(table).select(projection_col)
     for col, val in predicates:
         check = check.eq(col, val)
     if not check.execute().data:

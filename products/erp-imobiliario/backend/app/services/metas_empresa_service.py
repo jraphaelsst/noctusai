@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from noctusai_lib.api.crud_safety import delete_with_existence_check
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +90,7 @@ def atualizar_meta_empresa(db, meta_id: str, patch: dict) -> dict:
 
 
 def deletar_meta_empresa(db, meta_id: str) -> None:
-    result = db.table("metas_empresa").delete().eq("id", meta_id).execute()
-    if not result.data:
-        raise LookupError("Meta de empresa não encontrada")
+    delete_with_existence_check(db, "metas_empresa", ("id", meta_id), not_found_exc=lambda: LookupError("Meta de empresa não encontrada"))
 
 
 # ── Cascade invariant ───────────────────────────────────────────────

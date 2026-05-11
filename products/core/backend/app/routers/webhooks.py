@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
 from app.services import webhook_delivery, webhook_retention_service
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
@@ -140,12 +141,7 @@ async def deletar_webhook(webhook_id: str, authorization: Optional[str] = Header
     db = get_admin_client()
 
     # Only delete webhooks belonging to the user's org
-    result = db.table("webhook_endpoints").delete().eq(
-        "id", webhook_id
-    ).eq("org_id", org_id).execute()
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Webhook endpoint não encontrado")
+    delete_or_404(db, "webhook_endpoints", ("id", webhook_id), ("org_id", org_id), message="Webhook endpoint não encontrado")
 
     logger.info(f"Webhook endpoint deleted: {webhook_id}")
     return {"data": {"deleted": True, "id": webhook_id}}

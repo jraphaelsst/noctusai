@@ -45,6 +45,7 @@ from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
@@ -123,9 +124,7 @@ async def deletar_platform_setting(
     await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("platform_settings").delete().eq("key", key).execute()
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Configuração não encontrada")
+    delete_or_404(db, "platform_settings", ("key", key), message="Configuração não encontrada")
 
     logger.info(f"Platform setting deleted: {key}")
     return {"message": "Configuração removida com sucesso"}
@@ -188,9 +187,7 @@ async def deletar_org_setting(
     org_id = await get_org_id(user)
     db = get_admin_client()
 
-    result = db.table("org_settings").delete().eq("org_id", org_id).eq("key", key).execute()
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Configuração não encontrada")
+    delete_or_404(db, "org_settings", ("org_id", org_id), ("key", key), message="Configuração não encontrada")
 
     logger.info(f"Org setting deleted: {key} for org {org_id}")
     return {"message": "Configuração removida com sucesso"}
