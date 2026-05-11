@@ -81,6 +81,9 @@ def _detect(
         check_frontend_config_paths,
         check_out_of_contract_trees,
         check_test_status_assertion,
+        check_unknown_table_references,
+        check_function_search_path_pinned,
+        check_admin_endpoint_service_role_bypass,
     )
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
@@ -99,6 +102,9 @@ def _detect(
         issues.extend(check_config_extends_product_settings(product_path))
         issues.extend(check_frontend_config_paths(product_path))
         issues.extend(check_test_status_assertion(product_path))
+        issues.extend(check_unknown_table_references(product_path))
+        issues.extend(check_function_search_path_pinned(product_path))
+        issues.extend(check_admin_endpoint_service_role_bypass(product_path))
     # Global repo-root sweep — only when not scoped to a single product.
     if product_slug is None:
         issues.extend(check_out_of_contract_trees())

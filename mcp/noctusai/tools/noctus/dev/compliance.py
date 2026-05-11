@@ -2203,6 +2203,521 @@ def check_test_status_assertion(product_path: Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Production-correctness trio — surfaced by Engineer GG's therapy P4 audit
+# (commit a56a39e, 2026-05-10). MockSupabase WARN+skip masked N=12 migration
+# drift cases for 7+ days because tests passed silently against unknown tables.
+# Two siblings — function search_path drift + admin-endpoint service_role
+# bypass — are the same shape (real DB fails, tests pass). All three are
+# AST-driven, observation-only, deterministic.
+#
+# Per KB § PATTERNS/testing.md § Production-correctness keeper detectors.
+# ---------------------------------------------------------------------------
+
+
+# Tables that MAY appear as `.table("X")` callsites but live OUTSIDE the
+# product's own migrations — `auth.users` is Supabase-managed, `products` is
+# part of core's bootstrap. Allowlist suppresses false positives at the
+# unknown-table detector without weakening cross-product coverage.
+_KNOWN_EXTERNAL_TABLES: set[str] = {
+    "users",            # auth.users (Supabase auth)
+    "products",         # core/bootstrap products registry
+    "organizations",    # core/bootstrap org registry (multi-tenancy)
+    "user_org_roles",   # core bootstrap RBAC pivot
+}
+
+
+# Files MAY hold a `.table(...)` call that is intentionally a runtime-built
+# string concatenated from a variable. The detector ignores non-Constant
+# arguments (it CAN'T resolve them statically); this comment is just to
+# document the design choice — see `_extract_table_string_arg`.
+
+
+def _extract_table_string_arg(call: ast.Call) -> str | None:
+    """Return the literal string argument to a `.table("X")` call.
+
+    Returns None when the call has no positional args or the first arg is
+    not a `Constant[str]` (e.g. an f-string or a name reference — the
+    detector silently skips those because it can't resolve them statically).
+    """
+    if not call.args:
+        return None
+    first = call.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    return None
+
+
+def _walk_product_backend_python(product_path: Path):
+    """Yield every `.py` under `product/backend/app/`, excluding tests + caches.
+
+    Mirrors `_walk_python_files` exclusion set but scoped to one product's
+    backend (the unknown-table + admin-bypass detectors are per-product).
+    """
+    backend_app = product_path / "backend" / "app"
+    if not backend_app.exists():
+        return
+    excluded_parts: set[str] = {
+        "__pycache__", "node_modules", ".venv", "venv", "dist", "build",
+        ".git", ".pytest_cache", ".mypy_cache", "tests", "migrations",
+    }
+    for path in backend_app.rglob("*.py"):
+        if any(part in excluded_parts for part in path.parts):
+            continue
+        yield path
+
+
+# Pattern shared by the three production-correctness detectors. The migration
+# files are raw SQL; we use regex with the `re.IGNORECASE | re.DOTALL` flags
+# and document each regex's anchor strategy near its definition so future
+# maintainers can verify the matched shape against real CREATE statements.
+
+# Matches `CREATE TABLE [IF NOT EXISTS] [<schema>.]<name>` and captures the
+# unqualified name. Anchored on the `(` opening the column list so we never
+# false-match prose mentions of "create table foo" in a comment.
+_CREATE_TABLE_RE = re.compile(
+    r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*\.)?"   # optional schema
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+    r"\s*\(",
+    re.IGNORECASE,
+)
+
+
+# Matches every `CREATE [OR REPLACE] FUNCTION [<schema>.]<name>` start. We
+# don't try to capture the function BODY with one regex (Postgres function
+# bodies can use any dollar-quoted delimiter `$tag$ ... $tag$` plus optional
+# `SET` clauses outside the body). Instead the detector walks each match and
+# finds the body terminator by locating the closing dollar quote — see
+# `_function_block_text`.
+_CREATE_FUNCTION_START_RE = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+"
+    r"(?P<qualified>(?:[A-Za-z_][A-Za-z0-9_]*\.)?"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*))"
+    r"\s*\(",
+    re.IGNORECASE,
+)
+
+
+# Matches `CREATE POLICY "service_role_bypass" ... ON [<schema>.]<table>`
+# (DOTALL so the policy clause may span lines between POLICY and ON). We
+# match on the literal name `service_role_bypass` because that's the
+# convention every product follows (single keeper-enforced shape — drift
+# in the name itself is a separate concern and would be its own detector).
+_SERVICE_ROLE_BYPASS_POLICY_RE = re.compile(
+    r'\bCREATE\s+POLICY\s+"?service_role_bypass"?\s+ON\s+'
+    r"(?:[A-Za-z_][A-Za-z0-9_]*\.)?"
+    r"(?P<table>[A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _collect_known_tables(product_path: Path) -> set[str]:
+    """Return unqualified table names declared by `CREATE TABLE` in any of
+    the product's migrations. Includes both `IF NOT EXISTS` and bare forms.
+
+    Returns the empty set when `backend/migrations/` is missing (the
+    detectors short-circuit upstream in that case).
+    """
+    names: set[str] = set()
+    migrations_dir = product_path / "backend" / "migrations"
+    if not migrations_dir.exists():
+        return names
+    for sql_file in migrations_dir.glob("*.sql"):
+        try:
+            content = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+            continue
+        for m in _CREATE_TABLE_RE.finditer(content):
+            names.add(m.group("name").lower())
+    return names
+
+
+def _collect_service_role_bypass_tables(product_path: Path) -> set[str]:
+    """Return unqualified table names that have a `service_role_bypass`
+    policy in any of the product's migrations.
+    """
+    names: set[str] = set()
+    migrations_dir = product_path / "backend" / "migrations"
+    if not migrations_dir.exists():
+        return names
+    for sql_file in migrations_dir.glob("*.sql"):
+        try:
+            content = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+            continue
+        for m in _SERVICE_ROLE_BYPASS_POLICY_RE.finditer(content):
+            names.add(m.group("table").lower())
+    return names
+
+
+def _iter_table_callsites(tree: ast.AST):
+    """Yield every `.table("X")` Call node within `tree`.
+
+    Matches any attribute access named `table` regardless of receiver —
+    `db.table(...)`, `admin_db.table(...)`, `get_admin_client().table(...)`,
+    `self.client.table(...)`. Receiver discrimination happens at the caller
+    (the admin-bypass detector uses receiver shape; the unknown-table
+    detector flags any `.table(...)`).
+    """
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "table"
+        ):
+            yield node
+
+
+def check_unknown_table_references(product_path: Path) -> list[dict]:
+    """Flag `<X>.table("name")` callsites where `name` is not declared by a
+    `CREATE TABLE` in the product's migrations.
+
+    The slip this defends against (Engineer GG therapy P4, commit a56a39e):
+
+        # In services/admin_service.py
+        db.table("commission_overrides").select(...)
+        #          ^^^^^^^^^^^^^^^^^^^^
+        # Real schema has `platform_commission_overrides`. MockSupabase
+        # WARN+skip returns empty results silently; tests pass; production
+        # fails.
+
+    Conservative shape — false negatives over false positives:
+      - Skips `.table(<non-string>)` (f-strings, names, attributes — we
+        can't resolve them statically without dataflow).
+      - Skips tables in :data:`_KNOWN_EXTERNAL_TABLES` (Supabase-managed
+        `auth.users`, core-bootstrap `products`/`organizations`).
+      - Short-circuits if the product has no `backend/migrations/` —
+        scaffold-time products are not yet expected to have a schema.
+
+    Severity `warning` (not `high`) because the cross-cutting drift cases
+    surfaced by GG were genuine bugs but the false-positive risk on a
+    table that lives in another product's migration tree (cross-product
+    schema reference, rare but legitimate) is non-zero. Triage in
+    `--review` covers the rest.
+    """
+    issues: list[dict] = []
+    name = product_path.name
+    backend_app = product_path / "backend" / "app"
+    migrations = product_path / "backend" / "migrations"
+    if not backend_app.exists() or not migrations.exists():
+        return issues
+
+    known = _collect_known_tables(product_path)
+    if not known:
+        # No CREATE TABLE found — likely a scaffold or a product whose
+        # migrations live elsewhere. Avoid flagging every callsite.
+        return issues
+
+    seen_pairs: set[tuple[str, str, int, str]] = set()
+    for py_file in _walk_product_backend_python(product_path):
+        try:
+            source = py_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", py_file, exc)
+            continue
+        try:
+            tree = ast.parse(source, filename=str(py_file))
+        except SyntaxError as exc:
+            logger.debug("compliance: cannot parse %s (%s)", py_file, exc)
+            continue
+
+        try:
+            rel = str(py_file.relative_to(product_path))
+        except ValueError:
+            rel = str(py_file)
+
+        for call in _iter_table_callsites(tree):
+            table_name = _extract_table_string_arg(call)
+            if table_name is None:
+                continue
+            lower = table_name.lower()
+            if lower in known or lower in _KNOWN_EXTERNAL_TABLES:
+                continue
+            key = (name, rel, call.lineno, lower)
+            if key in seen_pairs:
+                continue
+            seen_pairs.add(key)
+            issues.append({
+                "product": name,
+                "file": rel,
+                "line": call.lineno,
+                "table": table_name,
+                "issue": (
+                    f"{rel}:{call.lineno} `.table({table_name!r})` references "
+                    f"a table not declared by any `CREATE TABLE` in "
+                    f"`products/{name}/backend/migrations/*.sql`. "
+                    f"MockSupabase WARN+skip masks this — production fails. "
+                    f"See KB § PATTERNS/testing.md § Production-correctness "
+                    f"keeper detectors."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+def _function_block_text(content: str, start: int) -> tuple[str, int]:
+    """Return the text of the CREATE FUNCTION block that begins at `start`,
+    plus the index where the block ends.
+
+    The block runs from the CREATE FUNCTION match's start through the first
+    statement terminator (`;`) that follows the matching dollar-quoted body
+    delimiter. Supports any `$tag$ ... $tag$` form (tag may be empty).
+
+    Falls back to "everything until the next `CREATE` keyword OR end of
+    file" if no dollar quote is found (some functions use AS 'SQL_LITERAL'
+    form — rare but legal).
+    """
+    # Find the first dollar-quote opener after `start`.
+    dq_open = re.search(r"\$(?P<tag>[A-Za-z_][A-Za-z0-9_]*)?\$", content[start:])
+    if dq_open is not None:
+        tag = dq_open.group("tag") or ""
+        opener_idx = start + dq_open.start()
+        # Find the matching closer.
+        closer_pat = re.compile(rf"\${re.escape(tag)}\$")
+        closer_match = closer_pat.search(content, opener_idx + len(dq_open.group(0)))
+        if closer_match is not None:
+            end = closer_match.end()
+            # Walk forward to the next `;` to include the statement terminator.
+            semi = content.find(";", end)
+            if semi != -1:
+                end = semi + 1
+            return content[start:end], end
+        # Unbalanced dollar quote — skip forward to the next CREATE/EOF.
+    # Fallback: take until next CREATE keyword or EOF.
+    next_create = re.search(r"\bCREATE\b", content[start + 1:], re.IGNORECASE)
+    end = start + 1 + next_create.start() if next_create else len(content)
+    return content[start:end], end
+
+
+def check_function_search_path_pinned(product_path: Path) -> list[dict]:
+    """Flag `CREATE [OR REPLACE] FUNCTION` blocks in product migrations
+    that do NOT pin `SET search_path = ...`.
+
+    The slip this defends against (Engineer GG therapy P4 / Supabase
+    advisor 0011): SECURITY DEFINER functions without a pinned search_path
+    can be hijacked by a caller's `search_path` settings — a public-facing
+    schema can shadow the intended schema. Pin every function.
+
+    Supabase guidance is to ALWAYS set `search_path` on SECURITY DEFINER
+    functions and as a defense-in-depth on STABLE / IMMUTABLE functions
+    too. The detector flags EVERY CREATE FUNCTION block missing the clause
+    — calibration based on advisor 0011 catching `gcal_authorization_is_fresh`
+    even though it was IMMUTABLE (no caller-search_path risk in theory; the
+    advisor flags it anyway because the static guarantee is weaker than the
+    pinned-clause guarantee).
+
+    Severity `warning`. False-positive shape: a function legitimately
+    relying on caller search_path (very rare in our codebase, none in any
+    existing migration). Accept-with-rationale + comment would shut the
+    detector up; we leave that to the product owner if the case arises.
+    """
+    issues: list[dict] = []
+    name = product_path.name
+    migrations_dir = product_path / "backend" / "migrations"
+    if not migrations_dir.exists():
+        return issues
+
+    seen: set[tuple[str, str, int, str]] = set()
+    for sql_file in sorted(migrations_dir.glob("*.sql")):
+        try:
+            content = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+            continue
+        try:
+            rel = str(sql_file.relative_to(product_path))
+        except ValueError:
+            rel = str(sql_file)
+
+        for m in _CREATE_FUNCTION_START_RE.finditer(content):
+            fn_qualified = m.group("qualified")
+            block_text, _end = _function_block_text(content, m.start())
+            # `SET search_path = ...` can appear anywhere in the block
+            # (header before AS, inside the body, after the body) — match
+            # the whole text. Use a tolerant regex: any whitespace, then
+            # SET, then search_path with optional schema/identifier list.
+            if re.search(
+                r"\bSET\s+search_path\b",
+                block_text,
+                re.IGNORECASE,
+            ):
+                continue
+            # Locate line number of the CREATE FUNCTION header.
+            lineno = content[:m.start()].count("\n") + 1
+            key = (name, rel, lineno, fn_qualified)
+            if key in seen:
+                continue
+            seen.add(key)
+            issues.append({
+                "product": name,
+                "file": rel,
+                "line": lineno,
+                "function": fn_qualified,
+                "issue": (
+                    f"{rel}:{lineno} `CREATE FUNCTION {fn_qualified}` "
+                    f"does not pin `SET search_path = ...`. Supabase "
+                    f"advisor 0011 flags this. See KB § PATTERNS/"
+                    f"testing.md § Production-correctness keeper detectors."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+def _admin_client_bindings(tree: ast.Module) -> set[str]:
+    """Return the set of local variable names that hold a `get_admin_client()`
+    return value within `tree`.
+
+    Detects two assignment shapes:
+        admin_db = get_admin_client()
+        client: SomeType = get_admin_client()
+
+    Plus the chained shape (`get_admin_client().table(...)`) which yields
+    no binding but is matched directly by the receiver-shape walker.
+    """
+    bindings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            if value is None:
+                continue
+            if not (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "get_admin_client"
+            ):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for tgt in targets:
+                if isinstance(tgt, ast.Name):
+                    bindings.add(tgt.id)
+    return bindings
+
+
+def _is_chained_admin_table_call(call: ast.Call) -> bool:
+    """True if `call` is `get_admin_client().table(...)` (chained, no
+    intermediate binding).
+    """
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "table"):
+        return False
+    receiver = call.func.value
+    return (
+        isinstance(receiver, ast.Call)
+        and isinstance(receiver.func, ast.Name)
+        and receiver.func.id == "get_admin_client"
+    )
+
+
+def _is_bound_admin_table_call(call: ast.Call, bindings: set[str]) -> bool:
+    """True if `call` is `<bound>.table(...)` where `<bound>` is in
+    `bindings` (an admin-client variable).
+    """
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "table"):
+        return False
+    receiver = call.func.value
+    return isinstance(receiver, ast.Name) and receiver.id in bindings
+
+
+def check_admin_endpoint_service_role_bypass(product_path: Path) -> list[dict]:
+    """Flag admin-client `.table("T")` callsites where the target table T
+    has no `service_role_bypass` policy in the product's migrations.
+
+    The slip this defends against (Engineer GG therapy P4): an admin
+    endpoint reaches for `get_admin_client()` to bypass authenticated-user
+    RLS, but the target table only has `authenticated_access` policies —
+    so the service_role bypass silently fails (returns empty result sets,
+    or worse, succeeds against a real row by coincidence). The detector
+    enforces the platform convention: every admin-accessed table ships a
+    matching `CREATE POLICY "service_role_bypass" ... FOR ALL TO
+    service_role USING (true)`.
+
+    Detection shape (AST):
+      - Find `admin_db = get_admin_client()` style bindings + chained
+        `get_admin_client().table(...)` calls.
+      - For each, extract the table-name literal arg.
+      - Cross-check against `_collect_service_role_bypass_tables`.
+
+    Severity `warning`. False-positive shape (rare): a table that's
+    accessed via admin client purely for cross-tenant reads where RLS is
+    intentionally not bypassed because the row visibility is enforced by
+    a different mechanism (foreign-key chain to a tenant-id column the
+    admin client already has). Accept-with-rationale handles those.
+    """
+    issues: list[dict] = []
+    name = product_path.name
+    backend_app = product_path / "backend" / "app"
+    migrations = product_path / "backend" / "migrations"
+    if not backend_app.exists() or not migrations.exists():
+        return issues
+
+    bypass_tables = _collect_service_role_bypass_tables(product_path)
+
+    seen: set[tuple[str, str, int, str]] = set()
+    for py_file in _walk_product_backend_python(product_path):
+        try:
+            source = py_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", py_file, exc)
+            continue
+        try:
+            tree = ast.parse(source, filename=str(py_file))
+        except SyntaxError as exc:
+            logger.debug("compliance: cannot parse %s (%s)", py_file, exc)
+            continue
+
+        bindings = _admin_client_bindings(tree)
+        if not bindings:
+            # Still scan for chained `get_admin_client().table(...)`.
+            pass
+
+        try:
+            rel = str(py_file.relative_to(product_path))
+        except ValueError:
+            rel = str(py_file)
+
+        for call in _iter_table_callsites(tree):
+            is_admin = (
+                _is_chained_admin_table_call(call)
+                or _is_bound_admin_table_call(call, bindings)
+            )
+            if not is_admin:
+                continue
+            table_name = _extract_table_string_arg(call)
+            if table_name is None:
+                continue
+            lower = table_name.lower()
+            if lower in _KNOWN_EXTERNAL_TABLES:
+                # External (auth.users etc.) — RLS not under our control.
+                continue
+            if lower in bypass_tables:
+                continue
+            key = (name, rel, call.lineno, lower)
+            if key in seen:
+                continue
+            seen.add(key)
+            issues.append({
+                "product": name,
+                "file": rel,
+                "line": call.lineno,
+                "table": table_name,
+                "issue": (
+                    f"{rel}:{call.lineno} admin client calls "
+                    f"`.table({table_name!r})` but table `{table_name}` "
+                    f"has no `CREATE POLICY \"service_role_bypass\" ... ON "
+                    f"<schema>.{table_name}` in "
+                    f"`products/{name}/backend/migrations/*.sql`. "
+                    f"Admin bypass will silently fail. See KB § "
+                    f"PATTERNS/testing.md § Production-correctness keeper "
+                    f"detectors."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -2470,6 +2985,9 @@ def check_all_products() -> tuple[int, list]:
             + check_mock_schema_validation(d)
             + check_ai_feature_completeness(d)
             + check_test_status_assertion(d)
+            + check_unknown_table_references(d)
+            + check_function_search_path_pinned(d)
+            + check_admin_endpoint_service_role_bypass(d)
         )
         all_issues.extend(issues)
         penalties = {"critical": 25, "high": 10, "warning": 3}
