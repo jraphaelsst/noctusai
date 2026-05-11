@@ -1343,3 +1343,65 @@ Within a wave, all chunks dispatch in parallel (single Task turn, multiple Agent
 - §17.7 (read-bodies-before-dispatch) — wave planning includes the body-read audit.
 
 **Three-way-synced 2026-05-10**: this section (§18) + `CLAUDE.md` branching-first orchestration bullet (pointer extension) + `feedback_wave_dispatch_and_pause_on_dependency.md` memory entry.
+
+### 18.4 — Resource-bounded engineer parallelism for shared-environment chunks (NEW 2026-05-10)
+
+**The gap surfaced by `containerization-backlog-closure` Wave 1.** Three engineers (T6-A, T6-B, T1) each independently surfaced the same blocker at runtime-verification time: **Docker daemon BuildKit instability under concurrent parallel-agent build pressure.** With 6+ concurrent `docker build` processes from sibling worktrees, the daemon's grpc frontend closed unexpectedly, `dockerd` HTTP API started returning 500s, and image production stopped on the entire host. Daemon restart did not recover within 20 min.
+
+This is the **pause-on-environment** signal — distinct from pause-on-dependency. Pause-on-dependency = an absent code-side primitive blocks the chunk. Pause-on-environment = a **shared host resource** (Docker daemon, single-host postgres, single Anthropic rate-bucket, a finite CPU, etc.) cannot serve N concurrent engineers regardless of code correctness. The methodology rule:
+
+**The rule.** When dispatched chunks share a non-shardable resource (a single Docker daemon, a single postgres instance, a single rate-limit bucket), the orchestrator MUST cap concurrent dispatch at that resource's empirical capacity. Even if §18.3 says "Wave 1 dispatches everything that has no in-batch dependencies in parallel," the resource cap takes precedence — chunks beyond the cap go to Wave 1b (a sequential continuation of Wave 1, not a new dependency wave).
+
+**Empirical caps observed 2026-05-10:**
+
+| Resource | Cap | Symptom past cap |
+|---|---|---|
+| Docker Desktop daemon @ 3.83 GB allocation | ~3 concurrent `docker build` jobs | BuildKit grpc frontend closes; daemon HTTP 500s; recovery requires Docker Desktop restart + ~20 min wait |
+| Docker Desktop daemon @ 8 GB allocation | ~6 concurrent `docker build` jobs | (to be calibrated — initial estimate) |
+| Local postgres (offline-dev profile) | 1 concurrent migration run | concurrent migration runs conflict on advisory locks / schema state |
+| Anthropic API rate-bucket per key | depends on tier | 429s + token-bucket starvation |
+
+These caps are **engineer-dispatch caps**, not chunk caps. A single engineer can run many builds inside its worktree — what matters is the **concurrent count across dispatched engineers**.
+
+**Architect-side protocol.**
+
+1. **Before Wave N dispatch**, identify shared-environment resources each chunk's verification will hit. Tag chunks with their resource needs (e.g., "T1: docker-build heavy", "T4: postgres-init heavy", "T6: docker-build moderate").
+2. **Sum the per-resource concurrent demand.** If `docker-build heavy` count > 3 (current cap), the wave does NOT dispatch all at once.
+3. **Split Wave N into Wave Na + Nb.** Wave Na = chunks within cap. Wave Nb = remaining same-shape chunks. Wave Nb dispatches AFTER Wave Na engineers have completed their build steps (not necessarily their full work — once they've yielded the daemon, the next batch can start).
+4. **Wave Nb gate is `daemon-yielded`, not full FF-merge.** This is a softer gate than the inter-wave §18.3 gate — Wave Nb doesn't need Wave Na's source-tree changes; it just needs the resource. The architect monitors and dispatches Wave Nb when the resource is free.
+5. **Communicate the cap to engineers.** Briefs include: "Concurrent docker-build load is capped at <N>. If you observe BuildKit instability or daemon HTTP 500s, STOP your build, signal pause-on-environment, and wait for orchestrator dispatch to resume."
+
+**Engineer-side protocol.**
+
+When an engineer hits BuildKit instability mid-build:
+
+```
+1. STOP the build (don't retry-loop — retrying when contention is the cause makes it worse).
+2. Capture the failure mode (exit code, log tail, `docker info` snapshot, `docker ps` output).
+3. Report to orchestrator with pause-on-environment signal: "Resource: docker-build daemon.
+   Observed: <symptom>. Likely cause: concurrent build pressure. Recovery hint: wait for
+   peer engineers to yield, OR architect raises daemon allocation."
+4. Continue any non-environment-bound deliverables (source-level changes, compose config
+   validation, structural verification via static analysis). Report what was achievable.
+5. The chunk's "structural confidence" deliverable can land on merge; the "runtime verification"
+   deliverable is deferred to a follow-up rebuild engineer dispatched once the resource recovers.
+```
+
+**Anti-patterns.**
+
+- **Architect dispatches all docker-build-heavy chunks in parallel "because they're independent in code."** Code-independent ≠ resource-independent. The daemon dies before any of them complete.
+- **Engineer retry-loops on daemon failure.** Each retry makes the contention worse. The right shape is STOP + report.
+- **Architect treats pause-on-environment as pause-on-dependency.** They're different — pause-on-environment doesn't dispatch a dependency engineer; it waits for the resource OR raises allocation. Filing a follow-up project for the "dependency" is the wrong shape.
+- **Skipping the structural-confidence carve-out.** When runtime verification is blocked by environment, the code changes can still merge on structural confidence (static analysis + compose config + fresh-eyes review). Blocking the merge for runtime verification when the daemon is dead would block the whole wave indefinitely.
+- **Conflating concurrent CHUNK count with concurrent ENGINEER count.** A single engineer running 3 sequential builds inside its worktree is FINE; 3 engineers each running 1 build concurrently is BORDERLINE; 6 engineers running 1 build concurrently is BROKEN. The cap is on concurrent engineers, not on per-engineer build count.
+
+**Recovery recipe — Docker daemon overload on macOS.**
+
+1. `docker desktop stop` — let any in-flight builds error out cleanly.
+2. Wait 30s.
+3. `docker desktop start` — fresh daemon.
+4. If still unstable: Docker Desktop GUI → Settings → Resources → Memory → raise allocation (3.83 GB → 8 GB or 12 GB depending on host) → Apply & restart. macOS TCC sandbox blocks shell access to the settings file; only the GUI can change it.
+5. `docker info | grep 'Total Memory'` to confirm new allocation took effect.
+6. Resume dispatched engineers (or dispatch follow-up rebuild engineer).
+
+**Three-way-synced 2026-05-10**: this subsection (§18.4) + memory `feedback_wave_dispatch_and_pause_on_dependency.md` (extend "pause-on-environment" sub-rule) + CLAUDE.md branching-first bullet (no new pointer — §18 covers it).
