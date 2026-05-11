@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import (
@@ -47,18 +47,17 @@ class MetaEmpresaUpdate(BaseModel):
 async def listar(
     periodo_id: Optional[str] = None,
     categoria: Optional[str] = None,
-    authorization: Optional[str] = Header(None),
-):
-    _, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    _, token = auth
     db = get_user_client(token)
     metas = svc.listar_metas_empresa(db, periodo_id=periodo_id, categoria=categoria)
     return success_response(metas)
 
 
 @router.post("", status_code=201)
-async def upsert(body: MetaEmpresaUpsert, authorization: Optional[str] = Header(None)):
+async def upsert(body: MetaEmpresaUpsert, auth = Depends(get_current_user)):
     """Insert or update the company meta for (periodo, categoria). One row per pair."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     try:
         meta = svc.upsert_meta_empresa(
@@ -82,17 +81,16 @@ async def upsert(body: MetaEmpresaUpsert, authorization: Optional[str] = Header(
 async def resumo(
     periodo_id: str = Query(...),
     categoria: str = Query("vgv"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Cascade summary: meta_empresa vs sum(metas_equipe). Drives the owner allocation UI."""
-    _, token = await get_current_user(authorization)
+    _, token = auth
     db = get_user_client(token)
     return success_response(svc.resumo_cascata(db, periodo_id=periodo_id, categoria=categoria))
 
 
 @router.get("/{meta_id}")
-async def obter(meta_id: str, authorization: Optional[str] = Header(None)):
-    _, token = await get_current_user(authorization)
+async def obter(meta_id: str, auth = Depends(get_current_user)):
+    _, token = auth
     db = get_user_client(token)
     meta = svc.obter_meta_empresa(db, meta_id)
     if not meta:
@@ -104,9 +102,8 @@ async def obter(meta_id: str, authorization: Optional[str] = Header(None)):
 async def atualizar(
     meta_id: str,
     body: MetaEmpresaUpdate,
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         meta = svc.atualizar_meta_empresa(db, meta_id, body.model_dump(exclude_none=True))
@@ -119,8 +116,8 @@ async def atualizar(
 
 
 @router.delete("/{meta_id}")
-async def deletar(meta_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def deletar(meta_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         svc.deletar_meta_empresa(db, meta_id)

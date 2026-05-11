@@ -6,7 +6,7 @@ and overdue payment detection.
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends, Header
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action
 from app.services.recorrencia_service import RecorrenciaService
 from app.responses import success_response
@@ -18,10 +18,9 @@ router = APIRouter(prefix="/api/recorrencia", tags=["recorrencia"])
 @router.post("/alugueis")
 async def gerar_alugueis(
     referencia: Optional[str] = None,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Generate monthly rent charges for active lease contracts."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -36,10 +35,9 @@ async def gerar_alugueis(
 
 @router.post("/lancamentos")
 async def gerar_lancamentos_recorrentes(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Process all recurring financial entries for current month."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -54,10 +52,9 @@ async def gerar_lancamentos_recorrentes(
 
 @router.post("/inadimplencia")
 async def verificar_inadimplencia(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Check and mark overdue payments."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 

@@ -3,7 +3,7 @@ Action Log Router — Server-side action logging and log retrieval.
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Depends, Header, Query
 from app.dependencies import get_current_user, get_user_client, get_admin_client
 from app.responses import success_response
 
@@ -16,9 +16,8 @@ async def listar_logs(
     usuario_id: Optional[str] = Query(None),
     data_inicio: Optional[str] = Query(None),
     data_fim: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     query = db.table("user_actions_log").select("*").order("created_at", desc=True).limit(200)

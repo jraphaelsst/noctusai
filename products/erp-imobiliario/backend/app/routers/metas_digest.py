@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 from app.dependencies import get_current_user
 from app.database import db as db_mod
@@ -29,14 +29,13 @@ router = APIRouter(prefix="/api/metas/digest", tags=["Metas · Digest"])
 async def enviar_digest(
     periodo_id: str,
     recipient: str = Query(..., description="Email address to deliver the digest to"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Send the biweekly digest for a period to `recipient`.
 
     Admin-only. The underlying tables have RLS + `has_role` checks but we
     also gate here because the admin client bypasses RLS.
     """
-    user, _ = await get_current_user(authorization)
+    user, _ = auth
     role = (user.user_metadata or {}).get("erp_role") or (user.user_metadata or {}).get("noctus_role")
     if role not in ("admin", "owner"):
         raise HTTPException(status_code=403, detail="Admin privileges required")

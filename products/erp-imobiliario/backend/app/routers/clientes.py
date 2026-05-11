@@ -3,11 +3,12 @@ Clientes CRUD Router — Manages clients, archiving, and pipeline moves.
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field, EmailStr
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/clientes", tags=["Clientes"])
@@ -51,9 +52,8 @@ async def listar_clientes(
     incluir_arquivados: bool = Query(False),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     # Calculate pagination
@@ -104,8 +104,8 @@ async def listar_clientes(
 
 
 @router.get("/{cliente_id}")
-async def obter_cliente(cliente_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def obter_cliente(cliente_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("clientes").select(
@@ -117,8 +117,8 @@ async def obter_cliente(cliente_id: str, authorization: Optional[str] = Header(N
 
 
 @router.post("")
-async def criar_cliente(body: ClienteCreate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def criar_cliente(body: ClienteCreate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -135,8 +135,8 @@ async def criar_cliente(body: ClienteCreate, authorization: Optional[str] = Head
 
 
 @router.patch("/{cliente_id}")
-async def atualizar_cliente(cliente_id: str, body: ClienteUpdate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def atualizar_cliente(cliente_id: str, body: ClienteUpdate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -153,22 +153,18 @@ async def atualizar_cliente(cliente_id: str, body: ClienteUpdate, authorization:
 
 
 @router.delete("/{cliente_id}")
-async def excluir_cliente(cliente_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def excluir_cliente(cliente_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("clientes").select("id").eq("id", cliente_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Cliente não encontrado")
-
-    db.table("clientes").delete().eq("id", cliente_id).execute()
+    delete_or_404(db, "clientes", ("id", cliente_id), message = "Cliente não encontrado")
     log_action(user.id, "excluir", "cliente", cliente_id, f"Excluiu cliente {cliente_id}")
     return ok_response("Cliente excluído com sucesso")
 
 
 @router.post("/{cliente_id}/arquivar")
-async def toggle_arquivar(cliente_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def toggle_arquivar(cliente_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     # Get current state
@@ -187,8 +183,8 @@ async def toggle_arquivar(cliente_id: str, authorization: Optional[str] = Header
 
 
 @router.post("/{cliente_id}/mover-etapa")
-async def mover_etapa(cliente_id: str, body: MoverEtapaRequest, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def mover_etapa(cliente_id: str, body: MoverEtapaRequest, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     valid_etapas = {"qualificacao", "visitas", "proposta", "negociacao", "fechado"}

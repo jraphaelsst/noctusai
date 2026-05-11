@@ -7,7 +7,7 @@ and CSV export.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_current_user, get_user_client, get_org_id
@@ -27,12 +27,11 @@ router = APIRouter(prefix="/api/relatorios", tags=["Relatórios"])
 @router.get("/ranking-corretores")
 async def get_ranking_corretores(
     periodo: int = Query(30, ge=1, le=365, description="Período em dias"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Agent ranking by sales, commissions, and active clients.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -46,12 +45,11 @@ async def get_ranking_corretores(
 
 @router.get("/conversao-funil")
 async def get_conversao_funil(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Funnel conversion rates between pipeline stages.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -65,12 +63,11 @@ async def get_conversao_funil(
 @router.get("/atividade-mensal")
 async def get_atividade_mensal(
     meses: int = Query(6, ge=1, le=24, description="Número de meses"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Monthly activity report (actions, new clients, sales).
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -90,12 +87,11 @@ async def export_csv(
     ),
     periodo: int = Query(30, ge=1, le=365),
     meses: int = Query(6, ge=1, le=24),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Export report data as a CSV file.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -113,7 +109,7 @@ async def export_csv(
         headers = ["mes", "total_atividades", "novos_clientes", "fechados"]
         filename = "atividade_mensal.csv"
     else:
-        from fastapi import HTTPException
+        from fastapi import Depends, HTTPException
         raise HTTPException(
             status_code=400,
             detail=f"Tipo de relatório inválido: {tipo}. "

@@ -10,7 +10,7 @@ Supports two providers:
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import success_response, paginated_response, calculate_pagination
@@ -87,15 +87,14 @@ def _get_config_from_db(db) -> tuple:
 
 @router.get("/config")
 async def whatsapp_config_status(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Get WhatsApp integration configuration status.
 
     Returns whether the API is configured and operational,
     without exposing sensitive credentials.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     config, provider = _get_config_from_db(db)
 
@@ -114,15 +113,14 @@ async def whatsapp_config_status(
 async def enviar_mensagem(
     request: Request,
     body: SendMessageRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Send a text message via WhatsApp.
 
     If the WhatsApp API is not configured, operates in dry-run mode
     and simulates message delivery (useful for development/testing).
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     config, provider = _get_config_from_db(db)
 
@@ -170,15 +168,14 @@ async def enviar_mensagem(
 async def enviar_imovel(
     request: Request,
     body: SendPropertyRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Send a formatted property listing card via WhatsApp.
 
     Fetches the property details from the database and sends a formatted
     card with all relevant information to the specified phone number.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     config, provider = _get_config_from_db(db)
 
@@ -236,15 +233,14 @@ async def enviar_imovel(
 async def listar_conversas(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     List all conversations grouped by phone number.
 
     Returns a paginated list of conversations with last message preview,
     timestamp, and unread count.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -290,12 +286,11 @@ async def listar_mensagens(
     phone: str = Query(..., description="Phone number to fetch messages for"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Retrieve messages for a specific phone number, ordered chronologically, with pagination.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -321,14 +316,13 @@ async def historico_mensagens(
     phone: str,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Retrieve message history for a specific phone number.
 
     Returns paginated message history ordered by most recent first.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(

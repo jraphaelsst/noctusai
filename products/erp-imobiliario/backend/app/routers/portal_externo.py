@@ -22,7 +22,7 @@ import secrets
 from typing import Optional, Literal
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, HTTPException, Header, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
@@ -80,9 +80,9 @@ def _validate_token(token: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.post("/gerar-link")
-async def gerar_link(body: GerarLinkBody, authorization: Optional[str] = Header(None)):
+async def gerar_link(body: GerarLinkBody, auth = Depends(get_current_user)):
     """Gera um link de acesso ao portal para proprietário ou locatário. Requer autenticação."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Generate secure token
@@ -117,10 +117,9 @@ async def gerar_link(body: GerarLinkBody, authorization: Optional[str] = Header(
 async def listar_tokens(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Lista todos os tokens de portal gerados (requer autenticação)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -138,9 +137,9 @@ async def listar_tokens(
 
 
 @router.delete("/tokens/{token_id}")
-async def revogar_token(token_id: str, authorization: Optional[str] = Header(None)):
+async def revogar_token(token_id: str, auth = Depends(get_current_user)):
     """Revoga (desativa) um token de portal."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("portal_tokens").update(

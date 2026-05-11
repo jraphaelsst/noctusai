@@ -5,7 +5,7 @@ Submit, list, and check status of background jobs.
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_org_id
 from app.services.job_service import submit_job, get_job, list_jobs
@@ -23,10 +23,9 @@ class JobSubmitRequest(BaseModel):
 @router.post("/submit")
 async def submit_background_job(
     body: JobSubmitRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Submit a new background job."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     org_id = get_org_id(user)
 
     job = submit_job(body.name, org_id, body.params)
@@ -37,10 +36,9 @@ async def submit_background_job(
 @router.get("/{job_id}")
 async def get_job_status(
     job_id: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get the status of a background job."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     org_id = get_org_id(user)
 
     job = get_job(job_id)
@@ -54,10 +52,9 @@ async def get_job_status(
 
 @router.get("")
 async def listar_jobs(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List recent background jobs for the org."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     org_id = get_org_id(user)
 
     jobs = list_jobs(org_id)

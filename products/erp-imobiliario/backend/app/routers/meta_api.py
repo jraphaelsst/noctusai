@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 
 from noctusai_lib.security.webhook_signatures import (
@@ -83,9 +83,9 @@ class MetaConfigCreate(BaseModel):
 # ── Config Endpoints ─────────────────────────────────────────────────
 
 @router.get("/config")
-async def obter_config(authorization: Optional[str] = Header(None)):
+async def obter_config(auth = Depends(get_current_user)):
     """Get Meta API configuration for the org."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
 
     result = sb.table("meta_config").select("*").execute()
@@ -101,10 +101,9 @@ async def obter_config(authorization: Optional[str] = Header(None)):
 @router.post("/config")
 async def salvar_config(
     body: MetaConfigCreate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Save or update Meta API configuration."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -129,13 +128,12 @@ async def salvar_config(
 
 @router.get("/leads")
 async def listar_leads(
-    authorization: Optional[str] = Header(None),
-    page: int = Query(1, ge=1),
+    auth = Depends(get_current_user), page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     importado: Optional[bool] = None,
 ):
     """List imported leads from Facebook Lead Ads."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
 
     query = sb.table("meta_leads").select("*", count="exact")
@@ -151,11 +149,10 @@ async def listar_leads(
 
 @router.post("/leads/sync")
 async def sincronizar_leads(
-    authorization: Optional[str] = Header(None),
-    form_id: Optional[str] = Query(None),
+    auth = Depends(get_current_user), form_id: Optional[str] = Query(None),
 ):
     """Sync leads from Facebook Lead Ads."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -206,10 +203,9 @@ async def sincronizar_leads(
 @router.post("/leads/{lead_id}/importar")
 async def importar_lead_como_cliente(
     lead_id: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Import a Meta lead as a CRM client."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -253,12 +249,11 @@ async def importar_lead_como_cliente(
 
 @router.get("/campanhas")
 async def listar_campanhas(
-    authorization: Optional[str] = Header(None),
-    page: int = Query(1, ge=1),
+    auth = Depends(get_current_user), page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     """List synced ad campaigns with metrics."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
 
     query = (
@@ -273,9 +268,9 @@ async def listar_campanhas(
 
 
 @router.post("/campanhas/sync")
-async def sincronizar_campanhas(authorization: Optional[str] = Header(None)):
+async def sincronizar_campanhas(auth = Depends(get_current_user)):
     """Sync campaign data from Facebook Ads Manager."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
     org_id = get_org_id(user)
 

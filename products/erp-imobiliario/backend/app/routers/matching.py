@@ -10,7 +10,7 @@ PATCH  /api/matching/{id}           — Update match status
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header
 
 from app.dependencies import get_current_user, get_user_client, get_org_id, first_or_none
 from app.responses import success_response
@@ -62,10 +62,10 @@ def _match_single_ativo(ativo: dict, db) -> list[dict]:
 
 
 @router.post("/gerar")
-async def gerar_matches(body: GerarMatchesRequest, authorization: Optional[str] = Header(None)):
+async def gerar_matches(body: GerarMatchesRequest, auth = Depends(get_current_user)):
     """Generate matches automatically. Tries embedding-based first, falls back to rule-based.
     When both IDs are empty, performs a full platform scan."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     matches = []
@@ -100,9 +100,9 @@ async def gerar_matches(body: GerarMatchesRequest, authorization: Optional[str] 
 
 
 @router.post("/embed")
-async def embed_ativo(body: EmbedRequest, authorization: Optional[str] = Header(None)):
+async def embed_ativo(body: EmbedRequest, auth = Depends(get_current_user)):
     """Generate embedding for a single ativo."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     if not check_openai_configured(get_org_id(user)):
         raise HTTPException(
             status_code=422,
@@ -130,9 +130,9 @@ async def embed_ativo(body: EmbedRequest, authorization: Optional[str] = Header(
 
 
 @router.post("/embed-batch")
-async def embed_batch(authorization: Optional[str] = Header(None)):
+async def embed_batch(auth = Depends(get_current_user)):
     """Batch embed all ativos without embeddings."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     if not check_openai_configured(get_org_id(user)):
         raise HTTPException(
             status_code=422,
@@ -162,9 +162,9 @@ _ATIVO_SUMMARY_FIELDS = "id,natureza,tipo_imovel,tipo_veiculo,marca,modelo,valor
 
 
 @router.get("/counts")
-async def match_counts(authorization: Optional[str] = Header(None)):
+async def match_counts(auth = Depends(get_current_user)):
     """Return match counts per ativo_destino_id (lightweight aggregation)."""
-    _, token = await get_current_user(authorization)
+    _, token = auth
     db = get_user_client(token)
 
     result = db.table("matches").select("ativo_destino_id").execute()
@@ -181,10 +181,9 @@ async def listar_matches(
     ativo_origem_id: Optional[str] = None,
     ativo_destino_id: Optional[str] = None,
     status: Optional[str] = None,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List persisted matches with optional filters, enriched with ativo summaries."""
-    _, token = await get_current_user(authorization)
+    _, token = auth
     db = get_user_client(token)
 
     query = db.table("matches").select("*").order("score", desc=True)
@@ -222,10 +221,9 @@ async def listar_matches(
 async def atualizar_status_match(
     match_id: str,
     body: AtualizarStatusRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update match status (aceito, rejeitado)."""
-    _, token = await get_current_user(authorization)
+    _, token = auth
     db = get_user_client(token)
 
     valid_statuses = {"aceito", "rejeitado", "pendente", "expirado"}

@@ -3,11 +3,12 @@ Ativos CRUD Router — Unified table for imóveis + permutas.
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ativos", tags=["Ativos"])
@@ -143,9 +144,8 @@ async def listar_ativos(
     busca: Optional[str] = Query(None),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     # Calculate pagination
@@ -200,8 +200,8 @@ async def listar_ativos(
 
 
 @router.get("/{ativo_id}")
-async def obter_ativo(ativo_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def obter_ativo(ativo_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("ativos").select("*").eq("id", ativo_id).single().execute()
@@ -211,8 +211,8 @@ async def obter_ativo(ativo_id: str, authorization: Optional[str] = Header(None)
 
 
 @router.post("")
-async def criar_ativo(body: AtivoCreate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def criar_ativo(body: AtivoCreate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     # natureza is validated by Pydantic Literal type
@@ -262,8 +262,8 @@ async def criar_ativo(body: AtivoCreate, authorization: Optional[str] = Header(N
 
 
 @router.patch("/{ativo_id}")
-async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -309,15 +309,11 @@ async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optio
 
 
 @router.delete("/{ativo_id}")
-async def excluir_ativo(ativo_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def excluir_ativo(ativo_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("ativos").select("id").eq("id", ativo_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Ativo não encontrado")
-
-    db.table("ativos").delete().eq("id", ativo_id).execute()
+    delete_or_404(db, "ativos", ("id", ativo_id), message = "Ativo não encontrado")
 
     # Clean up orphaned matches
     try:

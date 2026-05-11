@@ -6,7 +6,7 @@ inspection images, and other file types.
 """
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Header, UploadFile
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action
 from app.services.storage_service import StorageService
 from app.responses import success_response, ok_response
@@ -19,10 +19,9 @@ router = APIRouter(prefix="/api/storage", tags=["storage"])
 async def upload_file(
     file: UploadFile = File(...),
     categoria: str = Form(default="geral"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Upload a single file to Supabase Storage."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -46,10 +45,9 @@ async def upload_file(
 async def upload_multiple_files(
     files: List[UploadFile] = File(...),
     categoria: str = Form(default="geral"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Upload multiple files at once."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -78,10 +76,9 @@ async def upload_multiple_files(
 async def delete_file(
     path: str,
     categoria: str = "geral",
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Delete a file from storage."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 

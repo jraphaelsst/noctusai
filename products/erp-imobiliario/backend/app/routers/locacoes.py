@@ -25,13 +25,14 @@ import logging
 from typing import Optional, Literal
 from datetime import date
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.locacoes_service import calculate_reajuste
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/locacoes", tags=["Locações"])
@@ -83,10 +84,9 @@ async def listar_contratos(
     status: Optional[str] = Query(None, description="Filtrar por status"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List lease contracts with optional status filter."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -111,9 +111,9 @@ async def listar_contratos(
 
 
 @router.post("")
-async def criar_contrato(body: ContratoCreate, authorization: Optional[str] = Header(None)):
+async def criar_contrato(body: ContratoCreate, auth = Depends(get_current_user)):
     """Create a new lease contract."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Validate dates
@@ -139,9 +139,9 @@ async def criar_contrato(body: ContratoCreate, authorization: Optional[str] = He
 
 
 @router.get("/{contrato_id}")
-async def obter_contrato(contrato_id: str, authorization: Optional[str] = Header(None)):
+async def obter_contrato(contrato_id: str, auth = Depends(get_current_user)):
     """Get a single lease contract by ID."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("contratos_locacao").select("*").eq(
@@ -156,10 +156,9 @@ async def obter_contrato(contrato_id: str, authorization: Optional[str] = Header
 async def atualizar_contrato(
     contrato_id: str,
     body: ContratoUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update a lease contract."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -179,16 +178,12 @@ async def atualizar_contrato(
 
 
 @router.delete("/{contrato_id}")
-async def excluir_contrato(contrato_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_contrato(contrato_id: str, auth = Depends(get_current_user)):
     """Delete a lease contract."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("contratos_locacao").select("id").eq("id", contrato_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Contrato de locação não encontrado")
-
-    db.table("contratos_locacao").delete().eq("id", contrato_id).execute()
+    delete_or_404(db, "contratos_locacao", ("id", contrato_id), message = "Contrato de locação não encontrado")
     log_action(user.id, "excluir", "contrato_locacao", contrato_id,
                f"Excluiu contrato {contrato_id}")
     return ok_response("Contrato de locação excluído com sucesso")
@@ -198,15 +193,14 @@ async def excluir_contrato(contrato_id: str, authorization: Optional[str] = Head
 async def aplicar_reajuste(
     contrato_id: str,
     body: ReajusteRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Calculate or apply a rent adjustment.
 
     If `aplicar` is False (default), returns a preview.
     If `aplicar` is True, updates the contract's valor_aluguel.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     contrato_res = db.table("contratos_locacao").select("*").eq(
@@ -241,15 +235,14 @@ async def aplicar_reajuste(
 async def renovar_contrato(
     contrato_id: str,
     body: RenovarRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Renew a lease contract.
 
     Sets the current contract's status to 'renovado' and creates a new
     contract with the extended end date.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     contrato_res = db.table("contratos_locacao").select("*").eq(

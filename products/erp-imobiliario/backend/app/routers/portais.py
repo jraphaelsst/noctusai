@@ -6,7 +6,7 @@ Provides endpoints to generate XML feeds for major Brazilian real estate portals
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
@@ -47,12 +47,11 @@ class TogglePortalRequest(BaseModel):
 
 @router.get("/feeds")
 async def listar_feeds(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     List available portal feeds with their URLs and current property count.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Count portal-ready properties
@@ -78,8 +77,7 @@ async def listar_feeds(
 @router.get("/feed/{portal}")
 async def gerar_feed(
     portal: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Generate the XML feed for a specific portal.
 
@@ -91,8 +89,7 @@ async def gerar_feed(
             status_code=400,
             detail=f"Portal invalido. Portais disponiveis: {', '.join(PORTAL_GENERATORS.keys())}"
         )
-
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Fetch portal-ready properties
@@ -120,15 +117,14 @@ async def gerar_feed(
 async def toggle_portal(
     imovel_id: str,
     body: TogglePortalRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Toggle the portal publishing status for a specific property.
 
     Sets pronto_para_portais to True/False, controlling whether
     the property appears in generated XML feeds.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Verify property exists and is an imovel
@@ -160,16 +156,14 @@ async def listar_imoveis_portal(
     pronto_para_portais: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     List properties with their portal readiness status.
     Useful for managing which properties appear in feeds.
     """
     from app.responses import paginated_response, calculate_pagination
     from app.config import settings
-
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(

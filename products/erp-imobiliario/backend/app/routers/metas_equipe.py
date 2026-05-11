@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, log_action
@@ -34,16 +34,15 @@ async def listar(
     periodo_id: Optional[str] = None,
     equipe_id: Optional[str] = None,
     categoria: Optional[str] = None,
-    authorization: Optional[str] = Header(None),
-):
-    _, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    _, token = auth
     db = get_user_client(token)
     return success_response(svc.listar_metas_equipe(db, periodo_id=periodo_id, equipe_id=equipe_id, categoria=categoria))
 
 
 @router.post("", status_code=201)
-async def upsert(body: MetaEquipeUpsert, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def upsert(body: MetaEquipeUpsert, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         meta = svc.upsert_meta_equipe(
@@ -69,9 +68,8 @@ async def resumo(
     equipe_id: str = Query(...),
     periodo_id: str = Query(...),
     categoria: str = Query("vgv"),
-    authorization: Optional[str] = Header(None),
-):
-    _, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    _, token = auth
     db = get_user_client(token)
     return success_response(svc.resumo_cascata_equipe(
         db, equipe_id=equipe_id, periodo_id=periodo_id, categoria=categoria
@@ -79,8 +77,8 @@ async def resumo(
 
 
 @router.delete("/{meta_id}")
-async def deletar(meta_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def deletar(meta_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         svc.deletar_meta_equipe(db, meta_id)

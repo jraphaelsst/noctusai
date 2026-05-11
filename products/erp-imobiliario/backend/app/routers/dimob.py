@@ -3,7 +3,7 @@ DIMOB Tax Compliance Router — generate DIMOB XML for Receita Federal.
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import Response
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action
 from app.responses import success_response
@@ -16,10 +16,9 @@ router = APIRouter(prefix="/api/dimob", tags=["DIMOB"])
 @router.get("/preview")
 async def preview(
     ano: int = Query(..., ge=2000, le=2100, description="Ano de referência"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Preview DIMOB data for a given year before generating XML."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     org_id = get_org_id(user)
@@ -31,10 +30,9 @@ async def preview(
 @router.get("/validate")
 async def validate(
     ano: int = Query(..., ge=2000, le=2100, description="Ano de referência"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Validate data completeness for DIMOB generation."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     org_id = get_org_id(user)
@@ -52,10 +50,9 @@ async def validate(
 @router.post("/generate")
 async def generate(
     ano: int = Query(..., ge=2000, le=2100, description="Ano de referência"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Generate DIMOB XML file for download."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     org_id = get_org_id(user)

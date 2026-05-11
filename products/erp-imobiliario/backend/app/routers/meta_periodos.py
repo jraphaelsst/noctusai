@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import (
@@ -64,9 +64,8 @@ class PreviewBody(BaseModel):
 @router.get("")
 async def listar(
     tipo: Optional[TipoLiteral] = None,
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
     periodos = svc.listar_periodos(db, org_id=org_id, tipo=tipo)
@@ -74,8 +73,8 @@ async def listar(
 
 
 @router.post("", status_code=201)
-async def criar(body: PeriodoCreate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def criar(body: PeriodoCreate, auth = Depends(get_current_user)):
+    user, token = auth
     org_id = get_org_id(user, required=True)
     db = get_user_client(token)
     try:
@@ -98,9 +97,8 @@ async def criar(body: PeriodoCreate, authorization: Optional[str] = Header(None)
 
 
 @router.post("/preview")
-async def preview_trimestre(body: PreviewBody, authorization: Optional[str] = Header(None)):
+async def preview_trimestre(body: PreviewBody, _ = Depends(get_current_user)):
     """Return the structure that auto-generate would create — no DB writes."""
-    await get_current_user(authorization)
     try:
         plan = svc.plan_trimestre_structure(body.year, body.quarter)
     except ValueError as e:
@@ -109,9 +107,9 @@ async def preview_trimestre(body: PreviewBody, authorization: Optional[str] = He
 
 
 @router.post("/auto-generate", status_code=201)
-async def auto_generate(body: AutoGenerateBody, authorization: Optional[str] = Header(None)):
+async def auto_generate(body: AutoGenerateBody, auth = Depends(get_current_user)):
     """Create (or reuse) the trimestral + 3 mensal + 6 quinzenal chain for a quarter."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     org_id = get_org_id(user, required=True)
     db = get_user_client(token)
     try:
@@ -130,8 +128,8 @@ async def auto_generate(body: AutoGenerateBody, authorization: Optional[str] = H
 
 
 @router.get("/{periodo_id}")
-async def obter(periodo_id: str, authorization: Optional[str] = Header(None)):
-    _, token = await get_current_user(authorization)
+async def obter(periodo_id: str, auth = Depends(get_current_user)):
+    _, token = auth
     db = get_user_client(token)
     periodo = svc.obter_periodo(db, periodo_id)
     if not periodo:
@@ -143,9 +141,8 @@ async def obter(periodo_id: str, authorization: Optional[str] = Header(None)):
 async def atualizar(
     periodo_id: str,
     body: PeriodoUpdate,
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         periodo = svc.atualizar_periodo(db, periodo_id, body.model_dump(exclude_none=True))
@@ -158,8 +155,8 @@ async def atualizar(
 
 
 @router.delete("/{periodo_id}")
-async def deletar(periodo_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def deletar(periodo_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         svc.deletar_periodo(db, periodo_id)

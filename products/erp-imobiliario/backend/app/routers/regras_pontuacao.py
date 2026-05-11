@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import (
@@ -55,9 +55,8 @@ async def listar(
     evento_tipo: Optional[EventoLiteral] = None,
     periodo_id: Optional[str] = None,
     incluir_defaults: bool = True,
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     regras = svc.listar_regras(
         db,
@@ -74,10 +73,9 @@ async def resolve(
     evento_tipo: EventoLiteral = Query(...),
     modalidade: ModalidadeLiteral = Query("padrao"),
     periodo_id: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Return the winning rule for the tuple — the same resolution triggers use."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     rule = svc.resolve_rule(
         db,
@@ -92,9 +90,9 @@ async def resolve(
 
 
 @router.post("", status_code=201)
-async def upsert(body: RegraUpsert, authorization: Optional[str] = Header(None)):
+async def upsert(body: RegraUpsert, auth = Depends(get_current_user)):
     """Upsert a point rule. Omit `vigencia_periodo_id` for an org default."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user, required=True) if body.org_scope else None
     try:
@@ -120,9 +118,8 @@ async def upsert(body: RegraUpsert, authorization: Optional[str] = Header(None))
 async def atualizar(
     regra_id: str,
     body: RegraUpdate,
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         regra = svc.atualizar_regra(db, regra_id, body.model_dump(exclude_none=True))
@@ -135,8 +132,8 @@ async def atualizar(
 
 
 @router.delete("/{regra_id}")
-async def deletar(regra_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def deletar(regra_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         svc.deletar_regra(db, regra_id)

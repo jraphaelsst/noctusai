@@ -28,7 +28,7 @@ Comissoes CRUD Router — Commission management for real estate sales.
 """
 import logging
 from typing import Optional, Literal, List
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
@@ -67,10 +67,9 @@ class ComissaoStatusUpdate(BaseModel):
 
 @router.get("/resumo")
 async def resumo_comissoes(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get commission summary: totals by status and per agent."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Total by status
@@ -114,10 +113,9 @@ async def listar_comissoes(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List commissions with optional status filter and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -160,9 +158,9 @@ async def listar_comissoes(
 
 
 @router.get("/{comissao_id}")
-async def obter_comissao(comissao_id: str, authorization: Optional[str] = Header(None)):
+async def obter_comissao(comissao_id: str, auth = Depends(get_current_user)):
     """Get a single commission with its splits."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("comissoes").select("*").eq("id", comissao_id).single().execute()
@@ -181,9 +179,9 @@ async def obter_comissao(comissao_id: str, authorization: Optional[str] = Header
 
 
 @router.post("")
-async def criar_comissao(body: ComissaoCreate, authorization: Optional[str] = Header(None)):
+async def criar_comissao(body: ComissaoCreate, auth = Depends(get_current_user)):
     """Create a new commission with optional splits."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Calculate commission value
@@ -250,10 +248,9 @@ async def criar_comissao(body: ComissaoCreate, authorization: Optional[str] = He
 async def atualizar_comissao(
     comissao_id: str,
     body: ComissaoStatusUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update commission status (and optionally payment date/notes)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     update_data = {"status": body.status}
@@ -279,9 +276,9 @@ async def atualizar_comissao(
 
 
 @router.delete("/{comissao_id}")
-async def excluir_comissao(comissao_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_comissao(comissao_id: str, auth = Depends(get_current_user)):
     """Delete a commission and its splits (cascade)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Verify it exists

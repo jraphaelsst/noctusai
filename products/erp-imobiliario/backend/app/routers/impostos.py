@@ -26,12 +26,13 @@ and annual summaries per property.
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.impostos_service import ImpostosService
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/impostos", tags=["Impostos"])
@@ -80,10 +81,9 @@ async def listar_impostos(
     status: Optional[str] = Query(None, description="Filtrar por status"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List tax records with filters and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -127,10 +127,9 @@ async def listar_impostos(
 async def resumo_impostos(
     ano: Optional[int] = Query(None, description="Ano de referência"),
     imovel_id: Optional[str] = Query(None, description="Filtrar por imóvel"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get annual tax summary: total due, paid, pending, overdue by year or property."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = ImpostosService(db, user.id)
@@ -156,9 +155,9 @@ async def resumo_impostos(
 
 
 @router.get("/{imposto_id}")
-async def obter_imposto(imposto_id: str, authorization: Optional[str] = Header(None)):
+async def obter_imposto(imposto_id: str, auth = Depends(get_current_user)):
     """Get a single tax record by ID."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("impostos").select("*").eq("id", imposto_id).single().execute()
@@ -168,9 +167,9 @@ async def obter_imposto(imposto_id: str, authorization: Optional[str] = Header(N
 
 
 @router.post("")
-async def criar_imposto(body: ImpostoCreate, authorization: Optional[str] = Header(None)):
+async def criar_imposto(body: ImpostoCreate, auth = Depends(get_current_user)):
     """Create a new tax record."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -190,10 +189,9 @@ async def criar_imposto(body: ImpostoCreate, authorization: Optional[str] = Head
 async def atualizar_imposto(
     imposto_id: str,
     body: ImpostoUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update an existing tax record (mark paid, add receipt, update installment)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -212,16 +210,12 @@ async def atualizar_imposto(
 
 
 @router.delete("/{imposto_id}")
-async def excluir_imposto(imposto_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_imposto(imposto_id: str, auth = Depends(get_current_user)):
     """Delete a tax record."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("impostos").select("id").eq("id", imposto_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Imposto não encontrado")
-
-    db.table("impostos").delete().eq("id", imposto_id).execute()
+    delete_or_404(db, "impostos", ("id", imposto_id), message = "Imposto não encontrado")
 
     log_action(user.id, "excluir", "imposto", imposto_id,
                f"Excluiu imposto {imposto_id}")

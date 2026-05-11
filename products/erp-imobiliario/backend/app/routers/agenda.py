@@ -22,12 +22,13 @@ Agent Calendar / Agenda Router — event scheduling for corretores.
 import logging
 from typing import Optional, Literal
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.agenda_service import check_conflict
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agenda", tags=["Agenda"])
@@ -101,10 +102,9 @@ async def listar_eventos(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List events with optional date range and corretor filters."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -147,9 +147,9 @@ async def listar_eventos(
 
 
 @router.post("")
-async def criar_evento(body: EventoCreate, authorization: Optional[str] = Header(None)):
+async def criar_evento(body: EventoCreate, auth = Depends(get_current_user)):
     """Create a new calendar event. Warns if conflict detected."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Detect scheduling conflict
@@ -178,9 +178,9 @@ async def criar_evento(body: EventoCreate, authorization: Optional[str] = Header
 
 
 @router.get("/hoje")
-async def eventos_hoje(authorization: Optional[str] = Header(None)):
+async def eventos_hoje(auth = Depends(get_current_user)):
     """Get today's events for the current user."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     start, end = _today_range_sp()
@@ -195,9 +195,9 @@ async def eventos_hoje(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/semana")
-async def eventos_semana(authorization: Optional[str] = Header(None)):
+async def eventos_semana(auth = Depends(get_current_user)):
     """Get this week's events for the current user."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     start, end = _week_range_sp()
@@ -212,9 +212,9 @@ async def eventos_semana(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{evento_id}")
-async def obter_evento(evento_id: str, authorization: Optional[str] = Header(None)):
+async def obter_evento(evento_id: str, auth = Depends(get_current_user)):
     """Get a single event."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("eventos").select("*").eq("id", evento_id).single().execute()
@@ -226,10 +226,9 @@ async def obter_evento(evento_id: str, authorization: Optional[str] = Header(Non
 
 @router.patch("/{evento_id}")
 async def atualizar_evento(
-    evento_id: str, body: EventoUpdate, authorization: Optional[str] = Header(None)
-):
+    evento_id: str, body: EventoUpdate, auth = Depends(get_current_user)):
     """Update an event. Warns if new time causes conflict."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -269,15 +268,11 @@ async def atualizar_evento(
 
 
 @router.delete("/{evento_id}")
-async def excluir_evento(evento_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_evento(evento_id: str, auth = Depends(get_current_user)):
     """Delete an event."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("eventos").select("id").eq("id", evento_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Evento não encontrado")
-
-    db.table("eventos").delete().eq("id", evento_id).execute()
+    delete_or_404(db, "eventos", ("id", evento_id), message = "Evento não encontrado")
     log_action(user.id, "excluir", "evento", evento_id, f"Excluiu evento {evento_id}")
     return ok_response("Evento excluído com sucesso")

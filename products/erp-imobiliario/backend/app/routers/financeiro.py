@@ -30,12 +30,13 @@ from datetime import datetime, timezone
 from noctusai_lib.primitives.timeutil import now_utc
 from dateutil.relativedelta import relativedelta
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.financeiro_service import FinanceiroService
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/financeiro", tags=["Financeiro"])
@@ -86,10 +87,9 @@ async def listar_lancamentos(
     categoria: Optional[str] = Query(None, description="Filtrar por categoria"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List financial transactions with filters and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -137,10 +137,9 @@ async def listar_lancamentos(
 async def resumo_financeiro(
     data_inicio: Optional[str] = Query(None, description="Data início (YYYY-MM-DD)"),
     data_fim: Optional[str] = Query(None, description="Data fim (YYYY-MM-DD)"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get financial summary: total receitas, despesas, saldo, and overdue count."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = FinanceiroService(db, user.id)
@@ -171,10 +170,9 @@ async def resumo_financeiro(
 @router.get("/fluxo-caixa")
 async def fluxo_caixa(
     meses: int = Query(12, ge=1, le=24, description="Número de meses"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get cash flow by month for the last N months."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = FinanceiroService(db, user.id)
@@ -196,9 +194,9 @@ async def fluxo_caixa(
 
 
 @router.get("/{lancamento_id}")
-async def obter_lancamento(lancamento_id: str, authorization: Optional[str] = Header(None)):
+async def obter_lancamento(lancamento_id: str, auth = Depends(get_current_user)):
     """Get a single financial transaction by ID."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("lancamentos").select("*").eq("id", lancamento_id).single().execute()
@@ -208,9 +206,9 @@ async def obter_lancamento(lancamento_id: str, authorization: Optional[str] = He
 
 
 @router.post("")
-async def criar_lancamento(body: LancamentoCreate, authorization: Optional[str] = Header(None)):
+async def criar_lancamento(body: LancamentoCreate, auth = Depends(get_current_user)):
     """Create a new financial transaction."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -230,10 +228,9 @@ async def criar_lancamento(body: LancamentoCreate, authorization: Optional[str] 
 async def atualizar_lancamento(
     lancamento_id: str,
     body: LancamentoUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update an existing financial transaction."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -252,16 +249,12 @@ async def atualizar_lancamento(
 
 
 @router.delete("/{lancamento_id}")
-async def excluir_lancamento(lancamento_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_lancamento(lancamento_id: str, auth = Depends(get_current_user)):
     """Delete a financial transaction."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("lancamentos").select("id").eq("id", lancamento_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
-
-    db.table("lancamentos").delete().eq("id", lancamento_id).execute()
+    delete_or_404(db, "lancamentos", ("id", lancamento_id), message = "Lançamento não encontrado")
 
     log_action(user.id, "excluir", "lancamento", lancamento_id,
                f"Excluiu lançamento {lancamento_id}")

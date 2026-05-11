@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 
 from app.dependencies import get_current_user, get_org_id
@@ -74,9 +74,9 @@ TESTABLE_KEYS = set(_TESTERS.keys())
 # --------------- Endpoint ---------------
 
 @router.post("/testar-credencial/{key}")
-async def testar_credencial(key: str, authorization: Optional[str] = Header(None)):
+async def testar_credencial(key: str, auth = Depends(get_current_user)):
     """Test if a configured credential is valid by making a lightweight API call."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     org_id = get_org_id(user)
 
     if key not in _TESTERS:

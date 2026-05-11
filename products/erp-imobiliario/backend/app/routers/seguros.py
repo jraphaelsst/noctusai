@@ -23,7 +23,7 @@ Seguros (Insurance) Router — Manages insurance policies for properties.
 import logging
 from typing import Optional, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
@@ -81,10 +81,9 @@ async def listar_seguros(
     seguradora: Optional[str] = Query(None, description="Filtrar por seguradora"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List insurance policies with optional filters and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -132,10 +131,9 @@ async def listar_seguros(
 @router.get("/vencimentos")
 async def listar_vencimentos(
     dias: int = Query(30, ge=1, le=365, description="Dias à frente para verificar vencimentos"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List policies expiring in the next N days."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = SegurosService(db, user.id)
@@ -145,9 +143,9 @@ async def listar_vencimentos(
 
 
 @router.get("/{seguro_id}")
-async def obter_seguro(seguro_id: str, authorization: Optional[str] = Header(None)):
+async def obter_seguro(seguro_id: str, auth = Depends(get_current_user)):
     """Get a single insurance policy by ID."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("seguros").select("*").eq("id", seguro_id).single().execute()
@@ -158,9 +156,9 @@ async def obter_seguro(seguro_id: str, authorization: Optional[str] = Header(Non
 
 
 @router.post("")
-async def criar_seguro(body: SeguroCreate, authorization: Optional[str] = Header(None)):
+async def criar_seguro(body: SeguroCreate, auth = Depends(get_current_user)):
     """Create a new insurance policy."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Validate dates
@@ -196,10 +194,9 @@ async def criar_seguro(body: SeguroCreate, authorization: Optional[str] = Header
 async def atualizar_seguro(
     seguro_id: str,
     body: SeguroUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update an insurance policy."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -222,9 +219,9 @@ async def atualizar_seguro(
 
 
 @router.delete("/{seguro_id}")
-async def excluir_seguro(seguro_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_seguro(seguro_id: str, auth = Depends(get_current_user)):
     """Delete an insurance policy."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Verify it exists

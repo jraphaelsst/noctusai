@@ -16,7 +16,7 @@ configuration and agent queues.
 import logging
 from typing import Optional, Literal, List, Dict, Any
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
@@ -46,9 +46,9 @@ class AtribuirRequest(BaseModel):
 # --------------- Endpoints ---------------
 
 @router.get("/config")
-async def obter_config(authorization: Optional[str] = Header(None)):
+async def obter_config(auth = Depends(get_current_user)):
     """Get the distribution configuration for the current org."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("distribuicao_config").select("*").execute()
@@ -66,9 +66,9 @@ async def obter_config(authorization: Optional[str] = Header(None)):
 
 
 @router.patch("/config")
-async def atualizar_config(body: ConfigUpdate, authorization: Optional[str] = Header(None)):
+async def atualizar_config(body: ConfigUpdate, auth = Depends(get_current_user)):
     """Update the distribution configuration (mode, active agents, rules)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -98,14 +98,14 @@ async def atualizar_config(body: ConfigUpdate, authorization: Optional[str] = He
 
 
 @router.post("/atribuir")
-async def atribuir_lead(body: AtribuirRequest, authorization: Optional[str] = Header(None)):
+async def atribuir_lead(body: AtribuirRequest, auth = Depends(get_current_user)):
     """
     Assign a lead to an agent.
 
     If `corretor_id` is provided, assigns manually.
     If omitted, uses the auto-assign logic based on the org's config.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     if body.corretor_id:
@@ -145,12 +145,12 @@ async def atribuir_lead(body: AtribuirRequest, authorization: Optional[str] = He
 
 
 @router.get("/fila")
-async def obter_fila(authorization: Optional[str] = Header(None)):
+async def obter_fila(auth = Depends(get_current_user)):
     """
     Get current queue/next agent info for the org.
     Shows active agents and who is next in line.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     config_res = db.table("distribuicao_config").select("*").execute()

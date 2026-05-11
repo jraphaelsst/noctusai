@@ -23,7 +23,7 @@ import re
 from typing import Optional, Literal
 from datetime import date
 
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
@@ -69,9 +69,9 @@ class AtualizarAnaliseBody(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/consultar")
-async def consultar_credito(body: ConsultaCreditoBody, authorization: Optional[str] = Header(None)):
+async def consultar_credito(body: ConsultaCreditoBody, auth = Depends(get_current_user)):
     """Inicia uma consulta de crédito para uma pessoa (CPF)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Import the service for credit analysis
@@ -120,9 +120,9 @@ async def consultar_credito(body: ConsultaCreditoBody, authorization: Optional[s
 
 
 @router.get("/{analise_id}")
-async def obter_analise(analise_id: str, authorization: Optional[str] = Header(None)):
+async def obter_analise(analise_id: str, auth = Depends(get_current_user)):
     """Retorna o resultado de uma análise de crédito específica."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("analises_credito").select("*").eq("id", analise_id).single().execute()
@@ -133,9 +133,9 @@ async def obter_analise(analise_id: str, authorization: Optional[str] = Header(N
 
 
 @router.patch("/{analise_id}")
-async def atualizar_analise(analise_id: str, body: AtualizarAnaliseBody, authorization: Optional[str] = Header(None)):
+async def atualizar_analise(analise_id: str, body: AtualizarAnaliseBody, auth = Depends(get_current_user)):
     """Atualiza o status ou resultado de uma análise de crédito."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -160,10 +160,9 @@ async def listar_analises(
     cliente_id: Optional[str] = Query(None, description="Filtrar por cliente"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Lista análises de crédito com filtros opcionais."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(

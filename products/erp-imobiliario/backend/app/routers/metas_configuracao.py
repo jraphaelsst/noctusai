@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 
 from app.dependencies import (
@@ -33,16 +33,16 @@ class ConfigUpsert(BaseModel):
 
 
 @router.get("")
-async def obter(authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def obter(auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user, required=True)
     return success_response(svc.obter_configuracao(db, org_id))
 
 
 @router.put("")
-async def upsert(body: ConfigUpsert, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def upsert(body: ConfigUpsert, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user, required=True)
     try:

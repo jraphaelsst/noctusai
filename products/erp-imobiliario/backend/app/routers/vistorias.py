@@ -22,7 +22,7 @@ checklists, and photo documentation.
 import logging
 from typing import Optional, Literal, List, Any
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
@@ -33,6 +33,7 @@ from app.services.vistorias_service import (
     validate_checklist,
     summarise_checklist,
 )
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vistorias", tags=["Vistorias"])
@@ -82,10 +83,9 @@ async def listar_vistorias(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List inspections with optional filters."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -118,9 +118,9 @@ async def listar_vistorias(
 
 
 @router.post("")
-async def criar_vistoria(body: VistoriaCreate, authorization: Optional[str] = Header(None)):
+async def criar_vistoria(body: VistoriaCreate, auth = Depends(get_current_user)):
     """Create a new property inspection."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -147,16 +147,15 @@ async def criar_vistoria(body: VistoriaCreate, authorization: Optional[str] = He
 
 
 @router.get("/template-checklist")
-async def obter_template_checklist(authorization: Optional[str] = Header(None)):
+async def obter_template_checklist(_ = Depends(get_current_user)):
     """Return the default checklist template."""
-    await get_current_user(authorization)
     return success_response(get_default_checklist())
 
 
 @router.get("/{vistoria_id}")
-async def obter_vistoria(vistoria_id: str, authorization: Optional[str] = Header(None)):
+async def obter_vistoria(vistoria_id: str, auth = Depends(get_current_user)):
     """Get a single inspection by ID, including checklist summary."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("vistorias").select("*").eq("id", vistoria_id).single().execute()
@@ -173,10 +172,9 @@ async def obter_vistoria(vistoria_id: str, authorization: Optional[str] = Header
 async def atualizar_vistoria(
     vistoria_id: str,
     body: VistoriaUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update an inspection (status, checklist, photos, etc.)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -202,16 +200,12 @@ async def atualizar_vistoria(
 
 
 @router.delete("/{vistoria_id}")
-async def excluir_vistoria(vistoria_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_vistoria(vistoria_id: str, auth = Depends(get_current_user)):
     """Delete an inspection."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("vistorias").select("id").eq("id", vistoria_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Vistoria não encontrada")
-
-    db.table("vistorias").delete().eq("id", vistoria_id).execute()
+    delete_or_404(db, "vistorias", ("id", vistoria_id), message = "Vistoria não encontrada")
     log_action(user.id, "excluir", "vistoria", vistoria_id,
                f"Excluiu vistoria {vistoria_id}")
     return ok_response("Vistoria excluída com sucesso")
@@ -221,10 +215,9 @@ async def excluir_vistoria(vistoria_id: str, authorization: Optional[str] = Head
 async def adicionar_fotos(
     vistoria_id: str,
     body: FotosRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Add photos to an existing inspection (appends to existing array)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Get current photos

@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from pydantic import BaseModel, Field
 
 from noctusai_lib.security.webhook_signatures import (
@@ -189,9 +189,9 @@ async def _handle_ack(admin, org_id: str, payload: dict) -> dict:
 # ── WAHA Session Management (authenticated) ─────────────────────────
 
 @router.get("/sessions")
-async def listar_sessions(authorization: Optional[str] = Header(None)):
+async def listar_sessions(auth = Depends(get_current_user)):
     """List WAHA sessions for the org."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
 
     result = (
@@ -207,13 +207,12 @@ async def listar_sessions(authorization: Optional[str] = Header(None)):
 @router.post("/sessions/start")
 async def iniciar_session(
     body: WAHASessionRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Start a WAHA session (sends request to WAHA API).
     Requires WAHA config to be set up for the org.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     sb = get_user_client(token)
 
     config_result = (

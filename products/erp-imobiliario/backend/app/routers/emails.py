@@ -31,12 +31,13 @@ Emails CRUD Router — CRM email sending, templates, and tracking.
 """
 import logging
 from typing import Optional, Literal, List
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.email_service import EmailService
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/emails", tags=["Emails"])
@@ -82,9 +83,8 @@ async def listar_emails(
     data_fim: Optional[str] = Query(None, description="ISO date upper bound (inclusive)"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -128,8 +128,8 @@ async def listar_emails(
 
 
 @router.post("/enviar")
-async def enviar_email(body: EnviarEmailRequest, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def enviar_email(body: EnviarEmailRequest, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     svc = EmailService(db, user.id, org_id=get_org_id(user))
@@ -169,9 +169,8 @@ async def enviar_email(body: EnviarEmailRequest, authorization: Optional[str] = 
 async def listar_templates(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -194,8 +193,8 @@ async def listar_templates(
 
 
 @router.get("/templates/{template_id}")
-async def obter_template(template_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def obter_template(template_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("email_templates").select("*").eq("id", template_id).single().execute()
@@ -205,8 +204,8 @@ async def obter_template(template_id: str, authorization: Optional[str] = Header
 
 
 @router.post("/templates")
-async def criar_template(body: TemplateCreate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def criar_template(body: TemplateCreate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump()
@@ -224,9 +223,8 @@ async def criar_template(body: TemplateCreate, authorization: Optional[str] = He
 
 @router.patch("/templates/{template_id}")
 async def atualizar_template(
-    template_id: str, body: TemplateUpdate, authorization: Optional[str] = Header(None)
-):
-    user, token = await get_current_user(authorization)
+    template_id: str, body: TemplateUpdate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -248,15 +246,11 @@ async def atualizar_template(
 
 
 @router.delete("/templates/{template_id}")
-async def excluir_template(template_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def excluir_template(template_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("email_templates").select("id").eq("id", template_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Template não encontrado")
-
-    db.table("email_templates").delete().eq("id", template_id).execute()
+    delete_or_404(db, "email_templates", ("id", template_id), message = "Template não encontrado")
 
     log_action(
         user.id, "excluir", "email_template", template_id,
@@ -270,8 +264,8 @@ async def excluir_template(template_id: str, authorization: Optional[str] = Head
 # ---------------------------------------------------------------------------
 
 @router.get("/{email_id}")
-async def obter_email(email_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def obter_email(email_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("emails").select("*").eq("id", email_id).single().execute()

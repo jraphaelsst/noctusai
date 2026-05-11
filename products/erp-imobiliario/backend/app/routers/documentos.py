@@ -34,12 +34,13 @@ and document generation from templates.
 """
 import logging
 from typing import Optional, Literal, Dict
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.document_service import DocumentService
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documentos", tags=["Documentos"])
@@ -87,10 +88,9 @@ async def listar_documentos(
     proposta_id: Optional[str] = Query(None, description="Filtrar por proposta"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List documents with filters and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -136,10 +136,9 @@ async def listar_templates(
     ativo: bool = Query(True, description="Filtrar apenas ativos"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List document templates."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -170,9 +169,9 @@ async def listar_templates(
 
 
 @router.get("/{documento_id}")
-async def obter_documento(documento_id: str, authorization: Optional[str] = Header(None)):
+async def obter_documento(documento_id: str, auth = Depends(get_current_user)):
     """Get a single document by ID."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("documentos").select("*").eq("id", documento_id).single().execute()
@@ -182,9 +181,9 @@ async def obter_documento(documento_id: str, authorization: Optional[str] = Head
 
 
 @router.post("")
-async def criar_documento(body: DocumentoCreate, authorization: Optional[str] = Header(None)):
+async def criar_documento(body: DocumentoCreate, auth = Depends(get_current_user)):
     """Create/upload a new document."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -204,9 +203,9 @@ async def criar_documento(body: DocumentoCreate, authorization: Optional[str] = 
 
 
 @router.post("/templates")
-async def criar_template(body: TemplateCreate, authorization: Optional[str] = Header(None)):
+async def criar_template(body: TemplateCreate, auth = Depends(get_current_user)):
     """Create a new document template."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -228,9 +227,9 @@ async def criar_template(body: TemplateCreate, authorization: Optional[str] = He
 
 
 @router.post("/generate")
-async def gerar_documento(body: GenerateDocumentRequest, authorization: Optional[str] = Header(None)):
+async def gerar_documento(body: GenerateDocumentRequest, auth = Depends(get_current_user)):
     """Generate a document from a template by substituting variables."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = DocumentService(db, user.id)
@@ -260,16 +259,12 @@ async def gerar_documento(body: GenerateDocumentRequest, authorization: Optional
 
 
 @router.delete("/{documento_id}")
-async def excluir_documento(documento_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_documento(documento_id: str, auth = Depends(get_current_user)):
     """Delete a document."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("documentos").select("id").eq("id", documento_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Documento não encontrado")
-
-    db.table("documentos").delete().eq("id", documento_id).execute()
+    delete_or_404(db, "documentos", ("id", documento_id), message = "Documento não encontrado")
 
     log_action(user.id, "excluir", "documento", documento_id,
                f"Excluiu documento {documento_id}")

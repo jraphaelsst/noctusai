@@ -24,7 +24,7 @@ Gamification Router — leaderboard, points, achievements, and point registratio
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client
 from app.responses import success_response, paginated_response, calculate_pagination
@@ -57,13 +57,12 @@ class RegistrarPontosRequest(BaseModel):
 @router.get("/leaderboard")
 async def leaderboard(
     periodo: Literal["semana", "mes", "geral"] = Query("geral"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Get the leaderboard — ranking of agents by points.
     Supports filtering by period: semana, mes, geral.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     ranking = build_leaderboard(db, periodo)
@@ -91,10 +90,9 @@ async def leaderboard(
 async def meus_pontos(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get the current user's points history."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -130,9 +128,9 @@ async def meus_pontos(
 
 
 @router.get("/conquistas")
-async def minhas_conquistas(authorization: Optional[str] = Header(None)):
+async def minhas_conquistas(auth = Depends(get_current_user)):
     """Get the current user's badges/achievements."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("conquistas").select("*").eq(
@@ -163,12 +161,12 @@ async def minhas_conquistas(authorization: Optional[str] = Header(None)):
 
 
 @router.post("/registrar")
-async def registrar(body: RegistrarPontosRequest, authorization: Optional[str] = Header(None)):
+async def registrar(body: RegistrarPontosRequest, auth = Depends(get_current_user)):
     """
     Register points for an action. Intended for internal/automated use.
     Also checks and awards new badges if criteria are met.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     if body.acao not in PONTOS_POR_ACAO:
@@ -190,9 +188,8 @@ async def registrar(body: RegistrarPontosRequest, authorization: Optional[str] =
 
 
 @router.get("/regras")
-async def regras(authorization: Optional[str] = Header(None)):
+async def regras(_ = Depends(get_current_user)):
     """Get point rules and available badges — public reference endpoint."""
-    await get_current_user(authorization)
 
     return success_response({
         "pontos_por_acao": PONTOS_POR_ACAO,

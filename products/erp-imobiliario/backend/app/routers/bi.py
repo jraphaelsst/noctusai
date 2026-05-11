@@ -10,7 +10,7 @@ contratos_locacao, contratos.
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Depends, Header, Query
 from app.dependencies import get_current_user, get_user_client
 from app.responses import success_response
 from app.services.bi_service import BIService
@@ -25,10 +25,9 @@ router = APIRouter(prefix="/api/bi", tags=["BI"])
 async def analytics_vendas(
     periodo_inicio: Optional[str] = Query(None, description="Data inicio (YYYY-MM-DD)"),
     periodo_fim: Optional[str] = Query(None, description="Data fim (YYYY-MM-DD)"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Sales analytics: total sales, average ticket, conversion rate, avg close time, monthly breakdown."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BIService(db, user.id)
@@ -47,10 +46,9 @@ async def analytics_vendas(
 
 @router.get("/captacao")
 async def analytics_captacao(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Lead acquisition metrics: total leads, by origin, monthly trend, conversion by origin."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BIService(db, user.id)
@@ -66,10 +64,9 @@ async def analytics_captacao(
 @router.get("/corretores")
 async def analytics_corretores(
     periodo: Optional[str] = Query(None, description="Periodo: '30d', '90d', '6m', '1a' ou 'total'"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Broker performance ranking: sales count, total value, commissions, conversion rate."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BIService(db, user.id)
@@ -92,10 +89,9 @@ async def analytics_corretores(
 
 @router.get("/imoveis")
 async def analytics_imoveis(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Property portfolio analytics: totals, avg days on market, price/sqm, distributions."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BIService(db, user.id)
@@ -112,10 +108,9 @@ async def analytics_imoveis(
 async def analytics_financeiro(
     periodo_inicio: Optional[str] = Query(None, description="Data inicio (YYYY-MM-DD)"),
     periodo_fim: Optional[str] = Query(None, description="Data fim (YYYY-MM-DD)"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Financial overview: revenue, expenses, balance, forecast, breakdowns by category and month."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BIService(db, user.id)
@@ -130,15 +125,14 @@ async def analytics_financeiro(
 
 @router.get("/dashboard")
 async def dashboard_resumo(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Comprehensive dashboard summary — aggregates key metrics from all modules.
 
     Returns a single payload with: sales KPIs, funnel stats, financial summary,
     property portfolio counts, pending tasks, and recent activity.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BIService(db, user.id)

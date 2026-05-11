@@ -23,12 +23,13 @@ history tracking, and statistics.
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.propostas_service import PropostasService
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/propostas", tags=["Propostas"])
@@ -69,10 +70,9 @@ async def listar_propostas(
     cliente_id: Optional[str] = Query(None, description="Filtrar por cliente"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List proposals with filters and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -109,9 +109,9 @@ async def listar_propostas(
 
 
 @router.get("/stats")
-async def stats_propostas(authorization: Optional[str] = Header(None)):
+async def stats_propostas(auth = Depends(get_current_user)):
     """Get proposal statistics by status."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = PropostasService(db, user.id)
@@ -124,9 +124,9 @@ async def stats_propostas(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{proposta_id}")
-async def obter_proposta(proposta_id: str, authorization: Optional[str] = Header(None)):
+async def obter_proposta(proposta_id: str, auth = Depends(get_current_user)):
     """Get a single proposal by ID."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("propostas").select("*").eq("id", proposta_id).single().execute()
@@ -136,9 +136,9 @@ async def obter_proposta(proposta_id: str, authorization: Optional[str] = Header
 
 
 @router.post("")
-async def criar_proposta(body: PropostaCreate, authorization: Optional[str] = Header(None)):
+async def criar_proposta(body: PropostaCreate, auth = Depends(get_current_user)):
     """Create a new proposal."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = PropostasService(db, user.id)
@@ -170,10 +170,9 @@ async def criar_proposta(body: PropostaCreate, authorization: Optional[str] = He
 async def atualizar_proposta(
     proposta_id: str,
     body: PropostaUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update a proposal. Validates status transitions."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = PropostasService(db, user.id)
@@ -223,10 +222,9 @@ async def atualizar_proposta(
 async def criar_contraproposta(
     proposta_id: str,
     body: ContrapropostaCreate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Submit a counter-proposal for an existing proposal."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = PropostasService(db, user.id)
@@ -277,16 +275,12 @@ async def criar_contraproposta(
 
 
 @router.delete("/{proposta_id}")
-async def excluir_proposta(proposta_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_proposta(proposta_id: str, auth = Depends(get_current_user)):
     """Delete a proposal."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("propostas").select("id").eq("id", proposta_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Proposta não encontrada")
-
-    db.table("propostas").delete().eq("id", proposta_id).execute()
+    delete_or_404(db, "propostas", ("id", proposta_id), message = "Proposta não encontrada")
 
     log_action(user.id, "excluir", "proposta", proposta_id,
                f"Excluiu proposta {proposta_id}")

@@ -3,7 +3,7 @@ Atividades Router — Client activity tracking.
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, calculate_pagination
@@ -25,9 +25,8 @@ async def listar_atividades(
     cliente_id: Optional[str] = Query(None),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     # Calculate pagination
@@ -58,8 +57,8 @@ async def listar_atividades(
 
 
 @router.post("")
-async def criar_atividade(body: AtividadeCreate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def criar_atividade(body: AtividadeCreate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)

@@ -20,7 +20,7 @@ import logging
 import math
 from typing import Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
@@ -110,9 +110,9 @@ def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> f
 # ---------------------------------------------------------------------------
 
 @router.post("/checkin")
-async def registrar_checkin(body: CheckinCreate, authorization: Optional[str] = Header(None)):
+async def registrar_checkin(body: CheckinCreate, auth = Depends(get_current_user)):
     """Registra um check-in GPS do corretor em campo."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -136,10 +136,9 @@ async def listar_checkins(
     data_fim: Optional[str] = Query(None, description="Data fim (YYYY-MM-DD)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Lista check-ins com filtros opcionais."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -178,9 +177,9 @@ async def listar_checkins(
 
 
 @router.post("/vistoria-rapida")
-async def vistoria_rapida(body: VistoriaRapidaCreate, authorization: Optional[str] = Header(None)):
+async def vistoria_rapida(body: VistoriaRapidaCreate, auth = Depends(get_current_user)):
     """Registra uma vistoria rápida em campo com checklist simplificado e fotos."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Create a check-in record
@@ -231,10 +230,9 @@ async def imoveis_proximos(
     longitude: float = Query(..., ge=-180, le=180, description="Longitude atual do corretor"),
     raio_km: float = Query(5.0, ge=0.1, le=50, description="Raio de busca em km"),
     limit: int = Query(20, ge=1, le=100, description="Máximo de resultados"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Retorna imóveis próximos à localização GPS atual do corretor."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Fetch properties with coordinates
@@ -266,9 +264,9 @@ async def imoveis_proximos(
 
 
 @router.post("/sync")
-async def sincronizar_dados(body: SyncRequest, authorization: Optional[str] = Header(None)):
+async def sincronizar_dados(body: SyncRequest, auth = Depends(get_current_user)):
     """Batch sync offline data (checkins, vistorias) collected while offline."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = CampoService(db, user.id)
@@ -281,10 +279,9 @@ async def sincronizar_dados(body: SyncRequest, authorization: Optional[str] = He
 
 @router.get("/offline-data")
 async def dados_offline(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Download data pack for offline use: active properties, assigned clients, pending checkins."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = CampoService(db, user.id)

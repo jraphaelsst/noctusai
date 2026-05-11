@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 
 from app.dependencies import (
@@ -61,19 +61,18 @@ class MembroUpdate(BaseModel):
 @router.get("")
 async def listar(
     ativas_apenas: bool = True,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List teams visible to the caller (RLS filters automatically)."""
-    _, token = await get_current_user(authorization)
+    _, token = auth
     db = get_user_client(token)
     equipes = equipes_service.listar_equipes(db, ativas_apenas=ativas_apenas)
     return success_response(equipes)
 
 
 @router.post("", status_code=201)
-async def criar(body: EquipeCreate, authorization: Optional[str] = Header(None)):
+async def criar(body: EquipeCreate, auth = Depends(get_current_user)):
     """Create a team. RLS enforces admin-only at the DB layer."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     org_id = get_org_id(user, required=True)
     # Uses the caller's token so RLS enforces admin role — non-admins are rejected by policy.
     db = get_user_client(token)
@@ -95,8 +94,8 @@ async def criar(body: EquipeCreate, authorization: Optional[str] = Header(None))
 
 
 @router.get("/{equipe_id}")
-async def obter(equipe_id: str, authorization: Optional[str] = Header(None)):
-    _, token = await get_current_user(authorization)
+async def obter(equipe_id: str, auth = Depends(get_current_user)):
+    _, token = auth
     db = get_user_client(token)
     equipe = equipes_service.obter_equipe(db, equipe_id)
     if not equipe:
@@ -108,9 +107,8 @@ async def obter(equipe_id: str, authorization: Optional[str] = Header(None)):
 async def atualizar(
     equipe_id: str,
     body: EquipeUpdate,
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         equipe = equipes_service.atualizar_equipe(db, equipe_id, body.model_dump(exclude_none=True))
@@ -124,9 +122,9 @@ async def atualizar(
 
 
 @router.delete("/{equipe_id}")
-async def desativar(equipe_id: str, authorization: Optional[str] = Header(None)):
+async def desativar(equipe_id: str, auth = Depends(get_current_user)):
     """Soft-disband the team — preserves history of past events. RLS enforces admin-only."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     try:
         equipe = equipes_service.disband_equipe(db, equipe_id)
@@ -142,9 +140,8 @@ async def desativar(equipe_id: str, authorization: Optional[str] = Header(None))
 async def listar_membros(
     equipe_id: str,
     incluir_historico: bool = False,
-    authorization: Optional[str] = Header(None),
-):
-    _, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    _, token = auth
     db = get_user_client(token)
     membros = equipes_service.listar_membros(db, equipe_id, incluir_historico=incluir_historico)
     return success_response(membros)
@@ -154,9 +151,8 @@ async def listar_membros(
 async def adicionar_membro(
     equipe_id: str,
     body: MembroAdd,
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         membro = equipes_service.adicionar_membro(
@@ -176,9 +172,8 @@ async def atualizar_membro(
     equipe_id: str,
     membro_id: str,
     body: MembroUpdate,
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
     try:
         membro = equipes_service.atualizar_papel_membro(db, membro_id=membro_id, papel=body.papel)
@@ -194,10 +189,9 @@ async def atualizar_membro(
 async def remover_membro(
     equipe_id: str,
     membro_id: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Soft-remove: sets left_at, preserving history. RLS enforces admin-only."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     try:
         membro = equipes_service.remover_membro(db, membro_id)

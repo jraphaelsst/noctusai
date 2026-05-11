@@ -41,7 +41,7 @@ ALLOWED_ADMIN_ROLES = {"platform_admin", "admin", "owner"}
 # ---------------------------------------------------------------------------
 
 
-async def require_admin(authorization: Optional[str] = Header(None)):
+async def require_admin(auth = Depends(get_current_user)):
     """Resolve user, allow only platform/erp admins.
 
     Resolution order matches the rest of ERP:
@@ -49,7 +49,7 @@ async def require_admin(authorization: Optional[str] = Header(None)):
          (platform admin or org owner/admin)
       2. ERP-native role from user_metadata.erp_role / noctus_role
     """
-    user, _token = await get_current_user(authorization)
+    user, _token = auth
     sso_role = resolve_sso_role(user)
     if sso_role == "platform_admin":
         return user

@@ -3,12 +3,13 @@ Metas CRUD Router — Goals/targets management.
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.metas_service import criar_metas_hoje
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/metas", tags=["Metas"])
@@ -80,10 +81,8 @@ class CalcularProporcionalBody(BaseModel):
 @router.get("/data-prazo")
 async def data_prazo(
     tipo: Literal["diaria", "semanal", "mensal", "anual"] = Query("mensal"),
-    authorization: Optional[str] = Header(None),
-):
+    _ = Depends(get_current_user)):
     """Return current São Paulo date and the period end date for the given tipo."""
-    await get_current_user(authorization)
     admin = get_admin_client()
 
     date_result = admin.rpc("get_data_sp").execute()
@@ -100,9 +99,9 @@ async def data_prazo(
 # ---------------------------------------------------------------------------
 
 @router.get("/config")
-async def listar_config(authorization: Optional[str] = Header(None)):
+async def listar_config(auth = Depends(get_current_user)):
     """List the authenticated user's metas_config entries."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = (
@@ -116,9 +115,9 @@ async def listar_config(authorization: Optional[str] = Header(None)):
 
 
 @router.post("/config")
-async def upsert_config(body: MetaConfigCreate, authorization: Optional[str] = Header(None)):
+async def upsert_config(body: MetaConfigCreate, auth = Depends(get_current_user)):
     """Upsert a metas_config entry (always tipo='mensal')."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     payload = {
@@ -143,16 +142,12 @@ async def upsert_config(body: MetaConfigCreate, authorization: Optional[str] = H
 
 
 @router.delete("/config/{config_id}")
-async def excluir_config(config_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_config(config_id: str, auth = Depends(get_current_user)):
     """Delete a metas_config entry."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("metas_config").select("id").eq("id", config_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Configuração de meta não encontrada")
-
-    db.table("metas_config").delete().eq("id", config_id).execute()
+    delete_or_404(db, "metas_config", ("id", config_id), message = "Configuração de meta não encontrada")
     log_action(user.id, "excluir", "config_meta", config_id, f"Excluiu config {config_id}")
     return ok_response("Configuração de meta excluída com sucesso")
 
@@ -162,9 +157,9 @@ async def excluir_config(config_id: str, authorization: Optional[str] = Header(N
 # ---------------------------------------------------------------------------
 
 @router.post("/{meta_id}/concluir")
-async def concluir_meta(meta_id: str, authorization: Optional[str] = Header(None)):
+async def concluir_meta(meta_id: str, auth = Depends(get_current_user)):
     """Conclude a grouped meta via the concluir_meta_agrupada RPC."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.rpc("concluir_meta_agrupada", {"p_meta_id": meta_id}).execute()
@@ -182,9 +177,9 @@ async def concluir_meta(meta_id: str, authorization: Optional[str] = Header(None
 # ---------------------------------------------------------------------------
 
 @router.post("/atualizar-status")
-async def atualizar_status(authorization: Optional[str] = Header(None)):
+async def atualizar_status(auth = Depends(get_current_user)):
     """Bulk update meta statuses (overdue detection)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     admin = get_admin_client()
 
     # Get current São Paulo date
@@ -222,9 +217,9 @@ async def atualizar_status(authorization: Optional[str] = Header(None)):
 # ---------------------------------------------------------------------------
 
 @router.post("/criar-hoje")
-async def criar_hoje(authorization: Optional[str] = Header(None)):
+async def criar_hoje(auth = Depends(get_current_user)):
     """Create today's metas from active metas_config entries."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     admin = get_admin_client()
     db = get_user_client(token)
 
@@ -245,9 +240,9 @@ async def criar_hoje(authorization: Optional[str] = Header(None)):
 # ---------------------------------------------------------------------------
 
 @router.post("/scaffold")
-async def scaffold(body: ScaffoldBody, authorization: Optional[str] = Header(None)):
+async def scaffold(body: ScaffoldBody, auth = Depends(get_current_user)):
     """Ensure a scaffold meta exists for the given tipo/categoria."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     admin = get_admin_client()
     db = get_user_client(token)
 
@@ -272,9 +267,9 @@ async def scaffold(body: ScaffoldBody, authorization: Optional[str] = Header(Non
 # ---------------------------------------------------------------------------
 
 @router.post("/calcular-proporcional")
-async def calcular_proporcional(body: CalcularProporcionalBody, authorization: Optional[str] = Header(None)):
+async def calcular_proporcional(body: CalcularProporcionalBody, auth = Depends(get_current_user)):
     """Calculate proportional meta value based on remaining days in the period."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     admin = get_admin_client()
 
     # Resolve reference date
@@ -297,9 +292,9 @@ async def calcular_proporcional(body: CalcularProporcionalBody, authorization: O
 # ---------------------------------------------------------------------------
 
 @router.get("/hoje")
-async def metas_hoje(authorization: Optional[str] = Header(None)):
+async def metas_hoje(auth = Depends(get_current_user)):
     """Get current São Paulo date and today's metas."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Server-side date calculation (São Paulo timezone)
@@ -324,9 +319,8 @@ async def listar_metas(
     corretor_id: Optional[str] = Query(None),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     # Calculate pagination
@@ -354,8 +348,8 @@ async def listar_metas(
 
 
 @router.post("")
-async def criar_meta(body: MetaCreate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def criar_meta(body: MetaCreate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -373,8 +367,8 @@ async def criar_meta(body: MetaCreate, authorization: Optional[str] = Header(Non
 
 
 @router.patch("/{meta_id}")
-async def atualizar_meta(meta_id: str, body: MetaUpdate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def atualizar_meta(meta_id: str, body: MetaUpdate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -388,14 +382,10 @@ async def atualizar_meta(meta_id: str, body: MetaUpdate, authorization: Optional
 
 
 @router.delete("/{meta_id}")
-async def excluir_meta(meta_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def excluir_meta(meta_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("metas").select("id").eq("id", meta_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Meta não encontrada")
-
-    db.table("metas").delete().eq("id", meta_id).execute()
+    delete_or_404(db, "metas", ("id", meta_id), message = "Meta não encontrada")
     log_action(user.id, "excluir", "meta", meta_id, f"Excluiu meta {meta_id}")
     return ok_response("Meta excluída com sucesso")

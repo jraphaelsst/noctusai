@@ -47,7 +47,7 @@ import zipfile
 from typing import Optional, Literal
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, File, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Header, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -92,9 +92,8 @@ class ConsultaCreate(BaseModel):
 # --------------- Endpoints ---------------
 
 @router.get("/tipos")
-async def listar_tipos_certidoes(authorization: Optional[str] = Header(None)):
+async def listar_tipos_certidoes(_ = Depends(get_current_user)):
     """List available certificate types."""
-    await get_current_user(authorization)
     return success_response(get_certidoes_tipos())
 
 
@@ -104,10 +103,9 @@ async def listar_consultas(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List certificate consultation requests."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Auto-recover resultados stuck in "processando" for too long (e.g. server
@@ -174,10 +172,9 @@ async def listar_consultas(
 async def criar_consulta(
     body: ConsultaCreate,
     background_tasks: BackgroundTasks,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Create a new certificate consultation and start processing in background."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -241,9 +238,9 @@ async def criar_consulta(
 
 
 @router.get("/consultas/{consulta_id}")
-async def obter_consulta(consulta_id: str, authorization: Optional[str] = Header(None)):
+async def obter_consulta(consulta_id: str, auth = Depends(get_current_user)):
     """Get a consultation with all its certificate results."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     consulta = db.table("certidao_consultas").select("*").eq(
@@ -268,10 +265,9 @@ async def obter_consulta(consulta_id: str, authorization: Optional[str] = Header
 async def reprocessar_consulta(
     consulta_id: str,
     background_tasks: BackgroundTasks,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Retry failed certificates in a consultation."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     consulta = db.table("certidao_consultas").select("*").eq(
@@ -317,10 +313,9 @@ async def reprocessar_consulta(
 @router.post("/consultas/{consulta_id}/cancelar")
 async def cancelar_consulta_processamento(
     consulta_id: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Cancel in-progress certificate processing for a specific consulta."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     check = db.table("certidao_consultas").select("id").eq("id", consulta_id).execute()
@@ -340,9 +335,9 @@ async def cancelar_consulta_processamento(
 
 
 @router.delete("/consultas/{consulta_id}")
-async def excluir_consulta(consulta_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_consulta(consulta_id: str, auth = Depends(get_current_user)):
     """Delete a consultation, its results, and associated storage files."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -373,10 +368,8 @@ async def excluir_consulta(consulta_id: str, authorization: Optional[str] = Head
 async def download_certidao(
     url: str = Query(..., description="URL do arquivo para download"),
     filename: str = Query("certidao.pdf", description="Nome do arquivo"),
-    authorization: Optional[str] = Header(None),
-):
+    _ = Depends(get_current_user)):
     """Proxy download — fetches the file server-side to bypass CORS restrictions."""
-    await get_current_user(authorization)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -400,10 +393,9 @@ async def download_certidao(
 @router.get("/consultas/{consulta_id}/download-zip")
 async def download_consulta_zip(
     consulta_id: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Download all successful certificates from a consultation as a ZIP file."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     consulta = db.table("certidao_consultas").select(
@@ -480,15 +472,14 @@ async def download_consulta_zip(
 async def upload_certidao_manual(
     resultado_id: str,
     file: UploadFile = File(...),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Upload a certificate PDF manually for a resultado that failed automation.
 
     Delegates to the service layer which replicates the exact same post-download
     pipeline as the automated flow: storage upload → PDF text extraction →
     AI analysis → update resultado → recalculate consulta status.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 
@@ -541,9 +532,9 @@ async def upload_certidao_manual(
 
 
 @router.get("/fila-tjsp")
-async def status_fila_tjsp(authorization: Optional[str] = Header(None)):
+async def status_fila_tjsp(auth = Depends(get_current_user)):
     """Get TJSP queue status — queued items, cooldown info."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
     org_id = get_org_id(user)
 

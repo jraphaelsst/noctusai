@@ -5,7 +5,7 @@ never exposed to the client.
 """
 import logging
 from typing import Literal, Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action, first_or_none
 from app.responses import success_response, ok_response
@@ -34,8 +34,8 @@ class ProfileUpdate(BaseModel):
 
 
 @router.get("")
-async def listar_profiles(authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def listar_profiles(auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("profiles").select("*").order("created_at", desc=True).execute()
@@ -43,9 +43,9 @@ async def listar_profiles(authorization: Optional[str] = Header(None)):
 
 
 @router.post("")
-async def criar_profile(body: ProfileCreate, authorization: Optional[str] = Header(None)):
+async def criar_profile(body: ProfileCreate, auth = Depends(get_current_user)):
     """Create a new user. Uses service role to create auth user."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     admin = get_admin_client()
 
     # Get caller's org_id to assign to new user
@@ -84,8 +84,8 @@ async def criar_profile(body: ProfileCreate, authorization: Optional[str] = Head
 
 
 @router.patch("/{profile_id}")
-async def atualizar_profile(profile_id: str, body: ProfileUpdate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def atualizar_profile(profile_id: str, body: ProfileUpdate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -102,12 +102,12 @@ async def atualizar_profile(profile_id: str, body: ProfileUpdate, authorization:
 
 
 @router.delete("/{profile_id}")
-async def excluir_profile(profile_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_profile(profile_id: str, auth = Depends(get_current_user)):
     """
     Delete user SECURELY using service role key.
     This is the critical fix — admin.deleteUser only runs on the server.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     admin = get_admin_client()
 
     # Prevent self-deletion

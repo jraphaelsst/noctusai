@@ -3,7 +3,7 @@ Funil (Pipeline) Router — Kanban pipeline data.
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Depends, Header, Query
 from app.dependencies import get_current_user, get_user_client
 from app.responses import success_response
 
@@ -20,13 +20,12 @@ async def obter_funil(
     origem: Optional[str] = Query(None),
     etapa: Optional[str] = Query(None),
     incluir_arquivados: bool = Query(False),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """
     Returns kanban columns with clients grouped by pipeline stage.
     All filtering and grouping done server-side.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     query = db.table("clientes").select(

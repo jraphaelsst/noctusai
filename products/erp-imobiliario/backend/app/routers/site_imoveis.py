@@ -24,7 +24,7 @@ import logging
 import re
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
@@ -103,9 +103,9 @@ class SiteConfigCreate(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.get("/config")
-async def obter_config(authorization: Optional[str] = Header(None)):
+async def obter_config(auth = Depends(get_current_user)):
     """Retorna a configuração do site da organização do usuário."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("site_config").select("*").limit(1).execute()
@@ -114,9 +114,9 @@ async def obter_config(authorization: Optional[str] = Header(None)):
 
 
 @router.post("/config")
-async def criar_config(body: SiteConfigCreate, authorization: Optional[str] = Header(None)):
+async def criar_config(body: SiteConfigCreate, auth = Depends(get_current_user)):
     """Cria a configuração do site (primeira vez)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Check if config already exists
@@ -142,9 +142,9 @@ async def criar_config(body: SiteConfigCreate, authorization: Optional[str] = He
 
 
 @router.patch("/config")
-async def atualizar_config(body: SiteConfigUpdate, authorization: Optional[str] = Header(None)):
+async def atualizar_config(body: SiteConfigUpdate, auth = Depends(get_current_user)):
     """Atualiza a configuração do site da organização."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -167,9 +167,9 @@ async def atualizar_config(body: SiteConfigUpdate, authorization: Optional[str] 
 
 
 @router.get("/preview")
-async def preview_site(authorization: Optional[str] = Header(None)):
+async def preview_site(auth = Depends(get_current_user)):
     """Retorna dados de preview do site (config + imóveis publicáveis)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     config_result = db.table("site_config").select("*").limit(1).execute()

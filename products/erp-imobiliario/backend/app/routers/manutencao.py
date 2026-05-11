@@ -30,12 +30,13 @@ cost management, and overdue detection.
 """
 import logging
 from typing import Optional, Literal, List
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.manutencao_service import ManutencaoService
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/manutencao", tags=["Manutencao"])
@@ -91,10 +92,9 @@ async def listar_ordens(
     cliente_id: Optional[str] = Query(None, description="Filtrar por cliente"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List work orders with filters and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -140,10 +140,9 @@ async def listar_ordens(
 
 @router.get("/resumo")
 async def resumo_manutencao(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get maintenance summary: counts by status, avg resolution time, overdue count, total cost."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = ManutencaoService(db, user.id)
@@ -163,9 +162,9 @@ async def resumo_manutencao(
 
 
 @router.get("/{ordem_id}")
-async def obter_ordem(ordem_id: str, authorization: Optional[str] = Header(None)):
+async def obter_ordem(ordem_id: str, auth = Depends(get_current_user)):
     """Get a single work order by ID."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("ordens_servico").select("*").eq("id", ordem_id).single().execute()
@@ -175,9 +174,9 @@ async def obter_ordem(ordem_id: str, authorization: Optional[str] = Header(None)
 
 
 @router.post("")
-async def criar_ordem(body: OrdemServicoCreate, authorization: Optional[str] = Header(None)):
+async def criar_ordem(body: OrdemServicoCreate, auth = Depends(get_current_user)):
     """Create a new work order."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -197,10 +196,9 @@ async def criar_ordem(body: OrdemServicoCreate, authorization: Optional[str] = H
 async def atualizar_ordem(
     ordem_id: str,
     body: OrdemServicoUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update an existing work order."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -219,16 +217,12 @@ async def atualizar_ordem(
 
 
 @router.delete("/{ordem_id}")
-async def excluir_ordem(ordem_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_ordem(ordem_id: str, auth = Depends(get_current_user)):
     """Delete a work order."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("ordens_servico").select("id").eq("id", ordem_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Ordem de servico não encontrada")
-
-    db.table("ordens_servico").delete().eq("id", ordem_id).execute()
+    delete_or_404(db, "ordens_servico", ("id", ordem_id), message = "Ordem de servico não encontrada")
 
     log_action(user.id, "excluir", "ordem_servico", ordem_id,
                f"Excluiu ordem de servico {ordem_id}")

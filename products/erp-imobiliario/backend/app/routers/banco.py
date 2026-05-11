@@ -43,7 +43,7 @@ movimentacoes against lancamentos, and generation of CNAB 240/400 remittance fil
 """
 import logging
 from typing import Optional, Literal, List
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
@@ -91,9 +91,9 @@ class GerarRemessaRequest(BaseModel):
 # ---------- Endpoints ----------
 
 @router.post("/importar")
-async def importar_extrato(body: ImportarExtratoRequest, authorization: Optional[str] = Header(None)):
+async def importar_extrato(body: ImportarExtratoRequest, auth = Depends(get_current_user)):
     """Import a bank statement with its movimentacoes."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BancoService(db, user.id)
@@ -129,10 +129,9 @@ async def listar_extratos(
     banco: Optional[str] = Query(None, description="Filtrar por banco"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List imported bank statements with pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -163,10 +162,9 @@ async def listar_pendentes_conciliacao(
     extrato_id: Optional[str] = Query(None, description="Filtrar por extrato"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get movimentacoes pending reconciliation (conciliado=false)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -198,9 +196,9 @@ async def listar_pendentes_conciliacao(
 
 
 @router.post("/conciliar")
-async def conciliar_movimentacao(body: ConciliarRequest, authorization: Optional[str] = Header(None)):
+async def conciliar_movimentacao(body: ConciliarRequest, auth = Depends(get_current_user)):
     """Manually reconcile a bank movimentacao with a lancamento financeiro."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BancoService(db, user.id)
@@ -222,9 +220,9 @@ async def conciliar_movimentacao(body: ConciliarRequest, authorization: Optional
 
 
 @router.post("/gerar-remessa")
-async def gerar_remessa(body: GerarRemessaRequest, authorization: Optional[str] = Header(None)):
+async def gerar_remessa(body: GerarRemessaRequest, auth = Depends(get_current_user)):
     """Generate a CNAB remittance file (240 or 400 format)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = BancoService(db, user.id)
@@ -250,9 +248,9 @@ async def gerar_remessa(body: GerarRemessaRequest, authorization: Optional[str] 
 
 
 @router.get("/retorno/{remessa_id}")
-async def obter_retorno_remessa(remessa_id: str, authorization: Optional[str] = Header(None)):
+async def obter_retorno_remessa(remessa_id: str, auth = Depends(get_current_user)):
     """Get remittance status and return information."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("remessas").select("*").eq("id", remessa_id).single().execute()

@@ -30,7 +30,7 @@ and client-facing endpoints (token-based, no Bearer auth) for client self-servic
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
@@ -76,9 +76,9 @@ class ChamadoUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/gerar-acesso")
-async def gerar_acesso(body: GerarAcessoRequest, authorization: Optional[str] = Header(None)):
+async def gerar_acesso(body: GerarAcessoRequest, auth = Depends(get_current_user)):
     """Gera um token de acesso ao portal para um cliente. Requer autenticação."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = PortalClienteService(db, user.id)
@@ -111,10 +111,9 @@ async def listar_acessos(
     cliente_id: Optional[str] = Query(None, description="Filtrar por cliente"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Lista acessos ativos ao portal com paginação. Requer autenticação."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -143,9 +142,9 @@ async def listar_acessos(
 
 
 @router.delete("/acessos/{acesso_id}")
-async def revogar_acesso(acesso_id: str, authorization: Optional[str] = Header(None)):
+async def revogar_acesso(acesso_id: str, auth = Depends(get_current_user)):
     """Revoga (desativa) um acesso ao portal. Requer autenticação."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("portal_acessos").update(
@@ -168,10 +167,9 @@ async def listar_chamados(
     cliente_id: Optional[str] = Query(None, description="Filtrar por cliente"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Lista todos os chamados do portal com filtros e paginação. Requer autenticação."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -207,10 +205,9 @@ async def listar_chamados(
 async def atualizar_chamado(
     chamado_id: str,
     body: ChamadoUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Atualiza um chamado (status e/ou resposta). Requer autenticação."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)

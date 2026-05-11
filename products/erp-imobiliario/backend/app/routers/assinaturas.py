@@ -26,7 +26,7 @@ import json
 import logging
 from typing import Optional, Literal, List
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 
 from noctusai_lib.security.webhook_signatures import (
@@ -134,9 +134,9 @@ class AssinaturaUpdate(BaseModel):
 # --- Endpoints ---
 
 @router.post("/enviar")
-async def enviar_assinatura(body: EnviarAssinaturaRequest, authorization: Optional[str] = Header(None)):
+async def enviar_assinatura(body: EnviarAssinaturaRequest, auth = Depends(get_current_user)):
     """Send a document for digital signing."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = AssinaturaService(db, user.id, org_id=get_org_id(user))
@@ -166,10 +166,9 @@ async def listar_assinaturas(
     contrato_id: Optional[str] = Query(None, description="Filtrar por contrato"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List signature requests with filters and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -202,9 +201,9 @@ async def listar_assinaturas(
 
 
 @router.get("/resumo")
-async def resumo_assinaturas(authorization: Optional[str] = Header(None)):
+async def resumo_assinaturas(auth = Depends(get_current_user)):
     """Get signature summary: counts by status."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = AssinaturaService(db, user.id)
@@ -217,9 +216,9 @@ async def resumo_assinaturas(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{assinatura_id}")
-async def obter_assinatura(assinatura_id: str, authorization: Optional[str] = Header(None)):
+async def obter_assinatura(assinatura_id: str, auth = Depends(get_current_user)):
     """Get signing details including audit trail."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("assinaturas").select("*").eq("id", assinatura_id).single().execute()
@@ -274,9 +273,9 @@ async def processar_webhook(
 
 
 @router.delete("/{assinatura_id}")
-async def cancelar_assinatura(assinatura_id: str, authorization: Optional[str] = Header(None)):
+async def cancelar_assinatura(assinatura_id: str, auth = Depends(get_current_user)):
     """Cancel a signing request."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = AssinaturaService(db, user.id)

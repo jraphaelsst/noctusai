@@ -83,11 +83,10 @@ class FollowUpDraftRequest(BaseModel):
 async def generate_description(
     request: Request,
     body: GenerateDescriptionRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.imovel_description")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.imovel_description")),
 ):
     """Generate an AI-powered property description."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 
@@ -118,11 +117,10 @@ async def generate_description(
 async def lead_score(
     request: Request,
     body: LeadScoreRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.lead_score")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.lead_score")),
 ):
     """Score a lead using AI analysis."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 
@@ -163,11 +161,10 @@ async def lead_score(
 async def suggest_price(
     request: Request,
     body: SuggestPriceRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.suggest_price")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.suggest_price")),
 ):
     """Suggest a price for a property based on comparables."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 
@@ -216,8 +213,7 @@ async def follow_up_draft(
     request: Request,
     lead_id: str,
     body: FollowUpDraftRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.lead_follow_up_draft")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.lead_follow_up_draft")),
 ):
     """E4 — draft a personalized follow-up message for a stalled lead.
 
@@ -226,7 +222,7 @@ async def follow_up_draft(
     message. Returns `{channel, subject, body}`. Never modifies the lead record —
     UI sends the message after user review.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 
@@ -309,11 +305,10 @@ class SearchRelevanceRequest(BaseModel):
 async def whatsapp_intent(
     request: Request,
     body: WhatsAppIntentRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.whatsapp_intent")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.whatsapp_intent")),
 ):
     """E2 — classify a WhatsApp message into a sales intent and persist."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 
@@ -333,11 +328,10 @@ async def certidoes_score(
     request: Request,
     cliente_id: str,
     body: Optional[CertidoesScoreRequest] = None,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.certidoes_score")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.certidoes_score")),
 ):
     """E6 — score a client's certidões health and persist."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 
@@ -394,11 +388,10 @@ async def certidoes_score(
 async def metas_coach_tip(
     request: Request,
     body: MetasCoachTipRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.metas_coach_tip")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.metas_coach_tip")),
 ):
     """E7 — generate a coaching tip for the user's current metas progress."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 
@@ -419,11 +412,10 @@ async def metas_coach_tip(
 async def photo_compliance(
     request: Request,
     imovel_id: str,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.photo_compliance")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.photo_compliance")),
 ):
     """E8 — assess listing-photo compliance from photo metadata."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 
@@ -459,11 +451,10 @@ async def photo_compliance(
 async def search_relevance(
     request: Request,
     body: SearchRelevanceRequest,
-    authorization: Optional[str] = Header(None),
-    _consent: None = Depends(consent_required("erp.search_relevance")),
+    auth = Depends(get_current_user), _consent: None = Depends(consent_required("erp.search_relevance")),
 ):
     """E10 — score the relevance of a property to a search query and persist."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     _require_openai(get_org_id(user))
     db = get_user_client(token)
 

@@ -37,12 +37,13 @@ and overdue detection.
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.contratos_service import ContratosService
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/contratos", tags=["Contratos"])
@@ -102,10 +103,9 @@ async def listar_contratos(
     data_fim: Optional[str] = Query(None, description="Data fim (YYYY-MM-DD)"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List contracts with filters and pagination."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -151,10 +151,9 @@ async def listar_contratos(
 
 @router.get("/resumo")
 async def resumo_contratos(
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Get contract summary: total by status, valor total, inadimplencia count."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     service = ContratosService(db, user.id)
@@ -180,9 +179,9 @@ async def resumo_contratos(
 
 
 @router.get("/{contrato_id}")
-async def obter_contrato(contrato_id: str, authorization: Optional[str] = Header(None)):
+async def obter_contrato(contrato_id: str, auth = Depends(get_current_user)):
     """Get a single contract by ID."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("contratos").select("*").eq("id", contrato_id).single().execute()
@@ -192,9 +191,9 @@ async def obter_contrato(contrato_id: str, authorization: Optional[str] = Header
 
 
 @router.post("")
-async def criar_contrato(body: ContratoCreate, authorization: Optional[str] = Header(None)):
+async def criar_contrato(body: ContratoCreate, auth = Depends(get_current_user)):
     """Create a new contract."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -214,10 +213,9 @@ async def criar_contrato(body: ContratoCreate, authorization: Optional[str] = He
 async def atualizar_contrato(
     contrato_id: str,
     body: ContratoUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update an existing contract."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -236,16 +234,12 @@ async def atualizar_contrato(
 
 
 @router.delete("/{contrato_id}")
-async def excluir_contrato(contrato_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_contrato(contrato_id: str, auth = Depends(get_current_user)):
     """Delete a contract."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
-    check = db.table("contratos").select("id").eq("id", contrato_id).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Contrato não encontrado")
-
-    db.table("contratos").delete().eq("id", contrato_id).execute()
+    delete_or_404(db, "contratos", ("id", contrato_id), message = "Contrato não encontrado")
 
     log_action(user.id, "excluir", "contrato", contrato_id,
                f"Excluiu contrato {contrato_id}")
@@ -256,10 +250,9 @@ async def excluir_contrato(contrato_id: str, authorization: Optional[str] = Head
 @router.get("/{contrato_id}/parcelas")
 async def listar_parcelas(
     contrato_id: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List installments for a contract."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("parcelas_contrato").select("*").eq(
@@ -274,10 +267,9 @@ async def listar_parcelas(
 async def gerar_parcelas(
     contrato_id: str,
     body: GerarParcelasRequest,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Generate installment schedule for a contract."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Fetch the contract to get valor_total and data_inicio
@@ -312,10 +304,9 @@ async def gerar_parcelas(
 async def atualizar_parcela(
     parcela_id: str,
     body: ParcelaUpdate,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Update an installment (mark as paid, change status, etc.)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)

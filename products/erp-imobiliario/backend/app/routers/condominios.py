@@ -10,7 +10,7 @@ DELETE /api/condominios/{id}  — Delete
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client
@@ -71,9 +71,8 @@ class CondominioUpdate(BaseModel):
 async def listar_condominios(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token = await get_current_user(authorization)
+    auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     # Calculate pagination
@@ -94,8 +93,8 @@ async def listar_condominios(
 
 
 @router.get("/{condominio_id}")
-async def get_condominio(condominio_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def get_condominio(condominio_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     res = db.table("condominios").select("*").eq("id", condominio_id).single().execute()
@@ -105,8 +104,8 @@ async def get_condominio(condominio_id: str, authorization: Optional[str] = Head
 
 
 @router.post("")
-async def criar_condominio(body: CondominioCreate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def criar_condominio(body: CondominioCreate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -119,8 +118,8 @@ async def criar_condominio(body: CondominioCreate, authorization: Optional[str] 
 
 
 @router.patch("/{condominio_id}")
-async def atualizar_condominio(condominio_id: str, body: CondominioUpdate, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def atualizar_condominio(condominio_id: str, body: CondominioUpdate, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -134,8 +133,8 @@ async def atualizar_condominio(condominio_id: str, body: CondominioUpdate, autho
 
 
 @router.delete("/{condominio_id}")
-async def deletar_condominio(condominio_id: str, authorization: Optional[str] = Header(None)):
-    user, token = await get_current_user(authorization)
+async def deletar_condominio(condominio_id: str, auth = Depends(get_current_user)):
+    user, token = auth
     db = get_user_client(token)
 
     db.table("condominios").delete().eq("id", condominio_id).execute()

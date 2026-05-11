@@ -22,7 +22,7 @@ Manages organizational branches: CRUD, stats, and consolidated reporting.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
@@ -67,10 +67,9 @@ async def listar_filiais(
     is_active: Optional[bool] = Query(None, description="Filtrar por ativas/inativas"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Lista todas as filiais da organização."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -95,9 +94,9 @@ async def listar_filiais(
 
 
 @router.post("")
-async def criar_filial(body: FilialCreate, authorization: Optional[str] = Header(None)):
+async def criar_filial(body: FilialCreate, auth = Depends(get_current_user)):
     """Cria uma nova filial."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -114,9 +113,9 @@ async def criar_filial(body: FilialCreate, authorization: Optional[str] = Header
 
 
 @router.get("/consolidado")
-async def consolidado_filiais(authorization: Optional[str] = Header(None)):
+async def consolidado_filiais(auth = Depends(get_current_user)):
     """Retorna relatório consolidado com estatísticas de todas as filiais."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Get all active branches
@@ -164,9 +163,9 @@ async def consolidado_filiais(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{filial_id}")
-async def obter_filial(filial_id: str, authorization: Optional[str] = Header(None)):
+async def obter_filial(filial_id: str, auth = Depends(get_current_user)):
     """Retorna detalhes de uma filial com suas estatísticas."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("filiais").select("*").eq("id", filial_id).single().execute()
@@ -191,9 +190,9 @@ async def obter_filial(filial_id: str, authorization: Optional[str] = Header(Non
 
 
 @router.patch("/{filial_id}")
-async def atualizar_filial(filial_id: str, body: FilialUpdate, authorization: Optional[str] = Header(None)):
+async def atualizar_filial(filial_id: str, body: FilialUpdate, auth = Depends(get_current_user)):
     """Atualiza informações de uma filial."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -210,9 +209,9 @@ async def atualizar_filial(filial_id: str, body: FilialUpdate, authorization: Op
 
 
 @router.delete("/{filial_id}")
-async def desativar_filial(filial_id: str, authorization: Optional[str] = Header(None)):
+async def desativar_filial(filial_id: str, auth = Depends(get_current_user)):
     """Desativa uma filial (soft delete)."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("filiais").update(

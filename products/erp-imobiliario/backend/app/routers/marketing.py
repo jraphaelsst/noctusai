@@ -28,7 +28,7 @@ Marketing Automation Router — campaigns, sends, and interest-based alerts.
 """
 import logging
 from typing import Optional, Literal
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
@@ -69,10 +69,9 @@ async def listar_campanhas(
     tipo: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """List marketing campaigns with optional filters."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -103,9 +102,9 @@ async def listar_campanhas(
 
 
 @router.post("/campanhas")
-async def criar_campanha(body: CampanhaCreate, authorization: Optional[str] = Header(None)):
+async def criar_campanha(body: CampanhaCreate, auth = Depends(get_current_user)):
     """Create a new marketing campaign."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     payload = body.model_dump()
@@ -119,9 +118,9 @@ async def criar_campanha(body: CampanhaCreate, authorization: Optional[str] = He
 
 
 @router.get("/campanhas/{campanha_id}")
-async def obter_campanha(campanha_id: str, authorization: Optional[str] = Header(None)):
+async def obter_campanha(campanha_id: str, auth = Depends(get_current_user)):
     """Get a campaign with aggregated stats."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("campanhas").select("*").eq("id", campanha_id).single().execute()
@@ -135,10 +134,9 @@ async def obter_campanha(campanha_id: str, authorization: Optional[str] = Header
 
 @router.patch("/campanhas/{campanha_id}")
 async def atualizar_campanha(
-    campanha_id: str, body: CampanhaUpdate, authorization: Optional[str] = Header(None)
-):
+    campanha_id: str, body: CampanhaUpdate, auth = Depends(get_current_user)):
     """Update a campaign."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
@@ -155,11 +153,16 @@ async def atualizar_campanha(
 
 
 @router.delete("/campanhas/{campanha_id}")
-async def excluir_campanha(campanha_id: str, authorization: Optional[str] = Header(None)):
+async def excluir_campanha(campanha_id: str, auth = Depends(get_current_user)):
     """Delete a campaign and its sends."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
+    # NOTE: this site is intentionally NOT migrated to `delete_or_404` —
+    # the FK-child `envios_email` rows must be removed BEFORE the parent
+    # `campanhas` row, AND the existence-check must guard those child deletes.
+    # delete_or_404 only collapses the simple `check → delete-single-row` shape.
+    # See KB § PATTERNS/backend.md § DELETE-with-existence-check helper.
     check = db.table("campanhas").select("id").eq("id", campanha_id).execute()
     if not check.data:
         raise HTTPException(status_code=404, detail="Campanha não encontrada")
@@ -173,13 +176,13 @@ async def excluir_campanha(campanha_id: str, authorization: Optional[str] = Head
 
 
 @router.post("/campanhas/{campanha_id}/enviar")
-async def enviar_campanha(campanha_id: str, authorization: Optional[str] = Header(None)):
+async def enviar_campanha(campanha_id: str, auth = Depends(get_current_user)):
     """
     Trigger campaign send.
     Creates envio_email records for matching clients based on campaign filters.
     Actual email delivery would be handled by an async worker/webhook.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Fetch campaign
@@ -243,12 +246,12 @@ async def enviar_campanha(campanha_id: str, authorization: Optional[str] = Heade
 
 
 @router.get("/alertas")
-async def processar_alertas(authorization: Optional[str] = Header(None)):
+async def processar_alertas(auth = Depends(get_current_user)):
     """
     Process interest-based alerts — match new properties to client interests.
     Returns a list of matches that could be sent as alerts.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     org_id = get_org_id(user)

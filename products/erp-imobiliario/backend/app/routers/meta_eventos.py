@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
 from app.dependencies import get_current_user
 from app.database import db as db_mod
@@ -22,14 +22,13 @@ router = APIRouter(prefix="/api/metas/meta-eventos", tags=["Metas · Meta Evento
 async def listar_por_referencia(
     referencia_tipo: str = Query(..., description="ativo | evento | comissoes_split | contrato"),
     referencia_id: str = Query(...),
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Return every meta_evento matching the given (referencia_tipo, referencia_id).
 
     Usually 0 or 1 row per pair, but some triggers emit multiple (e.g.
     multi-participant visita). Returned oldest-first.
     """
-    user, token = await get_current_user(authorization)
+    user, token = auth
     # Use the user client (RLS-enforced) so a non-admin only sees their own
     # org's rows.
     db = db_mod.get_client_for_user(token) if hasattr(db_mod, "get_client_for_user") else db_mod.get_admin_client()

@@ -5,7 +5,7 @@ Endpoints for contracts, proposals, financial reports, and DIMOB.
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from fastapi.responses import StreamingResponse
 import io
 from app.dependencies import get_current_user, get_user_client, log_action
@@ -20,10 +20,9 @@ pdf_service = PDFService()
 @router.get("/contrato/{contrato_id}")
 async def gerar_pdf_contrato(
     contrato_id: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Generate a PDF for a contract with its installments."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Fetch contract
@@ -51,10 +50,9 @@ async def gerar_pdf_contrato(
 @router.get("/proposta/{proposta_id}")
 async def gerar_pdf_proposta(
     proposta_id: str,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Generate a PDF for a proposal."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     result = db.table("propostas").select("*").eq("id", proposta_id).single().execute()
@@ -76,10 +74,9 @@ async def gerar_pdf_proposta(
 async def gerar_pdf_financeiro(
     periodo_inicio: Optional[str] = None,
     periodo_fim: Optional[str] = None,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Generate a financial report PDF."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Fetch lancamentos
@@ -123,10 +120,9 @@ async def gerar_pdf_financeiro(
 @router.get("/dimob/{ano}")
 async def gerar_pdf_dimob(
     ano: int,
-    authorization: Optional[str] = Header(None),
-):
+    auth = Depends(get_current_user)):
     """Generate a DIMOB declaration report PDF."""
-    user, token = await get_current_user(authorization)
+    user, token = auth
     db = get_user_client(token)
 
     # Fetch relevant data for DIMOB
