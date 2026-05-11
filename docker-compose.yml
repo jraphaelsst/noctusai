@@ -61,6 +61,9 @@ include:
       - products/media-scheduling/docker-compose.yml
       - products/media-scheduling/docker-compose.override.yml
   - products/imobi-scheduling/docker-compose.yml
+  - path:
+      - products/youtube-crawler/docker-compose.yml
+      - products/youtube-crawler/docker-compose.override.yml
   # END_PRODUCTS_INCLUDE
 
 services:

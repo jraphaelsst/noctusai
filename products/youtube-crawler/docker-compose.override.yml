@@ -1,0 +1,25 @@
+# Dev override compose — auto-merged by `docker compose up` (no -f).
+# See KB § PATTERNS/containerization.md §11d for the full pattern.
+
+services:
+  youtube-crawler-backend:
+    volumes:
+      - ./backend:/app/products/youtube-crawler/backend
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8008"
+      - --reload
+      - --app-dir
+      - products/youtube-crawler/backend
+    restart: "no"
+
+  youtube-crawler-frontend:
+    volumes:
+      - ./frontend:/app/products/youtube-crawler/frontend
+    environment:
+      NODE_ENV: development
+    restart: "no"
