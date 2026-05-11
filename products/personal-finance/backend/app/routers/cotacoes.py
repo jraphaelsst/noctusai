@@ -1,7 +1,7 @@
 """Real-time stock quotes router."""
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Header, Query, Depends
 from pydantic import BaseModel
 from app.dependencies import get_current_user, get_current_user_org, get_user_client
 from app.responses import success_response
@@ -34,10 +34,9 @@ async def cotacoes_batch(body: BatchRequest, authorization: Optional[str] = Head
 @router.post("/atualizar")
 async def atualizar_precos(
     carteira_id: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
+    auth: tuple = Depends(get_current_user_org)):
     """Update holdings with current market prices. If carteira_id is given, update only that portfolio."""
-    user, token, org_id = await get_current_user_org(authorization)
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CotacoesService(db, org_id)
 

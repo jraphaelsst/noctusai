@@ -1,7 +1,7 @@
 """Holdings (stocks, ETFs, etc.) router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, ok_response
 from app.schemas.ativos import AtivoCreate, AtivoUpdate
@@ -14,9 +14,8 @@ router = APIRouter(prefix="/api/ativos", tags=["Ativos"])
 @router.get("")
 async def listar_ativos(
     carteira_id: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = AtivosService(db, org_id)
     data = await service.listar(carteira_id=carteira_id)
@@ -24,8 +23,8 @@ async def listar_ativos(
 
 
 @router.get("/por-carteira/{carteira_id}")
-async def ativos_por_carteira(carteira_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def ativos_por_carteira(carteira_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = AtivosService(db, org_id)
     data = await service.listar(carteira_id=carteira_id)
@@ -33,8 +32,8 @@ async def ativos_por_carteira(carteira_id: str, authorization: Optional[str] = H
 
 
 @router.get("/{ativo_id}")
-async def obter_ativo(ativo_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_ativo(ativo_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = AtivosService(db, org_id)
     data = await service.obter(ativo_id)
@@ -44,8 +43,8 @@ async def obter_ativo(ativo_id: str, authorization: Optional[str] = Header(None)
 
 
 @router.post("")
-async def criar_ativo(body: AtivoCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_ativo(body: AtivoCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = AtivosService(db, org_id)
     data = await service.criar(body.model_dump(exclude_none=True))
@@ -55,8 +54,8 @@ async def criar_ativo(body: AtivoCreate, authorization: Optional[str] = Header(N
 
 
 @router.patch("/{ativo_id}")
-async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = AtivosService(db, org_id)
     updates = body.model_dump(exclude_none=True)
@@ -69,8 +68,8 @@ async def atualizar_ativo(ativo_id: str, body: AtivoUpdate, authorization: Optio
 
 
 @router.delete("/{ativo_id}")
-async def excluir_ativo(ativo_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_ativo(ativo_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = AtivosService(db, org_id)
     await service.excluir(ativo_id)

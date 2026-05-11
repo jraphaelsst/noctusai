@@ -1,7 +1,7 @@
 """Accounts CRUD router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, paginated_response, ok_response
 from app.schemas.contas import ContaCreate, ContaUpdate
@@ -14,9 +14,8 @@ router = APIRouter(prefix="/api/contas", tags=["Contas"])
 @router.get("")
 async def listar_contas(
     ativo: Optional[bool] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = ContasService(db, org_id)
     data = await service.listar(ativo=ativo)
@@ -24,8 +23,8 @@ async def listar_contas(
 
 
 @router.get("/saldos")
-async def obter_saldos(authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_saldos(auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = ContasService(db, org_id)
     data = await service.obter_saldos()
@@ -33,8 +32,8 @@ async def obter_saldos(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{conta_id}")
-async def obter_conta(conta_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_conta(conta_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = ContasService(db, org_id)
     data = await service.obter(conta_id)
@@ -44,8 +43,8 @@ async def obter_conta(conta_id: str, authorization: Optional[str] = Header(None)
 
 
 @router.post("")
-async def criar_conta(body: ContaCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_conta(body: ContaCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = ContasService(db, org_id)
     data = await service.criar(body.model_dump(exclude_none=True))
@@ -55,8 +54,8 @@ async def criar_conta(body: ContaCreate, authorization: Optional[str] = Header(N
 
 
 @router.patch("/{conta_id}")
-async def atualizar_conta(conta_id: str, body: ContaUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_conta(conta_id: str, body: ContaUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = ContasService(db, org_id)
     updates = body.model_dump(exclude_none=True)
@@ -69,8 +68,8 @@ async def atualizar_conta(conta_id: str, body: ContaUpdate, authorization: Optio
 
 
 @router.delete("/{conta_id}")
-async def excluir_conta(conta_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_conta(conta_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = ContasService(db, org_id)
     await service.excluir(conta_id)

@@ -1,7 +1,7 @@
 """Stock watchlist router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, ok_response
 from app.schemas.watchlist import WatchlistCreate, WatchlistItemCreate
@@ -12,8 +12,8 @@ router = APIRouter(prefix="/api/watchlists", tags=["Watchlists"])
 
 
 @router.get("")
-async def listar_watchlists(authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def listar_watchlists(auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = WatchlistService(db, org_id)
     data = await service.listar()
@@ -21,8 +21,8 @@ async def listar_watchlists(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{watchlist_id}")
-async def obter_watchlist(watchlist_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_watchlist(watchlist_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = WatchlistService(db, org_id)
     data = await service.obter(watchlist_id)
@@ -30,8 +30,8 @@ async def obter_watchlist(watchlist_id: str, authorization: Optional[str] = Head
 
 
 @router.post("")
-async def criar_watchlist(body: WatchlistCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_watchlist(body: WatchlistCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = WatchlistService(db, org_id)
     data = await service.criar(body.model_dump())
@@ -39,8 +39,8 @@ async def criar_watchlist(body: WatchlistCreate, authorization: Optional[str] = 
 
 
 @router.delete("/{watchlist_id}")
-async def excluir_watchlist(watchlist_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_watchlist(watchlist_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = WatchlistService(db, org_id)
     await service.excluir(watchlist_id)
@@ -48,8 +48,8 @@ async def excluir_watchlist(watchlist_id: str, authorization: Optional[str] = He
 
 
 @router.post("/{watchlist_id}/itens")
-async def adicionar_item(watchlist_id: str, body: WatchlistItemCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def adicionar_item(watchlist_id: str, body: WatchlistItemCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = WatchlistService(db, org_id)
     data = await service.adicionar_item(watchlist_id, body.model_dump(exclude_none=True))
@@ -57,8 +57,8 @@ async def adicionar_item(watchlist_id: str, body: WatchlistItemCreate, authoriza
 
 
 @router.delete("/itens/{item_id}")
-async def remover_item(item_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def remover_item(item_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = WatchlistService(db, org_id)
     await service.remover_item(item_id)

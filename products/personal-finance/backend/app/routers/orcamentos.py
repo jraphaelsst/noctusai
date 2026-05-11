@@ -1,7 +1,7 @@
 """Budget management router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, ok_response
 from app.schemas.orcamentos import OrcamentoCreate, OrcamentoUpdate, OrcamentoItemCreate, OrcamentoItemUpdate
@@ -12,8 +12,8 @@ router = APIRouter(prefix="/api/orcamentos", tags=["Orcamentos"])
 
 
 @router.get("")
-async def listar_orcamentos(authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def listar_orcamentos(auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     data = await service.listar()
@@ -21,8 +21,8 @@ async def listar_orcamentos(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{orcamento_id}")
-async def obter_orcamento(orcamento_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_orcamento(orcamento_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     data = await service.obter(orcamento_id)
@@ -35,9 +35,8 @@ async def obter_orcamento(orcamento_id: str, authorization: Optional[str] = Head
 async def obter_progresso(
     orcamento_id: str,
     periodo_mes: str = Query(...),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     data = await service.obter_progresso(orcamento_id, periodo_mes)
@@ -48,9 +47,8 @@ async def obter_progresso(
 async def listar_itens(
     orcamento_id: str,
     periodo_mes: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     data = await service.listar_itens(orcamento_id, periodo_mes)
@@ -58,8 +56,8 @@ async def listar_itens(
 
 
 @router.post("")
-async def criar_orcamento(body: OrcamentoCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_orcamento(body: OrcamentoCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     itens = [i.model_dump() for i in body.itens] if body.itens else None
@@ -72,8 +70,8 @@ async def criar_orcamento(body: OrcamentoCreate, authorization: Optional[str] = 
 
 
 @router.patch("/{orcamento_id}")
-async def atualizar_orcamento(orcamento_id: str, body: OrcamentoUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_orcamento(orcamento_id: str, body: OrcamentoUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     updates = body.model_dump(exclude_none=True)
@@ -86,8 +84,8 @@ async def atualizar_orcamento(orcamento_id: str, body: OrcamentoUpdate, authoriz
 
 
 @router.delete("/{orcamento_id}")
-async def excluir_orcamento(orcamento_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_orcamento(orcamento_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     await service.excluir(orcamento_id)
@@ -95,8 +93,8 @@ async def excluir_orcamento(orcamento_id: str, authorization: Optional[str] = He
 
 
 @router.post("/{orcamento_id}/itens")
-async def criar_item(orcamento_id: str, body: OrcamentoItemCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_item(orcamento_id: str, body: OrcamentoItemCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     item_data = body.model_dump()
@@ -106,8 +104,8 @@ async def criar_item(orcamento_id: str, body: OrcamentoItemCreate, authorization
 
 
 @router.patch("/itens/{item_id}")
-async def atualizar_item(item_id: str, body: OrcamentoItemUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_item(item_id: str, body: OrcamentoItemUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     updates = body.model_dump(exclude_none=True)
@@ -118,8 +116,8 @@ async def atualizar_item(item_id: str, body: OrcamentoItemUpdate, authorization:
 
 
 @router.delete("/itens/{item_id}")
-async def excluir_item(item_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_item(item_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = OrcamentosService(db, org_id)
     await service.excluir_item(item_id)

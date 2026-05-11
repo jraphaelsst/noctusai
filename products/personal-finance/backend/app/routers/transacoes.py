@@ -1,7 +1,7 @@
 """Transactions CRUD router with filtering and categorization."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, paginated_response, ok_response, calculate_pagination
 from app.schemas.transacoes import TransacaoCreate, TransacaoUpdate
@@ -22,9 +22,8 @@ async def listar_transacoes(
     busca: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = TransacoesService(db, org_id)
 
@@ -42,9 +41,8 @@ async def listar_transacoes(
 async def transacoes_por_categoria(
     data_inicio: str = Query(...),
     data_fim: str = Query(...),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = TransacoesService(db, org_id)
     data = await service.por_categoria(data_inicio, data_fim)
@@ -52,8 +50,8 @@ async def transacoes_por_categoria(
 
 
 @router.get("/{transacao_id}")
-async def obter_transacao(transacao_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_transacao(transacao_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = TransacoesService(db, org_id)
     data = await service.obter(transacao_id)
@@ -63,8 +61,8 @@ async def obter_transacao(transacao_id: str, authorization: Optional[str] = Head
 
 
 @router.post("")
-async def criar_transacao(body: TransacaoCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_transacao(body: TransacaoCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = TransacoesService(db, org_id)
     data = await service.criar(body.model_dump(exclude_none=True))
@@ -74,8 +72,8 @@ async def criar_transacao(body: TransacaoCreate, authorization: Optional[str] = 
 
 
 @router.patch("/{transacao_id}")
-async def atualizar_transacao(transacao_id: str, body: TransacaoUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_transacao(transacao_id: str, body: TransacaoUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = TransacoesService(db, org_id)
     updates = body.model_dump(exclude_none=True)
@@ -88,8 +86,8 @@ async def atualizar_transacao(transacao_id: str, body: TransacaoUpdate, authoriz
 
 
 @router.delete("/{transacao_id}")
-async def excluir_transacao(transacao_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_transacao(transacao_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = TransacoesService(db, org_id)
     await service.excluir(transacao_id)

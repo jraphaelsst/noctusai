@@ -1,7 +1,7 @@
 """Reports & analytics router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response
 from app.services.relatorios_service import RelatoriosService
@@ -13,9 +13,8 @@ router = APIRouter(prefix="/api/relatorios", tags=["Relatorios"])
 @router.get("/mensal")
 async def relatorio_mensal(
     mes: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RelatoriosService(db, org_id)
     data = await service.relatorio_mensal(mes)
@@ -25,9 +24,8 @@ async def relatorio_mensal(
 @router.get("/anual")
 async def relatorio_anual(
     ano: str = Query(..., pattern=r"^\d{4}$"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RelatoriosService(db, org_id)
     data = await service.relatorio_anual(ano)
@@ -38,9 +36,8 @@ async def relatorio_anual(
 async def fluxo_caixa(
     data_inicio: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
     data_fim: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RelatoriosService(db, org_id)
     data = await service.fluxo_caixa(data_inicio, data_fim)

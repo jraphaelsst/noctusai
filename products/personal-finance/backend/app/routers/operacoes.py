@@ -1,7 +1,7 @@
 """Investment operations (buy/sell/dividend) router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, paginated_response, ok_response, calculate_pagination
 from app.schemas.ativos import OperacaoCreate
@@ -19,9 +19,8 @@ async def listar_operacoes(
     ticker: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(page, page_size, settings.max_page_size)
@@ -54,9 +53,8 @@ async def operacoes_por_ativo(
     ativo_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(page, page_size, settings.max_page_size)
@@ -73,8 +71,8 @@ async def operacoes_por_ativo(
 
 
 @router.get("/{operacao_id}")
-async def obter_operacao(operacao_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_operacao(operacao_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     result = db.table("operacoes").select("*").eq("id", operacao_id).eq("org_id", org_id).single().execute()
     if not result.data:
@@ -83,8 +81,8 @@ async def obter_operacao(operacao_id: str, authorization: Optional[str] = Header
 
 
 @router.post("")
-async def criar_operacao(body: OperacaoCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_operacao(body: OperacaoCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = AtivosService(db, org_id)
     op_data = body.model_dump(exclude_none=True)
@@ -96,8 +94,8 @@ async def criar_operacao(body: OperacaoCreate, authorization: Optional[str] = He
 
 
 @router.delete("/{operacao_id}")
-async def excluir_operacao(operacao_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_operacao(operacao_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = AtivosService(db, org_id)
     await service.excluir_operacao(operacao_id)

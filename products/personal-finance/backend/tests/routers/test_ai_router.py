@@ -232,3 +232,87 @@ class TestConsentGuards:
             )
         assert resp.status_code == 412
         mock_svc.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit guards — pf-auth-factory-migration Part 2 (2026-05-11)
+# ---------------------------------------------------------------------------
+#
+# Per RATELIMIT-AUDIT: PF's AI endpoints invoke OpenAI on every call and
+# were uncovered by rate-limiting (LLM-spend risk). Each endpoint now
+# carries ``@limiter.limit("30/minute")`` (ERP reference, products/erp-
+# imobiliario/backend/app/routers/ai.py). Below: 200 under limit + 429
+# over limit for the cheapest endpoint (categorize), which is enough to
+# prove slowapi is wired through. Per `KB § PATTERNS/testing.md`, both
+# assertions check ``.status_code`` directly.
+
+
+class TestRateLimit:
+    def test_categorize_under_limit_returns_200(self, client, _stub_persist):
+        """A single call well below the 30/minute limit returns 200.
+        Sanity check that the ``@limiter.limit`` decorator does not
+        short-circuit healthy traffic."""
+        from app.rate_limit import limiter
+        limiter.reset()
+        client._mock_supabase.set_table_data("transacoes", SAMPLE_TX)
+        client._mock_supabase.set_table_data("categorias", [
+            {"id": "cat-1", "nome": "Streaming", "tipo": "despesa"},
+        ])
+        with patch(
+            "app.services.ai_service.categorize_transaction",
+            new_callable=AsyncMock,
+            return_value={
+                "kind": "classification",
+                "label": "Streaming",
+                "chip": "STREAMING",
+                "explanation": "x",
+                "confidence": 0.9,
+                "score": None,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "pf-categorize@v1",
+                "matched_categoria_id": "cat-1",
+            },
+        ):
+            resp = client.post(
+                "/api/ai/transacoes/11111111-1111-1111-1111-111111111111/categorize"
+            )
+        assert resp.status_code == 200, resp.text
+
+    def test_categorize_over_limit_returns_429(self, client, _stub_persist):
+        """Exceeding 30 POST requests/minute on /categorize returns 429
+        from slowapi. Drives 31 calls in a tight loop against the in-
+        memory limiter (TestClient hits a single IP). The 31st must trip
+        the limit. Asserts on ``.status_code`` per the status-code-
+        assertion rule."""
+        from app.rate_limit import limiter
+        limiter.reset()
+        client._mock_supabase.set_table_data("transacoes", SAMPLE_TX)
+        client._mock_supabase.set_table_data("categorias", [
+            {"id": "cat-1", "nome": "Streaming", "tipo": "despesa"},
+        ])
+        with patch(
+            "app.services.ai_service.categorize_transaction",
+            new_callable=AsyncMock,
+            return_value={
+                "kind": "classification",
+                "label": "Streaming",
+                "chip": "STREAMING",
+                "explanation": "x",
+                "confidence": 0.9,
+                "score": None,
+                "model_version": "gpt-4o-mini",
+                "prompt_version": "pf-categorize@v1",
+                "matched_categoria_id": "cat-1",
+            },
+        ):
+            statuses = []
+            for _ in range(31):
+                resp = client.post(
+                    "/api/ai/transacoes/11111111-1111-1111-1111-111111111111/categorize"
+                )
+                statuses.append(resp.status_code)
+        # First 30 should succeed, 31st should be 429.
+        assert statuses[:30] == [200] * 30, (
+            f"first 30 expected 200, got {[s for s in statuses[:30] if s != 200]}"
+        )
+        assert statuses[30] == 429, f"31st call expected 429, got {statuses[30]}"

@@ -1,7 +1,7 @@
 """Investment portfolio router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.dependencies import get_current_user_org, get_user_client, first_or_none
 from app.responses import success_response, ok_response
 from app.schemas.carteira import CarteiraCreate, CarteiraUpdate, AlocacaoAlvoCreate
@@ -12,8 +12,8 @@ router = APIRouter(prefix="/api/carteiras", tags=["Carteiras"])
 
 
 @router.get("")
-async def listar_carteiras(authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def listar_carteiras(auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CarteiraService(db, org_id)
     data = await service.listar()
@@ -21,8 +21,8 @@ async def listar_carteiras(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{carteira_id}")
-async def obter_carteira(carteira_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_carteira(carteira_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CarteiraService(db, org_id)
     data = await service.obter(carteira_id)
@@ -32,8 +32,8 @@ async def obter_carteira(carteira_id: str, authorization: Optional[str] = Header
 
 
 @router.get("/{carteira_id}/resumo")
-async def resumo_carteira(carteira_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def resumo_carteira(carteira_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CarteiraService(db, org_id)
     data = await service.resumo(carteira_id)
@@ -43,8 +43,8 @@ async def resumo_carteira(carteira_id: str, authorization: Optional[str] = Heade
 
 
 @router.post("")
-async def criar_carteira(body: CarteiraCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_carteira(body: CarteiraCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CarteiraService(db, org_id)
     data = await service.criar(body.model_dump(exclude_none=True))
@@ -54,8 +54,8 @@ async def criar_carteira(body: CarteiraCreate, authorization: Optional[str] = He
 
 
 @router.patch("/{carteira_id}")
-async def atualizar_carteira(carteira_id: str, body: CarteiraUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_carteira(carteira_id: str, body: CarteiraUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CarteiraService(db, org_id)
     updates = body.model_dump(exclude_none=True)
@@ -68,8 +68,8 @@ async def atualizar_carteira(carteira_id: str, body: CarteiraUpdate, authorizati
 
 
 @router.delete("/{carteira_id}")
-async def excluir_carteira(carteira_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_carteira(carteira_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CarteiraService(db, org_id)
     await service.excluir(carteira_id)
@@ -77,8 +77,8 @@ async def excluir_carteira(carteira_id: str, authorization: Optional[str] = Head
 
 
 @router.post("/{carteira_id}/alocacao")
-async def definir_alocacao_alvo(carteira_id: str, body: AlocacaoAlvoCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def definir_alocacao_alvo(carteira_id: str, body: AlocacaoAlvoCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
 
     # Verify carteira belongs to org

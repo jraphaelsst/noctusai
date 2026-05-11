@@ -1,7 +1,7 @@
 """Financial goals router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, ok_response
 from app.schemas.metas import MetaCreate, MetaUpdate, ContribuicaoCreate
@@ -14,9 +14,8 @@ router = APIRouter(prefix="/api/metas", tags=["Metas"])
 @router.get("")
 async def listar_metas(
     status: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = MetasService(db, org_id)
     data = await service.listar(status=status)
@@ -24,8 +23,8 @@ async def listar_metas(
 
 
 @router.get("/{meta_id}")
-async def obter_meta(meta_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_meta(meta_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = MetasService(db, org_id)
     data = await service.obter(meta_id)
@@ -35,8 +34,8 @@ async def obter_meta(meta_id: str, authorization: Optional[str] = Header(None)):
 
 
 @router.get("/{meta_id}/progresso")
-async def obter_progresso(meta_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_progresso(meta_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = MetasService(db, org_id)
     data = await service.obter_progresso(meta_id)
@@ -46,8 +45,8 @@ async def obter_progresso(meta_id: str, authorization: Optional[str] = Header(No
 
 
 @router.post("")
-async def criar_meta(body: MetaCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_meta(body: MetaCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = MetasService(db, org_id)
     data = await service.criar(body.model_dump(exclude_none=True))
@@ -57,8 +56,8 @@ async def criar_meta(body: MetaCreate, authorization: Optional[str] = Header(Non
 
 
 @router.patch("/{meta_id}")
-async def atualizar_meta(meta_id: str, body: MetaUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_meta(meta_id: str, body: MetaUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = MetasService(db, org_id)
     updates = body.model_dump(exclude_none=True)
@@ -71,8 +70,8 @@ async def atualizar_meta(meta_id: str, body: MetaUpdate, authorization: Optional
 
 
 @router.delete("/{meta_id}")
-async def excluir_meta(meta_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_meta(meta_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = MetasService(db, org_id)
     await service.excluir(meta_id)
@@ -80,8 +79,8 @@ async def excluir_meta(meta_id: str, authorization: Optional[str] = Header(None)
 
 
 @router.post("/{meta_id}/contribuicao")
-async def adicionar_contribuicao(meta_id: str, body: ContribuicaoCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def adicionar_contribuicao(meta_id: str, body: ContribuicaoCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = MetasService(db, org_id)
     data = await service.adicionar_contribuicao(meta_id, body.model_dump(exclude_none=True))

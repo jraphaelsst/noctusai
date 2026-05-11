@@ -2,13 +2,14 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response
+from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
@@ -57,13 +58,13 @@ class FlagRecurringRequest(BaseModel):
 
 
 @router.post("/transacoes/{transacao_id}/categorize")
+@limiter.limit("30/minute")
 async def categorize_transaction_endpoint(
-    transacao_id: str,
-    authorization: Optional[str] = Header(None),
+    request: Request, transacao_id: str,
     _consent: None = Depends(consent_required("pf.transaction_categorize")),
-):
+auth: tuple = Depends(get_current_user_org)):
     """P1-opp — suggest a category for a transaction and persist the indicator."""
-    user, token, org_id = await get_current_user_org(authorization)
+    user, token, org_id = auth
     _require_openai(org_id)
     db = get_user_client(token)
 
@@ -103,17 +104,17 @@ class MonthlyNarrativeSendRequest(BaseModel):
 
 
 @router.get("/monthly-narrative")
+@limiter.limit("30/minute")
 async def monthly_narrative_endpoint(
-    period_days: int = 30,
-    authorization: Optional[str] = Header(None),
+    request: Request, period_days: int = 30,
     _consent: None = Depends(consent_required("pf.monthly_narrative")),
-):
+auth: tuple = Depends(get_current_user_org)):
     """P2-opp — build the past-month financial narrative for the caller's org
     and return the rendered digest payload + structured summary. No email send.
 
     Used by the dashboard card. Cron callers use the `/send` variant below.
     """
-    user, token, org_id = await get_current_user_org(authorization)
+    user, token, org_id = auth
     _require_openai(org_id)
     db = get_user_client(token)
 
@@ -128,14 +129,14 @@ async def monthly_narrative_endpoint(
 
 
 @router.post("/monthly-narrative/send")
+@limiter.limit("30/minute")
 async def monthly_narrative_send_endpoint(
-    body: MonthlyNarrativeSendRequest,
-    authorization: Optional[str] = Header(None),
+    request: Request, body: MonthlyNarrativeSendRequest,
     _consent: None = Depends(consent_required("pf.monthly_narrative")),
-):
+auth: tuple = Depends(get_current_user_org)):
     """P2-opp — build + email the past-month financial narrative to a recipient.
     Designed for cron / n8n triggers (typically end-of-month)."""
-    user, token, org_id = await get_current_user_org(authorization)
+    user, token, org_id = auth
     _require_openai(org_id)
     db = get_user_client(token)
 
@@ -147,13 +148,13 @@ async def monthly_narrative_send_endpoint(
 
 
 @router.post("/transacoes/{transacao_id}/recurring-flag")
+@limiter.limit("30/minute")
 async def recurring_flag_endpoint(
-    transacao_id: str,
-    authorization: Optional[str] = Header(None),
+    request: Request, transacao_id: str,
     _consent: None = Depends(consent_required("pf.recurring_flag")),
-):
+auth: tuple = Depends(get_current_user_org)):
     """P3-opp — flag whether a transaction looks recurring and persist the indicator."""
-    user, token, org_id = await get_current_user_org(authorization)
+    user, token, org_id = auth
     _require_openai(org_id)
     db = get_user_client(token)
 

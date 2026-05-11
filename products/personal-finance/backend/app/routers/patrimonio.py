@@ -1,7 +1,7 @@
 """Net worth tracking router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response
 from app.services.patrimonio_service import PatrimonioService
@@ -11,8 +11,8 @@ router = APIRouter(prefix="/api/patrimonio", tags=["Patrimonio"])
 
 
 @router.get("/atual")
-async def patrimonio_atual(authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def patrimonio_atual(auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = PatrimonioService(db, org_id)
     data = await service.calcular_atual()
@@ -22,9 +22,8 @@ async def patrimonio_atual(authorization: Optional[str] = Header(None)):
 @router.get("/historico")
 async def patrimonio_historico(
     limite: int = Query(24, ge=1, le=120),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = PatrimonioService(db, org_id)
     data = await service.historico(limite=limite)
@@ -34,9 +33,8 @@ async def patrimonio_historico(
 @router.post("/snapshot")
 async def criar_snapshot(
     data_snapshot: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = PatrimonioService(db, org_id)
     data = await service.criar_snapshot(data_snapshot)

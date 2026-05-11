@@ -1,7 +1,7 @@
 """Categories CRUD router with hierarchy support."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, ok_response
 from app.schemas.categorias import CategoriaCreate, CategoriaUpdate
@@ -14,9 +14,8 @@ router = APIRouter(prefix="/api/categorias", tags=["Categorias"])
 @router.get("")
 async def listar_categorias(
     tipo: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CategoriasService(db, org_id)
     data = await service.listar(tipo=tipo)
@@ -26,9 +25,8 @@ async def listar_categorias(
 @router.get("/arvore")
 async def categorias_arvore(
     tipo: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CategoriasService(db, org_id)
     data = await service.arvore(tipo=tipo)
@@ -36,8 +34,8 @@ async def categorias_arvore(
 
 
 @router.get("/{categoria_id}")
-async def obter_categoria(categoria_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_categoria(categoria_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CategoriasService(db, org_id)
     data = await service.obter(categoria_id)
@@ -47,8 +45,8 @@ async def obter_categoria(categoria_id: str, authorization: Optional[str] = Head
 
 
 @router.post("")
-async def criar_categoria(body: CategoriaCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_categoria(body: CategoriaCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CategoriasService(db, org_id)
     data = await service.criar(body.model_dump(exclude_none=True))
@@ -58,8 +56,8 @@ async def criar_categoria(body: CategoriaCreate, authorization: Optional[str] = 
 
 
 @router.patch("/{categoria_id}")
-async def atualizar_categoria(categoria_id: str, body: CategoriaUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_categoria(categoria_id: str, body: CategoriaUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CategoriasService(db, org_id)
     updates = body.model_dump(exclude_none=True)
@@ -72,8 +70,8 @@ async def atualizar_categoria(categoria_id: str, body: CategoriaUpdate, authoriz
 
 
 @router.delete("/{categoria_id}")
-async def excluir_categoria(categoria_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_categoria(categoria_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = CategoriasService(db, org_id)
     await service.excluir(categoria_id)

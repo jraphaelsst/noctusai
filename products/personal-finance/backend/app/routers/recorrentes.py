@@ -1,7 +1,7 @@
 """Recurring transactions & bills router."""
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_user_client
 from app.responses import success_response, ok_response
 from app.schemas.recorrentes import RecorrenteCreate, RecorrenteUpdate
@@ -14,9 +14,8 @@ router = APIRouter(prefix="/api/recorrentes", tags=["Recorrentes"])
 @router.get("")
 async def listar_recorrentes(
     ativo: Optional[bool] = Query(None),
-    authorization: Optional[str] = Header(None),
-):
-    user, token, org_id = await get_current_user_org(authorization)
+    auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RecorrentesService(db, org_id)
     data = await service.listar(ativo=ativo)
@@ -24,9 +23,9 @@ async def listar_recorrentes(
 
 
 @router.post("/executar")
-async def executar_pendentes(authorization: Optional[str] = Header(None)):
+async def executar_pendentes(auth: tuple = Depends(get_current_user_org)):
     """Execute all pending automatic recurring transactions."""
-    user, token, org_id = await get_current_user_org(authorization)
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RecorrentesService(db, org_id)
     data = await service.executar_pendentes()
@@ -36,10 +35,9 @@ async def executar_pendentes(authorization: Optional[str] = Header(None)):
 @router.get("/proximas")
 async def proximas_contas(
     dias: int = Query(7, ge=1, le=90),
-    authorization: Optional[str] = Header(None),
-):
+    auth: tuple = Depends(get_current_user_org)):
     """Get upcoming bills within the next N days."""
-    user, token, org_id = await get_current_user_org(authorization)
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RecorrentesService(db, org_id)
     data = await service.proximas(dias)
@@ -47,9 +45,9 @@ async def proximas_contas(
 
 
 @router.post("/{recorrente_id}/executar")
-async def executar_unico(recorrente_id: str, authorization: Optional[str] = Header(None)):
+async def executar_unico(recorrente_id: str, auth: tuple = Depends(get_current_user_org)):
     """Manually execute a single recurring entry once."""
-    user, token, org_id = await get_current_user_org(authorization)
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RecorrentesService(db, org_id)
     data = await service.executar_unico(recorrente_id)
@@ -59,8 +57,8 @@ async def executar_unico(recorrente_id: str, authorization: Optional[str] = Head
 
 
 @router.get("/{recorrente_id}")
-async def obter_recorrente(recorrente_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def obter_recorrente(recorrente_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RecorrentesService(db, org_id)
     data = await service.obter(recorrente_id)
@@ -70,8 +68,8 @@ async def obter_recorrente(recorrente_id: str, authorization: Optional[str] = He
 
 
 @router.post("")
-async def criar_recorrente(body: RecorrenteCreate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def criar_recorrente(body: RecorrenteCreate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RecorrentesService(db, org_id)
     data = await service.criar(body.model_dump(exclude_none=True))
@@ -81,8 +79,8 @@ async def criar_recorrente(body: RecorrenteCreate, authorization: Optional[str] 
 
 
 @router.patch("/{recorrente_id}")
-async def atualizar_recorrente(recorrente_id: str, body: RecorrenteUpdate, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def atualizar_recorrente(recorrente_id: str, body: RecorrenteUpdate, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     updates = body.model_dump(exclude_none=True)
     if not updates:
@@ -95,8 +93,8 @@ async def atualizar_recorrente(recorrente_id: str, body: RecorrenteUpdate, autho
 
 
 @router.delete("/{recorrente_id}")
-async def excluir_recorrente(recorrente_id: str, authorization: Optional[str] = Header(None)):
-    user, token, org_id = await get_current_user_org(authorization)
+async def excluir_recorrente(recorrente_id: str, auth: tuple = Depends(get_current_user_org)):
+    user, token, org_id = auth
     db = get_user_client(token)
     service = RecorrentesService(db, org_id)
     await service.excluir(recorrente_id)
