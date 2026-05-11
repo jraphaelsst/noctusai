@@ -423,3 +423,145 @@ jobs:
             ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:latest
           cache-from: type=gha,scope=${{ matrix.product }}-${{ matrix.role }}
           cache-to: type=gha,mode=max,scope=${{ matrix.product }}-${{ matrix.role }}
+
+  trivy-fs-scan:
+    # Filesystem-level dependency scan. Complements the per-image scan
+    # inside `docker-images-build` by reading lockfiles directly
+    # (requirements.txt, package-lock.json, etc.) BEFORE any image
+    # builds. Faster signal + lower cost on dep-only changes.
+    #
+    # Config bit-for-bit matches the T9 spec recorded in
+    # `KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md §
+    # "Entries from trivy-prescan-2026-05-11"`:
+    #   - aquasec/trivy:0.49.1 (pinned, not @latest)
+    #   - --severity HIGH,CRITICAL
+    #   - --ignore-unfixed
+    #   - respects `.trivyignore` at repo root (2 accepted CVEs)
+    name: Trivy filesystem scan (deps)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan — HIGH/CRITICAL, ignore-unfixed
+        # Run via the official action (matches the image-scan job's
+        # `aquasecurity/trivy-action@0.24.0` pin so DB / engine stay
+        # consistent across scan modes). `scan-type: fs` reads
+        # requirements*.txt / package-lock.json / Pipfile.lock etc.
+        # exit-code: 1 gates the PR; `trivyignores:` picks up the
+        # repo-root `.trivyignore` per the T9 spec.
+        id: scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy SARIF to GH Security tab
+        # `if: always()` so the report uploads even when the scan
+        # fails — same shape as the image-scan job above. Reviewers
+        # need to see WHICH CVE failed.
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  bandit-scan:
+    # Python static-application-security-testing.
+    # Config: `bandit.yml` at repo root.
+    # Gate: fails on MEDIUM+ severity AND MEDIUM+ confidence.
+    # Targets: every product's backend app + the shared seed lib.
+    name: Bandit Python SAST
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install bandit
+        # Pinned to 1.9.x — confirmed compatible with Python 3.11+ and
+        # the bandit.yml shape at repo root. `[toml]` extra so bandit
+        # can read pyproject-style configs alongside its own YAML.
+        run: pip install 'bandit[toml]==1.9.4'
+
+      - name: Run bandit (SARIF output)
+        # `--exit-zero` here so we can run BOTH the SARIF report
+        # (always uploaded) and the gate (next step) without short-
+        # circuiting on first failure. Same split-pattern as the
+        # Trivy job above.
+        run: |
+          bandit -r products/*/backend/app/ seed/lib/backend/noctusai_lib/ \
+            -c bandit.yml \
+            --severity-level medium \
+            --confidence-level medium \
+            -f sarif \
+            -o bandit.sarif \
+            --exit-zero
+
+      - name: Upload bandit SARIF to GH Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+      - name: Bandit gate — fail on NEW MEDIUM+ findings
+        # Real gate: re-run bandit against the committed baseline.
+        # `--baseline bandit-baseline.json` grandfathers existing
+        # findings (4 known issues — 3× XML parsing, 1× SHA1; tracked
+        # in the follow-up bandit-baseline-cleanup project). NEW
+        # findings introduced by a PR cause a non-zero exit and
+        # fail the job. Same config so the report above and the
+        # gate here surface identical NEW findings.
+        run: |
+          bandit -r products/*/backend/app/ seed/lib/backend/noctusai_lib/ \
+            -c bandit.yml \
+            --severity-level medium \
+            --confidence-level medium \
+            --baseline bandit-baseline.json \
+            -f screen
+
+  gitleaks-scan:
+    # Secrets scanning. Config: `.gitleaks.toml` at repo root.
+    # Gate: any leaked secret fails the job.
+    # On PRs: scans the PR diff (fast).
+    # On push to main: scans the diff against the previous commit.
+    # Full-history scan is out-of-scope (would push CI past 10min for
+    # zero signal — history is already merged).
+    name: Gitleaks secrets scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks-action needs the diff history; fetch-depth: 0
+          # pulls the full ref so the diff base is available.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # Public repo / free tier — no license required. Action
+          # auto-detects event shape (push vs pull_request) and
+          # scopes the scan accordingly.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Honour the repo-root `.gitleaks.toml` allowlist for
+          # known-safe public values (Supabase demo JWT, etc.).
+          config-path: .gitleaks.toml

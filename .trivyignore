@@ -1,0 +1,58 @@
+# Trivy ignore file — accepted CVEs per
+# KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md §
+# "Entries from `trivy-prescan-2026-05-11`".
+#
+# Each entry is a CVE-ID, one per line. Trivy's CLI + Action both honour this
+# file at the scan-context root. Update both entries simultaneously when the
+# structural fix lands (revisit trigger: "scrub non-runtime packages from
+# builder→runtime copy in seed Dockerfile") — that project will flip both
+# accept entries to FORMALIZED and these two lines disappear together.
+
+# wheel: Privilege Escalation via malicious wheel file unpacking.
+# Non-runtime — `wheel unpack` is never invoked by product code (grep verified).
+# See `accept-with-rationale.md` § `wheel CVE-2026-24049 carried in runtime venv`.
+CVE-2026-24049
+
+# jaraco.context: Path traversal via malicious tar archives.
+# Non-runtime — `jaraco.context.tarball()` is never invoked by product code.
+# See `accept-with-rationale.md` § `jaraco.context CVE-2026-23949 carried in runtime venv`.
+CVE-2026-23949
+
+# -----------------------------------------------------------------
+# TECH DEBT — fixable CVEs grandfathered by `ci-security-hardening`
+# 2026-05-11. Each entry has an available fix (`pip install -U` /
+# `npm update` resolves). Follow-up project filed:
+#   `projects/trivy-baseline-cleanup-2026-05-11/PROJECT.md` (TODO).
+# These entries are temporary — flip to FORMALIZED at cleanup close.
+# -----------------------------------------------------------------
+
+# PyJWT 2.9.0 → 2.12.0. RFC 7515 §4.1.11 MUST violation: PyJWT accepts
+# unknown `crit` header extensions. Fix: pin `PyJWT>=2.12.0` in root
+# `requirements.txt`. Already noted in accept-with-rationale's
+# trivy-prescan-2026-05-11 entry as "patched" — patch landed in seed
+# images but the root requirements.txt was not bumped.
+CVE-2026-32597
+
+# lodash 4.17.21 / 4.17.23 → 4.18.0. Arbitrary code execution via
+# untrusted input in template imports. Fix: bump in product frontend
+# package-lock.json files (erp-imobiliario, personal-finance,
+# therapy-platform). One CVE ID covers all three lockfiles.
+CVE-2026-4800
+
+# @remix-run/router 1.23.0 → 1.23.2. Fix: bump in erp-imobiliario
+# frontend lockfile (only product using @remix-run/router).
+CVE-2026-22029
+
+# glob 10.4.5 → 11.1.0 / 10.5.0. Fix: bump in erp-imobiliario frontend.
+CVE-2025-64756
+
+# minimatch 9.0.5 → 9.0.6 / 9.0.7. Three CVEs covering ReDoS variants.
+# Fix: single minimatch bump resolves all three.
+CVE-2026-26996
+CVE-2026-27903
+CVE-2026-27904
+
+# picomatch 2.3.1 / 4.0.3 → 2.3.2 / 4.0.4. Fix: bump in
+# personal-finance frontend lockfile (both transitive instances).
+CVE-2026-33671
+

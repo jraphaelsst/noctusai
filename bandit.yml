@@ -1,0 +1,54 @@
+# Bandit configuration — Python SAST.
+#
+# Used by:
+#   - CI job `bandit-scan` in `.github/workflows/test.yml`.
+#   - Local invocation:
+#       bandit -r products/*/backend/app/ \
+#              seed/lib/backend/noctusai_lib/ \
+#              -c bandit.yml --severity-level medium --confidence-level medium
+#
+# Config schema: https://bandit.readthedocs.io/en/latest/config.html
+#
+# What we WANT to catch (high-signal B-codes — NOT in `skips`):
+#   B301 pickle.loads / cPickle.loads — deserialization RCE.
+#   B306 mktemp_q — race conditions on temp files.
+#   B307 eval — arbitrary code execution.
+#   B308 mark_safe — Django XSS escape hatch.
+#   B309 httpsconnection (Python 2-only — auto-no-op on 3.x).
+#   B310 urllib_urlopen with file:// / ftp:// — SSRF surface.
+#   B312 telnetlib — cleartext credential transport.
+#   B321 ftplib — cleartext.
+#   B323 unverified_context — TLS bypass.
+#   B324 hashlib (md5/sha1 for security purposes).
+#   B501 ssl_with_no_cert_validation.
+#   B502 ssl_with_bad_version.
+#   B602 subprocess_popen_with_shell_equals_true.
+#   B608 hardcoded_sql_expressions — SQL injection.
+#   B609 linux_commands_wildcard_injection.
+#   B701 jinja2_autoescape_false — XSS.
+#
+# What we SKIP (false-positive prone in our codebase):
+#   B101 assert_used — tests use `assert` everywhere; even production code
+#         uses it for invariant checks the right way. Skipped repo-wide.
+#
+# Note on B104 (hardcoded_bind_all_interfaces): bandit 1.7.10 does NOT
+# register B104 as a built-in test (verified: `bandit.plugins_by_id` has
+# no B104 entry). If a future bandit version reintroduces it, add it to
+# `skips` below — `0.0.0.0` is correct in container contexts.
+
+skips:
+  - B101  # assert_used
+
+# Directories scanned by `bandit -r <path>` are passed at the CLI; the
+# `exclude_dirs` config below is bandit's path-substring filter applied to
+# every scanned path. Keep both layers — CLI for top-level scope, this for
+# universal exclusions regardless of where bandit is invoked from.
+exclude_dirs:
+  - "*/tests/*"           # product tests
+  - "*/test/*"            # singular variant
+  - "*/__pycache__/*"
+  - "*/.venv/*"
+  - "*/venv/*"
+  - "*/node_modules/*"
+  - "*/.git/*"
+  - "*/migrations/*"      # DDL-only; bandit's SQL detector misfires on Supabase migration DSL
