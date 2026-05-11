@@ -9,7 +9,8 @@
 # Modes:
 #   ./start.sh                     full fleet (10 products × backend+frontend)
 #   ./start.sh redis               + Redis profile
-#   ./start.sh full                + Redis + WAHA
+#   ./start.sh local-db            + local Postgres (offline dev — see KB §)
+#   ./start.sh full                + Redis + WAHA + Postgres
 #   ./start.sh tunnel <slug>       + cloudflare tunnel exposing one product
 #   ./start.sh tunnel              + cloudflare tunnels for ALL products
 #   ./start.sh build               rebuild images then up (forces refresh)
@@ -120,6 +121,9 @@ else
     waha)
       COMPOSE_ARGS+=(--profile waha)
       ;;
+    local-db|postgres)
+      COMPOSE_ARGS+=(--profile postgres)
+      ;;
     full)
       COMPOSE_ARGS+=(--profile full)
       ;;
@@ -153,7 +157,7 @@ else
       ;;
     *)
       echo "ERRO: modo desconhecido '$MODE'." >&2
-      echo "       Use: fleet | redis | waha | full | tunnel [slug] | build | native" >&2
+      echo "       Use: fleet | redis | waha | local-db | full | tunnel [slug] | build | native" >&2
       exit 1
       ;;
   esac
@@ -179,6 +183,13 @@ else
     echo "  $name Backend  → http://localhost:$bp"
     echo "  $name Frontend → http://localhost:$fp"
   done
+  # Surface the local Postgres URL when the postgres profile is active.
+  if [[ "$MODE" == "local-db" || "$MODE" == "postgres" || "$MODE" == "full" ]]; then
+    echo "  ─────────────────────────────────────────"
+    echo "  Postgres (local) → postgresql://noctus:noctus_local@localhost:5432/noctus"
+    echo "    container alias → postgresql://noctus:noctus_local@postgres:5432/noctus"
+    echo "    psql shell     → docker exec -it noctus-postgres psql -U noctus -d noctus"
+  fi
   echo "============================================"
 
   # Tunnel URL extraction — wait for cloudflared to log its public URL

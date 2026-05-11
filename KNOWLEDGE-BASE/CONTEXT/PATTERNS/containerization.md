@@ -291,12 +291,25 @@ services:
     profiles: [waha, full]
     # ...
 
+  postgres:                              # Local Postgres (offline dev — §11.13)
+    image: postgres:16-alpine
+    container_name: noctus-postgres
+    environment: { POSTGRES_USER: noctus, POSTGRES_PASSWORD: noctus_local, POSTGRES_DB: noctus }
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-local-db:/docker-entrypoint-initdb.d:ro
+    networks: [noctus-net]
+    profiles: [postgres, full]
+    # healthcheck: pg_isready -U noctus -d noctus
+
 networks:
   noctus-net: { name: noctus-net, driver: bridge }
 
 volumes:
   redis_data:
   waha_sessions:
+  postgres_data:
 ```
 
 **Profiles.** Anything that not all products need lives behind a
@@ -351,7 +364,8 @@ iteration.
 ./start.sh                      # 10 products × backend+frontend (20 containers)
 ./start.sh redis                # + Redis profile
 ./start.sh waha                 # + WAHA (WhatsApp HTTP API)
-./start.sh full                 # + Redis + WAHA
+./start.sh local-db             # + local Postgres (offline dev — see §11.13)
+./start.sh full                 # + Redis + WAHA + Postgres
 ./start.sh build                # rebuild images (--no-cache --pull) then up
 
 # Cloudflare tunnel — expose a product to the internet via *.trycloudflare.com
@@ -766,10 +780,16 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
     (`:dev` image tags, `restart: unless-stopped`, no resource limits).
     A `docker-compose.prod.yml` overlay defining resource caps + log
     drivers + read-only filesystems would be the deployment artifact.
-13. **Postgres profile.** Currently every backend talks to remote
-    Supabase. For offline dev / fully-isolated CI, a `postgres` profile
-    serving a local DB (with a schema-init script that mirrors
-    migrations) would unlock more scenarios.
+13. ✅ **Postgres profile — applied (T4, containerization-backlog-closure
+    Wave 1).** `postgres:16-alpine` service in the root compose under
+    `profiles: [postgres, full]`. Schema init via
+    `scripts/init-local-db/`: `00-extensions.sql` (pgcrypto, uuid-ossp,
+    citext) + `00a-supabase-shims.sql` (roles + `auth.jwt()`/`auth.uid()`
+    stubs + `extensions` + `storage` schemas + minimal `auth.users` table)
+    + `01-schemas.sql` + `02-migrations.sql` (last two regenerated from
+    each product's first migration by `scripts/build-init-local-db.sh`).
+    `./start.sh local-db` activates the profile alongside the fleet. See
+    §11b below for the full mental model + caveats.
 14. **Health endpoint per-product variation.** All products use the
     seed's `/api/health` — fine, but dev-team's agno engine has
     deeper health probes (`/api/health/agno`) that the docker
@@ -795,6 +815,118 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
 
 ---
 
+## 11b · Local-postgres profile (offline dev)
+
+> **Status:** Applied 2026-05-10 (T4, containerization-backlog-closure
+> Wave 1). Closes §11 backlog #13.
+
+### When to use it
+
+- **Offline dev** — flight, no internet, no Supabase reach.
+- **Fully-isolated CI** — no network to remote services; reproducible
+  schema applied identically every run.
+- **Fresh laptop** — Supabase project credentials not yet provisioned;
+  want to verify the stack starts.
+- **Migration sanity-check** — apply every product's first migration
+  against a clean Postgres to surface SQL errors *before* they hit
+  staging.
+
+Default `docker compose up` does NOT bring postgres up. Default `start.sh`
+fleet mode does NOT bring it up. The profile is fully opt-in.
+
+### How to activate
+
+```bash
+./start.sh local-db                                # fleet + postgres
+docker compose --profile postgres up -d postgres   # postgres only
+docker compose --profile full up                   # everything
+```
+
+The container exposes `5432` on the host, plus an internal alias
+`postgres` reachable on `noctus-net`:
+
+| From | URL |
+|---|---|
+| host shell (psql, pgcli, IDE) | `postgresql://noctus:noctus_local@localhost:5432/noctus` |
+| inside any product container | `postgresql://noctus:noctus_local@postgres:5432/noctus` |
+
+### What runs on first boot
+
+Files under `scripts/init-local-db/` are bind-mounted to
+`/docker-entrypoint-initdb.d/` (read-only). The official postgres image
+runs every `.sql` / `.sh` in that directory in **alphabetical order**
+on a fresh `postgres_data` volume:
+
+| Order | File | Purpose |
+|---|---|---|
+| 1 | `00-extensions.sql` | `CREATE EXTENSION pgcrypto / "uuid-ossp" / citext` |
+| 2 | `00a-supabase-shims.sql` | roles (`anon` / `authenticated` / `service_role`) + `auth.{jwt,uid,role,email}()` no-op functions + `auth.users` shim + `extensions` / `storage` schema placeholders |
+| 3 | `01-schemas.sql` | `CREATE SCHEMA IF NOT EXISTS <slug>` per product **(generated)** |
+| 4 | `02-migrations.sql` | concatenated `products/*/backend/migrations/<first>_*.sql` wrapped in `BEGIN; ... COMMIT;` per product **(generated)** |
+
+### Regenerating the init scripts
+
+When a product's first migration changes (rare — usually 001 is frozen),
+regenerate the two generated files:
+
+```bash
+bash scripts/build-init-local-db.sh
+```
+
+The generator finds the lexicographically-first numeric-prefixed `.sql`
+in each `products/*/backend/migrations/` directory (handles both
+3-digit `001_*` and 4-digit `0001_*` zero-padding). Output is
+deterministic; commit alongside the migration change.
+
+### Caveat — schema init runs ONCE per volume
+
+The postgres official image only runs `/docker-entrypoint-initdb.d/`
+when the data directory is empty. After the first successful boot, the
+volume has data and subsequent `docker compose up postgres` reuses it
+unchanged. To re-init:
+
+```bash
+./stop.sh volumes        # drops the postgres_data volume
+./start.sh local-db      # fresh init
+```
+
+### Caveat — RLS policies evaluate to FALSE under default settings
+
+Every product migration references `auth.jwt()->>'org_id'` in its RLS
+policies. The shim returns NULL (no JWT issuer in offline-dev), so RLS
+filters reject all rows for non-superusers. Two workarounds:
+
+1. **Connect as `noctus`** (the `POSTGRES_USER` — superuser; bypasses
+   RLS). Default in `psql -U noctus`.
+2. **Simulate a logged-in user per session** —
+   `SET LOCAL request.jwt.claims = '{"org_id": "...", "sub": "..."}';`
+   before queries. `auth.jwt()` will then return that JSON.
+
+### Caveat — Supabase-specific features are best-effort
+
+Some product migrations reference features `postgres:16-alpine` doesn't
+ship: `CREATE EXTENSION vector`, `CREATE EXTENSION pg_cron`, `CREATE
+EXTENSION pg_net`, Supabase `storage.objects` table. The generator
+wraps each product's migration in `BEGIN; ... COMMIT;` so a single
+product's failure rolls back THAT product's block only — the rest of
+the fleet still applies. ERP is the typical casualty (uses pgvector
+for embeddings); accept-with-rationale for offline-dev. To use those
+features locally, install the extensions in the postgres image
+(rebuild postgres with `pgvector/pgvector:pg16` base) or live with
+that one product missing in offline-dev.
+
+### Wiring a product at the local DB
+
+Most products consume Supabase via PostgREST (`SUPABASE_URL` is an
+HTTP endpoint, not a raw postgres URL). Pointing a product at the
+local Postgres requires the product to swap its data-access path to
+raw psycopg2/asyncpg — out of scope for T4. The local DB is shipped
+today as a **schema + data substrate** for ad-hoc psql / pgcli /
+direct-SQL workflows; a follow-up (or per-product carve-out) wires
+runtime read/write through.
+
+---
+
 ## 12 · References
 
 - Root compose: `docker-compose.yml`
@@ -802,5 +934,7 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
 - nginx template: `seed/framework/frontend/nginx.conf.template`
 - Vite alias factory: `seed/framework/frontend/vite.config.factory.ts`
 - Workspace template (sibling-product equivalent): `templates/seed-workspace-docker/`
+- Local-postgres init scripts: `scripts/init-local-db/`
+- Local-postgres generator: `scripts/build-init-local-db.sh`
 - Deploy drill (when user says "put X online"): `KB § GUIDES/deploy-workspace-online.md`
 - Operations: `start.sh`, `stop.sh`
