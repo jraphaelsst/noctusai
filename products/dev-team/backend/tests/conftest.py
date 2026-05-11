@@ -5,6 +5,20 @@ products/mailing/backend/tests/conftest.py for the reference). Patches the
 seed's database getters so we can spin a TestClient against a mock
 Supabase instance — no live DB needed.
 """
+import sys as _sys
+from pathlib import Path as _Path
+
+_LIB = _Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
+if str(_LIB) not in _sys.path:
+    _sys.path.insert(0, str(_LIB))
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location(
+    "_bootstrap_conftest_helpers",
+    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_mod.purge_shadowing_editable_finders(_LIB)
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient

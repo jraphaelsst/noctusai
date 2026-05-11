@@ -15,6 +15,20 @@ than the canonical noc migrations (the seed lib is installed in the shared
 venv, so its `_find_repo_root` walks up to canonical noc by default — see
 `projects/imobi-scheduling-bot-creation/findings.md` §1).
 """
+import sys as _sys
+from pathlib import Path as _Path
+
+_LIB = _Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
+if str(_LIB) not in _sys.path:
+    _sys.path.insert(0, str(_LIB))
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location(
+    "_bootstrap_conftest_helpers",
+    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_mod.purge_shadowing_editable_finders(_LIB)
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
