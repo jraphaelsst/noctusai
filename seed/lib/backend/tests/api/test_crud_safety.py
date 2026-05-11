@@ -274,6 +274,57 @@ def test_predicate_alignment_select_and_delete_match():
     assert fake.delete_predicates == [("id", "m1"), ("org_id", "org-A")]
 
 
+def test_select_projection_uses_first_predicate_column():
+    """The existence-check SELECT projects the FIRST predicate column, NOT
+    a hardcoded `"id"`. Tables keyed on non-`id` columns (e.g. `platform_settings`
+    keyed on `key`) MUST work without schema errors.
+
+    Regression test: hardcoding `select("id")` broke `delete_or_404` for any
+    table whose PK is named differently. Caught in
+    `delete-precheck-backlog-cleanup` Phase 2 when refactoring
+    `products/core/backend/app/routers/settings.py::deletar_platform_setting`.
+    """
+    fake = _RecordingFake(present=True)
+    fake_select_cols: list[str] = []
+    original_select = fake.select
+
+    def recording_select(cols):
+        fake_select_cols.append(cols)
+        return original_select(cols)
+
+    fake.select = recording_select  # type: ignore[method-assign]
+
+    delete_with_existence_check(
+        fake,
+        "platform_settings",
+        ("key", "FOO_FLAG"),
+        not_found_exc=lambda: LookupError("setting missing"),
+    )
+
+    assert fake_select_cols == ["key"], (
+        f"Expected SELECT projection to use first predicate column 'key', "
+        f"got {fake_select_cols!r}"
+    )
+
+
+def test_no_predicates_raises_value_error():
+    """Defensive: zero predicates would match every row in the table.
+
+    The helper refuses rather than silently nuking the whole table.
+    """
+    fake = _RecordingFake(present=True)
+
+    with pytest.raises(ValueError, match="at least one predicate"):
+        delete_with_existence_check(
+            fake,
+            "metas",
+            not_found_exc=lambda: LookupError("nope"),
+        )
+
+    assert fake.select_predicates == []
+    assert fake.delete_predicates == []
+
+
 def test_predicate_alignment_skips_delete_when_absent():
     """When pre-check fails, DELETE chain MUST NOT execute.
 
