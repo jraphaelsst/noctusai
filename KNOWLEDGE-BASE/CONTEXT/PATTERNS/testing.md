@@ -820,6 +820,51 @@ describe('useFoo', () => {
 
 ---
 
+## Test-isolation pollution detection (since 2026-05-11)
+
+**Symptom:** a test passes in isolation but fails when the full suite is run. The classic shape of mutable-shared-state leakage across tests — a *polluter test* mutates state that the *polluted test* reads, with the polluter being upstream in the test-collection order.
+
+**Hallmark check (every triage):**
+```bash
+# 1. Full-suite failure (reproduces the manifestation)
+pytest products/<product>/backend/ -q
+# 2. Isolation pass (confirms not a genuine logic bug)
+pytest products/<product>/backend/tests/path/to/test::ClassName::test_method -q
+# 3. pytest-randomly amplification (if step-2 passes but step-1 fails)
+pytest -p randomly --randomly-seed=<N> products/<product>/backend/ -q   # vary N
+```
+
+If steps 1 + 2 both fail in the same way → **genuine logic/test bug** (file as separate follow-up). If 1 fails + 2 passes → **isolation pollution** (continue below).
+
+**Common polluter shapes (NoctusAI catalog):**
+
+1. **Module-level mutable fixture dicts (the dominant shape — 2026-05-11).** Tests define `SAMPLE_X = {...}` at module top, then pass `SAMPLE_X` (or `[SAMPLE_X]`) into `MockSupabaseClient.set_table_data(...)`. When the service under test calls `db.table(t).update({...}).eq(...).execute()`, the mock's write-propagation feature mutates the row **in place via `dict.update`** — and that "row" is *the same dict object as `SAMPLE_X`*. Subsequent tests reading `SAMPLE_X` see polluted state. Cured at the polluter source (the seed mock) by deep-copying rows at `MockRequestBuilder.__init__` time, so the shared list within one builder propagates writes (preserves the 2026-05-10 feature) but the caller's input dicts stay pristine. Therapy 4F-set (2026-05-10) was this exact shape; isolation closed by `seed/lib/backend/noctusai_lib/testing/mocks.py` deep-copy guard.
+
+2. **Autouse fixture without teardown.** `@pytest.fixture(autouse=True)` that *sets* but never *resets* module-level state (settings, registries, global counters).
+
+3. **Module-level singleton with lazy init.** First test triggers init with state X; later tests inherit that init even when they want state Y.
+
+4. **`@functools.lru_cache` on test-touching helpers.** Cache key collisions across test runs leak prior-test results.
+
+**Detection recipe — bisecting the polluter:**
+
+```bash
+pip install pytest-randomly                            # one-time setup
+pytest -p randomly --randomly-seed=42 ... | tee /tmp/order
+# Each random seed produces a different ordering; one will fail, others may pass.
+# When a failing seed is found, half-split the test list:
+pytest -p no:randomly first_half ... target_test       # bisect downward
+pytest -p no:randomly second_half ... target_test
+# Once the polluter test is identified, instrument it: print/inspect the shared
+# object it mutates (e.g. `print(id(SAMPLE_X), SAMPLE_X)` before and after).
+```
+
+**Fix at the polluter source, not the polluted test.** Adding `setup_method` cleanup to the failing test is a workaround — it patches the symptom. The fix lives where the mutable state leaks (the polluter or the mutation primitive). For shape #1, the mutation primitive (the mock) gets the deep-copy guard; for shapes #2-4, the fixture/cache/singleton gets a teardown or `clear()` call in its scope.
+
+**Anti-pattern:** treating every full-suite failure as a "test ordering bug to mark `xfail`." If the failure manifests with shared state and disappears in isolation, dig — *the polluter is the methodology gap*.
+
+---
+
 See also:
 - `../06-AGENTS.md` — the MCP heal loop runs tests automatically
 - `../../INSTRUCTIONS/05-TESTING-EVALS.md` — eval strategy (beyond unit/integration)
