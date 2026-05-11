@@ -787,10 +787,22 @@ this session; 🟡 = pending. Some are "flag and continue" — not blockers
 
 ### 🟢 Later — strategic
 
-12. **Production compose vs dev compose.** Today's compose is dev-shaped
-    (`:dev` image tags, `restart: unless-stopped`, no resource limits).
-    A `docker-compose.prod.yml` overlay defining resource caps + log
-    drivers + read-only filesystems would be the deployment artifact.
+12. ✅ **Production compose overlay (T8, containerization-backlog-closure
+    Wave 2).** `docker-compose.prod.yml` shipped at root + per-product
+    (10 products) + template. Activated via
+    `NOCTUS_IMAGE_TAG=<sha> docker compose -f docker-compose.yml -f
+    docker-compose.prod.yml up`. The `-f -f` pair is explicit so Compose
+    does NOT auto-load `docker-compose.override.yml` (T7's dev-shape).
+    Overlay tightens: image-only (no `build:`), bare `${NOCTUS_IMAGE_TAG}`
+    (no `:-dev` fallback — fail-loud on unpinned deploys), `restart:
+    always`, json-file log rotation (10MB × 3 files), `deploy.resources.
+    limits` (1.0 CPU + 512MB backend; 0.5 CPU + 256MB frontend; bumped
+    to 2.0 CPU + 1GB for dev-team's agno engine), `read_only: true` on
+    frontend rootfs with tmpfs for nginx pidfile/cache/temp paths.
+    Backend left writable (phase_learnings.db + temp uploads + log lines
+    need rootfs writes — chasing each with another tmpfs is more risk
+    than benefit at this stage). Full pattern at **§11e · Production
+    compose overlay** below.
 13. **Postgres profile.** Currently every backend talks to remote
     Supabase. For offline dev / fully-isolated CI, a `postgres` profile
     serving a local DB (with a schema-init script that mirrors
@@ -1206,6 +1218,140 @@ paid once by the template, not N times by readers.
   Docker's still hitting `/api/health`) or the override blind
   (Docker hits `/_ready` but no product-specific hooks are
   registered, so the deeper signal isn't surfaced).
+
+## 11e · Production compose overlay
+
+> **Status:** Applied 2026-05-10 (T8, containerization-backlog-closure
+> Wave 2). Closes §11 backlog #12.
+
+### Rule
+
+Production runs the fleet via an explicit overlay pair:
+
+```bash
+NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD) \
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+The `-f docker-compose.yml -f docker-compose.prod.yml` pair is
+**mandatory** — naming files explicitly tells Compose to NOT auto-load
+`docker-compose.override.yml` (T7's dev-shape overrides: bind-mounts,
+hot-reload, no resource caps). Without `-f`, Compose's default
+`docker compose up` would pull the override in alongside the base.
+
+### When to use it
+
+- **Deployment to staging / prod** — replaces ad-hoc compose tweaks
+  with a checked-in deployment artifact.
+- **CI integration tests requiring prod shape** — runs against
+  registry images at a specific SHA, with the same resource caps and
+  restart policy the real deploy uses.
+- **Resource-capped local runs** — when you want to test how the
+  fleet behaves under the prod envelope without spinning up Swarm/k8s.
+
+### Why image-only, no `build:`
+
+Prod consumes registry images; if you need to rebuild for prod, you
+**build in CI, push to the registry, then prod pulls**. The base
+files keep their `build:` directives (used by dev `docker compose
+build`); prod overlays simply don't override them, but the deploy
+path is `docker compose pull && docker compose up` — `build:` is
+never triggered.
+
+The rationale: a prod box that can `build` is a prod box that has
+build deps installed (gcc, dev libraries, full npm tree). That's a
+larger attack surface, more disk, more variance. Pre-built artifacts
+land at one SHA and stay there.
+
+### Why bare `${NOCTUS_IMAGE_TAG}` (no `:-dev` fallback)
+
+The base files use `${NOCTUS_IMAGE_TAG:-dev}` so local builds tag as
+`:dev` automatically. Prod overlays use bare `${NOCTUS_IMAGE_TAG}` —
+when the variable is unset, Compose renders `image: ghcr.io/.../...:`
+(empty tag), which **fails at `docker compose pull`**. That's the
+intent: a prod deploy without a pinned SHA is a misuse; fail at the
+gate rather than silently shipping `:dev`.
+
+CI deploys set `NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)` and
+push images with that tag (see §11a).
+
+### Resource caps + log rotation
+
+Per-product caps are conservative starting points; revise after the
+first prod run with real traffic:
+
+| Service              | CPUs    | Memory  | Rationale                              |
+|----------------------|---------|---------|----------------------------------------|
+| backend (default)    | 1.0     | 512 MB  | FastAPI + uvicorn + business logic     |
+| frontend             | 0.5     | 256 MB  | nginx + static files (very light)      |
+| dev-team backend     | 2.0     | 1024 MB | agno engine + 11 specialists in-proc   |
+| redis (shared)       | 0.5     | 256 MB  | small key set                          |
+| waha (shared)        | 1.0     | 512 MB  | WhatsApp HTTP API + node runtime       |
+
+`deploy.resources.limits` is **enforced under Swarm / k8s**; under
+plain `docker compose up` it's advisory (no enforcement). Documenting
+it in the overlay is still valuable — the orchestrator reads from the
+same compose file when it lands.
+
+Log rotation (`logging.driver: json-file` + `max-size: 10m` +
+`max-file: 3`) prevents the host disk filling with container logs;
+default Docker behavior is unbounded growth, which is a known cause
+of "container says it's up but the host ran out of disk" surprises.
+
+### Read-only filesystems
+
+Frontend gets `read_only: true` with three tmpfs mounts
+(`/var/cache/nginx`, `/var/run`, `/tmp`) — nginx writes its pidfile,
+cache, and client_body_temp_path under those paths. Everywhere else
+on the rootfs is read-only, so an exploited frontend can't drop a
+binary.
+
+Backend left writable: phase_learnings.db, temp uploads, structlog
+output, and a few seed-framework dirs all write to rootfs today.
+Chasing each with a dedicated tmpfs is more breakage risk than the
+hardening gain at this stage; revisit when the seed's IO surface is
+audited.
+
+### What's intentionally absent
+
+- **`postgres` service in the prod overlay.** Prod talks to managed
+  Supabase / RDS / Cloud SQL. The `postgres` profile (§11b) is for
+  offline dev; bringing it up in prod is a misuse.
+- **Cloudflared tunnels.** Prod uses real DNS + named tunnels (or
+  the platform's hosting front-door); the `trycloudflare.com`
+  quick-tunnel pattern is dev/demo-only.
+- **`docker-compose.override.yml` auto-load.** The whole point of
+  `-f -f` is to opt out.
+
+### Files
+
+- `docker-compose.prod.yml` (root) — overlay for shared services
+  (redis, waha) + `include:` re-listing each product's pair
+  `[base.yml, prod.yml]` so per-product hardening lands.
+- `products/<slug>/docker-compose.prod.yml` — per-product overlay
+  for the 10 active products (10 × 2 services).
+- `templates/product-seed/docker-compose.prod.yml` — scaffolder
+  template; new products inherit the shape on creation.
+
+### Anti-patterns
+
+- **Running `docker compose up` (no `-f`) in prod.** Auto-loads the
+  dev override and silently undoes every prod hardening.
+- **Setting `${NOCTUS_IMAGE_TAG:-dev}` in the prod overlay.** Defeats
+  the fail-loud guard; defaults to `:dev` and ships dev images to
+  prod.
+- **Setting `build:` in the prod overlay.** Even if not triggered,
+  it signals "this prod has build deps." Keep prod images
+  consume-only.
+- **Resource caps that exceed the host's real envelope.** Caps are
+  the orchestrator's contract; if the cap can't be honored, the
+  scheduler doesn't know that until it tries to start. Calibrate
+  to the smallest production host, not the dev laptop.
+- **`read_only: true` on the backend without auditing IO paths.**
+  The backend writes in a half-dozen places today; flipping the bit
+  without tracing those would cause silent failures (sqlite
+  read-only errors logged but not bubbled; phase_learnings.db
+  vanishing into a tmpfs that gets wiped on restart).
 
 ## 11b · Local-postgres profile (offline dev)
 

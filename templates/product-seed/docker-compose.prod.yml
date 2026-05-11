@@ -1,0 +1,68 @@
+# seed per-product production overlay (canonical pattern).
+#
+# Activate via the root overlay pair:
+#
+#   NOCTUS_IMAGE_TAG=<sha> docker compose \
+#       -f docker-compose.yml \
+#       -f docker-compose.prod.yml \
+#       up
+#
+# (root compose `include:`s this file via products/{{PRODUCT_SLUG}}/docker-compose.yml;
+# the prod overlay is applied automatically alongside it.)
+#
+# This overlay tightens the dev base:
+#   - image: bare ${NOCTUS_IMAGE_TAG} (no `:-dev` fallback) — fail-loud
+#     if the deploy didn't pin a SHA
+#   - restart: always (stronger than dev's unless-stopped)
+#   - logging: json-file rotation (10MB × 3 files)
+#   - resource caps (cpus + memory; conservative starting point,
+#     enforced under Swarm/k8s; advisory under plain `docker compose`)
+#   - frontend: read_only rootfs + tmpfs for the paths nginx writes
+#     (pidfile, client_body_temp, cache). Backend left writable —
+#     phase_learnings.db / temp uploads / log lines all need rootfs
+#     writes today; safer to leave it writable than to chase every
+#     write path with another tmpfs.
+#
+# What is intentionally NOT here:
+#   - `build:` keys (prod consumes pre-built registry images; `docker
+#     compose pull` first, then `up`)
+#   - bind-mounts (override file owns those; prod must NOT auto-load
+#     the override, hence the explicit `-f -f` pair above)
+#   - cloudflared tunnel (prod uses real DNS + named tunnels, not the
+#     trycloudflare.com quick-tunnel)
+
+services:
+  {{PRODUCT_SLUG}}-backend:
+    image: ghcr.io/jraphaelsst/noctus-{{PRODUCT_SLUG}}-backend:${NOCTUS_IMAGE_TAG}
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  {{PRODUCT_SLUG}}-frontend:
+    image: ghcr.io/jraphaelsst/noctus-{{PRODUCT_SLUG}}-frontend:${NOCTUS_IMAGE_TAG}
+    environment:
+      NODE_ENV: production
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp

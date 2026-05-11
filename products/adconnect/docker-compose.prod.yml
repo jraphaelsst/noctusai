@@ -1,0 +1,40 @@
+# adconnect per-product production overlay.
+#
+# Generated from canonical pattern at products/seed/docker-compose.prod.yml.
+# See KB § PATTERNS/containerization.md §11e for the full rationale.
+
+services:
+  adconnect-backend:
+    image: ghcr.io/jraphaelsst/noctus-adconnect-backend:${NOCTUS_IMAGE_TAG}
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  adconnect-frontend:
+    image: ghcr.io/jraphaelsst/noctus-adconnect-frontend:${NOCTUS_IMAGE_TAG}
+    environment:
+      NODE_ENV: production
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
