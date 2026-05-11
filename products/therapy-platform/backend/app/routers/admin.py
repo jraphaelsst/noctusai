@@ -7,11 +7,18 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user, get_admin_client, get_user_role
 from app.responses import paginated_response, success_response
 from app.schemas.admin import ApprovalAction, CommissionOverrideCreate, PatientAssignment
 from app.services import admin_service
+
+
+class _ReportResolution(BaseModel):
+    """Body for ``POST /api/admin/reports/{id}/resolve``."""
+
+    resolution: str = Field(..., min_length=1, max_length=2000)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -155,20 +162,22 @@ async def list_all_clinics(
     authorization: Optional[str] = Header(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None, description="pendente | aprovada | rejeitada | suspensa"),
+    busca: Optional[str] = Query(None, description="Buscar por nome ou CNPJ"),
 ):
-    """List all clinics (admin only)."""
+    """List all clinics for the admin console, shaped as the frontend ``Clinica`` DTO."""
     user, _ = await get_current_user(authorization)
     _require_admin(user)
     db = get_admin_client()
 
-    query = (
-        db.table("clinics")
-        .select("*", count="exact")
-        .order("created_at", desc=True)
+    data, total = await admin_service.list_clinics_for_admin(
+        db=db,
+        page=page,
+        page_size=page_size,
+        status=status,
+        busca=busca,
     )
-    offset = (page - 1) * page_size
-    result = query.range(offset, offset + page_size - 1).execute()
-    return paginated_response(result.data or [], result.count or 0, page, page_size)
+    return paginated_response(data, total, page, page_size)
 
 
 @router.get("/patients")
@@ -176,20 +185,20 @@ async def list_all_patients(
     authorization: Optional[str] = Header(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    busca: Optional[str] = Query(None, description="Buscar por telefone (server-side); name/email filter on client"),
 ):
-    """List all patients (admin only)."""
+    """List all patients for the admin console, shaped as the ``AdminPatient`` DTO."""
     user, _ = await get_current_user(authorization)
     _require_admin(user)
     db = get_admin_client()
 
-    query = (
-        db.table("patient_profiles")
-        .select("*", count="exact")
-        .order("created_at", desc=True)
+    data, total = await admin_service.list_patients_for_admin(
+        db=db,
+        page=page,
+        page_size=page_size,
+        busca=busca,
     )
-    offset = (page - 1) * page_size
-    result = query.range(offset, offset + page_size - 1).execute()
-    return paginated_response(result.data or [], result.count or 0, page, page_size)
+    return paginated_response(data, total, page, page_size)
 
 
 @router.get("/appointments")
@@ -259,3 +268,155 @@ async def suspend_entity(
         db=db,
     )
     return success_response(result)
+
+
+# ── Moderation: Reports ──────────────────────────────────────────────
+
+
+@router.get("/reports")
+async def list_admin_reports(
+    authorization: Optional[str] = Header(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None, description="pending | reviewed | resolved | dismissed"),
+):
+    """List message-reports for the admin Moderation page, DTO-shaped."""
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+
+    data, total = await admin_service.list_reports_for_admin(
+        db=db,
+        page=page,
+        page_size=page_size,
+        status=status,
+    )
+    return paginated_response(data, total, page, page_size)
+
+
+@router.post("/reports/{report_id}/resolve")
+async def resolve_admin_report(
+    report_id: str,
+    body: _ReportResolution,
+    authorization: Optional[str] = Header(None),
+):
+    """Admin resolves a message report."""
+    user, _ = await get_current_user(authorization)
+    admin_id = _require_admin(user)
+    db = get_admin_client()
+
+    result = await admin_service.resolve_report(
+        report_id=report_id,
+        admin_id=admin_id,
+        resolution=body.resolution,
+        db=db,
+    )
+    return success_response(result)
+
+
+# ── Moderation: Flagged reviews ──────────────────────────────────────
+
+
+@router.get("/reviews/flagged")
+async def list_admin_flagged_reviews(
+    authorization: Optional[str] = Header(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    entity_type: Optional[str] = Query(None, description="therapist | clinic"),
+):
+    """List flagged (and not hidden) reviews across therapists + clinics."""
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+
+    data, total = await admin_service.list_flagged_reviews_for_admin(
+        db=db,
+        page=page,
+        page_size=page_size,
+        entity_type=entity_type,
+    )
+    return paginated_response(data, total, page, page_size)
+
+
+@router.post("/reviews/{review_id}/dismiss")
+async def dismiss_review_flag(
+    review_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Admin dismisses a review flag — review goes back to visible."""
+    user, _ = await get_current_user(authorization)
+    admin_id = _require_admin(user)
+    db = get_admin_client()
+
+    result = await admin_service.moderate_review(
+        review_id=review_id,
+        action="dismiss",
+        admin_id=admin_id,
+        db=db,
+    )
+    return success_response(result)
+
+
+@router.post("/reviews/{review_id}/hide")
+async def hide_review(
+    review_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Admin hides a flagged review — sets ``is_hidden=True``."""
+    user, _ = await get_current_user(authorization)
+    admin_id = _require_admin(user)
+    db = get_admin_client()
+
+    result = await admin_service.moderate_review(
+        review_id=review_id,
+        action="hide",
+        admin_id=admin_id,
+        db=db,
+    )
+    return success_response(result)
+
+
+# ── Moderation: Blocks ───────────────────────────────────────────────
+
+
+@router.get("/blocks")
+async def list_admin_blocks(
+    authorization: Optional[str] = Header(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """List user-blocks for the admin Moderation page, DTO-shaped."""
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+
+    data, total = await admin_service.list_blocks_for_admin(
+        db=db,
+        page=page,
+        page_size=page_size,
+    )
+    return paginated_response(data, total, page, page_size)
+
+
+# ── Support inbox ────────────────────────────────────────────────────
+
+
+@router.get("/support/conversations")
+async def list_admin_support_conversations(
+    authorization: Optional[str] = Header(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    busca: Optional[str] = Query(None, description="Buscar por id da conversa"),
+):
+    """List support conversations for the admin inbox, ``Conversation`` DTO."""
+    user, _ = await get_current_user(authorization)
+    _require_admin(user)
+    db = get_admin_client()
+
+    data, total = await admin_service.list_support_conversations_for_admin(
+        db=db,
+        page=page,
+        page_size=page_size,
+        busca=busca,
+    )
+    return paginated_response(data, total, page, page_size)
