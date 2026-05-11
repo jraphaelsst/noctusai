@@ -1,8 +1,10 @@
-"""Recurring transactions service — schedule execution and backfill."""
+"""Recurring transactions service — CRUD + schedule execution and backfill."""
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List, Optional
 from dateutil.relativedelta import relativedelta
+from fastapi import HTTPException
+from noctusai_lib.api.crud_safety import delete_or_404
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
@@ -30,9 +32,62 @@ def calcular_proxima_data(data_atual: date, frequencia: str) -> date:
 
 
 class RecorrentesService:
+    SELECT_WITH_REFS = "*, conta:contas(id,nome), categoria:categorias(id,nome,icone,cor)"
+
     def __init__(self, db_client, org_id: str):
         self.db = db_client
         self.org_id = org_id
+
+    async def listar(self, ativo: Optional[bool] = None) -> List[Dict]:
+        """List recurring entries with optional active-flag filter, ordered by next due date."""
+        query = self.db.table("recorrentes").select(self.SELECT_WITH_REFS).eq(
+            "org_id", self.org_id
+        ).order("proxima_data")
+        if ativo is not None:
+            query = query.eq("ativo", ativo)
+        result = query.execute()
+        return result.data or []
+
+    async def proximas(self, dias: int) -> List[Dict]:
+        """Get upcoming active bills within the next N days."""
+        hoje = date.today().isoformat()
+        limite = (date.today() + timedelta(days=dias)).isoformat()
+        result = self.db.table("recorrentes").select(self.SELECT_WITH_REFS).eq(
+            "org_id", self.org_id
+        ).eq("ativo", True).gte("proxima_data", hoje).lte(
+            "proxima_data", limite
+        ).order("proxima_data").execute()
+        return result.data or []
+
+    async def obter(self, recorrente_id: str) -> Optional[Dict]:
+        """Fetch a single recurring entry by id (org-scoped). Returns None if missing."""
+        result = self.db.table("recorrentes").select(self.SELECT_WITH_REFS).eq(
+            "id", recorrente_id
+        ).eq("org_id", self.org_id).single().execute()
+        return result.data
+
+    async def criar(self, data: Dict) -> Optional[Dict]:
+        """Insert a recurring entry. Returns the inserted row, or None on insert failure."""
+        data["org_id"] = self.org_id
+        result = self.db.table("recorrentes").insert(data).execute()
+        return first_or_none(result)
+
+    async def atualizar(self, recorrente_id: str, updates: Dict) -> Optional[Dict]:
+        """Update a recurring entry. Returns the updated row, or None when no row matched."""
+        result = self.db.table("recorrentes").update(updates).eq(
+            "id", recorrente_id
+        ).eq("org_id", self.org_id).execute()
+        return first_or_none(result)
+
+    async def excluir(self, recorrente_id: str) -> None:
+        """Delete a recurring entry. Raises HTTPException 404 when missing (PF-9 pre-check via seed helper)."""
+        delete_or_404(
+            self.db,
+            "recorrentes",
+            ("id", recorrente_id),
+            ("org_id", self.org_id),
+            message="Recorrente nao encontrado",
+        )
 
     async def executar_pendentes(self) -> Dict:
         """Execute all pending automatic recurring entries up to today.
