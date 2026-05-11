@@ -8,6 +8,8 @@ const KEYS = {
   aiPromptHistory: (type: string) => ['settings', 'ai-prompts', type, 'history'] as const,
   therapist: ['settings', 'therapist'] as const,
   clinicBranding: ['settings', 'clinic', 'branding'] as const,
+  clinicProfile: (clinicId: string) => ['clinics', clinicId] as const,
+  clinicAdminSettings: ['clinics', 'settings'] as const,
   patient: ['settings', 'patient'] as const,
 };
 
@@ -139,15 +141,15 @@ export interface ClinicBranding {
  * Update payload — strict subset of read-side fields (no `clinic_id` write).
  * Mirrors `ClinicBrandingUpdate` Pydantic schema.
  *
- * NOTE (Phase 8.b/d): the mutation `mutationFn` signature stays `Record<string, unknown>`
- * because today `pages/clinic/Settings.tsx` calls `updateBranding.mutate()` with
- * Profile/Bank/Commission payloads that aren't branding fields — those are
- * silently dropped by the backend Pydantic `ClinicBrandingUpdate` schema (
- * unknown-field exclusion is Pydantic default). Tightening to `ClinicBrandingUpdate`
- * here surfaces 3 TS errors in Settings.tsx that reflect REAL clinic-portal
- * misrouting bugs (Profile → `/api/clinics/:id` PATCH; Bank/Commission →
- * `/api/clinics/settings` PATCH). Filed as the `therapy-clinic-settings-misrouting`
- * follow-up; the read-side typing is the safer-to-tighten win.
+ * NOTE (`therapy-clinic-settings-misrouting`, 2026-05-11): the misrouting bug
+ * filed in Phase 8.b/d is now FIXED. Settings.tsx Profile section uses
+ * `useUpdateClinicProfile` (→ `PATCH /api/clinics/{id}`); Bank + Commission
+ * use `useUpdateClinicAdminSettings` (→ `PATCH /api/clinics/settings`); only
+ * Branding stays on `useUpdateClinicBranding`. The mutation `mutationFn`
+ * signature for `useUpdateClinicBranding` stays `Record<string, unknown>`
+ * because the consumer (Branding section) currently passes
+ * `{primary_color, secondary_color}` directly; tightening to
+ * `ClinicBrandingUpdate` is a follow-up typing win, not a correctness fix.
  */
 export interface ClinicBrandingUpdate {
   primary_color?: string;
@@ -183,6 +185,143 @@ export function useUpdateClinicBranding() {
     },
     onError: () => {
       toast.error('Erro ao atualizar branding');
+    },
+  });
+}
+
+// ── Clinic Profile (PATCH /api/clinics/{clinic_id}) ────────
+//
+// Filed under `therapy-clinic-settings-misrouting` (2026-05-11). Profile
+// fields (name/cnpj/phone/contact_email) live on the `clinics` table and
+// must hit the `ClinicUpdate` Pydantic schema route — NOT the branding route.
+
+/**
+ * Clinic profile DTO — mirrors `app/schemas/clinic.py::ClinicResponse`.
+ */
+export interface ClinicProfile {
+  id: string;
+  name: string;
+  cnpj?: string | null;
+  responsible_person?: string | null;
+  contact_email?: string | null;
+  phone?: string | null;
+  logo_url?: string | null;
+  description?: string | null;
+  tagline?: string | null;
+  specialties_offered?: string[];
+  is_approved?: boolean;
+  created_at?: string | null;
+  is_active?: boolean;
+}
+
+/**
+ * Clinic profile update payload — mirrors `ClinicUpdate` Pydantic schema.
+ */
+export interface ClinicProfileUpdate {
+  name?: string;
+  cnpj?: string;
+  responsible_person?: string;
+  contact_email?: string;
+  phone?: string;
+  logo_url?: string;
+  description?: string;
+  tagline?: string;
+  specialties_offered?: string[];
+}
+
+export function useClinicProfile(clinicId: string | undefined) {
+  const { user } = useAuthStore();
+  return useQuery<ClinicProfile>({
+    queryKey: KEYS.clinicProfile(clinicId ?? ''),
+    queryFn: async () => {
+      const res = await api.get(`/api/clinics/${clinicId}`);
+      return (res.data ?? res) as ClinicProfile;
+    },
+    enabled: !!user && !!clinicId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUpdateClinicProfile(clinicId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: ClinicProfileUpdate) => {
+      if (!clinicId) {
+        throw new Error('clinic_id is required to update clinic profile');
+      }
+      return api.patch(`/api/clinics/${clinicId}`, data);
+    },
+    onSuccess: () => {
+      if (clinicId) {
+        qc.invalidateQueries({ queryKey: KEYS.clinicProfile(clinicId) });
+      }
+      toast.success('Perfil atualizado');
+    },
+    onError: () => {
+      toast.error('Erro ao atualizar perfil');
+    },
+  });
+}
+
+// ── Clinic Admin Settings (PATCH /api/clinics/settings) ────
+//
+// Filed under `therapy-clinic-settings-misrouting` (2026-05-11). Bank +
+// commission fields live on the `clinic_settings` table and must hit the
+// `ClinicSettingsUpdate` Pydantic schema route.
+
+/**
+ * Clinic admin settings DTO — mirrors `app/schemas/clinic.py::ClinicSettingsUpdate`
+ * plus the read-side `clinic_id` field.
+ */
+export interface ClinicAdminSettings {
+  clinic_id?: string;
+  bank_name?: string | null;
+  bank_agency?: string | null;
+  bank_account?: string | null;
+  pix_key?: string | null;
+  notification_email_to?: string | null;
+  default_commission_pct_clinic_sourced?: number | null;
+  default_commission_pct_therapist_sourced?: number | null;
+}
+
+/**
+ * Clinic admin settings update payload — mirrors `ClinicSettingsUpdate` schema.
+ */
+export interface ClinicAdminSettingsUpdate {
+  bank_name?: string;
+  bank_agency?: string;
+  bank_account?: string;
+  pix_key?: string;
+  notification_email_to?: string;
+  default_commission_pct_clinic_sourced?: number;
+  default_commission_pct_therapist_sourced?: number;
+}
+
+export function useClinicAdminSettings() {
+  const { user } = useAuthStore();
+  return useQuery<ClinicAdminSettings>({
+    queryKey: KEYS.clinicAdminSettings,
+    queryFn: async () => {
+      const res = await api.get('/api/clinics/settings');
+      return (res.data ?? res) as ClinicAdminSettings;
+    },
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUpdateClinicAdminSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: ClinicAdminSettingsUpdate) => {
+      return api.patch('/api/clinics/settings', data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.clinicAdminSettings });
+      toast.success('Configuracoes atualizadas');
+    },
+    onError: () => {
+      toast.error('Erro ao atualizar configuracoes');
     },
   });
 }

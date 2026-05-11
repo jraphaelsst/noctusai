@@ -5,26 +5,50 @@ import { Button } from '@noctusai/seed/components/ui/button';
 import { Input } from '@noctusai/seed/components/ui/input';
 import { Label } from '@noctusai/seed/components/ui/label';
 import { Separator } from '@noctusai/seed/components/ui/separator';
-import { useClinicBranding, useUpdateClinicBranding } from '@/hooks/useSettings';
-import { toast } from 'sonner';
+import { useAuthStore } from '@noctusai/seed/infra';
+import {
+  useClinicBranding,
+  useUpdateClinicBranding,
+  useClinicProfile,
+  useUpdateClinicProfile,
+  useClinicAdminSettings,
+  useUpdateClinicAdminSettings,
+} from '@/hooks/useSettings';
 
 export default function ClinicSettings() {
-  const { data: branding, isLoading } = useClinicBranding();
-  const updateBranding = useUpdateClinicBranding();
+  // `therapy-clinic-settings-misrouting` (2026-05-11) — each Settings section
+  // routes to its CANONICAL backend endpoint via a dedicated hook:
+  //   Profile     → useUpdateClinicProfile     → PATCH /api/clinics/{id}
+  //   Bank        → useUpdateClinicAdminSettings → PATCH /api/clinics/settings
+  //   Commission  → useUpdateClinicAdminSettings → PATCH /api/clinics/settings
+  //   Branding    → useUpdateClinicBranding    → PATCH /api/settings/clinic/branding
+  // Prior shape called `updateBranding.mutate(profile|bank|commission)` for
+  // every section; the `ClinicBrandingUpdate` Pydantic schema silently dropped
+  // every non-color/logo field. Bug reported by Engineer NNN.
+  const { user } = useAuthStore();
+  const clinicId = (user?.user_metadata as { clinic_id?: string } | undefined)?.clinic_id;
 
-  const b = (branding as Record<string, unknown>) ?? {};
+  const { data: branding, isLoading: brandingLoading } = useClinicBranding();
+  const { data: clinicProfile, isLoading: profileLoading } = useClinicProfile(clinicId);
+  const { data: adminSettings, isLoading: adminLoading } = useClinicAdminSettings();
+
+  const updateBranding = useUpdateClinicBranding();
+  const updateProfile = useUpdateClinicProfile(clinicId);
+  const updateAdminSettings = useUpdateClinicAdminSettings();
+
+  const isLoading = brandingLoading || profileLoading || adminLoading;
 
   const [profile, setProfile] = useState({
-    nome: '',
+    name: '',
     cnpj: '',
-    telefone: '',
-    email: '',
+    phone: '',
+    contact_email: '',
   });
   const [bank, setBank] = useState({
-    banco: '',
-    agencia: '',
-    conta: '',
-    pix: '',
+    bank_name: '',
+    bank_agency: '',
+    bank_account: '',
+    pix_key: '',
   });
   const [commission, setCommission] = useState({
     default_therapist_pct: '',
@@ -37,43 +61,55 @@ export default function ClinicSettings() {
 
   const [initialized, setInitialized] = useState(false);
 
-  // Initialize form once data loads
-  if (branding && !initialized) {
-    setProfile({
-      nome: (b.nome as string) ?? '',
-      cnpj: (b.cnpj as string) ?? '',
-      telefone: (b.telefone as string) ?? '',
-      email: (b.email as string) ?? '',
-    });
-    setBank({
-      banco: (b.banco as string) ?? '',
-      agencia: (b.agencia as string) ?? '',
-      conta: (b.conta as string) ?? '',
-      pix: (b.pix as string) ?? '',
-    });
-    setCommission({
-      default_therapist_pct: (b.default_therapist_pct as string) ?? '',
-      default_clinic_pct: (b.default_clinic_pct as string) ?? '',
-    });
+  // Initialize forms once data loads
+  if (!initialized && (branding || clinicProfile || adminSettings)) {
+    if (clinicProfile) {
+      setProfile({
+        name: clinicProfile.name ?? '',
+        cnpj: clinicProfile.cnpj ?? '',
+        phone: clinicProfile.phone ?? '',
+        contact_email: clinicProfile.contact_email ?? '',
+      });
+    }
+    if (adminSettings) {
+      setBank({
+        bank_name: adminSettings.bank_name ?? '',
+        bank_agency: adminSettings.bank_agency ?? '',
+        bank_account: adminSettings.bank_account ?? '',
+        pix_key: adminSettings.pix_key ?? '',
+      });
+      setCommission({
+        default_therapist_pct:
+          adminSettings.default_commission_pct_therapist_sourced != null
+            ? String(adminSettings.default_commission_pct_therapist_sourced)
+            : '',
+        default_clinic_pct:
+          adminSettings.default_commission_pct_clinic_sourced != null
+            ? String(adminSettings.default_commission_pct_clinic_sourced)
+            : '',
+      });
+    }
     setBrandingForm({
-      primary_color: (b.primary_color as string) ?? '#6366f1',
-      secondary_color: (b.secondary_color as string) ?? '#a855f7',
+      primary_color: branding?.primary_color ?? '#6366f1',
+      secondary_color: branding?.secondary_color ?? '#a855f7',
     });
     setInitialized(true);
   }
 
   const handleSaveProfile = () => {
-    updateBranding.mutate(profile);
+    updateProfile.mutate(profile);
   };
 
   const handleSaveBank = () => {
-    updateBranding.mutate(bank);
+    updateAdminSettings.mutate(bank);
   };
 
   const handleSaveCommission = () => {
-    updateBranding.mutate({
-      default_therapist_pct: parseFloat(commission.default_therapist_pct) || 0,
-      default_clinic_pct: parseFloat(commission.default_clinic_pct) || 0,
+    updateAdminSettings.mutate({
+      default_commission_pct_therapist_sourced:
+        parseFloat(commission.default_therapist_pct) || 0,
+      default_commission_pct_clinic_sourced:
+        parseFloat(commission.default_clinic_pct) || 0,
     });
   };
 
@@ -115,8 +151,8 @@ export default function ClinicSettings() {
             <div className="space-y-2">
               <Label>Nome da Clinica</Label>
               <Input
-                value={profile.nome}
-                onChange={e => setProfile(p => ({ ...p, nome: e.target.value }))}
+                value={profile.name}
+                onChange={e => setProfile(p => ({ ...p, name: e.target.value }))}
               />
             </div>
             <div className="space-y-2">
@@ -129,20 +165,20 @@ export default function ClinicSettings() {
             <div className="space-y-2">
               <Label>Telefone</Label>
               <Input
-                value={profile.telefone}
-                onChange={e => setProfile(p => ({ ...p, telefone: e.target.value }))}
+                value={profile.phone}
+                onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))}
               />
             </div>
             <div className="space-y-2">
               <Label>Email de Contato</Label>
               <Input
                 type="email"
-                value={profile.email}
-                onChange={e => setProfile(p => ({ ...p, email: e.target.value }))}
+                value={profile.contact_email}
+                onChange={e => setProfile(p => ({ ...p, contact_email: e.target.value }))}
               />
             </div>
           </div>
-          <Button onClick={handleSaveProfile} disabled={updateBranding.isPending}>
+          <Button onClick={handleSaveProfile} disabled={updateProfile.isPending}>
             <Save className="h-4 w-4 mr-2" /> Salvar Perfil
           </Button>
         </CardContent>
@@ -160,35 +196,35 @@ export default function ClinicSettings() {
             <div className="space-y-2">
               <Label>Banco</Label>
               <Input
-                value={bank.banco}
-                onChange={e => setBank(b => ({ ...b, banco: e.target.value }))}
+                value={bank.bank_name}
+                onChange={e => setBank(b => ({ ...b, bank_name: e.target.value }))}
                 placeholder="Ex: Banco do Brasil"
               />
             </div>
             <div className="space-y-2">
               <Label>Agencia</Label>
               <Input
-                value={bank.agencia}
-                onChange={e => setBank(b => ({ ...b, agencia: e.target.value }))}
+                value={bank.bank_agency}
+                onChange={e => setBank(b => ({ ...b, bank_agency: e.target.value }))}
               />
             </div>
             <div className="space-y-2">
               <Label>Conta</Label>
               <Input
-                value={bank.conta}
-                onChange={e => setBank(b => ({ ...b, conta: e.target.value }))}
+                value={bank.bank_account}
+                onChange={e => setBank(b => ({ ...b, bank_account: e.target.value }))}
               />
             </div>
             <div className="space-y-2">
               <Label>Chave PIX</Label>
               <Input
-                value={bank.pix}
-                onChange={e => setBank(b => ({ ...b, pix: e.target.value }))}
+                value={bank.pix_key}
+                onChange={e => setBank(b => ({ ...b, pix_key: e.target.value }))}
                 placeholder="CPF, email, telefone ou chave aleatoria"
               />
             </div>
           </div>
-          <Button onClick={handleSaveBank} disabled={updateBranding.isPending}>
+          <Button onClick={handleSaveBank} disabled={updateAdminSettings.isPending}>
             <Save className="h-4 w-4 mr-2" /> Salvar Dados Bancarios
           </Button>
         </CardContent>
@@ -229,7 +265,7 @@ export default function ClinicSettings() {
               />
             </div>
           </div>
-          <Button onClick={handleSaveCommission} disabled={updateBranding.isPending}>
+          <Button onClick={handleSaveCommission} disabled={updateAdminSettings.isPending}>
             <Save className="h-4 w-4 mr-2" /> Salvar Comissoes
           </Button>
         </CardContent>

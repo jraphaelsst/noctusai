@@ -161,6 +161,41 @@ class TestUpdateClinic:
         assert resp.status_code == 200
         assert resp.json()["data"]["name"] == "Clínica Atualizada"
 
+    def test_update_clinic_profile_fields_persist(self, clinic_admin_client):
+        """Persistence guard — Profile fields (name/cnpj/phone/contact_email)
+        from the clinic Settings page MUST land in `clinics` UPDATE payload.
+
+        Filed under `therapy-clinic-settings-misrouting` (Engineer NNN). Before
+        the Settings.tsx rewire, the Profile section called
+        `updateBranding.mutate({nome, cnpj, telefone, email})` against
+        `/api/settings/clinic/branding`; the `ClinicBrandingUpdate` schema
+        accepted only color/logo fields and silently dropped everything else.
+        This test pins the canonical route — `PATCH /api/clinics/{id}` with
+        `ClinicUpdate` schema — and asserts the fields ACTUALLY persist via
+        `MockRequestBuilder.updated_payloads`.
+        """
+        clinic_admin_client._mock_supabase.set_table_data(
+            "clinics",
+            [{**SAMPLE_CLINIC, "id": "test-clinic-123"}],
+        )
+        resp = clinic_admin_client.patch(
+            "/api/clinics/test-clinic-123",
+            json={
+                "name": "Clínica Renovada",
+                "cnpj": "11222333000144",
+                "phone": "11955554444",
+                "contact_email": "renovada@test.com",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        updates = clinic_admin_client._mock_supabase.table("clinics").updated_payloads
+        assert updates, "expected at least one UPDATE payload on clinics"
+        merged = {k: v for payload in updates for k, v in payload.items()}
+        assert merged.get("name") == "Clínica Renovada"
+        assert merged.get("cnpj") == "11222333000144"
+        assert merged.get("phone") == "11955554444"
+        assert merged.get("contact_email") == "renovada@test.com"
+
     def test_update_other_clinic_forbidden(self, clinic_admin_client):
         """Clinic admin cannot update another clinic."""
         resp = clinic_admin_client.patch(
@@ -307,6 +342,46 @@ class TestClinicSettings:
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["pix_key"] == "novo@pix.com"
+
+    def test_update_settings_bank_and_commission_fields_persist(self, clinic_admin_client):
+        """Persistence guard — Bank + Commission fields from the clinic Settings
+        page MUST land in `clinic_settings` UPDATE payload.
+
+        Filed under `therapy-clinic-settings-misrouting` (Engineer NNN). Before
+        the Settings.tsx rewire, Bank section called
+        `updateBranding.mutate({banco, agencia, conta, pix})` and Commission
+        section called `updateBranding.mutate({default_therapist_pct, ...})`
+        — both against `/api/settings/clinic/branding`, which silently dropped
+        these fields. This test pins the canonical route —
+        `PATCH /api/clinics/settings` with `ClinicSettingsUpdate` schema —
+        and asserts the fields ACTUALLY persist via
+        `MockRequestBuilder.updated_payloads`.
+        """
+        clinic_admin_client._mock_supabase.set_table_data(
+            "clinic_settings",
+            [SAMPLE_CLINIC_SETTINGS],
+        )
+        resp = clinic_admin_client.patch(
+            "/api/clinics/settings",
+            json={
+                "bank_name": "Itaú",
+                "bank_agency": "0001",
+                "bank_account": "99999-9",
+                "pix_key": "clinica@nova.com",
+                "default_commission_pct_clinic_sourced": 35.5,
+                "default_commission_pct_therapist_sourced": 10.0,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        updates = clinic_admin_client._mock_supabase.table("clinic_settings").updated_payloads
+        assert updates, "expected at least one UPDATE payload on clinic_settings"
+        merged = {k: v for payload in updates for k, v in payload.items()}
+        assert merged.get("bank_name") == "Itaú"
+        assert merged.get("bank_agency") == "0001"
+        assert merged.get("bank_account") == "99999-9"
+        assert merged.get("pix_key") == "clinica@nova.com"
+        assert merged.get("default_commission_pct_clinic_sourced") == 35.5
+        assert merged.get("default_commission_pct_therapist_sourced") == 10.0
 
     def test_update_settings_as_therapist_forbidden(self, client):
         resp = client.patch(

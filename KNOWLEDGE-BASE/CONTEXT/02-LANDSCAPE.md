@@ -33,7 +33,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Core | 28 | 12 | 26 | 0 | 39 | 439 |
 | ERP | 59 | 52 | 67 | 66 | 112 | 1,659 |
 | PF | 15 | 17 | 30 | 16 | 45 | 464 |
-| Therapy | 40 | 45 | 65 | 33 | 78 | 1,093 |
+| Therapy | 40 | 45 | 65 | 33 | 78 | 1,095 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 7 | 7 | 11 | 7 | 15 | 226 |
 | Mailing | 10 | 10 | 21 | 9 | 16 | 184 |
