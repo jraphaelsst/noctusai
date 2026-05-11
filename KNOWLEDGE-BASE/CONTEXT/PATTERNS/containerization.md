@@ -1659,6 +1659,36 @@ products/<slug>/frontend && npm run dev`), the dev-in-docker shape is
 opt-in. Both paths produce the same HMR experience; the docker shape
 is for "I want the full fleet up in one command."
 
+### Prod-overlay dev-reset discipline (formalized 2026-05-11)
+
+**The mechanism.** Compose's `!reset` is **merge-operation-scoped, not service-name-scoped.** When `-f a.yml -f b.yml` is invoked, each file resolves its own `include:` tree first, then the top-level structures of `a` and `b` merge. A `!reset` declared inside an `include:`'d file of `b` (e.g. `products/<slug>/docker-compose.prod.yml`) cannot see values contributed by an `include:`'d file of `a` (e.g. `products/<slug>/docker-compose.override.yml`). The reset has to live at the **top-level of the outermost overlay file** (`docker-compose.prod.yml` at repo root) to fire across that boundary.
+
+**The rule.** Every key the dev override sets that is NOT also set by the per-product prod overlay needs an explicit `!reset null` at the top-level of `docker-compose.prod.yml`. Per-product-prod-overlay-set keys do NOT need reset — compose's later-wins merge handles them naturally.
+
+**Today's mapping (T7 dev override + HMR Option B):**
+
+| Key | Set by dev override? | Set by per-product prod overlay? | Top-level reset needed? |
+|---|---|---|---|
+| `build.target: dev` | Yes (frontend) | No | ✅ Reset |
+| `volumes` (bind-mounts) | Yes (both) | No | ✅ Reset |
+| `command` (uvicorn --reload / npm run dev) | Yes (both) | No (image default CMD wins) | ✅ Reset |
+| `restart: "no"` | Yes (both) | Yes (`restart: always`) | ❌ Per-product prod overrides directly |
+| `environment.NODE_ENV: development` | Yes (frontend) | Yes (`NODE_ENV: production`) | ❌ Per-product prod overrides directly |
+
+**The recurrence-rule trigger.** When the dev override gains a new runtime-affecting key:
+
+1. Check if the per-product prod overlay sets the same key.
+2. If yes → no top-level reset needed; later-wins handles it.
+3. If no → add `<key>: !reset null` to every service entry in `docker-compose.prod.yml`'s top-level `services:` block.
+
+N=2 today (two `!reset` rounds: HMR Option B's build+command, then 2026-05-11 expansion to volumes + backend-command). If a future dispatch adds another runtime-affecting key to the dev override → recurrence rule fires.
+
+**Anti-patterns.**
+
+- **Resetting at per-product-prod-overlay level** (inside `products/<slug>/docker-compose.prod.yml`). Doesn't fire — wrong merge-operation scope. HMR engineer hit this on first pass + fixed by hoisting to top level.
+- **Resetting EVERY override key uniformly.** Over-aggressive — clobbers per-product prod overlay's intended values (`restart: always`, `NODE_ENV: production`). Reset ONLY keys without a per-product-prod-overlay counterpart.
+- **Re-listing `include:` for prod overlay without the per-product prod overlay path.** A new product added to root's `include:` AND to start.sh PRODUCTS needs its `docker-compose.prod.yml` path added to THIS file's `include:` block — otherwise per-product prod hardening doesn't apply. youtube-crawler hit this gap (caught + fixed 2026-05-11).
+
 ### Common pitfalls
 
 - **Bind-mount must NOT clobber `/opt/venv`.** The backend Dockerfile
