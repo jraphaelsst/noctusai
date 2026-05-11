@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-11
 - **Last updated:** 2026-05-11
-- **Status:** 🚨 **READY FOR EXECUTION — PRODUCTION BUG.** Filed under user signal "create projects for deferrals/parks that happen along the way." Engineer JJ's PF P6 close (commit `0c45079`) surfaced **runtime-broken seed `team` /accept handler across all adopters**. TypeError on first call. Drift survived because no integration test calls the endpoint.
+- **Status:** ⏳ **EXECUTING — Phase 1 ✅ 2026-05-11 (commit `06b5eeb`).** Engineer QQ shipped seed-side router fix (5 broken call sites — wider than spec) + 7 integration tests at `seed/framework/backend/tests/routers/test_team_router_accept.py`; 55/55 seed/framework tests green. **Phase 2 (per-product migrations + accept_invitation domain helper update) PENDING** — orchestrator dispatches after Wave 13 settles to avoid file-overlap with parallel therapy/PF/imobi engineers.
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `seed-team-router-accept-real-adapter`
 - **Related docs:**
@@ -95,17 +95,27 @@ ALTER TABLE invitations
 
 ## 6. Implementation phases
 
-### Phase 0 — Confirm scope + read proposal
+### Phase 0 — Confirm scope + read proposal ✅ *(2026-05-11)*
 
-- [ ] Read JJ's proposal (after PF P6 archive) for the exact fix shape.
-- [ ] Confirm domain function signatures via direct read of `invitations.py:116,168`.
-- [ ] Check each product's `005_invitations.sql` for `accepted_at`/`accepted_by` — list which need migrations.
+- [x] Read JJ's proposal (after PF P6 archive) for the exact fix shape.
+- [x] Confirm domain function signatures via direct read of `invitations.py:116,168`. **Confirmed positional `(db, table, token|id)`**; also verified 3 sibling helpers (`create_invitation`, `cancel_invitation`, `list_pending_invitations`) use the same `(db, table, ...)` shape — drift was wider than spec.
+- [x] Check each product's `005_invitations.sql` for `accepted_at`/`accepted_by` — list which need migrations. **Deferred to Phase 2 dispatch** (per-product scan + migration writes are Phase 2 work).
 
-### Phase 1 — Fix router + add integration test
+**Improvements (Phase 0):** none identified — scope-confirmation phase only; the wider-than-spec finding (5 call sites broken, not just /accept) was surfaced by QQ in Phase 1, not at Phase 0 read time.
 
-- [ ] Edit `seed/framework/backend/noctusai_seed/routers.py:153-175` per the architecture shape.
-- [ ] Add integration test at `seed/framework/backend/tests/routers/test_team_router_accept.py` — calls `client.post("/api/team/accept", ...)` against `_create_team_router(...)`. Status-code-assertion-rule on every assertion.
-- [ ] Verify test FAILS before the router fix + PASSES after (TDD-ish discipline).
+### Phase 1 — Fix router + add integration test ✅ *(2026-05-11)*
+
+- [x] Edit `seed/framework/backend/noctusai_seed/routers.py` per the architecture shape. **Wider than spec — 5 call sites broken** (lines 130 invite-create, 156 accept-validate, 164 accept-post, 185 invitations-list, 195 invitation-delete), all using `db=admin, schema=deps._db.schema, X=Y` kwargs. Fixed all 5 in one pass via libcst per `feedback_no_quick_fixes`.
+- [x] Add integration test at `seed/framework/backend/tests/routers/test_team_router_accept.py` — 7 test cases against `_create_team_router(...)`. Status-code-assertion-rule honored on every assertion.
+- [x] Verify test FAILS before the router fix + PASSES after — confirmed via Engineer QQ's pre-fix run (6/7 with literal `TypeError: validate_invitation() got an unexpected keyword argument 'schema'`) + post-fix run (7/7).
+
+**Improvements (Phase 1):**
+- **Wider-than-spec fix**: Phase 1 closed 5 broken call sites, not just `/accept`. No-quick-fixes rule fired — applying the literal `/accept` scope would have left 4 TypeError landmines.
+- **User-creation seam gap surfaced**: pre-fix `/accept` body was `{token, user_id, email, password, name}` — implying user creation. The domain layer has no such surface; those kwargs were dead before TypeError. If frontend (PF AcceptInvite) expected user creation, the seed needs a `user_creator: Callable` injection seam. Filed as follow-up candidate `seed-team-router-user-creation-seam`.
+- **`accept_invitation` domain helper does NOT write `accepted_at` + `accepted_by`** — only sets `status="accepted"`. Phase 2 must update both the domain helper AND each product's migration in lockstep.
+- **`deps._db.schema` is a public accessor with a leading underscore** — cosmetic rename deferred (catalog candidate).
+- **`seed/framework/backend` lacks `.venv` hydration** in `scripts/bootstrap-worktree.sh` — engineer fell back to `mcp/noctusai/.venv/bin/python` + manual `pip install apscheduler`. Follow-up candidate.
+- **libcst `cst.Comma()` defaults collapse to `f(a,b,c)`** — use `cst.Comma(whitespace_after=cst.SimpleWhitespace(" "))` for PEP-8. Candidate addition to `KB § PATTERNS/ast.md`.
 
 ### Phase 2 — Per-product migrations + smoke
 
@@ -141,6 +151,7 @@ Single-engineer dispatch via worktree. Pattern locked by JJ's proposal — pure 
 | Date | Change | By |
 |---|---|---|
 | 2026-05-11 | **Filed under user signal "create projects for deferrals/parks that happen along the way."** Engineer JJ's PF P6 (commit `0c45079`) surfaced runtime-broken seed team /accept handler across all adopters. TypeError on first call. Drift survived because no seed integration test exercises the endpoint. Mechanical fix at router caller-side + integration test + per-product migration columns. | claude-opus-4-7 |
+| 2026-05-11 | **Phase 1 closed by Engineer QQ** (commit `a51c29c` → cherry-picked to main as `06b5eeb`). Caller-side fix at `seed/framework/backend/noctusai_seed/routers.py` — **5 broken call sites** (not just `/accept` as spec'd): lines 130, 156, 164, 185, 195. All converted from `db=admin, schema=deps._db.schema, X=Y` kwargs to positional `(admin, f"{schema}.invitations", ...)`. `/accept` body simplified from `{token, user_id, email, password, name}` (5 fields, 4 dead) to `{token: str}`. New integration test `tests/routers/test_team_router_accept.py` with 7 cases; status-code-assertion-rule honored throughout. Pre-fix run: 6/7 FAILED with literal `TypeError: validate_invitation() got an unexpected keyword argument 'schema'`. Post-fix run: 7/7 PASSED. Seed/framework suite: 55/55 green (was 48). Keeper `--review --product seed` → 0 issues. **Phase 2 dependencies surfaced**: (1) `accept_invitation` domain helper does NOT write `accepted_at`/`accepted_by` — needs lockstep update with per-product migrations; (2) user-creation seam may be needed if frontend expected user creation in old `/accept` — filed as follow-up candidate `seed-team-router-user-creation-seam`. | engineer-subagent QQ |
 
 ## 12. No-leftovers constraint
 
