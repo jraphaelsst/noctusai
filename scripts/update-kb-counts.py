@@ -37,13 +37,18 @@ REPO = Path(__file__).resolve().parents[1]
 # ────────────────────────────────────────────────────────────────
 
 PRODUCTS = [
-    ("Core",       "products/core"),
-    ("ERP",        "products/erp-imobiliario"),
-    ("PF",         "products/personal-finance"),
-    ("Therapy",    "products/therapy-platform"),
-    ("Seed",       "products/seed"),
-    ("Daily Life", "products/daily-life"),
-    ("Mailing",    "products/mailing"),
+    ("Core",             "products/core"),
+    ("ERP",              "products/erp-imobiliario"),
+    ("PF",               "products/personal-finance"),
+    ("Therapy",          "products/therapy-platform"),
+    ("Seed",             "products/seed"),
+    ("Daily Life",       "products/daily-life"),
+    ("Mailing",          "products/mailing"),
+    ("AdConnect",        "products/adconnect"),
+    ("Dev Team",         "products/dev-team"),
+    ("Media Scheduling", "products/media-scheduling"),
+    ("YouTube Crawler",  "products/youtube-crawler"),
+    ("Imobi Scheduling", "products/imobi-scheduling"),
 ]
 
 
@@ -149,7 +154,10 @@ def render_inventory() -> str:
 def render_database() -> str:
     counts = count_schema_tables()
     total = sum(counts.values())
-    ordered = ["public", "erp", "personal-finance", "therapy", "daily_life", "mailing", "seed"]
+    ordered = [
+        "public", "erp", "personal-finance", "therapy", "daily_life", "mailing", "seed",
+        "adconnect", "dev_team", "media_scheduling", "youtube_crawler", "imobi_scheduling",
+    ]
     schemas_line = " + ".join(f"`{s}`" for s in ordered if s in counts)
     return (
         f"- **Schemas ({len([s for s in ordered if s in counts])}):** {schemas_line}.\n"
