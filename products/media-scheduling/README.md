@@ -14,10 +14,10 @@ Minimal reference implementation — the spine with no organs. Proves that both 
 
 ```bash
 # Backend
-uvicorn app.main:app --reload --port 8096 --app-dir products/seed/backend
+uvicorn app.main:app --reload --port 8096 --app-dir products/media-scheduling/backend
 
 # Frontend
-cd products/seed/frontend && npm run dev
+cd products/media-scheduling/frontend && npm run dev
 ```
 
 ## What it proves
@@ -34,5 +34,5 @@ cd products/seed/frontend && npm run dev
 ## Tests
 
 ```bash
-cd products/seed/backend && pytest  # 6 tests
+cd products/media-scheduling/backend && pytest  # 6 tests
 ```
