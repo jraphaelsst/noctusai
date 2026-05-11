@@ -1,6 +1,6 @@
 export interface Conta {
   id: string;
-  user_id: string;
+  created_by?: string;
   nome: string;
   tipo: string;
   instituicao?: string;
@@ -15,7 +15,7 @@ export interface Conta {
 
 export interface Categoria {
   id: string;
-  user_id?: string;
+  created_by?: string;
   nome: string;
   tipo: string;
   categoria_pai_id?: string;
@@ -29,7 +29,7 @@ export interface Categoria {
 
 export interface Transacao {
   id: string;
-  user_id: string;
+  created_by?: string;
   conta_id: string;
   conta_destino_id?: string;
   categoria_id?: string;
@@ -47,7 +47,7 @@ export interface Transacao {
 
 export interface Orcamento {
   id: string;
-  user_id: string;
+  created_by?: string;
   nome: string;
   metodo: string;
   periodo: string;
@@ -68,7 +68,7 @@ export interface OrcamentoItem {
 
 export interface Meta {
   id: string;
-  user_id: string;
+  created_by?: string;
   nome: string;
   tipo: string;
   valor_alvo: number;
@@ -85,7 +85,7 @@ export interface Meta {
 
 export interface Carteira {
   id: string;
-  user_id: string;
+  created_by?: string;
   nome: string;
   tipo: string;
   corretora?: string;
@@ -99,7 +99,7 @@ export interface Carteira {
 export interface Ativo {
   id: string;
   carteira_id: string;
-  user_id: string;
+  created_by?: string;
   ticker: string;
   nome?: string;
   tipo: string;
@@ -117,7 +117,7 @@ export interface Operacao {
   id: string;
   carteira_id: string;
   ativo_id?: string;
-  user_id: string;
+  created_by?: string;
   ticker: string;
   tipo: string;
   data: string;
@@ -131,7 +131,7 @@ export interface Operacao {
 
 export interface Recorrente {
   id: string;
-  user_id: string;
+  created_by?: string;
   conta_id?: string;
   nome: string;
   valor: number;
@@ -185,8 +185,8 @@ export interface Cotacao {
   min_dia: number;
   max_52s: number;
   min_52s: number;
-  timestamp: string;
-  fonte: string;
+  timestamp?: string;
+  fonte?: 'yfinance' | 'dry-run';
 }
 
 export interface WatchlistItem {
@@ -201,7 +201,7 @@ export interface WatchlistItem {
 
 export interface Watchlist {
   id: string;
-  user_id: string;
+  created_by?: string;
   nome: string;
   itens?: WatchlistItem[];
   created_at: string;
