@@ -2303,9 +2303,20 @@ _CREATE_FUNCTION_START_RE = re.compile(
 # match on the literal name `service_role_bypass` because that's the
 # convention every product follows (single keeper-enforced shape — drift
 # in the name itself is a separate concern and would be its own detector).
+#
+# Schema prefix accepts both the unquoted form (`therapy.clinics`) and the
+# double-quoted form (`"personal-finance".recorrentes`) — dashed schemas
+# MUST be double-quoted at DDL time per Postgres identifier rules. Before
+# this teach (2026-05-11), only the unquoted prefix matched, causing the
+# detector to mis-report PF / mailing / any dashed-schema product as still
+# missing the policy even after it was applied. Surfaced by keeper-trio-pf
+# (Engineer BBB, Wave 1) when migration 009 applied live + `pg_policies`
+# confirmed the policy but the detector kept flagging the callsite.
+# Table-name segment continues to be unquoted: every adopter's table name
+# is a plain identifier (`recorrentes`, `clinics`, ...), never dashed.
 _SERVICE_ROLE_BYPASS_POLICY_RE = re.compile(
     r'\bCREATE\s+POLICY\s+"?service_role_bypass"?\s+ON\s+'
-    r"(?:[A-Za-z_][A-Za-z0-9_]*\.)?"
+    r'(?:(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.)?'
     r"(?P<table>[A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE | re.DOTALL,
 )

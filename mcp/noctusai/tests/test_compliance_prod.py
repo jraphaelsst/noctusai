@@ -426,3 +426,38 @@ class TestCheckAdminEndpointServiceRoleBypass:
             },
         )
         assert check_admin_endpoint_service_role_bypass(product) == []
+
+    def test_dashed_schema_bypass_policy_is_recognized(self):
+        """`CREATE POLICY "service_role_bypass" ON "personal-finance".T`
+        → counts as a bypass policy on table T. Dashed schemas MUST be
+        double-quoted at DDL time per Postgres identifier rules.
+
+        Pins the keeper-trio-pf finding (Engineer BBB, 2026-05-11):
+        migration 009 applied live + `pg_policies` confirmed the policy
+        but the detector kept flagging the callsite because the schema
+        regex only matched unquoted identifiers
+        (`[A-Za-z_][A-Za-z0-9_]*\\.`) — `"personal-finance".` failed.
+        Without this test the regression silently reopens for every
+        dashed-schema adopter (personal-finance, mailing).
+        """
+        product = _mk_product(
+            migrations={
+                "001.sql": (
+                    "CREATE TABLE IF NOT EXISTS \"personal-finance\".recorrentes "
+                    "( id UUID );\n"
+                    "ALTER TABLE \"personal-finance\".recorrentes "
+                    "ENABLE ROW LEVEL SECURITY;\n"
+                    "CREATE POLICY \"service_role_bypass\" "
+                    "ON \"personal-finance\".recorrentes "
+                    "FOR ALL TO service_role USING (true) WITH CHECK (true);\n"
+                )
+            },
+            app_files={
+                "scheduler.py": (
+                    "def run():\n"
+                    "    db = get_admin_client()\n"
+                    "    db.table('recorrentes').select('org_id').execute()\n"
+                )
+            },
+        )
+        assert check_admin_endpoint_service_role_bypass(product) == []

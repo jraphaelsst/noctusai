@@ -1,0 +1,30 @@
+-- 009_recorrentes_service_role_bypass.sql
+-- keeper-trio-pf project (child of keeper-trio-platform-triage).
+-- Closes the 1 DEFENSE_IN_DEPTH finding from the platform keeper-trio audit:
+--   backend/app/scheduler.py:30 — admin client calls `.table("recorrentes")`
+--   but `"personal-finance".recorrentes` has no `service_role_bypass` policy.
+--
+-- Runtime is currently fine (service_role JWT bypasses RLS at the connection
+-- level + schema-level `GRANT ALL ... TO service_role` covers DML), but the
+-- platform convention is to ship the explicit per-table policy so the keeper
+-- detector's compliance contract holds: every admin-accessed table has a
+-- `CREATE POLICY "service_role_bypass" ... FOR ALL TO service_role USING (true)`
+-- in the product's migrations.
+--
+-- SQL emitted by `noctusai_lib.sql.service_role_bypass("recorrentes",
+-- schema='"personal-finance"')` (caller wraps the dashed schema in quotes
+-- per the helper's caller-responsibility contract).
+--
+-- See:
+--   - projects/keeper-trio-platform-triage/phase-0-triage.md § personal-finance (1 finding)
+--   - KB § PATTERNS/testing.md § Production-correctness keeper detectors
+--   - mcp/noctusai/tools/noctus/dev/compliance.py § check_admin_endpoint_service_role_bypass
+--
+-- Defer-with-destination: PF has 15 other RLS-enabled tables (contas,
+-- categorias, transacoes, orcamentos, orcamento_itens, metas,
+-- meta_contribuicoes, carteiras, ativos, operacoes, watchlists,
+-- watchlist_itens, patrimonio_snapshots, resumos_mensais, alocacao_alvo).
+-- Adding `service_role_bypass` to each for symmetry is suggested by triage
+-- but out of scope for this 1-finding fix; captured in findings.md.
+
+CREATE POLICY "service_role_bypass" ON "personal-finance".recorrentes FOR ALL TO service_role USING (true) WITH CHECK (true);
