@@ -35,31 +35,13 @@ DELETE /api/subscriptions/{id}      — Cancel subscription (admin only)
 import logging
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
+from app.schemas.subscriptions import SubscriptionCreate, SubscriptionUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subscriptions", tags=["Subscriptions"])
-
-
-class SubscriptionCreate(BaseModel):
-    org_id: str
-    plan_id: str
-    status: str = Field(default="active", pattern="^(active|canceled|expired|trial)$")
-    expires_at: Optional[str] = None
-    metadata: dict = Field(default_factory=dict)
-
-
-class SubscriptionUpdate(BaseModel):
-    plan_id: Optional[str] = None
-    status: Optional[str] = Field(default=None, pattern="^(active|canceled|expired|trial)$")
-    expires_at: Optional[str] = None
-    canceled_at: Optional[str] = None
-    stripe_subscription_id: Optional[str] = None
-    stripe_customer_id: Optional[str] = None
-    metadata: Optional[dict] = None
 
 
 @router.get("")

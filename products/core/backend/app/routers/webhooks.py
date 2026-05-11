@@ -35,27 +35,15 @@ import secrets
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException, Query
-from pydantic import BaseModel, Field
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
 from app.services import webhook_delivery, webhook_retention_service
+from app.schemas.webhooks import WebhookCreate, WebhookUpdate
 from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
-
-
-class WebhookCreate(BaseModel):
-    url: str = Field(..., max_length=500)
-    events: List[str] = Field(default_factory=list)
-    is_active: bool = True
-
-
-class WebhookUpdate(BaseModel):
-    url: Optional[str] = Field(default=None, max_length=500)
-    events: Optional[List[str]] = None
-    is_active: Optional[bool] = None
 
 
 def _generate_webhook_secret() -> str:
