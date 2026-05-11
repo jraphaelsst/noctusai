@@ -30,7 +30,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 28 | 12 | 26 | 0 | 38 | 425 |
+| Core | 28 | 12 | 26 | 0 | 39 | 439 |
 | ERP | 59 | 52 | 67 | 66 | 112 | 1,658 |
 | PF | 15 | 17 | 30 | 16 | 44 | 459 |
 | Therapy | 40 | 45 | 65 | 29 | 78 | 1,072 |
@@ -42,14 +42,14 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Media Scheduling | 5 | 8 | 10 | 3 | 13 | 56 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 8 | 8 | 1 | 16 | 185 |
-| **Total** | **178** | **172** | **275** | **137** | **368** | **4,532** |
+| **Total** | **178** | **172** | **275** | **137** | **369** | **4,546** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (12):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed` + `adconnect` + `dev_team` + `media_scheduling` + `youtube_crawler` + `imobi_scheduling`.
-- **Tables: 310** distributed across the schemas.
+- **Tables: 311** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.
