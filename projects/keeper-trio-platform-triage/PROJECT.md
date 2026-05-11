@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-11
 - **Last updated:** 2026-05-11
-- **Status:** 🚨 **READY FOR EXECUTION — PLATFORM-WIDE PRODUCTION-CORRECTNESS GAPS.** Filed under user signal "create projects for deferrals/parks that happen along the way." Engineer II's keeper-detector-trio close (commit `e23a4be`) surfaced **200+ latent admin-bypass gaps + 9 erp search_path + ~50 unknown-table cases** across the platform. Each gap is a real production-correctness risk masked by MockSupabase WARN+skip.
+- **Status:** ⏳ **EXECUTING — Phase 0 ✅ 2026-05-11.** Engineer RR shipped read-only classification of 215 findings at `phase-0-triage.md` (commit `f1940a5`). Bucket totals: **12 REAL_BUG** (3 high-priority production bugs) / **201 DEFENSE_IN_DEPTH** / **2 FALSE_POSITIVE**. Recommended Wave 0 (seed-formalize + detector-tuning, parallel × 2) → Wave 1 (per-product children, parallel × 4) dispatch structure. Wave 1 children FF-gated on Wave 0 close per wave-based dispatch (`KB § PATTERNS/branching-and-merging.md §18`).
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `keeper-trio-platform-triage`
 
@@ -76,12 +76,17 @@ OR a single product-walking child for the smaller ones; the bigger products (cor
 
 ## 6. Implementation phases
 
-### Phase 0 — Per-product classification
+### Phase 0 — Per-product classification ✅ *(2026-05-11)*
 
-- [ ] For each non-clean product: run `cli.py --review --product <p>` and capture all findings.
-- [ ] Classify each finding (REAL_BUG / DEFENSE_IN_DEPTH / FALSE_POSITIVE).
-- [ ] Build per-product triage queue.
-- [ ] **Decision**: if detector FALSE_POSITIVE rate is >50%, file detector-tuning follow-up at higher priority.
+- [x] For each non-clean product: run `cli.py --review --product <p>` and capture all findings.
+- [x] Classify each finding (REAL_BUG / DEFENSE_IN_DEPTH / FALSE_POSITIVE).
+- [x] Build per-product triage queue. → `phase-0-triage.md` (176 lines).
+- [x] **Decision**: FALSE_POSITIVE rate <3% per product (core 0.7%, erp 2.2%, mailing 0%, pf 0%) — no detector-FIRST gate needed. Wave 0 still recommended so Wave 1 children consume canonical `service_role_bypass(table)` helper.
+
+**Improvements (Phase 0):**
+- Top-3 REAL_BUGs surfaced as production bugs masked by MockSupabase WARN+skip — see §11 for detail.
+- Detector tuning opportunity: `.schema(X).table(Y)` chain support (N=1 today at `core/admin_llm_usage.py:92`; tune now before consumers proliferate).
+- 192 admin_bypass DEFENSE_IN_DEPTH findings consolidate into a single decision: add `service_role_bypass(table)` helper to `noctusai_lib.sql` (mirroring `prelude` + `updated_at_trigger`) — closes 192 findings via one seed addition + per-product backfill.
 
 ### Phase 1 — Per-product child dispatches (parallel)
 
@@ -120,6 +125,7 @@ Master-tree orchestration. Phase 0 single agent (classification); Phase 1 parall
 | Date | Change | By |
 |---|---|---|
 | 2026-05-11 | **Filed under user signal "create projects for deferrals/parks that happen along the way."** Engineer II's keeper-detector-trio (commit `e23a4be`) surfaced 200+ platform-wide latent admin-bypass + search_path + unknown_table gaps. Master-tree dispatching per-product children. | claude-opus-4-7 |
+| 2026-05-11 | **Phase 0 (read-only classification) closed by Engineer RR** (commit `ed15a60` → cherry-picked to main as `f1940a5`). 215 findings classified across core (151) / erp (45) / mailing (18) / pf (1): **12 REAL_BUG** / **201 DEFENSE_IN_DEPTH** / **2 FALSE_POSITIVE**. Top-3 high-priority REAL_BUGs: (1) `erp/ai.py:351` references phantom `certidoes_negativas` table — actual tables are `certidao_consultas` + `certidao_resultados`; (2) `erp/003_schema_separation.sql:750` `delete_expired_password_codes()` is SECURITY DEFINER without `SET search_path` — privilege-escalation vector; (3) `core/billing.py:284` references phantom `core.billing_events` — Stripe webhook broken in production. Triage doc at `phase-0-triage.md`. Recommended dispatch: Wave 0 (`keeper-trio-seed-formalize` + `keeper-detector-schema-chain-tuning`, parallel × 2) → Wave 1 (`keeper-trio-{core,erp,mailing,pf}`, parallel × 4) FF-gated on Wave 0. False-positive rate <3% per product — no detector-FIRST gate needed, but Wave 0 preferred so Wave 1 children consume canonical `service_role_bypass(table)` helper from `noctusai_lib.sql`. | claude-opus-4-7 |
 
 ## 12. No-leftovers constraint
 
