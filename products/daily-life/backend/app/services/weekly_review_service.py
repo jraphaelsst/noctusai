@@ -14,8 +14,9 @@ adjacent (matches D4 note-extraction posture in the same product).
 Renders html + text inline (Jinja migration is the next cross-cutting
 project). Sends via `noctusai_lib.email.digest.send_digest`.
 
-Trigger: cron (Friday afternoon) posts to `POST /api/ai/weekly-review/send`
-with the user's id + recipient.
+Trigger: `GET /api/ai/weekly-review` returns the rendered narrative for
+the Dashboard widget. (The historical `POST /api/ai/weekly-review/send`
+email-delivery endpoint was retired in daily-life-wiring Phase 1.)
 """
 from __future__ import annotations
 

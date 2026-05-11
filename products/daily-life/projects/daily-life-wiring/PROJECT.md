@@ -7,8 +7,8 @@
 > as foundational input.
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 0 ✅)
-- **Status:** ⏳ **Phase 0 ✅** — gap table populated; awaiting "continue" before Phase 1.
+- **Last updated:** 2026-05-11 (Phase 2 ✅)
+- **Status:** ⏳ **Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅** — Pattern F (auth-factory) + Pattern H (orphan deletes) shipped Phase 1; Pattern A (EN-rename `/api/metricas` → `/api/metrics`) shipped Phase 2 + stranded-Phase-1-reference cleanup in MASTER-PROMPT.md + weekly_review_service.py docstring. Phase 3 (`ai_outputs` standard router + mount-smoke + status-assertion sweep) pending.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `archive/projects/2026-05-11/16-personal-finance-wiring/personal-finance-wiring-lessons.md` — direct prior-art reference
@@ -255,14 +255,14 @@ a migration unless Pattern A/H decisions require renames.
 
 | Pattern | Description | Count | Disposition |
 |---|---|---|---|
-| **A** | EN/PT path mismatch (frontend EN, backend PT — or vice-versa) | 2 routers: `/api/metricas` + `/api/foco` | Phase 1; needs §7 Q1 (daily-life is product-PT — possibly KEEP rather than EN-rename) |
+| **A** | EN/PT path mismatch (frontend EN, backend PT — or vice-versa) | ~~2 routers: `/api/metricas` + `/api/foco`~~ → **CLOSED**: `/api/foco` deleted Phase 1; `/api/metricas` → `/api/metrics` renamed Phase 2 (Q1 = Option B, EN-rename) |
 | **B** | Admin-namespace split | 0 | n/a (no admin console) |
 | **C** | Admin-detail endpoints missing | 0 | n/a |
 | **D** | Role-prefix paths in direct-fetch pages | 0 | Equipe/AcceptInvite hit seed `team` router — correctly routed |
 | **E** | Implicit DTO contract (no `response_model`) | All 35 routes | Accept-with-rationale; defer to `daily-life-dto-contract` follow-up |
-| **F** | Manual auth-triple (`get_current_user` + `get_org_id` + `get_user_client`) recurrence | All 7 product routers | Gated on PF's `make-get-current-user-org-factory` seed real-adapter project — daily-life adopts when shipped (N=4 across platform) |
+| **F** | Manual auth-triple (`get_current_user` + `get_org_id` + `get_user_client`) recurrence | ~~All 7 product routers~~ → **CLOSED**: Phase 1 absorbed (29 callsites refactored to `Depends(get_current_user_org)`; seed real adapter shipped ahead of plan) |
 | **G** | Path-shape mismatch (beyond language) | 0 spotted | n/a |
-| **H** | Orphan-backend-route (zero FE consumer) | 6 endpoints: `/api/foco/*` (5) + `POST /api/ai/weekly-review/send` (1) | Phase 1; needs §7 Q2 (delete vs. wire-the-UI) |
+| **H** | Orphan-backend-route (zero FE consumer) | ~~6 endpoints: `/api/foco/*` (5) + `POST /api/ai/weekly-review/send` (1)~~ → **CLOSED**: Phase 1 = Option A (DELETE both); router file + 26 paired tests removed |
 
 #### 5.4.3 Per-hook gap inventory
 
@@ -344,32 +344,52 @@ Format: `✅` = wired correctly; `❌` = gap.
 *Phase proposal filed at end-of-Phase-0:* deferred to architect (engineer
 returns findings as text per §17.6.1).
 
-### Phase 1 — Pattern H decisions (delete-or-wire) + Pattern A decisions (EN/PT alignment)
+### Phase 1 — Pattern F (auth-factory absorption) + Pattern H (orphan deletes) ✅ (shipped 2026-05-11)
 
-Pending §7 Q1 + Q2 user input. Branches:
+Original Phase 1 (Pattern H + Pattern A) and Phase 2 (auth-factory) were
+**collapsed** when the `make-get-current-user-org-factory` seed real
+adapter shipped ahead of expectations. Engineer DL-P1 picked Q2 = Option A
+(DELETE both orphans) per default-recommendation. Q1 (Pattern A EN/PT
+rename) **deferred to Phase 2** per the brief scope split.
 
-- [ ] **Q1 outcome A (KEEP PT)** — no path renames; close Pattern A as
-  accept-with-rationale (daily-life is product-Portuguese).
-- [ ] **Q1 outcome B (EN-RENAME)** — rename `/api/metricas` → `/api/metrics`
-  + (if Q2 wires `/api/foco`) `/api/foco` → `/api/focus`. Update
-  `hooks/useDashboard.ts` (single line) + new `useFoco.ts` if applicable.
-  Tests follow.
-- [ ] **Q2 outcome A (DELETE)** — remove `app/routers/focus.py` + its
-  test file + the `focus.router` import in `main.py`. Same for the
-  orphan `POST /api/ai/weekly-review/send` endpoint.
-- [ ] **Q2 outcome B (WIRE)** — author `Focus.tsx` page + `useFoco.ts`
-  hook; add route in `App.tsx`; add tests. Wire weekly-review-send to a
-  Dashboard button.
+- [x] Pattern F: 29 callsites refactored (manual triple → `Depends(get_current_user_org)`)
+  in 6 routers (tasks/goals/schedule/notes/metrics/ai). AST-driven via libcst.
+- [x] Pattern H Q2 = DELETE: `app/routers/focus.py` + 18 test cases + 5
+  e2e focus 401 tests + 1 focus flow test + `POST /api/ai/weekly-review/send`
+  + 2 paired ai tests. Frontend grep confirms 0 references survive.
+- [x] `app/dependencies.py` wires `get_current_user_org` via seed factory.
+- [x] Baseline pytest: 234 → 208 (delta −26 = removed orphan + factory tests).
 
-### Phase 2 — Auth-factory absorption (gated on PF's seed real adapter)
+### Phase 2 — Pattern A (EN-rename `/api/metricas` → `/api/metrics`) + Phase-1 stranded-reference cleanup ✅ (shipped 2026-05-11)
 
-- [ ] On `make_get_current_user_org` seed real adapter shipping
-  (per `make-get-current-user-org-factory` project filed by PF),
-  refactor all 7 daily-life routers from manual triple to factory.
-- [ ] Add `Depends(get_current_user_org)` pattern + `coerce_org_uuid`.
-- [ ] Update tests; verify 234/234 still green.
+- [x] Q1 = Option B (EN-RENAME) per default-recommendation. With Q2's
+  DELETE landing `/api/foco`, `/api/metricas` became the lone PT outlier
+  in 5/6 EN routers → strong-precedent rename. AST-driven via libcst
+  (string-literal-only codemod over the 3 .py files; 22 string sites
+  rewritten across `app/routers/metrics.py` + `tests/routers/test_metrics_router.py`
+  + `tests/integration/test_e2e_flows.py`). Frontend hook updated
+  (`useDashboard.ts` `/api/metricas/resumo` → `/api/metrics/resumo`).
+- [x] Stranded-reference cleanup caught by Phase 2 read (Phase 1 left these):
+  - `products/daily-life/MASTER-PROMPT.md`: removed `Focus` Domain row +
+    removed `/api/ai/weekly-review/send` from AI-weekly-review row +
+    removed `Foco` Pages row + renamed `/api/metricas` → `/api/metrics`
+    in Metrics Domain row.
+  - `products/daily-life/backend/app/services/weekly_review_service.py`
+    module docstring: corrected the `POST /api/ai/weekly-review/send`
+    trigger reference to the GET endpoint + flagged the historical
+    deletion (Phase 1 retired the POST).
+- [x] Frontend UI route `/metricas` (PT label) **preserved** — daily-life
+  is product-Portuguese; the backend-rename rationale ("internal-facing
+  technical paths") does NOT extend to user-facing UI labels.
+- [x] DB table name `metricas_produtividade` **preserved** — data-model
+  identifier, not API surface.
+- [x] Pytest 210/210 green (no delta from Phase 1 close).
+- [ ] **Pre-existing build gap (NOT introduced by Phase 2):** `npx vite build`
+  fails on `tailwindcss-animate` resolution from the seed framework's
+  `tailwind.config.factory.ts` — verified by stash-clean-tree reproduction.
+  Belongs in the same `bootstrap-worktree.sh` follow-up surfaced by Q4 (PF lesson §(b)#1).
 
-### Phase 3 — Standard-router smoke + status-assertion sweep
+### Phase 3 — Standard-router smoke + status-assertion sweep + optional `ai_outputs` mount
 
 Per PF lesson §(d)#4: dispatch the 5-test mount-shape smoke pattern for
 seed-routed `health` / `notificacoes` / `team` / `ai_feedback` + (if
@@ -521,6 +541,84 @@ cat products/daily-life/projects/daily-life-wiring/PROJECT.md | sed -n '/Phase 1
 ---
 
 ## 11. Change log
+
+### 2026-05-11 — Phase 2 ✅ (Engineer DL-P2)
+
+- Scope (per dispatch brief + default-recommendations on §7 open questions):
+  - **Q1 = Option B (EN-RENAME)** applied. Rationale: Q2's DELETE landing
+    in Phase 1 dropped `/api/foco`, leaving `/api/metricas` as the single
+    PT outlier in 5/6 EN routers — the §7 recommendation's "majority
+    precedent" condition strengthened.
+  - **Q3 (mount `ai_outputs` standard router)** **DEFERRED to Phase 3**.
+    The §7 "low cost (one string in main.py)" estimate was incomplete:
+    the seed `create_ai_outputs_router` reads from a per-product
+    `<schema>.ai_outputs` table that daily-life doesn't provision. Adding
+    the mount without the migration would let the router's `try/except`
+    silently return empty arrays — a no-silent-errors violation. Belongs
+    in Phase 3 alongside the migration (cleaner-scoped focused brief).
+- **Pattern A close** (`/api/metricas` → `/api/metrics`):
+  - libcst codemod over 3 .py files: 1 prefix-arg change in `metrics.py`
+    + 15 URL strings in `tests/routers/test_metrics_router.py` (incl.
+    module docstring) + 6 URL strings in `tests/integration/test_e2e_flows.py`
+    = 22 string-literal sites rewritten.
+  - `products/daily-life/frontend/src/hooks/useDashboard.ts` line 44 hook
+    queryFn URL updated (single-character payload, Edit tool — string
+    content, not structural code).
+  - DB table `metricas_produtividade` preserved (data-model, not API).
+  - Frontend UI route `/metricas` preserved (PT label; daily-life is
+    product-Portuguese — backend-rename rationale does not extend to UI).
+- **Stranded-reference cleanup** (Phase 1 missed these):
+  - `products/daily-life/MASTER-PROMPT.md` Domain + Pages tables:
+    removed Focus/`/api/foco` row, removed Foco/`/foco` page row,
+    dropped `+ POST /api/ai/weekly-review/send` from the AI-weekly-review
+    row, renamed `/api/metricas` → `/api/metrics`.
+  - `products/daily-life/backend/app/services/weekly_review_service.py`
+    module docstring: corrected the `POST .../send` trigger reference
+    (endpoint retired Phase 1) → GET endpoint + historical note.
+- **Tests**: 210/210 green (no delta from Phase 1 close; the rename is
+  a string-substitution that the tests catch end-to-end via the route
+  matcher).
+- **Frontend build**: `npx vite build` fails on `tailwindcss-animate`
+  module resolution from the seed framework's `tailwind.config.factory.ts`
+  — verified via stash-clean-tree reproduction (failure existed BEFORE
+  Phase 2's hook edit). NOT introduced by Phase 2; **same-shape** as the
+  PF lesson §(b)#1 worktree-bootstrap gap; queue under §7 Q4.
+- **Keeper**: not run from worktree (`mcp/noctusai/.venv` absent — same
+  PF lesson §(b)#1). Architect runs post-FF-merge.
+- **§5.4.2 gap table updated**: Patterns A / F / H all marked CLOSED with
+  Phase pointers. Patterns E (response_model deferred) + B/C/D/G (0
+  counts) unchanged.
+- **§6 phase entries reshaped**: original Phase 1 (Pattern H+A) and
+  Phase 2 (auth-factory) were collapsed when Pattern F shipped alongside
+  H in Phase 1 (the seed real adapter landed early). Phase 2 = this work
+  (Pattern A + Phase-1-stranded cleanup). Phase 3 = the original
+  standard-router smoke + status-assertion sweep + (new) `ai_outputs`
+  mount + migration.
+- **Files modified** (this Phase): `products/daily-life/backend/app/routers/metrics.py`,
+  `products/daily-life/backend/tests/routers/test_metrics_router.py`,
+  `products/daily-life/backend/tests/integration/test_e2e_flows.py`,
+  `products/daily-life/backend/app/services/weekly_review_service.py`,
+  `products/daily-life/frontend/src/hooks/useDashboard.ts`,
+  `products/daily-life/MASTER-PROMPT.md`,
+  `products/daily-life/projects/daily-life-wiring/PROJECT.md`.
+
+### 2026-05-11 — Phase 1 ✅ (Engineer DL-P1; merged 03e8db7)
+
+- Pattern F adoption: 29 callsites in 6 routers (tasks/goals/schedule/notes/metrics/ai)
+  refactored from the manual triple (`get_current_user` + `get_org_id` +
+  `get_user_client`) to `Depends(get_current_user_org)`. Made possible
+  by the `make-get-current-user-org-factory` seed real adapter shipping
+  ahead of expectations — what PROJECT.md §6 had called Phase 2.
+- Pattern H Q2 = Option A (DELETE both): removed `app/routers/focus.py`
+  (5 endpoints) + `tests/routers/test_focus_router.py` (18 cases) + 5
+  e2e focus 401 tests + 1 focus flow test; dropped
+  `POST /api/ai/weekly-review/send` (1 endpoint) + 2 paired ai tests.
+  GET `/api/ai/weekly-review` preserved for Dashboard widget.
+- Pattern A NOT addressed in Phase 1 (out of brief scope) — deferred
+  to Phase 2.
+- Pytest: 234 → 208 (delta −26 from removed orphan + tests).
+- Stranded references in `MASTER-PROMPT.md` + `weekly_review_service.py`
+  module docstring missed at Phase 1 close; caught in Phase 2 cleanup.
 
 ### 2026-05-11 — Phase 0 ✅
 

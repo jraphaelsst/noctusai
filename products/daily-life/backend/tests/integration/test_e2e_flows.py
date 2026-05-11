@@ -333,7 +333,7 @@ class TestMetricsSnapshotFlow:
 
         # Step 1: Create metric
         client.mock_supabase.set_table_data("metricas_produtividade", [metric])
-        resp = client.post("/api/metricas", json={
+        resp = client.post("/api/metrics", json={
             "data": TODAY,
             "tarefas_concluidas": 7,
             "tarefas_criadas": 4,
@@ -347,14 +347,14 @@ class TestMetricsSnapshotFlow:
 
         # Step 2: List metrics
         client.mock_supabase.set_table_data("metricas_produtividade", [metric])
-        resp = client.get("/api/metricas")
+        resp = client.get("/api/metrics")
         assert resp.status_code == 200
         assert len(resp.json()["data"]) == 1
         assert resp.json()["data"][0]["score_produtividade"] == 9.0
 
         # Step 3: Check summary
         client.mock_supabase.set_table_data("metricas_produtividade", [metric])
-        resp = client.get("/api/metricas/resumo")
+        resp = client.get("/api/metrics/resumo")
         assert resp.status_code == 200
         summary = resp.json()["data"]
         assert summary["dias_analisados"] == 1
@@ -468,15 +468,15 @@ class TestAuthBoundary:
         assert resp.status_code == 401
 
     def test_metrics_list_401(self, client):
-        resp = client.raw().get("/api/metricas")
+        resp = client.raw().get("/api/metrics")
         assert resp.status_code == 401
 
     def test_metrics_create_401(self, client):
-        resp = client.raw().post("/api/metricas", json={"data": TODAY})
+        resp = client.raw().post("/api/metrics", json={"data": TODAY})
         assert resp.status_code == 401
 
     def test_metrics_summary_401(self, client):
-        resp = client.raw().get("/api/metricas/resumo")
+        resp = client.raw().get("/api/metrics/resumo")
         assert resp.status_code == 401
 
     def test_team_list_401(self, client):

@@ -17,7 +17,7 @@ from noctusai_lib.api.auth import first_or_none
 from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/metricas", tags=["Metrics"])
+router = APIRouter(prefix="/api/metrics", tags=["Metrics"])
 
 
 # ---------------------------------------------------------------------------

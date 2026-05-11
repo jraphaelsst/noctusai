@@ -41,7 +41,7 @@ export function useDashboardMetrics() {
 
   return useQuery<{ data: MetricsResume }>({
     queryKey: ["dashboard-metrics"],
-    queryFn: () => api.get("/api/metricas/resumo?dias=7"),
+    queryFn: () => api.get("/api/metrics/resumo?dias=7"),
     enabled: !!user,
     staleTime: 60_000,
   });
