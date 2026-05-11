@@ -54,7 +54,7 @@ class InviteCreate(BaseModel):
     role: str = Field(default="member", max_length=50)
 
 
-class RoleUpdate(BaseModel):
+class TeamMemberRoleUpdate(BaseModel):
     role: str = Field(..., max_length=50)
 
 
@@ -295,7 +295,7 @@ async def remover_membro(
 @router.patch("/{user_id}/role")
 async def alterar_role_membro(
     user_id: str,
-    body: RoleUpdate,
+    body: TeamMemberRoleUpdate,
     authorization: Optional[str] = Header(None),
 ):
     """Change a member's role within the organization.
