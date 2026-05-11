@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-03
 - **Last updated:** 2026-05-10
-- **Status:** ⏳ **EXECUTING (Path A — re-scoped 2026-05-10).** Engineer H Phase 0 STOP+escalate (no commit) surfaced that seed `WahaClient.send_text` covers WAHA transport only, NOT ERP's Meta Cloud API. **Real N=2 recurrence is `send_via_waha`, not `send_message`.** Re-scoped: ERP `whatsapp_service.send_via_waha` (line 319) + therapy `whatsapp_therapy_service.send_via_waha` (line 44) → consume seed `WahaClient`. ERP `send_message` (Meta) + therapy `send_message` stub UNTOUCHED (N=1 → low-priority follow-up `whatsapp-meta-cloud-api-seed-absorption`). Re-dispatched 2026-05-10.
+- **Status:** ✅ **CLOSED (Path A — 2026-05-10).** Both `send_via_waha` callsites (ERP `whatsapp_service.py:319` + therapy `whatsapp_therapy_service.py:44`) now delegate to seed `noctusai_lib.integrations.whatsapp.WahaClient.send_text` via the `get_whatsapp_client(...)` factory. Each product retains a thin wrapper for product-specific concerns (ERP: BR phone normalization + DB config + legacy envelope; therapy: explicit-arg signature + ValueError contract). ERP 33/33 + therapy 10/10 WhatsApp service tests green; full suites land on the same baseline (ERP 1860 passed / 4 pre-existing date-arith failures; therapy 1218 passed / 4 pre-existing order-dependent failures). Catalog entry FORMALIZED 2026-05-10. Auth-header behavior change captured in findings.md (X-Api-Key replaces ERP's previous Authorization: Bearer — aligns with WAHA standard).
 - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
 - **Project slug:** `send-message-consolidation` — cross-product naming + transport collision; lives at `projects/<slug>/` per `KB § PATTERNS/project-execution.md §1`.
 - **Related docs:**
@@ -147,31 +147,39 @@ KB § PATTERNS/accept-with-rationale.md
 
 ## 6. Implementation phases
 
-### Phase 0 — Predecessor verification 🅿️ PARKED
-- [ ] Confirm `noctusai_lib.integrations.whatsapp.send_text` exists at expected path (gate: `whatsapp-seed-absorption` Phase 1 close commit).
-- [ ] Confirm send_text signature matches both ERP and therapy callers' needs (phone, message, config).
-- [ ] Confirm dry-run fallback semantics preserved (ERP currently checks `config.is_configured`; lib must own that branch).
-- [ ] Re-grep `def send_message|async def send_message` to confirm site count is still N=2 for WhatsApp transport (not N=3+ — if N=3 happened during the wait, escalate scope before continuing).
+### Phase 0 — Re-grep + seed gate verification ✅
+- [x] Re-confirmed seed `noctusai_lib.integrations.whatsapp.WahaClient.send_text` + `get_whatsapp_client(...)` factory + `chat_id_for_phone(...)` helper exist (seed ships Protocol + Fake + Real + factory shape per `KB § PATTERNS/seed-fake-real-adapter.md`).
+- [x] Read both `send_via_waha` call sites — confirmed N=2 byte-level recurrence at ERP `whatsapp_service.py:319` + therapy `whatsapp_therapy_service.py:44`.
+- [x] Re-grep `def send_via_waha|async def send_via_waha` across all products — N=2 confirmed.
+- [x] Mapped response-shape divergence (ERP envelope vs therapy raw + therapy `ValueError`-on-error contract) — preserved as product-specific concerns in thin wrappers.
 
-### Phase 1 — ERP refactor
-- [ ] Replace `whatsapp_service.send_message` body with delegation to `send_text`.
-- [ ] Update `WhatsAppConfig` if seed-lib expects a different config shape (likely: lib accepts `WhatsAppConfig` directly OR a smaller `WhatsAppCredentials` dataclass).
-- [ ] Run `pytest products/erp-imobiliario/backend/`. Update mocks that patch `whatsapp_service.send_message` directly to patch the seed-lib seam instead (per "no monkey-patching of our own code in tests" rule — use `MockRequestBuilder` patterns or DI).
-- [ ] **Improvements:** capture during steps; synthesize at phase end.
+### Phase 1 — ERP refactor ✅
+- [x] Replaced `whatsapp_service.send_via_waha` body: drops `httpx.AsyncClient`/import + `Authorization: Bearer` header; delegates to seed `WahaClient.send_text` via `get_whatsapp_client(base_url=, api_key=, session=)`.
+- [x] Preserved BR phone normalization (digits + "55" prepend) at ERP boundary — phone normalization is product-specific (CRM-imported phones lack country code), not transport-level.
+- [x] Preserved legacy `{message_id, status, phone, [error|dry_run]}` envelope expected by `/whatsapp/send` router.
+- [x] Added 4 new tests (`TestSendViaWaha`) patching `httpx.AsyncClient` at the seed-lib boundary (`waha_client_module.httpx`) — mirrors the seed's own client-test pattern; never patches the product service itself.
+- [x] `pytest products/erp-imobiliario/backend/tests/services/test_whatsapp_service.py` → 33/33 passed (29 baseline + 4 new).
+- [x] Full `pytest products/erp-imobiliario/backend/` → 1860 passed + 4 pre-existing date-arithmetic failures (`test_financeiro_service.py::TestMarkOverdue` + `test_recorrencia_service.py::TestVerificarInadimplencia`) unchanged from baseline; verified via stash+rerun.
+- [x] Keeper `noctus.dev.review(product="erp-imobiliario")` → 0 issues.
+- **Improvements:** captured 1 behavioral change (auth-header swap Bearer → X-Api-Key) — documented in findings.md §3 lessons; no proposal needed (intentional alignment with WAHA standard).
 
-### Phase 2 — Therapy refactor
-- [ ] Replace stub body in `whatsapp_therapy_service.send_message` with real `send_text` call wrapped in the existing audit-log shell.
-- [ ] Update test assertions: previously `{"status": "sent", "phone": ...}` was always returned even without an HTTP call; now the lib's response shape carries through. Update tests to match.
-- [ ] Run `pytest products/therapy-platform/backend/`.
-- [ ] Verify `messaging_service.send_message` is untouched (sanity grep).
-- [ ] **Improvements:** capture during steps; synthesize at phase end.
+### Phase 2 — Therapy refactor ✅
+- [x] Replaced `whatsapp_therapy_service.send_via_waha` body: drops top-level `import httpx` + `httpx.AsyncClient` block; delegates to seed `WahaClient.send_text` via `get_whatsapp_client(base_url=, api_key=None, session=)`.
+- [x] Preserved explicit-arg signature `(waha_url, session_name, phone, message)` + raw-WAHA-response return + `ValueError`-on-error contract (wraps seed's `httpx.HTTPStatusError` in `ValueError` to keep `send_reminder` happy).
+- [x] Updated `TestSendViaWaha` — patches `httpx.AsyncClient` at the seed-lib boundary (`waha_client_module.httpx`) instead of `app.services.whatsapp_therapy_service.httpx.AsyncClient` (which no longer exists post-refactor).
+- [x] `pytest products/therapy-platform/backend/tests/services/test_whatsapp_therapy_service.py` → 10/10 passed.
+- [x] Full `pytest products/therapy-platform/backend/` → 1218 passed + 4 pre-existing test-order-dependent failures (`test_crisis_router.py::test_review_alert_admin_allowed`, `test_refunds_router.py::test_deny_refund_with_reason`, `test_crisis_service.py::test_review_as_false_positive`, `test_homework_service.py::test_review_pending_homework_fails`) unchanged from baseline; verified via stash+rerun.
+- [x] `messaging_service.send_message` untouched — verified via `git diff --stat`.
+- [x] Keeper `noctus.dev.review(product="therapy-platform")` → 0 issues.
+- **Improvements:** captured 1 behavioral subtlety (raw-vs-envelope response shape preserved per consumer; therapy keeps raw because `send_reminder` packs it into `waha_response`).
 
-### Phase 3 — Catalog flip + project close
-- [ ] Replace the `accept-with-rationale.md § "send_message exists in ERP and therapy"` entry with a `FORMALIZED YYYY-MM-DD` entry; `Recorded by: send-message-consolidation Phase 3 (closed); commit <hash>`.
-- [ ] Update `projects/README.md` — drop this project's row from active.
-- [ ] Update `NEXT-STEPS.md` — strike `send_message` collision from P2 deferrals.
-- [ ] File ONE bundled phase proposal via `noctus.dev.file_proposal(project="send-message-consolidation", ...)` if any improvements accumulated; otherwise apply-inline-then-skip.
-- [ ] Flip phase headers to ✅; add §11 close entry; delete this folder; final commit + push (project-close gate).
+### Phase 3 — Catalog flip + project close ✅
+- [x] Replaced the `accept-with-rationale.md § send_message-collision` entry with a FORMALIZED 2026-05-10 entry under the title `send_via_waha exists in ERP and therapy (N=2 → FORMALIZED 2026-05-10)`. Preserved the slip-pattern history (filed at N=2 on wrong premise — `send_message` vs the real `send_via_waha`) so future scans can find the trail.
+- [x] No `projects/README.md` to update (no per-project registry exists at the path the original phase template referenced).
+- [x] No `NEXT-STEPS.md` `send_message` entry to strike (the deferral was rescoped in commit `33dd4f7`).
+- [x] Inline improvements applied (no separate proposal); see findings.md for capture.
+- [x] All phase headers ticked ✅; §11 close entry added below.
+- [ ] **Folder deletion deferred to orchestrator** per dispatch brief: "Do NOT delete the project folder — orchestrator handles archive after fresh-eyes merge."
 
 ---
 
@@ -234,3 +242,4 @@ bash scripts/verify-kb-sync.sh
 |---|---|---|
 | 2026-05-03 | **Project filed at N=2** per `NEXT-STEPS.md § P2 deferrals` directive *"file `send_message-consolidation` follow-up project NOW"* and the recurrence-rule pre-emption clause. §1-§10 populated; §6 phases drafted with predecessor gate on `whatsapp-seed-absorption` Phase 1. Status: 🅿️ PARKED. Used `send-message-consolidation` (dashes, platform-consistent) as slug rather than the `send_message-consolidation` form NEXT-STEPS.md used (hybrid underscore/dash) — slug normalized in the same commit. | Claude Opus 4.7 |
 | 2026-05-10 | **Re-scoped (Path A) after Engineer H Phase 0 STOP+escalate.** Engineer H correctly halted at premise-invalidation per "verify the seed ships it" methodology: seed `noctusai_lib.integrations.whatsapp.WahaClient.send_text` covers WAHA transport only, NOT Meta Cloud API. The REAL N=2 recurrence is `send_via_waha` (60→37 LoC dup at ERP `whatsapp_service.send_via_waha:319` + therapy `whatsapp_therapy_service.send_via_waha:44`), not `send_message`. Path A re-scope: (1) ERP `send_via_waha` → consume seed `WahaClient`. (2) Therapy `send_via_waha` → consume seed `WahaClient`. (3) ERP `send_message` (Meta Cloud API, N=1) UNTOUCHED — separate follow-up `whatsapp-meta-cloud-api-seed-absorption` filed. (4) Therapy `send_message` stub UNTOUCHED — wiring it to real send is a feature change. Re-dispatched 2026-05-10 with corrected scope. Engineer H's findings preserved as 6th confirmation of §17.6.1 return-as-text protocol. | claude-opus-4-7 |
+| 2026-05-10 | **Path A executed (closed).** Phase 0-3 complete. ERP `whatsapp_service.send_via_waha:319` + therapy `whatsapp_therapy_service.send_via_waha:44` both now delegate to seed `noctusai_lib.integrations.whatsapp.WahaClient.send_text` via the `get_whatsapp_client(...)` factory. ERP wrapper retains BR phone normalization + DB config lookup + legacy `{message_id,status,phone}` envelope; therapy wrapper retains explicit-arg signature + raw-response + `ValueError`-on-error contract (wraps seed's `HTTPStatusError` to keep `send_reminder` happy). Both products: 0 keeper issues, all WhatsApp service tests green (ERP 33/33, +4 new `TestSendViaWaha` patching `httpx.AsyncClient` at seed boundary; therapy 10/10), full suites match baseline (4 unrelated pre-existing failures in each, verified via stash+rerun). Catalog flipped: `send_via_waha exists in ERP and therapy (N=2 → FORMALIZED 2026-05-10)` — slip-pattern history preserved (filed at N=2 on wrong premise `send_message` vs real `send_via_waha`). Behavioral change: ERP auth header swap `Authorization: Bearer` → `X-Api-Key` (aligns with WAHA standard + seed default; documented in findings.md). findings.md emitted as engineer report text per §17.6.1. Folder deletion + final merge deferred to orchestrator. | claude-opus-4-7 |
