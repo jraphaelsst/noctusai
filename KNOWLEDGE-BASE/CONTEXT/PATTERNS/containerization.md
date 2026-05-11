@@ -1407,7 +1407,7 @@ audited.
   read-only errors logged but not bubbled; phase_learnings.db
   vanishing into a tmpfs that gets wiped on restart).
 
-## 11b · Local-postgres profile (offline dev)
+## 11g · Local-postgres profile (offline dev)
 
 > **Status:** Applied 2026-05-10 (T4, containerization-backlog-closure
 > Wave 1). Closes §11 backlog #13.
