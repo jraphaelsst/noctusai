@@ -225,3 +225,142 @@ pre-authored from sibling-fold; both got an imobi-scheduling
 first-adopter section appended. This is the emerging shape for
 "absorb planning artifact → adopt on first consumer." Worth
 naming + formalizing as a methodology pattern.
+
+---
+
+# Phase 12 + 13 + 14 (final close) — Engineer IMB-FIN findings
+
+## 1. Errors
+
+None during final-close execution. Pytest green at 393 from the first run.
+
+## 2. Mistakes / slips
+
+### 2.1 The scaffold seed-stub README + MASTER-PROMPT survived ten phases
+
+`products/imobi-scheduling/README.md` (38 lines) and `MASTER-PROMPT.md`
+(78 lines) shipped at Phase 1 scaffold with seed-product placeholder
+prose ("Minimal reference implementation — the spine with no
+organs"). Nine subsequent phases (3-11) added real domain code,
+migrations, services, security hardening — but never touched the
+two top-level docs. Phase 12's deliverables were always the
+authoring of these files; the slip is that the seed-stub prose
+silently lived under the imobi-scheduling slug across the entire
+project lifetime, technically misrepresenting the product to anyone
+opening either file. The scaffold tool emitting stub-prose at copy
+time is acceptable (the alternative is a stub that says "this needs
+filling"); the slip is the gap-period between scaffold and Phase 12.
+
+**Surface candidate**: scaffolded README + MASTER-PROMPT could carry
+a `<!-- TODO(phase-12-authoring): replace this seed-stub prose -->`
+marker that `noctus.dev.review` flags as a NEW issue until removed.
+N=2 with `youtube-crawler` (whose stub may show the same shape)
+would trigger the seed lift.
+
+### 2.2 Sibling-path reference in `scheduling_bot.md` survived Phase 6 review
+
+The prompt-source provenance comment carried an absolute
+`~/Documents/repository/NoctusAI/whatsapp-google-scheduling/...`
+path inside a code-internal file (NOT a project doc). PROJECT.md
+§12 explicitly forbids "sibling-path references survive in product
+code, KB docs, MASTER-PROMPT, or README". Phase 14 sibling-deletion
+safety scan caught it; rewritten to a relative-style citation.
+
+**Lesson**: §12's scrub criterion is sound but the verification
+moment was Phase 14 — not Phase 6 when the prompt was authored.
+A `grep -r "whatsapp-google-scheduling" products/imobi-scheduling/`
+check at each phase close (or via a keeper detector) would have
+caught it sooner. Not blocking; documented for the next absorption
+project.
+
+## 3. Lessons
+
+### 3.1 KB-first authorship pays off at the final close
+
+Phase 10 + 11 both authored their KB pattern docs as part of the
+phase (`chatbot-operational-readiness.md` + extension of
+`llm-bot-security.md`). Phase 12's "Update KB / INDEX / CLAUDE.md"
+checklist consequently had nothing to do — the KB layers were
+already three-way-synced. The phantom-empty-output signal at
+Phase 12 ("nothing to update?") was the methodology working, not
+a gap.
+
+### 3.2 Phase-12 prose authoring needs concrete product context, not boilerplate
+
+The PF reference shape is the right template, but blindly copying
+the structure produces a thin doc. The high-leverage move is
+pulling specific files (`app/main.py`, `app/config.py`,
+`app/lifespan.py`, services list, migration list) into context
+BEFORE writing — the prose density comes from naming the actual
+services / tables / seams, not from filling generic sections.
+Folded into the IMB-FIN brief workflow; would be a candidate for a
+`noctus.dev.scaffold_master_prompt(product, --from-files=...)`
+helper that emits a populated skeleton.
+
+### 3.3 "Sibling repo deletion is safe" is a continuous claim, not a one-time check
+
+KB pattern docs cite `whatsapp-google-scheduling/` as the *origin*
+of folded patterns (e.g. `KB § PATTERNS/whatsapp-chatbot-seed.md`,
+`seed-fake-real-adapter.md`, `chatbot-operational-readiness.md`,
+`llm-bot-security.md`, `scheduling-seed.md`, `containerization.md`,
+`webhook-signatures.md`, `accept-with-rationale.md`). These are
+*historical* references — same shape as citing a deprecated
+upstream library. Post-deletion they're semantically valid; only
+path-style URI references would break. The §12 scrub rule was
+written assuming "no references survive at all" — the more
+precise rule is "no *functional* references survive (path-deps,
+symlinks, editable installs, runtime-resolved paths)". Surfaces
+language for `KB § PATTERNS/accept-with-rationale.md` if future
+absorption projects hit the same.
+
+## 4. Interesting findings
+
+### 4.1 INDEX.md auto-update via pre-commit captures the inventory row
+
+The Imobi Scheduling row in `KB § CONTEXT/02-LANDSCAPE.md`
+inventory + database-schemas blocks already existed at Phase 12
+open (test count 272, schema list including `imobi_scheduling`).
+That's the pre-commit `scripts/update-kb-counts.py` doing its job:
+the inventory section is auto-derived between markers
+(`<!-- kb-counts:start:inventory -->` / `:end:inventory -->`).
+What Phase 12 *did* need to author was the Products table row
+(top of the file, human-curated) — which is NOT auto-derived. The
+clean separation between auto + manual blocks is a methodology
+strength worth preserving.
+
+### 4.2 Test count of 393 has been stable since Phase 11
+
+Phase 11 close: 393. Phase 12: 393 (no test churn — prose only).
+Phase 13: 393 (deferred). Phase 14: 393 (verification only). The
+"final test count vs baseline" metric matches by design — final-close
+phases shouldn't add tests. If they do, that's a sign the brief
+exceeded scope.
+
+## 5. Knowledge pieces
+
+### 5.1 Final-close phases are mostly verification + prose; rarely code
+
+The IMB-FIN brief combined three phases (12 + 13 + 14) into one
+dispatch because none of them author significant code:
+- P12 = prose (README + MASTER-PROMPT + KB landscape row)
+- P13 = DEFER decision documented + accept-with-rationale
+- P14 = run three commands + write up results
+
+Combining them in one engineer makes sense (vs Phase-9-style
+mid-flight WIP-handoff). The architect-side rule: *final-close
+phases are bundleable; mid-flight phases are not.*
+
+### 5.2 The "deletion-safe" criterion has three axes
+
+Phase 14 sibling-deletion safety check looks for:
+1. **Path-style references** — `grep -r '~/Documents/.../sibling-repo/'`
+   in product code + docs.
+2. **Functional dependencies** — `pyproject.toml` / `package.json`
+   path deps; symlinks; editable installs.
+3. **Historical citations in KB prose** — acknowledged but NOT
+   scrubbed (they survive deletion as prose; same shape as citing
+   a deprecated library).
+
+The criterion is about (1) + (2). (3) is fine. Documenting the
+distinction here so future absorption projects know which axis
+they're scrubbing.

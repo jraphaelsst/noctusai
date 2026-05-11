@@ -10,10 +10,10 @@
 > framework concern; pt-BR only in v1). Re-translate when a second locale
 > lands; don't add inline string-substitution.
 >
-> **Source.** Prose ported 2026-05-11 from
-> `~/Documents/repository/NoctusAI/whatsapp-google-scheduling/app/services/openai/conversation.py::SYSTEM_PROMPT`
-> per project §5.1 (semantics carry, code does not). After the sibling
-> repo is deleted post-absorption, this file is the canonical voice.
+> **Source.** Prose ported 2026-05-11 from the sibling repo
+> `whatsapp-google-scheduling/` (per `projects/imobi-scheduling-bot-creation/`
+> §5.1 — semantics carry, code does not). Sibling repo deleted post-absorption;
+> this file is the canonical voice.
 
 ---
 
