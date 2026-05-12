@@ -1,12 +1,14 @@
 """Tests for `noctusai_lib.testing.purge_shadowing_editable_finders`.
 
-Five high-value scenarios covering the parallel-worktree shadow-purge contract:
+Scenarios covering the parallel-worktree shadow-purge contract:
 
 (a) class-MAPPING finder pointing OUTSIDE local_root → REMOVED;
 (b) module-MAPPING finder (pip PEP-660 shape) pointing OUTSIDE local_root → REMOVED;
 (c) finder bound to a different worktree → PURGED;
 (d) finder bound to the local worktree → PRESERVED;
-(e) idempotency — calling twice in one process is safe and a no-op the second time.
+(e) idempotency — calling twice in one process is safe and a no-op the second time;
+(f) generalization — finders for BOTH `noctusai_lib` AND `noctusai_seed` are purged in
+    a single call (2026-05-11 regression for the multi-package shape Engineer W surfaced).
 
 Each test snapshots and restores `sys.meta_path` + `sys.modules` so
 side-effects do not leak between tests.
@@ -44,23 +46,29 @@ def isolated_meta_path():
         sys.modules[k] = v
 
 
-def _make_class_mapping_finder(target: str):
-    """Build a class with a class-level ``MAPPING`` attribute pointing at ``target``."""
+def _make_class_mapping_finder(target: str, package: str = "noctusai_lib"):
+    """Build a class with a class-level ``MAPPING`` attribute pointing at ``target``.
+
+    ``package`` parametrizes the mapping key so the same builder can simulate
+    finders for ``noctusai_lib``, ``noctusai_seed``, or any other guarded
+    package.
+    """
 
     class _ClassMappingFinder:
-        MAPPING = {"noctusai_lib": target}
+        MAPPING = {package: target}
 
     return _ClassMappingFinder
 
 
-def _make_module_mapping_finder(target: str, mod_name: str):
+def _make_module_mapping_finder(target: str, mod_name: str, package: str = "noctusai_lib"):
     """Mimic pip's PEP-660 shape: class with no MAPPING, MAPPING on the *module*.
 
     Returns the class. Side-effect: registers the synthetic module in
     ``sys.modules[mod_name]`` so ``finder.__module__`` resolves correctly.
+    ``package`` parametrizes the mapping key (default ``noctusai_lib``).
     """
     synthetic_mod = types.ModuleType(mod_name)
-    synthetic_mod.MAPPING = {"noctusai_lib": target}
+    synthetic_mod.MAPPING = {package: target}
     sys.modules[mod_name] = synthetic_mod
 
     class _ModuleMappingFinder:
@@ -197,4 +205,45 @@ def test_idempotent_double_call_is_safe(isolated_meta_path, tmp_path):
     purge_shadowing_editable_finders(local_root)
     assert list(sys.meta_path) == meta_path_after_first, (
         "idempotency violated: second call mutated sys.meta_path"
+    )
+
+
+def test_both_noctusai_lib_and_noctusai_seed_finders_are_purged(isolated_meta_path, tmp_path):
+    """(f) Default ``package_names`` covers ``noctusai_lib`` AND ``noctusai_seed``.
+
+    Regression for the 2026-05-11 generalization (Engineer W surfaced the
+    shape). Pre-generalization, only ``noctusai_lib`` finders were
+    inspected; a sibling-worktree editable install of ``noctusai_seed``
+    silently shadowed the local source tree.
+
+    Setup: install one foreign-pointing finder per package; both must be
+    purged in a single call with the default ``package_names``.
+    """
+    local_lib = tmp_path / "local_worktree" / "seed" / "lib" / "backend"
+    local_lib.mkdir(parents=True)
+    foreign_lib_root = tmp_path / "other_worktree" / "seed" / "lib" / "backend"
+    foreign_lib_root.mkdir(parents=True)
+    (foreign_lib_root / "noctusai_lib").mkdir()
+    (foreign_lib_root / "noctusai_seed").mkdir()
+
+    lib_finder = _make_class_mapping_finder(
+        str(foreign_lib_root / "noctusai_lib"), package="noctusai_lib"
+    )
+    seed_finder = _make_class_mapping_finder(
+        str(foreign_lib_root / "noctusai_seed"), package="noctusai_seed"
+    )
+    sys.meta_path.append(lib_finder)
+    sys.meta_path.append(seed_finder)
+    assert lib_finder in sys.meta_path
+    assert seed_finder in sys.meta_path
+
+    # Default args — both packages must be guarded out of the box.
+    purge_shadowing_editable_finders(local_lib)
+
+    assert lib_finder not in sys.meta_path, (
+        "default package_names must purge noctusai_lib finders"
+    )
+    assert seed_finder not in sys.meta_path, (
+        "default package_names must purge noctusai_seed finders too "
+        "(2026-05-11 generalization regression)"
     )
