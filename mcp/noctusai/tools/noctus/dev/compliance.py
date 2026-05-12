@@ -3778,15 +3778,12 @@ _MCP_WRITE_TOOL_NAME_PREFIXES: tuple[str, ...] = (
     "set_proposal_status",
     "file_proposal",
     "promote",
-    "reserve_port_range",
-    "create_testing_ground",
     "build_parallel",
     "vite_build",
     "phase_learning_log",
     "phase_learning_consume",
     "batch_speed_gain_log",
     "batch_speed_gain_update",
-    "review_session",
 )
 
 # Function-name prefixes that mean "this is read-side; do NOT flag" even
@@ -3804,15 +3801,44 @@ _MCP_READ_PREFIX_GUARDS: tuple[str, ...] = (
     "outline_", # `outline_python` reads source
 )
 
+# Explicit, name-keyed exceptions. Used when:
+#   (a) the tool's name pattern collides with a legitimate write-prefix
+#       but the tool itself is read-side (e.g. `scaffold_interrogate`
+#       returns design questions — collides with the `scaffold` prefix
+#       that catches `scaffold_product` / `scaffold_migration`); OR
+#   (b) the tool DOES write, but its destination is fixed by design and
+#       NOT a caller-resolved worktree (e.g. `reserve_port_range` writes
+#       to the centralized port registry; `create_testing_ground`
+#       provisions a NEW sibling workspace outside any existing worktree
+#       via `bootstrap-seed-workspace.sh`).
+# Calibrated 2026-05-11 from a 4-false-positive sweep against the
+# detector Engineer P shipped in commit `e6893e9`. Names are matched
+# against the bare function name (stripped of leading underscores).
+# Reasoning: prefix-only calibration cannot disambiguate
+# `scaffold_interrogate` (read) from `scaffold_product` (write); an
+# explicit exception set keeps the heuristic clean and documents
+# each carve-out at the source.
+_MCP_WRITE_TOOL_NAME_EXCEPTIONS: frozenset[str] = frozenset({
+    # Read-side tools whose name collides with a write-prefix:
+    "scaffold_interrogate",  # returns design questions; read-side
+    "review_session",        # dev review report; read-side
+    # Write-side tools whose destination is fixed-by-design, not a
+    # caller-resolved worktree:
+    "reserve_port_range",    # writes the central port registry
+    "create_testing_ground", # provisions a NEW sibling workspace
+})
+
 
 def _function_name_implies_write(name: str) -> bool:
     """Heuristic: True iff `name` starts with a write-verb prefix and is
-    not gated by a read-prefix guard.
+    not gated by a read-prefix guard or an explicit name exception.
 
     Stripped of any single leading underscore so private helpers like
     `_archive_internal` are recognized.
     """
     bare = name.lstrip("_")
+    if bare in _MCP_WRITE_TOOL_NAME_EXCEPTIONS:
+        return False
     if any(bare.startswith(guard) for guard in _MCP_READ_PREFIX_GUARDS):
         return False
     return any(bare.startswith(prefix) for prefix in _MCP_WRITE_TOOL_NAME_PREFIXES)

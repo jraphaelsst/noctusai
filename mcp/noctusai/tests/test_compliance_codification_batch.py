@@ -345,6 +345,88 @@ class TestCheckMcpWriteToolWorktreeArg:
         issues = check_mcp_write_tool_worktree_arg(tmp_path)
         assert issues == [], f"async with worktree_path must not flag, got: {issues}"
 
+    # ------------------------------------------------------------------
+    # Calibration regression — 4 explicit-exception tools (2026-05-11).
+    # `scaffold_interrogate` / `review_session` collide with a write-prefix
+    # but are read-side; `reserve_port_range` / `create_testing_ground`
+    # DO write but to fixed-by-design destinations, not a caller-resolved
+    # worktree. All four are listed in `_MCP_WRITE_TOOL_NAME_EXCEPTIONS`.
+    # ------------------------------------------------------------------
+
+    def test_scaffold_interrogate_not_flagged(self, tmp_path):
+        # `scaffold_interrogate` is read-side (returns design questions);
+        # name collides with the `scaffold` write-prefix that legitimately
+        # catches `scaffold_product` / `scaffold_migration`. Exception
+        # should suppress.
+        content = (
+            "def scaffold_interrogate(slug: str) -> dict:\n"
+            "    return {}\n"
+        )
+        self._mk_mcp_tool(tmp_path, content)
+        issues = check_mcp_write_tool_worktree_arg(tmp_path)
+        assert issues == [], f"scaffold_interrogate is read-side, got: {issues}"
+
+    def test_reserve_port_range_not_flagged(self, tmp_path):
+        # `reserve_port_range` writes the central port registry, not a
+        # caller-resolved worktree — `worktree_path` semantics don't apply.
+        content = (
+            "def reserve_port_range(slug: str, count: int = 1) -> dict:\n"
+            "    return {}\n"
+        )
+        self._mk_mcp_tool(tmp_path, content)
+        issues = check_mcp_write_tool_worktree_arg(tmp_path)
+        assert issues == [], f"reserve_port_range is registry-side, got: {issues}"
+
+    def test_create_testing_ground_not_flagged(self, tmp_path):
+        # `create_testing_ground` provisions a NEW sibling workspace via
+        # `bootstrap-seed-workspace.sh` — writes outside any existing
+        # worktree by definition.
+        content = (
+            "def create_testing_ground(name: str) -> dict:\n"
+            "    return {}\n"
+        )
+        self._mk_mcp_tool(tmp_path, content)
+        issues = check_mcp_write_tool_worktree_arg(tmp_path)
+        assert issues == [], f"create_testing_ground spawns siblings, got: {issues}"
+
+    def test_review_session_not_flagged(self, tmp_path):
+        # `review_session` is the read-side dev review tool; the `review_`
+        # token is the SCOPE, not a write action.
+        content = (
+            "def review_session(slug: str) -> dict:\n"
+            "    return {}\n"
+        )
+        self._mk_mcp_tool(tmp_path, content)
+        issues = check_mcp_write_tool_worktree_arg(tmp_path)
+        assert issues == [], f"review_session is read-side, got: {issues}"
+
+    def test_genuine_writers_still_flagged_after_calibration(self, tmp_path):
+        # Defensive check: the exception set MUST NOT swallow other
+        # write-prefix tools. `archive` / `scaffold_product` /
+        # `absorb_file` / `set_proposal_status` / `file_proposal` all
+        # still fire when missing `worktree_path`.
+        content = (
+            "def archive(target: str) -> dict:\n"
+            "    return {}\n"
+            "def scaffold_product(slug: str) -> dict:\n"
+            "    return {}\n"
+            "def absorb_file(path: str) -> dict:\n"
+            "    return {}\n"
+            "def set_proposal_status(slug: str, status: str) -> dict:\n"
+            "    return {}\n"
+            "def file_proposal(slug: str) -> dict:\n"
+            "    return {}\n"
+        )
+        self._mk_mcp_tool(tmp_path, content)
+        issues = check_mcp_write_tool_worktree_arg(tmp_path)
+        flagged = {i["issue"].split("`")[1].split(":")[0]: i for i in issues}
+        # All 5 genuine write tools should still fire.
+        assert len(issues) == 5, f"expected 5 genuine flags, got {len(issues)}: {issues}"
+        names = " ".join(i["issue"] for i in issues)
+        for genuine in ("archive", "scaffold_product", "absorb_file",
+                        "set_proposal_status", "file_proposal"):
+            assert genuine in names, f"genuine writer `{genuine}` not flagged"
+
 
 # ---------------------------------------------------------------------------
 # check_pipefail_grep_q
