@@ -123,7 +123,9 @@ KNOWLEDGE-BASE/CONTEXT/PATTERNS/
 
 ## 6. Implementation phases
 
-### Phase 1 — Pattern rollout (documentation + agent definition) — IN PROGRESS
+### Phase 1 ✅ — Pattern rollout (documentation + agent definition)
+
+**Improvements:** none identified — Phase 1 is design + documentation; Phase 2 (pilot) is the calibration phase where findings will surface.
 
 - [x] Write `.claude/agents/orchestrator-operator.md` with YAML frontmatter + per-task playbook + outbox convention + git ownership rules + failure handling
 - [x] Write `KNOWLEDGE-BASE/CONTEXT/PATTERNS/autonomous-operator-via-subagent.md` (A vs B vs C vs D comparison + 8-step flow + cadence + when-to-use + setup recipe + anti-patterns)
