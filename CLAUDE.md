@@ -154,6 +154,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 | Touching gamified UI | `CLAUDE/frontend.md` + `KB § 07-GAMIFICATION.md` |
 | Designing an agent / MCP / skill | `KB § INSTRUCTIONS/00-MASTER.md` |
 | Touching Vista CRM (showcase adapter, future MCP server, endpoint surface, field-set calibration) | `KB § INTEGRATIONS/vista.md` |
+| User says "two sessions" / "second Claude" / "architect/operator split" / "run a second window" / wants the inbox+outbox coordination pattern | `KB § PATTERNS/two-session-architect-operator.md` (Session A = Architect, no git; Session B = Operator, owns ALL git + dispatch exec + tail sweeps; coordinate via gitignored `dispatcher-inbox.md` + `dispatcher-outbox.md` at repo root; setup recipe + `/loop` variant + 5-question pilot rubric) |
 | Anything not listed | `KB § INDEX.md` |
 
 ---
