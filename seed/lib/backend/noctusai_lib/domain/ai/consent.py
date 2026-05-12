@@ -36,6 +36,13 @@ from noctusai_lib.primitives.exceptions import AppException
 logger = logging.getLogger(__name__)
 
 
+# Type aliases for per-feature LGPD redaction (exported via __init__.py).
+# Defined here as Any-returning to keep the contract simple; redactors return
+# a redacted version of the arguments dict / result value or raise to skip.
+RedactArgumentsFn = Callable[[dict[str, Any]], dict[str, Any]]
+RedactResultFn = Callable[[Any], Any]
+
+
 # ---------------------------------------------------------------------------
 # Exception
 # ---------------------------------------------------------------------------
