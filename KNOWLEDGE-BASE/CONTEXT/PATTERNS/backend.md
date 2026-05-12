@@ -129,7 +129,7 @@ the right client.
   `Depends(get_user_role)` — broken (positional args become query
   params); fires a `DeprecationWarning`.
 - ❌ Imperative `_resolve_auth(authorization)` helpers per product —
-  N=2+ recurrence, the factory IS the absorption.
+  N≥2 recurrence, the factory IS the absorption.
 - ❌ Capturing `_db.get_client` (bound method) at module load and
   passing it to the factory — breaks test patching.
 - ❌ Annotating `-> None` on FastAPI routes with

@@ -39,7 +39,7 @@
 - **Shape:** structured template (`templates/PROPOSAL-TEMPLATE.md`).
 - **Purpose:** actionable, triageable records that a reviewer accepts or rejects and a future agent executes.
 - **Audience:** any agent opening the queue to triage or execute accepted items.
-- **Lifecycle:** `pending` → `accepted` / `rejected`, with reasons. Dedup by title slug + key entity.
+- **Lifecycle:** `pending` ⇒ `accepted` ∨ `rejected`, with reasons. Dedup by title slug + key entity.
 
 **Why keep them separate:** improvements are in-flow capture (fast, mid-step); proposals are synthesis artifacts (rich, end-of-phase or end-of-detection). Collapsing both into one store would either force ceremony onto quick-capture bullets (killing flow) or drown the triage queue in unprocessed observations.
 
@@ -159,9 +159,9 @@ This **amends** §2 / §4b. The previous protocol required filing a `noctus.dev.
 When the auto-improvement path applies (default for most phase closes):
 
 1. At end of phase, read the `**Improvements:**` block.
-2. For each item, decide: in-scope + low-risk + self-contained?
-   - **Yes** → apply in this same session, inline, before the next phase starts.
-   - **No** → defer with a live pointer (next-phase sub-task, follow-up project scaffolded from `templates/PROJECT-TEMPLATE.md`, backlog note). Same deferral rules as §4b.
+2. For each item, decide: in-scope ∧ low-risk ∧ self-contained?
+   - **Yes** ⇒ apply in this same session, inline, before the next phase starts.
+   - **No** ⇒ defer with a live pointer (next-phase sub-task, follow-up project scaffolded from `templates/PROJECT-TEMPLATE.md`, backlog note). Same deferral rules as §4b.
 3. Update the phase's `**Improvements:**` block in-place to mark each item as **applied** or **deferred → <destination>**. The block becomes the audit trail; no separate proposal file is created.
 4. Add the §11 Change-Log entry capturing what was applied / what was deferred.
 5. Continue to the next phase **without prompting the user**.
@@ -177,7 +177,7 @@ When the formal-proposal path applies, the §4b apply-inline-then-delete mechani
 
 **Why this is the default**: filing a proposal file just to delete it the same session was ceremony. The `**Improvements:**` block + §11 entry IS the durable audit trail. Removing the proposal-file step recovers turn-time without losing the trail.
 
-**What does NOT change**: the §4c end-of-work summary still runs. The §6 ↔ §11 self-check still runs. Three-way sync still runs. Phase-by-phase cadence still holds (one phase, then pause for "continue") — auto-improvement applies to **the closing of the current phase**, not the user's permission to start the next one.
+**What does NOT change**: §4c end-of-work summary still runs. §6 ↔ §11 self-check still runs. Three-way sync (KB ↔ CLAUDE.md ↔ memory) still runs. Phase-by-phase cadence still holds (one phase, then pause for "continue") — auto-improvement applies to **closing the current phase**, ¬ user-permission to start the next.
 
 **Anti-pattern**: auto-applying an item that wasn't actually in-scope ("the agent decided"). The in-scope filter is load-bearing — if you're unsure whether an item is in-scope, defer it.
 
@@ -244,7 +244,7 @@ When extending or correcting any rule in this doc (or any KB / CLAUDE.md rule), 
 
 1. **Land KB changes first** — update the KB file that holds the long-form rule. If creating a new KB file, update `KNOWLEDGE-BASE/INDEX.md` in the same change.
 2. **Then update CLAUDE.md** — the short behavioral rule + pointer into the KB.
-3. **Never the reverse.** CLAUDE.md is the pointer layer; pointing into KB content that doesn't exist yet strands the pointer.
+3. **Never the reverse.** CLAUDE.md is the pointer layer; pointing into KB content that doesn't exist yet strands the pointer. (Order: KB → CLAUDE.md ↔ memory.)
 
 The `verify-kb-sync.sh` pre-commit hook catches dangling pointers but do not rely on it — the hook is a safety net, not the protocol. The protocol is ordering.
 
