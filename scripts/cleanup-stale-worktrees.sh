@@ -30,9 +30,19 @@
 # Safety
 #   - Never removes the main worktree.
 #   - Never removes sibling workspaces (paths NOT under `.claude/worktrees/agent-*`).
-#   - Refuses to remove worktrees with uncommitted/unpushed work
-#     unless `--force` is passed.
+#   - Refuses to remove worktrees with uncommitted files or stashes — surfaces
+#     them as manual-review findings instead. `--force` does NOT override this
+#     (THE-P10 lesson: --force only suppresses the interactive prompt, never
+#     overrides safety gating).
 #   - Always runs `git worktree prune` after to clean .git/worktrees/ metadata.
+#
+# Enumeration alignment with mole.sh
+#   This script SHARES the classification predicate with `scripts/mole.sh`:
+#   `mole.sh scan --worktrees` reports the same target set this script would
+#   sweep. Both apply the same merge + on-disk + uncommitted/stash gating.
+#   2026-05-11 incident: prior version targeted 122 worktrees while scan
+#   reported 33 stale — gap was on-disk gating + uncommitted-work gating in
+#   the scan that this script lacked. Now aligned.
 
 set -euo pipefail
 
@@ -77,39 +87,120 @@ fi
 # Refresh main's tip so merged-detection is accurate.
 git fetch origin main --quiet || echo "  · (warning: fetch origin main failed; using local main)"
 
-stale_paths=()
-active_paths=()
+stale_paths=()      # safe to auto-remove (merged + clean + on-disk or phantom)
+active_paths=()     # branch unmerged — skip (work-in-progress)
+dirty_paths=()     # branch merged BUT uncommitted/stashed — manual review
+dirty_reasons=()
+locked_paths=()    # branch merged + locked — manual review (THE-P10 protection)
 
-# Iterate registered worktrees. `git worktree list --porcelain` emits
-# `worktree <path>`, `HEAD <sha>`, `branch refs/heads/<name>` per entry.
+# Helper: classify a single (wt, branch) pair and route into the right bucket.
+# Mirrors mole.sh `_classify_emit_registered`. Keep predicates in sync.
+_classify_one() {
+  local wt="$1" branch="$2" locked="$3"
+  # Main repo or sibling workspace: ignore.
+  [ "$wt" = "$REPO_ROOT" ] && return 0
+  case "$wt" in
+    "$WORKTREE_DIR/agent-"*) ;;
+    *) return 0 ;;
+  esac
+
+  # Merge predicate: ancestry OR patch-id equivalence.
+  local merged=0
+  if git merge-base --is-ancestor "$branch" origin/main 2>/dev/null; then
+    merged=1
+  elif _all_commits_cherry_picked_to_main "$branch"; then
+    merged=1
+  fi
+
+  if [ "$merged" -ne 1 ]; then
+    active_paths+=("$wt")
+    return 0
+  fi
+
+  # Branch IS merged. If the on-disk dir is gone, it's a PHANTOM — safe to
+  # remove (git worktree remove --force will clean metadata).
+  if [ ! -d "$wt" ]; then
+    stale_paths+=("$wt")
+    return 0
+  fi
+
+  # On-disk + merged. Check uncommitted/stashed/locked.
+  local dirty stashes
+  dirty="$(cd "$wt" 2>/dev/null && git status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
+  stashes="$(cd "$wt" 2>/dev/null && git stash list 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
+
+  if [ "$dirty" != "0" ]; then
+    dirty_paths+=("$wt")
+    dirty_reasons+=("$dirty uncommitted file(s) — INVESTIGATE before removing")
+  elif [ "$stashes" != "0" ]; then
+    dirty_paths+=("$wt")
+    dirty_reasons+=("$stashes stash(es) — recover before removing")
+  elif [ "$locked" -eq 1 ]; then
+    locked_paths+=("$wt")
+  else
+    stale_paths+=("$wt")
+  fi
+}
+
+# Iterate registered worktrees. `git worktree list --porcelain` emits a block
+# per entry: `worktree <path>`, `HEAD <sha>`, `branch refs/heads/<name>`,
+# optionally `locked [<reason>]`. Blocks separated by blank lines.
+wt=""
+branch=""
+locked=0
 while IFS= read -r line; do
   case "$line" in
-    "worktree "*)  wt="${line#worktree }" ;;
-    "branch "*)    branch="${line#branch refs/heads/}"
-                   # Decide on the worktree we just parsed.
-                   if [ "$wt" = "$REPO_ROOT" ]; then
-                     :  # main worktree; skip
-                   elif [[ "$wt" != "$WORKTREE_DIR/agent-"* ]]; then
-                     :  # sibling workspace; skip
-                   elif git merge-base --is-ancestor "$branch" origin/main 2>/dev/null; then
-                     stale_paths+=("$wt")
-                   elif _all_commits_cherry_picked_to_main "$branch"; then
-                     # Branch commits are already on main by patch-id (cherry-pick).
-                     stale_paths+=("$wt")
-                   else
-                     active_paths+=("$wt")
-                   fi
-                   ;;
+    "worktree "*)
+      # Flush previous block.
+      if [ -n "$wt" ] && [ -n "$branch" ]; then
+        _classify_one "$wt" "$branch" "$locked"
+      fi
+      wt="${line#worktree }"
+      branch=""
+      locked=0
+      ;;
+    "branch "*)
+      branch="${line#branch refs/heads/}"
+      ;;
+    "locked"*)
+      locked=1
+      ;;
+    "")
+      if [ -n "$wt" ] && [ -n "$branch" ]; then
+        _classify_one "$wt" "$branch" "$locked"
+        wt=""
+        branch=""
+        locked=0
+      fi
+      ;;
   esac
 done < <(git worktree list --porcelain)
+# Final flush.
+if [ -n "$wt" ] && [ -n "$branch" ]; then
+  _classify_one "$wt" "$branch" "$locked"
+fi
 
-# Also catch dangling agent-* directories (rm'd manually but git metadata still locked).
+# Also catch dangling agent-* directories (rm'd manually but git metadata still
+# missing). An orphan = on-disk dir whose path is NOT in `git worktree list`.
+#
+# Pre-existing bug fixed 2026-05-11: the prior implementation used
+#   `git worktree list --porcelain | grep -qF "worktree $d"`
+# under `set -o pipefail`. `grep -q` short-circuits on first match (closes
+# stdin); the upstream `git worktree list` then writes to a closed pipe,
+# receives SIGPIPE (exit 141), and `pipefail` propagates that as failure —
+# so `! cmd` evaluates TRUE even when the path WAS in the list. Result: 5
+# registered worktrees were falsely classified as orphans and double-listed
+# under stale + dirty. Fix: precompute the registered-paths set in a
+# variable, then test membership via `case`/string-grep with no pipe.
+_registered_paths_blob="$(git worktree list --porcelain | awk '/^worktree / { print $2 }')"
 while IFS= read -r d; do
   [ -d "$d" ] || continue
-  # If this path is not in the registered worktree list at all, it's an orphan.
-  if ! git worktree list --porcelain | grep -qF "worktree $d"; then
-    stale_paths+=("$d")
-  fi
+  # Use newline-anchored search via parameter expansion + check whether
+  # removing the exact match yields a different string. This avoids any pipe.
+  case $'\n'"$_registered_paths_blob"$'\n' in
+    *$'\n'"$d"$'\n'*) ;;     # registered — skip
+    *) stale_paths+=("$d") ;; # genuine orphan
+  esac
 done < <(find "$WORKTREE_DIR" -maxdepth 1 -type d -name "agent-*" 2>/dev/null)
 
 # Dedupe stale_paths. Portable for bash 3.x (macOS default) — `mapfile` is bash 4+.
@@ -123,12 +214,35 @@ fi
 stale_paths=("${_dedup_paths[@]+"${_dedup_paths[@]}"}")
 
 echo "Worktree-cleanup scan:"
-echo "  · main:           $REPO_ROOT"
-echo "  · active (kept):  ${#active_paths[@]}"
-echo "  · stale (target): ${#stale_paths[@]}"
+echo "  · main:                     $REPO_ROOT"
+echo "  · active (unmerged, kept):  ${#active_paths[@]}"
+echo "  · dirty (merged + work):    ${#dirty_paths[@]} (manual review)"
+echo "  · locked (merged + lock):   ${#locked_paths[@]} (manual review)"
+echo "  · stale (target):           ${#stale_paths[@]}"
+
+# Surface dirty entries explicitly — never silent.
+if [ "${#dirty_paths[@]}" -gt 0 ]; then
+  echo ""
+  echo "─── DIRTY merged worktrees (NOT auto-removed; uncommitted/stashed work) ───"
+  i=0
+  while [ "$i" -lt "${#dirty_paths[@]}" ]; do
+    echo "  • ${dirty_paths[$i]}"
+    echo "      ${dirty_reasons[$i]}"
+    i=$((i+1))
+  done
+fi
+
+# Surface locked entries explicitly.
+if [ "${#locked_paths[@]}" -gt 0 ]; then
+  echo ""
+  echo "─── LOCKED merged worktrees (NOT auto-removed; lock held by another process) ───"
+  for wt in "${locked_paths[@]}"; do
+    echo "  • $wt  (run: git worktree unlock <path> && git worktree remove <path>)"
+  done
+fi
 
 if [ "${#stale_paths[@]}" -eq 0 ]; then
-  echo "✓ Nothing stale. Disk usage already minimal."
+  echo "✓ Nothing stale to auto-remove. Disk usage already minimal."
   exit 0
 fi
 

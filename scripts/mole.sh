@@ -6,7 +6,10 @@
 #   Three orthogonal scopes:
 #     - artifacts   : regenerable caches/builds (__pycache__, .pytest_cache, dist, etc.)
 #     - environments: venv + node_modules duplication (advisory-only)
-#     - worktrees   : stale .claude/worktrees/agent-*/ (delegates to cleanup-stale-worktrees.sh)
+#     - worktrees   : stale .claude/worktrees/agent-*/ — scan + sweep share ONE
+#                     classifier (_classify_worktrees) emitting categorized TSV
+#                     records; counts are parity-guaranteed by construction.
+#                     scripts/cleanup-stale-worktrees.sh shares the same predicate.
 #
 # Usage
 #   bash scripts/mole.sh scan                  # all scopes, read-only
@@ -206,7 +209,178 @@ scan_environments() {
 }
 
 # =========================
-# scan_worktrees + sweep_worktrees (delegates to cleanup-stale-worktrees.sh)
+# Worktree classification — SINGLE SOURCE OF TRUTH used by both scan + sweep.
+# =========================
+#
+# Why this exists
+#   The 2026-05-11 enumeration-mismatch incident: scan_worktrees counted only
+#   on-disk agent-* dirs (33), sweep_worktrees delegated to a script that
+#   targeted registered-merged-branch worktrees INCLUDING phantom registry
+#   entries with no on-disk dir (122). User couldn't trust either number.
+#
+#   Fix: one classifier — `_classify_worktrees` — emits TSV records that BOTH
+#   scan and sweep consume. Counts are guaranteed parity by construction.
+#
+# Categories (the only authoritative taxonomy)
+#   STALE          — agent-* worktree, on-disk, registered, branch merged
+#                    (or cherry-picked) to origin/main, removable by
+#                    `git worktree remove`. SWEEP TARGET.
+#   STALE_LOCKED   — same as STALE but git refuses removal due to lock.
+#                    Surface as manual-review finding; NEVER auto-destroy.
+#   STALE_DIRTY    — STALE branch but uncommitted files / stashes present.
+#                    Surface for human review; NEVER auto-destroy.
+#   ACTIVE         — agent-* worktree, registered, branch NOT merged.
+#                    Work-in-progress. SKIP (not a finding).
+#   ORPHAN         — on-disk agent-* dir NOT registered with git.
+#                    Safe to `rm -rf`. SWEEP TARGET.
+#   PHANTOM        — registered agent-* worktree path with NO on-disk dir.
+#                    `.git/worktrees/<id>/` metadata leak; clear via
+#                    `git worktree prune` or `git worktree remove`. SWEEP TARGET.
+#
+# Output format (TSV, one record per line, written to $1 = tempfile path)
+#   <category>\t<path>\t<branch>\t<reason>
+#
+# Bash 3.x compatible — no associative arrays, no mapfile.
+_classify_worktrees() {
+  local outfile="$1"
+  : >"$outfile"  # truncate
+
+  # Refresh origin/main once for accurate merge detection.
+  git fetch origin main --quiet 2>/dev/null || true
+
+  local wt="" branch="" locked=0
+  local seen_paths_file
+  seen_paths_file="$(mktemp -t mole-seen.XXXXXX)"
+  : >"$seen_paths_file"
+
+  # Pass 1: walk registered worktrees and classify each agent-* entry.
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        # Flush previous record (handles last entry without trailing blank line).
+        if [ -n "$wt" ] && [ -n "$branch" ]; then
+          _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file"
+        fi
+        wt="${line#worktree }"
+        branch=""
+        locked=0
+        ;;
+      "branch "*)
+        branch="${line#branch refs/heads/}"
+        ;;
+      "locked"*)
+        locked=1
+        ;;
+      "")
+        if [ -n "$wt" ] && [ -n "$branch" ]; then
+          _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file"
+          wt=""
+          branch=""
+          locked=0
+        fi
+        ;;
+    esac
+  done < <(git worktree list --porcelain)
+  # Final flush.
+  if [ -n "$wt" ] && [ -n "$branch" ]; then
+    _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file"
+  fi
+
+  # Pass 2: walk on-disk agent-* dirs and classify ones not in the seen set
+  # as ORPHAN.
+  if [ -d "$WORKTREE_DIR" ]; then
+    local d
+    while IFS= read -r d; do
+      [ -z "$d" ] && continue
+      # Normalize to absolute path (find already gives absolute since WORKTREE_DIR is).
+      if ! grep -qxF "$d" "$seen_paths_file"; then
+        printf 'ORPHAN\t%s\t-\ton-disk but not git-registered (safe to rm -rf)\n' "$d" >>"$outfile"
+      fi
+    done < <(find "$WORKTREE_DIR" -maxdepth 1 -type d -name 'agent-*' 2>/dev/null)
+  fi
+
+  rm -f "$seen_paths_file"
+}
+
+# Helper: classify ONE registered worktree entry. Writes one TSV line to
+# $outfile, records the path in $seen_paths_file. Filters non-agent-* paths
+# (main repo, sibling workspaces) silently.
+_classify_emit_registered() {
+  local wt="$1" branch="$2" locked="$3" outfile="$4" seen_file="$5"
+
+  # Filter: only agent-* worktrees under WORKTREE_DIR. Non-agent paths
+  # (the main repo, sibling workspaces) are ignored entirely — neither
+  # classified nor recorded in seen (so they can't be mis-classified
+  # as ORPHAN in Pass 2 either — Pass 2's `find` is already scoped to
+  # WORKTREE_DIR/agent-*).
+  case "$wt" in
+    "$WORKTREE_DIR/agent-"*) ;;
+    *) return 0 ;;
+  esac
+
+  # Always record we've seen this path BEFORE the self-skip below — Pass 2
+  # walks on-disk dirs and would otherwise mis-flag the engineer's OWN
+  # worktree as ORPHAN when mole.sh runs from inside an agent-* worktree.
+  printf '%s\n' "$wt" >>"$seen_file"
+
+  # Skip classifying the worktree we're running from — that's the
+  # script's own working tree (REPO_ROOT may equal an agent worktree
+  # when invoked from inside one). Mirrors cleanup-stale-worktrees.sh
+  # which also excludes "$REPO_ROOT".
+  [ "$wt" = "$REPO_ROOT" ] && return 0
+
+  # Merge check: ancestry OR patch-id equivalence. Do this BEFORE on-disk check
+  # so a phantom (no on-disk dir) with UNMERGED branch is correctly classified
+  # as ACTIVE (work-in-progress, branch metadata still valuable) rather than
+  # PHANTOM (silently sweep-eligible). The cleanup-stale-worktrees.sh script
+  # mirrors this ordering — keep them in sync.
+  local merged=0
+  if git merge-base --is-ancestor "$branch" origin/main 2>/dev/null; then
+    merged=1
+  else
+    local plus_lines total
+    plus_lines="$(git cherry origin/main "$branch" 2>/dev/null | grep -c '^+' || true)"
+    total="$(git log --oneline "origin/main..$branch" 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "$total" -gt 0 ] && [ "$plus_lines" = "0" ]; then
+      merged=1
+    fi
+  fi
+
+  if [ "$merged" -ne 1 ]; then
+    printf 'ACTIVE\t%s\t%s\tbranch has unmerged commits (work-in-progress)\n' \
+      "$wt" "$branch" >>"$outfile"
+    return 0
+  fi
+
+  # On-disk check (after merge check — we only PHANTOM-classify merged ones).
+  if [ ! -d "$wt" ]; then
+    printf 'PHANTOM\t%s\t%s\tregistered + merged but on-disk dir missing (safe to remove)\n' \
+      "$wt" "$branch" >>"$outfile"
+    return 0
+  fi
+
+  # Branch is merged. Check for uncommitted / stashes / lock.
+  local dirty stashes
+  dirty="$(cd "$wt" 2>/dev/null && git status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
+  stashes="$(cd "$wt" 2>/dev/null && git stash list 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
+
+  if [ "$dirty" != "0" ]; then
+    printf 'STALE_DIRTY\t%s\t%s\t%s uncommitted file(s) — INVESTIGATE before removing\n' \
+      "$wt" "$branch" "$dirty" >>"$outfile"
+  elif [ "$stashes" != "0" ]; then
+    printf 'STALE_DIRTY\t%s\t%s\t%s stash(es) — recover before removing\n' \
+      "$wt" "$branch" "$stashes" >>"$outfile"
+  elif [ "$locked" -eq 1 ]; then
+    printf 'STALE_LOCKED\t%s\t%s\tlocked (clean dir) — safe to unlock+remove after PID check\n' \
+      "$wt" "$branch" >>"$outfile"
+  else
+    printf 'STALE\t%s\t%s\tbranch merged to origin/main; safe to remove\n' \
+      "$wt" "$branch" >>"$outfile"
+  fi
+}
+
+# =========================
+# scan_worktrees + sweep_worktrees — driven by the shared classifier.
 # =========================
 scan_worktrees() {
   echo "─── WORKTREES scope ───" >&2
@@ -215,107 +389,164 @@ scan_worktrees() {
     echo "0"
     return 0
   fi
-  local count
-  count=$(find "$WORKTREE_DIR" -maxdepth 1 -type d -name 'agent-*' 2>/dev/null | wc -l | tr -d ' ')
-  local total_kb
+
+  local classfile
+  classfile="$(mktemp -t mole-classify.XXXXXX)"
+  _classify_worktrees "$classfile"
+
+  # Tally by category (bash 3.x — no associative arrays).
+  local n_stale n_locked n_dirty n_active n_orphan n_phantom n_total
+  n_stale=$(grep -c '^STALE\b'        "$classfile" 2>/dev/null || echo 0)
+  n_stale=$(echo "$n_stale" | head -1 | tr -d ' \n')
+  [ -z "$n_stale" ] && n_stale=0
+  n_locked=$(grep -c '^STALE_LOCKED'  "$classfile" 2>/dev/null || echo 0)
+  n_locked=$(echo "$n_locked" | head -1 | tr -d ' \n')
+  [ -z "$n_locked" ] && n_locked=0
+  n_dirty=$(grep -c '^STALE_DIRTY'    "$classfile" 2>/dev/null || echo 0)
+  n_dirty=$(echo "$n_dirty" | head -1 | tr -d ' \n')
+  [ -z "$n_dirty" ] && n_dirty=0
+  n_active=$(grep -c '^ACTIVE'        "$classfile" 2>/dev/null || echo 0)
+  n_active=$(echo "$n_active" | head -1 | tr -d ' \n')
+  [ -z "$n_active" ] && n_active=0
+  n_orphan=$(grep -c '^ORPHAN'        "$classfile" 2>/dev/null || echo 0)
+  n_orphan=$(echo "$n_orphan" | head -1 | tr -d ' \n')
+  [ -z "$n_orphan" ] && n_orphan=0
+  n_phantom=$(grep -c '^PHANTOM'      "$classfile" 2>/dev/null || echo 0)
+  n_phantom=$(echo "$n_phantom" | head -1 | tr -d ' \n')
+  [ -z "$n_phantom" ] && n_phantom=0
+  n_total=$((n_stale + n_locked + n_dirty + n_active + n_orphan + n_phantom))
+
+  local on_disk_count
+  on_disk_count=$(find "$WORKTREE_DIR" -maxdepth 1 -type d -name 'agent-*' 2>/dev/null | wc -l | tr -d ' ')
+  local total_kb total_mb
   total_kb=$(du -sk "$WORKTREE_DIR" 2>/dev/null | awk '{print $1}')
   [ -z "$total_kb" ] && total_kb=0
-  local total_mb=$((total_kb / 1024))
-  echo "  count: $count worktrees   total: ${total_mb} MB" >&2
-  echo "$count"
+  total_mb=$((total_kb / 1024))
+
+  # Per-category breakdown (always shown so user sees WHY non-stale entries
+  # weren't swept).
+  echo "  on-disk dirs:   $on_disk_count   total: ${total_mb} MB" >&2
+  echo "  classified:     $n_total" >&2
+  echo "    STALE         $n_stale (safe to sweep)" >&2
+  echo "    STALE_LOCKED  $n_locked (locked — manual review)" >&2
+  echo "    STALE_DIRTY   $n_dirty (uncommitted/stashes — manual review)" >&2
+  echo "    ACTIVE        $n_active (unmerged branch — work-in-progress, skipped)" >&2
+  echo "    ORPHAN        $n_orphan (on-disk, unregistered — safe to sweep)" >&2
+  echo "    PHANTOM       $n_phantom (registered, no on-disk dir — metadata leak)" >&2
+
+  # Surface non-sweepable entries explicitly so they don't go silent.
+  _print_category_entries "$classfile" "STALE_LOCKED"   "─── LOCKED stale (manual review) ───"
+  _print_category_entries "$classfile" "STALE_DIRTY"    "─── DIRTY stale (manual review — uncommitted work) ───"
+  _print_category_entries "$classfile" "ACTIVE"         "─── ACTIVE (unmerged work — skipped, NOT a finding) ───"
+
+  rm -f "$classfile"
+
+  # Return value to next_action / severity grading: the actionable count
+  # (STALE + ORPHAN + PHANTOM). Locked/dirty/active are NOT actionable by
+  # automated sweep — they need human attention.
+  local actionable=$((n_stale + n_orphan + n_phantom))
+  echo "$actionable"
+}
+
+# Helper: print all entries of a given category. No-op when zero.
+_print_category_entries() {
+  local classfile="$1" category="$2" header="$3"
+  if grep -q "^${category}	" "$classfile" 2>/dev/null; then
+    echo "" >&2
+    echo "$header" >&2
+    while IFS=$'\t' read -r cat path branch reason; do
+      [ "$cat" != "$category" ] && continue
+      echo "  • $path" >&2
+      echo "      branch: $branch" >&2
+      echo "      $reason" >&2
+    done <"$classfile"
+  fi
 }
 
 sweep_worktrees() {
   echo "─── SWEEP worktrees (dry-run=$DRY_RUN) ───" >&2
-  if [ ! -x "$REPO_ROOT/scripts/cleanup-stale-worktrees.sh" ]; then
-    echo "  ERR: cleanup-stale-worktrees.sh not found or not executable" >&2
-    return 1
-  fi
-  if [ "$DRY_RUN" -eq 1 ]; then
-    bash "$REPO_ROOT/scripts/cleanup-stale-worktrees.sh" --dry-run
-  else
-    bash "$REPO_ROOT/scripts/cleanup-stale-worktrees.sh" --force
-    # Surface locked-stale worktrees as UNRESOLVED findings — never auto-destroy.
-    _report_unresolved_locked_stale
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') worktrees: cleanup invoked" >> "$LOG_FILE"
-  fi
-}
 
-# "Resolve before sweep" — surface locked-stale worktrees for human review.
-# A locked worktree means: another process holds the lock (agent harness, stale lock, etc.).
-# Force-removing a lock could destroy uncommitted work / stashes / inflight artifacts.
-# The mole's contract: report what NEEDS resolution; user decides whether to act.
-_report_unresolved_locked_stale() {
-  git fetch origin main --quiet 2>/dev/null || true
-  local wt branch in_main empty_lines
-  local -a unresolved_paths=()
-  local -a unresolved_reasons=()
-  while IFS= read -r entry; do
-    case "$entry" in
-      "worktree "*)   wt="${entry#worktree }" ;;
-      "branch "*)
-        branch="${entry#branch refs/heads/}"
-        # Only consider .claude/worktrees/agent-* paths.
-        case "$wt" in "$WORKTREE_DIR/agent-"*) ;; *) continue ;; esac
-        # Skip if the worktree path no longer exists (already cleaned by Phase 1).
-        [ -d "$wt" ] || continue
-        # Check if branch is on main by ancestry OR patch-id.
-        if git merge-base --is-ancestor "$branch" origin/main 2>/dev/null; then
-          in_main=1
+  local classfile
+  classfile="$(mktemp -t mole-classify.XXXXXX)"
+  _classify_worktrees "$classfile"
+
+  # Target set = STALE + ORPHAN + PHANTOM. Never STALE_LOCKED / STALE_DIRTY / ACTIVE.
+  local n_target n_skipped
+  n_target=$(grep -cE '^(STALE|ORPHAN|PHANTOM)	' "$classfile" 2>/dev/null || echo 0)
+  n_target=$(echo "$n_target" | head -1 | tr -d ' \n')
+  [ -z "$n_target" ] && n_target=0
+  n_skipped=$(grep -cE '^(STALE_LOCKED|STALE_DIRTY|ACTIVE)	' "$classfile" 2>/dev/null || echo 0)
+  n_skipped=$(echo "$n_skipped" | head -1 | tr -d ' \n')
+  [ -z "$n_skipped" ] && n_skipped=0
+
+  echo "  target:       $n_target (STALE + ORPHAN + PHANTOM)" >&2
+  echo "  skipped:      $n_skipped (LOCKED + DIRTY + ACTIVE)" >&2
+
+  if [ "$n_target" -eq 0 ]; then
+    echo "  nothing to sweep." >&2
+    # Still surface skipped findings for visibility.
+    _print_category_entries "$classfile" "STALE_LOCKED"   "─── LOCKED stale (manual review) ───"
+    _print_category_entries "$classfile" "STALE_DIRTY"    "─── DIRTY stale (manual review) ───"
+    rm -f "$classfile"
+    return 0
+  fi
+
+  # Dry-run path: list targets, do not touch disk.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "" >&2
+    echo "DRY-RUN — would remove:" >&2
+    while IFS=$'\t' read -r cat path branch reason; do
+      case "$cat" in
+        STALE|ORPHAN|PHANTOM)
+          echo "  [${cat}] $path" >&2
+          echo "          branch: $branch" >&2
+          echo "          $reason" >&2
+          ;;
+      esac
+    done <"$classfile"
+    _print_category_entries "$classfile" "STALE_LOCKED"   "─── SKIPPED — LOCKED (manual review) ───"
+    _print_category_entries "$classfile" "STALE_DIRTY"    "─── SKIPPED — DIRTY (manual review) ───"
+    rm -f "$classfile"
+    return 0
+  fi
+
+  # Live sweep — act only on the targeted categories.
+  local removed=0 failed=0
+  local cat path branch reason
+  while IFS=$'\t' read -r cat path branch reason; do
+    case "$cat" in
+      STALE|PHANTOM)
+        if git worktree remove --force "$path" 2>/dev/null; then
+          removed=$((removed+1))
         else
-          empty_lines=$(git cherry origin/main "$branch" 2>/dev/null | grep -c '^+' || true)
-          local total
-          total=$(git log --oneline "origin/main..$branch" 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$total" -gt 0 ] && [ "$empty_lines" = "0" ]; then
-            in_main=1
-          else
-            in_main=0
-          fi
+          # Registered but git refuses: lock appeared between classify and act,
+          # OR another concurrent process touched it. Skip; do NOT rm -rf
+          # (KB § PATTERNS/storage-hygiene.md §2.3 — THE-P10 incident).
+          echo "  WARN: git refused to remove $path (lock raced between scan and sweep)" >&2
+          failed=$((failed+1))
         fi
-        # Only surface if branch IS merged (otherwise it's active work — leave alone, NOT a finding).
-        [ "$in_main" -ne 1 ] && continue
-        # Branch IS merged but worktree retained. Diagnose WHY.
-        local dirty stashes reason
-        dirty=$(cd "$wt" 2>/dev/null && git status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo "?")
-        stashes=$(cd "$wt" 2>/dev/null && git stash list 2>/dev/null | wc -l | tr -d ' ' || echo "?")
-        if [ "$dirty" != "0" ] && [ "$dirty" != "?" ]; then
-          reason="$dirty uncommitted file(s) — INVESTIGATE before removing"
-        elif [ "$stashes" != "0" ] && [ "$stashes" != "?" ]; then
-          reason="$stashes stash(es) — recover before removing"
+        ;;
+      ORPHAN)
+        # Not registered → safe to direct-rm.
+        if rm -rf "$path" 2>/dev/null; then
+          removed=$((removed+1))
         else
-          reason="locked (clean dir) — safe to unlock+remove after PID check"
+          failed=$((failed+1))
         fi
-        unresolved_paths+=("$wt")
-        unresolved_reasons+=("$reason")
         ;;
     esac
-  done < <(git worktree list --porcelain)
-  if [ "${#unresolved_paths[@]+x}" = "x" ] && [ "${#unresolved_paths[@]}" -gt 0 ]; then
-    echo "" >&2
-    echo "─── UNRESOLVED locked-stale worktrees (manual review required) ───" >&2
-    echo "  Branch IS merged to main but worktree retained (lock held by another process)." >&2
-    echo "  The mole NEVER auto-destroys locked dirs — uncommitted work could be lost." >&2
-    echo "" >&2
-    local i=0
-    while [ "$i" -lt "${#unresolved_paths[@]}" ]; do
-      echo "  • ${unresolved_paths[$i]}" >&2
-      echo "      ${unresolved_reasons[$i]}" >&2
-      i=$((i+1))
-    done
-    echo "" >&2
-    echo "  Resolution recipes:" >&2
-    echo "    Clean dir (just locked):" >&2
-    echo "      git worktree unlock <path> && git worktree remove <path>" >&2
-    echo "    Uncommitted work present:" >&2
-    echo "      cd <path> && git status               # inspect what's there" >&2
-    echo "      cd <path> && git stash push -u -m wip # if recoverable" >&2
-    echo "      git worktree unlock <path> && git worktree remove <path>" >&2
-    echo "    Stashes present:" >&2
-    echo "      cd <path> && git stash list           # check what's stashed" >&2
-    echo "      cd <path> && git stash pop / apply    # recover what you need" >&2
-    echo "      git worktree unlock <path> && git worktree remove <path>" >&2
-  fi
+  done <"$classfile"
+
   git worktree prune 2>/dev/null || true
+
+  echo "  removed: $removed   failed: $failed" >&2
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') worktrees: removed=$removed failed=$failed targeted=$n_target skipped=$n_skipped" >> "$LOG_FILE"
+
+  # Surface skipped findings so the operator sees what was held back.
+  _print_category_entries "$classfile" "STALE_LOCKED"   "─── SKIPPED — LOCKED (manual review) ───"
+  _print_category_entries "$classfile" "STALE_DIRTY"    "─── SKIPPED — DIRTY (manual review) ───"
+
+  rm -f "$classfile"
 }
 
 # =========================
