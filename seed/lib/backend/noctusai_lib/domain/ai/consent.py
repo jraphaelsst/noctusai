@@ -101,6 +101,15 @@ class ConsentFeature:
     default_granted: bool = False    # opt-in vs. opt-out semantics
     product: Optional[str] = None    # optional product slug for grouping ('erp', 'pf', etc.)
     toggleable: bool = True          # False = infrastructure-tier (visible for billing transparency, locked-on)
+    # LGPD redaction hooks (per `KB § PATTERNS/llm-tool-audit.md § LGPD redaction`).
+    # When present, `tool_call_audits.arguments` / `.result` are scrubbed via these
+    # callables before the `AuditRecord` is constructed at the dispatch site. Pure
+    # functions of the raw value → JSON-friendly value (or `None` to drop entirely).
+    # No-op default (lambdas return input unchanged) is intentionally NOT applied:
+    # `None` is the explicit "no scrub registered" signal so the dispatch wrapper
+    # can choose its own fallback (typically drop-to-None for safety).
+    redact_arguments: Optional[Callable[[Any], Any]] = field(default=None, repr=False)
+    redact_result: Optional[Callable[[Any], Any]] = field(default=None, repr=False)
 
 
 # Module-level registry. Products register at import time.
@@ -115,6 +124,8 @@ def register_feature(
     default_granted: bool = False,
     product: Optional[str] = None,
     toggleable: bool = True,
+    redact_arguments: Optional[Callable[[Any], Any]] = None,
+    redact_result: Optional[Callable[[Any], Any]] = None,
 ) -> ConsentFeature:
     """Register a feature in the platform catalog. Called at product startup.
 
@@ -125,6 +136,13 @@ def register_feature(
             as granted in `is_granted` regardless of any stored decision.
             Use for inference primitives consumed silently by other features
             (e.g. `erp.embeddings`, used by lead-matching + search-relevance).
+        redact_arguments: optional callable applied to the `AuditRecord.arguments`
+            payload BEFORE the audit row is written. Use for LGPD-sensitive
+            fields (transaction descriptions / account balances / income figures /
+            clinical text / email bodies — per-product call). Return value is the
+            scrubbed dict (or `None` to drop arguments entirely). See
+            `KB § PATTERNS/llm-tool-audit.md § LGPD redaction`.
+        redact_result: same as `redact_arguments` but applied to `AuditRecord.result`.
     """
     if not key:
         raise ValueError("feature key required")
@@ -139,6 +157,8 @@ def register_feature(
         default_granted=default_granted,
         product=product,
         toggleable=toggleable,
+        redact_arguments=redact_arguments,
+        redact_result=redact_result,
     )
     _CATALOG[key] = feature
     return feature

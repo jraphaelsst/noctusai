@@ -8,10 +8,18 @@ Phase 7 P1 indicators (ai-expansion):
 Both call `noctusai_lib.llm.chat_completion(cache=True, org_id=...)`. The
 router wraps the AIOutput-shaped dict into `noctusai_lib.ai.AIOutput(...)`
 and persists via `persist_output(db, schema="personal-finance", output)`.
+
+**Audit wiring (llm-tool-audit-rollout Phase 4).** Every `chat_completion`
+dispatch writes one row to `"personal-finance".tool_call_audits` via the
+seed `make_audit_writer` (best-effort — never breaks dispatch). LGPD
+redaction is registered alongside each feature in
+`app.services.ai_consent_features`; the `build_audit_record` helper in
+`app.services.audit_hook` applies it BEFORE the row is persisted.
 """
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Optional
 
 from noctusai_lib.config.credentials import resolve_credential
@@ -24,6 +32,41 @@ MODEL = "gpt-4o-mini"
 
 PROMPT_VERSION_CATEGORIZE = "pf-categorize@v1"
 PROMPT_VERSION_RECURRING = "pf-recurring@v1"
+
+
+def _audit_dispatch(
+    *,
+    feature_key: str,
+    tool_name: str,
+    status: str,
+    arguments: Optional[dict[str, Any]] = None,
+    result: Any = None,
+    error: Optional[str] = None,
+    duration_ms: int = 0,
+) -> None:
+    """Best-effort audit-row write — never raises to the caller.
+
+    Looks up the feature's redactors via `audit_hook.build_audit_record` and
+    persists via `get_audit_writer()`. Wrapped in try/except so an audit-side
+    failure cannot break the user-facing AI call (matches the seed
+    `make_audit_writer` best-effort contract one level out).
+    """
+    try:
+        from app.services.audit_hook import build_audit_record, get_audit_writer
+
+        record = build_audit_record(
+            feature_key=feature_key,
+            tool_name=tool_name,
+            status=status,
+            duration_ms=duration_ms,
+            arguments=arguments,
+            result=result,
+            error=error,
+        )
+        writer = get_audit_writer()
+        writer(record)
+    except Exception:
+        logger.exception("pf.ai._audit_dispatch failed for feature=%s", feature_key)
 
 
 def check_openai_configured(org_id: Optional[str] = None) -> bool:
@@ -86,6 +129,15 @@ async def categorize_transaction(
         f"Categorias disponíveis:\n{cat_lines}"
     )
 
+    _audit_args = {
+        "tipo": tipo,
+        "descricao": descricao,
+        "comerciante": comerciante,
+        "valor": valor,
+        "available_categories": cats,
+        "org_id": org_id,
+    }
+    _started = time.monotonic()
     try:
         content = await chat_completion(
             messages=[
@@ -98,8 +150,17 @@ async def categorize_transaction(
             cache=True,
             org_id=org_id,
         )
-    except Exception:
+    except Exception as _exc:
         logger.warning("pf.ai.categorize_transaction: LLM unavailable")
+        _audit_dispatch(
+            feature_key="pf.transaction_categorize",
+            tool_name="pf.transaction_categorize",
+            status="failure",
+            arguments=_audit_args,
+            result=None,
+            error=str(_exc),
+            duration_ms=int((time.monotonic() - _started) * 1000),
+        )
         return _empty_output()
 
     category = ""
@@ -128,7 +189,7 @@ async def categorize_transaction(
 
     chip = (category[:18]).upper() if category else None
 
-    return {
+    _out = {
         "kind": "classification",
         "label": category,
         "chip": chip,
@@ -139,6 +200,15 @@ async def categorize_transaction(
         "prompt_version": PROMPT_VERSION_CATEGORIZE,
         "matched_categoria_id": matched_cat["id"] if matched_cat else None,
     }
+    _audit_dispatch(
+        feature_key="pf.transaction_categorize",
+        tool_name="pf.transaction_categorize",
+        status="success",
+        arguments=_audit_args,
+        result=_out,
+        duration_ms=int((time.monotonic() - _started) * 1000),
+    )
+    return _out
 
 
 async def flag_recurring_expense(
@@ -181,6 +251,14 @@ async def flag_recurring_expense(
         f"Histórico similar (mais recentes primeiro):\n{history_lines}"
     )
 
+    _audit_args = {
+        "tipo": tipo,
+        "descricao": descricao,
+        "valor": valor,
+        "similar_history": history,
+        "org_id": org_id,
+    }
+    _started = time.monotonic()
     try:
         content = await chat_completion(
             messages=[
@@ -193,8 +271,17 @@ async def flag_recurring_expense(
             cache=True,
             org_id=org_id,
         )
-    except Exception:
+    except Exception as _exc:
         logger.warning("pf.ai.flag_recurring_expense: LLM unavailable")
+        _audit_dispatch(
+            feature_key="pf.recurring_flag",
+            tool_name="pf.recurring_flag",
+            status="failure",
+            arguments=_audit_args,
+            result=None,
+            error=str(_exc),
+            duration_ms=int((time.monotonic() - _started) * 1000),
+        )
         return _empty_output()
 
     flag = "incerto"
@@ -218,7 +305,7 @@ async def flag_recurring_expense(
 
     chip_map = {"recorrente": "RECORRENTE", "pontual": "PONTUAL", "incerto": "INCERTO"}
 
-    return {
+    _out = {
         "kind": "flag",
         "label": flag,
         "score": probability,
@@ -228,3 +315,12 @@ async def flag_recurring_expense(
         "model_version": MODEL,
         "prompt_version": PROMPT_VERSION_RECURRING,
     }
+    _audit_dispatch(
+        feature_key="pf.recurring_flag",
+        tool_name="pf.recurring_flag",
+        status="success",
+        arguments=_audit_args,
+        result=_out,
+        duration_ms=int((time.monotonic() - _started) * 1000),
+    )
+    return _out

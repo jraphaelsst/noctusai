@@ -21,6 +21,7 @@ aggregates produce identical narratives.
 from __future__ import annotations
 
 import logging
+import time
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -97,14 +98,78 @@ async def _generate_narrative(
         f"fluxo líquido {_fmt_brl(fluxo)} (taxa de poupança {poupanca_pct:.1f}%). "
         f"Sem narrativa detalhada — LLM indisponível para esta janela."
     )
-    return await digest_narrative(
-        system=system,
-        user_prompt=user_prompt,
-        model=MODEL,
-        cache=True,
-        org_id=org_id,
-        fallback=fallback,
+    _audit_args = {
+        "period_label": period_label,
+        "receita": receita,
+        "despesa": despesa,
+        "fluxo": fluxo,
+        "poupanca_pct": poupanca_pct,
+        "top_categorias": [
+            {"nome": nome, "total": total} for nome, total in top_categorias[:6]
+        ],
+        "transacoes_count": transacoes_count,
+        "org_id": org_id,
+    }
+    _started = time.monotonic()
+    try:
+        result = await digest_narrative(
+            system=system,
+            user_prompt=user_prompt,
+            model=MODEL,
+            cache=True,
+            org_id=org_id,
+            fallback=fallback,
+        )
+    except Exception as _exc:
+        _audit_narrative_dispatch(
+            status="failure",
+            arguments=_audit_args,
+            result=None,
+            error=str(_exc),
+            duration_ms=int((time.monotonic() - _started) * 1000),
+        )
+        raise
+    _audit_narrative_dispatch(
+        status="success",
+        arguments=_audit_args,
+        result=result,
+        duration_ms=int((time.monotonic() - _started) * 1000),
     )
+    return result
+
+
+def _audit_narrative_dispatch(
+    *,
+    status: str,
+    arguments: Optional[dict[str, Any]] = None,
+    result: Any = None,
+    error: Optional[str] = None,
+    duration_ms: int = 0,
+) -> None:
+    """Best-effort audit-row write for the monthly narrative LLM call.
+
+    Wraps `audit_hook.build_audit_record` + `get_audit_writer()` in
+    try/except so an audit-side failure never breaks digest rendering.
+    Redaction is applied by `build_audit_record` via the feature's
+    registered `redact_arguments` / `redact_result` callables in
+    `app.services.ai_consent_features`.
+    """
+    try:
+        from app.services.audit_hook import build_audit_record, get_audit_writer
+
+        record = build_audit_record(
+            feature_key="pf.monthly_narrative",
+            tool_name="pf.monthly_narrative",
+            status=status,
+            duration_ms=duration_ms,
+            arguments=arguments,
+            result=result,
+            error=error,
+        )
+        writer = get_audit_writer()
+        writer(record)
+    except Exception:
+        logger.exception("pf.monthly_narrative: audit dispatch failed")
 
 
 def _aggregate_period(
