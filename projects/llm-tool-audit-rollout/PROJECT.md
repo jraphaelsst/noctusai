@@ -5,8 +5,8 @@
 > `KB § 01-PHILOSOPHY.md § No silent errors` for why missing audit rows are silent debt.
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (filed; not yet started)
-- **Status:** Filed (Phase 0 pending — discovery + per-product gap audit)
+- **Last updated:** 2026-05-11 (Phase 0 ✅ — discovery shipped by Engineer LLM-P0)
+- **Status:** Phase 0 complete; Phase 1 ready (recipe + reference-adoption parity using media-scheduling as canonical)
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `KB § PATTERNS/llm-tool-audit.md` — the audit primitive (`tool_call_audits` table, `AuditRecord`, `make_audit_writer`, LGPD redaction)
@@ -105,14 +105,14 @@ To be captured during interrogation at Phase 0 kickoff. Provisional from mailing
 
 ---
 
-## 6. Phase plan (provisional — refine after Phase 0)
+## 6. Phase plan (revised post-Phase 0 — 2026-05-11)
 
-- **Phase 0 — Discovery + cross-product gap audit.** Count LLM-dispatch sites per product (mailing=7 confirmed; therapy/ERP/PF TBD). Confirm `tool_call_audits` table existence per product.
-- **Phase 1 — Recipe + reference adoption (pick the easiest product first).** Document the per-product rollout in `KB § PATTERNS/llm-tool-audit.md § Per-product rollout recipe` + ship the reference adoption (likely mailing — 7 calls, well-bounded).
-- **Phase 2 — Therapy rollout** (follows recipe).
-- **Phase 3 — ERP rollout** (follows recipe).
-- **Phase 4 — PF rollout** (follows recipe).
-- **Phase 5 — Final keeper + close.** Run keeper + `noctus.hound.scan` to confirm no remaining LLM dispatches lack audit wiring. File a detector follow-up (a `check_llm_audit_wired` keeper rule) if drift risk warrants.
+- **Phase 0 — Discovery + cross-product gap audit.** ✅ **DONE 2026-05-11** (Engineer LLM-P0). Tabulated 7 products with LLM dispatch (mailing=7, therapy=4, erp=9, PF=3, daily-life=3, core=1, media-scheduling=1). Only media-scheduling has audit wiring (reference adopter). Zero products wire LGPD redaction. See §11 for the full table. **Improvements:** seed-lib should ship a `tool_call_audits.sql.template` (verified at `seed/lib/backend/noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template`) so per-product migrations call it via `noctusai_lib.sql` instead of inlining — pre-emptive lift since N=7 adopters guaranteed. Surfaced redaction-wiring N=0 across **all 35 `register_feature` calls** as the highest-impact gap (Q2 in §7 becomes mandatory).
+- **Phase 1 — Recipe + reference-adoption parity** (reference = media-scheduling, already shipped). Document the per-product rollout in `KB § PATTERNS/llm-tool-audit.md § Per-product rollout recipe` using media-scheduling's `audit_hook.py` + `models/tool_call_audit.py` + migration block as the canonical shape. No new product wiring this phase — just lock in the recipe.
+- **Phase 2 — ERP rollout** (highest LLM-site count = 9 + 10 `register_feature` calls, biggest single-product win; full `ai_service.py` already in one file = surgical wrap point).
+- **Phase 3 — Mailing rollout** (7 LLM sites + 7 `register_feature` calls; mailing-wiring M-4 was the originating gap — close it next).
+- **Phase 4 — Therapy + PF + daily-life + core combined rollout** (smaller — 4+3+3+1 sites, 2+3+3+1 features). Same recipe; can ship in one phase as a sweep.
+- **Phase 5 — Final keeper + close.** Run keeper + `noctus.hound.scan` to confirm no remaining LLM dispatches lack audit wiring. File a detector follow-up (`check_llm_audit_wired` + `check_register_feature_has_redaction`) so the codification-pipeline closes the drift loop. adconnect + dev-team explicitly carved out (no LLM dispatch).
 
 ---
 
@@ -161,3 +161,50 @@ python mcp/noctusai/cli.py --check-llm-audit-wired --worktree-path "$PWD"
 ## 11. Change log
 
 - **2026-05-11 — Filed (Engineer MAI-P2)**. Surfaced as Q7 in `products/mailing/projects/mailing-wiring/PROJECT.md` Phase 0 (M-4 gap row); mailing-wiring scope excluded the rollout to keep the project focused. This project is the cross-product follow-up. Provisional design captured; Phase 0 discovery pending.
+
+- **2026-05-11 — Phase 0 complete (Engineer LLM-P0 / LLM-AUDIT-DISCOVERY)**. Read-only cross-product gap audit shipped. Findings tabulated below.
+
+### Phase 0 — Per-product gap audit (2026-05-11)
+
+LLM-dispatch site count includes direct `noctusai_lib.integrations.llm.chat_completion` calls. `digest_narrative()` (4 callers — mailing/PF/daily-life/core) wraps `chat_completion` internally and is counted once at the call-site, not at the wrapper. Embedding / transcription / vision calls (`generate_embedding` / `transcribe_audio` / `analyze_image`) excluded from the chat-completion count — they are separate LLM modalities that the audit primitive also covers but call sites are colocated.
+
+| Product           | LLM-dispatch sites | `tool_call_audits` migration | `make_audit_writer` wired | LGPD redaction wired |
+|-------------------|--------------------|------------------------------|---------------------------|----------------------|
+| mailing           | 7 (chat) + 1 emb   | **missing**                  | **missing**               | **missing** (7 features) |
+| therapy-platform  | 2 (chat) + 1 img + 1 audio + N emb | **missing**     | **missing**               | **missing** (2 features) |
+| erp-imobiliario   | 9 (chat) + N emb + 3 direct-OpenAI HTTP | **missing** | **missing**         | **missing** (10 features) |
+| personal-finance  | 3 (chat — incl. monthly_narrative_service via digest) | **missing** | **missing** | **missing** (3 features) |
+| daily-life        | 3 (chat — incl. weekly_review_service via digest) | **missing** | **missing**   | **missing** (3 features) |
+| adconnect         | **0** — no LLM use | n/a (carve-out)              | n/a                       | n/a (no consent file) |
+| core              | 1 (chat — audit_digest_service via digest) | **missing**          | **missing**               | **missing** (1 feature) |
+| **media-scheduling** | 1 (direct `OpenAI()` via agno worker) | **present** (002_initial_schema.sql L295-) | **present** (audit_hook.py + models/tool_call_audit.py + workers/conversation_worker.py L191) | **n/a** — no `register_feature` consent layer (worker-driven chatbot, no UI consent flow) |
+| dev-team          | **0** — orchestrates external agno LLM calls, no direct dispatch | n/a (carve-out) | n/a            | n/a                  |
+
+**Concrete file:line refs (top 5 per product, dispatch sites only):**
+
+- **mailing** — `app/services/ai_service.py:55,100,138,190,245`; `app/services/segmentation_service.py:155`; `app/services/campaign_debrief_service.py:93` (via `digest_narrative`); `app/services/segmentation_service.py:215` (`generate_embedding`).
+- **therapy-platform** — `app/services/summary_service.py:93`; `app/services/longitudinal_service.py:83`; `app/services/attachment_service.py:159` (`analyze_image`), `:172` (`transcribe_audio`); `app/services/transcription_service.py:68` (`transcribe_audio`).
+- **erp-imobiliario** — `app/services/ai_service.py:83,140,223,316,409,497,561,649,725` (9 sites); `app/routers/configuracoes.py:32` + `app/services/matricula_service.py:54` + `app/services/certidoes_service.py:397` (3 direct-OpenAI HTTP calls — NOT going through seed `chat_completion`, so seed cache/budget/audit hooks bypassed; flag as a structural fork to fix in Phase 2).
+- **personal-finance** — `app/services/ai_service.py:90,185`; `app/services/monthly_narrative_service.py:100` (via `digest_narrative`).
+- **daily-life** — `app/services/ai_service.py:50`; `app/services/daily_brief_service.py:178`; `app/services/weekly_review_service.py:87` (via `digest_narrative`).
+- **core** — `app/services/audit_digest_service.py:112` (via `digest_narrative`).
+- **media-scheduling** — `app/workers/conversation_worker.py:323` (`OpenAI()` client construction; agent dispatches inside `_run_agent`). Audit row written at `:191` via `AuditRecord(...)` + `audit_hook.write(record)`.
+
+**Carve-outs:**
+
+- **adconnect** — no LLM dispatch in `products/adconnect/backend/app/`. No `ai_consent_features.py`. No `chat_completion` / `OpenAI` / `Anthropic` imports. Not in rollout scope.
+- **dev-team** — no direct LLM dispatch; orchestrates external agno calls (which run in `dev_team/` engine, not in product backend). Agno's own telemetry covers tool-calls. Confirmed by absence of `chat_completion` import, no `ai_consent_features.py`, no `OpenAI()` construction. Not in rollout scope; revisit when agno bridges into product code paths.
+
+**Three structural findings beyond the per-product gap table:**
+
+1. **ERP has 3 direct-OpenAI HTTP calls (`httpx.post → api.openai.com/v1/chat/completions`)** bypassing the seed `chat_completion` wrapper — this dodges seed cache + budget + (future) audit. Fix at Phase 2: refactor to `chat_completion` before wiring the audit writer (otherwise audit coverage is structurally incomplete).
+2. **Zero products wire `redact_arguments=` / `redact_result=` in any `register_feature` call** (35 calls total across 6 products checked). The seed primitive `_safe_jsonable` is a defensive fallback, not a redaction strategy — current state means **PII flows raw into prompts and (when the audit writer lands) into `tool_call_audits.arguments`/`result`**. This is the highest-impact LGPD gap surfaced. Phase 1 recipe MUST require explicit redaction args per `register_feature` call (Q2 in §7 becomes mandatory, not optional).
+3. **`tool_call_audits` migration recurrence = 7** (every product that needs the table). The seed template at `seed/lib/backend/noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template` exists; per-product migrations should call it via a `noctusai_lib.sql` helper (consistent with `prelude(schema)` + `updated_at_trigger(table)` pattern). Q1 in §7 resolves to **yes, lift to seed-lib helper** — N=7 ≥ recurrence threshold.
+
+**Recommended Phase ordering (post-Phase 0):**
+
+1. Phase 1 — recipe + reference-adoption parity → **media-scheduling** (already shipped; just codify).
+2. Phase 2 — **erp-imobiliario** (highest LLM-site count = 9 + 3 direct-HTTP refactor + 10 register_feature calls; biggest single-product win).
+3. Phase 3 — **mailing** (7 sites + 7 features; closes the originating M-4 gap).
+4. Phase 4 — **therapy + personal-finance + daily-life + core combined** (sweep; 4+3+3+1 sites, 2+3+3+1 features).
+5. Phase 5 — keeper detectors (`check_llm_audit_wired` + `check_register_feature_has_redaction`) + close.
