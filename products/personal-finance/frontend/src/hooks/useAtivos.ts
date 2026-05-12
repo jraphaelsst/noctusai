@@ -9,7 +9,7 @@ export function useAtivos(carteiraId?: string) {
   return useQuery({
     queryKey: ["ativos", carteiraId],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { carteira_id?: string } = {};
       if (carteiraId) params.carteira_id = carteiraId;
       const result = await api.get("/api/ativos", params);
       return (result.data || []) as Ativo[];

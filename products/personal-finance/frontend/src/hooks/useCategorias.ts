@@ -9,7 +9,7 @@ export function useCategorias(tipo?: string) {
   return useQuery({
     queryKey: ["categorias", tipo],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { tipo?: string } = {};
       if (tipo) params.tipo = tipo;
       const result = await api.get("/api/categorias", params);
       return (result.data || []) as Categoria[];
@@ -25,7 +25,7 @@ export function useCategoriasArvore(tipo?: string) {
   return useQuery({
     queryKey: ["categorias", "arvore", tipo],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { tipo?: string } = {};
       if (tipo) params.tipo = tipo;
       const result = await api.get("/api/categorias/arvore", params);
       return (result.data || []) as Categoria[];

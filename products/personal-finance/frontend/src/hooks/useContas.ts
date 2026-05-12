@@ -9,7 +9,7 @@ export function useContas(ativo?: boolean) {
   return useQuery({
     queryKey: ["contas", ativo],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { ativo?: boolean } = {};
       if (ativo !== undefined) params.ativo = ativo;
       const result = await api.get("/api/contas", params);
       return (result.data || []) as Conta[];

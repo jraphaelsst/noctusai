@@ -39,7 +39,7 @@ export function useOrcamentoProgresso(id?: string, periodoMes?: string) {
     queryKey: ["orcamento", id, "progresso", periodoMes],
     queryFn: async () => {
       if (!id) return null;
-      const params: Record<string, any> = {};
+      const params: { periodo_mes?: string } = {};
       if (periodoMes) params.periodo_mes = periodoMes;
       const result = await api.get(`/api/orcamentos/${id}/progresso`, params);
       return result.data;

@@ -23,7 +23,7 @@ export function usePatrimonioHistorico(limite?: number) {
   return useQuery({
     queryKey: ["patrimonio", "historico", limite],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { limite?: number } = {};
       if (limite !== undefined) params.limite = limite;
       const result = await api.get("/api/patrimonio/historico", params);
       return (result.data || []) as PatrimonioSnapshot[];

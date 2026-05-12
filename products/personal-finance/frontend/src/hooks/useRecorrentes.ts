@@ -9,7 +9,7 @@ export function useRecorrentes(ativo?: boolean) {
   return useQuery({
     queryKey: ["recorrentes", ativo],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { ativo?: boolean } = {};
       if (ativo !== undefined) params.ativo = ativo;
       const result = await api.get("/api/recorrentes", params);
       return (result.data || []) as Recorrente[];
@@ -25,7 +25,7 @@ export function useProximasContas(dias?: number) {
   return useQuery({
     queryKey: ["recorrentes", "proximas", dias],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { dias?: number } = {};
       if (dias !== undefined) params.dias = dias;
       const result = await api.get("/api/recorrentes/proximas", params);
       return (result.data || []) as Recorrente[];

@@ -9,7 +9,7 @@ export function useMetas(status?: string) {
   return useQuery({
     queryKey: ["metas", status],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { status?: string } = {};
       if (status) params.status = status;
       const result = await api.get("/api/metas", params);
       return (result.data || []) as Meta[];

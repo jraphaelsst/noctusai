@@ -17,7 +17,7 @@ export function useOperacoes(filtros?: FiltrosOperacoes) {
   return useQuery({
     queryKey: ["operacoes", filtros],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: FiltrosOperacoes = {};
       if (filtros?.carteira_id) params.carteira_id = filtros.carteira_id;
       if (filtros?.ativo_id) params.ativo_id = filtros.ativo_id;
       if (filtros?.ticker) params.ticker = filtros.ticker;

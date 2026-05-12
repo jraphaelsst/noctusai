@@ -20,7 +20,7 @@ export function useTransacoes(filtros?: FiltrosTransacoes) {
   return useQuery({
     queryKey: ["transacoes", filtros],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: FiltrosTransacoes = {};
       if (filtros?.page) params.page = filtros.page;
       if (filtros?.page_size) params.page_size = filtros.page_size;
       if (filtros?.conta_id) params.conta_id = filtros.conta_id;
@@ -56,7 +56,7 @@ export function useTransacoesPorCategoria(dataInicio?: string, dataFim?: string)
   return useQuery({
     queryKey: ["transacoes", "por-categoria", dataInicio, dataFim],
     queryFn: async () => {
-      const params: Record<string, any> = {};
+      const params: { data_inicio?: string; data_fim?: string } = {};
       if (dataInicio) params.data_inicio = dataInicio;
       if (dataFim) params.data_fim = dataFim;
       const result = await api.get("/api/transacoes/por-categoria", params);
