@@ -129,13 +129,17 @@ class TestAdminAuthBoundary:
 class TestDashboard:
     def test_dashboard_returns_aggregates(self, admin_client) -> None:
         tc, db = admin_client
+        # MockSupabaseClient applies .eq() predicates at SELECT — seeded rows
+        # MUST carry org_id matching the admin's MockUser(org_id=ORG_ID) so
+        # the service's `.eq("org_id", org_id)` filter returns both rows.
+        # Pre-predicate-fix the rows leaked through unfiltered.
         db.set_table_data("distributors", [
-            {"id": DIST_A, "status": "ativo"},
-            {"id": DIST_B, "status": "pendente"},
+            {"id": DIST_A, "org_id": ORG_ID, "status": "ativo"},
+            {"id": DIST_B, "org_id": ORG_ID, "status": "pendente"},
         ])
         db.set_table_data("relatorios_sellout", [
-            {"id": "s1", "status": "pendente"},
-            {"id": "s2", "status": "aprovado"},
+            {"id": "s1", "org_id": ORG_ID, "status": "pendente"},
+            {"id": "s2", "org_id": ORG_ID, "status": "aprovado"},
         ])
         r = tc.get("/admin/dashboard", headers=_bearer("admin"))
         assert r.status_code == 200, r.text
@@ -241,10 +245,13 @@ class TestDistributorCreatePatch:
 class TestSelloutQueue:
     def test_queue_returns_only_pending(self, admin_client) -> None:
         tc, db = admin_client
+        # MockSupabaseClient applies .eq() predicates at SELECT — seeded rows
+        # MUST carry org_id matching the admin's MockUser(org_id=ORG_ID) so
+        # the service's `.eq("org_id", org_id)` filter returns them.
         db.set_table_data("relatorios_sellout", [
-            {"id": "s1", "status": "pendente"},
-            {"id": "s2", "status": "em_analise"},
-            {"id": "s3", "status": "aprovado"},
+            {"id": "s1", "org_id": ORG_ID, "status": "pendente"},
+            {"id": "s2", "org_id": ORG_ID, "status": "em_analise"},
+            {"id": "s3", "org_id": ORG_ID, "status": "aprovado"},
         ])
         r = tc.get("/admin/sellout/queue", headers=_bearer("admin"))
         assert r.status_code == 200, r.text

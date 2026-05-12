@@ -41,18 +41,23 @@ def _mk_db() -> MockSupabaseClient:
 class TestDashboardMetrics:
     def test_aggregates_by_status_buckets(self) -> None:
         db = _mk_db()
+        # MockSupabaseClient applies .eq() predicates at SELECT — seeded rows
+        # for tables the service filters by .eq("org_id", ORG_ID) MUST carry
+        # org_id. distributors + relatorios_sellout are org_id-scoped; pedidos
+        # / recompensas / faturas are queried without an org filter so they
+        # don't need it.
         db.set_table_data(admin_service.DISTRIBUTORS_TABLE, [
-            {"id": DIST_A, "status": "ativo"},
-            {"id": DIST_B, "status": "ativo"},
-            {"id": "dist-3", "status": "inativo"},
+            {"id": DIST_A, "org_id": ORG_ID, "status": "ativo"},
+            {"id": DIST_B, "org_id": ORG_ID, "status": "ativo"},
+            {"id": "dist-3", "org_id": ORG_ID, "status": "inativo"},
         ])
         db.set_table_data(admin_service.PEDIDOS_TABLE, [
             {"id": "p1", "status": "enviado", "placed_at": "2026-05-01"},
             {"id": "p2", "status": "entregue", "placed_at": "2026-05-08"},
         ])
         db.set_table_data(admin_service.SELLOUT_TABLE, [
-            {"id": "s1", "status": "pendente"},
-            {"id": "s2", "status": "aprovado"},
+            {"id": "s1", "org_id": ORG_ID, "status": "pendente"},
+            {"id": "s2", "org_id": ORG_ID, "status": "aprovado"},
         ])
         db.set_table_data(admin_service.RECOMPENSAS_TABLE, [
             {"id": "r1", "status": "acumulado", "valor": 100.0},
@@ -160,11 +165,14 @@ class TestDistributorListWithMetrics:
 class TestSelloutQueue:
     def test_returns_only_pending_or_em_analise(self) -> None:
         db = _mk_db()
+        # MockSupabaseClient applies .eq() predicates at SELECT — seeded rows
+        # MUST carry org_id matching ORG_ID so `.eq("org_id", ORG_ID)` in
+        # admin_service.sellout_queue returns them.
         db.set_table_data(admin_service.SELLOUT_TABLE, [
-            {"id": "s1", "status": "pendente"},
-            {"id": "s2", "status": "em_analise"},
-            {"id": "s3", "status": "aprovado"},
-            {"id": "s4", "status": "recusado"},
+            {"id": "s1", "org_id": ORG_ID, "status": "pendente"},
+            {"id": "s2", "org_id": ORG_ID, "status": "em_analise"},
+            {"id": "s3", "org_id": ORG_ID, "status": "aprovado"},
+            {"id": "s4", "org_id": ORG_ID, "status": "recusado"},
         ])
         out = admin_service.sellout_queue(db, org_id=ORG_ID)
         statuses = {r["status"] for r in out}
