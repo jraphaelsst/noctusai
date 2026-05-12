@@ -38,6 +38,7 @@ from app.services.portal_cliente_service import PortalClienteService
 from app.rate_limit import limiter
 from app.config import settings
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.rate_limit_policies import DEFAULT_PORTAL_RL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portal-cliente", tags=["Portal do Cliente"])
@@ -231,7 +232,7 @@ async def atualizar_chamado(
 # ---------------------------------------------------------------------------
 
 @router.get("/{token}/dashboard")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_dashboard(request: Request, token: str):
     """Retorna o dashboard do cliente: contratos, pagamentos recentes e documentos."""
     service = PortalClienteService.__from_token__(token)
@@ -244,7 +245,7 @@ async def portal_dashboard(request: Request, token: str):
 
 
 @router.get("/{token}/financeiro")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_financeiro(request: Request, token: str):
     """Retorna a visão financeira do cliente (lançamentos vinculados)."""
     service = PortalClienteService.__from_token__(token)
@@ -257,7 +258,7 @@ async def portal_financeiro(request: Request, token: str):
 
 
 @router.get("/{token}/chamados")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_listar_chamados(request: Request, token: str):
     """Retorna os chamados de suporte do cliente."""
     service = PortalClienteService.__from_token__(token)
@@ -271,7 +272,7 @@ async def portal_listar_chamados(request: Request, token: str):
 
 
 @router.post("/{token}/chamados")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_criar_chamado(request: Request, token: str, body: ChamadoCreate):
     """Abre um chamado de suporte pelo portal do cliente."""
     service = PortalClienteService.__from_token__(token)

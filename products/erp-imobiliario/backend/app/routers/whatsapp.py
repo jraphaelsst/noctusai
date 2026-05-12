@@ -25,6 +25,7 @@ from app.services.whatsapp_service import (
     get_whatsapp_config_from_env,
 )
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/whatsapp", tags=["WhatsApp"])
@@ -110,7 +111,7 @@ async def whatsapp_config_status(
 
 
 @router.post("/send")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def enviar_mensagem(
     request: Request,
     body: SendMessageRequest,
@@ -165,7 +166,7 @@ async def enviar_mensagem(
 
 
 @router.post("/send-property")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def enviar_imovel(
     request: Request,
     body: SendPropertyRequest,

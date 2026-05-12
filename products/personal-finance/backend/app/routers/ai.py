@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 
 from app.dependencies import get_current_user_org, get_user_client
@@ -58,7 +59,7 @@ class FlagRecurringRequest(BaseModel):
 
 
 @router.post("/transacoes/{transacao_id}/categorize")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def categorize_transaction_endpoint(
     request: Request, transacao_id: str,
     _consent: None = Depends(consent_required("pf.transaction_categorize")),
@@ -104,7 +105,7 @@ class MonthlyNarrativeSendRequest(BaseModel):
 
 
 @router.get("/monthly-narrative")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def monthly_narrative_endpoint(
     request: Request, period_days: int = 30,
     _consent: None = Depends(consent_required("pf.monthly_narrative")),
@@ -129,7 +130,7 @@ auth: tuple = Depends(get_current_user_org)):
 
 
 @router.post("/monthly-narrative/send")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def monthly_narrative_send_endpoint(
     request: Request, body: MonthlyNarrativeSendRequest,
     _consent: None = Depends(consent_required("pf.monthly_narrative")),
@@ -148,7 +149,7 @@ auth: tuple = Depends(get_current_user_org)):
 
 
 @router.post("/transacoes/{transacao_id}/recurring-flag")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def recurring_flag_endpoint(
     request: Request, transacao_id: str,
     _consent: None = Depends(consent_required("pf.recurring_flag")),

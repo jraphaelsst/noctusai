@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, Request
 from app.dependencies import get_current_user, get_admin_client
 from app.rate_limit import limiter
 from app.responses import success_response
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
 from app.schemas.auth import (
     PatientRegister,
     TherapistRegister,
@@ -78,7 +79,7 @@ async def register_clinic(request: Request, body: ClinicRegister):
 
 
 @router.post("/login")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def login(request: Request, body: LoginRequest):
     """Authenticate with email and password."""
     admin_db = get_admin_client()
@@ -91,7 +92,7 @@ async def login(request: Request, body: LoginRequest):
 
 
 @router.post("/google")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def google_auth(request: Request, body: GoogleAuthRequest):
     """Authenticate with Google OAuth ID token."""
     admin_db = get_admin_client()
@@ -115,7 +116,7 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
 
 
 @router.get("/me")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def get_me(request: Request, authorization: Optional[str] = Header(None)):
     """Get current user info and role-specific profile."""
     user, _ = await get_current_user(authorization)

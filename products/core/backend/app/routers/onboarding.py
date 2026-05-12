@@ -18,6 +18,7 @@ from app.database import get_admin_client
 from app.dependencies import get_current_user, get_org_id
 from app.rate_limit import limiter
 from app.schemas.onboarding import StepComplete, CompanyDetailsUpdate
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
@@ -33,7 +34,7 @@ DEFAULT_STEPS = {
 
 
 @router.get("/status")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def get_onboarding_status(request: Request, authorization: Optional[str] = Header(None)):
     """Returns onboarding completion state for the current user's organization."""
     user, token = await get_current_user(authorization)
@@ -71,7 +72,7 @@ async def get_onboarding_status(request: Request, authorization: Optional[str] =
 
 
 @router.patch("/complete")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def complete_onboarding_step(
     request: Request,
     body: StepComplete,

@@ -30,6 +30,7 @@ from app.responses import success_response, paginated_response, ok_response, cal
 from app.config import settings
 from app.rate_limit import limiter
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.rate_limit_policies import DEFAULT_PORTAL_RL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portal", tags=["Portal Externo"])
@@ -160,7 +161,7 @@ async def revogar_token(token_id: str, auth = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @router.get("/{portal_token}")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def validar_portal(request: Request, portal_token: str):
     """Valida um token de portal e retorna dados básicos."""
     token_data = _validate_token(portal_token)
@@ -172,7 +173,7 @@ async def validar_portal(request: Request, portal_token: str):
 
 
 @router.get("/{portal_token}/imoveis")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_imoveis(request: Request, portal_token: str):
     """Retorna os imóveis do proprietário (via portal token)."""
     token_data = _validate_token(portal_token)
@@ -191,7 +192,7 @@ async def portal_imoveis(request: Request, portal_token: str):
 
 
 @router.get("/{portal_token}/financeiro")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_financeiro(request: Request, portal_token: str):
     """Retorna o extrato financeiro do proprietário (aluguéis recebidos, taxas)."""
     token_data = _validate_token(portal_token)
@@ -211,7 +212,7 @@ async def portal_financeiro(request: Request, portal_token: str):
 
 
 @router.get("/{portal_token}/contratos")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_contratos(request: Request, portal_token: str):
     """Retorna os contratos do locatário (via portal token)."""
     token_data = _validate_token(portal_token)
@@ -227,7 +228,7 @@ async def portal_contratos(request: Request, portal_token: str):
 
 
 @router.get("/{portal_token}/documentos")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_documentos(request: Request, portal_token: str):
     """Retorna documentos compartilhados com o proprietário ou locatário."""
     token_data = _validate_token(portal_token)

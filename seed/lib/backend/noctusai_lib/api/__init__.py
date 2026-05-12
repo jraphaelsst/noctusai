@@ -17,7 +17,8 @@ contributes to a product's HTTP layer".
 **Active occupants:**
 - `auth.py` — JWT + SSO factories, `verify_*` helpers
 - `middleware.py` — correlation-ID middleware, request logger
-- `rate_limit.py` — slowapi configuration helpers
+- `rate_limit.py` — slowapi `create_limiter(...)` factory (Redis-backed when reachable, in-memory fallback)
+- `rate_limit_policies.py` — canonical named policies (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL`); intent-encoded so per-product tuning lifts to one seed-side change
 - `app_factory.py` — `create_product_app(...)` companion shim
 - `crud_safety.py` — `delete_with_existence_check` + `delete_or_404` (replaces the unreliable `.delete()` + `if not result.data` 404 shape)
 - `schemas.py` — `StrictHttpModel` base (Pydantic `extra="forbid"`) for HTTP-boundary request/response shapes; defends against silent-drop misroutes (see `KB § PATTERNS/pydantic-strict-http.md`).

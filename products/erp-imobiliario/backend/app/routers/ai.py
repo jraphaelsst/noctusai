@@ -12,6 +12,7 @@ from app.responses import success_response
 from app.rate_limit import limiter
 from app.services.ai_service import check_openai_configured
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
@@ -56,7 +57,7 @@ class FollowUpDraftRequest(StrictHttpModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/generate-description")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def generate_description(
     request: Request,
     body: GenerateDescriptionRequest,
@@ -90,7 +91,7 @@ async def generate_description(
 
 
 @router.post("/lead-score")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def lead_score(
     request: Request,
     body: LeadScoreRequest,
@@ -134,7 +135,7 @@ async def lead_score(
 
 
 @router.post("/suggest-price")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def suggest_price(
     request: Request,
     body: SuggestPriceRequest,
@@ -185,7 +186,7 @@ async def suggest_price(
 
 
 @router.post("/leads/{lead_id}/follow-up-draft")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def follow_up_draft(
     request: Request,
     lead_id: str,
@@ -300,7 +301,7 @@ async def whatsapp_intent(
 
 
 @router.post("/clientes/{cliente_id}/certidoes-score")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def certidoes_score(
     request: Request,
     cliente_id: str,
@@ -361,7 +362,7 @@ async def certidoes_score(
 
 
 @router.post("/metas/coach-tip")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def metas_coach_tip(
     request: Request,
     body: MetasCoachTipRequest,
@@ -385,7 +386,7 @@ async def metas_coach_tip(
 
 
 @router.post("/imoveis/{imovel_id}/photo-compliance")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def photo_compliance(
     request: Request,
     imovel_id: str,

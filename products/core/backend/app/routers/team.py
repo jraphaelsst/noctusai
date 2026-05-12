@@ -33,6 +33,7 @@ from app.dependencies import get_current_user
 from app.rate_limit import limiter
 from app.services.permissions import check_permission
 from app.schemas.team import AcceptInviteRequest, InviteCreate, TeamMemberRoleUpdate
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
 from noctusai_lib.domain.invitations import (
     create_invitation,
     validate_invitation,
@@ -102,7 +103,7 @@ async def listar_membros(authorization: Optional[str] = Header(None)):
 
 
 @router.post("/invite")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def convidar_membro(
     request: Request,
     body: InviteCreate,
@@ -391,7 +392,7 @@ async def cancelar_convite(
 
 
 @router.post("/accept-invite")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AUTH_RL)
 async def aceitar_convite(
     request: Request,
     body: AcceptInviteRequest,

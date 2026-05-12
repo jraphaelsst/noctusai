@@ -14,6 +14,7 @@ from app.rate_limit import limiter
 from app.services import ai_service
 from app.services import segmentation_service
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
@@ -42,7 +43,7 @@ class TranslationRequest(StrictHttpModel):
 
 
 @router.post("/subjects")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def generate_subjects_endpoint(
     request: Request,
     body: SubjectsRequest,
@@ -57,7 +58,7 @@ async def generate_subjects_endpoint(
 
 
 @router.post("/template-draft")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def template_draft_endpoint(
     request: Request,
     body: TemplateDraftRequest,
@@ -70,7 +71,7 @@ async def template_draft_endpoint(
 
 
 @router.post("/reengagement")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def reengagement_endpoint(
     request: Request,
     body: ReengagementRequest,
@@ -83,7 +84,7 @@ async def reengagement_endpoint(
 
 
 @router.post("/deliverability")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def deliverability_endpoint(
     request: Request,
     body: DeliverabilityRequest,
@@ -98,7 +99,7 @@ async def deliverability_endpoint(
 
 
 @router.post("/translate")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def translate_endpoint(
     request: Request,
     body: TranslationRequest,
@@ -224,7 +225,7 @@ class CampaignDebriefRequest(StrictHttpModel):
 
 
 @router.get("/campaigns/{campaign_id}/debrief")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def campaign_debrief_preview_endpoint(
     request: Request,
     campaign_id: str,
@@ -252,7 +253,7 @@ async def campaign_debrief_preview_endpoint(
 
 
 @router.post("/campaigns/{campaign_id}/debrief/send")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def campaign_debrief_send_endpoint(
     request: Request,
     campaign_id: str,

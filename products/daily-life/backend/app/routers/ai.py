@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
 
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 from noctusai_lib.domain.ai import consent_required
 from noctusai_lib.primitives.responses import success_response
 
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/ai", tags=["AI"])
 
 
 @router.get("/weekly-review")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def weekly_review_endpoint(
     request: Request,
     period_days: int = 7,
@@ -50,7 +51,7 @@ async def weekly_review_endpoint(
 
 
 @router.get("/daily-brief")
-@limiter.limit("30/minute")
+@limiter.limit(DEFAULT_AI_RL)
 async def daily_brief_endpoint(
     request: Request,
     auth: tuple = Depends(get_current_user_org),
