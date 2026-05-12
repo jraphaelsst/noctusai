@@ -7,12 +7,19 @@ degradation when the OpenAI API key is not configured.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Optional
 
 from app.config import settings
 from app.dependencies import first_or_none
+from app.services.audit_hook import audit_dispatch
 
 logger = logging.getLogger(__name__)
+
+# LGPD audit — operational dispatch key; not a `register_feature` (no UI
+# consent surface for session audio transcription — it's an infrastructure
+# step). Redactor: `audit_hook.REDACTION_BY_FEATURE["therapy.session_transcribe_audio"]`.
+_AUDIT_FEATURE_KEY = "therapy.session_transcribe_audio"
 
 _PLACEHOLDER_TEXT = (
     "[Transcrição não disponível — OpenAI API Key não configurada. "
@@ -65,13 +72,45 @@ async def transcribe_segment(
         # LGPD: raw patient audio. Whisper is a 3rd-party egress; the outbound
         # is unavoidable for the feature but the response is never cached
         # (transcribe_audio doesn't go through the cache layer).
-        transcript = await transcribe_audio(
-            audio_data,
-            model="whisper-1",
-            filename="segment.ogg",
-            language="pt",
-            response_format="text",
-            org_id=clinic_id,
+        # The audit redactor scrubs the raw bytes + transcript to length-only.
+        audit_arguments = {
+            "audio": audio_data,  # redactor drops the bytes
+            "model": "whisper-1",
+            "filename": "segment.ogg",
+            "language": "pt",
+            "response_format": "text",
+            "org_id": clinic_id,
+        }
+        started = time.monotonic()
+        try:
+            transcript = await transcribe_audio(
+                audio_data,
+                model="whisper-1",
+                filename="segment.ogg",
+                language="pt",
+                response_format="text",
+                org_id=clinic_id,
+            )
+        except LLMNotConfigured as exc:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            audit_dispatch(
+                feature_key=_AUDIT_FEATURE_KEY,
+                tool_name="transcribe_audio",
+                status="failure",
+                duration_ms=elapsed_ms,
+                arguments=audit_arguments,
+                result=None,
+                error=f"LLMNotConfigured: {exc}",
+            )
+            raise
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        audit_dispatch(
+            feature_key=_AUDIT_FEATURE_KEY,
+            tool_name="transcribe_audio",
+            status="success",
+            duration_ms=elapsed_ms,
+            arguments=audit_arguments,
+            result=transcript,
         )
         return str(transcript).strip()
 

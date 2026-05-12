@@ -24,10 +24,13 @@ cached (audio / vision skip the response-cache layer).
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
+
+from app.services.audit_hook import audit_dispatch
 
 from app.config import settings
 
@@ -154,32 +157,91 @@ async def process_attachment_with_ai(
     """
     from noctusai_lib.integrations.llm import LLMNotConfigured, analyze_image, transcribe_audio
 
+    image_prompt = (
+        "Descreva esta imagem de forma concisa em português. "
+        "Se parecer ser um documento clínico ou anotação, "
+        "extraia o conteúdo textual principal."
+    )
+
+    # LGPD audit — `audit_dispatch` redacts via the feature's lambdas BEFORE
+    # writing the row. Both branches scrub raw bytes (image / audio) +
+    # response text to length-only metadata.
+    if file_type == "image":
+        feature_key = "therapy.attachment_analyze_image"
+        tool_name = "analyze_image"
+        audit_arguments: Dict[str, Any] = {
+            "image": file_bytes,  # redactor drops the bytes
+            "prompt": image_prompt,
+            "model": "gpt-4o",
+            "max_tokens": 500,
+            "org_id": clinic_id,
+        }
+    elif file_type == "audio":
+        feature_key = "therapy.attachment_transcribe_audio"
+        tool_name = "transcribe_audio"
+        audit_arguments = {
+            "audio": file_bytes,  # redactor drops the bytes
+            "model": "whisper-1",
+            "filename": "attachment.mp3",
+            "language": "pt",
+            "org_id": clinic_id,
+        }
+    else:
+        # Unknown file_type — short-circuit before the LLM call.
+        return None
+
+    started = time.monotonic()
     try:
         if file_type == "image":
-            return await analyze_image(
-                image=file_bytes,  # server-mediated: bytes → base64 data URL by provider
-                prompt=(
-                    "Descreva esta imagem de forma concisa em português. "
-                    "Se parecer ser um documento clínico ou anotação, "
-                    "extraia o conteúdo textual principal."
-                ),
+            result = await analyze_image(
+                image=file_bytes,
+                prompt=image_prompt,
                 model="gpt-4o",
                 max_tokens=500,
                 org_id=clinic_id,
             )
-
-        elif file_type == "audio":
-            return await transcribe_audio(
+        else:  # "audio"
+            result = await transcribe_audio(
                 file_bytes,
                 model="whisper-1",
                 filename="attachment.mp3",
                 language="pt",
                 org_id=clinic_id,
             )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        audit_dispatch(
+            feature_key=feature_key,
+            tool_name=tool_name,
+            status="success",
+            duration_ms=elapsed_ms,
+            arguments=audit_arguments,
+            result=result,
+        )
+        return result
 
-    except LLMNotConfigured:
+    except LLMNotConfigured as exc:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        audit_dispatch(
+            feature_key=feature_key,
+            tool_name=tool_name,
+            status="failure",
+            duration_ms=elapsed_ms,
+            arguments=audit_arguments,
+            result=None,
+            error=f"LLMNotConfigured: {exc}",
+        )
         logger.info("LLM not configured — skipping AI attachment processing")
         return None
     except Exception as e:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        audit_dispatch(
+            feature_key=feature_key,
+            tool_name=tool_name,
+            status="failure",
+            duration_ms=elapsed_ms,
+            arguments=audit_arguments,
+            result=None,
+            error=str(e),
+        )
         logger.error("AI attachment processing failed: %s", e)
         return None

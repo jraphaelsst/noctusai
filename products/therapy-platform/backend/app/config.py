@@ -58,5 +58,14 @@ class TherapySettings(ProductSettings):
     therapy_scheduler_enabled: bool = True
     therapy_audio_retention_sweep_interval_hours: int = 24
 
+    # Optional Postgres URL for SQLAlchemy-bound flows. Used today only by
+    # `app.services.audit_hook` to INSERT into `therapy.tool_call_audits` via
+    # the seed `make_audit_writer(db, ToolCallAudit)` factory. Empty → the
+    # audit-hook lazy session factory returns None and the writer becomes a
+    # noop with a debug log (best-effort guarantee — never breaks LLM
+    # dispatch). Routers + admin CRUD use the Supabase admin client; the
+    # SQLAlchemy session is a SECONDARY surface.
+    postgres_url: str = ""
+
 
 settings = TherapySettings()

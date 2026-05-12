@@ -11,12 +11,18 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from app.config import settings
 from app.dependencies import first_or_none
+from app.services.audit_hook import audit_dispatch
 
 logger = logging.getLogger(__name__)
+
+# LGPD audit — feature key from `app/services/ai_consent_features.py`.
+# Redactor: `audit_hook.REDACTION_BY_FEATURE["therapy.longitudinal_narrative"]`.
+_AUDIT_FEATURE_KEY = "therapy.longitudinal_narrative"
 
 _PLACEHOLDER_ANALYSIS = (
     "[Análise longitudinal não disponível — OpenAI API Key não configurada. "
@@ -79,12 +85,27 @@ async def _call_openai(
     """
     from noctusai_lib.integrations.llm import LLMNotConfigured, chat_completion
 
+    # LGPD audit — `audit_dispatch` redacts via the feature's lambdas BEFORE
+    # writing the row. Longitudinal aggregates clinical text from N sessions
+    # (highest sensitivity surface in therapy); the redactor scrubs
+    # `messages[].content` to length-only metadata.
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    audit_arguments = {
+        "messages": messages,
+        "model": "gpt-4o",
+        "temperature": 0.4,
+        "max_tokens": 3000,
+        "response_format": {"type": "json_object"},
+        "cache": False,
+        "org_id": clinic_id,
+    }
+    started = time.monotonic()
     try:
         content = await chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
+            messages=messages,
             model="gpt-4o",
             temperature=0.4,
             max_tokens=3000,
@@ -92,11 +113,40 @@ async def _call_openai(
             cache=False,  # LGPD: longitudinal clinical aggregation
             org_id=clinic_id,
         )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        audit_dispatch(
+            feature_key=_AUDIT_FEATURE_KEY,
+            tool_name="chat_completion",
+            status="success",
+            duration_ms=elapsed_ms,
+            arguments=audit_arguments,
+            result=content,
+        )
         return json.loads(content or "{}")
     except LLMNotConfigured as e:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        audit_dispatch(
+            feature_key=_AUDIT_FEATURE_KEY,
+            tool_name="chat_completion",
+            status="failure",
+            duration_ms=elapsed_ms,
+            arguments=audit_arguments,
+            result=None,
+            error=f"LLMNotConfigured: {e}",
+        )
         logger.warning("LLM not configured for longitudinal call: %s", e)
         return {"error": str(e)}
     except Exception as e:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        audit_dispatch(
+            feature_key=_AUDIT_FEATURE_KEY,
+            tool_name="chat_completion",
+            status="failure",
+            duration_ms=elapsed_ms,
+            arguments=audit_arguments,
+            result=None,
+            error=str(e),
+        )
         logger.error("LLM longitudinal call failed: %s", e)
         return {"error": str(e)}
 
