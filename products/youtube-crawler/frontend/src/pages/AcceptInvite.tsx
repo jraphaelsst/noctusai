@@ -2,7 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { PlaySquare } from "lucide-react";
 import { AcceptInvitePage } from "@noctusai/lib/design-system";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:8010";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:8008";
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
 
 export default function SeedAcceptInvite() {

@@ -1,10 +1,12 @@
 """
-NoctusAI YouTube Crawler — Reference Implementation
+NoctusAI YouTube Crawler
 
-The simplest possible product. Just the spine, no domain code.
-Proves that the seed framework works end-to-end.
+YouTube Data API v3 + Drive + WAHA + SMTP — quota-aware uploads with
+Fernet-encrypted refresh tokens. Scaffolded against the seed framework
+2026-05-05; domain routers/services land via the implementation project
+(see `products/youtube-crawler/projects/`).
 
-Run with: uvicorn app.main:app --reload --port 8010
+Run with: uvicorn app.main:app --reload --port 8008
 
 LLM access is inherited automatically — `create_product_app()` auto-wires
 credential resolution + the default multi-provider LLMConfig. If this

@@ -1,78 +1,88 @@
 # YouTube Crawler — MASTER-PROMPT
 
-> Authoritative development guide for the seed reference product.
+> Authoritative development guide for the YouTube Crawler product.
 
 ## Purpose
 
-Minimal reference implementation proving the NoctusAI seed framework works end-to-end. The simplest possible product — just the spine, no domain logic. When the seed breaks, the framework broke. When creating a new product, the seed is the pattern to follow.
+YouTube Data API v3 + Drive + WAHA + SMTP — quota-aware uploads with Fernet-encrypted refresh tokens. Operators authenticate against Google (YouTube + Drive), the product polls source-material drops in Drive, transcodes/uploads to YouTube with daily-quota awareness, and notifies operators of progress / failures via WhatsApp (WAHA) and email (SMTP) digests.
 
 ## Architecture
 
-**Born from the seed framework.** This product has ZERO domain code. Everything comes from the framework.
+- Schema: `youtube_crawler`
+- Backend port: 8008 | Frontend port: 8150
+- Tenant key: `org_id`
+- Auth: SSO via seed's `make_get_current_user` factory; Google refresh tokens stored Fernet-encrypted in `youtube_crawler.google_credentials` (table introduced by domain implementation).
+- Backend path: `products/youtube-crawler/backend/app/`
+- Frontend path: `products/youtube-crawler/frontend/src/`
 
-### Backend (19 lines in main.py)
+## Current state (2026-05-11)
 
-```
-products/youtube-crawler/backend/app/
-  main.py              → create_product_app("YouTube Crawler", "youtube_crawler", settings)
-  config.py            → SeedSettings(ProductSettings) — no extra fields
-  database.py          → create_database_module(settings, "youtube_crawler")
-  dependencies.py      → create_dependencies(db)
-  rate_limit.py        → create_product_limiter(settings)
-  routers/             → EMPTY — framework provides health, team, notifications
-```
+**Scaffolded only.** Backend ships seed wiring (`create_product_app` + `create_database_module` + `create_dependencies` + `create_product_limiter`) with `0` routers / `0` services. Frontend ships seed pages (Dashboard, Equipe, Landing, Login, AcceptInvite, ForgotPassword, NotFound) with no domain UI. Migration `001_youtube_crawler.sql` provisions schema + `status_pagina` + `invitations` only — zero domain tables.
 
-### Frontend (App.tsx uses framework factories)
+Tests: 31 framework-suite tests (FrameworkEndpoints / TeamFlow / NotificationFlow / AuthBoundary / TeamRouter*) inherited from `noctusai_lib.testing` — all pass.
 
-```
-products/youtube-crawler/frontend/src/
-  App.tsx              → createProductApp() + createProductLayout()
-  vite.config.ts       → createViteConfig({ port: 8150 }) — 3 lines
-  pages/               → Dashboard (stack status), Equipe (team), Landing, Login, etc.
-  hooks/               → useNotificacoes (from seed lib)
-  components/          → NotificationBell, ErrorBoundary, AuthProvider (from seed lib)
-  NO Layout.tsx        → framework provides it via createProductLayout()
-```
+Domain implementation tracked in `projects/youtube-crawler-domain-implementation/` (filed 2026-05-11). The project resolves: Google OAuth flow + Fernet vault, Drive polling + drop-folder convention, YouTube upload pipeline + quota tracking, WAHA notification channel, SMTP digest, operator UI.
 
-### Database
+## Key Domains (planned)
 
-Schema: `seed` — only `status_pagina` (feature flags) and `invitations` (team invites). Zero domain tables.
+### Auth & credentials
+- **google_oauth** — Google sign-in for YouTube + Drive scopes; refresh-token storage via Fernet-encrypted column; SSO context binds to operator's org_id.
+- **credentials_router** — operator-facing endpoint for "connect Google" / "disconnect" / "rotate"; admin-only management.
 
-## What the framework provides automatically
+### Upload pipeline
+- **drive_watcher** — periodic poll of Drive drop folders (per-org convention); enqueues source files for upload.
+- **upload_worker** — YouTube Data API v3 resumable-upload client; backoff on quota / transient failure; persists state in `youtube_crawler.upload_jobs`.
+- **quota_tracker** — daily-quota accounting against YouTube Data API limits (cost-per-call tabulated server-side); pauses jobs at threshold.
 
-- `/api/health` — health check
-- `/api/team` — team management (invite, accept, list, cancel, remove)
-- `/api/notificacoes` — notification proxy to core
-- `/api/llm/providers`, `/api/llm/models`, `/api/llm/preferences` — shared LLM router from `noctusai_seed.llm_router`
-- Multi-provider LLM access: `create_product_app()` auto-wires `configure_credentials()` + `configure_llm(default_llm_config())` + `shutdown_llm()` in lifespan. Products inherit `noctusai_lib.llm.chat_completion` / `generate_embedding` / `transcribe_audio` / `analyze_image` with zero plumbing. Override only when the product needs different defaults: `create_product_app(..., llm_config=default_llm_config(default_chat_model="gpt-4o"))`.
-- CORS, Sentry, exception handlers, middleware, rate limiting, logging
-- Sidebar, Header, AppShell, page status filtering, SSO context, trial/license warnings
-- TooltipProvider, QueryClientProvider, AuthProvider, ErrorBoundary, Suspense
+### Notifications
+- **waha_notifier** — pushes upload progress / failure summaries to operator WhatsApp via the seed's `noctusai_lib.integrations.whatsapp` adapter.
+- **smtp_digest** — daily / weekly digest email; piggybacks on the seed's `BaseDigestService` (`KB § PATTERNS/digest-seed.md`).
 
-## Template Auto-Sync
-
-The seed is the source for `templates/product-seed/`. Post-commit hook runs `scripts/sync-seed-template.sh`:
-1. Copies seed → template
-2. Replaces values with `{{PLACEHOLDERS}}`
-3. Template always in sync
-
-Do NOT edit `templates/product-seed/` directly.
+### Operator UI
+- **upload_dashboard** — live job list, quota usage gauge, retry / pause / cancel controls.
+- **credentials_page** — connect / disconnect Google; show scope grants.
+- **digest_preferences** — opt-in channels (WAHA / SMTP), digest cadence.
 
 ## Rules
 
-- Keep the seed minimal — zero domain logic
-- Any new framework feature must work in the seed first
-- Changes to the seed propagate to the template automatically
-- 6 tests must always pass
+- The seed framework is non-negotiable — all domain routers attach through `create_product_app()`'s `standard_routers=[...]` seam. Never re-wire CORS, exception handlers, or middleware locally.
+- Single `001_youtube_crawler.sql` is the fresh-start migration. New schema changes edit 001 in-place during the implementation project + ship additive `002+` patches for live DBs (single-001 convention; `KB § PATTERNS/database-rls.md`).
+- Auth via the canonical factory: `Depends(get_current_user_org)` wired in `app/dependencies.py` via `make_get_current_user_org`. Never wire `ProductDependencies.{get_org_id,get_user_role,get_user_client}` through `Depends(...)` — positional args become required query params (`KB § PATTERNS/backend.md § Auth — canonical pattern`).
+- LGPD-first: operator PII (Google email, refresh token, channel handle) is flagged at every write site via `noctus.dev.lgpd_flag`. The Fernet column is LGPD-sensitive — masked in audit logs.
+- Refresh-token encryption uses the seed's vault primitive (`noctusai_lib.integrations.<vault>` if it ships at adoption time; otherwise file the seed real-adapter project per "Verify the seed ships it" rule).
+- Rate-limit policies: prefer named imports from `noctusai_lib.api.rate_limit_policies` (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL`) over inline `"30/minute"` literals.
+- Webhook receivers (if Google Pub/Sub adopted for Drive change notification) follow the 5-pin compliance contract (`KB § PATTERNS/webhook-signatures.md`); the seed ships the canonical receiver shape at `products/seed/backend/app/routers/webhook_router.py`.
+- Doc-code coherence: when a tool/script/MCP-tool referenced in this doc changes behavior, update this MASTER-PROMPT in the same commit — discover drift via `grep -rn "<tool-name>" products/youtube-crawler/`. (CLAUDE.md §1 — doc-code coherence rule.)
 
 ## Testing
 
 ```bash
-cd products/youtube-crawler/backend && pytest  # 6 tests
-cd products/youtube-crawler/frontend && npx vite build  # must build clean
+cd products/youtube-crawler/backend && pytest
+cd products/youtube-crawler/frontend && npx vite build
 ```
+
+Framework-test suites inherit from `noctusai_lib.testing` (FrameworkEndpointsSuite / TeamFlowSuite / NotificationFlowSuite / AuthBoundarySuite / TeamRouter*Suite). The current scaffold ships only these inherited suites; domain tests land alongside their routers/services in the implementation project.
+
+Seed mocks: `MockSupabaseClient` (2026-05-11) deep-copies caller inputs at storage time so UPDATE/DELETE write-propagation doesn't mutate module-level fixture dicts; `_eval_is` now handles PostgREST IS-NULL semantics; `_FilterMixin.not_` actually negates.
+
+## Common commands
+
+- Compliance review (LGPD / webhook-pins / status-assertion / 10 new detectors added 2026-05-11): `noctus.dev.review --product youtube-crawler`. New detectors: `check_doc_tool_reference_drift` (this doc), `check_no_silent_ok_comment`, `check_auth_dep_anti_pattern`, `check_mcp_path_via_settings`, `check_mcp_write_tool_worktree_arg`, `check_pipefail_grep_q`, `check_archive_staleness`, `check_dispatcher_staleness`, `check_branch_orphan`, `check_gitignore_drift`.
+- Cleanup triage (cross-product / cross-tool / intra-file hygiene): `noctus.hound.scan`.
+- Storage triage (artifacts / environments / stale worktrees): `bash scripts/mole.sh scan`.
+- Fresh-clone bootstrap auto-hydrates every `products/*/backend/requirements.txt` into the shared venv (`scripts/bootstrap-worktree.sh` + `scripts/setup.sh`, 2026-05-11) — no per-product `pip install -r` step needed.
+
+## Deploy
+
+```bash
+./start.sh                  # full stack (Docker, with youtube-crawler from PRODUCTS registry)
+./start.sh tunnel youtube-crawler   # cloudflare quick-tunnel for OAuth / WAHA online testing
+./stop.sh                   # graceful tear-down
+```
+
+Backend container port: 8008 (canonical, matches `start.sh` PRODUCTS registry + LANDSCAPE table). Frontend: 8150.
 
 ## Dependencies
 
-- Backend: `noctusai_lib` (code library) + `noctusai_seed` (framework)
+- Backend: `noctusai_lib` (code library) + `noctusai_seed` (framework) + `google-api-python-client` + `google-auth` + `cryptography` (Fernet) + `httpx` (WAHA) — added when domain routers land.
 - Frontend: `@noctusai/lib` (code library) + `@noctusai/seed` (framework)
