@@ -147,6 +147,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 | Adding a `try/except` (production code) | `KB § PATTERNS/logging.md` (level guide, no-`# silent-ok` rule) |
 | Editing `.py` / `.ts` / `.tsx` source (rename, codemod, find-callers, multi-file change) | `KB § PATTERNS/ast.md` (AST-first — never sed/regex on source) |
 | Exposing a new capability to agents | `CLAUDE/platform.md` + `KB § 01-PHILOSOPHY.md § MCP-first` |
+| Dispatch-heavy project (3+ engineers / wave-based parallel batches / cherry-pick + push backlog); user wants to "keep working while we talk" | `KB § PATTERNS/autonomous-operator-via-subagent.md` (Option D — `ScheduleWakeup` tick → spawn `orchestrator-operator` subagent → drains `dispatcher-inbox.md` in isolated context → architect main context stays clean) |
 | Adding / amending a keeper detector | `KB § PATTERNS/testing.md § Regression-test-the-detector` |
 | Adding a helper to `noctusai_lib` | `KB § PATTERNS/seed-lib-layout.md` |
 | End-of-phase polish / "what cleanup is most urgent?" / cross-product absorption / cross-tool fusion / intra-file dead code | `noctus.hound.scan` (single entry point) → drill into per-scope detail per `KB § PATTERNS/seed-absorption.md` |
