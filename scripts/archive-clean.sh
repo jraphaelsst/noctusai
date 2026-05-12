@@ -41,14 +41,18 @@ for arg in "$@"; do
   esac
 done
 
-# Compute today + yesterday (BSD date for macOS; coreutils date for Linux).
-today=$(date -u '+%Y-%m-%d')
-if date -u -v-1d '+%Y-%m-%d' >/dev/null 2>&1; then
+# Compute today + yesterday in LOCAL time (BSD date for macOS; coreutils date for Linux).
+#
+# Local time chosen because user invokes archive cleanup based on local-day boundaries;
+# using UTC caused tick 2 to flag `2026-05-10` as stale at 21:40 BRT (UTC `2026-05-12`),
+# shifting the keep window forward by one day.
+today=$(date '+%Y-%m-%d')
+if date -v-1d '+%Y-%m-%d' >/dev/null 2>&1; then
   # BSD date (macOS)
-  yesterday=$(date -u -v-1d '+%Y-%m-%d')
+  yesterday=$(date -v-1d '+%Y-%m-%d')
 else
   # GNU date (Linux)
-  yesterday=$(date -u -d 'yesterday' '+%Y-%m-%d')
+  yesterday=$(date -d 'yesterday' '+%Y-%m-%d')
 fi
 
 echo "Archive cleanup — keep window: $yesterday + $today"
