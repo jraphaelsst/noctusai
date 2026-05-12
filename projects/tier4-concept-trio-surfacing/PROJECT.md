@@ -399,7 +399,12 @@ guidance), not a Q11 trigger. Three small bookkeeping follow-ups:
       rationale.
 - [x] Surface bookkeeping follow-ups per child.
 
-### Phase 1 — User decision per child *(blocked on user)*
+**Improvements:** none identified — surfacing-only deliverable, no
+absorption / formalization / refactor opportunities discovered while
+quoting the three children's §7s. Bookkeeping follow-ups already
+catalogued per child (5.1.(a), 5.2.(a), 5.3.(a)).
+
+### Phase 1 — User decision per child 🅿️ (blocked on user signoff)
 
 - [ ] **`project-history-ledger`** — confirm LEAVE-DEFERRED (effectively
       CLOSED). Optionally action follow-ups 5.1.(a) and 5.1.(b).
