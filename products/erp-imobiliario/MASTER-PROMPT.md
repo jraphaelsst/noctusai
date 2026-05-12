@@ -91,6 +91,7 @@ Credential resolution (per-org → platform → env) now lives in `noctusai_lib.
 - **Production safety**: `jwt_secret` defaults empty and raises `RuntimeError` at startup if empty in production.
 - **Portal scoping**: Portal endpoints scope all queries by `org_id` from JWT.
 - **Legacy data**: 264 migrated properties from old Django platform, marked with `titulo_anuncio LIKE '[MOCK]%'`.
+- **Canonical rate-limit policies (2026-05-11).** ERP routers now consume named policies from `noctusai_lib.api.rate_limit_policies` instead of inline literal strings — `whatsapp.py` uses `DEFAULT_AUTH_RL`, `portal_cliente.py` + `portal_externo.py` use `DEFAULT_PORTAL_RL`, `ai.py` uses `DEFAULT_AI_RL`. Never re-inline `@limiter.limit("5/minute")` — bump the named constant in `noctusai_lib` if a tier needs adjustment.
 
 ## Frontend Pages
 
@@ -107,6 +108,37 @@ Dashboard, Imoveis, ImovelDetalhes, Clientes, ClienteDetalhes, Funil, Contratos,
 - DELETE endpoints require pre-check for related data before deletion
 - Search endpoints accept `busca` query parameter for full-text search
 
+## Methodology evolution (2026-05-11)
+
+### Codification pipeline
+Methodology rules now route deliberately through a 4-stage path: **Stage 1 emerges → Stage 2 memory entry → Stage 3 KB pattern doc + CLAUDE.md pointer → Stage 4 `check_*` keeper detector with colocated test**. Codification criteria = deterministic predicate + recurrence ≥3 + clear remediation. Rules that legitimately stay at Stage 3 (judgment / context-dependent / aesthetic / pilot) are catalogued. When a new ERP-specific rule emerges, route it instead of letting it stall at memory. → `KB § PATTERNS/methodology-codification-pipeline.md`.
+
+### Doc-code coherence rule (CLAUDE.md §1)
+Updating a tool means updating its docs in the **same change**. Whenever a coding tool (script / MCP tool / keeper detector / CLI command) changes behavior — new flag, new mode, renamed detector, different severity — every doc that references it MUST update in the same commit: KB pattern docs, Situation→Tool maps, CLAUDE.md pointers, INDEX.md, inline `--help`, README / MASTER-PROMPT references. Discovery grep: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/*/README.md`. **This MASTER-PROMPT counts** — any ERP-targeted tool rename triggers an update here.
+
+### 10 new keeper detectors today (live discovery)
+Run `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py` for the canonical list. Notable additions relevant to ERP touch-zones:
+
+- `check_test_status_assertion` — body-assertion without status-code assertion (the YouTube-Crawler false-green slip).
+- `check_function_search_path_pinned` — `CREATE FUNCTION` blocks must pin `SET search_path` (matters for ERP's many SQL migrations).
+- `check_admin_endpoint_service_role_bypass` — admin-client `.table("T")` callsites where T lacks a `service_role_bypass` RLS policy.
+- `check_slowapi_with_pep563` — `from __future__ import annotations` + `@limiter.limit` is broken; ERP rate-limit-policy adoption was exercised against this.
+- `check_archive_staleness` — date-stamped archive folders older than retention.
+- `check_dispatcher_staleness` — stale `## Pending` entries in `dispatcher-inbox.md`.
+- `check_branch_orphan` — local branches >30 days old AND fully merged.
+- `check_gitignore_drift` — expected transient-coordination paths missing from `.gitignore`.
+- `check_no_silent_ok_comment` — the retired `# silent-ok` escape hatch.
+- `check_auth_dep_anti_pattern` — `Depends(ProductDependencies.get_org_id)` / `get_user_role` / `get_user_client` shapes (the 422 query-param trap — directly relevant to ERP's 41 routers).
+- `check_mcp_path_via_settings` — MCP tool modules must import `REPO_ROOT` from `settings`, never compute via `Path(__file__).parents[N]`.
+- `check_mcp_write_tool_worktree_arg` — MCP tools with write-verb names must accept `worktree_path`.
+- `check_pipefail_grep_q` — SIGPIPE-141 footgun under `set -o pipefail`.
+- `check_doc_tool_reference_drift` — KB doc references to `bash scripts/<name>.sh <mode>` whose mode doesn't exist.
+- `check_detector_has_regression_test` — every `check_*` ships colocated `Test<CamelCase>`.
+- `check_section_7_placeholder_consistency` — PROJECT.md §7 says "all answered" but §2 still has placeholders.
+
+### Bootstrap auto-hydrate (closes the defusedxml gap)
+`bootstrap-worktree.sh` now installs `products/erp-imobiliario/backend/requirements.txt` automatically on worktree creation. This closes the **940 ERP collection errors** that previously blocked test discovery when `defusedxml` (and other ERP-specific deps) weren't hydrated. Do not bypass — never paste deps into an ad-hoc `pip install` line.
+
 ## Testing
 
 ```bash
@@ -114,6 +146,12 @@ cd products/erp-imobiliario/backend && pytest
 ```
 
 1,661 tests. DELETE tests must provide mock data with matching ID for pre-check and separate `test_delete_not_found` with empty data returning 404. Search tests: mock `.or_()` is no-op, tests verify endpoint accepts `busca` and returns 200.
+
+**Status-code assertion rule (codified 2026-05).** Every test asserting on response BODY (`.text` / `.json()` / `.content`) MUST also assert on `.status_code` in the same method. Enforced by keeper detector `check_test_status_assertion`.
+
+**Seed mock predicate fix (2026-05-11, Engineer Q).** `MockRequestBuilder` in the seed now deep-copies caller inputs at storage time so write-propagation (UPDATE/DELETE) no longer mutates module-level fixture dicts. ERP test suite was the largest impact: **29 ERP tests fixed by Engineer E in commit `80786e9`**; `test_list_active_members` was incidentally fixed by the seed-side change. Diagnostic recipe for pollution vs genuine bug: 2-second `pytest <single-test>` classifier.
+
+**ERP-specific outstanding (NOT in current scope).** 20 pre-existing failures in WAHA webhook / router fixtures filed as a separate follow-up project; do not chase here.
 
 ## Dependencies
 
