@@ -60,6 +60,7 @@ def test_oauth_status_returns_connected_with_metadata_when_row_exists(client):
         "oauth_credentials",
         [
             {
+                "provider": "google",
                 "account_email": "media@noctusai.com",
                 "access_token_expires_at": "2026-12-31T00:00:00+00:00",
                 "scopes": "openid email https://www.googleapis.com/auth/calendar",
