@@ -67,7 +67,15 @@ Per the brief (Write-authorization clause): you MAY create `findings.md` within 
 - Never `git push --force` / `git reset --hard` without architect direction
 - `--no-verify` only when the architect's brief authorizes it (e.g. doc reconciliation hitting a known phase-state hook scope issue)
 
-## 10. Brief-shape reference (for the architect writing briefs)
+## 10. Symbol-first when authoring dense docs
+
+When authoring OR refactoring dense docs (MASTER-PROMPTs, CLAUDE.md, KB patterns, PROJECT.md §6+§11, memory bodies): **use the doc-symbology glossary by default** — `KB § PATTERNS/doc-symbology.md`. Lossless-swap test gates every prose→symbol swap.
+
+Core symbols: `∧ ∨ ¬ ⇒ ↔ ∈ ⊂ ≡ ≠ ≈` (logic) · `✅ ⏳ ❌ 🔒 📋 🗑 ⭐ ⚠️` (status) · `s1/s2/s3/s4` (codification stages) · `[F]/[R]/[A]` (triage) · `N≥3 N=2 Δ Σ ± D-N` (counts).
+
+NOT for: error messages, first-paragraph context, quoted user instructions, bug-fix code comments, commit messages. Stacking ≤2 symbols/clause. `→` = routes/pointer; `⇒` = logical implies (never interchangeable).
+
+## 11. Brief-shape reference (for the architect writing briefs)
 
 A minimum-viable brief now looks like:
 
