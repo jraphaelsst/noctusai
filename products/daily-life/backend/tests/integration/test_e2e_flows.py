@@ -9,6 +9,7 @@ from datetime import date, timedelta, datetime
 from unittest.mock import MagicMock, patch
 
 from noctusai_lib.testing import MockSupabaseResponse, MockUser, MockUserResponse
+from noctusai_lib.testing.framework_test_suites import TeamFlowSuite
 
 
 TODAY = date.today().isoformat()
@@ -293,21 +294,18 @@ class TestScheduleEventFlow:
 # ==========================================================================
 
 
-class TestTeamFrameworkEndpoints:
-    """Verify team endpoints exist and work via the seed framework."""
+class TestTeamFlow(TeamFlowSuite):
+    """Verify team endpoints exist and work via the seed framework.
 
-    def test_team_list_returns_members(self, client):
-        """GET /api/team returns org members."""
-        members = [
-            {"id": "user-1", "nome": "Alice", "email": "alice@test.com",
-             "org_role": "owner", "avatar_url": None, "created_at": "2026-01-01T00:00:00Z"},
-            {"id": "user-2", "nome": "Bob", "email": "bob@test.com",
-             "org_role": "member", "avatar_url": None, "created_at": "2026-01-02T00:00:00Z"},
-        ]
-        client.mock_supabase.set_table_data("noctus_users", members)
-        resp = client.get("/api/team")
-        assert resp.status_code == 200
-        assert len(resp.json()["data"]) == 2
+    Adopts the lifted ``TeamFlowSuite`` from
+    ``noctusai_lib.testing.framework_test_suites``. Daily-life's conftest
+    binds ``MockUser(org_id="test-org-123")`` — the suite's default — so
+    no override of ``expected_org_id`` is required, but it is set
+    explicitly to document the binding and surface drift if the conftest
+    changes.
+    """
+
+    expected_org_id = "test-org-123"
 
 
 # ==========================================================================

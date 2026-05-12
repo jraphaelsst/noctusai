@@ -25,6 +25,8 @@ gets enforced at one place instead of N copies.
 """
 from __future__ import annotations
 
+from typing import ClassVar
+
 
 # ---------------------------------------------------------------------------
 # Health endpoint — provided by seed framework
@@ -201,13 +203,23 @@ class TeamFlowSuite:
 
     Lifted verbatim from seed/adconnect/media-scheduling/youtube-crawler
     (4 byte-identical copies pre-absorption).
+
+    Subclasses whose conftest-bound ``MockUser`` carries a non-default
+    ``org_id`` (e.g. adconnect's ``ORG_ID_BRAND``, daily-life's tenant
+    org) override the class attribute ``expected_org_id`` instead of
+    overriding the whole ``test_list_members_returns_data`` method.
     """
+
+    #: Org id the conftest-bound ``MockUser`` carries. Subclasses
+    #: override when their fixture binds a different value. Defaults to
+    #: ``"test-org-123"`` to match the seed-default ``MockUser``.
+    expected_org_id: ClassVar[str] = "test-org-123"
 
     def test_list_members_returns_data(self, client):
         """Authenticated user can list org members.
 
         Seeded rows include ``org_id`` matching the conftest-bound
-        ``MockUser(org_id="test-org-123")`` so the production
+        ``MockUser(org_id=<expected_org_id>)`` so the production
         ``.eq("org_id", org_id)`` filter in
         ``noctusai_seed.routers._create_team_router`` returns both rows
         instead of empty. Without ``org_id`` the filter drops every row
@@ -215,10 +227,10 @@ class TeamFlowSuite:
         """
         client._mock_supabase.set_table_data("noctus_users", [
             {"id": "u1", "nome": "Alice", "email": "alice@test.com",
-             "org_id": "test-org-123", "org_role": "owner",
+             "org_id": self.expected_org_id, "org_role": "owner",
              "avatar_url": None, "created_at": "2026-01-01T00:00:00Z"},
             {"id": "u2", "nome": "Bob", "email": "bob@test.com",
-             "org_id": "test-org-123", "org_role": "member",
+             "org_id": self.expected_org_id, "org_role": "member",
              "avatar_url": None, "created_at": "2026-01-02T00:00:00Z"},
         ])
         resp = client.get("/api/team")
