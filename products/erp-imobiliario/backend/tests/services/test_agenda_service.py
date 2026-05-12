@@ -26,7 +26,18 @@ class TestCheckConflict:
         assert result is None
 
     def test_conflict_returns_first_event(self):
-        conflicting = {"id": "evt-1", "titulo": "Visita", "data_inicio": "2026-03-10T09:30:00", "data_fim": "2026-03-10T10:30:00"}
+        # `corretor_id` + `status` required on seed: production filters by
+        # `.eq("corretor_id", ...).neq("status", "cancelado")` plus time-range
+        # bounds. Pre-MOCK-SELECT-PREDICATE-FIX the predicates were tracked
+        # but unevaluated; once SELECT obeys them, missing columns drop the row.
+        conflicting = {
+            "id": "evt-1",
+            "corretor_id": "c-1",
+            "status": "agendado",
+            "titulo": "Visita",
+            "data_inicio": "2026-03-10T09:30:00",
+            "data_fim": "2026-03-10T10:30:00",
+        }
         db = MockSupabaseClient(data=[conflicting])
 
         from app.services.agenda_service import check_conflict
@@ -56,9 +67,11 @@ class TestCheckConflict:
         assert result is None
 
     def test_multiple_conflicts_returns_first(self):
+        # `corretor_id` + `status` required on seed — same MOCK-SELECT shape as
+        # test_conflict_returns_first_event above.
         conflicts = [
-            {"id": "evt-1", "titulo": "Reuniao 1", "data_inicio": "2026-03-10T09:00:00", "data_fim": "2026-03-10T10:00:00"},
-            {"id": "evt-2", "titulo": "Reuniao 2", "data_inicio": "2026-03-10T09:30:00", "data_fim": "2026-03-10T10:30:00"},
+            {"id": "evt-1", "corretor_id": "c-1", "status": "agendado", "titulo": "Reuniao 1", "data_inicio": "2026-03-10T09:00:00", "data_fim": "2026-03-10T10:00:00"},
+            {"id": "evt-2", "corretor_id": "c-1", "status": "agendado", "titulo": "Reuniao 2", "data_inicio": "2026-03-10T09:30:00", "data_fim": "2026-03-10T10:30:00"},
         ]
         db = MockSupabaseClient(data=conflicts)
 

@@ -261,7 +261,11 @@ class TestToggleArchive:
 
         db = MockSupabaseClient()
         # First call (select): returns current state
-        db.set_table_data("clientes", {"arquivado": False, "nome": "João"})
+        # `id` required on seed: production filters by `.eq("id", cliente_id)`
+        # then `.single()`. Pre-MOCK-SELECT-PREDICATE-FIX predicates were
+        # tracked-but-unevaluated; once SELECT obeys them, missing `id` makes
+        # the SELECT 404 and `toggle_archive` returns (None, False).
+        db.set_table_data("clientes", {"id": "c1", "arquivado": False, "nome": "João"})
 
         svc = ClientesService(db, "user-1")
 

@@ -331,7 +331,15 @@ class TestMarkOverdue:
 
     @pytest.mark.asyncio
     async def test_overdue_records_are_updated(self):
-        db = MockSupabaseClient(data=[{"id": "p1"}, {"id": "p2"}])
+        # `status` + `data_vencimento` required on seed: production filters by
+        # `.eq("status", "pendente").lt("data_vencimento", today)`. Pre-MOCK-
+        # SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated; once
+        # SELECT obeys them, missing columns silently strip rows.
+        past = "2000-01-01"
+        db = MockSupabaseClient(data=[
+            {"id": "p1", "status": "pendente", "data_vencimento": past},
+            {"id": "p2", "status": "pendente", "data_vencimento": past},
+        ])
 
         from app.services.contratos_service import ContratosService
         svc = ContratosService(db, "u1")

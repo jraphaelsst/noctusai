@@ -782,9 +782,13 @@ class TestGetTjspLastRequestAt:
 
     def test_with_previous_request(self):
         """Has a previous TJSP request with api_requested_at → returns datetime."""
+        # `tipo` + `org_id` required on seed: production filters by
+        # `.eq("tipo", TJSP_TIPO).eq("org_id", org_id)`. Pre-MOCK-SELECT-
+        # PREDICATE-FIX the predicates were tracked-but-unevaluated; once
+        # SELECT obeys them, rows missing these columns are stripped.
         mock_db = MockSupabaseClient()
         mock_db.set_table_data("certidao_resultados", [
-            {"api_requested_at": "2026-03-13T10:00:00+00:00"},
+            {"tipo": TJSP_TIPO, "org_id": "org-001", "api_requested_at": "2026-03-13T10:00:00+00:00"},
         ])
         result = _get_tjsp_last_request_at("org-001", mock_db)
         assert result is not None
@@ -801,9 +805,11 @@ class TestGetTjspLastRequestAt:
     def test_survives_status_reset_on_reprocessing(self):
         """api_requested_at is preserved even when status is reset to na_fila,
         so the cooldown is still enforced after reprocessing."""
+        # `tipo` + `org_id` required on seed — same MOCK-SELECT shape as
+        # test_with_previous_request above.
         mock_db = MockSupabaseClient()
         mock_db.set_table_data("certidao_resultados", [
-            {"api_requested_at": "2026-03-13T10:00:00+00:00", "status": "na_fila"},
+            {"tipo": TJSP_TIPO, "org_id": "org-001", "api_requested_at": "2026-03-13T10:00:00+00:00", "status": "na_fila"},
         ])
         result = _get_tjsp_last_request_at("org-001", mock_db)
         assert result is not None
@@ -825,10 +831,13 @@ class TestGetTjspRemainingCooldown:
     def test_cooldown_active(self):
         """Recent request → positive seconds remaining."""
         from datetime import datetime, timezone, timedelta
+        # `tipo` + `org_id` required on seed — same MOCK-SELECT shape as
+        # TestGetTjspLastRequestAt above (this test calls the same helper
+        # internally through `_get_tjsp_remaining_cooldown`).
         mock_db = MockSupabaseClient()
         five_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
         mock_db.set_table_data("certidao_resultados", [
-            {"api_requested_at": five_min_ago},
+            {"tipo": TJSP_TIPO, "org_id": "org-001", "api_requested_at": five_min_ago},
         ])
         result = _get_tjsp_remaining_cooldown("org-001", mock_db)
         # Should be ~40 min remaining (45 - 5)
@@ -870,9 +879,13 @@ class TestScheduleTjspForOrg:
     def test_creates_task_for_queued_item(self):
         """Queued item → schedules coroutine via the seed helper."""
         import app.services.certidoes_service as svc
+        # `tipo` + `status` required on seed: production filters by
+        # `.eq("tipo", TJSP_TIPO).eq("status", "na_fila").eq("org_id", org_id)`.
+        # Pre-MOCK-SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated;
+        # once SELECT obeys them, rows missing `tipo`/`status` are stripped.
         mock_db = MockSupabaseClient()
         mock_db.set_table_data("certidao_resultados", [
-            {"id": "res-1", "consulta_id": "c-1", "org_id": "org-001"},
+            {"id": "res-1", "tipo": TJSP_TIPO, "status": "na_fila", "consulta_id": "c-1", "org_id": "org-001"},
         ])
 
         svc._tjsp_scheduled_tasks.pop("org-001", None)
@@ -919,9 +932,14 @@ class TestDelayedTjspProcess:
     async def test_processes_item_when_still_queued(self):
         """Item is na_fila → processes it."""
         import app.services.certidoes_service as svc
+        # `id` required on seed: `_delayed_tjsp_process` re-fetches via
+        # `.eq("id", resultado_id)`. Pre-MOCK-SELECT-PREDICATE-FIX the
+        # predicate was tracked-but-unevaluated; once SELECT obeys it, the
+        # missing `id` strips the row and the helper skips with "no longer
+        # na_fila", never calling _process_single_tjsp_item.
         mock_db = MockSupabaseClient()
         mock_db.set_table_data("certidao_resultados", [
-            {"status": "na_fila"},
+            {"id": "res-1", "status": "na_fila"},
         ])
 
         resultado = {"id": "res-1", "consulta_id": "c-1", "org_id": "org-001"}
@@ -974,11 +992,16 @@ class TestDelayedTjspProcess:
 class TestScheduleAllPendingTjsp:
     def test_schedules_per_org(self):
         """Scans for queued items and schedules one task per org."""
+        # `tipo` + `status` required on each seed row: production filters by
+        # `.eq("tipo", TJSP_TIPO).eq("status", "na_fila")` before grouping by
+        # org. Pre-MOCK-SELECT-PREDICATE-FIX predicates were tracked-but-
+        # unevaluated; once SELECT obeys them, rows missing these columns
+        # are stripped and zero orgs land in the set.
         mock_db = MockSupabaseClient()
         mock_db.set_table_data("certidao_resultados", [
-            {"org_id": "org-001"},
-            {"org_id": "org-001"},
-            {"org_id": "org-002"},
+            {"tipo": TJSP_TIPO, "status": "na_fila", "org_id": "org-001"},
+            {"tipo": TJSP_TIPO, "status": "na_fila", "org_id": "org-001"},
+            {"tipo": TJSP_TIPO, "status": "na_fila", "org_id": "org-002"},
         ])
 
         with patch("app.services.certidoes_service.schedule_tjsp_for_org") as mock_schedule:
@@ -1009,8 +1032,13 @@ class TestProcessarConsultaTjspQueue:
         mock_db = MockSupabaseClient()
         mock_db.set_table_data("certidao_consultas", CONSULTA_CPF)
 
+        # `consulta_id` required on each seed row: production filters by
+        # `.eq("consulta_id", consulta_id)`. Pre-MOCK-SELECT-PREDICATE-FIX the
+        # predicate was tracked-but-unevaluated; once SELECT obeys it, rows
+        # missing `consulta_id` are stripped and zero resultados feed the
+        # parallel-process loop.
         resultados = [
-            {"id": f"res-{i}", "tipo": c["tipo"], "status": "pendente"}
+            {"id": f"res-{i}", "consulta_id": "consulta-001", "tipo": c["tipo"], "status": "pendente"}
             for i, c in enumerate(CERTIDOES_CONFIG)
         ]
         mock_db.set_table_data("certidao_resultados", resultados)
@@ -1039,8 +1067,10 @@ class TestProcessarConsultaTjspQueue:
         mock_db = MockSupabaseClient()
         mock_db.set_table_data("certidao_consultas", CONSULTA_CPF)
 
+        # `consulta_id` required on each seed row — same MOCK-SELECT shape as
+        # test_tjsp_queued_when_cooldown_active above.
         resultados = [
-            {"id": f"res-{i}", "tipo": c["tipo"], "status": "pendente"}
+            {"id": f"res-{i}", "consulta_id": "consulta-001", "tipo": c["tipo"], "status": "pendente"}
             for i, c in enumerate(CERTIDOES_CONFIG)
         ]
         mock_db.set_table_data("certidao_resultados", resultados)

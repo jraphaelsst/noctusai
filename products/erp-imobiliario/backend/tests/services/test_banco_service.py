@@ -225,10 +225,14 @@ class TestAutoConciliar:
         """When movimentacoes and lancamentos match on tipo+valor+data, they should be reconciled."""
         db = MockSupabaseClient()
 
+        # `extrato_id` + `conciliado` required on seed: production filters by
+        # `.eq("extrato_id", extrato_id).eq("conciliado", False)`. Pre-MOCK-
+        # SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated; once
+        # SELECT obeys them, missing columns silently strip rows.
         movs = [
-            {"id": "m1", "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
-            {"id": "m2", "tipo": "debito", "valor": 500.0, "data": "2026-01-20"},
-            {"id": "m3", "tipo": "credito", "valor": 2000.0, "data": "2026-01-25"},  # no match
+            {"id": "m1", "extrato_id": "ext-1", "conciliado": False, "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
+            {"id": "m2", "extrato_id": "ext-1", "conciliado": False, "tipo": "debito", "valor": 500.0, "data": "2026-01-20"},
+            {"id": "m3", "extrato_id": "ext-1", "conciliado": False, "tipo": "credito", "valor": 2000.0, "data": "2026-01-25"},  # no match
         ]
         lancs = [
             {"id": "l1", "tipo": "receita", "valor": 1000.0, "data_vencimento": "2026-01-15", "status": "pendente"},
@@ -250,9 +254,11 @@ class TestAutoConciliar:
         """Two movimentacoes with the same signature should not both match the same lancamento."""
         db = MockSupabaseClient()
 
+        # `extrato_id` + `conciliado` required on seed — same MOCK-SELECT shape
+        # as test_matching_logic above.
         movs = [
-            {"id": "m1", "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
-            {"id": "m2", "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
+            {"id": "m1", "extrato_id": "ext-1", "conciliado": False, "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
+            {"id": "m2", "extrato_id": "ext-1", "conciliado": False, "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
         ]
         lancs = [
             {"id": "l1", "tipo": "receita", "valor": 1000.0, "data_vencimento": "2026-01-15", "status": "pendente"},

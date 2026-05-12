@@ -187,13 +187,24 @@ class TestCheckVencidos:
 
     @pytest.mark.asyncio
     async def test_overdue_records_counted(self):
-        db = MockSupabaseClient(data=[{"id": "i1"}, {"id": "i2"}])
+        # Production runs TWO SELECTs (status=pendente + status=parcial)
+        # each with `.lt("data_vencimento", today)`. Pre-MOCK-SELECT-PREDICATE-
+        # FIX both queries returned the same 2 rows (predicates tracked-but-
+        # unevaluated), totalling 4. Post-fix each predicate must literally
+        # match — seed 2 pendente + 2 parcial rows (4 distinct), each with a
+        # past `data_vencimento` so `.lt("data_vencimento", today)` passes.
+        past = "2000-01-01"
+        db = MockSupabaseClient(data=[
+            {"id": "i1", "status": "pendente", "data_vencimento": past},
+            {"id": "i2", "status": "pendente", "data_vencimento": past},
+            {"id": "i3", "status": "parcial", "data_vencimento": past},
+            {"id": "i4", "status": "parcial", "data_vencimento": past},
+        ])
 
         from app.services.impostos_service import ImpostosService
         svc = ImpostosService(db, "u1")
 
         count = await svc.check_vencidos()
 
-        # The mock returns 2 records for both pendente and parcial queries,
-        # so 4 total (2+2) get updated
+        # 2 pendente + 2 parcial overdue rows, all past data_vencimento.
         assert count == 4

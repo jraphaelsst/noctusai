@@ -199,7 +199,16 @@ class TestMarkOverdue:
 
     @pytest.mark.asyncio
     async def test_overdue_records_are_escalated(self):
-        db = MockSupabaseClient(data=[{"id": "o1"}, {"id": "o2"}, {"id": "o3"}])
+        # `status` + `data_previsao` required on seed: production filters by
+        # `.in_("status", ["aberto", "em_andamento"]).lt("data_previsao", today)`.
+        # Pre-MOCK-SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated;
+        # once SELECT obeys them, missing columns silently strip rows.
+        past = "2000-01-01"
+        db = MockSupabaseClient(data=[
+            {"id": "o1", "status": "aberto", "data_previsao": past},
+            {"id": "o2", "status": "em_andamento", "data_previsao": past},
+            {"id": "o3", "status": "aberto", "data_previsao": past},
+        ])
 
         from app.services.manutencao_service import ManutencaoService
         svc = ManutencaoService(db, "u1")

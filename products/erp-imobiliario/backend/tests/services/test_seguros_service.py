@@ -154,7 +154,15 @@ class TestCheckVencidos:
         assert count == 0
 
     def test_expired_policies_are_counted(self):
-        db = MockSupabaseClient(data=[{"id": "s1"}, {"id": "s2"}])
+        # `status` + `data_vencimento` required on seed: production filters by
+        # `.eq("status", "ativo").lt("data_vencimento", today)`. Pre-MOCK-
+        # SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated; once
+        # SELECT obeys them, missing columns silently strip rows.
+        past = "2000-01-01"
+        db = MockSupabaseClient(data=[
+            {"id": "s1", "status": "ativo", "data_vencimento": past},
+            {"id": "s2", "status": "ativo", "data_vencimento": past},
+        ])
 
         from app.services.seguros_service import SegurosService
         svc = SegurosService(db, "u1")

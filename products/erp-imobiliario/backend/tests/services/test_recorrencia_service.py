@@ -90,9 +90,14 @@ class TestGerarAlugueisMes:
         """Contracts that already have a lancamento for the reference month are skipped."""
         db = MockSupabaseClient()
 
+        # `status` required on seed: production filters contratos_locacao by
+        # `.eq("status", "ativo")`. Pre-MOCK-SELECT-PREDICATE-FIX the predicate
+        # was tracked-but-unevaluated; once SELECT obeys it, rows without
+        # `status` are stripped and total_contratos collapses to 0.
         contratos = [
             {
                 "id": "c-aaa-1111",
+                "status": "ativo",
                 "valor_aluguel": 2500.0,
                 "dia_vencimento": 10,
             },
@@ -143,10 +148,12 @@ class TestGerarAlugueisMes:
         """Mix of contracts: some already generated, some new."""
         db = MockSupabaseClient()
 
+        # `status` required on each seed row — same MOCK-SELECT shape as
+        # test_skips_already_generated above.
         contratos = [
-            {"id": "c-111", "valor_aluguel": 1000.0, "dia_vencimento": 5},
-            {"id": "c-222", "valor_aluguel": 2000.0, "dia_vencimento": 10},
-            {"id": "c-333", "valor_aluguel": 3000.0, "dia_vencimento": 15},
+            {"id": "c-111", "status": "ativo", "valor_aluguel": 1000.0, "dia_vencimento": 5},
+            {"id": "c-222", "status": "ativo", "valor_aluguel": 2000.0, "dia_vencimento": 10},
+            {"id": "c-333", "status": "ativo", "valor_aluguel": 3000.0, "dia_vencimento": 15},
         ]
         db.set_table_data("contratos_locacao", contratos)
 

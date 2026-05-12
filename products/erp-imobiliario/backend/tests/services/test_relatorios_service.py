@@ -138,16 +138,20 @@ class TestConversaoFunil:
     def test_all_stages_present(self):
         db = MockSupabaseClient()
 
+        # `arquivado` required on each seed row: production filters by
+        # `.eq("arquivado", False)`. Pre-MOCK-SELECT-PREDICATE-FIX the
+        # predicate was tracked-but-unevaluated; once SELECT obeys it, rows
+        # without `arquivado` are stripped and the funnel collapses to empty.
         clientes = [
-            {"id": "c-1", "etapa_atual": "qualificacao"},
-            {"id": "c-2", "etapa_atual": "qualificacao"},
-            {"id": "c-3", "etapa_atual": "qualificacao"},
-            {"id": "c-4", "etapa_atual": "qualificacao"},
-            {"id": "c-5", "etapa_atual": "visitas"},
-            {"id": "c-6", "etapa_atual": "visitas"},
-            {"id": "c-7", "etapa_atual": "proposta"},
-            {"id": "c-8", "etapa_atual": "negociacao"},
-            {"id": "c-9", "etapa_atual": "fechado"},
+            {"id": "c-1", "arquivado": False, "etapa_atual": "qualificacao"},
+            {"id": "c-2", "arquivado": False, "etapa_atual": "qualificacao"},
+            {"id": "c-3", "arquivado": False, "etapa_atual": "qualificacao"},
+            {"id": "c-4", "arquivado": False, "etapa_atual": "qualificacao"},
+            {"id": "c-5", "arquivado": False, "etapa_atual": "visitas"},
+            {"id": "c-6", "arquivado": False, "etapa_atual": "visitas"},
+            {"id": "c-7", "arquivado": False, "etapa_atual": "proposta"},
+            {"id": "c-8", "arquivado": False, "etapa_atual": "negociacao"},
+            {"id": "c-9", "arquivado": False, "etapa_atual": "fechado"},
         ]
         db.set_table_data("clientes", clientes)
 
@@ -224,10 +228,12 @@ class TestConversaoFunil:
         """All clients in one stage, none elsewhere."""
         db = MockSupabaseClient()
 
+        # `arquivado` required on each seed row — same MOCK-SELECT shape as
+        # test_all_stages_present above.
         db.set_table_data("clientes", [
-            {"id": "c-1", "etapa_atual": "visitas"},
-            {"id": "c-2", "etapa_atual": "visitas"},
-            {"id": "c-3", "etapa_atual": "visitas"},
+            {"id": "c-1", "arquivado": False, "etapa_atual": "visitas"},
+            {"id": "c-2", "arquivado": False, "etapa_atual": "visitas"},
+            {"id": "c-3", "arquivado": False, "etapa_atual": "visitas"},
         ])
 
         from app.services.relatorios_service import conversao_funil

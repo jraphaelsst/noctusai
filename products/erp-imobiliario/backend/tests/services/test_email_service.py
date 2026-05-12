@@ -163,7 +163,14 @@ class TestEnviar:
 class TestGetHistoricoCliente:
 
     def test_returns_list(self):
-        db = MockSupabaseClient(data=[{"id": "e1"}, {"id": "e2"}])
+        # `cliente_id` required on seed: production filters by
+        # `.eq("cliente_id", cliente_id)`. Pre-MOCK-SELECT-PREDICATE-FIX
+        # predicates were tracked-but-unevaluated; once SELECT obeys them,
+        # missing `cliente_id` silently strips rows.
+        db = MockSupabaseClient(data=[
+            {"id": "e1", "cliente_id": "client-1"},
+            {"id": "e2", "cliente_id": "client-1"},
+        ])
 
         from app.services.email_service import EmailService
         svc = EmailService(db, "user-1")

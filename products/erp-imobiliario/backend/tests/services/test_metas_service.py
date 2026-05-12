@@ -197,8 +197,13 @@ class TestCriarMetasHoje:
             "meta_pretendida": 100,
             "ativo": True,
         }]
-        # One meta already exists for "diaria"
+        # One meta already exists for "diaria". `usuario_id` required on seed:
+        # production filters existing metas by `.eq("usuario_id", user_id)`.
+        # Pre-MOCK-SELECT-PREDICATE-FIX the predicate was tracked-but-unevaluated;
+        # once SELECT obeys it, rows without `usuario_id` are stripped → all 4
+        # metas get inserted (instead of skipping the existing diaria).
         existing = [{
+            "usuario_id": "user-1",
             "tipo": "diaria",
             "categoria": "ligacoes",
             "data_prazo": _period_end_date("diaria", ref).isoformat(),
@@ -329,8 +334,10 @@ class TestCriarMetasHoje:
             "meta_pretendida": 100,
             "ativo": True,
         }]
+        # `usuario_id` required on each seed row — same MOCK-SELECT shape as
+        # test_skips_existing_metas above.
         existing = [
-            {"tipo": tipo, "categoria": "ligacoes", "data_prazo": _period_end_date(tipo, ref).isoformat()}
+            {"usuario_id": "user-1", "tipo": tipo, "categoria": "ligacoes", "data_prazo": _period_end_date(tipo, ref).isoformat()}
             for tipo in ["diaria", "semanal", "mensal", "anual"]
         ]
         db = self._make_db(configs=configs, existing_metas=existing)
