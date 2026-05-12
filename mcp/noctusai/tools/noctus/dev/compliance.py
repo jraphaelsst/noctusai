@@ -2992,6 +2992,392 @@ def check_slowapi_with_pep563(product_path: Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Hygiene-compliance detectors — shipped 2026-05-11 by
+# `keeper-housekeeping-upgrade` Phase 1. The keeper trio (keeper/hound/mole)
+# already covers compliance/curatorial/storage; these four detectors close
+# the residual housekeeping gap where transient coordination state, archive
+# residue, dead branches, and gitignore drift accumulate silently and only
+# get caught by ad-hoc user requests ("clean the archive", "kill old
+# branches"). Per the `feedback_archive_clean_trigger` + the dispatcher-
+# inbox/outbox + mole-last-sweep gitignore decisions logged 2026-05-11.
+#
+# All four are `<platform>` / `<root>` scoped and emit at `warning` severity
+# by default — they are housekeeping, not contract violations. Escalation
+# rules (e.g. archive entries >7d → high) live inline.
+# ---------------------------------------------------------------------------
+
+
+_ARCHIVE_DIR_NAME = "archive"
+_ARCHIVE_DATE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DISPATCHER_INBOX_FILENAME = "dispatcher-inbox.md"
+_DISPATCHER_HEADING_RE = re.compile(
+    r"^###\s+(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})\s+[—-]\s+(.+?)\s*$",
+    re.MULTILINE,
+)
+_DISPATCHER_PENDING_RE = re.compile(
+    r"^##\s+Pending\s*$.*?(?=^##\s+|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+# Paths that should be in .gitignore — transient coordination artifacts,
+# log files, and `dispatcher-outbox.md` (operator-written outcomes, see
+# KB § PATTERNS/two-session-architect-operator.md). Extend when new
+# transient surfaces land; the detector flags missing entries, not
+# extra entries.
+_EXPECTED_GITIGNORE_PATHS: tuple[str, ...] = (
+    "dispatcher-outbox.md",
+    "scripts/mole-last-sweep.log",
+    "scripts/archive-clean-last-sweep.log",
+)
+
+
+def _parse_iso_date(s: str):
+    """Parse `YYYY-MM-DD` → date object, returning None on failure.
+
+    Kept local + tiny rather than reaching for `dateutil` — these detectors
+    only ever see the ISO date format the archive + dispatcher conventions
+    pin.
+    """
+    import datetime as _dt
+
+    try:
+        return _dt.date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def check_archive_staleness(repo_root: Path | None = None) -> list[dict]:
+    """Detect date-stamped folders under `archive/<bucket>/YYYY-MM-DD/` that
+    are older than D-2 (D = today, D-1 = yesterday).
+
+    Why: per `feedback_archive_clean_trigger` (memory 2026-05-XX), the
+    convention is "keep today + yesterday, delete D-2+". Users currently
+    invoke `bash scripts/archive-clean.sh --force` manually; this detector
+    surfaces accumulation so the keeper can recommend the sweep.
+
+    Folder shape recognized: `archive/<bucket>/YYYY-MM-DD/` where `<bucket>`
+    is any subdir (projects/, features/, seed-absorption/, …). Folders
+    whose name doesn't match the ISO-date pattern are ignored — they're
+    typically README.md siblings or non-date-stamped buckets.
+
+    Severity:
+      - `warning` for stale entries within the first week (D-2 to D-7).
+      - `high` past 7 days (a long-overlooked accumulation).
+    """
+    import datetime as _dt
+
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    archive_dir = root / _ARCHIVE_DIR_NAME
+    if not archive_dir.exists() or not archive_dir.is_dir():
+        return issues
+
+    today = _dt.date.today()
+    # Keep today + yesterday only. Any folder dated < yesterday → flag.
+    # I.e. threshold is yesterday (today - 1d); folders with date < threshold
+    # are stale.
+    threshold = today - _dt.timedelta(days=1)
+
+    for bucket in sorted(archive_dir.iterdir()):
+        if not bucket.is_dir() or bucket.name.startswith("."):
+            continue
+        for dated in sorted(bucket.iterdir()):
+            if not dated.is_dir():
+                continue
+            if not _ARCHIVE_DATE_NAME_RE.match(dated.name):
+                continue
+            d = _parse_iso_date(dated.name)
+            if d is None:
+                continue
+            if d >= threshold:
+                continue
+            age_days = (today - d).days
+            try:
+                rel = str(dated.relative_to(root))
+            except ValueError:
+                rel = str(dated)
+            severity = "high" if age_days > 7 else "warning"
+            issues.append({
+                "product": "<root>",
+                "file": rel,
+                "issue": (
+                    f"Archive entry `{rel}` is {age_days} days old "
+                    f"(threshold: keep today + yesterday only). Run "
+                    f"`bash scripts/archive-clean.sh --force` to trim "
+                    f"entries older than D-1. Per "
+                    f"`feedback_archive_clean_trigger`."
+                ),
+                "severity": severity,
+            })
+    return issues
+
+
+def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
+    """Detect entries in `dispatcher-inbox.md` `## Pending` section that
+    were appended >24h ago and never moved to `## Completed`.
+
+    Why: per `KB § PATTERNS/two-session-architect-operator.md`, the
+    inbox is a coordination channel — entries that sit there past 24h
+    indicate the operator session is offline or the entry got missed.
+    The keeper surfaces accumulation so the architect notices.
+
+    Entry shape recognized: `### YYYY-MM-DDTHH:MM — <SHORT-NAME>` per
+    the inbox-format scaffold. Entries inside `## Completed` are ignored.
+
+    Severity:
+      - `warning` for 24h–72h-old pending entries.
+      - `high` past 7 days (operator session likely abandoned).
+    """
+    import datetime as _dt
+
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    inbox = root / _DISPATCHER_INBOX_FILENAME
+    if not inbox.exists() or not inbox.is_file():
+        return issues
+
+    try:
+        content = inbox.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("compliance: cannot read %s (%s)", inbox, exc)
+        return issues
+
+    pending_match = _DISPATCHER_PENDING_RE.search(content)
+    if pending_match is None:
+        return issues
+    pending_block = pending_match.group(0)
+
+    now = _dt.datetime.now()
+
+    for m in _DISPATCHER_HEADING_RE.finditer(pending_block):
+        date_str, hour_str, min_str, label = m.groups()
+        d = _parse_iso_date(date_str)
+        if d is None:
+            continue
+        try:
+            ts = _dt.datetime.combine(
+                d,
+                _dt.time(hour=int(hour_str), minute=int(min_str)),
+            )
+        except ValueError:
+            continue
+        age = now - ts
+        age_hours = age.total_seconds() / 3600.0
+        if age_hours < 24:
+            continue
+        severity = "high" if age.days > 7 else "warning"
+        issues.append({
+            "product": "<platform>",
+            "file": _DISPATCHER_INBOX_FILENAME,
+            "issue": (
+                f"Dispatcher pending entry `{date_str}T{hour_str}:{min_str} "
+                f"— {label}` is {age_hours:.0f}h old. The architect/operator "
+                f"split expects pending entries to drain within 24h. Either "
+                f"resume operator session and consume the entry, or move it "
+                f"to `## Completed` with a `❌ stale` marker. Per "
+                f"`KB § PATTERNS/two-session-architect-operator.md`."
+            ),
+            "severity": severity,
+        })
+    return issues
+
+
+def check_branch_orphan(repo_root: Path | None = None) -> list[dict]:
+    """Detect local branches whose last commit is >30 days old AND that
+    are either merged to `origin/main` or otherwise abandonable.
+
+    Why: in practice the platform accumulates hundreds of branches from
+    per-engineer worktrees. Merged branches >30d are pure clutter; deleting
+    them keeps `git branch` output legible and lets `bootstrap-worktree.sh`
+    find a clean tree faster.
+
+    Implementation:
+      - `git for-each-ref --format='%(refname:short)|%(committerdate:iso8601)' refs/heads/`
+        to enumerate local branches + last-commit date.
+      - For each, check merged-to-`origin/main` via `git merge-base --is-ancestor`.
+      - Flag with appropriate severity. NEVER deletes — observation-only
+        per the keeper-observation-only methodology.
+
+    Severity:
+      - `warning` per merged branch >30d old.
+      - `high` only if the merged-orphan count surpasses 50 (signals
+        bulk cleanup needed).
+    """
+    import subprocess
+    import datetime as _dt
+
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not (root / ".git").exists() and not (root / ".git").is_file():
+        # Not a git repo (or detached working tree without .git pointer) — skip.
+        return issues
+
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(root),
+                "for-each-ref",
+                "--format=%(refname:short)|%(committerdate:iso8601)",
+                "refs/heads/",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("compliance: git unavailable for branch-orphan check (%s); skipping", exc)
+        return issues
+
+    if result.returncode != 0:
+        return issues
+
+    today = _dt.date.today()
+    stale_threshold_days = 30
+    orphans: list[tuple[str, int]] = []
+
+    for line in result.stdout.splitlines():
+        if "|" not in line:
+            continue
+        name, date_str = line.split("|", 1)
+        name = name.strip()
+        date_str = date_str.strip()
+        if not name or name in {"main", "master"}:
+            continue
+        # Parse the date portion only — committerdate:iso8601 looks like
+        # `2026-04-12 18:23:11 +0000`. Ignoring the time + tz is fine for
+        # day-granularity staleness checks.
+        date_only = date_str.split(" ", 1)[0]
+        d = _parse_iso_date(date_only)
+        if d is None:
+            continue
+        age_days = (today - d).days
+        if age_days < stale_threshold_days:
+            continue
+
+        # Check merged-to-origin/main. If origin/main isn't fetched, skip
+        # the merged-check (don't flag everything as orphan in that case).
+        try:
+            merged = subprocess.run(
+                ["git", "-C", str(root), "merge-base", "--is-ancestor", name, "origin/main"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        if merged.returncode != 0:
+            # Not merged — leave alone; this branch may still hold WIP.
+            continue
+        orphans.append((name, age_days))
+
+    if not orphans:
+        return issues
+
+    # Emit individual entries up to a small cap to keep keeper output legible,
+    # plus one summary line at higher severity if the count breaches 50.
+    cap = 10
+    for name, age_days in orphans[:cap]:
+        issues.append({
+            "product": "<platform>",
+            "file": f".git/refs/heads/{name}",
+            "issue": (
+                f"Branch `{name}` is {age_days} days stale AND merged to "
+                f"`origin/main`. Safe to delete: "
+                f"`git branch -d {name}` (or `-D` if local-only commits "
+                f"are reflog-recoverable). Bulk cleanup: "
+                f"`bash scripts/cleanup-stale-worktrees.sh` cleans "
+                f"merged-branch worktrees + their dirs."
+            ),
+            "severity": "warning",
+        })
+    remaining = len(orphans) - cap
+    if remaining > 0:
+        issues.append({
+            "product": "<platform>",
+            "file": ".git/refs/heads/",
+            "issue": (
+                f"+{remaining} more stale-merged branches not listed "
+                f"(total: {len(orphans)}). Bulk cleanup: "
+                f"`git for-each-ref --merged origin/main --format='%(refname:short)' refs/heads/ "
+                f"| xargs -n1 git branch -d`."
+            ),
+            "severity": "high" if len(orphans) > 50 else "warning",
+        })
+    return issues
+
+
+def check_gitignore_drift(repo_root: Path | None = None) -> list[dict]:
+    """Detect expected transient-coordination paths missing from `.gitignore`.
+
+    Why: the platform has a small set of transient artifacts that MUST
+    stay untracked (`dispatcher-outbox.md`, `scripts/mole-last-sweep.log`,
+    `scripts/archive-clean-last-sweep.log`). Without explicit gitignore
+    entries an absent-minded `git add .` commits them, polluting history
+    with operator-only state.
+
+    The expected-paths list is the source of truth (`_EXPECTED_GITIGNORE_PATHS`).
+    When a new transient artifact lands, extend the tuple + amend this
+    detector's regression test — the detector then catches the drift
+    automatically across every checkout.
+
+    Severity:
+      - `warning` per missing entry — drift, not a contract violation.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    gitignore = root / ".gitignore"
+    if not gitignore.exists() or not gitignore.is_file():
+        # No .gitignore at all is a separate (much louder) problem;
+        # surface as a single high-severity entry.
+        issues.append({
+            "product": "<root>",
+            "file": ".gitignore",
+            "issue": (
+                "Repository has no `.gitignore` at root — every transient "
+                "artifact path is at risk of being tracked. Create one with "
+                "the standard NoctusAI exclusions."
+            ),
+            "severity": "high",
+        })
+        return issues
+
+    try:
+        content = gitignore.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("compliance: cannot read %s (%s)", gitignore, exc)
+        return issues
+
+    # Strip comments + blank lines; normalize each pattern.
+    patterns: set[str] = set()
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        patterns.add(line)
+
+    for expected in _EXPECTED_GITIGNORE_PATHS:
+        # Accept both exact match + leading-slash anchored form.
+        if expected in patterns or f"/{expected}" in patterns:
+            continue
+        issues.append({
+            "product": "<root>",
+            "file": ".gitignore",
+            "issue": (
+                f"Expected transient path `{expected}` is missing from "
+                f"`.gitignore`. Append the literal pattern to keep "
+                f"operator-only state from being tracked. The expected-paths "
+                f"list lives in `_EXPECTED_GITIGNORE_PATHS` in "
+                f"`mcp/noctusai/tools/noctus/dev/compliance.py` — extend when "
+                f"new transient surfaces land."
+            ),
+            "severity": "warning",
+        })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -3277,6 +3663,11 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_silent_errors())
     all_issues.extend(check_clean_folder_violations())
     all_issues.extend(check_section_7_placeholder_consistency())
+    # Hygiene-compliance globals — `keeper-housekeeping-upgrade` Phase 1.
+    all_issues.extend(check_archive_staleness())
+    all_issues.extend(check_dispatcher_staleness())
+    all_issues.extend(check_branch_orphan())
+    all_issues.extend(check_gitignore_drift())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

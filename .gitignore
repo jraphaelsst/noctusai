@@ -63,3 +63,12 @@ seed/lib/backend/noctusai_lib/_version_static.py
 # `KB § PATTERNS/project-execution.md § 2.11 Phase enrichment loop`.
 mcp/noctusai/data/
 
+# Coordination + log artifacts (per keeper-housekeeping-upgrade Phase 1).
+# `dispatcher-outbox.md` is operator-written output for the two-session split
+# (KB § PATTERNS/two-session-architect-operator.md); the two `*-last-sweep.log`
+# files are mole/archive transient run logs. Enforced by
+# `check_gitignore_drift` in `mcp/noctusai/tools/noctus/dev/compliance.py`.
+dispatcher-outbox.md
+scripts/mole-last-sweep.log
+scripts/archive-clean-last-sweep.log
+

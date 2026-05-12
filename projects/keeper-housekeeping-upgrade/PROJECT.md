@@ -82,7 +82,11 @@ Operator tick 2 (2026-05-11) surfaced four hygiene-compliance gaps that no curre
 
 ## 6. Phase plan
 
-### Phase 1 — Detector scaffolding + tests (single engineer K, single PR)
+### Phase 1 — Detector scaffolding + tests ✅ DONE 2026-05-11 (Engineer K)
+
+**Improvements:** none identified for Phase 1 specifically. Two architect-followups surfaced (filed to §11):
+- `_detect()` consistency: 7 existing pre-existing global detectors aren't wired through `review.py::_detect()`; engineer mirrored existing pattern (validate-only). Decision deferred to a separate methodology pass.
+- Editable-install re-point gotcha at worktree time — captured for KB § GUIDES/setup.md amendment.
 
 **1.1** Read `compliance.py` global-checks section end-to-end. Identify registration pattern (likely a list near `_detect_global` or similar).
 
@@ -161,3 +165,4 @@ bash scripts/verify-kb-sync.sh
 ## 11. Change log
 
 - **2026-05-11** — Project filed. Design locked with user: "all 4 detectors in one pass". Engineer K dispatch authorized.
+- **2026-05-11** — Phase 1 shipped (Engineer K). 4 hygiene-compliance detectors landed in `mcp/noctusai/tools/noctus/dev/compliance.py` + colocated regression suite (`tests/test_compliance_hygiene.py`, 19 tests green) + drive-by `.gitignore` patch (dispatcher-outbox + 2 sweep logs). All wired into `check_all_products()` global-checks section. Real-repo live findings: archive=0, dispatcher=0, branch-orphan=0 (all 290 local branches are recent), gitignore-drift=3 (closed by the drive-by patch). Tracking-shape decision for `dispatcher-inbox.md`: **kept tracked as-is** (scaffold file with header docstring + section structure — keeping it in history lets fresh clones bootstrap the two-session pattern without an extra setup step; `dispatcher-outbox.md` is the operator-only churn surface and that one IS gitignored).
