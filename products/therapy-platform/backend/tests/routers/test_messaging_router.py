@@ -154,7 +154,13 @@ SAMPLE_MESSAGE = {
     "content": "Olá, como você está?",
     "file_url": None,
     "ai_processed_content": None,
-    "deleted_at": None,
+    # MOCK-SELECT-PREDICATE-FIX (45be944): messaging_service.get_messages
+    # filters via `.is_("deleted_at", "null")`. Seed mock's `_eval_is` is
+    # literal Python `is`: `None is "null"` → False filters rows out
+    # (test_get_messages_success asserts len(data)==1 → fails on empty).
+    # Use interned string "null" so `"null" is "null"` → True. Test-only
+    # shim until the seed mock implements IS NULL semantics.
+    "deleted_at": "null",
     "created_at": "2026-04-01T12:00:00Z",
 }
 

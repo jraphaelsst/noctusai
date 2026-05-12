@@ -167,6 +167,10 @@ class TestRescheduleEndpoint:
             "appointments",
             [
                 {
+                    # MOCK-SELECT-PREDICATE-FIX: route filters via
+                    # `.eq("id", appointment_id)` — seed row MUST carry `id`
+                    # or the row is filtered out and route 404s.
+                    "id": "appt-1",
                     "therapist_id": THERAPIST_ID,
                     "patient_id": "patient-X",
                     "clinic_id": None,
@@ -202,6 +206,9 @@ class TestRescheduleEndpoint:
             "appointments",
             [
                 {
+                    # MOCK-SELECT-PREDICATE-FIX: route filters via
+                    # `.eq("id", appointment_id)` — seed row MUST carry `id`.
+                    "id": "appt-1",
                     "therapist_id": OTHER_THERAPIST_ID,
                     "patient_id": "patient-X",
                     "clinic_id": None,

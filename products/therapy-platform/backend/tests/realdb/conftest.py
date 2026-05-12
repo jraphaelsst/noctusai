@@ -45,9 +45,17 @@ pytestmark = pytest.mark.realdb
 def _get_credentials() -> tuple[str, str]:
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not url or not key:
+    # The unit-test conftest at `tests/conftest.py` sets placeholder env vars
+    # (URL=http://test.local, KEY=aaa.bbb.ccc) so the seed framework's
+    # `app.database` module-import doesn't crash when SUPABASE_* are unset.
+    # Treat those placeholders as "not set" so realdb tests still skip when
+    # no real Supabase credentials are configured.
+    _PLACEHOLDER_URL = "http://test.local"
+    _PLACEHOLDER_KEY = "aaa.bbb.ccc"
+    if not url or not key or url == _PLACEHOLDER_URL or key == _PLACEHOLDER_KEY:
         pytest.skip(
-            "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — skipping realdb"
+            "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set (or set to unit-"
+            "test placeholders from tests/conftest.py) — skipping realdb"
         )
     return url, key
 

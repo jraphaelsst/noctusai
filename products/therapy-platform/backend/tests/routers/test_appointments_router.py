@@ -23,16 +23,27 @@ class TestCreateAppointment:
     """POST /api/appointments"""
 
     def test_create_appointment_patient(self, patient_client):
-        """Patient creates an appointment.
+        """Patient creates an appointment — happy path.
 
-        The mock conflict check returns any data in the appointments table,
-        so with existing appointment data the service returns 409
-        (therapist already has a session at this time). This tests that
-        the router correctly delegates to the service and returns the
-        service's conflict response.
+        Pre-MOCK-SELECT-PREDICATE-FIX (45be944) the conflict check `db.table(
+        "appointments").select("id").eq("therapist_id", ...).execute()` was
+        evaluated as match-all by the mock, so ANY seeded appointment row
+        triggered the conflict-409 branch and the test asserted 409 with a
+        comment calling it a "mock limitation". Post-fix the predicate now
+        evaluates literally — seeded therapist_id="test-user-123" no longer
+        matches the requested therapist_id="therapist-001", so the conflict
+        path is correctly NOT taken and the service returns 200.
+
+        Note: synthesizing a real conflict would also need the mock's `not_`
+        no-op semantics to NOT drop the negation — currently `.not_.in_(
+        "status", ["cancelled", ...])` is recorded as `.in_(...)` (negation
+        lost), so any row with status="scheduled" is excluded by the broken
+        predicate. Until the seed mock implements `not_`, this test asserts
+        the happy path; conflict semantics are exercised at the service
+        level in `tests/services/test_scheduling_service.py`.
         """
         patient_client._mock_supabase.set_table_data("availability_slots", [])
-        patient_client._mock_supabase.set_table_data("appointments", [SAMPLE_APPOINTMENT])
+        patient_client._mock_supabase.set_table_data("appointments", [])
         patient_client._mock_supabase.set_table_data("video_rooms", [])
         patient_client._mock_supabase.set_table_data("therapist_profiles", [
             {"user_id": "therapist-001", "session_duration_minutes": 50},
@@ -43,8 +54,7 @@ class TestCreateAppointment:
             "therapist_id": "therapist-001",
             "scheduled_start": "2026-04-10T15:00:00Z",
         })
-        # Mock limitation: conflict check always finds data, returns 409
-        assert resp.status_code == 409
+        assert resp.status_code == 200, resp.text
 
     def test_create_appointment_missing_therapist_id(self, patient_client):
         """Missing therapist_id returns 422."""

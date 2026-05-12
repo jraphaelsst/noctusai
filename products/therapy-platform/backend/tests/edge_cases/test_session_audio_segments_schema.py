@@ -128,7 +128,15 @@ class TestRecordingIdRoundTrip:
             "segment_number": 1,
             "segment_type": "initial",
             "started_at": _from,
-            "ended_at": None,
+            # MOCK-SELECT-PREDICATE-FIX (45be944) — `end_session` filters
+            # active segment via `.is_("ended_at", "null")`. The seed mock's
+            # `_eval_is` does literal `is` comparison: `None is "null"` →
+            # False. To make the row survive the predicate (i.e. behave as
+            # "ended_at IS NULL"), seed the LITERAL STRING "null" — Python
+            # interns small strings, so `"null" is "null"` is True. Real
+            # PostgREST stores PostgreSQL NULL; this is a test-only shim
+            # until the seed mock fixes its IS NULL semantics.
+            "ended_at": "null",
             "recording_id": "egress-001",
         }
         client._mock_supabase.set_table_data("appointments", [appt])
@@ -164,7 +172,10 @@ class TestQueryFiltersVideoRoomId:
             "segment_number": 1,
             "segment_type": "initial",
             "started_at": _from,
-            "ended_at": None,
+            # MOCK-SELECT-PREDICATE-FIX shim — see TestRecordingIdRoundTrip
+            # above for the rationale (`is_("col","null")` literal-`is`
+            # gap on the seed mock).
+            "ended_at": "null",
             "recording_id": "egress-pause-001",
         }
         client._mock_supabase.set_table_data("appointments", [appt])

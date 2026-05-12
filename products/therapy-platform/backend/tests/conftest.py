@@ -7,6 +7,29 @@ all shared classes for backwards compatibility (tests import from conftest).
 Key difference from ERP/PF: no org_id. Instead, users have roles
 (platform_admin, clinic_admin, therapist, patient) and optional clinic_id.
 """
+# MOCK-SELECT-PREDICATE-FIX follow-up: pre-populate Supabase env vars BEFORE
+# `app.main` is imported by `noctusai_lib.testing.pytest_plugin` at session
+# start. Without these defaults, BackgroundTask paths that call
+# `app.database.get_core_client()` / `get_admin_client()` (e.g. `ai_pipeline.
+# on_observation_change`, `process_session_end`) try to instantiate a real
+# Supabase client and crash on "supabase_url is required", surfacing as test
+# failures even though the test-fixture mock SHOULD have been used. The
+# per-fixture `patch(...)` patches on `DatabaseModule.<method>` don't reach
+# the bound-method bindings captured at module-import time. Setting these
+# placeholder env vars lets `make_supabase_client` succeed; the actual data
+# IO still routes through the mock via `patcher4/5/6` in
+# `_make_client_context`. Tests asserting real network IO live under
+# `tests/realdb/` and use their own env probe.
+import os as _os
+_os.environ.setdefault("SUPABASE_URL", "http://test.local")
+# Supabase client validates the key as a JWT regex: header.body.signature
+# (`^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$`). Plain "test"
+# fails with "Invalid API key" at module-import. Use a minimal valid-shape
+# placeholder. NO real secrets — this never reaches a real Supabase.
+_FAKE_JWT = "aaa.bbb.ccc"
+_os.environ.setdefault("SUPABASE_ANON_KEY", _FAKE_JWT)
+_os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", _FAKE_JWT)
+
 import sys as _sys
 from pathlib import Path as _Path
 
@@ -99,9 +122,25 @@ def _make_client_context(role="therapist", clinic_id=None):
     patcher1 = patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb)
     patcher2 = patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb)
     patcher3 = patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb)
+    # MOCK-SELECT-PREDICATE-FIX follow-up: `app.database` captures
+    # `db.get_client / get_core_client / get_admin_client` as BOUND METHODS
+    # at module-import time (triggered by `pytest_plugin`'s `app.main` probe
+    # at session start). Class-level patches above do NOT propagate to those
+    # captured bindings — the original `DatabaseModule.<method>` reference
+    # is frozen into the bound. Patch the module-level callables directly so
+    # the BackgroundTask path in routers (which calls `get_core_client()` /
+    # `get_admin_client()` from `app.database` / `app.dependencies`) lands on
+    # the test's mock instead of attempting to instantiate a real Supabase
+    # client and crashing on missing `SUPABASE_URL`.
+    patcher4 = patch("app.database.get_core_client", return_value=mock_sb)
+    patcher5 = patch("app.database.get_admin_client", return_value=mock_sb)
+    patcher6 = patch("app.database.get_supabase_client", return_value=mock_sb)
     patcher1.start()
     patcher2.start()
     patcher3.start()
+    patcher4.start()
+    patcher5.start()
+    patcher6.start()
 
     from app.main import app
     # Per-fixture re-bind of the seed's consent module to THIS test's mock_sb.
@@ -109,7 +148,7 @@ def _make_client_context(role="therapist", clinic_id=None):
     bind_consent_module_to_mock(mock_sb)
     tc = TestClient(app)
     client = AuthClient(tc, mock_sb)
-    return client, (patcher1, patcher2, patcher3)
+    return client, (patcher1, patcher2, patcher3, patcher4, patcher5, patcher6)
 
 
 @pytest.fixture
