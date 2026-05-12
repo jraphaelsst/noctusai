@@ -80,6 +80,20 @@ Each divergence lands on ONE of `[F]`/`[R]`/`[A]` — silent moving forbidden.
 - **Code comments explaining a specific bug fix** — comments need to survive a fresh reader; symbols add cognitive load.
 - **Commit messages** — short prose is already token-efficient; symbols there look like noise.
 
+## 3a. ROI calibration (bimodal yield)
+
+**Lossless symbology yields are bimodal** — calibrated 2026-05-11 from SYM wave:
+
+| Surface type | Typical yield | Recommendation |
+|---|---|---|
+| Bullet/rule-list (CLAUDE.md §1, MASTER-PROMPTs Rules, dispatch briefs) | 8-15% | **Apply by default** |
+| Status + cross-ref headers (PROJECT.md §6+§11) | 5-10% | **Apply by default** |
+| Glossary tables + decision matrices | 3-8% | Apply where lossless |
+| Narrative pattern docs (KB § PATTERNS bodies, examples) | 0-3% | **Prose-acceptable; symbol swap only on obvious wins** |
+| Code-fence-dense docs (containerization / fake-real-adapter) | <1% | Skip — code blocks dominate |
+
+The methodology values clarity over compression. When a swap would force prose-rewrite to hit a target, **the prose stays**.
+
 ## 4. Anti-patterns
 
 - **Stacking** symbols without breathing room: `A ⇒ B ∧ ¬C ∨ D` becomes unparseable. Default to ≤2 symbols per clause.
