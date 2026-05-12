@@ -160,7 +160,7 @@ class TestResolveSettings:
             {"org_id": "org-1"},
         ])
         mock_sb.set_table_data("org_settings", [
-            {"value": "org-level-value"},
+            {"org_id": "org-1", "key": "openai_api_key", "value": "org-level-value"},
         ])
 
         resp = client.get("/api/settings/resolve/openai_api_key")
@@ -177,7 +177,7 @@ class TestResolveSettings:
         ])
         mock_sb.set_table_data("org_settings", [])
         mock_sb.set_table_data("platform_settings", [
-            {"value": "platform-level-value"},
+            {"key": "openai_api_key", "value": "platform-level-value"},
         ])
 
         resp = client.get("/api/settings/resolve/openai_api_key")

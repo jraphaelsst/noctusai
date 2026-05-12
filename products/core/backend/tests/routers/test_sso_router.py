@@ -29,7 +29,10 @@ class TestGenerateSSOToken:
             "email": "test@example.com",
         })
         mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp-imobiliario"})
-        mock_sb.set_table_data("licenses", [{"id": "lic-1", "status": "active"}])
+        mock_sb.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active",
+            "org_id": "org-1", "product_id": "prod-1",
+        }])
 
         with patch("app.routers.sso.create_sso_token", return_value="mocked-sso-token"):
             resp = client.post("/api/sso/token", json={
@@ -152,6 +155,7 @@ class TestLaunchProduct:
     def test_launch_product_redirects(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123",
             "org_id": "org-1",
             "role": "user",
         })
@@ -160,7 +164,10 @@ class TestLaunchProduct:
             "slug": "erp",
             "url_base": "http://localhost:8080",
         })
-        mock_sb.set_table_data("licenses", [{"id": "lic-1"}])
+        mock_sb.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active",
+            "org_id": "org-1", "product_id": "prod-1",
+        }])
 
         with patch("app.routers.sso.create_sso_token", return_value="redirect-token"):
             resp = client.get("/api/sso/launch/erp", follow_redirects=False)
@@ -169,7 +176,7 @@ class TestLaunchProduct:
 
     def test_launch_product_no_license(self, client):
         mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
+        mock_sb.set_table_data("noctus_users", {"id": "test-user-123", "org_id": "org-1", "role": "user"})
         mock_sb.set_table_data("products", {
             "id": "prod-1",
             "slug": "erp",
@@ -487,7 +494,10 @@ class TestSSOTokenOrgRole:
             "email": "test@example.com",
         })
         mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp"})
-        mock_sb.set_table_data("licenses", [{"id": "lic-1", "status": "active", "fim": None}])
+        mock_sb.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "fim": None,
+            "org_id": "org-1", "product_id": "prod-1",
+        }])
 
         resp = client.post("/api/sso/token", json={"product_slug": "erp"})
         assert resp.status_code == 200
@@ -507,7 +517,10 @@ class TestSSOTokenOrgRole:
             # org_role intentionally missing
         })
         mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp"})
-        mock_sb.set_table_data("licenses", [{"id": "lic-1", "status": "active", "fim": None}])
+        mock_sb.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "fim": None,
+            "org_id": "org-1", "product_id": "prod-1",
+        }])
 
         resp = client.post("/api/sso/token", json={"product_slug": "erp"})
         assert resp.status_code == 200
@@ -575,6 +588,7 @@ class TestSSOSessionContextEnrichment:
         client, mock_admin = sso_session_client
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("organizations", {
+            "id": "org-123",
             "nome": "Acme Corp",
             "logo_url": "https://example.com/logo.png",
         })
@@ -593,6 +607,7 @@ class TestSSOSessionContextEnrichment:
         client, mock_admin = sso_session_client
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("subscriptions", [{
+            "org_id": "org-123",
             "status": "active",
             "expires_at": None,
             "plans": {"slug": "pro", "max_users": 50, "max_products": 10, "features": {"ai": True}},
@@ -614,7 +629,10 @@ class TestSSOSessionContextEnrichment:
         client, mock_admin = sso_session_client
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
-        mock_sb.set_table_data("licenses", [{"fim": "2026-12-31T00:00:00+00:00"}])
+        mock_sb.set_table_data("licenses", [{
+            "org_id": "org-123", "product_id": "prod-1", "status": "active",
+            "fim": "2026-12-31T00:00:00+00:00",
+        }])
 
         token = _make_sso_token()
         resp = client.post("/api/sso/session", json={"token": token})

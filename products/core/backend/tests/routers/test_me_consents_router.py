@@ -57,6 +57,7 @@ class TestListMyConsents:
     def test_stored_decision_overrides_default(self, client):
         client._mock_supabase.set_table_data("ai_consent", [
             {
+                "user_id": "test-user-123",
                 "feature_key": "pf.categorize", "granted": False,
                 "granted_at": None, "revoked_at": "2026-04-26T00:00:00Z",
                 "rationale_pt": "...",

@@ -18,8 +18,8 @@ class TestListPlans:
     def test_list_plans_success(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("plans", [
-            {"id": "plan-1", "nome": "Free", "slug": "free", "price_monthly": 0},
-            {"id": "plan-2", "nome": "Pro", "slug": "pro", "price_monthly": 99},
+            {"id": "plan-1", "nome": "Free", "slug": "free", "price_monthly": 0, "ativo": True},
+            {"id": "plan-2", "nome": "Pro", "slug": "pro", "price_monthly": 99, "ativo": True},
         ])
 
         resp = client.get("/api/plans")

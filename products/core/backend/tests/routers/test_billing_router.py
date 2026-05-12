@@ -143,7 +143,7 @@ class TestListInvoices:
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("subscriptions", [
-            {"stripe_customer_id": "cus_123"},
+            {"stripe_customer_id": "cus_123", "org_id": "org-1"},
         ])
 
         mock_invoice = MagicMock()

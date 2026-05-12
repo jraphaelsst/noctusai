@@ -113,12 +113,22 @@ class TestInviteMember:
 class TestRemoveMember:
     def test_remove_member_success(self, admin_client):
         mock_sb = admin_client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {
-            "id": "admin-user-456",
-            "org_id": "org-1",
-            "org_role": "admin",
-            "role": "admin",
-        })
+        mock_sb.set_table_data("noctus_users", [
+            {
+                "id": "admin-user-456",
+                "org_id": "org-1",
+                "org_role": "admin",
+                "role": "admin",
+                "email": "admin@example.com",
+            },
+            {
+                "id": "other-user-789",
+                "org_id": "org-1",
+                "org_role": "member",
+                "role": "user",
+                "email": "other@example.com",
+            },
+        ])
 
         resp = admin_client.delete("/api/team/other-user-789")
         assert resp.status_code == 200
@@ -312,6 +322,7 @@ class TestAcceptInvite:
             "role": "member",
             "status": "pending",
             "expires_at": "2099-01-01T00:00:00Z",
+            "token": "valid-invite-token-abc",
         })
         mock_sb.set_table_data("noctus_users", None)
 
@@ -341,6 +352,7 @@ class TestAcceptInvite:
             "role": "member",
             "status": "accepted",
             "expires_at": "2099-01-01T00:00:00Z",
+            "token": "used-token",
         })
 
         resp = client.post("/api/team/accept-invite", json={

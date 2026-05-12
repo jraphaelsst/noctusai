@@ -126,7 +126,7 @@ class TestDeleteWebhook:
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("webhook_endpoints", [
-            {"id": "wh-1"},
+            {"id": "wh-1", "org_id": "org-1"},
         ])
 
         resp = client.delete("/api/webhooks/wh-1")
@@ -151,7 +151,7 @@ class TestListDeliveries:
     def test_list_deliveries_success(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
-        mock_sb.set_table_data("webhook_endpoints", [{"id": "wh-1"}])
+        mock_sb.set_table_data("webhook_endpoints", [{"id": "wh-1", "org_id": "org-1"}])
         mock_sb.set_table_data("webhook_deliveries", [
             {
                 "id": "del-1",
@@ -179,7 +179,7 @@ class TestListDeliveries:
     def test_list_deliveries_with_pagination(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
-        mock_sb.set_table_data("webhook_endpoints", [{"id": "wh-1"}])
+        mock_sb.set_table_data("webhook_endpoints", [{"id": "wh-1", "org_id": "org-1"}])
         mock_sb.set_table_data("webhook_deliveries", [])
 
         resp = client.get("/api/webhooks/wh-1/deliveries?page=2&page_size=5")

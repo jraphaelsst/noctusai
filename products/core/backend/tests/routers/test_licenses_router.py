@@ -183,9 +183,9 @@ class TestCheckAccess:
     def test_check_access_has_license(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
-        mock_sb.set_table_data("products", {"id": "prod-1"})
+        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp-imobiliario"})
         mock_sb.set_table_data("licenses", [
-            {"id": "lic-1", "status": "active"},
+            {"id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1"},
         ])
 
         resp = client.get("/api/licenses/check/erp-imobiliario")

@@ -17,6 +17,7 @@ class TestListOrganizations:
     def test_list_as_admin_returns_all(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123",
             "org_id": "org-1",
             "role": "admin",
         })
@@ -33,6 +34,7 @@ class TestListOrganizations:
     def test_list_as_user_returns_own(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123",
             "org_id": "org-1",
             "role": "user",
         })
@@ -64,7 +66,7 @@ class TestListOrganizations:
 class TestGetOrganization:
     def test_get_org_success(self, client):
         mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
+        mock_sb.set_table_data("noctus_users", {"id": "test-user-123", "org_id": "org-1", "role": "user"})
         mock_sb.set_table_data("organizations", {
             "id": "org-1",
             "nome": "Test Corp",
@@ -95,7 +97,7 @@ class TestGetOrganization:
 class TestUpdateOrganization:
     def test_update_org_success(self, client):
         mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
+        mock_sb.set_table_data("noctus_users", {"id": "test-user-123", "org_id": "org-1", "role": "user"})
         mock_sb.set_table_data("organizations", [
             {"id": "org-1", "nome": "Updated Corp", "plano": "pro"},
         ])
@@ -109,7 +111,7 @@ class TestUpdateOrganization:
 
     def test_update_org_empty_body(self, client):
         mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
+        mock_sb.set_table_data("noctus_users", {"id": "test-user-123", "org_id": "org-1", "role": "user"})
 
         resp = client.patch("/api/organizations/org-1", json={})
         assert resp.status_code == 400
@@ -131,7 +133,7 @@ class TestUpdateOrganization:
 
     def test_update_org_valid_category(self, client):
         mock_sb = client.mock_supabase
-        mock_sb.set_table_data("noctus_users", {"org_id": "org-1", "role": "user"})
+        mock_sb.set_table_data("noctus_users", {"id": "test-user-123", "org_id": "org-1", "role": "user"})
         mock_sb.set_table_data("organizations", [
             {"id": "org-1", "nome": "Corp", "category": "test"},
         ])
