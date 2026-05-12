@@ -17,7 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from app.config import settings
-from app.dependencies import get_current_user
+from app.dependencies import require_role
 from noctusai_lib.integrations.vista import (
     VistaClient,
     VistaConfigError,
@@ -28,35 +28,31 @@ from noctusai_lib.integrations.vista import (
     VistaUpstreamError,
 )
 from app.services import vista_showcase_service as svc
-from noctusai_lib.api.auth import resolve_sso_role
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vista-showcase", tags=["Vista Showcase (admin)"])
 
-ALLOWED_ADMIN_ROLES = {"platform_admin", "admin", "owner"}
+ALLOWED_ADMIN_ROLES = ("platform_admin", "admin", "owner")
 
 
 # ---------------------------------------------------------------------------
 # Admin-only dependency
 # ---------------------------------------------------------------------------
+# Phase 3 (erp-wiring 2026-05-11) — bespoke `require_admin` body retired in
+# favor of the seed `make_require_role` composition (Pattern F continuation,
+# PROJECT.md §11). The ERP-specific resolution order (SSO short-circuit →
+# `erp_role` → `noctus_role`) lives in `app.dependencies.get_erp_user_role`;
+# `require_role` is the bound `make_require_role` factory.
+#
+# `require_admin` is kept as a thin adapter so each endpoint's signature
+# binds to a single dep and unwraps `(user, _token, _role) → user` without
+# repeating the slice at every callsite.
 
 
-async def require_admin(auth = Depends(get_current_user)):
-    """Resolve user, allow only platform/erp admins.
-
-    Resolution order matches the rest of ERP:
-      1. SSO role from `noctusai_lib.api.auth.resolve_sso_role`
-         (platform admin or org owner/admin)
-      2. ERP-native role from user_metadata.erp_role / noctus_role
-    """
-    user, _token = auth
-    sso_role = resolve_sso_role(user)
-    if sso_role == "platform_admin":
-        return user
-    role = (user.user_metadata or {}).get("erp_role") or (user.user_metadata or {}).get("noctus_role")
-    if role in ALLOWED_ADMIN_ROLES:
-        return user
-    raise HTTPException(status_code=403, detail="Admin privileges required for the Vista showcase")
+async def require_admin(auth_role = Depends(require_role(*ALLOWED_ADMIN_ROLES))):
+    """Allow only platform/erp admins. Returns the resolved user object."""
+    user, _token, _role = auth_role
+    return user
 
 
 def _client() -> VistaClient:

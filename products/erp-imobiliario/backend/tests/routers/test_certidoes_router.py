@@ -57,6 +57,7 @@ class TestListarTipos:
 
     def test_cada_tipo_tem_campos_obrigatorios(self, client):
         resp = client.get("/api/certidoes/tipos")
+        assert resp.status_code == 200
         for item in resp.json()["data"]:
             assert "tipo" in item
             assert "nome" in item
@@ -64,6 +65,7 @@ class TestListarTipos:
 
     def test_ordem_sequencial(self, client):
         resp = client.get("/api/certidoes/tipos")
+        assert resp.status_code == 200
         ordens = [t["ordem"] for t in resp.json()["data"]]
         assert ordens == list(range(1, 11))
 
@@ -328,6 +330,7 @@ class TestObterConsulta:
         client._mock_supabase.set_table_data("certidao_consultas", SAMPLE_CONSULTA)
         client._mock_supabase.set_table_data("certidao_resultados", [SAMPLE_RESULTADO])
         resp = client.get("/api/certidoes/consultas/consulta-001")
+        assert resp.status_code == 200
         data = resp.json()["data"]
         assert isinstance(data["resultados"], list)
 
@@ -393,6 +396,7 @@ class TestExcluirConsulta:
     def test_exclui_retorna_mensagem(self, client):
         client._mock_supabase.set_table_data("certidao_consultas", [SAMPLE_CONSULTA])
         resp = client.delete("/api/certidoes/consultas/consulta-001")
+        assert resp.status_code == 200
         body = resp.json()
         assert "message" in body
 

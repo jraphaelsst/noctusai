@@ -23,7 +23,8 @@ from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
     make_get_current_user_org,
-    resolve_sso_role,  # noqa: F401 — re-exported for product imports
+    make_require_role,
+    resolve_sso_role,
 )
 from app.config import settings
 
@@ -78,3 +79,42 @@ def log_action(user_id: str, tipo_acao: str, tipo_entidade: str,
         get_admin_client(), "user_actions_log", "usuario_id",
         user_id, tipo_acao, tipo_entidade, entidade_id, descricao, detalhes,
     )
+
+
+# ---------------------------------------------------------------------------
+# Role resolution + `require_role` factory wiring
+# ---------------------------------------------------------------------------
+# Phase 3 (erp-wiring 2026-05-11) — Pattern F continuation. Replaces the
+# bespoke `vista_showcase.require_admin` SSO-aware gate and the inline
+# `metas_digest` role check with seed `make_require_role` composition.
+#
+# ERP's role resolution differs from the seed default because it preserves
+# *both* historical metadata keys (`erp_role` first, `noctus_role` second)
+# while still letting `resolve_sso_role` short-circuit to "platform_admin"
+# for cross-product SSO admins. The seed primitive only consumes the
+# resolver — composition stays in product code.
+
+
+def get_erp_user_role(user) -> str:
+    """Resolve ERP-tier role for a user.
+
+    Resolution order matches the historical `vista_showcase.require_admin`
+    body:
+      1. Cross-product SSO role (`resolve_sso_role`) — short-circuits to
+         "platform_admin" for SSO-authenticated platform admins.
+      2. `user_metadata.erp_role` — ERP-native role (preferred).
+      3. `user_metadata.noctus_role` — legacy fallback key.
+      4. ``"user"`` — sentinel default for unauthenticated / anonymous
+         metadata; downstream `require_role(*allowed)` will 403.
+    """
+    sso = resolve_sso_role(user)
+    if sso == "platform_admin":
+        return sso
+    metadata = user.user_metadata or {}
+    return metadata.get("erp_role") or metadata.get("noctus_role") or "user"
+
+
+# Canonical `require_role(*allowed)` factory — bound once at module load to
+# this product's `get_current_user` (Supabase-client-aware) and ERP role
+# resolver. Routers consume via `Depends(require_role("admin", "owner"))`.
+require_role = make_require_role(get_current_user, get_erp_user_role)

@@ -158,6 +158,7 @@ class TestRegras:
 
     def test_regras_conquistas_structure(self, client):
         resp = client.get("/api/gamificacao/regras")
+        assert resp.status_code == 200
         data = resp.json()["data"]
         for conquista in data["conquistas_disponiveis"]:
             assert "tipo" in conquista

@@ -8,8 +8,18 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 @pytest.fixture(autouse=True)
 def _bypass_openai_check():
-    """Bypass upfront OpenAI credential check for all AI router tests."""
-    with patch("app.routers.ai.check_openai_configured", return_value=True):
+    """Bypass the upfront OpenAI credential check for all AI router tests.
+
+    Patches the canonical seed surface `noctusai_lib.config.credentials.resolve_credential`
+    (the *external* credential-source boundary — Supabase `org_settings` /
+    `platform_settings` / env-var fallback). Per
+    `feedback_no_monkeypatching_in_tests`, patching external-integration
+    surfaces (DB-backed credential resolver) is allowed; patching our own
+    in-product helpers (`app.routers.ai.check_openai_configured`) is not.
+    Phase 3 (erp-wiring 2026-05-11) — see PROJECT.md §11; mirrors the
+    Phase 2 `_stub_persist` patch-target lift.
+    """
+    with patch("noctusai_lib.config.credentials.resolve_credential", return_value="test-key"):
         yield
 
 

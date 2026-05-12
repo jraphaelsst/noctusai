@@ -15,16 +15,20 @@
 > *wiring*, not redesign or feature growth.
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ — focused-subset)
-- **Status:** ⏳ **Phase 2 ✅ — focused-subset closed (AI plumbing `safe_persist_indicator` absorption).**
-  Phase 0 ✅ discovery; Phase 1 ✅ Pattern F (300 callsites) + delete_or_404
-  sweep (15 sites); Phase 2 ✅ this dispatch — `_persist_indicator` →
-  `safe_persist_indicator` (5 callsites in `ai.py`, local helper retired,
-  PF retro §e row 2 N=2 → N=2-formalize-and-adopt-now). Remaining Phase 2
-  candidates (`_require_openai` → `require_credential_or_422` migration,
-  `make_require_role` Pattern F continuation, status-assertion calibration)
-  deferred to a future Phase 3 dispatch — each requires coordinating test
-  patch-target updates and is non-trivial alone.
+- **Last updated:** 2026-05-11 (Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ — deferred-items absorption batch)
+- **Status:** ⏳ **Phase 3 ✅ — deferred-items absorption batch closed (AI plumbing migration + Pattern F continuation + status-code calibration).**
+  Phase 0 ✅ discovery; Phase 1 ✅ Pattern F initial (300 callsites) +
+  delete_or_404 sweep (15 sites); Phase 2 ✅ `_persist_indicator` →
+  `safe_persist_indicator` (5 callsites in `ai.py`); Phase 3 ✅ this
+  dispatch — `_require_openai` thin-wrapper + matching.py inline-checks →
+  seed `require_credential_or_422`, test fixtures lifted to
+  `noctusai_lib.config.credentials.resolve_credential` (external
+  credential-source boundary), `make_require_role` adoption across
+  `vista_showcase.require_admin` + `metas_digest` inline check
+  (Pattern F continuation), status-code calibration (8 test gaps closed),
+  7 new factory smoke tests. Pytest 1850 passed (was 1843) / 34 skipped /
+  31 pre-existing fails (baseline preserved). Phase 3b "DTO normalization
+  sweep" renumbered from original §6 Phase 3 heading and remains pending.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `CLAUDE.md § Universal rules` — behavioral rules, loaded every session
@@ -428,9 +432,28 @@ Instead, Phase 2 picked a focused subset from the PF retro §e absorption rows: 
 - `make_require_role` adoption (Pattern F continuation for `vista_showcase.require_admin` + `metas_digest` inline check).
 - Status-code-assertion calibration.
 
-### Phase 3 — DTO normalization sweep (operational contract, NOT `response_model` rollout)
+### Phase 3 ✅ — Deferred-items absorption batch (AI plumbing + Pattern F continuation + status-code calibration) *(2026-05-11)*
 
-Per §5.4.6 — frontend `types/` is the operational DTO contract. Phase 3 ensures every list-endpoint maps raw DB rows to typed shapes BEFORE the HTTP boundary. `response_model=PydanticDTO` rollout DEFERRED to follow-up `erp-imobiliario-dto-contract` project (§7 Q-E).
+**Improvements:** Phase 3 closed the deferred batch from Phase 1/2 (`require_credential_or_422` migration, `make_require_role` adoption, status-code calibration). DTO normalization sweep (the original §6 Phase 3 heading) is re-numbered to **Phase 3b** below and remains pending.
+
+Engineer ERP-P3 executed the deferred-items batch from the Phase 1 Improvements block (5 items) + Phase 2 deferred list. All landed without baseline regression.
+
+- [x] **`_require_openai` retirement → `require_credential_or_422`** in `app/routers/ai.py`. Local helper kept as a thin pass-through delegating to the seed; import lifted to `noctusai_lib.api.auth`. 9 callsites unchanged at the routing layer (still `_require_openai(get_org_id(user))`); the body now calls `require_credential_or_422("openai_api_key", org_id, detail=_OPENAI_MISSING_DETAIL)`. PF retro §e row 2 progresses ERP-side from "N=2 candidate → N=3-pending" to "N=3-pending → ERP-side adopted, PF/therapy pending".
+- [x] **`check_openai_configured` → `require_credential_or_422`** in `app/routers/matching.py`. Two callsites (`/api/matching/embed`, `/api/matching/embed-batch`) inlined the `if not check_openai_configured(...): raise HTTPException(422, ...)` shape; both replaced with `require_credential_or_422("openai_api_key", get_org_id(user), detail=_OPENAI_MISSING_DETAIL)`. `from app.services.ai_service import check_openai_configured` retired from matching.py imports.
+- [x] **Test fixture patch-target lifts** — `app.routers.ai.check_openai_configured` and `app.routers.matching.check_openai_configured` no longer importable. Both fixtures (`tests/routers/test_ai_router.py:_bypass_openai_check`, `tests/routers/test_matching_router.py:TestEmbedAtivo._bypass_openai_check`, `TestEmbedBatch._bypass_openai_check`) lifted to patch the canonical seed surface `noctusai_lib.config.credentials.resolve_credential`. Per `feedback_no_monkeypatching_in_tests`: patching the *external* credential-source boundary (DB-backed `resolve_credential`) is allowed; patching in-product helpers is not. Mirrors the Phase 2 `_stub_persist` patch-target lift. `test_embed_ativo_no_api_key` updated to override the autouse fixture with `return_value=None` for the 422-path assertion.
+- [x] **`make_require_role` adoption (Pattern F continuation)** — added `get_erp_user_role(user) -> str` to `app/dependencies.py` (ERP-specific resolver preserving `SSO platform_admin → erp_role → noctus_role → "user"` priority) and bound `require_role = make_require_role(get_current_user, get_erp_user_role)`. `app/routers/vista_showcase.py:require_admin` body retired in favor of `Depends(require_role(*ALLOWED_ADMIN_ROLES))`; the bespoke `resolve_sso_role` + metadata-lookup logic now lives in `get_erp_user_role` (single resolver, multiple routers can compose). `app/routers/metas_digest.py` inline `if role not in ("admin", "owner"):` check retired; endpoint now binds `auth_role = Depends(require_role("admin", "owner", "platform_admin"))` (added `platform_admin` to allowed set to match the canonical SSO short-circuit shape).
+- [x] **Status-code-assertion calibration** — AST-walked `tests/routers/` for body-asserts-without-status-code (defended by the `feedback_status_code_assertion_rule`). 8 gaps found, 8 fixed: `test_certidoes_router.py` (3 sites — `test_cada_tipo_tem_campos_obrigatorios`, `test_ordem_sequencial`, `test_consulta_retorna_resultados_lista`, `test_exclui_retorna_mensagem`), `test_funil_router.py` (3 sites — `test_funil_empty`, `test_funil_grouping_correct`, `test_funil_search_filters`), `test_gamificacao_router.py` (1 site — `test_regras_conquistas_structure`). Each gained an explicit `assert resp.status_code == 200` before the body assertion.
+- [x] **Metas-domain `extra` (StrictHttpModel) inheritance** — *(no-op finding)* — audit of `app/routers/metas*.py` + `app/routers/meta_*.py` + `app/routers/regras_pontuacao.py` shows **every** request-body model already inherits `StrictHttpModel`. The architect's inventory item is already complete; logging as a no-op rather than silently skipping. `app/services/vista_showcase_types.py` uses raw `BaseModel` but those are response shapes (envelopes), not request bodies — `StrictHttpModel` is the HTTP-inbound boundary contract; out of scope.
+- [x] **Smoke tests for the new factory wiring** — extended `tests/test_dependencies_factory.py` with 7 new test methods: `test_make_require_role_import_path` (seed-source check), `TestErpRoleResolver` (4 tests — erp_role preferred, noctus_role fallback, "user" default, None-metadata-safe), `TestRequireRoleFactoryBinding` (2 tests — factory callable + dep-signature is `authorization`-only). All 13 factory tests pass (6 existing + 7 new).
+- [x] **Baseline preserved + net +7 passing** — pytest 1850 passed (was 1843) / 34 skipped / 31 failed (same set as Phase 2 close). All 31 failures are pre-existing out-of-scope (11 WAHA mock-fixture drift, 9 certidoes drift, 11 misc) — filed elsewhere per architect brief.
+- [x] Vista showcase tests: 18/18 pass (admin-gating + SSO short-circuit + non-admin 403 paths intact).
+- [x] Keeper review: **expected 0 NEW issues** (architect to verify at merge).
+
+**Deferred to a future Phase 3b:** the original "DTO normalization sweep" heading below. AI plumbing + role-factory continuation closed.
+
+### Phase 3b — DTO normalization sweep (operational contract, NOT `response_model` rollout)
+
+Per §5.4.6 — frontend `types/` is the operational DTO contract. Phase 3b ensures every list-endpoint maps raw DB rows to typed shapes BEFORE the HTTP boundary. `response_model=PydanticDTO` rollout DEFERRED to follow-up `erp-imobiliario-dto-contract` project (§7 Q-E).
 
 - [ ] Audit every admin list endpoint for raw-DB-row leak.
 - [ ] Mappers land in `app/services/<domain>_service.py`.
@@ -569,3 +592,4 @@ cd seed/lib/backend && \
 | 2026-05-11 | Phase 0 ✅ — Discovery & inventory complete. §5.4 populated: 60 routers / 321 endpoints / 65 hooks / 67 pages / 29 migrations baseline; Pattern A=0, B=1, C=0, D=3+1, E=systemic, F=1+1, G=1, H=2. Pytest 1856 passed / 34 skipped / 0 failed. Keeper 0 issues. §6 phases rewritten from concrete data; §7 design batch surfaced (Q-A through Q-F + Q-NEW-DEL + 3 sub-project gate Qs). Project ready for Phase 1 dispatch. | Engineer OOO (worktree `agent-a079b6316d758e93c`) |
 | 2026-05-11 | Phase 1 ✅ — Pattern F (auth factory) adoption + DELETE pre-check sweep. 300 / 300 router callsites migrated from `Header(authorization) + await get_current_user(authorization)` to `Depends(get_current_user_org)` via `make_get_current_user_org` factory. `app/dependencies.py` wires both `get_current_user` (late-binding lambda for conftest patches) + `get_current_user_org` (required=True, missing_status=400). 15 canonical DELETE sites migrated to `noctusai_lib.api.crud_safety.delete_or_404`; 8 non-canonical sites left with documented rationale. Smoke test `tests/test_dependencies_factory.py` (6 assertions). Pytest 1873 passed / 34 skipped / 0 failed; keeper 0 issues; net −166 LOC. Commit `989a75e`. | Engineer ERP-P1 |
 | 2026-05-11 | Phase 2 ✅ — AI plumbing partial absorption (focused subset). `_persist_indicator` → `noctusai_lib.domain.ai.safe_persist_indicator` via libcst codemod across 5 callsites in `app/routers/ai.py`; local helper retired; import updated (`AIOutput` + `persist_output` dropped, `safe_persist_indicator` added). Test fixture `_stub_persist` patch target lifted from `app.routers.ai.persist_output` to canonical seed surface `noctusai_lib.domain.ai.outputs.persist_output` (no-monkey-patching-of-our-own-code rule). Baseline preserved: pytest 1862 passed / 34 skipped / 12 pre-existing fails (same emails_router + email_service + certidoes_router failures as Phase-1-close). Keeper 0 NEW issues. PF retro §e row 2 progresses from "N=2 candidate" → "ERP-side adopted" (PF side still pending; flips full N=3 formalization when PF adopts). Deferred to Phase 3: `_require_openai` → `require_credential_or_422`, `check_openai_configured` migration, `make_require_role` Pattern F continuation, status-assertion calibration. | Engineer ERP-P2 |
+| 2026-05-11 | Phase 3 ✅ — deferred-items absorption batch. **AI plumbing migration:** `_require_openai` body delegates to seed `require_credential_or_422` in `app/routers/ai.py`; `matching.py` 2 inline `check_openai_configured + raise` callsites swapped to seed helper. Test fixtures (`test_ai_router.py:_bypass_openai_check`, `test_matching_router.py:TestEmbedAtivo/TestEmbedBatch._bypass_openai_check`) lifted from patching in-product `app.routers.{ai,matching}.check_openai_configured` (no longer importable) to the canonical seed external-boundary surface `noctusai_lib.config.credentials.resolve_credential` — mirrors Phase 2's `_stub_persist` patch-target lift (no-monkey-patching-of-our-own-code rule). **Pattern F continuation:** `app/dependencies.py` exposes `get_erp_user_role(user) -> str` (SSO platform_admin → erp_role → noctus_role → "user" priority) + binds `require_role = make_require_role(get_current_user, get_erp_user_role)`. `vista_showcase.require_admin` 21-line bespoke body → thin `Depends(require_role(*ALLOWED_ADMIN_ROLES))` adapter; `metas_digest.enviar_digest` inline role check retired. **Status-code calibration:** AST-walked `tests/routers/` for body-asserts-without-status-code; 8 gaps fixed (3 in `test_certidoes_router.py`, 3 in `test_funil_router.py`, 1 in `test_gamificacao_router.py`, plus `test_exclui_retorna_mensagem`). **Metas StrictHttpModel adoption:** audit shows all metas-area request models already inherit `StrictHttpModel` — no-op finding logged. **Smoke tests:** 7 new tests in `test_dependencies_factory.py` (require_role factory binding + `get_erp_user_role` resolver tests). Baseline preserved + net +7 passing: pytest 1850 passed (was 1843) / 34 skipped / 31 pre-existing fails (same WAHA + certidoes + email mock-drift set, filed elsewhere). PF retro §e row 2 progresses ERP-side from N=3-pending to ERP-side-fully-adopted (PF + therapy still pending). Pattern F continuation closes Phase 0 §5.4.2 Pattern F row (was N=1 local + 1 inline; now both consume seed). | Engineer ERP-P3 |

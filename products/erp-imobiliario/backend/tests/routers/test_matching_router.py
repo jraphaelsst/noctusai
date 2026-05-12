@@ -100,7 +100,16 @@ class TestGerarMatches:
 class TestEmbedAtivo:
     @pytest.fixture(autouse=True)
     def _bypass_openai_check(self):
-        with patch("app.routers.matching.check_openai_configured", return_value=True):
+        """Bypass the upfront OpenAI credential check.
+
+        Patches the canonical seed surface
+        `noctusai_lib.config.credentials.resolve_credential` (the *external*
+        credential-source boundary). Per `feedback_no_monkeypatching_in_tests`,
+        patching external-integration surfaces (DB-backed credential resolver)
+        is allowed; patching in-product helpers is not. Phase 3
+        (erp-wiring 2026-05-11) — see PROJECT.md §11.
+        """
+        with patch("noctusai_lib.config.credentials.resolve_credential", return_value="test-key"):
             yield
 
     def test_embed_ativo_endpoint(self, client):
@@ -126,7 +135,9 @@ class TestEmbedAtivo:
 
     def test_embed_ativo_no_api_key(self, client):
         """422 when OpenAI key not configured (upfront check)."""
-        with patch("app.routers.matching.check_openai_configured", return_value=False):
+        # Override the autouse fixture: simulate the seed credential resolver
+        # returning None (no key configured at any tier).
+        with patch("noctusai_lib.config.credentials.resolve_credential", return_value=None):
             resp = client.post("/api/matching/embed", json={"ativo_id": "ativo-1"})
             assert resp.status_code == 422
             assert "OpenAI" in resp.json()["error"]["message"]
@@ -135,7 +146,8 @@ class TestEmbedAtivo:
 class TestEmbedBatch:
     @pytest.fixture(autouse=True)
     def _bypass_openai_check(self):
-        with patch("app.routers.matching.check_openai_configured", return_value=True):
+        """Bypass the upfront OpenAI credential check (see TestEmbedAtivo)."""
+        with patch("noctusai_lib.config.credentials.resolve_credential", return_value="test-key"):
             yield
 
     def test_embed_batch_endpoint(self, client):

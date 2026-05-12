@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 
 from app.dependencies import get_current_user, get_user_client, get_org_id, first_or_none
 from app.responses import success_response
-from app.services.ai_service import check_openai_configured
+from noctusai_lib.api.auth import require_credential_or_422
 from app.schemas.matching import MatchRequest as GerarMatchesRequest, MatchStatusUpdate as AtualizarStatusRequest, EmbedRequest
 from app.services.matching import (
     gerar_matches_para_imovel,
@@ -24,6 +24,15 @@ from app.services.matching import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/matching", tags=["Matching"])
+
+
+# Localized 422 copy preserved from the inline `check_openai_configured + raise`
+# shape. Phase 3 (erp-wiring 2026-05-11) — N=2 → N=3-pending; the seed-shared
+# `require_credential_or_422` swap unifies the raise-on-missing pattern.
+_OPENAI_MISSING_DETAIL = (
+    "OpenAI API Key não configurada. "
+    "Acesse Configurações > Chaves de API para configurar."
+)
 
 
 _SCORE_MINIMO = 45.0
@@ -103,12 +112,7 @@ async def gerar_matches(body: GerarMatchesRequest, auth = Depends(get_current_us
 async def embed_ativo(body: EmbedRequest, auth = Depends(get_current_user)):
     """Generate embedding for a single ativo."""
     user, token = auth
-    if not check_openai_configured(get_org_id(user)):
-        raise HTTPException(
-            status_code=422,
-            detail="OpenAI API Key não configurada. "
-            "Acesse Configurações > Chaves de API para configurar.",
-        )
+    require_credential_or_422("openai_api_key", get_org_id(user), detail=_OPENAI_MISSING_DETAIL)
     db = get_user_client(token)
 
     from app.services.embedding_service import embed_ativo as do_embed
@@ -133,12 +137,7 @@ async def embed_ativo(body: EmbedRequest, auth = Depends(get_current_user)):
 async def embed_batch(auth = Depends(get_current_user)):
     """Batch embed all ativos without embeddings."""
     user, token = auth
-    if not check_openai_configured(get_org_id(user)):
-        raise HTTPException(
-            status_code=422,
-            detail="OpenAI API Key não configurada. "
-            "Acesse Configurações > Chaves de API para configurar.",
-        )
+    require_credential_or_422("openai_api_key", get_org_id(user), detail=_OPENAI_MISSING_DETAIL)
     db = get_user_client(token)
 
     from app.services.embedding_service import embed_ativos_batch

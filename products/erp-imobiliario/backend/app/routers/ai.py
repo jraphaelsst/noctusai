@@ -6,11 +6,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from noctusai_lib.domain.ai import consent_required, safe_persist_indicator
+from noctusai_lib.api.auth import require_credential_or_422
 
 from app.dependencies import get_current_user, get_user_client, get_org_id
 from app.responses import success_response
 from app.rate_limit import limiter
-from app.services.ai_service import check_openai_configured
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 
@@ -18,14 +18,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
 
 
+# Localized 422 copy preserved from the retired local helper.
+# Phase 3 (erp-wiring 2026-05-11): `_require_openai` retired in favor of the
+# seed-shared `require_credential_or_422` (PF retro §e row 2 N=2 → N=3-pending).
+_OPENAI_MISSING_DETAIL = (
+    "OpenAI API Key não configurada. "
+    "Acesse Configurações > Chaves de API para configurar."
+)
+
+
 def _require_openai(org_id):
-    """Raise 422 if OpenAI key is not configured."""
-    if not check_openai_configured(org_id):
-        raise HTTPException(
-            status_code=422,
-            detail="OpenAI API Key não configurada. "
-            "Acesse Configurações > Chaves de API para configurar.",
-        )
+    """Raise 422 if OpenAI key is not configured (delegates to seed)."""
+    require_credential_or_422("openai_api_key", org_id, detail=_OPENAI_MISSING_DETAIL)
 
 
 # ---------------------------------------------------------------------------

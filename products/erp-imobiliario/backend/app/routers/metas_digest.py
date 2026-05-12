@@ -16,7 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 
-from app.dependencies import get_current_user
+from app.dependencies import require_role
 from app.database import db as db_mod
 from app.services import meta_rankings_service
 from app.services.metas_digest_service import send_biweekly_digest
@@ -29,16 +29,16 @@ router = APIRouter(prefix="/api/metas/digest", tags=["Metas · Digest"])
 async def enviar_digest(
     periodo_id: str,
     recipient: str = Query(..., description="Email address to deliver the digest to"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role("admin", "owner", "platform_admin"))):
     """Send the biweekly digest for a period to `recipient`.
 
     Admin-only. The underlying tables have RLS + `has_role` checks but we
     also gate here because the admin client bypasses RLS.
+
+    Phase 3 (erp-wiring 2026-05-11) — inline role check retired in favor of
+    `make_require_role` composition (Pattern F continuation, PROJECT.md §11).
     """
-    user, _ = auth
-    role = (user.user_metadata or {}).get("erp_role") or (user.user_metadata or {}).get("noctus_role")
-    if role not in ("admin", "owner"):
-        raise HTTPException(status_code=403, detail="Admin privileges required")
+    user, _token, _role = auth_role
 
     admin_db = db_mod.get_admin_client()
     periodo_res = (

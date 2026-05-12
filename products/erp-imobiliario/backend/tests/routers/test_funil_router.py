@@ -23,6 +23,7 @@ class TestGetFunil:
     def test_funil_empty(self, client):
         client._mock_supabase.set_table_data("clientes", [])
         resp = client.get("/api/funil")
+        assert resp.status_code == 200
         colunas = resp.json()["data"]
         assert all(c["total"] == 0 for c in colunas)
 
@@ -36,6 +37,7 @@ class TestFunilGrouping:
              "kanban_pos": 1, "valor_estimado": 100000, "email": None, "telefone": None},
         ])
         resp = client.get("/api/funil")
+        assert resp.status_code == 200
         colunas = resp.json()["data"]
         qualificacao = next(c for c in colunas if c["etapa"] == "qualificacao")
         assert qualificacao["total"] == 2
@@ -51,6 +53,7 @@ class TestFunilSearch:
              "kanban_pos": 0, "valor_estimado": 0, "email": None, "telefone": None},
         ])
         resp = client.get("/api/funil?busca=joão")
+        assert resp.status_code == 200
         colunas = resp.json()["data"]
         total_cards = sum(c["total"] for c in colunas)
         assert total_cards == 1

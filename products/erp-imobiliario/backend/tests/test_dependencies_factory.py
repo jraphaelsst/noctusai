@@ -64,3 +64,61 @@ class TestFactorySourceIsSeed:
         assert make_get_current_user.__module__ == "noctusai_lib.api.auth", (
             f"Expected seed source, got {make_get_current_user.__module__}"
         )
+
+    def test_make_require_role_import_path(self):
+        """Phase 3 (erp-wiring 2026-05-11) — Pattern F continuation."""
+        from app.dependencies import make_require_role
+        assert make_require_role.__module__ == "noctusai_lib.api.auth", (
+            f"Expected seed source, got {make_require_role.__module__}"
+        )
+
+
+class TestErpRoleResolver:
+    """Phase 3 (erp-wiring 2026-05-11) — ERP-specific role resolution preserves
+    the historical ``erp_role > noctus_role`` priority while letting cross-
+    product SSO admins short-circuit to ``platform_admin``.
+    """
+
+    def _user(self, metadata):
+        """Build a minimal user stub with the given user_metadata dict."""
+        from types import SimpleNamespace
+        return SimpleNamespace(user_metadata=metadata)
+
+    def test_resolves_erp_role_preferred(self):
+        from app.dependencies import get_erp_user_role
+        user = self._user({"erp_role": "admin", "noctus_role": "user"})
+        assert get_erp_user_role(user) == "admin"
+
+    def test_falls_through_to_noctus_role(self):
+        from app.dependencies import get_erp_user_role
+        user = self._user({"noctus_role": "owner"})
+        assert get_erp_user_role(user) == "owner"
+
+    def test_defaults_to_user_sentinel(self):
+        from app.dependencies import get_erp_user_role
+        user = self._user({})
+        assert get_erp_user_role(user) == "user"
+
+    def test_none_metadata_does_not_crash(self):
+        from app.dependencies import get_erp_user_role
+        user = self._user(None)
+        assert get_erp_user_role(user) == "user"
+
+
+class TestRequireRoleFactoryBinding:
+    def test_require_role_is_callable(self):
+        from app.dependencies import require_role
+        assert callable(require_role)
+
+    def test_require_role_returns_dependency(self):
+        """``require_role("admin")`` should return a FastAPI dep callable."""
+        from app.dependencies import require_role
+        dep = require_role("admin", "owner")
+        assert callable(dep)
+        sig = inspect.signature(dep)
+        params = list(sig.parameters.values())
+        # The seed-factory wraps in `async def _check_role(authorization: ...)`.
+        assert len(params) == 1, (
+            f"Expected 1 param (authorization), got {[p.name for p in params]}"
+        )
+        assert params[0].name == "authorization"
