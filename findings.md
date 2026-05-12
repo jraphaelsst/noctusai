@@ -324,3 +324,85 @@ knowledge pieces. Append in-the-moment; synthesise at project close.
   per-context behavior. The fragility tax is the upstream-rename
   risk — mitigated by a regression test that drives the synthetic
   call shape.
+
+---
+
+## Engineer R (BOOTSTRAP-REQS-HYDRATE) — 2026-05-11
+
+### Errors
+*(none — clean execution)*
+
+### Mistakes / slips
+- **First `find products` pass picked up `products/seed/.backup/backend/requirements.txt`.**
+  The original `--check` enumeration was run from inside the worktree
+  (which has no `.backup` dir) and showed 12 clean products. When I
+  validated the loop standalone from the main checkout I caught a
+  13th entry: `products/seed/.backup/backend/requirements.txt`. Backup
+  directories aren't real products; their reqs shouldn't hit the shared
+  venv. Fix: added `-not -path '*/.*/*'` to both `find` invocations so
+  hidden directories (`.backup`, `.git`, etc.) are excluded. Lesson: the
+  worktree's filesystem view can DIFFER from the main checkout (because
+  worktrees are git checkouts of a branch state — they don't inherit
+  ad-hoc backup dirs created in main). Validate cross-tree before
+  declaring an enumeration complete.
+
+### Lessons
+- **`pip install -r` is naturally idempotent at the request level**
+  (already-satisfied packages are no-ops), but the **resolver pass
+  still runs**. A 12-product re-bootstrap takes ~50s wall-clock even
+  when no installs occur — that's pip resolving the dep graph. Not a
+  bug; acceptable for a one-shot bootstrap script. Worth noting so
+  future agents don't try to optimize with mtime gates (would add
+  surface area for a marginal win).
+- **N=2 defusedxml recurrence revealed a structural gap, not a
+  per-product oversight.** Both engineers (D + E) hit the same
+  missing-import on the SAME day independently — root-cause is that
+  bootstrap-worktree.sh + setup.sh both stopped at root requirements +
+  seed packages, leaving every product's incremental deps to manual
+  pip-install. Per-product reqs are the right level for *isolated
+  Docker deploys* (per the root requirements.txt comment), but the
+  *shared dev venv* needs the union. The recurrence rule (N=2 →
+  triage time) said: fix at the bootstrap layer, not in adconnect or
+  erp. Triage outcome: FORMALIZE.
+
+### Interesting findings
+- **The root `requirements.txt` is documented as a "unified superset"**
+  (line 1-2: "Per-backend requirements.txt files are kept for
+  independent Docker deploys"). But it lagged in practice — `defusedxml`
+  was only in adconnect's + erp's per-product reqs, never absorbed into
+  the root list. This raises a meta-question: should bootstrap install
+  per-product reqs (this fix), OR should there be a doc-tool-coherence
+  detector that flags drift between root and per-product reqs? Filed
+  in §Architect-followup. The new bootstrap behavior closes the gap
+  even if the doc lags; a detector would close the SOURCE of the lag.
+- **All 12 products' requirements.txt installed cleanly on first
+  pass.** No dep conflicts, no resolver flailing. Modest confidence
+  that the per-product reqs are currently a clean superset relative
+  to the shared venv state. Could break in the future if two products
+  pin conflicting versions of the same dep — at which point the right
+  fix is to lift the conflicting dep into root reqs with a single
+  pinned version. Worth knowing the failure mode exists.
+
+### Knowledge pieces
+- **`find ... -not -path '*/.*/*'`** is the cleanest way to exclude
+  hidden directories from a find recurse — matches any path containing
+  a `/.` segment. More robust than `-not -name '.*'` (only excludes
+  hidden basenames) and faster than piping through grep -v. Generalizes
+  for any script enumerating product/tenant/module-style trees.
+- **The `--check` mode pattern is idempotency-bait — re-running it
+  after the live install should report 0 stale items.** Confirmed:
+  bootstrap-worktree.sh --check after live run showed "Frontend
+  skipped: 14 (already current)". The per-product reqs loop in
+  --check mode still ENUMERATES (showing "WOULD install"), which is
+  the right behavior for a probe — they're naturally idempotent so
+  there's no "stale" state to report on, but the user wants visibility
+  on the list.
+
+### Architect-followup
+- **Doc-tool-coherence — root requirements.txt vs per-product reqs.**
+  The root `requirements.txt` comment claims "unified superset" but
+  drifted (defusedxml in 2 products, not in root). Candidate keeper
+  detector: `check_root_reqs_superset` — flags any dep in
+  `products/*/backend/requirements.txt` not present in root reqs.
+  Stage-3 → Stage-4 pipeline candidate. Out of scope here; bootstrap
+  fix closes the symptom regardless.
