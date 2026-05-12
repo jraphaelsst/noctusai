@@ -114,6 +114,57 @@ Frontend hooks in `src/hooks/useAI.ts`: `useGenerateSubjects`, `useDraftTemplate
 
 Per-page UI integration for M1/M2/M5/M6/M7 (buttons in campaign / template editors) is follow-up polish — hooks are consumable today; pages can mount buttons when convenient.
 
+## Methodology evolution (2026-05-11 refresh)
+
+This section snapshots platform-wide methodology pieces that landed today and how they apply to mailing. Open the cited KB depth on demand — do not pre-load.
+
+### 1. Codification pipeline — Stage 4 is where rules become enforceable
+Conversation rules graduate through 4 stages: **emerges → memory entry → KB pattern doc + CLAUDE.md pointer → `check_*` keeper detector with colocated regression test**. The keeper is the **codification layer** of the methodology (not a regulatory silo). Mailing-relevant criteria: deterministic predicate + recurrence ≥3 + clear remediation. When a slip surfaces inside mailing (services / routers / hooks), the right move is to route it through this pipeline rather than fix-and-forget. → `KB § PATTERNS/methodology-codification-pipeline.md`
+
+### 2. Doc-code coherence — extension of three-way sync
+When mailing tooling, scripts, or referenced MCP detectors change behavior (new flag, renamed mode, different severity), every doc that references them updates in the **same commit** — including this MASTER-PROMPT.md if it names the surface. "I'll update the doc later" is forbidden. Discovery: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/mailing/MASTER-PROMPT.md`. Codification candidates: `check_doc_tool_reference_drift` (Stage 4 today, broader `check_mcp_tool_argument_drift` pending). → `KB § PATTERNS/methodology-codification-pipeline.md § 8`
+
+### 3. Keeper detector population — what fires across mailing today
+The keeper module at `mcp/noctusai/tools/noctus/dev/compliance.py` exports 32 `check_*` detectors (live count via `noctus.dev.outline_python compliance.py`). The 12 most recently codified — and the ones most likely to fire on routine mailing edits — are:
+
+| Detector | What it catches in mailing context |
+|---|---|
+| `check_no_silent_ok_comment` | `# silent-ok` literal anywhere under `products/mailing/backend/app/` (escape hatch retired platform-wide) |
+| `check_auth_dep_anti_pattern` | `Depends(ProductDependencies.get_org_id)` / `get_user_role` / `get_user_client` — must use `Depends(get_current_user_org)` factory |
+| `check_section_7_placeholder_consistency` | mailing-scoped `PROJECT.md` files claiming "§7 all answered" while §2 still has placeholders |
+| `check_test_status_assertion` | mailing test methods that assert on response body (`.text` / `.json()`) without `.status_code` in the same method |
+| `check_slowapi_with_pep563` | mailing routers combining `@limiter.limit` with `from __future__ import annotations` (slowapi PEP-563 footgun) |
+| `check_unknown_table_references` | `.table("name")` callsites under `app/` where `name` is not declared by mailing's `001_mailing.sql` |
+| `check_function_search_path_pinned` | unpinned `search_path` on `CREATE FUNCTION` blocks in mailing migrations |
+| `check_admin_endpoint_service_role_bypass` | `get_admin_client().table("T")` where T lacks an explicit `service_role_bypass` policy |
+| `check_no_self_monkeypatch` | `monkeypatch.setattr(<mailing_module>, ...)` in mailing tests — use DI / `MockRequestBuilder.inserted_payloads` instead |
+| `check_archive_staleness` / `check_dispatcher_staleness` / `check_branch_orphan` | repo-wide hygiene; fire if mailing project entries linger |
+| `check_detector_has_regression_test` | meta-detector — every new keeper rule ships with `Test<CamelCase>` colocated |
+| `check_doc_tool_reference_drift` | KB doc references to `bash scripts/<name>.sh <mode>` that don't resolve |
+
+Run `noctus.dev.validate_product products/mailing` to fire the full battery against mailing. Triage results with formalize / refactor / accept-with-rationale.
+
+### 4. Seed mock predicate fix — MockSupabaseClient now deep-copies inputs
+`MockRequestBuilder.__init__` deep-copies `_data` at storage time so write-propagation (UPDATE / DELETE) on mailing tests no longer mutates module-level fixture dicts. Net effect for mailing test suites: fixture-pollution bugs disappear; if a mailing test was previously green by accident due to shared mutable state, the fix may surface a latent assertion. Diagnostic recipe when triaging: 2-second `pytest <single-test>` classifies pollution vs genuine bug.
+
+### 5. Canonical rate-limit policies — `DEFAULT_AI_RL` is mailing's source of truth
+`products/mailing/backend/app/routers/ai.py` now imports `DEFAULT_AI_RL` from `noctusai_lib.api.rate_limit_policies` and decorates 7 of 8 endpoints with `@limiter.limit(DEFAULT_AI_RL)`. The single intentional deviation (`@limiter.limit("10/minute")` at line 128) is a **carve-out**: surface it in the next robustness pass (formalize as `DEFAULT_AI_RL_TIGHT` policy, or document at `KB § PATTERNS/accept-with-rationale.md`). New mailing AI endpoints MUST default to `DEFAULT_AI_RL`; bespoke literals are a triage trigger.
+
+### 6. Bootstrap auto-hydrate
+Fresh worktrees hydrate via `scripts/bootstrap-worktree.sh` — pre-hydrate sweep removes stale `.claude/worktrees/agent-*/` (any whose branch is merged to `origin/main`). Mailing engineer briefs do not need a separate hydration step; the orchestrator's dispatch flow handles it.
+
+### 7. Chatbot operational readiness — mailing is an N=2 inheritor candidate
+Mailing is **explicitly named** as an N=2 inheritor candidate in `KB § PATTERNS/chatbot-operational-readiness.md` (alongside therapy / PF). First adopter is `imobi-scheduling`. The pattern is a 6-piece production-hardening checklist for chatbot products with external writes:
+
+1. **Retries** on transient external writes via `retry_call` composing seed `RetryPolicy` (lift to seed at N=2 — mailing's outbound triggers it)
+2. **Structured logs** auto-wired by `create_product_app`
+3. **Health endpoint** via `standard_routers=["health"]` (mailing already opts in)
+4. **`DEPLOYMENT.md`** shape — uniform across chatbot products
+5. **Supabase managed backups** documented
+6. **Metrics sink** seam wired at call sites; default `NoopCounter` (lift to platform-metrics project at N=2)
+
+When mailing's send engine / webhook receiver / Resend Batch dispatcher acquires retry+metrics requirements, **do not rebuild from scratch** — inherit verbatim from imobi-scheduling's shape and trigger the seed-side lifts for retry (§2) + metrics (§6). The send engine's `app/services/send_service.py` Resend Batch API call is the most natural retry seam; `webhook_service.py` is the metrics-sink seam. → `KB § PATTERNS/chatbot-operational-readiness.md § 9 First adopter`
+
 ## Testing
 
 ```bash
