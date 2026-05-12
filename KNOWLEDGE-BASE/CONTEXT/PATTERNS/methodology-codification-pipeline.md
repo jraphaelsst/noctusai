@@ -228,12 +228,12 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 
 | Symptom you see | Tool / script | Invocation | Stage |
 |---|---|---|---|
-| Stale archive folders (older than today + yesterday) | `archive-clean.sh` + (post K-merge) `check_archive_staleness` | `bash scripts/archive-clean.sh` (dry-run) / `bash scripts/archive-clean.sh --force` | Stage 4 detect → script execute |
-| Stale agent worktrees on disk | `mole.sh` worktree scope | `bash scripts/mole.sh scan --worktrees` / `bash scripts/mole.sh sweep --worktrees --force` | Stage 4-equivalent custodial |
+| Stale archive folders (older than today + yesterday) | `check_archive_staleness` + `archive-clean.sh` | `noctus.dev.review` (detect) → `bash scripts/archive-clean.sh --force` (execute) | Stage 4 detect → script execute |
+| Stale agent worktrees on disk | `mole.sh` worktree scope (now aligned scan↔sweep enumeration) | `bash scripts/mole.sh scan --worktrees` reports STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM categories; `bash scripts/mole.sh sweep --worktrees --force` removes STALE + ORPHAN + PHANTOM only | Stage 4-equivalent custodial |
 | Disk artifacts (caches, builds) bloating repo | `mole.sh` artifact scope | `bash scripts/mole.sh scan --artifacts` / `... sweep --artifacts --force` | Stage 4-equivalent custodial |
-| Dispatcher inbox/outbox entries piling up | (post K-merge) `check_dispatcher_staleness` | Manual prune of `dispatcher-inbox.md` `## Completed` section; consider archiving to `dispatcher-archive/<date>.md` | Stage 4 detect → manual execute |
-| Merged branches still hanging around | (post K-merge) `check_branch_orphan` | `git branch -d <name>` (local) / `git push origin --delete <name>` (remote) | Stage 4 detect → git execute |
-| Transient log/coordination files not gitignored | (post K-merge) `check_gitignore_drift` | `.gitignore` patch + `git rm --cached <file>` if tracked | Stage 4 detect → gitignore patch |
+| Dispatcher inbox/outbox entries piling up | `check_dispatcher_staleness` | `noctus.dev.review` (detect); manual prune of `dispatcher-inbox.md` `## Completed` section; consider archiving to `dispatcher-archive/<date>.md` | Stage 4 detect → manual execute |
+| Merged branches still hanging around | `check_branch_orphan` | `noctus.dev.review` (detect); `git branch -d <name>` (local) / `git push origin --delete <name>` (remote) | Stage 4 detect → git execute |
+| Transient log/coordination files not gitignored | `check_gitignore_drift` | `noctus.dev.review` (detect); `.gitignore` patch + `git rm --cached <file>` if tracked | Stage 4 detect → gitignore patch |
 | Disk usage approaching capacity | `disk-usage-monitor.sh` | `bash scripts/disk-usage-monitor.sh` (exit code 0-3 by severity) | preventative monitor |
 
 ### Code hygiene (Stage 4 — hound + seed scans)

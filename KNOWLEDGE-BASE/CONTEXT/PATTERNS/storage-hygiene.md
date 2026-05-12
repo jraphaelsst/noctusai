@@ -19,13 +19,15 @@ A monitor (`disk-usage-monitor.sh`) detects the failure; a sweeper (`cleanup-sta
 
 ### Analogy with keeper + hound
 
-| Agent | Domain | Default mode | Single entry point | Three scopes |
+| Agent | Domain | Default mode | Single entry point | Three (or more) scopes |
 |---|---|---|---|---|
-| **Keeper** | Regulatory (compliance contracts) | `--review` observation-only | `noctus.dev.review` | LGPD / webhook-pins / auth-shape / etc. |
+| **Keeper** | Regulatory + hygiene compliance (any rule with a deterministic predicate) | `--review` observation-only | `noctus.dev.review` | **Regulatory:** LGPD / webhook 5-pin / auth-shape / status-assertion / slowapi-pep563 / etc. **Hygiene-compliance (added 2026-05-11):** archive staleness / dispatcher staleness / branch orphans / gitignore drift. |
 | **Hound** | Curatorial (code hygiene) | `scan` (read-only) | `noctus.hound.scan` | absorption / fusion / optimization |
-| **Mole** | Custodial (storage hygiene) | `scan` (read-only) | `noctus.mole.scan` | **artifacts / environments / worktrees** |
+| **Mole** | Custodial (storage execution) | `scan` (read-only) | `noctus.mole.scan` | **artifacts / environments / worktrees** |
 
 Each agent has **observation-only scan** (default) + **destructive sweep** (gated, dry-run-by-default).
+
+**Note (2026-05-11):** the keeper now covers two compliance axes — *regulatory* (the original LGPD / webhook / auth shape) and *hygiene-compliance* (workspace state: archive / dispatcher / branch / gitignore). This expansion is documented in `KB § PATTERNS/methodology-codification-pipeline.md` — the keeper is **Stage 4** of the methodology codification pipeline, not a regulatory silo. Workspace-state rules that meet the codification criteria (deterministic predicate + recurrence ≥3 + clear remediation) belong in the keeper, not in a fourth identity. Mole stays as the **execution layer downstream** of keeper hygiene findings that touch the filesystem.
 
 ---
 
