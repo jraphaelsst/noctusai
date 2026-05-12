@@ -26,15 +26,25 @@ Write-to-read propagation (added 2026-05-10):
       matching row in place. Returns the mutated rows in `response.data`.
     - DELETE evaluates accumulated filter predicates and removes each
       matching row in place. Returns the deleted rows in `response.data`.
+    - SELECT evaluates accumulated filter predicates and returns only matching
+      rows in `response.data`. Empty predicate list = match-all. Added
+      2026-05-11 (closes the SELECT-side gap surfaced by the UPDATE/DELETE
+      filter-wiring; before the fix, `.select().eq(...).execute()` returned
+      ALL seeded rows regardless of predicates, masking ~43 latent test bugs
+      across 7 products).
     - When `set_sequential_responses(...)` is configured for the table, the
-      queue dictates the response AND propagation is suppressed (lets tests
-      simulate insert failures without implicit data seeding).
-    - Filter ops with simple equality/membership/comparison semantics are
-      evaluated literally. Other ops (PostgREST expressions like `or_`,
-      `match`, `like`, `ilike`, `contains`, `text_search`, `fts`, `filter`)
-      fall back to "match all rows" — see `_PREDICATE_EVALUATORS`. Empty
-      predicate list = match-all (mirrors real PostgREST).
-  Project: `projects/mock-supabase-write-propagation/`.
+      queue dictates the response AND propagation / predicate-filtering is
+      suppressed (lets tests simulate insert failures without implicit data
+      seeding).
+    - Filter ops with simple equality/membership/comparison/string-pattern
+      /collection-contains semantics are evaluated literally (eq, neq, in_,
+      gt, lt, gte, lte, is_, like, ilike, contains). Other ops (PostgREST
+      expressions like `or_`, `text_search`, `fts`, `filter`, `overlaps`,
+      `contained_by`) fall back to "match all rows" — see
+      `_PREDICATE_EVALUATORS`. `match({col: val})` is decomposed to eq
+      predicates at record time.
+  Project: `projects/mock-supabase-write-propagation/` (Phase 2:
+  `projects/mock-supabase-select-predicate-filter/`).
 """
 from __future__ import annotations
 
@@ -255,9 +265,86 @@ def _eval_is(row: dict, col: str, value: Any) -> bool:
     return row.get(col) is value
 
 
+def _eval_like(row: dict, col: str, value: Any) -> bool:
+    """SQL LIKE (case-sensitive). `%` → `.*`, `_` → `.`. Non-string cell → False."""
+    cell = row.get(col)
+    if not isinstance(cell, str) or not isinstance(value, str):
+        return False
+    return _like_match(cell, value, case_sensitive=True)
+
+
+def _eval_ilike(row: dict, col: str, value: Any) -> bool:
+    """SQL ILIKE (case-insensitive). `%` → `.*`, `_` → `.`. Non-string cell → False."""
+    cell = row.get(col)
+    if not isinstance(cell, str) or not isinstance(value, str):
+        return False
+    return _like_match(cell, value, case_sensitive=False)
+
+
+def _like_match(cell: str, pattern: str, *, case_sensitive: bool) -> bool:
+    """Translate a SQL LIKE/ILIKE pattern to a regex anchored at both ends.
+
+    PostgREST passes patterns with `%` (any-substring) and `_` (single-char).
+    We escape every other regex metachar so a stray `.` in the pattern doesn't
+    behave as a wildcard.
+    """
+    import re
+
+    out = []
+    for ch in pattern:
+        if ch == "%":
+            out.append(".*")
+        elif ch == "_":
+            out.append(".")
+        else:
+            out.append(re.escape(ch))
+    regex = "^" + "".join(out) + "$"
+    flags = 0 if case_sensitive else re.IGNORECASE
+    try:
+        return re.match(regex, cell, flags) is not None
+    except re.error:
+        return False
+
+
+def _eval_contains(row: dict, col: str, value: Any) -> bool:
+    """PostgREST `contains` — cell-collection contains value-collection.
+
+    Three shapes:
+      - cell is a list/tuple/set + value is a list/tuple/set → every value in cell
+      - cell is a dict + value is a dict → every key in cell with equal values
+      - cell is a string + value is a string → substring (PostgREST text-array
+        carve-out; rare, mirrored for completeness)
+
+    Anything else (None, type mismatch) → False.
+    """
+    cell = row.get(col)
+    if cell is None:
+        return False
+    # List-of-elements vs list-of-elements
+    if isinstance(value, (list, tuple, set)):
+        if not isinstance(cell, (list, tuple, set)):
+            return False
+        try:
+            return all(v in cell for v in value)
+        except TypeError:
+            return False
+    # Dict subset
+    if isinstance(value, Mapping):
+        if not isinstance(cell, Mapping):
+            return False
+        return all(cell.get(k) == v for k, v in value.items())
+    # String substring fallback
+    if isinstance(value, str) and isinstance(cell, str):
+        return value in cell
+    return False
+
+
 # Map op → evaluator. Ops not in this map are recorded but evaluate as
 # "match all" (with a debug log) so unsupported PostgREST expressions don't
-# silently mismatch.
+# silently mismatch. Ops covered: every PostgREST filter call site exercised
+# across the workspace (eq/neq/in_/gt/lt/gte/lte/is_/like/ilike/contains).
+# Match-all fallback ops: or_/fts/text_search/filter/overlaps/contained_by/match
+# (match is decomposed to eq predicates at record time, so it never hits here).
 _PREDICATE_EVALUATORS = {
     "eq": _eval_eq,
     "neq": _eval_neq,
@@ -267,6 +354,9 @@ _PREDICATE_EVALUATORS = {
     "gte": _eval_gte,
     "lte": _eval_lte,
     "is_": _eval_is,
+    "like": _eval_like,
+    "ilike": _eval_ilike,
+    "contains": _eval_contains,
 }
 
 
@@ -347,11 +437,13 @@ class _FilterMixin:
     raise (Tier 1.5 G4).
 
     Filter calls also append a `(op, col, value)` tuple to `_predicates` so
-    the UPDATE/DELETE execute path can evaluate which rows match. Ops with
-    simple literal semantics (`eq`, `neq`, `in_`, `gt`, `lt`, `gte`, `lte`,
-    `is_`) are evaluated literally; complex PostgREST expressions
-    (`like`, `ilike`, `contains`, `or_`, `match`, `text_search`, `fts`,
-    `filter`) accumulate as predicates but evaluate as match-all (debug log).
+    the SELECT / UPDATE / DELETE execute paths can evaluate which rows match.
+    Ops with simple literal semantics (`eq`, `neq`, `in_`, `gt`, `lt`, `gte`,
+    `lte`, `is_`, `like`, `ilike`, `contains`) are evaluated literally;
+    complex PostgREST expressions (`or_`, `text_search`, `fts`, `filter`,
+    `overlaps`, `contained_by`) accumulate as predicates but evaluate as
+    match-all (debug log). `match({col: val})` is decomposed to literal `eq`
+    predicates at record time.
     """
 
     _validate_schema: bool = False
@@ -552,8 +644,43 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         self._single_mode = True
         return self
 
+    def _filtered_rows(self) -> list:
+        """Evaluate `_predicates` against the shared list and return matches.
+
+        Empty predicate list → return all rows (PostgREST match-all). Non-dict
+        rows are passed through unchanged (defensive — matches the UPDATE/DELETE
+        path's handling at `_apply_mutation`).
+        """
+        if not isinstance(self._data, list):
+            return self._data
+        if not self._predicates:
+            # Snapshot the list — callers shouldn't accidentally mutate the
+            # shared store via response.data. Mirrors the empty-predicates
+            # PostgREST contract while keeping isolation.
+            return list(self._data)
+        out = []
+        for row in self._data:
+            if not isinstance(row, dict):
+                # Non-dict rows survive at the same position as the UPDATE/DELETE
+                # path — keep them in the output unconditionally (no predicate
+                # can match a non-dict literally).
+                out.append(row)
+                continue
+            if _row_matches_predicates(row, self._predicates):
+                out.append(row)
+        return out
+
     def execute(self):
-        return self._do_execute()
+        # Response queue wins — propagation / predicate-filtering suppressed,
+        # mirroring the UPDATE/DELETE contract documented at module-level.
+        if self._response_queue is not None:
+            return self._do_execute()
+        filtered = self._filtered_rows()
+        data = filtered
+        if self._single_mode and isinstance(data, list):
+            data = data[0] if data else None
+        self._single_mode = False
+        return MockSupabaseResponse(data=data, count=self._count)
 
 
 # ---------------------------------------------------------------------------
