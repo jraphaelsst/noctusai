@@ -27,6 +27,7 @@ over `gpt-4o-mini`):
 from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
+from app.routers.credentials_router import router as credentials_router
 
 app = create_product_app(
     name="YouTube Crawler",
@@ -35,6 +36,13 @@ app = create_product_app(
     version="0.1.0",
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team"],
+    # Phase 1 of `youtube-crawler-domain-implementation`: operator-facing
+    # Google OAuth router. Mounts at `/api/credentials/...`. Consumes
+    # `noctusai_lib.security.oauth.GoogleProvider` (Real) /
+    # `FakeOAuthProvider` (Fake) underneath — the router itself is
+    # product-shaped because persistence + state-nonce CSRF are
+    # product-specific.
+    routers=[credentials_router],
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):

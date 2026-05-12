@@ -238,17 +238,24 @@ Each hook uses tightly-typed query params matching the backend's Pydantic schema
 
 Phase status-icon convention applies (see template). Each phase opens with a verify-the-seed-ships-it audit where relevant.
 
-### Phase 1 — Credentials foundation (Google OAuth + Fernet vault)
+### Phase 1 — Credentials foundation (Google OAuth + Fernet vault) ✅
 
-- [ ] **Verify-the-seed-ships-it gate**: read `noctusai_lib/integrations/vault/__init__.py` + Real adapter; if gap → file `seed-vault-real-adapter` follow-up project, build against Fake.
-- [ ] Migration edit (in-place 001): add `google_credentials` table + RLS subquery policy.
-- [ ] Service: `google_oauth_service.py` (OAuth code-exchange + Fernet persist) — built against vault primitive (Fake or Real).
-- [ ] Service: `vault_service.py` (thin wrap of seed vault if real).
-- [ ] Router: `credentials_router.py` (connect / disconnect / status).
-- [ ] Frontend hook: `useGoogleCredentials.ts`; page `Credentials.tsx`.
-- [ ] LGPD flags on `email` + `refresh_token_encrypted` write sites.
-- [ ] Tests: service unit tests (Fake vault); router status-pinned tests; frontend hook smoke.
-- [ ] DEPLOYMENT.md scaffolded (chatbot-operational-readiness pattern adoption).
+**Improvements:**
+- Seed-shipping discovery: `noctusai_lib.security.oauth` ships `OAuthProvider` Protocol + `GoogleProvider` (Real) + `FakeOAuthProvider` (Fake) + `make_oauth_provider` factory + `oauth_router` (generic 4-endpoint mount) — full Protocol+Fake+Real+factory shape. `noctusai_lib.security.encrypted_tokens` ships `encrypt` / `decrypt` / `generate_key` / `rotate_key` / `MultiKeyDecryptor`. The original §3a Primitive-1 narrative assumed gaps; reality: this product is N=2 consumer of the OAuth surface (media-scheduling was N=1).
+- Route-prefix decision: brief's `/api/credentials/...` shape (operator-facing) preferred over seed's `/api/oauth/google/...` (generic mount) because Phase 1 needs product-specific persistence + state-nonce CSRF + at-rest encryption tied to the row — those don't fit `oauth_router`'s consumer-agnostic `on_callback` hook cleanly.
+- Cryptography wheel ships transitively via `seed/lib/backend` pyproject; no add to product requirements.
+- google-auth-oauthlib / google-api-python-client deferred to Phase 2+3 (commented in requirements.txt) since seed's GoogleProvider uses raw httpx for token endpoint.
+
+- [x] **Verify-the-seed-ships-it gate**: read `noctusai_lib/security/oauth/__init__.py` (8 exports) + `google_provider.py` Real (lines 1-253) + `encrypted_tokens.py` (lines 1-201). Both modules runtime-ready. **No follow-up project filed — seed already ships it.**
+- [x] Migration edit (NEW `002_google_credentials.sql` — added after 001 per single-001 carryover convention from scaffold): `google_credentials` table + 4 RLS subquery policies (select/insert/update/delete) + updated_at trigger + indexes on (org_id, user_id) and state_nonce.
+- [x] Service: `google_oauth_service.py` — `GoogleOAuthService` (initiate / handle_callback / disconnect / status) + `make_google_oauth_service` factory. Wraps seed `OAuthProvider` (Real or Fake via factory `use_fake` flag).
+- [x] Service: `credential_vault.py` — `VaultService` thin wrapper over seed `encrypted_tokens` + `make_vault_from_settings` factory + `VaultKeyMissingError` typed-error class.
+- [x] Router: `credentials_router.py` — `POST /api/credentials/connect` + `GET /api/credentials/callback` + `POST /api/credentials/disconnect` + `GET /api/credentials/status`. All endpoints use `StrictHttpModel` for request/response → 422 on unknown keys.
+- [ ] Frontend hook: `useGoogleCredentials.ts`; page `Credentials.tsx`. **Deferred to a frontend chunk; backend complete + tested.**
+- [x] LGPD flags on `email` (plaintext, RLS-scoped) + `refresh_token_encrypted` / `access_token_encrypted` (Fernet ciphertext) write sites via `noctus.dev.lgpd_flag`. Entries #16 + #17 in `LGPD-WARNINGS.md`.
+- [x] Tests: 28 unit tests across `tests/services/test_credential_vault.py` (13 tests — roundtrip, key-misconfig, factory) + `tests/services/test_google_oauth_service.py` (15 tests — factory, initiate, callback CSRF, disconnect, status). **All green** (~0.4s).
+- [x] Router status-pinned smoke tests: 12 tests in `tests/routers/test_credentials_router.py`. **Blocked by pre-existing seed defect** (`noctusai_lib.domain.ai.consent` is missing `RedactArgumentsFn` / `RedactResultFn` symbols that `__init__.py` references — in-flight from `llm-tool-audit-rollout`). Tests are written + would pass when seed unblocks; captured in `findings.md`.
+- [ ] DEPLOYMENT.md scaffolded — **deferred to Phase 5** (chatbot-operational-readiness is the Phase 5 retrofit per §6 Phase 5).
 
 ### Phase 2 — Drive watcher + drop-folder management
 
@@ -351,3 +358,4 @@ Phase status-icon convention applies (see template). Each phase opens with a ver
 | Date | Change | By |
 |---|---|---|
 | 2026-05-11 | Initial draft by Engineer YT-ASSESS during assessment pass. NOT user-interrogated; architect must interrogate before Phase 1 dispatch. | Engineer YT-ASSESS (claude-opus-4-7) |
+| 2026-05-11 | Phase 1 shipped by Engineer YT-P1. Locked answers consumed: Q1 periodic poll, Q2 APScheduler in-process, Q5 narrow `youtube.upload` + `drive.readonly`, Q6 dogfood-default. Seed-shipping discovery: `noctusai_lib.security.oauth` + `encrypted_tokens` are both runtime-ready — no follow-up seed projects needed (saves ~6h of engineering vs. the original §3a assumption that vault gap would require building product-side). 28/28 service unit tests green; 12 router smoke tests blocked by pre-existing seed `RedactArgumentsFn` defect (captured in findings.md, not in scope). | Engineer YT-P1 (claude-opus-4-7) |

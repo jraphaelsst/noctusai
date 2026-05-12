@@ -21,3 +21,16 @@ redis==5.0.1
 
 # Testing
 pytest-asyncio>=0.21.0
+
+# Phase 1 of `youtube-crawler-domain-implementation`:
+#   - `cryptography` ships transitively via `seed/lib/backend` (pyproject pins
+#     `cryptography>=42.0`), so no add needed here.
+#   - `httpx` is already required above (FastAPI / seed `GoogleProvider`).
+#   - The seed `GoogleProvider` uses raw httpx for the token-endpoint dance;
+#     we don't need `google-auth-oauthlib` for Phase 1.
+#
+# Phases 2+3 will add:
+#   google-auth>=2.0.0                # for service-account / refresh handling
+#   google-api-python-client>=2.0.0   # Drive readonly + YouTube Data API v3
+#   google-auth-httplib2>=0.2.0       # transport
+# Leaving as comments until those phases land.
