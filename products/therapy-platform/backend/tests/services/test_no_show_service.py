@@ -157,7 +157,13 @@ class TestDetectAndChargeNoShows:
 class TestGetPlatformSetting:
     def test_returns_setting_value(self):
         db = MockSupabaseClient()
-        db.set_table_data("platform_settings", [{"value": "50"}])
+        # `_get_platform_setting` filters by `.eq("key", key)`. Seed row
+        # must carry the `key` predicate column or MOCK-SELECT-PREDICATE-FIX
+        # excludes it.
+        db.set_table_data(
+            "platform_settings",
+            [{"key": "no_show_charge_pct", "value": "50"}],
+        )
         result = no_show_service._get_platform_setting(db, "no_show_charge_pct", "30")
         assert result == "50"
 

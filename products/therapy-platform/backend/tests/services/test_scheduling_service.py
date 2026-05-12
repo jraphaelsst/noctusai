@@ -51,6 +51,7 @@ class TestMaterializeAvailabilityLookup:
             "availability_slots",
             [
                 {
+                    "therapist_id": THERAPIST_ID,
                     "day_of_week": 1,
                     "start_time": "09:00",
                     "end_time": "12:00",
@@ -94,6 +95,7 @@ class TestMaterializeAvailabilityLookup:
             "availability_slots",
             [
                 {
+                    "therapist_id": THERAPIST_ID,
                     "day_of_week": 0,
                     "start_time": "14:00",
                     "end_time": "16:00",
@@ -115,6 +117,7 @@ class TestMaterializeAvailabilityLookup:
             "availability_slots",
             [
                 {
+                    "therapist_id": THERAPIST_ID,
                     "day_of_week": 0,
                     "start_time": "14:00",
                     "end_time": "15:00",
@@ -139,20 +142,26 @@ class TestMaterializeAvailabilityLookup:
 class TestListBlockedIntervals:
     def test_filters_out_cancelled_statuses(self):
         db = _mock_db()
+        # `list_blocked_intervals` filters by `.eq("therapist_id", ...)
+        # .gte("scheduled_end", window_start).lte("scheduled_start", window_end)`.
+        # Seed rows carry `therapist_id` so MOCK-SELECT-PREDICATE-FIX keeps them.
         db.set_table_data(
             "appointments",
             [
                 {
+                    "therapist_id": THERAPIST_ID,
                     "scheduled_start": "2026-06-01T10:00:00+00:00",
                     "scheduled_end": "2026-06-01T11:00:00+00:00",
                     "status": "waiting",
                 },
                 {
+                    "therapist_id": THERAPIST_ID,
                     "scheduled_start": "2026-06-01T12:00:00+00:00",
                     "scheduled_end": "2026-06-01T13:00:00+00:00",
                     "status": "cancelled",
                 },
                 {
+                    "therapist_id": THERAPIST_ID,
                     "scheduled_start": "2026-06-01T14:00:00+00:00",
                     "scheduled_end": "2026-06-01T15:00:00+00:00",
                     "status": "no_show",
@@ -210,6 +219,7 @@ class TestGenerateCandidateSlots:
             "availability_slots",
             [
                 {
+                    "therapist_id": THERAPIST_ID,
                     "day_of_week": 1,
                     "start_time": "09:00",
                     "end_time": "10:00",

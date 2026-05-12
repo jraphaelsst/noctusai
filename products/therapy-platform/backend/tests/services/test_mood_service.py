@@ -4,19 +4,32 @@ Tests for the Mood Service.
 Covers: create entry, date range filtering, analytics calculation
 (avg rating, trend, emotion frequency).
 """
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 from app.services import mood_service
 
 
+# `get_analytics` filters by `created_at >= now - days` (default 30d, SP_TZ).
+# Anchor sample timestamps inside the rolling 30d window so the predicate
+# matches under literal evaluation (MOCK-SELECT-PREDICATE-FIX). Spread over
+# the last 25 days, ordered so first/second-half averages diverge → improving.
+_SP_TZ = timezone(timedelta(hours=-3))
+
+
+def _iso(days_ago: int) -> str:
+    return (datetime.now(_SP_TZ) - timedelta(days=days_ago)).isoformat()
+
+
 SAMPLE_ENTRIES = [
-    {"id": "mood-001", "patient_id": "patient-001", "rating": 3, "emocoes": ["ansiedade", "tristeza"], "created_at": "2026-03-01T10:00:00Z"},
-    {"id": "mood-002", "patient_id": "patient-001", "rating": 4, "emocoes": ["ansiedade"], "created_at": "2026-03-05T10:00:00Z"},
-    {"id": "mood-003", "patient_id": "patient-001", "rating": 5, "emocoes": ["calma"], "created_at": "2026-03-10T10:00:00Z"},
-    {"id": "mood-004", "patient_id": "patient-001", "rating": 6, "emocoes": ["calma", "esperança"], "created_at": "2026-03-15T10:00:00Z"},
-    {"id": "mood-005", "patient_id": "patient-001", "rating": 7, "emocoes": ["esperança", "alegria"], "created_at": "2026-03-20T10:00:00Z"},
-    {"id": "mood-006", "patient_id": "patient-001", "rating": 8, "emocoes": ["alegria"], "created_at": "2026-03-25T10:00:00Z"},
+    {"id": "mood-001", "patient_id": "patient-001", "rating": 3, "emocoes": ["ansiedade", "tristeza"], "created_at": _iso(25)},
+    {"id": "mood-002", "patient_id": "patient-001", "rating": 4, "emocoes": ["ansiedade"], "created_at": _iso(20)},
+    {"id": "mood-003", "patient_id": "patient-001", "rating": 5, "emocoes": ["calma"], "created_at": _iso(16)},
+    {"id": "mood-004", "patient_id": "patient-001", "rating": 6, "emocoes": ["calma", "esperança"], "created_at": _iso(12)},
+    {"id": "mood-005", "patient_id": "patient-001", "rating": 7, "emocoes": ["esperança", "alegria"], "created_at": _iso(8)},
+    {"id": "mood-006", "patient_id": "patient-001", "rating": 8, "emocoes": ["alegria"], "created_at": _iso(3)},
 ]
 
 
@@ -116,12 +129,12 @@ class TestMoodAnalytics:
         """When second half avg < first half avg by > 0.5, trend is declining."""
         db = MockSupabaseClient()
         declining_entries = [
-            {"rating": 8, "emocoes": [], "created_at": "2026-03-01T10:00:00Z"},
-            {"rating": 7, "emocoes": [], "created_at": "2026-03-05T10:00:00Z"},
-            {"rating": 6, "emocoes": [], "created_at": "2026-03-10T10:00:00Z"},
-            {"rating": 3, "emocoes": [], "created_at": "2026-03-15T10:00:00Z"},
-            {"rating": 2, "emocoes": [], "created_at": "2026-03-20T10:00:00Z"},
-            {"rating": 1, "emocoes": [], "created_at": "2026-03-25T10:00:00Z"},
+            {"patient_id": "patient-001", "rating": 8, "emocoes": [], "created_at": _iso(25)},
+            {"patient_id": "patient-001", "rating": 7, "emocoes": [], "created_at": _iso(20)},
+            {"patient_id": "patient-001", "rating": 6, "emocoes": [], "created_at": _iso(16)},
+            {"patient_id": "patient-001", "rating": 3, "emocoes": [], "created_at": _iso(12)},
+            {"patient_id": "patient-001", "rating": 2, "emocoes": [], "created_at": _iso(8)},
+            {"patient_id": "patient-001", "rating": 1, "emocoes": [], "created_at": _iso(3)},
         ]
         db.set_table_data("mood_entries", declining_entries)
         result = await mood_service.get_analytics(
@@ -135,10 +148,10 @@ class TestMoodAnalytics:
         """When difference is less than 0.5, trend is stable."""
         db = MockSupabaseClient()
         stable_entries = [
-            {"rating": 5, "emocoes": [], "created_at": "2026-03-01T10:00:00Z"},
-            {"rating": 5, "emocoes": [], "created_at": "2026-03-10T10:00:00Z"},
-            {"rating": 5, "emocoes": [], "created_at": "2026-03-20T10:00:00Z"},
-            {"rating": 5, "emocoes": [], "created_at": "2026-03-25T10:00:00Z"},
+            {"patient_id": "patient-001", "rating": 5, "emocoes": [], "created_at": _iso(25)},
+            {"patient_id": "patient-001", "rating": 5, "emocoes": [], "created_at": _iso(16)},
+            {"patient_id": "patient-001", "rating": 5, "emocoes": [], "created_at": _iso(8)},
+            {"patient_id": "patient-001", "rating": 5, "emocoes": [], "created_at": _iso(3)},
         ]
         db.set_table_data("mood_entries", stable_entries)
         result = await mood_service.get_analytics(
