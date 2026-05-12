@@ -23,11 +23,13 @@ weekly (typically Monday morning).
 from __future__ import annotations
 
 import logging
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from noctusai_lib.domain.ai.tool_audit import AuditRecord, now_utc
 from noctusai_lib.domain.digest import (
     BaseDigestService,
     DigestResult,
@@ -38,6 +40,12 @@ from noctusai_lib.domain.digest import (
     render_digest_pair,
 )
 from noctusai_lib.integrations.email.digest import Digest
+
+from app.services.ai_consent_features import (
+    REDACT_AUDIT_DIGEST_ARGUMENTS,
+    REDACT_AUDIT_DIGEST_RESULT,
+)
+from app.services.audit_hook import get_audit_writer
 
 logger = logging.getLogger(__name__)
 
@@ -109,14 +117,66 @@ async def _generate_narrative(
         + ", ".join(f"{a} ({n})" for a, n in actions_by_count[:3])
         + ". Sem narrativa detalhada — LLM indisponível para esta janela."
     )
-    return await digest_narrative(
-        system=system,
-        user_prompt=user_prompt,
-        model=MODEL,
-        cache=True,
-        org_id=org_id,
-        fallback=fallback,
-    )
+
+    # Tool-call audit (LLM-tool-audit-rollout Phase 4 — core wiring).
+    # The narrative call is the single LLM dispatch site in core
+    # (`audit_digest_service` → `digest_narrative` → `chat_completion`).
+    # We capture the call in `public.tool_call_audits` with feature-specific
+    # LGPD redaction applied at AuditRecord-construction time per
+    # `KB § PATTERNS/llm-tool-audit.md § LGPD redaction`. Best-effort: the
+    # audit-writer never raises and `digest_narrative` itself swallows LLM
+    # failures into the deterministic fallback.
+    audit_writer = get_audit_writer()
+    audit_started = now_utc()
+    audit_start_perf = time.perf_counter()
+    raw_arguments: dict[str, Any] = {
+        "org_id": org_id,
+        "org_name": org_name,
+        "period_days": period_days,
+        "total_events": total_events,
+        "model": MODEL,
+        "prompt_version": PROMPT_VERSION,
+        "actions_by_count_top3": actions_by_count[:3],
+    }
+    audit_status: str = "success"
+    audit_error: Optional[str] = None
+    try:
+        narrative_text = await digest_narrative(
+            system=system,
+            user_prompt=user_prompt,
+            model=MODEL,
+            cache=True,
+            org_id=org_id,
+            fallback=fallback,
+        )
+        raw_result: Any = {
+            "narrative_chars": len(narrative_text),
+            "narrative_preview": narrative_text[:200],
+        }
+        return narrative_text
+    except Exception as exc:  # pragma: no cover — digest_narrative swallows
+        audit_status = "failure"
+        audit_error = repr(exc)
+        raw_result = None
+        raise
+    finally:
+        try:
+            duration_ms = int((time.perf_counter() - audit_start_perf) * 1000)
+            audit_writer(
+                AuditRecord(
+                    tool_name="core.audit_digest",
+                    status=audit_status,
+                    duration_ms=duration_ms,
+                    started_at=audit_started,
+                    arguments=REDACT_AUDIT_DIGEST_ARGUMENTS(raw_arguments),
+                    result=REDACT_AUDIT_DIGEST_RESULT(raw_result),
+                    error=audit_error,
+                )
+            )
+        except Exception:  # pragma: no cover — best-effort
+            logger.exception(
+                "audit_digest_service: audit-writer failed for core.audit_digest"
+            )
 
 
 def _render_bodies(

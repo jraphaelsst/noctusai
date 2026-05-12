@@ -17,3 +17,12 @@ email-validator>=2.0.0
 # APScheduler — core uses for background jobs; was previously
 # inherited from root requirements.txt in native dev mode
 APScheduler>=3.10.0
+
+# SQLAlchemy — used by the seed `make_audit_writer` audit-hook contract
+# (`app/services/audit_hook.py` + `app/models/tool_call_audit.py`).
+# Routers/services use the Supabase admin client per `KB § PATTERNS/backend.md`;
+# SQLAlchemy is a SECONDARY surface for the typed-table-class shape the seed
+# audit writer requires. Postgres driver (`psycopg2-binary`) is opt-in — only
+# loaded when `postgres_url` is set. See `KB § PATTERNS/llm-tool-audit.md`.
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0

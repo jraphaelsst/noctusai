@@ -41,5 +41,13 @@ class Settings(ProductSettings):
     # Email (optional — Resend)
     resend_api_key: Optional[str] = None
 
+    # Optional Postgres URL for SQLAlchemy-bound flows (audit-hook write side
+    # effects for `public.tool_call_audits`). Empty → audit-hook lazy session
+    # factory returns None and the audit writer skips with a debug log.
+    # Routers/services use the Supabase admin client per `KB § PATTERNS/backend.md`
+    # — the SQLAlchemy session is a SECONDARY surface, not the primary data path.
+    # See `app/services/audit_hook.py` + `KB § PATTERNS/llm-tool-audit.md`.
+    postgres_url: str = ""
+
 
 settings = Settings()
