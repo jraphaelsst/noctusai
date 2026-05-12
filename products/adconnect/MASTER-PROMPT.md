@@ -49,6 +49,8 @@ Backend is 100% Supabase-backed. Single `001_adconnect.sql` builds the full sche
 - Module-level `from ..database import X` binds at import time and defeats conftest patches. Use `_db.get_client()` lazy attribute access in services.
 - Recurrence on rewards/sellout/financial/NF-e primitives must absorb to `noctusai_lib.domain.*` per the recurrence rule if mailing/PF/ERP/etc. grow similar engines.
 - LGPD-first: distributor PII (CNPJ, addresses, financial state, NF-e XML) is flagged at every write site via `noctus.dev.lgpd_flag`.
+- Rate-limit policies: prefer named imports from `noctusai_lib.api.rate_limit_policies` (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL`) over inline `"30/minute"` literals. Adconnect already config-drives the financial webhook (`settings.webhook_rate_limit`); future limiter decorators should adopt the canonical module so per-policy tuning lifts to one seed-side change.
+- Doc-code coherence: when a tool/script/MCP-tool referenced in this doc changes behavior, update this MASTER-PROMPT in the same commit — discover drift via `grep -rn "<tool-name>" products/adconnect/`. (CLAUDE.md §1 — doc-code coherence rule.)
 
 ## Testing
 
@@ -56,6 +58,17 @@ Backend is 100% Supabase-backed. Single `001_adconnect.sql` builds the full sche
 cd products/adconnect/backend && pytest
 cd products/adconnect/frontend && npx vite build
 ```
+
+Framework-test suites inherit from `noctusai_lib.testing` (FrameworkEndpointsSuite / TeamFlowSuite / NotificationFlowSuite / AuthBoundarySuite). Adconnect overrides `TeamFlowSuite.test_list_members_returns_data` because the product's `client` fixture binds `MockUser(org_id=ORG_ID_BRAND)` instead of seed-default `test-org-123`. As of 2026-05-11 the suite ships a `expected_org_id: ClassVar[str]` class attribute — the override can be simplified to `expected_org_id = ORG_ID_BRAND` (no method override needed). Follow-up cleanup, tracked under recurrence-rule N=2+ if other products surface the same shape.
+
+Seed mocks: `MockSupabaseClient` (2026-05-11) deep-copies caller inputs at storage time so UPDATE/DELETE write-propagation doesn't mutate module-level fixture dicts; `_eval_is` now handles PostgREST IS-NULL semantics; `_FilterMixin.not_` actually negates. Adconnect tests that hit `.is_(..., None)` or `.not_(...)` no longer need local workarounds.
+
+## Common commands
+
+- Compliance review (LGPD / webhook-pins / status-assertion / and 10 new detectors added 2026-05-11): `noctus.dev.review --product adconnect`. New detectors include `check_doc_tool_reference_drift` (this doc), `check_no_silent_ok_comment`, `check_auth_dep_anti_pattern`, `check_mcp_path_via_settings`, `check_mcp_write_tool_worktree_arg`, `check_pipefail_grep_q`, `check_archive_staleness`, `check_dispatcher_staleness`, `check_branch_orphan`, `check_gitignore_drift` — live inventory: `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`.
+- Cleanup triage (cross-product / cross-tool / intra-file hygiene): `noctus.hound.scan`.
+- Storage triage (artifacts / environments / stale worktrees): `bash scripts/mole.sh scan`.
+- Fresh-clone bootstrap auto-hydrates every `products/*/backend/requirements.txt` into the shared venv (`scripts/bootstrap-worktree.sh` + `scripts/setup.sh`, 2026-05-11) — no per-product `pip install -r` step needed.
 
 ## Dependencies
 
