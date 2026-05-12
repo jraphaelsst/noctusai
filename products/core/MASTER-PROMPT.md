@@ -76,6 +76,7 @@ AcceptInvite, AccountSettings, BillingSettings, CheckoutCancel, CheckoutSuccess,
 
 - Follow shared patterns from noctusai_lib (auth, roles, invitations, responses, exceptions)
 - Router -> Service -> Schema pattern; routers are thin, business logic in services
+- **Schemas live under `app/schemas/` as 21 per-domain modules** (5-wave extraction, commit `09ea826`, 2026-05-11). Add a new module rather than appending to an existing one; one `BaseModel` cluster per file. `app/schemas/__init__.py` is the canonical re-export surface for stable identifiers — keep it tidy.
 - RLS policies use `(SELECT auth.uid())` pattern on all tables
 - Portuguese for business domain names, English for technical/framework code
 - Use `get_current_admin()` for all admin-only routes
@@ -83,6 +84,8 @@ AcceptInvite, AccountSettings, BillingSettings, CheckoutCancel, CheckoutSuccess,
 - Webhook delivery uses retry with exponential backoff
 - N+1 zero tolerance: use `.in_("id", ids)` for batch reads, `.insert(rows)` for batch writes
 - All product notification proxies route through Core's `public.notifications` table
+- **Rate-limit policies are canonical.** `team.py` + `onboarding.py` consume `DEFAULT_AUTH_RL` from `noctusai_lib.api.rate_limit_policies`. New auth/team/invite routes MUST import `DEFAULT_AUTH_RL`; new webhook routes use `DEFAULT_WEBHOOK_RL`; admin/portal routes use `DEFAULT_PORTAL_RL`; LLM-touching routes use `DEFAULT_AI_RL`. Inline `@limiter.limit("N/min")` strings are an N=2 trigger.
+- **Doc-code coherence at commit time.** When you change a script / MCP tool / keeper detector / CLI flag that this MASTER-PROMPT or `KB § backend/01-CORE.md` references by name, update the prose in the SAME commit. `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ products/core/` first. → CLAUDE.md §1 "Doc-code coherence" + `KB § PATTERNS/methodology-codification-pipeline.md`
 
 ## Testing
 
@@ -90,7 +93,12 @@ AcceptInvite, AccountSettings, BillingSettings, CheckoutCancel, CheckoutSuccess,
 cd products/core/backend && pytest
 ```
 
-411 tests across 23 test files (passing post-Phase-3 seed-framework migration, 2026-04-22).
+Tests live under `products/core/backend/tests/` (45 files; grew from 23 post-Phase-3 seed-framework migration). New core tests should:
+
+- Inherit framework suites from `noctusai_lib.testing.framework_test_suites` (TestHealthCheck / TeamRouter* / AuthBoundary / NotificationFlow / etc.) rather than copy-paste. Core uses the `admin_client` rich variant — content-diff before deciding "duplicate" with another product's adopter.
+- For `TeamFlowSuite` adopters: set the `expected_org_id` **class attribute** (commit `f2b0336`, 2026-05-11) — drives the assertion seam without overriding helper methods.
+- Use `MockSupabaseClient` from the seed; the mock deep-copies caller inputs at storage time, so write-propagation (UPDATE/DELETE) tests don't mutate module-level fixture dicts. Q's seed-side fix to `_eval_is` (PostgREST IS-NULL semantics) + `_FilterMixin.not_` negation landed 2026-05-11; pull the latest noctusai_lib if a `.is_("col", "null")` / `.not_.is_(...)` query returns surprising rows.
+- Never `monkeypatch.setattr(<our_module>, ...)` — seed the underlying data instead. `unittest.mock.patch.object(<external_integration>, ...)` for LLM/Resend/Stripe network IS fine.
 
 ## Dependencies
 
@@ -99,3 +107,9 @@ cd products/core/backend && pytest
 - Stripe: checkout, subscriptions, webhooks, customer portal
 - Resend: transactional email delivery
 - Supabase: Auth, database, RLS
+
+## Methodology hooks (2026-05-11 refresh)
+
+- **Codification pipeline.** New rules that emerge from core work route through 4 stages: emerges in conversation → memory entry → KB pattern doc + CLAUDE.md pointer → `check_*` keeper detector with colocated test. Don't let a rule stall at memory if it has a deterministic predicate + recurrence ≥ 3 + clear remediation. Today's batch added 10 new keeper detectors covering hygiene + codification gaps — discover via `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`. → `KB § PATTERNS/methodology-codification-pipeline.md`
+- **Bootstrap auto-hydrate.** Fresh worktrees + clones run `scripts/bootstrap-worktree.sh` / `scripts/setup.sh`; both auto-hydrate hooks + venv + npm without manual steps. If a hook is missing in your worktree, re-run setup before touching code — don't commit around a missing pre-commit.
+- **Branching-first orchestration.** Multi-router or multi-service changes in core (e.g., the schemas extraction) belong in waves of focused engineer chunks, not a single sprawling brief. Architect plans; engineers execute. Wave N+1 dispatches after Wave N FF-merges. → CLAUDE.md §1 + `KB § PATTERNS/branching-and-merging.md`
