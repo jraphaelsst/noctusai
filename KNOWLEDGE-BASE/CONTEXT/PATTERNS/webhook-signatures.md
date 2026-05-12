@@ -186,7 +186,7 @@ owns secret resolution); pins 4+5 still apply. The Stripe receiver in
 - ✅ `core` — Stripe billing webhooks (pattern 4) — pins 4+5 enforced 2026-05-09
 - ✅ `erp-imobiliario` — WAHA (pattern 2), Meta Lead Ads (pattern 1) — all 5 pins from launch
 - ✅ `mailing` — Resend (pattern 3) — all 5 pins from 2026-05-02
-- ✅ `media-scheduling` — WAHA (pattern 2) — all 5 pins after 2026-05-09 audit (pins 4+5 added)
+- ✅ `imobi-scheduling` — WAHA (pattern 2) — all 5 pins from launch (consolidates the earlier `media-scheduling` port deleted 2026-05-11)
 - ✅ `whatsapp-google-scheduling` (sibling repo) — WAHA (pattern 2)
   via vendored copy until published-package shape lands.
 

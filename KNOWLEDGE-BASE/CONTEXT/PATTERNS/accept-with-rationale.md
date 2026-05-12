@@ -428,6 +428,8 @@ state change, not a removal.
 
 ## Entries from `media-scheduling-port-resume` (closed 2026-05-04)
 
+> **DELETED 2026-05-11.** The `media-scheduling` product was deleted in favor of `imobi-scheduling` (same product, divergent shapes; imobi was the canonical cleaner adopter — single 001 migration, Supabase-native audit adapter, factory-shaped WhatsApp router, 393 tests passing, DEPLOYMENT.md). All file-paths cited in the entries below point to deleted code. Entries kept for **methodology archaeology** — the rationales (LID-auth at N=1 stays product-side; dispatcher mutation vs per-call `tool_handler=`; hybrid SQLAlchemy+Pydantic at the seed-audit-contract boundary; etc.) remain relevant when the next product hits the same shape. Their **revisit triggers** still fire — imobi-scheduling re-instantiates the WhatsApp/Calendar/Maps surface and inherits the open questions. If/when N=2 fires, the move-to-seed conversation re-opens; cite this catalog block for context.
+
 ### LID-aware first-inbound auth stays product-side
 
 - **What:** `products/media-scheduling/backend/app/services/lid_auth.py::LidAuthService` (3-path WhatsApp `chat_id` → `authorized_user` resolution: direct LID match, PendingChatIdentity capture, anonymous-but-known-phone fallback).

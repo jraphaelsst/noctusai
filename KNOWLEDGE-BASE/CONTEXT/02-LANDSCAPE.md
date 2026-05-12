@@ -17,8 +17,7 @@
 | **AdConnect** | `products/adconnect/` | B2B ad-inventory marketplace (custom JWT auth; MVP in flight on `adconnect-mvp-implementation`) | 8007/8130 | `adconnect` |
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
 | **YouTube Crawler** | `products/youtube-crawler/` | YouTube Data API v3 + Drive + WAHA + SMTP — quota-aware uploads with Fernet-encrypted refresh tokens (scaffolded 2026-05-05; containerized 2026-05-10 follow-up of `containerization-backlog-closure`) | 8008/8150 | `youtube_crawler` |
-| **Media Scheduling** | `products/media-scheduling/` | Real-estate media-crew scheduling via WhatsApp ↔ OpenAI ↔ Google Calendar (ported 2026-05-04 from sibling repo `whatsapp-google-scheduling/` via `projects/media-scheduling-port/`) | 8096/8140 | `media_scheduling` |
-| **Imobi Scheduling** | `products/imobi-scheduling/` | WhatsApp chatbot scheduling real-estate media crews via OpenAI tool-loop + Google Calendar + Maps travel-time; first chatbot consumer of `noctusai_lib.{integrations.whatsapp,domain.chatbot,domain.scheduling}`; folded 2026-05-11 from sibling repo `whatsapp-google-scheduling/` via `projects/imobi-scheduling-bot-creation/`; single-agency v1, WhatsApp-only (admin UI deferred) | 8011/8160 | `imobi_scheduling` |
+| **Imobi Scheduling** | `products/imobi-scheduling/` | WhatsApp chatbot scheduling real-estate media crews via OpenAI tool-loop + Google Calendar + Maps travel-time; first chatbot consumer of `noctusai_lib.{integrations.whatsapp,domain.chatbot,domain.scheduling}`; folded 2026-05-11 from sibling repo `whatsapp-google-scheduling/` via `projects/imobi-scheduling-bot-creation/`; consolidated 2026-05-11 by deleting earlier `media-scheduling` port (same product, divergent shapes — imobi was the canonical cleaner adopter); single-agency v1, WhatsApp-only (admin UI deferred) | 8011/8160 | `imobi_scheduling` |
 
 > **Port allocation table** of record: `RESERVED_RANGES` in `mcp/noctusai/tools/noctus/dev/scaffold.py`. The `noctus.dev.reserve_port_range` MCP tool consults that list when scaffolding new products; this table mirrors it.
 
@@ -31,26 +30,25 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 28 | 12 | 26 | 0 | 45 | 485 |
-| ERP | 59 | 52 | 67 | 66 | 113 | 1,673 |
+| Core | 28 | 13 | 26 | 0 | 47 | 499 |
+| ERP | 59 | 53 | 67 | 66 | 115 | 1,677 |
 | PF | 15 | 18 | 30 | 16 | 48 | 482 |
-| Therapy | 40 | 45 | 65 | 33 | 81 | 1,120 |
+| Therapy | 40 | 46 | 65 | 33 | 83 | 1,138 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 6 | 8 | 11 | 7 | 17 | 216 |
 | Mailing | 10 | 11 | 21 | 9 | 19 | 202 |
 | AdConnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Media Scheduling | 5 | 8 | 10 | 3 | 17 | 86 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 13 | 8 | 1 | 22 | 273 |
-| **Total** | **177** | **180** | **275** | **141** | **398** | **4,828** |
+| **Total** | **172** | **175** | **265** | **138** | **387** | **4,778** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas (12):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed` + `adconnect` + `dev_team` + `media_scheduling` + `youtube_crawler` + `imobi_scheduling`.
-- **Tables: 314** distributed across the schemas.
+- **Schemas (11):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed` + `adconnect` + `dev_team` + `youtube_crawler` + `imobi_scheduling`.
+- **Tables: 302** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

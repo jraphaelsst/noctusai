@@ -310,7 +310,6 @@ The detector catch matches GG's manual audit case-for-case. The detectors close 
 | erp-imobiliario | 2 | 9 | 34 |
 | imobi-scheduling | 0 | 0 | 0 |
 | mailing | 0 | 0 | 18 |
-| media-scheduling | 0 | 0 | 0 |
 | personal-finance | 0 | 0 | 1 |
 | seed | 0 | 0 | 0 |
 | therapy-platform | 37 | 1 | 5 |
@@ -723,9 +722,9 @@ class TestHealthCheck(HealthCheckSuite):
 
 Pytest collects `test_*` methods on any `Test*` class regardless of base. Class attrs on the subclass shadow base defaults at lookup time. The `client` fixture is consumed by name from each adopter's `conftest.py` — suites in `noctusai_lib` don't redefine it.
 
-**Adopters (6 products, 14 test files refactored):** adconnect, daily-life, mailing, media-scheduling, seed, youtube-crawler. Net: −848 LOC product test code, +316 LOC seed-lib.
+**Adopters (5 products, ~12 test files refactored):** adconnect, daily-life, mailing, seed, youtube-crawler. Net: −848 LOC product test code, +316 LOC seed-lib (historical — media-scheduling was a 6th adopter; the product was deleted 2026-05-11 in favor of `imobi-scheduling` which consolidates the same WhatsApp/Calendar/Maps scheduling surface).
 
-**The N=4 byte-identical lesson.** The audit flagged `TestRemoveMember` recurring in 7 products — but reading bodies showed only 4 are byte-identical (adconnect / media-scheduling / seed / youtube-crawler). Core / daily-life / erp-imobiliario have **divergent rich tests** using `admin_client` to exercise real business logic (self-removal rejection, role-promotion guards). Those stayed untouched — they're independent test artifacts that share a label, NOT duplicates waiting to be unified. **Content-diff before deciding "this is a duplicate."**
+**The N=4 byte-identical lesson.** The audit flagged `TestRemoveMember` recurring in 7 products — but reading bodies showed only 4 are byte-identical (adconnect / media-scheduling / seed / youtube-crawler). Core / daily-life / erp-imobiliario have **divergent rich tests** using `admin_client` to exercise real business logic (self-removal rejection, role-promotion guards). Those stayed untouched — they're independent test artifacts that share a label, NOT duplicates waiting to be unified. **Content-diff before deciding "this is a duplicate."** (Historical — media-scheduling was deleted 2026-05-11; the byte-identical-4 count at the time of the lesson stands as recorded.)
 
 **Anti-patterns:**
 - Hand-writing `TestHealthCheck` inline instead of inheriting `HealthCheckSuite` — seed framework changes will silently miss your tests

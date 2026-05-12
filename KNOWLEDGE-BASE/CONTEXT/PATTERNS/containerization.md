@@ -87,7 +87,7 @@ noctusai/
     ├── mailing/           ← (8006 / 8120)
     ├── adconnect/         ← (8007 / 8130)
     ├── dev-team/          ← (8009 / 8123) + extra: /opt/dev_team editable install
-    ├── media-scheduling/  ← (8096 / 8140)
+    ├── imobi-scheduling/  ← (8011 / 8160)
     └── youtube-crawler/   ← (8008 / 8150)
 ```
 
@@ -1825,16 +1825,15 @@ strategy:
       - mailing
       - adconnect
       - dev-team
-      - media-scheduling
       - seed
     role: [backend, frontend]
 ```
 
-**10 products × 2 roles = 20 matrix cells.** Each cell is one GitHub
+**9 products × 2 roles = 18 matrix cells.** Each cell is one GitHub
 Actions runner. `fail-fast: false` is non-negotiable: dev-team's
 backend (~900MB with the agno engine) is the heaviest build and prone
 to flake; without `fail-fast: false`, a single dev-team-backend failure
-would cancel the other 19 builds and waste 20-30 minutes of compute.
+would cancel the other 17 builds and waste 20-30 minutes of compute.
 
 **`youtube-crawler` and `imobi-scheduling` are intentionally absent**
 from the matrix:
@@ -1842,7 +1841,8 @@ from the matrix:
   as a separate follow-up).
 - `imobi-scheduling` still carries stale `seed-*` literal service
   names from a pre-T7 scaffold (see §11d carve-out). Add it to the
-  matrix after the rename lands.
+  matrix after the rename lands. (The earlier `media-scheduling` port
+  of the same product was deleted 2026-05-11 — imobi consolidates.)
 
 ### Cache strategy
 

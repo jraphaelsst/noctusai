@@ -328,7 +328,6 @@ jobs:
           - mailing
           - adconnect
           - dev-team
-          - media-scheduling
           - seed
         role: [backend, frontend]
     steps:
