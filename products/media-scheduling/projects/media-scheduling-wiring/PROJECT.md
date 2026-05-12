@@ -13,15 +13,16 @@
 > redesign or feature growth. Smallest product in the rollout (4 admin routes).
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 2 ⏳ staged — awaiting architect commit)
-- **Status:** ⏳ **Phase 2 staged — awaiting architect commit + FF-to-main.**
-  Phase 0 ✅ (gap inventory). Phase 1 ✅ (merged `bb78d1e`: Pattern F adoption ×9
-  callsites + ghost-field enrichment on Appointment DTO + migration 007
-  `authorized_users.notes` + 22 new router tests → 109 green). Phase 2 (this
-  branch — `media-scheduling-wiring-phase-2-2026-05-11`) closes the last
-  Phase 3 router-test-coverage gap (`test_condominiums_router.py` +4 tests
-  → **117 green**). Remaining: detail pages (Phase 4 — user signal needed)
-  + `platform-dto-contract` follow-up (Pattern E — deferred platform-wide).
+- **Last updated:** 2026-05-11 (status reconciled — Phase 2 merged to main as `6e10620`)
+- **Status:** ✅ **Phase 2 merged to main (`6e10620`).** Phases 3-5 absorbed
+  or deferred; Phase 4 (frontend detail pages) parked on user signal; Phase 6
+  (close) ready when user signals project completion.
+  Phase 0 ✅ (merged `3367cb3`: gap inventory). Phase 1 ✅ (merged `bb78d1e`:
+  Pattern F adoption ×9 callsites + ghost-field enrichment on Appointment DTO
+  + migration 007 `authorized_users.notes` + 22 new router tests → 109 green).
+  Phase 2 ✅ (merged `6e10620`: `test_condominiums_router.py` +4 tests →
+  **117 green**). Remaining: detail pages (Phase 4 — user signal needed) +
+  `platform-dto-contract` follow-up (Pattern E — deferred platform-wide).
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `CLAUDE.md § Universal rules` — behavioral rules, loaded every session
@@ -404,7 +405,7 @@ the wider seam since the work was tightly coupled.
 
 Verification: **109/109 pytest green**; keeper `--review` 0 issues.
 
-### Phase 2 ⏳ — Phase 3 router-test gap closure + status refresh *(2026-05-11, this branch)*
+### Phase 2 ✅ — Phase 3 router-test gap closure + status refresh *(2026-05-11, merged `6e10620`)*
 
 Focused-subset scope — Phase 1 absorbed wire-shape/phantom-field cleanup
 already, so Phase 2 is the residual router-test gap (Phase 3 in §6 plan).
@@ -501,6 +502,55 @@ cd products/media-scheduling/frontend && npx vite build
 ---
 
 ## 11. Change log
+
+### 2026-05-11 — Status reconciliation (Engineer MS-CLOSE)
+
+**Doc-lag fix. Phase 2 already shipped to `origin/main` as `6e10620` (2026-05-11
+20:13) but PROJECT.md still displayed "Phase 2 ⏳ staged — awaiting architect
+commit + FF-to-main." Git-log + git-show + git-ls-tree confirmed all promised
+artifacts are on main:**
+
+- `products/media-scheduling/backend/tests/routers/test_condominiums_router.py`
+  present on `origin/main` (blob `b6f33d7`).
+- `PROJECT.md` §11 Phase 2 entry committed in `6e10620`.
+- Two subsequent commits by Engineer S touched media-scheduling
+  (`d3b46c6` fixture provider=google, `8d64b42` MASTER-PROMPT refresh)
+  — both shipped on main; orthogonal to Phase 2's scope.
+
+**Verification:** `pytest products/media-scheduling/backend/` → **117 passed,
+0 failed, 1 unrelated PendingDeprecationWarning** at HEAD (matches the
+Phase 2 baseline; 0 regressions from the post-Phase-2 follow-ups).
+
+**Edits applied this entry:**
+- Status header (top of PROJECT.md): ⏳ → ✅, Phase 2 SHA captured.
+- §6 Phase 2 header: ⏳ → ✅ with `6e10620` SHA.
+- §11 new entry above Phase 2 entry (this entry).
+
+**Improvements (methodology-candidate):** PROJECT.md status header is the
+front-of-doc signal but lives in human-edited prose — it drifts whenever a
+phase author writes "staged — awaiting architect commit" then commits the
+phase doc inline rather than via a follow-up doc-only commit. **Detector
+idea:** `check_project_status_header_vs_git_log` — for every `**Status:** ⏳
+… awaiting … commit` in any `*-PROJECT.md`, walk `git log --oneline -- <doc>`
++ `git log --oneline -- <product>` and warn if a phase row in §6 is icon=⏳
+while git history shows a commit with that phase's slug already merged.
+Codifies Phase 2's own surfaced learning (PROJECT.md reconciliation pass as
+Phase N step 0). Fits Stage 4 of the codification pipeline (deterministic
+predicate + ≥3 recurrence — already seen in PF + ERP + media-scheduling +
+likely therapy/mailing/daily-life). Filed as memory-only for now; promote on
+the next visible recurrence.
+
+**Phase 3 assessment (per architect ask):** §6 Phase 3 (Router test coverage)
+is fully closed — all 3 in-scope router tests landed in Phases 1+2;
+`test_notificacoes_router.py` proved a false-positive gap (covered via
+seed `NotificationFlowSuite` in `tests/integration/test_e2e_flows.py`). §6
+Phase 4 (Frontend type alignment + detail pages) is **gated on user signal**
+per the original phase plan — no execution this session. §6 Phase 5
+(End-to-end verification including browser QA) requires deploy/manual steps
+the architect typically runs. §6 Phase 6 (Close + retrospective + FF) is
+ready when user signals close.
+
+**No code changes this entry — doc-only reconciliation.**
 
 ### 2026-05-11 — Phase 2 ⏳ staged (Engineer MED-P2, branch `media-scheduling-wiring-phase-2-2026-05-11`)
 
