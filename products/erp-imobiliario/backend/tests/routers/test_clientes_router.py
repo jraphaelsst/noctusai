@@ -1,8 +1,16 @@
 """
 Tests for the Clientes CRUD router.
 Covers create, read, update, delete, archive, move pipeline stage.
+
+Phase 3b DTO-shape assertions (TestDTOBoundary) pin the operational DTO
+contract — they activate once the pre-existing
+`RedactArgumentsFn` import failure in `noctusai_lib.domain.ai` is cleared
+(out of Phase 3b scope; tracked at `tests/services/test_dto_mappers.py`
+which runs green standalone).
 """
 import pytest
+
+from app.services.clientes_service import _CLIENTE_DTO_FIELDS
 
 
 class TestListarClientes:
@@ -125,3 +133,40 @@ class TestMoverEtapa:
             "para_etapa": "negociacao", "novo_indice": 0
         })
         assert resp.status_code == 200
+
+
+class TestDTOBoundary:
+    """Pin the operational Cliente DTO contract at the HTTP boundary."""
+
+    def test_list_strips_unknown_fields(self, client):
+        client._mock_supabase.set_table_data("clientes", [{
+            "id": "c1",
+            "nome": "DTO Test",
+            "email": "x@y.com",
+            "arquivado": False,
+            "internal_org_secret": "MUST-NOT-LEAK",
+            "audit_trail_hash": "MUST-NOT-LEAK",
+        }])
+        resp = client.get("/api/clientes")
+        assert resp.status_code == 200
+        rows = resp.json().get("data", [])
+        assert rows, "expected at least one cliente row"
+        for row in rows:
+            assert set(row.keys()).issubset(set(_CLIENTE_DTO_FIELDS)), (
+                f"raw-row leak detected: unexpected keys "
+                f"{set(row.keys()) - set(_CLIENTE_DTO_FIELDS)}"
+            )
+            assert "internal_org_secret" not in row
+            assert "audit_trail_hash" not in row
+
+    def test_get_single_strips_unknown_fields(self, client):
+        client._mock_supabase.set_table_data("clientes", {
+            "id": "c-single",
+            "nome": "Single",
+            "internal_score": 99,
+        })
+        resp = client.get("/api/clientes/c-single")
+        assert resp.status_code == 200
+        data = resp.json().get("data", {})
+        assert set(data.keys()).issubset(set(_CLIENTE_DTO_FIELDS))
+        assert "internal_score" not in data

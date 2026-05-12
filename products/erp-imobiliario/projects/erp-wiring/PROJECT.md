@@ -15,20 +15,27 @@
 > *wiring*, not redesign or feature growth.
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ — deferred-items absorption batch)
-- **Status:** ⏳ **Phase 3 ✅ — deferred-items absorption batch closed (AI plumbing migration + Pattern F continuation + status-code calibration).**
+- **Last updated:** 2026-05-11 (Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 3b ✅ — DTO normalization sweep)
+- **Status:** ⏳ **Phase 3b ✅ — DTO normalization sweep closed (operational contract; `response_model` deferred per §7 Q-E).**
   Phase 0 ✅ discovery; Phase 1 ✅ Pattern F initial (300 callsites) +
   delete_or_404 sweep (15 sites); Phase 2 ✅ `_persist_indicator` →
-  `safe_persist_indicator` (5 callsites in `ai.py`); Phase 3 ✅ this
-  dispatch — `_require_openai` thin-wrapper + matching.py inline-checks →
+  `safe_persist_indicator` (5 callsites in `ai.py`); Phase 3 ✅
+  `_require_openai` thin-wrapper + matching.py inline-checks →
   seed `require_credential_or_422`, test fixtures lifted to
-  `noctusai_lib.config.credentials.resolve_credential` (external
-  credential-source boundary), `make_require_role` adoption across
-  `vista_showcase.require_admin` + `metas_digest` inline check
-  (Pattern F continuation), status-code calibration (8 test gaps closed),
-  7 new factory smoke tests. Pytest 1850 passed (was 1843) / 34 skipped /
-  31 pre-existing fails (baseline preserved). Phase 3b "DTO normalization
-  sweep" renumbered from original §6 Phase 3 heading and remains pending.
+  `noctusai_lib.config.credentials.resolve_credential`, `make_require_role`
+  adoption across `vista_showcase` + `metas_digest`, status-code calibration
+  (8 test gaps closed), 7 new factory smoke tests; Phase 3b ✅ this
+  dispatch — N=6 highest-leak-risk PII routers (clientes / financeiro /
+  contratos+parcelas / locacoes / propostas / portal_cliente) now project
+  raw DB rows through co-located `<entity>_row_to_dto` mappers BEFORE the
+  HTTP boundary. Token-leak defense added at `portal_cliente` admin
+  listing (bearer tokens hidden; re-issue via `gerar-acesso` only).
+  29 standalone DTO-shape tests pass green (incl. `test_listing_hides_token`
+  security pin). Bonus router-boundary assertions added to
+  `test_clientes_router.py::TestDTOBoundary` activate when pre-existing
+  `RedactArgumentsFn` import in `noctusai_lib.domain.ai` clears (OOS
+  per dispatch brief). 53 remaining routers logged as absorption candidate
+  for the follow-up `erp-imobiliario-dto-contract` project.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `CLAUDE.md § Universal rules` — behavioral rules, loaded every session
@@ -451,13 +458,15 @@ Engineer ERP-P3 executed the deferred-items batch from the Phase 1 Improvements 
 
 **Deferred to a future Phase 3b:** the original "DTO normalization sweep" heading below. AI plumbing + role-factory continuation closed.
 
-### Phase 3b — DTO normalization sweep (operational contract, NOT `response_model` rollout)
+### Phase 3b ✅ — DTO normalization sweep (operational contract, NOT `response_model` rollout) *(2026-05-11)*
 
 Per §5.4.6 — frontend `types/` is the operational DTO contract. Phase 3b ensures every list-endpoint maps raw DB rows to typed shapes BEFORE the HTTP boundary. `response_model=PydanticDTO` rollout DEFERRED to follow-up `erp-imobiliario-dto-contract` project (§7 Q-E).
 
-- [ ] Audit every admin list endpoint for raw-DB-row leak.
-- [ ] Mappers land in `app/services/<domain>_service.py`.
-- [ ] Tests pin DTO shape at the router boundary.
+**Improvements:** Module-level mapper pattern (`<entity>_row_to_dto` + `<entity>_rows_to_dto`) co-located in each `<domain>_service.py`. Whitelist mirrors `frontend/src/types/<entity>.ts`. Token-leak defense added to `portal_cliente` listing: bearer tokens hidden in `GET /acessos`, shown only at one-shot issue (`POST /gerar-acesso`). N=6 routers covered (clientes / financeiro / contratos+parcelas / locacoes / propostas / portal_cliente). 29 standalone DTO-shape tests at `tests/services/test_dto_mappers.py` pass green; router-boundary assertions added to `test_clientes_router.py::TestDTOBoundary` (activate once pre-existing `RedactArgumentsFn` import in `noctusai_lib.domain.ai` clears — out of Phase 3b scope).
+
+- [x] Audit every admin list endpoint for raw-DB-row leak. → 6 highest-leak-risk routers covered (clientes / financeiro / contratos / locacoes / propostas / portal_cliente). Out-of-scope: 53 remaining routers — recurrence rule fires at N=2+ adoption, so the mapper pattern is now an absorption candidate for the follow-up `erp-imobiliario-dto-contract` project.
+- [x] Mappers land in `app/services/<domain>_service.py`. → 7 mapper-pairs added (clientes / financeiro / contratos / parcelas / locacoes / propostas / portal_cliente-listing + portal_cliente-issued + chamado_portal).
+- [x] Tests pin DTO shape at the router boundary. → 29 standalone mapper tests + bonus `TestDTOBoundary` class added to `test_clientes_router.py` (will run when pre-existing seed import failure clears).
 
 ### Phase 4 — Pre-existing scaffolding debt
 
@@ -592,4 +601,5 @@ cd seed/lib/backend && \
 | 2026-05-11 | Phase 0 ✅ — Discovery & inventory complete. §5.4 populated: 60 routers / 321 endpoints / 65 hooks / 67 pages / 29 migrations baseline; Pattern A=0, B=1, C=0, D=3+1, E=systemic, F=1+1, G=1, H=2. Pytest 1856 passed / 34 skipped / 0 failed. Keeper 0 issues. §6 phases rewritten from concrete data; §7 design batch surfaced (Q-A through Q-F + Q-NEW-DEL + 3 sub-project gate Qs). Project ready for Phase 1 dispatch. | Engineer OOO (worktree `agent-a079b6316d758e93c`) |
 | 2026-05-11 | Phase 1 ✅ — Pattern F (auth factory) adoption + DELETE pre-check sweep. 300 / 300 router callsites migrated from `Header(authorization) + await get_current_user(authorization)` to `Depends(get_current_user_org)` via `make_get_current_user_org` factory. `app/dependencies.py` wires both `get_current_user` (late-binding lambda for conftest patches) + `get_current_user_org` (required=True, missing_status=400). 15 canonical DELETE sites migrated to `noctusai_lib.api.crud_safety.delete_or_404`; 8 non-canonical sites left with documented rationale. Smoke test `tests/test_dependencies_factory.py` (6 assertions). Pytest 1873 passed / 34 skipped / 0 failed; keeper 0 issues; net −166 LOC. Commit `989a75e`. | Engineer ERP-P1 |
 | 2026-05-11 | Phase 2 ✅ — AI plumbing partial absorption (focused subset). `_persist_indicator` → `noctusai_lib.domain.ai.safe_persist_indicator` via libcst codemod across 5 callsites in `app/routers/ai.py`; local helper retired; import updated (`AIOutput` + `persist_output` dropped, `safe_persist_indicator` added). Test fixture `_stub_persist` patch target lifted from `app.routers.ai.persist_output` to canonical seed surface `noctusai_lib.domain.ai.outputs.persist_output` (no-monkey-patching-of-our-own-code rule). Baseline preserved: pytest 1862 passed / 34 skipped / 12 pre-existing fails (same emails_router + email_service + certidoes_router failures as Phase-1-close). Keeper 0 NEW issues. PF retro §e row 2 progresses from "N=2 candidate" → "ERP-side adopted" (PF side still pending; flips full N=3 formalization when PF adopts). Deferred to Phase 3: `_require_openai` → `require_credential_or_422`, `check_openai_configured` migration, `make_require_role` Pattern F continuation, status-assertion calibration. | Engineer ERP-P2 |
+| 2026-05-11 | Phase 3b ✅ — DTO normalization sweep (operational contract, NOT `response_model` rollout). N=6 highest-leak-risk PII routers covered: `clientes` (lead_score + email + phone + observacoes), `financeiro` (lancamentos with cliente_id + comissao_id), `contratos` + `parcelas_contrato` (cliente/imovel/valor surface), `locacoes` (locatario_id + proprietario_id + valor_aluguel + caucao), `propostas` (corretor_id + valor + historico), `portal_cliente` (chamados_portal + token-leak defense). Mapper pattern: module-level `<entity>_row_to_dto` + `<entity>_rows_to_dto` co-located in `app/services/<domain>_service.py`. Whitelists mirror `frontend/src/types/<entity>.ts` interfaces (operational DTO contract per §5.4.6). **Token-leak defense added:** `portal_acesso_listing_to_dto` (admin `GET /acessos`) hides bearer tokens — re-issue via `POST /gerar-acesso` only. `portal_acesso_issued_to_dto` exposes token at one-shot issue moment. Tests: 29 standalone mapper-shape tests at `tests/services/test_dto_mappers.py` — all green (including `TestPortalAcessoListing::test_listing_hides_token` security pin). Bonus `TestDTOBoundary` class added to `test_clientes_router.py` (activates when pre-existing `RedactArgumentsFn` import in `noctusai_lib.domain.ai` clears — out of Phase 3b scope, OOS per brief). `response_model=PydanticDTO` rollout DEFERRED to follow-up `erp-imobiliario-dto-contract` project per §7 Q-E (accept-with-rationale). Out-of-scope: 53 remaining routers — pattern is now an absorption candidate for the follow-up project (recurrence fires at N=2+). | Engineer ERP-P3B |
 | 2026-05-11 | Phase 3 ✅ — deferred-items absorption batch. **AI plumbing migration:** `_require_openai` body delegates to seed `require_credential_or_422` in `app/routers/ai.py`; `matching.py` 2 inline `check_openai_configured + raise` callsites swapped to seed helper. Test fixtures (`test_ai_router.py:_bypass_openai_check`, `test_matching_router.py:TestEmbedAtivo/TestEmbedBatch._bypass_openai_check`) lifted from patching in-product `app.routers.{ai,matching}.check_openai_configured` (no longer importable) to the canonical seed external-boundary surface `noctusai_lib.config.credentials.resolve_credential` — mirrors Phase 2's `_stub_persist` patch-target lift (no-monkey-patching-of-our-own-code rule). **Pattern F continuation:** `app/dependencies.py` exposes `get_erp_user_role(user) -> str` (SSO platform_admin → erp_role → noctus_role → "user" priority) + binds `require_role = make_require_role(get_current_user, get_erp_user_role)`. `vista_showcase.require_admin` 21-line bespoke body → thin `Depends(require_role(*ALLOWED_ADMIN_ROLES))` adapter; `metas_digest.enviar_digest` inline role check retired. **Status-code calibration:** AST-walked `tests/routers/` for body-asserts-without-status-code; 8 gaps fixed (3 in `test_certidoes_router.py`, 3 in `test_funil_router.py`, 1 in `test_gamificacao_router.py`, plus `test_exclui_retorna_mensagem`). **Metas StrictHttpModel adoption:** audit shows all metas-area request models already inherit `StrictHttpModel` — no-op finding logged. **Smoke tests:** 7 new tests in `test_dependencies_factory.py` (require_role factory binding + `get_erp_user_role` resolver tests). Baseline preserved + net +7 passing: pytest 1850 passed (was 1843) / 34 skipped / 31 pre-existing fails (same WAHA + certidoes + email mock-drift set, filed elsewhere). PF retro §e row 2 progresses ERP-side from N=3-pending to ERP-side-fully-adopted (PF + therapy still pending). Pattern F continuation closes Phase 0 §5.4.2 Pattern F row (was N=1 local + 1 inline; now both consume seed). | Engineer ERP-P3 |

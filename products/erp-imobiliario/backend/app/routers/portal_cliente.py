@@ -34,7 +34,13 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
-from app.services.portal_cliente_service import PortalClienteService
+from app.services.portal_cliente_service import (
+    PortalClienteService,
+    chamado_portal_row_to_dto,
+    chamado_portal_rows_to_dto,
+    portal_acesso_issued_to_dto,
+    portal_acesso_listing_rows_to_dto,
+)
 from app.rate_limit import limiter
 from app.config import settings
 from noctusai_lib.api import StrictHttpModel
@@ -102,8 +108,9 @@ async def gerar_acesso(body: GerarAcessoRequest, auth = Depends(get_current_user
     log_action(user.id, "criar", "portal_acesso", row["id"],
                f"Gerou acesso ao portal para cliente {body.cliente_id}")
 
+    issued = portal_acesso_issued_to_dto(row) or {}
     return success_response({
-        **row,
+        **issued,
         "link": f"/portal-cliente/{portal_token}",
     })
 
@@ -140,7 +147,8 @@ async def listar_acessos(
     count_result = count_query.execute()
     total = count_result.count if count_result.count is not None else len(data)
 
-    return paginated_response(data, total, validated_page, validated_page_size)
+    # SECURITY: listing intentionally hides bearer tokens. Re-issue via gerar-acesso.
+    return paginated_response(portal_acesso_listing_rows_to_dto(data), total, validated_page, validated_page_size)
 
 
 @router.delete("/acessos/{acesso_id}")
@@ -200,7 +208,7 @@ async def listar_chamados(
     count_result = count_query.execute()
     total = count_result.count if count_result.count is not None else len(data)
 
-    return paginated_response(data, total, validated_page, validated_page_size)
+    return paginated_response(chamado_portal_rows_to_dto(data), total, validated_page, validated_page_size)
 
 
 @router.patch("/chamados/{chamado_id}")
@@ -224,7 +232,7 @@ async def atualizar_chamado(
     log_action(user.id, "editar", "chamado_portal", chamado_id,
                f"Atualizou chamado {chamado_id}")
 
-    return success_response(row)
+    return success_response(chamado_portal_row_to_dto(row))
 
 
 # ---------------------------------------------------------------------------
@@ -297,4 +305,4 @@ async def portal_criar_chamado(request: Request, token: str, body: ChamadoCreate
     if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar chamado")
 
-    return success_response(row)
+    return success_response(chamado_portal_row_to_dto(row))

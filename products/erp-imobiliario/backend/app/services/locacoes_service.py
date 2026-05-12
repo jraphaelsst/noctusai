@@ -20,6 +20,46 @@ DEFAULT_INDICES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# DTO mapper (Phase 3b — operational contract, NOT response_model)
+# ---------------------------------------------------------------------------
+# Whitelist mirrors `frontend/src/types/locacoes.ts → interface ContratoLocacao`.
+# response_model=PydanticDTO rollout deferred per PROJECT.md §7 Q-E.
+_CONTRATO_LOCACAO_DTO_FIELDS: tuple = (
+    "id",
+    "org_id",
+    "imovel_id",
+    "locatario_id",
+    "proprietario_id",
+    "valor_aluguel",
+    "dia_vencimento",
+    "data_inicio",
+    "data_fim",
+    "indice_reajuste",
+    "percentual_reajuste",
+    "status",
+    "taxa_administracao",
+    "valor_caucao",
+    "observacoes",
+    "created_at",
+    "updated_at",
+)
+
+
+def contrato_locacao_row_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a raw DB row to the operational ContratoLocacao DTO contract."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _CONTRATO_LOCACAO_DTO_FIELDS if k in row}
+
+
+def contrato_locacao_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of raw DB rows to ContratoLocacao DTO shape."""
+    if not rows:
+        return []
+    return [contrato_locacao_row_to_dto(r) for r in rows]
+
+
 def calculate_reajuste(
     valor_atual: float,
     indice: str,

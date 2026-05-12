@@ -5,11 +5,50 @@ Handles summaries, cash flow aggregation, and overdue detection.
 """
 import logging
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from noctusai_lib.primitives.timeutil import current_day_ref
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# DTO mappers (Phase 3b — operational contract, NOT response_model)
+# ---------------------------------------------------------------------------
+# Whitelist mirrors `frontend/src/types/financeiro.ts → interface Lancamento`.
+# response_model=PydanticDTO rollout deferred per PROJECT.md §7 Q-E.
+_LANCAMENTO_DTO_FIELDS: Tuple[str, ...] = (
+    "id",
+    "tipo",
+    "categoria",
+    "descricao",
+    "valor",
+    "data_vencimento",
+    "data_pagamento",
+    "status",
+    "forma_pagamento",
+    "imovel_id",
+    "cliente_id",
+    "comissao_id",
+    "recorrente",
+    "observacoes",
+    "created_at",
+    "updated_at",
+)
+
+
+def lancamento_row_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a raw DB row to the operational Lancamento DTO contract."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _LANCAMENTO_DTO_FIELDS if k in row}
+
+
+def lancamento_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of raw DB rows to Lancamento DTO shape."""
+    if not rows:
+        return []
+    return [lancamento_row_to_dto(r) for r in rows]
 
 
 class FinanceiroService:

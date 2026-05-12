@@ -31,7 +31,11 @@ from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
-from app.services.locacoes_service import calculate_reajuste
+from app.services.locacoes_service import (
+    calculate_reajuste,
+    contrato_locacao_row_to_dto,
+    contrato_locacao_rows_to_dto,
+)
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.api import StrictHttpModel
 
@@ -108,7 +112,12 @@ async def listar_contratos(
     query = query.range(offset, offset + validated_page_size - 1)
 
     result = query.execute()
-    return paginated_response(result.data or [], total, validated_page, validated_page_size)
+    return paginated_response(
+        contrato_locacao_rows_to_dto(result.data or []),
+        total,
+        validated_page,
+        validated_page_size,
+    )
 
 
 @router.post("")
@@ -136,7 +145,7 @@ async def criar_contrato(body: ContratoCreate, auth = Depends(get_current_user))
     log_action(user.id, "criar", "contrato_locacao", row["id"],
                f"Criou contrato de locação para imóvel {body.imovel_id}")
 
-    return success_response(row)
+    return success_response(contrato_locacao_row_to_dto(row))
 
 
 @router.get("/{contrato_id}")
@@ -150,7 +159,7 @@ async def obter_contrato(contrato_id: str, auth = Depends(get_current_user)):
     ).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
-    return success_response(result.data)
+    return success_response(contrato_locacao_row_to_dto(result.data))
 
 
 @router.patch("/{contrato_id}")
@@ -175,7 +184,7 @@ async def atualizar_contrato(
 
     log_action(user.id, "editar", "contrato_locacao", contrato_id,
                f"Atualizou contrato {contrato_id}")
-    return success_response(row)
+    return success_response(contrato_locacao_row_to_dto(row))
 
 
 @router.delete("/{contrato_id}")
@@ -301,6 +310,6 @@ async def renovar_contrato(
                {"contrato_anterior_id": contrato_id, "novo_contrato_id": novo_row["id"]})
 
     return success_response({
-        "contrato_anterior": contrato,
-        "contrato_novo": novo_row,
+        "contrato_anterior": contrato_locacao_row_to_dto(contrato),
+        "contrato_novo": contrato_locacao_row_to_dto(novo_row),
     })

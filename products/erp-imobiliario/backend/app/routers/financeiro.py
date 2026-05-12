@@ -34,7 +34,11 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
-from app.services.financeiro_service import FinanceiroService
+from app.services.financeiro_service import (
+    FinanceiroService,
+    lancamento_row_to_dto,
+    lancamento_rows_to_dto,
+)
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.api import StrictHttpModel
@@ -131,7 +135,7 @@ async def listar_lancamentos(
     count_result = count_query.execute()
     total = count_result.count if count_result.count is not None else len(data)
 
-    return paginated_response(data, total, validated_page, validated_page_size)
+    return paginated_response(lancamento_rows_to_dto(data), total, validated_page, validated_page_size)
 
 
 @router.get("/resumo")
@@ -203,7 +207,7 @@ async def obter_lancamento(lancamento_id: str, auth = Depends(get_current_user))
     result = db.table("lancamentos").select("*").eq("id", lancamento_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
-    return success_response(result.data)
+    return success_response(lancamento_row_to_dto(result.data))
 
 
 @router.post("")
@@ -222,7 +226,7 @@ async def criar_lancamento(body: LancamentoCreate, auth = Depends(get_current_us
     log_action(user.id, "criar", "lancamento", row["id"],
                f"Criou lançamento {body.tipo}: {body.descricao}")
 
-    return success_response(row)
+    return success_response(lancamento_row_to_dto(row))
 
 
 @router.patch("/{lancamento_id}")
@@ -246,7 +250,7 @@ async def atualizar_lancamento(
     log_action(user.id, "editar", "lancamento", lancamento_id,
                f"Editou lançamento {lancamento_id}")
 
-    return success_response(row)
+    return success_response(lancamento_row_to_dto(row))
 
 
 @router.delete("/{lancamento_id}")

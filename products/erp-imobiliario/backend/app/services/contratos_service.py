@@ -7,11 +7,76 @@ and inadimplencia tracking.
 import logging
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.dependencies import first_or_none
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# DTO mappers (Phase 3b — operational contract, NOT response_model)
+# ---------------------------------------------------------------------------
+# Whitelists mirror `frontend/src/types/contratos.ts → interface Contrato`
+# + `interface ParcelaContrato`.
+# response_model=PydanticDTO rollout deferred per PROJECT.md §7 Q-E.
+_CONTRATO_DTO_FIELDS: Tuple[str, ...] = (
+    "id",
+    "tipo",
+    "status",
+    "cliente_id",
+    "imovel_id",
+    "proposta_id",
+    "valor_total",
+    "valor_entrada",
+    "num_parcelas",
+    "data_inicio",
+    "data_fim",
+    "data_assinatura",
+    "observacoes",
+    "created_at",
+    "updated_at",
+)
+
+_PARCELA_DTO_FIELDS: Tuple[str, ...] = (
+    "id",
+    "contrato_id",
+    "numero",
+    "valor",
+    "data_vencimento",
+    "data_pagamento",
+    "status",
+    "forma_pagamento",
+    "created_at",
+)
+
+
+def contrato_row_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a raw DB row to the operational Contrato DTO contract."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _CONTRATO_DTO_FIELDS if k in row}
+
+
+def contrato_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of raw DB rows to Contrato DTO shape."""
+    if not rows:
+        return []
+    return [contrato_row_to_dto(r) for r in rows]
+
+
+def parcela_row_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a raw DB row to the operational ParcelaContrato DTO contract."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _PARCELA_DTO_FIELDS if k in row}
+
+
+def parcela_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of raw DB rows to ParcelaContrato DTO shape."""
+    if not rows:
+        return []
+    return [parcela_row_to_dto(r) for r in rows]
 
 
 class ContratosService:

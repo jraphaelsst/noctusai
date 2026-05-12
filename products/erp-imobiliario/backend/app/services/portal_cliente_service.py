@@ -16,6 +16,85 @@ from app.dependencies import get_admin_client
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# DTO mappers (Phase 3b — operational contract, NOT response_model)
+# ---------------------------------------------------------------------------
+# response_model=PydanticDTO rollout deferred per PROJECT.md §7 Q-E.
+#
+# IMPORTANT — token-leak defense:
+#   - `_PORTAL_ACESSO_LISTING_FIELDS` (used by GET /api/portal-cliente/acessos)
+#     INTENTIONALLY EXCLUDES `token`. Admins listing acessos should never see
+#     raw bearer tokens — re-issue via `/gerar-acesso` instead.
+#   - `_PORTAL_ACESSO_ISSUED_FIELDS` (used by POST /api/portal-cliente/gerar-acesso)
+#     INCLUDES `token` — it's the one-shot share moment.
+_PORTAL_ACESSO_LISTING_FIELDS: tuple = (
+    "id",
+    "cliente_id",
+    "ativo",
+    "data_expiracao",
+    "ultimo_acesso",
+    "created_at",
+)
+
+_PORTAL_ACESSO_ISSUED_FIELDS: tuple = (
+    "id",
+    "cliente_id",
+    "token",
+    "ativo",
+    "data_expiracao",
+    "ultimo_acesso",
+    "created_at",
+)
+
+_CHAMADO_PORTAL_FIELDS: tuple = (
+    "id",
+    "cliente_id",
+    "portal_acesso_id",
+    "assunto",
+    "descricao",
+    "status",
+    "prioridade",
+    "resposta",
+    "created_at",
+    "updated_at",
+)
+
+
+def portal_acesso_listing_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a portal_acessos row for ADMIN LISTING (token hidden)."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _PORTAL_ACESSO_LISTING_FIELDS if k in row}
+
+
+def portal_acesso_listing_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of portal_acessos rows for ADMIN LISTING (tokens hidden)."""
+    if not rows:
+        return []
+    return [portal_acesso_listing_to_dto(r) for r in rows]
+
+
+def portal_acesso_issued_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a portal_acessos row for the ONE-SHOT ISSUE moment (token shown)."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _PORTAL_ACESSO_ISSUED_FIELDS if k in row}
+
+
+def chamado_portal_row_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a chamados_portal row to operational DTO."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _CHAMADO_PORTAL_FIELDS if k in row}
+
+
+def chamado_portal_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of chamados_portal rows to DTO shape."""
+    if not rows:
+        return []
+    return [chamado_portal_row_to_dto(r) for r in rows]
+
+
 class PortalClienteService:
     """Service for client portal business logic."""
 

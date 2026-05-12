@@ -8,6 +8,7 @@ from pydantic import Field, EmailStr
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
+from app.services.clientes_service import cliente_row_to_dto, cliente_rows_to_dto
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.api import StrictHttpModel
 
@@ -101,7 +102,7 @@ async def listar_clientes(
     count_result = count_query.execute()
     total = count_result.count if count_result.count is not None else len(data)
 
-    return paginated_response(data, total, validated_page, validated_page_size)
+    return paginated_response(cliente_rows_to_dto(data), total, validated_page, validated_page_size)
 
 
 @router.get("/{cliente_id}")
@@ -114,7 +115,7 @@ async def obter_cliente(cliente_id: str, auth = Depends(get_current_user)):
     ).eq("id", cliente_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
-    return success_response(result.data)
+    return success_response(cliente_row_to_dto(result.data))
 
 
 @router.post("")
@@ -132,7 +133,7 @@ async def criar_cliente(body: ClienteCreate, auth = Depends(get_current_user)):
 
     log_action(user.id, "criar", "cliente", row["id"],
                f"Criou cliente {body.nome}")
-    return success_response(row)
+    return success_response(cliente_row_to_dto(row))
 
 
 @router.patch("/{cliente_id}")
@@ -150,7 +151,7 @@ async def atualizar_cliente(cliente_id: str, body: ClienteUpdate, auth = Depends
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
     log_action(user.id, "editar", "cliente", cliente_id, f"Editou cliente {cliente_id}")
-    return success_response(row)
+    return success_response(cliente_row_to_dto(row))
 
 
 @router.delete("/{cliente_id}")
@@ -180,7 +181,7 @@ async def toggle_arquivar(cliente_id: str, auth = Depends(get_current_user)):
     acao = "arquivar" if novo_estado else "desarquivar"
     log_action(user.id, acao, "cliente", cliente_id,
                f"{'Arquivou' if novo_estado else 'Desarquivou'} cliente {current.data['nome']}")
-    return success_response(row)
+    return success_response(cliente_row_to_dto(row))
 
 
 @router.post("/{cliente_id}/mover-etapa")
@@ -204,4 +205,4 @@ async def mover_etapa(cliente_id: str, body: MoverEtapaRequest, auth = Depends(g
     log_action(user.id, "mover", "cliente", cliente_id,
                f"Moveu cliente para etapa {body.para_etapa}",
                {"para_etapa": body.para_etapa, "motivo": body.motivo})
-    return success_response(row)
+    return success_response(cliente_row_to_dto(row))

@@ -24,6 +24,42 @@ VALID_TRANSITIONS = {
 ALL_STATUSES = {"enviada", "em_analise", "contraproposta", "aceita", "recusada", "expirada"}
 
 
+# ---------------------------------------------------------------------------
+# DTO mapper (Phase 3b — operational contract, NOT response_model)
+# ---------------------------------------------------------------------------
+# Whitelist mirrors `frontend/src/types/propostas.ts → interface Proposta`.
+# response_model=PydanticDTO rollout deferred per PROJECT.md §7 Q-E.
+_PROPOSTA_DTO_FIELDS: tuple = (
+    "id",
+    "imovel_id",
+    "cliente_id",
+    "corretor_id",
+    "valor_proposta",
+    "valor_contraproposta",
+    "status",
+    "condicoes_pagamento",
+    "prazo_validade",
+    "observacoes",
+    "historico",
+    "created_at",
+    "updated_at",
+)
+
+
+def proposta_row_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a raw DB row to the operational Proposta DTO contract."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _PROPOSTA_DTO_FIELDS if k in row}
+
+
+def proposta_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of raw DB rows to Proposta DTO shape."""
+    if not rows:
+        return []
+    return [proposta_row_to_dto(r) for r in rows]
+
+
 class PropostasService:
     """Service for proposal business logic."""
 

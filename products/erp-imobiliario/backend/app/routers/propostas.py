@@ -27,7 +27,11 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
-from app.services.propostas_service import PropostasService
+from app.services.propostas_service import (
+    PropostasService,
+    proposta_row_to_dto,
+    proposta_rows_to_dto,
+)
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.api import StrictHttpModel
@@ -106,7 +110,7 @@ async def listar_propostas(
     count_result = count_query.execute()
     total = count_result.count if count_result.count is not None else len(data)
 
-    return paginated_response(data, total, validated_page, validated_page_size)
+    return paginated_response(proposta_rows_to_dto(data), total, validated_page, validated_page_size)
 
 
 @router.get("/stats")
@@ -133,7 +137,7 @@ async def obter_proposta(proposta_id: str, auth = Depends(get_current_user)):
     result = db.table("propostas").select("*").eq("id", proposta_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Proposta não encontrada")
-    return success_response(result.data)
+    return success_response(proposta_row_to_dto(result.data))
 
 
 @router.post("")
@@ -164,7 +168,7 @@ async def criar_proposta(body: PropostaCreate, auth = Depends(get_current_user))
     log_action(user.id, "criar", "proposta", row["id"],
                f"Criou proposta para imóvel {body.imovel_id}, valor {body.valor_proposta}")
 
-    return success_response(row)
+    return success_response(proposta_row_to_dto(row))
 
 
 @router.patch("/{proposta_id}")
@@ -216,7 +220,7 @@ async def atualizar_proposta(
     log_action(user.id, "editar", "proposta", proposta_id,
                f"Editou proposta {proposta_id}")
 
-    return success_response(row)
+    return success_response(proposta_row_to_dto(row))
 
 
 @router.post("/{proposta_id}/contraproposta")
@@ -272,7 +276,7 @@ async def criar_contraproposta(
     log_action(user.id, "contraproposta", "proposta", proposta_id,
                f"Contraproposta de {body.valor_contraproposta} para proposta {proposta_id}")
 
-    return success_response(row)
+    return success_response(proposta_row_to_dto(row))
 
 
 @router.delete("/{proposta_id}")

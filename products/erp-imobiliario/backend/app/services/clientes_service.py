@@ -12,6 +12,53 @@ from app.dependencies import first_or_none, log_action
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# DTO mapper (Phase 3b — operational contract, NOT response_model)
+# ---------------------------------------------------------------------------
+# Whitelist mirrors `frontend/src/types/clientes.ts → interface Cliente`.
+# response_model=PydanticDTO rollout deferred to follow-up project
+# `erp-imobiliario-dto-contract` per PROJECT.md §7 Q-E.
+_CLIENTE_DTO_FIELDS: Tuple[str, ...] = (
+    "id",
+    "usuario_id",
+    "nome",
+    "email",
+    "telefone",
+    "origem",
+    "interesse",
+    "observacoes",
+    "etapa_atual",
+    "probabilidade",
+    "valor_estimado",
+    "arquivado",
+    "kanban_pos",
+    "lead_score",
+    "lead_score_justificativa",
+    "lead_score_updated_at",
+    "created_at",
+    "updated_at",
+    "usuario",  # nested join object (id/nome/email — projected by DB select)
+)
+
+
+def cliente_row_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a raw DB row to the operational Cliente DTO contract.
+
+    Strips any column not in the whitelist (defense against silent schema
+    drift + PII over-share). Returns None for None input (caller-safe).
+    """
+    if not row:
+        return row
+    return {k: row.get(k) for k in _CLIENTE_DTO_FIELDS if k in row}
+
+
+def cliente_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of raw DB rows to Cliente DTO shape."""
+    if not rows:
+        return []
+    return [cliente_row_to_dto(r) for r in rows]
+
+
 class ClientesService:
     """Service for client business logic."""
 

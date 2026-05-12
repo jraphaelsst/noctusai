@@ -41,7 +41,13 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
-from app.services.contratos_service import ContratosService
+from app.services.contratos_service import (
+    ContratosService,
+    contrato_row_to_dto,
+    contrato_rows_to_dto,
+    parcela_row_to_dto,
+    parcela_rows_to_dto,
+)
 from app.config import settings
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.api import StrictHttpModel
@@ -147,7 +153,7 @@ async def listar_contratos(
     count_result = count_query.execute()
     total = count_result.count if count_result.count is not None else len(data)
 
-    return paginated_response(data, total, validated_page, validated_page_size)
+    return paginated_response(contrato_rows_to_dto(data), total, validated_page, validated_page_size)
 
 
 @router.get("/resumo")
@@ -188,7 +194,7 @@ async def obter_contrato(contrato_id: str, auth = Depends(get_current_user)):
     result = db.table("contratos").select("*").eq("id", contrato_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
-    return success_response(result.data)
+    return success_response(contrato_row_to_dto(result.data))
 
 
 @router.post("")
@@ -207,7 +213,7 @@ async def criar_contrato(body: ContratoCreate, auth = Depends(get_current_user))
     log_action(user.id, "criar", "contrato", row["id"],
                f"Criou contrato {body.tipo} para cliente {body.cliente_id}")
 
-    return success_response(row)
+    return success_response(contrato_row_to_dto(row))
 
 
 @router.patch("/{contrato_id}")
@@ -231,7 +237,7 @@ async def atualizar_contrato(
     log_action(user.id, "editar", "contrato", contrato_id,
                f"Editou contrato {contrato_id}")
 
-    return success_response(row)
+    return success_response(contrato_row_to_dto(row))
 
 
 @router.delete("/{contrato_id}")
@@ -261,7 +267,7 @@ async def listar_parcelas(
     ).order("numero", desc=False).execute()
 
     data = result.data or []
-    return success_response(data)
+    return success_response(parcela_rows_to_dto(data))
 
 
 @router.post("/{contrato_id}/parcelas")
@@ -298,7 +304,7 @@ async def gerar_parcelas(
     log_action(user.id, "criar", "parcelas", contrato_id,
                f"Gerou {body.num_parcelas} parcelas para contrato {contrato_id}")
 
-    return success_response(parcelas)
+    return success_response(parcela_rows_to_dto(parcelas) if isinstance(parcelas, list) else parcelas)
 
 
 @router.patch("/parcelas/{parcela_id}")
@@ -325,4 +331,4 @@ async def atualizar_parcela(
     log_action(user.id, "editar", "parcela", parcela_id,
                f"Editou parcela {parcela_id}")
 
-    return success_response(row)
+    return success_response(parcela_row_to_dto(row))
