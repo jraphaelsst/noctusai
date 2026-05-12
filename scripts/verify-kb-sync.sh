@@ -93,10 +93,19 @@ while IFS= read -r file; do
       continue ;;
   esac
   base="$(basename "$file")"
-  if ! printf '%s\n' "$layout_files" | grep -qx "$base"; then
-    yellow "  ⚠ NOT IN LAYOUT TREE: $file (visible in INDEX.md tables but missing from the Layout sketch)"
-    warnings=$((warnings + 1))
-  fi
+  # Membership test via `case` on a newline-anchored blob — NOT `| grep -q`.
+  # Under `set -o pipefail`, `grep -q` short-circuits on first match, the
+  # upstream writer gets SIGPIPE (exit 141), and pipefail propagates 141 —
+  # the `if !` then evaluates TRUE even when the match succeeded. Same
+  # footgun fixed in scripts/cleanup-stale-worktrees.sh + scripts/mole.sh
+  # 2026-05-11; see KB § PATTERNS/methodology-codification-pipeline.md.
+  case $'\n'"$layout_files"$'\n' in
+    *$'\n'"$base"$'\n'*) ;;  # in layout tree — fine
+    *)
+      yellow "  ⚠ NOT IN LAYOUT TREE: $file (visible in INDEX.md tables but missing from the Layout sketch)"
+      warnings=$((warnings + 1))
+      ;;
+  esac
 done < <(find "$KB_DIR" -type f -name '*.md' ! -path '*/.*' | sort -u)
 
 # ─── 4. Summary

@@ -289,14 +289,26 @@ for wt in "${stale_paths[@]}"; do
     # by the second loop at lines 80-86), `git worktree remove` will report
     # "is not a working tree" and we can safely rm -rf. But locks are NOT
     # orphans. Distinguish by re-asking git.
-    if git worktree list --porcelain | grep -qF "worktree $wt"; then
-      # Git knows about it → lock held or active. SKIP destructively; surface.
-      locked_skipped+=("$wt")
-      failed=$((failed+1))
-    else
-      # Git doesn't know about it → true orphan, safe to direct-rm.
-      rm -rf "$wt" 2>/dev/null && removed=$((removed+1)) || failed=$((failed+1))
-    fi
+    #
+    # Membership test via `case` on a newline-anchored blob — NOT `| grep -q`.
+    # Under `set -o pipefail`, `grep -q` short-circuits on first match, the
+    # upstream `git worktree list` gets SIGPIPE (exit 141), and pipefail
+    # propagates 141 — the `if !` evaluates TRUE even when the path WAS
+    # in the list. Same footgun M fixed in the orphan-detection loop above;
+    # this is the second site (missed in 3868058, surfaced by Stage 4
+    # `check_pipefail_grep_q` detector 2026-05-11).
+    _registered_now="$(git worktree list --porcelain | awk '/^worktree / { print $2 }')"
+    case $'\n'"$_registered_now"$'\n' in
+      *$'\n'"$wt"$'\n'*)
+        # Git knows about it → lock held or active. SKIP destructively; surface.
+        locked_skipped+=("$wt")
+        failed=$((failed+1))
+        ;;
+      *)
+        # Git doesn't know about it → true orphan, safe to direct-rm.
+        rm -rf "$wt" 2>/dev/null && removed=$((removed+1)) || failed=$((failed+1))
+        ;;
+    esac
   fi
 done
 
