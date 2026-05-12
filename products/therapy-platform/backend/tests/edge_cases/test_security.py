@@ -171,11 +171,7 @@ class TestTherapistCannotAccessOtherTherapists:
             "session_record_id": "sr-sec-002",
             "therapist_id": "other-therapist-999",
             "observation_text": "Not mine",
-            # MOCK-SELECT-PREDICATE-FIX shim: route filters via
-            # `.is_("deleted_at","null")`. Seed mock's `_eval_is` is literal
-            # `is` comparison; `None is "null"` → False filters the row out.
-            # Use interned literal string "null" so `"null" is "null"` → True.
-            "deleted_at": "null",
+            "deleted_at": None,
         }])
         resp = client.patch("/api/observations/obs-other-001", json={
             "observation_text": "Trying to edit",
@@ -190,8 +186,7 @@ class TestTherapistCannotAccessOtherTherapists:
             "session_record_id": "sr-sec-002",
             "therapist_id": "other-therapist-999",
             "observation_text": "Not mine",
-            # MOCK-SELECT-PREDICATE-FIX shim: see PATCH test above.
-            "deleted_at": "null",
+            "deleted_at": None,
         }])
         resp = client.delete("/api/observations/obs-other-001")
         assert resp.status_code == 403

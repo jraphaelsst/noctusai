@@ -18,14 +18,7 @@ SAMPLE_OBSERVATION = {
     "therapist_id": "test-user-123",
     "observation_text": "Paciente demonstrou boa reflexao sobre conflitos familiares.",
     "is_initial": False,
-    # MOCK-SELECT-PREDICATE-FIX (45be944): observations router filters via
-    # `.is_("deleted_at", "null")` on SELECT before ownership check. The
-    # seed mock's `_eval_is` is literal Python `is`: `None is "null"` →
-    # False, so rows with `deleted_at: None` get filtered out → 404. Seed
-    # the literal string "null" (interned by Python → `"null" is "null"` →
-    # True) so the predicate passes. Real PostgREST stores PostgreSQL NULL;
-    # this is a test-only shim until the seed mock fixes IS NULL semantics.
-    "deleted_at": "null",
+    "deleted_at": None,
     "created_at": "2026-04-01T10:00:00Z",
 }
 
