@@ -41,11 +41,14 @@ for arg in "$@"; do
 bootstrap-worktree.sh — hydrate a fresh worktree's env
 
 Usage:
-  bash scripts/bootstrap-worktree.sh           # full hydrate (npm ci everywhere)
+  bash scripts/bootstrap-worktree.sh           # full hydrate
   bash scripts/bootstrap-worktree.sh --check   # report only (no installs)
 
-Runs `npm ci` in every frontend dir (seed/lib/frontend, seed/framework/frontend,
-products/*/frontend) that's stale, then prints a Python recap.
+Steps:
+  [1/4] Seed frontends            — npm ci in seed/lib/frontend + seed/framework/frontend
+  [2/4] Per-product frontends     — npm ci in every products/*/frontend
+  [3/4] Python recap              — discover shared venv + probe cli.py deps
+  [4/4] Per-product backend reqs  — pip install -r every products/*/backend/requirements.txt
 EOF
       exit 0
       ;;
@@ -138,13 +141,13 @@ hydrate_frontend() {
   fi
 }
 
-echo "[1/3] Seed frontends"
+echo "[1/4] Seed frontends"
 for d in seed/lib/frontend seed/framework/frontend; do
   hydrate_frontend "$d"
 done
 echo ""
 
-echo "[2/3] Per-product frontends"
+echo "[2/4] Per-product frontends"
 # Stable, sorted order — deterministic across runs.
 while IFS= read -r d; do
   hydrate_frontend "$d"
@@ -163,7 +166,7 @@ echo ""
 # engineers in worktrees hit `ModuleNotFoundError: pydantic_settings` invoking
 # cli.py because system `python3` lacks the platform's deps. Pointing them at
 # the main venv closes the gap.
-echo "[3/3] Python recap"
+echo "[3/4] Python recap"
 if command -v python3.11 >/dev/null 2>&1; then
   PY="$(command -v python3.11)"
   PY_VER="$($PY --version 2>&1)"
@@ -218,6 +221,49 @@ if [[ -n "$SHARED_VENV_PY" ]]; then
 fi
 echo ""
 
+# ─── Per-product backend requirements hydration ─────────────────────────────
+# Closes the N=2 defusedxml recurrence (2026-05-11 — adconnect 12 tests
+# uncollected + erp 940 collection errors). Root requirements.txt is a unified
+# superset but lags per-product requirements; the structural fix is to install
+# every products/*/backend/requirements.txt into the shared venv at bootstrap.
+#
+# pip install -r is naturally idempotent (already-installed packages no-op).
+# Quiet flag (-q) suppresses noise on already-satisfied; one summary line per
+# product (installed / failed / skipped-no-venv).
+#
+# Per-product pyproject.toml fallback is not needed today (no products use one
+# 2026-05-11) — extend here if that changes.
+echo "[4/4] Per-product backend requirements"
+PRODUCT_REQS_INSTALLED=()
+PRODUCT_REQS_FAILED=()
+if [[ -z "$SHARED_VENV_PY" ]]; then
+  echo "  · skip (no shared venv discovered above — re-run after main-checkout venv exists)"
+else
+  if [[ $CHECK_ONLY -eq 1 ]]; then
+    while IFS= read -r req; do
+      [[ -z "$req" ]] && continue
+      product="$(basename "$(dirname "$(dirname "$req")")")"
+      echo "  · WOULD install: $product ($req)"
+      PRODUCT_REQS_INSTALLED+=("$product")
+    done < <(find products -maxdepth 4 -name requirements.txt -path '*/backend/*' -not -path '*/.*/*' 2>/dev/null | sort)
+  else
+    while IFS= read -r req; do
+      [[ -z "$req" ]] && continue
+      product="$(basename "$(dirname "$(dirname "$req")")")"
+      if "$SHARED_VENV_PY" -m pip install -q -r "$req" 2>/dev/null; then
+        echo "  · installed: $product"
+        PRODUCT_REQS_INSTALLED+=("$product")
+      else
+        # Re-run without -q to surface the reason on failure.
+        err="$("$SHARED_VENV_PY" -m pip install -r "$req" 2>&1 | tail -3 | tr '\n' ' ')"
+        echo "  · failed:    $product — $err"
+        PRODUCT_REQS_FAILED+=("$product")
+      fi
+    done < <(find products -maxdepth 4 -name requirements.txt -path '*/backend/*' -not -path '*/.*/*' 2>/dev/null | sort)
+  fi
+fi
+echo ""
+
 # ─── Final recap ─────────────────────────────────────────────────────────────
 echo "============================================"
 if [[ $CHECK_ONLY -eq 1 ]]; then
@@ -226,18 +272,31 @@ else
   echo "Bootstrap summary"
 fi
 echo "============================================"
-printf "  Installed: %d\n" "${#INSTALLED[@]}"
-printf "  Skipped:   %d  (already current)\n" "${#SKIPPED[@]}"
-printf "  Failed:    %d\n" "${#FAILED[@]}"
+printf "  Frontend installed: %d\n" "${#INSTALLED[@]}"
+printf "  Frontend skipped:   %d  (already current)\n" "${#SKIPPED[@]}"
+printf "  Frontend failed:    %d\n" "${#FAILED[@]}"
+printf "  Product reqs OK:    %d\n" "${#PRODUCT_REQS_INSTALLED[@]}"
+printf "  Product reqs fail:  %d\n" "${#PRODUCT_REQS_FAILED[@]}"
 
 if [[ ${#FAILED[@]} -gt 0 ]]; then
   echo ""
-  echo "✗ Hydration failed for:"
+  echo "✗ Frontend hydration failed for:"
   for d in "${FAILED[@]}"; do
     echo "    - $d"
   done
   echo ""
   echo "  Investigate manually: (cd <dir> && npm ci)"
+  exit 1
+fi
+
+if [[ ${#PRODUCT_REQS_FAILED[@]} -gt 0 ]]; then
+  echo ""
+  echo "✗ Per-product requirements install failed for:"
+  for p in "${PRODUCT_REQS_FAILED[@]}"; do
+    echo "    - $p"
+  done
+  echo ""
+  echo "  Investigate manually: $SHARED_VENV_PY -m pip install -r products/<slug>/backend/requirements.txt"
   exit 1
 fi
 

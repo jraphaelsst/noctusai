@@ -6,11 +6,13 @@
 #
 # What it does:
 #   1. Installs git hooks (seed auto-sync)
-#   2. Creates Python venv + installs all backend deps
+#   2. Creates Python venv + installs root backend deps
 #   3. Installs seed packages (shared + framework) in dev mode
-#   4. Installs frontend deps for all products
-#   5. Verifies .env exists (warns if not)
-#   6. Prints status summary
+#   4. Installs every products/*/backend/requirements.txt into the shared venv
+#      (closes the N=2 defusedxml recurrence — adconnect + erp, 2026-05-11)
+#   5. Installs frontend deps for all products
+#   6. Verifies .env exists (warns if not)
+#   7. Prints status summary
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -34,14 +36,14 @@ echo -e "${BLUE}╚════════════════════�
 echo ""
 
 # ── Step 1: Git hooks ────────────────────────────────────────
-step "Step 1/5: Installing git hooks"
+step "Step 1/6: Installing git hooks"
 
 # Delegate to scripts/install-hooks.sh (single source of truth).
 # Installs the unified pre-commit: seed→template sync + KB counts + KB sync verification.
 bash "$REPO_ROOT/scripts/install-hooks.sh" | sed 's/^/  /'
 
 # ── Step 2: Python venv ──────────────────────────────────────
-step "Step 2/5: Python virtual environment"
+step "Step 2/6: Python virtual environment"
 
 if [ ! -d "$REPO_ROOT/venv" ]; then
     log "Creating venv..."
@@ -54,7 +56,7 @@ fi
 source "$REPO_ROOT/venv/bin/activate"
 
 # ── Step 3: Backend deps ─────────────────────────────────────
-step "Step 3/5: Backend dependencies"
+step "Step 3/6: Backend dependencies (root + seed)"
 
 pip install -q -r requirements.txt 2>/dev/null
 log "Root requirements installed"
@@ -63,8 +65,35 @@ pip install -q -e seed/lib/backend 2>/dev/null
 pip install -q -e seed/framework/backend 2>/dev/null
 log "Seed packages installed (shared + framework, dev mode)"
 
-# ── Step 4: Frontend deps ────────────────────────────────────
-step "Step 4/5: Frontend dependencies"
+# ── Step 4: Per-product backend requirements ─────────────────
+# Each product's backend/requirements.txt may pin deps the root unified
+# superset hasn't yet absorbed (e.g. defusedxml in adconnect + erp 2026-05-11
+# — N=2 recurrence that caused 12 + 940 collection errors before manual fix).
+# pip install -r is naturally idempotent; -q suppresses already-satisfied
+# noise. Failures are reported with the product slug + tail of pip output.
+step "Step 4/6: Per-product backend requirements"
+
+PRODUCT_REQS_OK=0
+PRODUCT_REQS_FAIL=0
+PRODUCT_REQS_FAIL_LIST=()
+while IFS= read -r req; do
+    [ -z "$req" ] && continue
+    product="$(basename "$(dirname "$(dirname "$req")")")"
+    if pip install -q -r "$req" 2>/dev/null; then
+        log "installed: $product"
+        PRODUCT_REQS_OK=$((PRODUCT_REQS_OK + 1))
+    else
+        err="$(pip install -r "$req" 2>&1 | tail -3 | tr '\n' ' ')"
+        warn "failed: $product — $err"
+        PRODUCT_REQS_FAIL=$((PRODUCT_REQS_FAIL + 1))
+        PRODUCT_REQS_FAIL_LIST+=("$product")
+    fi
+done < <(find products -maxdepth 4 -name requirements.txt -path '*/backend/*' -not -path '*/.*/*' 2>/dev/null | sort)
+
+log "Per-product backend reqs — OK: $PRODUCT_REQS_OK, failed: $PRODUCT_REQS_FAIL"
+
+# ── Step 5: Frontend deps ────────────────────────────────────
+step "Step 5/6: Frontend dependencies"
 
 FRONTENDS=(
     "products/core/frontend"
@@ -86,8 +115,8 @@ if [ -d "$REPO_ROOT/products/seed/frontend" ] && [ -f "$REPO_ROOT/products/seed/
     log "products/seed/frontend deps installed"
 fi
 
-# ── Step 5: Environment check ────────────────────────────────
-step "Step 5/5: Environment verification"
+# ── Step 6: Environment check ────────────────────────────────
+step "Step 6/6: Environment verification"
 
 if [ -f "$REPO_ROOT/.env" ]; then
     log ".env file found"
