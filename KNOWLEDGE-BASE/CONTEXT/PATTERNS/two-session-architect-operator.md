@@ -76,7 +76,7 @@ The tempo threshold (rough rule of thumb): if you'd otherwise be flipping betwee
 
 **Owns:**
 - Watching `dispatcher-inbox.md` (manual re-read at each turn, or `/loop` interval).
-- ALL git operations: `add`, `commit`, `push`, `cherry-pick`, `merge --ff-only`, `branch -m`, `worktree add/remove`, tag operations.
+- ALL git operations: `add`, `commit`, `push`, `cherry-pick`, `merge --ff-only`, `branch -m`, `worktree add/remove`, tag operations. **Post-cherry-pick MUST cleanup the source worktree** (`git worktree unlock` if needed, `git worktree remove --force`, `git branch -D`) — see `KB § PATTERNS/storage-hygiene.md § 4.4`. Cherry-pick that leaves the source worktree on disk is incomplete work (the 2026-05-12 THE-P11 incident traced 9 GB of accumulation to this gap).
 - Engineer dispatch *execution* when the architect's brief is in the inbox (the operator opens the Task tool-use, hands the brief verbatim, collects the report, writes outcome to outbox).
 - Worktree validation (post-engineer-finish: confirm branch exists, diff matches brief, no surprise files).
 - Project close mechanics — final commit, folder deletion, FF-to-main, push.

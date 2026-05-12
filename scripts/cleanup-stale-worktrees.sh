@@ -87,6 +87,14 @@ fi
 # Refresh main's tip so merged-detection is accurate.
 git fetch origin main --quiet || echo "  · (warning: fetch origin main failed; using local main)"
 
+# Snapshot main-repo stashes for shared-stash subtraction (THE-P11 fix).
+# Linked worktrees share `refs/stash` with main; counting shared stashes
+# against a linked worktree's WIP produces false positives. See mole.sh
+# `_classify_worktrees` header for full incident note.
+MAIN_STASHES_FILE="$(mktemp -t cleanup-main-stashes.XXXXXX)"
+trap 'rm -f "$MAIN_STASHES_FILE"' EXIT
+(cd "$REPO_ROOT" && git stash list --pretty='%H' 2>/dev/null | sort -u) > "$MAIN_STASHES_FILE"
+
 stale_paths=()      # safe to auto-remove (merged + clean + on-disk or phantom)
 active_paths=()     # branch unmerged — skip (work-in-progress)
 dirty_paths=()     # branch merged BUT uncommitted/stashed — manual review
@@ -127,7 +135,13 @@ _classify_one() {
   # On-disk + merged. Check uncommitted/stashed/locked.
   local dirty stashes
   dirty="$(cd "$wt" 2>/dev/null && git status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
-  stashes="$(cd "$wt" 2>/dev/null && git stash list 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
+  # Unique-stash count: subtract main's shared stashes (THE-P11 fix).
+  if [ -f "$MAIN_STASHES_FILE" ]; then
+    stashes="$(cd "$wt" 2>/dev/null && git stash list --pretty='%H' 2>/dev/null | sort -u \
+      | comm -23 - "$MAIN_STASHES_FILE" | grep -c . || echo "0")"
+  else
+    stashes="$(cd "$wt" 2>/dev/null && git stash list 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
+  fi
 
   if [ "$dirty" != "0" ]; then
     dirty_paths+=("$wt")
@@ -164,6 +178,15 @@ while IFS= read -r line; do
       ;;
     "locked"*)
       locked=1
+      # Auto-unlock dead-pid locks (THE-P11 fix). A crashed Claude session
+      # leaves stale "(pid N)" locks that block prune + remove forever.
+      if [[ "$line" == *"(pid "* ]]; then
+        _pid="${line##*(pid }"
+        _pid="${_pid%)*}"
+        if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+          git worktree unlock "$wt" 2>/dev/null && locked=0
+        fi
+      fi
       ;;
     "")
       if [ -n "$wt" ] && [ -n "$branch" ]; then

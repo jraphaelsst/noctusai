@@ -248,6 +248,19 @@ _classify_worktrees() {
   # Refresh origin/main once for accurate merge detection.
   git fetch origin main --quiet 2>/dev/null || true
 
+  # Snapshot the main repo's stash commit hashes once per scan. Linked
+  # worktrees share `refs/stash` with the main repo, so `git stash list`
+  # inside a worktree reports the SAME stashes that exist in main. Counting
+  # those against the worktree as "WIP that blocks removal" produces false
+  # positives (THE-P11 incident, 2026-05-12 — 65 worktrees survived a
+  # mole sweep because each was credited with 10 shared stashes). The fix:
+  # subtract main's stash set from the worktree's stash set; only count
+  # stashes UNIQUE to the worktree as recovery-required WIP.
+  local main_stashes_file
+  main_stashes_file="$(mktemp -t mole-main-stashes.XXXXXX)"
+  (cd "$REPO_ROOT" && git stash list --pretty='%H' 2>/dev/null | sort -u) \
+    > "$main_stashes_file"
+
   local wt="" branch="" locked=0
   local seen_paths_file
   seen_paths_file="$(mktemp -t mole-seen.XXXXXX)"
@@ -259,7 +272,7 @@ _classify_worktrees() {
       "worktree "*)
         # Flush previous record (handles last entry without trailing blank line).
         if [ -n "$wt" ] && [ -n "$branch" ]; then
-          _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file"
+          _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file" "$main_stashes_file"
         fi
         wt="${line#worktree }"
         branch=""
@@ -270,10 +283,26 @@ _classify_worktrees() {
         ;;
       "locked"*)
         locked=1
+        # Auto-unlock dead-pid locks. When the bootstrap script locks a
+        # worktree with `locked claude agent agent-... (pid N)`, the lock
+        # survives the process — a crashed Claude session leaves stale
+        # locks behind that prevent `git worktree prune` and `git worktree
+        # remove` from ever cleaning the entry (THE-P11 incident,
+        # 2026-05-12 — 151 phantoms registered against dead pid 18579).
+        # If we can parse a pid from the lock line and the process is
+        # dead, unlock right here so downstream classification + sweep
+        # treat the entry normally.
+        if [[ "$line" == *"(pid "* ]]; then
+          local _pid="${line##*(pid }"
+          _pid="${_pid%)*}"
+          if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+            git worktree unlock "$wt" 2>/dev/null && locked=0
+          fi
+        fi
         ;;
       "")
         if [ -n "$wt" ] && [ -n "$branch" ]; then
-          _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file"
+          _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file" "$main_stashes_file"
           wt=""
           branch=""
           locked=0
@@ -283,7 +312,7 @@ _classify_worktrees() {
   done < <(git worktree list --porcelain)
   # Final flush.
   if [ -n "$wt" ] && [ -n "$branch" ]; then
-    _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file"
+    _classify_emit_registered "$wt" "$branch" "$locked" "$outfile" "$seen_paths_file" "$main_stashes_file"
   fi
 
   # Pass 2: walk on-disk agent-* dirs and classify ones not in the seen set
@@ -299,12 +328,14 @@ _classify_worktrees() {
     done < <(find "$WORKTREE_DIR" -maxdepth 1 -type d -name 'agent-*' 2>/dev/null)
   fi
 
-  rm -f "$seen_paths_file"
+  rm -f "$seen_paths_file" "$main_stashes_file"
 }
 
 # Helper: classify ONE registered worktree entry. Writes one TSV line to
-# $outfile, records the path in $seen_paths_file. Filters non-agent-* paths
-# (main repo, sibling workspaces) silently.
+# $outfile, records the path in $seen_paths_file. The 6th arg, when given,
+# is a sorted file of main-repo stash commit hashes; the helper uses it to
+# compute UNIQUE-stash count (worktree stashes minus shared main stashes).
+# Filters non-agent-* paths (main repo, sibling workspaces) silently.
 _classify_emit_registered() {
   local wt="$1" branch="$2" locked="$3" outfile="$4" seen_file="$5"
 
@@ -362,7 +393,15 @@ _classify_emit_registered() {
   # Branch is merged. Check for uncommitted / stashes / lock.
   local dirty stashes
   dirty="$(cd "$wt" 2>/dev/null && git status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
-  stashes="$(cd "$wt" 2>/dev/null && git stash list 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
+  # Stash count = stashes UNIQUE to this worktree (not present in main).
+  # See _classify_worktrees header re: THE-P11 shared-stash false positive.
+  local main_stashes_path="$6"
+  if [ -n "$main_stashes_path" ] && [ -f "$main_stashes_path" ]; then
+    stashes="$(cd "$wt" 2>/dev/null && git stash list --pretty='%H' 2>/dev/null | sort -u \
+      | comm -23 - "$main_stashes_path" | grep -c . || echo "0")"
+  else
+    stashes="$(cd "$wt" 2>/dev/null && git stash list 2>/dev/null | wc -l | tr -d ' ' || echo "0")"
+  fi
 
   if [ "$dirty" != "0" ]; then
     printf 'STALE_DIRTY\t%s\t%s\t%s uncommitted file(s) — INVESTIGATE before removing\n' \

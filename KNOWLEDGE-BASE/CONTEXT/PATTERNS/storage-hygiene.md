@@ -97,6 +97,10 @@ Each agent has **observation-only scan** (default) + **destructive sweep** (gate
 
 This matches the **keeper observation-only contract**: detect + report + recommend; never destroy without explicit user action.
 
+**Dead-pid lock auto-unlock (THE-P11 fix, 2026-05-12).** The bootstrap script locks each worktree with `locked claude agent agent-... (pid N)`. The lock survives the process — a crashed Claude session leaves stale locks behind that prevent `git worktree prune` and `git worktree remove` from cleaning the entry forever. The mole now parses the pid from the lock line at scan time, runs `kill -0 <pid>` to test process liveness, and **auto-unlocks if the pid is dead**. The lock metadata is decoupled from a process that no longer exists; preserving it serves no safety purpose. This is bounded to *dead* pids — locks held by a live process are untouched (the safety constraint still holds). Without this fix, the 2026-05-12 incident left 151 phantom-locked entries that mole counted as unsweepable.
+
+**Shared-stash false positive (THE-P11 fix, 2026-05-12).** Linked worktrees share `refs/stash` with the main repo — `git stash list` inside an engineer worktree reports the SAME stashes that exist in main. The naive `wc -l` count credited each linked worktree with N "stashes" (where N was usually 10, the main repo's stash count from accumulated parallel-agent rescue captures). Mole's `STALE_DIRTY` guard then refused to sweep, on the (false) assumption that those stashes were recoverable WIP unique to the worktree. The fix subtracts main's stash commit-hash set from each worktree's set; only stashes UNIQUE to the worktree count as recovery-required WIP. Effect on the 2026-05-12 incident: 65 surviving worktrees had `unique_stash_count == 0` → would have classified as STALE (sweepable), not STALE_DIRTY.
+
 **Anti-patterns**:
 - Removing a worktree whose branch has UNMERGED commits — loses the engineer's work
 - Removing the main worktree (the repo root itself)
@@ -176,9 +180,19 @@ Before any `Agent(isolation: "worktree")` call, the orchestrator runs `bash scri
 
 `scripts/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `bash scripts/mole.sh sweep --worktrees --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
 
-### 4.4 · Post-merge (orchestrator-side)
+### 4.4 · Post-cherry-pick (orchestrator-side) — **MUST**, not MAY
 
-After `git push origin main` of a cherry-picked commit, the orchestrator MAY run `bash scripts/mole.sh sweep --worktrees --force` to immediately reclaim the just-merged engineer's worktree. Optional — bootstrap pre-flight catches it on next cycle anyway.
+After every successful cherry-pick + push of an engineer's branch to `main`, the orchestrator MUST immediately remove the source worktree + delete the branch:
+
+```bash
+git worktree unlock "<source-worktree>" 2>/dev/null
+git worktree remove --force "<source-worktree>"
+git branch -D "<source-branch>"
+```
+
+Strengthened from MAY → MUST on 2026-05-12 after the THE-P11 incident (150+ worktrees accumulated despite bootstrap pre-flight and pre-dispatch triggers because mole's stash-shared false positive blocked them from being eligible — see §2.3). Eliminating accumulation at the cherry-pick boundary is the most reliable trigger; it doesn't depend on mole's classification reaching the right decision.
+
+The cleanup belongs in the orchestrator playbook (operator side when split per `KB § PATTERNS/two-session-architect-operator.md`; architect side in single-session mode). Cherry-pick that doesn't cleanup the source worktree is incomplete work.
 
 ---
 
