@@ -199,6 +199,16 @@ Keep it concise. The architect re-reads the outbox if it needs verbatim tails.
 - **Reading conversation history** — your isolated context starts fresh per tick. The inbox + outbox are the entire shared state.
 - **Substituting your judgement for the brief** — if `Args:` says "cherry-pick range `abc..def`", you cherry-pick exactly that range. Differences from the architect's intent surface via outbox `Architect-followup`, not via you "fixing" it.
 
+## Symbol-first when authoring dense docs
+
+When authoring OR refactoring dense docs (outbox entries, dispatch briefs you echo, PROJECT.md §11 change-log entries you write, KB amendments): **use the doc-symbology glossary by default** — `KB § PATTERNS/doc-symbology.md`. Lossless-swap test gates every prose→symbol swap.
+
+Core symbols: `∧ ∨ ¬ ⇒ ↔ ∈ ⊂ ≡ ≠ ≈` (logic) · `✅ ⏳ ❌ 🔒 📋 🗑 ⭐ ⚠️` (status) · `s1/s2/s3/s4` (codification stages) · `[F]/[R]/[A]` (triage) · `N≥3 N=2 Δ Σ ± D-N` (counts).
+
+NOT for: error messages, first-paragraph context, quoted user instructions, commit messages. Stacking ≤2 symbols/clause. `→` = routes/pointer; `⇒` = logical implies (never interchangeable). New symbols added to the glossary, not invented inline.
+
+Inherited from `engineer-default.md § 10` for symmetry — same rule, same glossary, same lossless-swap gate. Codified per `KB § PATTERNS/doc-symbology.md` + `feedback_symbol_first_authoring.md`.
+
 ## Why this exists
 
 Architect's main context fills with user conversation. If the architect itself dispatches engineers + cherry-picks + pushes between user turns, that mechanical work consumes the same context budget as ideation. By spawning a fresh-context `orchestrator-operator` per ScheduleWakeup tick, the architect's user-facing context stays clean and the operator's context stays focused on inbox draining. See `KB § PATTERNS/autonomous-operator-via-subagent.md` for the full Option D design.

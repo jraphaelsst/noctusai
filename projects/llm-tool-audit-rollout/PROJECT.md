@@ -164,7 +164,9 @@ python mcp/noctusai/cli.py --check-llm-audit-wired --worktree-path "$PWD"
 
 - **2026-05-11 — Phase 0 complete (Engineer LLM-P0 / LLM-AUDIT-DISCOVERY)**. Read-only cross-product gap audit shipped. Findings tabulated below.
 
-### Phase 0 — Per-product gap audit (2026-05-11)
+### Phase 0 — Per-product gap audit ✅ (2026-05-11)
+
+**Improvements:** none identified — discovery-only phase, no engineering churn. Findings tabulated into §6 Phase 1-5 plan (see table below); follow-up project filings deferred to per-phase close per parent project's standard execution.
 
 LLM-dispatch site count includes direct `noctusai_lib.integrations.llm.chat_completion` calls. `digest_narrative()` (4 callers — mailing/PF/daily-life/core) wraps `chat_completion` internally and is counted once at the call-site, not at the wrapper. Embedding / transcription / vision calls (`generate_embedding` / `transcribe_audio` / `analyze_image`) excluded from the chat-completion count — they are separate LLM modalities that the audit primitive also covers but call sites are colocated.
 

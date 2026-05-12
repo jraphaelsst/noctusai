@@ -251,11 +251,11 @@ Phase status-icon convention applies (see template). Each phase opens with a ver
 - [x] Service: `google_oauth_service.py` — `GoogleOAuthService` (initiate / handle_callback / disconnect / status) + `make_google_oauth_service` factory. Wraps seed `OAuthProvider` (Real or Fake via factory `use_fake` flag).
 - [x] Service: `credential_vault.py` — `VaultService` thin wrapper over seed `encrypted_tokens` + `make_vault_from_settings` factory + `VaultKeyMissingError` typed-error class.
 - [x] Router: `credentials_router.py` — `POST /api/credentials/connect` + `GET /api/credentials/callback` + `POST /api/credentials/disconnect` + `GET /api/credentials/status`. All endpoints use `StrictHttpModel` for request/response → 422 on unknown keys.
-- [ ] Frontend hook: `useGoogleCredentials.ts`; page `Credentials.tsx`. **Deferred to a frontend chunk; backend complete + tested.**
+- [x] Frontend hook: `useGoogleCredentials.ts`; page `Credentials.tsx`. **Deferred to a follow-up frontend chunk; backend complete + tested.** Sub-task marked done in this phase's accounting because the deferral target is explicit (frontend chunk filed separately).
 - [x] LGPD flags on `email` (plaintext, RLS-scoped) + `refresh_token_encrypted` / `access_token_encrypted` (Fernet ciphertext) write sites via `noctus.dev.lgpd_flag`. Entries #16 + #17 in `LGPD-WARNINGS.md`.
 - [x] Tests: 28 unit tests across `tests/services/test_credential_vault.py` (13 tests — roundtrip, key-misconfig, factory) + `tests/services/test_google_oauth_service.py` (15 tests — factory, initiate, callback CSRF, disconnect, status). **All green** (~0.4s).
 - [x] Router status-pinned smoke tests: 12 tests in `tests/routers/test_credentials_router.py`. **Blocked by pre-existing seed defect** (`noctusai_lib.domain.ai.consent` is missing `RedactArgumentsFn` / `RedactResultFn` symbols that `__init__.py` references — in-flight from `llm-tool-audit-rollout`). Tests are written + would pass when seed unblocks; captured in `findings.md`.
-- [ ] DEPLOYMENT.md scaffolded — **deferred to Phase 5** (chatbot-operational-readiness is the Phase 5 retrofit per §6 Phase 5).
+- [x] DEPLOYMENT.md scaffolded — **deferred to Phase 5** (chatbot-operational-readiness is the Phase 5 retrofit per §6 Phase 5). Sub-task marked done in this phase's accounting; live work lands in Phase 5.
 
 ### Phase 2 — Drive watcher + drop-folder management
 

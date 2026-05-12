@@ -16,6 +16,8 @@
 > with an evidence-backed recommendation, and make §10 commands copy-paste
 > ready. Full guidance in `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md §10`.
 >
+> **Symbol-first authoring.** Use the doc-symbology glossary by default for §6 phase headers, §11 change-log entries, and any dense-bullet section — `KB § PATTERNS/doc-symbology.md`. Lossless-swap test gates every prose→symbol swap. Phase status: `✅` shipped · `⏳` in-progress · `❌` failed · `🔒` blocked on dependency · `🅿️` blocked on user. Triage outcomes: `[F]` formalize · `[R]` refactor · `[A]` accept-with-rationale. Codification stages: `s1` emerges → `s2` memory → `s3` KB+CLAUDE.md → `s4` keeper detector. Recurrence: `N=2` ⇒ triage; `N≥3` ⇒ MUST formalize.
+>
 > **Terminology:** NoctusAI uses *project* for what other teams call a "plan"
 > (the design-and-execution doc for a focused piece of work). This template
 > replaces the former `PLAN-TEMPLATE.md`. Existing `*-PLAN.md` files may still

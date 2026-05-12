@@ -183,6 +183,8 @@ Audit the post-MVP state of `products/adconnect/` against the seed-first contrac
 
 ### Phase 1 — User interrogation + scope confirmation ✅ (architect default-accept, 2026-05-11)
 
+**Improvements:** none identified — interrogation-only phase, no engineering churn. Architect default-accept of evidence-backed defaults was the right shape (Q4-Q6 deferred to closure batch per §6 Phase 4).
+
 Architect signaled "go with §7 Q1-Q3 recommendations" (default-accept the evidence-backed defaults already paired with each open question). No user round-trip needed. Q4-Q6 are out-of-band closure questions handled at Phase 4.
 
 - [x] Q1 — `auth_deps.py` retirement timing: **retire now** (default ratified).
@@ -191,6 +193,10 @@ Architect signaled "go with §7 Q1-Q3 recommendations" (default-accept the evide
 - [x] Q4-Q6 — closure-time questions deferred to Phase 4 sweep.
 
 ### Phase 2 — Canonical auth shape adoption ✅ (Engineer ADCO-MIG-P2, 2026-05-11)
+
+**Improvements:**
+- `dependencies.py` reuses `app.database._db` instead of constructing its own `DatabaseModule` instance — accept-with-rationale: AdConnect's conftest patches `app.database._db.get_client` directly at module-attr level; a duplicate `_db` instance would create a second module the patches miss, breaking 145+ tests. ERP/PF avoid this by patching at the framework class level (`noctusai_seed.database.DatabaseModule.get_client`). N=1 hybrid pattern — surface to `accept-with-rationale.md` catalog if a second product replicates.
+- `required=False` divergence from ERP/PF (`required=True`) accepted with rationale: AdConnect single-instance MVP preserves `DEFAULT_ORG_ID` fallback; flipping to `required=True` would 403 every test path whose `MockUser` lacks an `org_id`. Production behavior unchanged.
 
 Replaced `auth_deps.py` with canonical `dependencies.py`. Migrated router consumer pattern.
 
@@ -212,6 +218,8 @@ Replaced `auth_deps.py` with canonical `dependencies.py`. Migrated router consum
 - [x] Same-commit per doc-code coherence rule (staging only per brief — actual commit is the architect's responsibility).
 
 ### Phase 3 — Vestigial-config retire ✅ (Engineer ADCO-MIG-P2, 2026-05-11)
+
+**Improvements:** none identified — local-literal test secret is the canonical pattern (not a retrofit). No accept-with-rationale entry needed.
 
 Removed `jwt_secret` from `SeedSettings`.
 
