@@ -53,8 +53,19 @@ from typing import Any, Iterable, Mapping, Optional
 from unittest.mock import MagicMock
 
 from noctusai_lib.testing._schema_cache import get_schema_map
-from noctusai_lib.testing.schema_errors import MockSchemaError, MockUnknownTableError
+from noctusai_lib.testing.schema_errors import (
+    MockCheckViolation,
+    MockSchemaError,
+    MockUnknownTableError,
+)
 import copy
+
+# Type alias: per-product CHECK-constraint manifest. Maps
+#   {table_name: {column_name: (allowed_value, ...)}}
+# Keys may be bare table names ("recompensas_acumuladas") OR schema-qualified
+# ("adconnect.recompensas_acumuladas"). Bare keys match any schema bound on
+# the client; qualified keys match exactly. Resolution prefers qualified.
+CheckManifest = dict[str, dict[str, tuple]]
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +210,80 @@ def _validate_payload_keys(
                 schema, table, str(key), operation=operation,
                 strict_unknown_tables=strict_unknown_tables,
             )
+
+
+# ---------------------------------------------------------------------------
+# CHECK-constraint validation (opt-in)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_constraint_entry(
+    manifest: Optional["CheckManifest"],
+    schema: Optional[str],
+    table: Optional[str],
+) -> dict[str, tuple]:
+    """Resolve `(schema, table) → {col: (allowed,)}` from the manifest.
+
+    Lookup prefers schema-qualified keys (`adconnect.recompensas_acumuladas`)
+    over bare table keys (`recompensas_acumuladas`). Returns an empty dict if
+    no entry exists — caller treats that as "no constraints for this table".
+    """
+    if not manifest or not table:
+        return {}
+    if schema:
+        qualified = f"{schema}.{table}"
+        if qualified in manifest:
+            return manifest[qualified]
+    return manifest.get(table, {})
+
+
+def _validate_check_constraints(
+    manifest: Optional["CheckManifest"],
+    schema: Optional[str],
+    table: Optional[str],
+    payload,
+    operation: str,
+) -> None:
+    """Raise `MockCheckViolation` when a payload literal violates the manifest.
+
+    No-op when `manifest` is falsy, when the table has no manifest entry, or
+    when the payload column isn't in the entry. Mirrors `_validate_payload_keys`
+    in accepting dict (single row) or list[dict] (batch).
+    """
+    if not manifest:
+        return
+    entry = _resolve_constraint_entry(manifest, schema, table)
+    if not entry:
+        return
+    if isinstance(payload, Mapping):
+        rows = [payload]
+    elif isinstance(payload, (list, tuple)):
+        rows = [r for r in payload if isinstance(r, Mapping)]
+    else:
+        return
+    for row in rows:
+        for col, allowed in entry.items():
+            if col not in row:
+                continue  # column not present in this row — nothing to check
+            value = row[col]
+            # `None` is acceptable unless the manifest entry explicitly
+            # disallows it (caller can pass `(..., None)` to allow NULL).
+            if value is None and None not in allowed:
+                # NULL handling: many CHECK constraints in this codebase
+                # coexist with `NOT NULL`, so a missing value should usually
+                # be flagged. But we can't tell from the manifest alone, so
+                # we only flag explicit non-None mismatches — NULL is a
+                # separate not-null concern out of scope here.
+                continue
+            if value not in allowed:
+                raise MockCheckViolation(
+                    schema=schema,
+                    table=table or "",
+                    column=col,
+                    invalid_value=value,
+                    allowed_values=allowed,
+                    operation=operation,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -714,6 +799,8 @@ class MockFilterBuilder(_FilterMixin, _MockExecuteMixin):
         strict_unknown_tables: bool = False,
         mutation_kind: Optional[str] = None,  # "update" | "delete" | None
         update_payload: Optional[Mapping] = None,
+        validate_constraints: bool = False,
+        constraint_manifest: Optional["CheckManifest"] = None,
     ):
         self._data = data if data is not None else []
         self._single_mode = False
@@ -727,6 +814,8 @@ class MockFilterBuilder(_FilterMixin, _MockExecuteMixin):
         self._predicates: list[tuple[str, str, Any]] = []
         self._mutation_kind = mutation_kind
         self._update_payload = update_payload
+        self._validate_constraints = validate_constraints
+        self._constraint_manifest = constraint_manifest
 
     def _apply_mutation(self) -> list[dict]:
         """Evaluate predicates against the shared list and apply the mutation.
@@ -848,6 +937,8 @@ class MockRequestBuilder:
         schema: Optional[str] = None,
         table: Optional[str] = None,
         strict_unknown_tables: bool = False,
+        validate_constraints: bool = False,
+        constraint_manifest: Optional["CheckManifest"] = None,
     ):
         self.inserted_payloads: list = []
         # Mirror of `inserted_payloads` for `.update(...)` calls. Tests
@@ -878,6 +969,8 @@ class MockRequestBuilder:
         self._schema = schema
         self._table = table
         self._strict_unknown_tables = strict_unknown_tables
+        self._validate_constraints = validate_constraints
+        self._constraint_manifest = constraint_manifest
         # Running counter for auto-id generation. Incremented per row
         # appended via insert; survives across calls so successive inserts
         # get distinct ids (mock-<table>-1, mock-<table>-2, ...).
@@ -894,6 +987,19 @@ class MockRequestBuilder:
             "schema": self._schema,
             "table": self._table,
             "strict_unknown_tables": self._strict_unknown_tables,
+        }
+
+    def _builder_kwargs_with_constraints(self) -> dict:
+        """Variant for builders that participate in INSERT/UPDATE validation.
+
+        `MockQueryBuilder` (INSERT result) and `MockFilterBuilder`
+        (UPDATE/DELETE) accept the constraint kwargs; `MockSelectBuilder`
+        does not (CHECK constraints only fire on writes).
+        """
+        return {
+            **self._builder_kwargs(),
+            "validate_constraints": self._validate_constraints,
+            "constraint_manifest": self._constraint_manifest,
         }
 
     def _check_table_known(self, op: str) -> None:
@@ -980,6 +1086,14 @@ class MockRequestBuilder:
                 self._schema, self._table, data, operation="insert",
                 strict_unknown_tables=self._strict_unknown_tables,
             )
+        if self._validate_constraints:
+            _validate_check_constraints(
+                self._constraint_manifest,
+                self._schema,
+                self._table,
+                data,
+                operation="insert",
+            )
 
         # Normalize to list-of-dicts.
         if isinstance(data, list):
@@ -1016,6 +1130,8 @@ class MockRequestBuilder:
         if self._response_queue is None:
             self._data.extend(response_rows)
 
+        # MockQueryBuilder does not re-validate; INSERT CHECK validation
+        # fires above in the parent before payload normalization.
         return MockQueryBuilder(
             response_rows,
             response_queue=self._response_queue,
@@ -1029,6 +1145,14 @@ class MockRequestBuilder:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="update",
                 strict_unknown_tables=self._strict_unknown_tables,
+            )
+        if self._validate_constraints:
+            _validate_check_constraints(
+                self._constraint_manifest,
+                self._schema,
+                self._table,
+                data,
+                operation="update",
             )
         # Mirror inserted_payloads — track the update payload so tests
         # can assert side effects without monkey-patching the helper.
@@ -1059,7 +1183,7 @@ class MockRequestBuilder:
             response_idx=self._response_idx,
             mutation_kind="update",
             update_payload=update_payload,
-            **self._builder_kwargs(),
+            **self._builder_kwargs_with_constraints(),
         )
 
     def upsert(self, data=None, *a, **k):
@@ -1068,6 +1192,14 @@ class MockRequestBuilder:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="upsert",
                 strict_unknown_tables=self._strict_unknown_tables,
+            )
+        if self._validate_constraints:
+            _validate_check_constraints(
+                self._constraint_manifest,
+                self._schema,
+                self._table,
+                data,
+                operation="upsert",
             )
         # Upsert propagation is deferred to a follow-up project (needs
         # conflict-target tracking via `on_conflict`). For now, the call
@@ -1078,7 +1210,7 @@ class MockRequestBuilder:
             self._data,
             response_queue=self._response_queue,
             response_idx=self._response_idx,
-            **self._builder_kwargs(),
+            **self._builder_kwargs_with_constraints(),
         )
 
     def delete(self, *a, **k):
@@ -1088,7 +1220,7 @@ class MockRequestBuilder:
             response_queue=self._response_queue,
             response_idx=self._response_idx,
             mutation_kind="delete",
-            **self._builder_kwargs(),
+            **self._builder_kwargs_with_constraints(),
         )
 
 
@@ -1108,6 +1240,21 @@ class MockSupabaseClient:
             default-True in Phase 4.
         schema: the PostgREST schema to bind to (for `.schema(name).from_(...)`
             chains). Defaults to `public`.
+        validate_schema_constraints: when True (default OFF), INSERT/UPDATE
+            payloads are checked against the `manifest` and a
+            `MockCheckViolation` is raised when a column literal is outside
+            the allowed-values tuple. Mirrors PostgreSQL CHECK-constraint
+            behavior so tests fail loudly on writes the real DB would reject
+            (e.g. `recompensas_acumuladas.status='success'` when only
+            `('acumulado', 'resgatado', 'expirado')` are allowed). Opt-in;
+            products supply a manifest in `conftest.py`.
+        manifest: per-table CHECK-constraint catalog of the form
+            `{table_or_qualified: {column: (allowed_value, ...)}}`. Bare
+            table keys (`recompensas_acumuladas`) match any schema; qualified
+            keys (`adconnect.recompensas_acumuladas`) match exactly. Keys
+            absent from the manifest impose no constraints; columns absent
+            from a table entry impose no constraints. NULL values are
+            ignored unless `None` appears in the allowed tuple.
     """
 
     def __init__(
@@ -1117,6 +1264,8 @@ class MockSupabaseClient:
         validate_schema: bool = True,
         schema: Optional[str] = "public",
         strict_unknown_tables: bool = False,
+        validate_schema_constraints: bool = False,
+        manifest: Optional["CheckManifest"] = None,
     ):
         self._data = data
         self.auth = MagicMock()
@@ -1126,6 +1275,8 @@ class MockSupabaseClient:
         self._validate_schema = validate_schema
         self._schema = schema
         self._strict_unknown_tables = strict_unknown_tables
+        self._validate_constraints = validate_schema_constraints
+        self._constraint_manifest = manifest
 
     def _builder_for(self, name: str, data=None) -> MockRequestBuilder:
         # If the caller passes "schema.table", split it; otherwise use bound schema.
@@ -1140,6 +1291,8 @@ class MockSupabaseClient:
             schema=schema,
             table=table,
             strict_unknown_tables=self._strict_unknown_tables,
+            validate_constraints=self._validate_constraints,
+            constraint_manifest=self._constraint_manifest,
         )
 
     def table(self, name):
@@ -1158,6 +1311,8 @@ class MockSupabaseClient:
             validate_schema=self._validate_schema,
             schema=name,
             strict_unknown_tables=self._strict_unknown_tables,
+            validate_schema_constraints=self._validate_constraints,
+            manifest=self._constraint_manifest,
         )
         scoped.auth = self.auth
         scoped.storage = self.storage

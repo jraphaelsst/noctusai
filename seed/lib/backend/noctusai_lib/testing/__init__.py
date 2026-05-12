@@ -36,7 +36,11 @@ from noctusai_lib.testing.clients import (
     AuthClient,
     bind_user_metadata,
 )
-from noctusai_lib.testing.schema_errors import MockSchemaError, MockUnknownTableError
+from noctusai_lib.testing.schema_errors import (
+    MockCheckViolation,
+    MockSchemaError,
+    MockUnknownTableError,
+)
 from noctusai_lib.testing._schema_cache import (
     get_schema_map,
     reset_cache,
@@ -68,6 +72,7 @@ __all__ = [
     "MockUserResponse",
     "AuthClient",
     "bind_user_metadata",
+    "MockCheckViolation",
     "MockSchemaError",
     "MockUnknownTableError",
     "get_schema_map",

@@ -44,6 +44,52 @@ class MockSchemaError(AssertionError):
         super().__init__(message)
 
 
+class MockCheckViolation(AssertionError):
+    """Raised when a mock INSERT/UPDATE writes a CHECK-violating literal.
+
+    Activated when `MockSupabaseClient(validate_schema_constraints=True,
+    manifest={table: {column: (allowed_values, ...)}})` is configured. On
+    INSERT or UPDATE, every row literal whose `(table, column)` appears in
+    the manifest is compared against the allowed-values tuple — a miss
+    raises `MockCheckViolation` so the test fails loudly, mirroring the
+    PostgreSQL CHECK-constraint behavior the real DB would emit at INSERT
+    time (`new row for relation "X" violates check constraint "X_status_check"`).
+
+    Closes the silent-success class where tests would pass with a write that
+    Postgres rejects at runtime. Default-OFF so existing tests are
+    unchanged; products opt in by passing a manifest in `conftest.py`.
+
+    Subclasses `AssertionError` so pytest treats it as a failed assertion
+    (red, with stack trace).
+    """
+
+    def __init__(
+        self,
+        *,
+        schema: str | None,
+        table: str,
+        column: str,
+        invalid_value,
+        allowed_values,
+        operation: str = "insert",
+    ):
+        self.schema = schema
+        self.table = table
+        self.column = column
+        self.invalid_value = invalid_value
+        self.allowed_values = tuple(allowed_values)
+        self.operation = operation
+
+        qualified = f"{schema}.{table}" if schema else table
+        allowed_repr = ", ".join(repr(v) for v in self.allowed_values) or "<none>"
+        message = (
+            f"{qualified}.{column}: {invalid_value!r} not in ({allowed_repr}) "
+            f"(called via {operation}). CHECK constraint violated — the real "
+            f"database would reject this write."
+        )
+        super().__init__(message)
+
+
 class MockUnknownTableError(MockSchemaError):
     """Raised when a mock call references a table that does not appear in any
     migration file, AND the client was constructed with

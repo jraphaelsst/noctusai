@@ -75,6 +75,39 @@ OTHER_ORG_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 DIST_A_ID = "11111111-1111-1111-1111-111111111111"
 DIST_B_ID = "22222222-2222-2222-2222-222222222222"
 
+# ---------------------------------------------------------------------------
+# CHECK-constraint manifest (opt-in, narrow adoption)
+# ---------------------------------------------------------------------------
+# Mirrors the CHECK constraints declared in `migrations/001_adconnect.sql` on
+# the rewards tables. Wiring this manifest through `MockSupabaseClient(
+# validate_schema_constraints=True, manifest=...)` makes the mock raise
+# `MockCheckViolation` when production code writes a literal outside the
+# allowed set — the test-time analog of the real DB's CHECK enforcement.
+#
+# Closes the ADCO-REWARDS-STATUS-CHECK class: a service inserted
+# `status='success'` into `recompensas_acumuladas` (CHECK allows only
+# `('acumulado', 'resgatado', 'expirado')`); tests passed because the mock
+# was permissive; the real DB rejected at deploy.
+#
+# Narrow adoption: only the two rewards tables are listed here. Other
+# adconnect tables (distributors / pedidos / sellout / regras_recompensa)
+# keep their writes unvalidated until a follow-up extends the manifest.
+ADCONNECT_CHECK_MANIFEST = {
+    "recompensas_acumuladas": {
+        "tipo": ("cashback", "pontos"),
+        "status": ("acumulado", "resgatado", "expirado"),
+    },
+    "resgates_recompensa": {
+        "metodo": (
+            "credito_em_pedido",
+            "credito_em_fatura",
+            "reembolso_pix",
+            "outro",
+        ),
+        "status": ("pendente", "aprovado", "recusado", "pago"),
+    },
+}
+
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
@@ -154,7 +187,16 @@ def client():
     # drift-reconciliation` follow-up project (mirrors the ERP precedent
     # at `products/erp-imobiliario/backend/tests/conftest.py:28`). Flip to
     # True once reconciliation lands.
-    mock_sb = MockSupabaseClient(validate_schema=False, schema="adconnect")
+    # CHECK-constraint validation is OPT-IN (narrow adoption: only the two
+    # rewards tables in `ADCONNECT_CHECK_MANIFEST`). Other tables / columns
+    # are unaffected. Closes ADCO-REWARDS-STATUS-CHECK class — writes that
+    # PostgreSQL would reject now raise `MockCheckViolation` at test time.
+    mock_sb = MockSupabaseClient(
+        validate_schema=False,
+        schema="adconnect",
+        validate_schema_constraints=True,
+        manifest=ADCONNECT_CHECK_MANIFEST,
+    )
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(
         MockUser(org_id=ORG_ID_BRAND)
     ))
