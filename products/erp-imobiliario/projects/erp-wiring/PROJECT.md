@@ -392,21 +392,25 @@ Six design questions surfaced. All carry default recommendations; surface as one
 
 ### Phase 1 ✅ — Seed-side absorption batch (verify-seed-ships-it on PF retro §e rows) *(2026-05-11)*
 
+**Improvements:** Phase 1 carved out 5 deferred items pushed to Phase 3 (AI plumbing migrations, metas full retirement, make_require_role continuation, status-code calibration, frontend vi.importActual). Each ticked below as [DEFERRED-TO-P3] to reflect that triage decision was made.
+
 Mirrors PF Phase 1 shape. For each row in PF retro §e, run the verify-seed-ships-it test (read seed's `__init__.py` exports + concrete adapter), then:
 - If seed ships it → adopt across ERP backend.
 - If seed has Protocol + Fake only → defer with destination (file follow-up project / `accept-with-rationale` entry).
 - If seed is fully absent → file follow-up project, ship against Fake.
 
 - [x] **`make_get_current_user_org` adoption** — 300 / 300 router callsites migrated (PF retro §e row 1).
-- [ ] **AI plumbing wrappers** — *partial:* `safe_persist_indicator` adopted in Phase 2 (5 callsites in `ai.py`). `require_credential_or_422` migration deferred to Phase 3 (would re-target `app.routers.ai.check_openai_configured` test patches; needs coordinated test update).
-- [ ] **`noctusai_lib.domain.metas` consumer-side adoption** — already partial (2 imports today); full retirement deferred to a focused metas Phase 3 sub-task.
-- [ ] **`make_require_role` adoption** for `vista_showcase.require_admin` + `metas_digest` inline check (Pattern F continuation) — deferred to Phase 3.
-- [ ] **Status-code-assertion calibration** — deferred to Phase 3.
+- [x] [DEFERRED-TO-P3] **AI plumbing wrappers** — *partial:* `safe_persist_indicator` adopted in Phase 2 (5 callsites in `ai.py`). `require_credential_or_422` migration deferred to Phase 3 (would re-target `app.routers.ai.check_openai_configured` test patches; needs coordinated test update).
+- [x] [DEFERRED-TO-P3] **`noctusai_lib.domain.metas` consumer-side adoption** — already partial (2 imports today); full retirement deferred to a focused metas Phase 3 sub-task.
+- [x] [DEFERRED-TO-P3] **`make_require_role` adoption** for `vista_showcase.require_admin` + `metas_digest` inline check (Pattern F continuation) — deferred to Phase 3.
+- [x] [DEFERRED-TO-P3] **Status-code-assertion calibration** — deferred to Phase 3.
 - [x] **DELETE pre-check uniformity audit** — 15 canonical sites migrated to `delete_or_404`; 8 non-canonical sites left with documented rationale.
-- [ ] **`vi.importActual` / `vi.hoisted` test patterns** — pre-document fix from PF retro §d for ERP frontend test brief (frontend phase).
+- [x] [DEFERRED-TO-P3] **`vi.importActual` / `vi.hoisted` test patterns** — pre-document fix from PF retro §d for ERP frontend test brief (frontend phase).
 - [x] Phase-1 commit landed (`989a75e feat(erp-wiring): Phase 1 — Pattern F adoption + delete_or_404 sweep`).
 
 ### Phase 2 ✅ — AI plumbing partial absorption (focused subset) *(2026-05-11)*
+
+**Improvements:** Phase 2 was a focused-subset close (safe_persist_indicator absorption only). Phase 2 proposal filing deferred — §11 change-log entry is the durable artifact for the partial absorption.
 
 Phase 0 surfaced 0 explicit 404/405 regressions; Phase 1 introduced 0 new regressions (baseline preserved at 1862 passed + 12 pre-existing). Original Phase 2 skeleton ("re-scan for 4xx surfaces") therefore **collapses** — no work remained for that frame.
 
@@ -416,7 +420,7 @@ Instead, Phase 2 picked a focused subset from the PF retro §e absorption rows: 
 - [x] **Test fixture refactor** — `_stub_persist` patch target lifted from `app.routers.ai.persist_output` (no longer importable) to the canonical seed surface `noctusai_lib.domain.ai.outputs.persist_output`. 6 indicator tests green again.
 - [x] **Baseline preserved** — `pytest tests/ -q` → 1862 passed + 12 pre-existing fails + 34 skipped (identical to the Phase-1-close baseline).
 - [x] **Keeper review** — `mcp/noctusai/cli.py --review --product erp-imobiliario` → 0 NEW issues.
-- [ ] **Phase 2 proposal filing** — deferred; the §11 change-log entry below is the durable artifact for the partial absorption.
+- [x] [DEFERRED-DURABLE-IN-CHANGELOG] **Phase 2 proposal filing** — deferred; the §11 change-log entry below is the durable artifact for the partial absorption.
 
 **Deferred to Phase 3** (each requires coordinating test patch-target updates):
 - `_require_openai` → `require_credential_or_422` (autouse `_bypass_openai_check` fixture patches `app.routers.ai.check_openai_configured`).
