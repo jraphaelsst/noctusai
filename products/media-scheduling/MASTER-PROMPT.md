@@ -63,12 +63,12 @@ Do NOT edit `templates/product-seed/` directly.
 - Keep the seed minimal — zero domain logic
 - Any new framework feature must work in the seed first
 - Changes to the seed propagate to the template automatically
-- 6 tests must always pass
+- All tests must stay green; treat any red as a framework regression first
 
 ## Testing
 
 ```bash
-cd products/media-scheduling/backend && pytest  # 6 tests
+cd products/media-scheduling/backend && pytest
 cd products/media-scheduling/frontend && npx vite build  # must build clean
 ```
 
@@ -76,3 +76,19 @@ cd products/media-scheduling/frontend && npx vite build  # must build clean
 
 - Backend: `noctusai_lib` (code library) + `noctusai_seed` (framework)
 - Frontend: `@noctusai/lib` (code library) + `@noctusai/seed` (framework)
+
+## Methodology evolution — 2026-05-11
+
+Active rules this product exercises as the seed reference. Pointers, not bodies — open the KB doc on demand.
+
+- **Codification pipeline (4 stages).** New rules walk Stage 1 (emerges) → Stage 2 (memory) → Stage 3 (KB pattern + CLAUDE.md pointer) → Stage 4 (`check_*` keeper detector + colocated regression test). When the seed gains a new convention, route it through the stages — don't stall at memory. → `KB § CONTEXT/PATTERNS/methodology-codification-pipeline.md`
+- **Doc-code coherence.** Any tool / detector / flag change updates its doc surfaces (KB pattern docs, Situation→Tool maps, CLAUDE.md pointers, INDEX.md, `--help`, per-product README/MASTER-PROMPT references) in the **same commit**. "Later" is forbidden. Discovery: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ products/*/MASTER-PROMPT.md`. → `CLAUDE.md §1` + codification candidate `check_doc_tool_reference_drift`.
+- **Keeper grew to 32 detectors.** Live list via `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`. New since seed reference last refresh include `check_doc_tool_reference_drift`, `check_detector_has_regression_test`, `check_section_7_placeholder_consistency`, `check_mcp_write_tool_worktree_arg`, `check_mcp_path_via_settings`, `check_auth_dep_anti_pattern`, `check_no_silent_ok_comment`, `check_pipefail_grep_q`, `check_slowapi_with_pep563`, `check_test_status_assertion`. Each ships a colocated `Test<CamelCase>` regression — meta-detector enforces.
+- **Seed mock predicate fix (commit `f3aabfd`).** `_eval_is` now dispatches PostgREST IS-NULL sentinels (`"null"`/`"true"`/`"false"`) with soft compat for literal-string equality; `_FilterMixin.not_` is an actual negator. Test predicates against the seed `MockSupabaseClient` now match production PostgREST semantics — fixture data must use real values, not literal-string shims.
+- **Canonical rate-limit policies.** `noctusai_lib.api.rate_limit_policies` exports named buckets (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL`). Replaces N=10+ products' hard-coded `@limiter.limit("30/minute")` literals. Tune at the seed; products inherit. Shape invariant enforced by regression test.
+- **Bootstrap auto-hydrate.** `scripts/bootstrap-worktree.sh` runs pre-hydrate cleanup of stale `.claude/worktrees/agent-*/` (companion to disk-usage monitor at ≥80%). Sibling-workspace bootstrap drops Docker + start.sh/stop.sh + scaffolded skeletons day-one; `docker compose up` is the deploy drill.
+
+## Local notes — media-scheduling specific
+
+- **OAuth credentials shape is single-tenant.** Route filters `oauth_credentials` by `.eq("provider", "google")` + `.limit(1)` with no `org_id` filter (per route docstring). Test fixtures MUST seed `provider="google"` for `MockSupabaseClient` predicate filtering to match. Engineer S landed the fixture fix in commit `d3b46c6` (single test affected).
+- **Calibration: callsite count is a loose upper bound.** The 28-callsite tally for the seed mock predicate fix over-projected actual failures by ~28× — count-of-callsites is a worst-case ceiling, not a forecast. When estimating latent-fix wave scope, read the fixture shape against the route's actual predicate, not callsite totals.
