@@ -5,13 +5,30 @@ scoring, and pricing.
 Dispatches via `noctusai_lib.llm` — the provider, model, and credential chain
 are all inherited from the seed-injector. Product code stays free of provider
 SDKs and HTTP plumbing.
+
+Audit wiring (2026-05-11, LLM-ERP rollout, Step B): every chat dispatch
+goes through `_dispatch_chat(...)` which writes one row to
+`erp.tool_call_audits` via the seed `make_audit_writer` factory. The
+audit writer is best-effort — a DB exception NEVER raises to the caller
+(see `noctusai_lib.domain.ai.tool_audit.make_audit_writer`). When
+`settings.postgres_url` is empty the writer is a noop (debug log + skip),
+so dispatch keeps working in dev / test contexts without a Postgres URL.
+LGPD redaction (per-feature `redact_arguments` / `redact_result` lambdas)
+is blocked on the seed `register_feature(...)` signature being extended
+to accept those kwargs — Phase-0 surfaced this as Q2 → mandatory; until
+the seed lands them, audit rows carry raw arguments/result (acceptable
+for dev / staging; LGPD-blocking for production rollout).
 """
 import logging
+import time
 from typing import Any, Optional
 
 from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.domain.ai.tool_audit import AuditRecord, now_utc
 from noctusai_lib.integrations.llm import chat_completion
 from noctusai_lib.primitives.parsing import safe_float as _safe_float
+
+from app.services.audit_hook import get_audit_writer
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +36,88 @@ logger = logging.getLogger(__name__)
 # default is `gpt-4o-mini` — we pin it explicitly here so tuning this
 # service's model doesn't accidentally shift the rest of the platform.
 MODEL = "gpt-4o-mini"
+
+
+async def _dispatch_chat(
+    *,
+    tool_name: str,
+    messages: list[dict],
+    arguments: Optional[dict] = None,
+    org_id: Optional[str] = None,
+    user_id: Optional[int] = None,
+    **chat_kwargs: Any,
+) -> str:
+    """Single chat dispatch wrapper: routes through the seed `chat_completion`
+    and writes one `tool_call_audits` row via the seed writer factory.
+
+    Best-effort guarantee: the audit-write path swallows DB exceptions
+    inside `make_audit_writer`. If the chat call itself raises, the audit
+    record is written with `status="failure"` + `error=str(exc)` and the
+    exception is re-raised so callers can keep their own fallback logic
+    (e.g. `draft_follow_up` catches `LLMNotConfigured` to return an empty
+    draft). The audit row lands BEFORE the re-raise so failures stay
+    observable.
+
+    Args:
+        tool_name: Audit row's `tool_name` — typically the matching
+            `register_feature(...)` key (e.g. `"erp.lead_score"`).
+        messages: Forwarded to `chat_completion`.
+        arguments: Logged as the audit row's `arguments` JSONB column.
+            Should NOT carry raw PII once the seed `register_feature`
+            signature accepts `redact_arguments=` — callers redact at
+            the dispatch site until that lands. Pass `None` to log
+            nothing structured.
+        org_id: Forwarded to `chat_completion` for per-org key + cache
+            scoping. Also stored in the audit row indirectly via the
+            seed correlation context (`user_id` is what the row keys on).
+        user_id: Stored on the audit row's `user_id` BIGINT column.
+            Optional — many ERP AI flows run system-side without a user.
+        **chat_kwargs: Forwarded to `chat_completion` (model, temperature,
+            max_tokens, cache, response_format, …).
+    """
+    started_at = now_utc()
+    started_ns = time.monotonic_ns()
+    audit_writer = get_audit_writer()
+
+    try:
+        result = await chat_completion(messages=messages, org_id=org_id, **chat_kwargs)
+    except Exception as exc:
+        duration_ms = max(0, (time.monotonic_ns() - started_ns) // 1_000_000)
+        try:
+            audit_writer(
+                AuditRecord(
+                    tool_name=tool_name,
+                    status="failure",
+                    duration_ms=duration_ms,
+                    started_at=started_at,
+                    arguments=arguments,
+                    result=None,
+                    error=str(exc),
+                    user_id=user_id,
+                )
+            )
+        except Exception:
+            # Audit-side failure NEVER masks the original chat exception.
+            logger.exception("ai_service: audit-writer failed for tool=%s", tool_name)
+        raise
+
+    duration_ms = max(0, (time.monotonic_ns() - started_ns) // 1_000_000)
+    try:
+        audit_writer(
+            AuditRecord(
+                tool_name=tool_name,
+                status="success",
+                duration_ms=duration_ms,
+                started_at=started_at,
+                arguments=arguments,
+                result={"content": result} if isinstance(result, str) else result,
+                user_id=user_id,
+            )
+        )
+    except Exception:
+        logger.exception("ai_service: audit-writer failed for tool=%s", tool_name)
+
+    return result
 
 
 def check_openai_configured(org_id: Optional[str] = None) -> bool:
@@ -80,7 +179,14 @@ DESCRIÇÃO:
         {"role": "user", "content": prompt},
     ]
 
-    content = await chat_completion(messages, model=MODEL, temperature=0.7, max_tokens=1024)
+    content = await _dispatch_chat(
+        tool_name="erp.imovel_description",
+        messages=messages,
+        arguments={"tipo": tipo, "cidade": cidade, "bairro": bairro, "area": area},
+        model=MODEL,
+        temperature=0.7,
+        max_tokens=1024,
+    )
 
     # Parse response
     titulo = ""
@@ -137,7 +243,14 @@ RECOMENDAÇÃO: [1 frase com próximo passo sugerido]"""
         {"role": "user", "content": prompt},
     ]
 
-    content = await chat_completion(messages, model=MODEL, temperature=0.3, max_tokens=1024)
+    content = await _dispatch_chat(
+        tool_name="erp.lead_score",
+        messages=messages,
+        arguments={"nome": nome, "etapa": etapa, "probabilidade": probabilidade},
+        model=MODEL,
+        temperature=0.3,
+        max_tokens=1024,
+    )
 
     # Parse response
     score = 50
@@ -220,7 +333,14 @@ ANALISE: [2-3 frases justificando a sugestão]"""
         {"role": "user", "content": prompt},
     ]
 
-    content = await chat_completion(messages, model=MODEL, temperature=0.3, max_tokens=1024)
+    content = await _dispatch_chat(
+        tool_name="erp.suggest_price",
+        messages=messages,
+        arguments={"tipo": tipo, "cidade": cidade, "bairro": bairro, "comparable_count": len(comparables)},
+        model=MODEL,
+        temperature=0.3,
+        max_tokens=1024,
+    )
 
     # Parse response
     preco = 0.0
@@ -313,16 +433,22 @@ async def draft_follow_up(
     user_prompt = "\n".join(lines) + "\n\nResponda APENAS com o corpo da mensagem."
 
     try:
-        body = await chat_completion(
+        body = await _dispatch_chat(
+            tool_name="erp.lead_follow_up_draft",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
+            arguments={
+                "cliente_nome": cliente_nome,
+                "last_interaction_days": last_interaction_days,
+                "etapa_atual": etapa_atual,
+            },
+            org_id=org_id,
             model=MODEL,
             temperature=0.0,
             max_tokens=400,
             cache=True,
-            org_id=org_id,
         )
     except Exception:
         # Both LLMNotConfigured (per-provider) and RuntimeError (configure_llm
@@ -406,16 +532,18 @@ async def classify_whatsapp_intent(
         f"Mensagem: {message_text.strip()}"
     )
     try:
-        content = await chat_completion(
+        content = await _dispatch_chat(
+            tool_name="erp.whatsapp_intent",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
+            arguments={"cliente_nome": cliente_nome, "message_len": len(message_text)},
+            org_id=org_id,
             model=MODEL,
             temperature=0.0,
             max_tokens=120,
             cache=True,
-            org_id=org_id,
         )
     except Exception:
         logger.warning("erp.ai.whatsapp_intent: LLM unavailable")
@@ -494,16 +622,18 @@ async def score_certidoes(
     user_prompt = f"Cliente: {cliente_nome}\nCertidões:\n" + "\n".join(cert_lines)
 
     try:
-        content = await chat_completion(
+        content = await _dispatch_chat(
+            tool_name="erp.certidoes_score",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
+            arguments={"cliente_nome": cliente_nome, "certidao_count": len(certidoes)},
+            org_id=org_id,
             model=MODEL,
             temperature=0.0,
             max_tokens=160,
             cache=True,
-            org_id=org_id,
         )
     except Exception:
         logger.warning("erp.ai.score_certidoes: LLM unavailable")
@@ -558,16 +688,22 @@ async def generate_metas_coach_tip(
     )
 
     try:
-        content = await chat_completion(
+        content = await _dispatch_chat(
+            tool_name="erp.metas_coach_tip",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
+            arguments={
+                "user_nome": user_nome,
+                "progresso_percent": progresso_percent,
+                "dias_restantes": dias_restantes,
+            },
+            org_id=org_id,
             model=MODEL,
             temperature=0.4,
             max_tokens=140,
             cache=True,
-            org_id=org_id,
         )
     except Exception:
         logger.warning("erp.ai.metas_coach_tip: LLM unavailable")
@@ -646,16 +782,18 @@ async def assess_photo_compliance(
     )
 
     try:
-        content = await chat_completion(
+        content = await _dispatch_chat(
+            tool_name="erp.photo_compliance",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
+            arguments={"foto_count": len(fotos)},
+            org_id=org_id,
             model=MODEL,
             temperature=0.0,
             max_tokens=140,
             cache=True,
-            org_id=org_id,
         )
     except Exception:
         logger.warning("erp.ai.photo_compliance: LLM unavailable")
@@ -722,16 +860,18 @@ async def score_search_relevance(
     user_prompt = f"Busca: {query.strip()}\nImóvel: " + "; ".join(fields)
 
     try:
-        content = await chat_completion(
+        content = await _dispatch_chat(
+            tool_name="erp.search_relevance",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
+            arguments={"query_len": len(query), "tipo": imovel_data.get("tipo_imovel")},
+            org_id=org_id,
             model=MODEL,
             temperature=0.0,
             max_tokens=100,
             cache=True,
-            org_id=org_id,
         )
     except Exception:
         logger.warning("erp.ai.search_relevance: LLM unavailable")

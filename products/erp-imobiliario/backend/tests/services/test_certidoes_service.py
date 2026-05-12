@@ -531,29 +531,29 @@ class TestAnalyzeWithAi:
 
     @pytest.mark.asyncio
     async def test_sucesso_com_api_key(self):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": "Situação regular, sem débitos."}}],
-        }
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
+        """Updated 2026-05-11 (LLM-ERP rollout, Step A): now patches the seed
+        `chat_completion` wrapper instead of raw `httpx.AsyncClient`. Seed
+        wrapper is an external integration so `patch` is the right shape."""
         with patch("app.services.certidoes_service.resolve_credential", return_value="sk-test"), \
-             patch("app.services.certidoes_service.httpx.AsyncClient", return_value=mock_client):
+             patch(
+                 "app.services.certidoes_service.chat_completion",
+                 new_callable=AsyncMock,
+                 return_value="Situação regular, sem débitos.",
+             ):
             result = await _analyze_with_ai("texto da certidão")
         assert result == "Situação regular, sem débitos."
 
     @pytest.mark.asyncio
     async def test_excecao_retorna_mensagem_erro(self):
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=Exception("API down"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
+        """Updated 2026-05-11 (LLM-ERP rollout, Step A): patches the seed
+        wrapper to raise. Caller's outer try/except still funnels into the
+        `[Erro na análise IA: ...]` fallback marker."""
         with patch("app.services.certidoes_service.resolve_credential", return_value="sk-test"), \
-             patch("app.services.certidoes_service.httpx.AsyncClient", return_value=mock_client):
+             patch(
+                 "app.services.certidoes_service.chat_completion",
+                 new_callable=AsyncMock,
+                 side_effect=Exception("API down"),
+             ):
             result = await _analyze_with_ai("texto da certidão")
         assert "Erro na análise IA" in result
 

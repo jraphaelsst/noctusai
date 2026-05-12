@@ -1,9 +1,13 @@
 """Tests for the Matrícula Text Extractor service — PDF→image conversion,
-OCR via OpenAI Vision, and full extraction pipeline."""
+OCR via the seed vision wrapper, and full extraction pipeline.
+
+Updated 2026-05-11 (LLM-ERP rollout, Step A): the service now dispatches
+through `noctusai_lib.integrations.llm.analyze_image` instead of raw
+`httpx.post(...)`. Tests patch the seed wrapper (external integration, so
+`patch` is the right shape per `KB § PATTERNS/testing.md`).
+"""
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-
-import httpx
 
 from app.services.matricula_service import (
     _pdf_to_images,
@@ -52,34 +56,30 @@ class TestPdfToImages:
 class TestOcrPage:
     @pytest.mark.asyncio
     async def test_sucesso(self):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": "Texto extraído da página."}}],
-        }
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.post = AsyncMock(return_value=mock_resp)
-
-        result = await _ocr_page(b"\x89PNG fake", 1, 1, "sk-test", client)
+        with patch(
+            "app.services.matricula_service.analyze_image",
+            new_callable=AsyncMock,
+            return_value="Texto extraído da página.",
+        ):
+            result = await _ocr_page(b"\x89PNG fake", 1, 1, "org-001")
         assert result == "Texto extraído da página."
 
     @pytest.mark.asyncio
-    async def test_chama_openai_com_base64(self):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": "ok"}}],
-        }
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.post = AsyncMock(return_value=mock_resp)
+    async def test_chama_seed_wrapper_com_modelo_e_org_id(self):
+        """The seed wrapper must receive the OCR-pinned model + the caller's
+        org_id (so per-org key resolution works) + max_tokens=4096."""
+        mock = AsyncMock(return_value="ok")
+        with patch("app.services.matricula_service.analyze_image", new=mock):
+            await _ocr_page(b"image-bytes", 1, 1, "org-001")
 
-        await _ocr_page(b"image-bytes", 1, 1, "sk-test", client)
-
-        call_kwargs = client.post.call_args
-        body = call_kwargs.kwargs["json"] if "json" in call_kwargs.kwargs else call_kwargs[1]["json"]
-        assert body["model"] == "gpt-4.1-mini"
-        # Check image is base64 encoded
-        image_content = body["messages"][1]["content"][0]
-        assert image_content["type"] == "image_url"
-        assert "base64" in image_content["image_url"]["url"]
+        # `analyze_image(image, prompt, *, model=..., org_id=..., max_tokens=...)`
+        # — first two positional, rest keyword.
+        args, kwargs = mock.call_args
+        assert args[0] == b"image-bytes"
+        assert "Extract the exact text" in args[1]
+        assert kwargs.get("model") == "gpt-4.1-mini"
+        assert kwargs.get("org_id") == "org-001"
+        assert kwargs.get("max_tokens") == 4096
 
 
 # ---------------------------------------------------------------------------

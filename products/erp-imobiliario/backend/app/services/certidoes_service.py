@@ -18,6 +18,7 @@ import httpx
 from xhtml2pdf import pisa
 
 from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.llm import chat_completion
 from noctusai_lib.primitives.tasks import schedule_coro
 
 logger = logging.getLogger(__name__)
@@ -381,10 +382,18 @@ async def _upload_to_storage(
 
 
 async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[str]:
-    """Send document text/summary to OpenAI for analysis.
+    """Send document text/summary to the seed `chat_completion` wrapper for analysis.
 
-    Returns None if OpenAI key is not configured (AI analysis is optional —
-    the certificate itself is still valid without it).
+    Returns a fallback marker if OpenAI key is not configured (AI analysis
+    is optional — the certificate itself is still valid without it).
+
+    Refactored 2026-05-11 (LLM-ERP rollout, Step A): replaced raw
+    `httpx.post("https://api.openai.com/v1/chat/completions", ...)` with
+    `noctusai_lib.integrations.llm.chat_completion`. Goes through the seed
+    provider registry → inherits seed cache / budget / (future) audit hooks
+    which the raw-httpx path bypassed. The pre-flight `resolve_credential`
+    check is kept so we surface a friendly Portuguese message at the
+    Certidão UI instead of bubbling up `LLMNotConfigured`.
     """
     api_key = resolve_credential("openai_api_key", org_id)
     if not api_key:
@@ -392,30 +401,23 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
         return "[Análise IA não disponível — OpenAI API Key não configurada em Configurações > Chaves de API]"
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": "gpt-4.1-mini",
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Você é um analista jurídico. Analise o conteúdo desta certidão "
-                                "e forneça um resumo claro da situação da pessoa/empresa mencionada. "
-                                "Foque em: existência de débitos, pendências, restrições ou se está tudo regular. "
-                                "Responda em português."
-                            ),
-                        },
-                        {"role": "user", "content": text},
-                    ],
-                    "max_tokens": 1000,
+        return await chat_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Você é um analista jurídico. Analise o conteúdo desta certidão "
+                        "e forneça um resumo claro da situação da pessoa/empresa mencionada. "
+                        "Foque em: existência de débitos, pendências, restrições ou se está tudo regular. "
+                        "Responda em português."
+                    ),
                 },
-                timeout=60.0,
-            )
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+                {"role": "user", "content": text},
+            ],
+            model="gpt-4.1-mini",
+            org_id=org_id,
+            max_tokens=1000,
+        )
     except Exception as e:
         logger.error("AI analysis failed: %s", e)
         return f"[Erro na análise IA: {e}]"

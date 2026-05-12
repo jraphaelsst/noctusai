@@ -36,5 +36,12 @@ class ERPSettings(ProductSettings):
     vista_base_url: Optional[str] = None
     vista_api_key: Optional[str] = None
 
+    # Direct Postgres connection — used ONLY by the SQLAlchemy session
+    # backing the seed `make_audit_writer(db, ToolCallAudit)` contract
+    # (`app/services/audit_hook.py`). ERP's primary data path is the
+    # Supabase admin client; this URL is opt-in (empty → noop writer).
+    # See `KB § PATTERNS/llm-tool-audit.md` for the rollout recipe.
+    postgres_url: str = ""
+
 
 settings = ERPSettings()

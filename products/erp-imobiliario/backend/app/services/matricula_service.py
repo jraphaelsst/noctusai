@@ -1,26 +1,39 @@
 """
 Matrícula Text Extractor Service — Converts property registration PDFs to text
-using PyMuPDF for page rendering and OpenAI Vision for OCR.
+using PyMuPDF for page rendering and the seed vision wrapper for OCR.
 
-Pipeline: PDF bytes → PNG per page (PyMuPDF) → OpenAI Vision OCR → aggregated text.
+Pipeline: PDF bytes → PNG per page (PyMuPDF) → seed `analyze_image` OCR → aggregated text.
+
+Refactored 2026-05-11 (LLM-ERP rollout, Step A): replaced raw
+`httpx.post("https://api.openai.com/v1/chat/completions", ...)` with
+`noctusai_lib.integrations.llm.analyze_image`. Goes through the seed
+provider registry → inherits seed cache / budget / (future) audit hooks
+which the raw-httpx path bypassed.
 """
 from __future__ import annotations
 
-import asyncio
-import base64
-import io
 import logging
 from typing import Optional
 
 import fitz  # PyMuPDF
-import httpx
 
 from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.llm import analyze_image
 
 logger = logging.getLogger(__name__)
 
 # Image DPI for OCR quality — 200 balances quality vs. token cost
 RENDER_DPI = 200
+
+# Pinned model for OCR (separate from the chat-MODEL pin in ai_service.py).
+# gpt-4.1-mini balances cost + page-throughput; tune here, not at the call site.
+_OCR_MODEL = "gpt-4.1-mini"
+
+_OCR_PROMPT = (
+    "Extract the exact text from the provided image. "
+    "Return only the text content exactly as it appears in the document, "
+    "without corrections, formatting changes, or any modifications."
+)
 
 
 def _pdf_to_images(pdf_bytes: bytes) -> list[bytes]:
@@ -45,44 +58,21 @@ async def _ocr_page(
     image_bytes: bytes,
     page_num: int,
     total_pages: int,
-    api_key: str,
-    client: httpx.AsyncClient,
+    org_id: Optional[str],
 ) -> str:
-    """Send a single page image to OpenAI Vision for text extraction."""
-    b64 = base64.b64encode(image_bytes).decode()
-    resp = await client.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": "gpt-4.1-mini",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Extract the exact text from the provided image. "
-                        "Return only the text content exactly as it appears in the document, "
-                        "without corrections, formatting changes, or any modifications."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{b64}",
-                                "detail": "high",
-                            },
-                        },
-                    ],
-                },
-            ],
-            "max_tokens": 4096,
-        },
-        timeout=120.0,
+    """Send a single page image to the seed vision wrapper for text extraction.
+
+    Goes through `noctusai_lib.integrations.llm.analyze_image` so cache /
+    budget / (future) audit hooks fire uniformly with the rest of the
+    platform's LLM dispatches.
+    """
+    text = await analyze_image(
+        image_bytes,
+        _OCR_PROMPT,
+        model=_OCR_MODEL,
+        org_id=org_id,
+        max_tokens=4096,
     )
-    data = resp.json()
-    text = data["choices"][0]["message"]["content"]
     logger.info("OCR page %d/%d done (%d chars)", page_num, total_pages, len(text))
     return text
 
@@ -128,12 +118,13 @@ async def processar_extracao(extracao_id: str, pdf_bytes: bytes, org_id: Optiona
             }).eq("id", extracao_id).execute()
             return
 
-        # OCR each page (sequential to respect rate limits)
+        # OCR each page (sequential to respect rate limits).
+        # Seed `analyze_image` owns its own httpx client + provider routing;
+        # no per-call AsyncClient context needed here.
         page_texts: list[str] = []
-        async with httpx.AsyncClient() as client:
-            for i, img in enumerate(images, 1):
-                text = await _ocr_page(img, i, num_paginas, api_key, client)
-                page_texts.append(text)
+        for i, img in enumerate(images, 1):
+            text = await _ocr_page(img, i, num_paginas, org_id)
+            page_texts.append(text)
 
         # Aggregate
         full_text = "\n\n".join(page_texts)
