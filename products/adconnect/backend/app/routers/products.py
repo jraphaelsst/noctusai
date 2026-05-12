@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..auth_deps import get_current_user
+from ..dependencies import get_current_user_org, resolve_role
 from ..database import get_admin_client
 from ..services import products_service
 
@@ -40,28 +40,28 @@ router = APIRouter(prefix="/products", tags=["products"])
 # ---------------------------------------------------------------------------
 
 
-def _resolve_org_id(user: dict[str, Any]) -> str:
+def _resolve_org_id(user: Any, org_id: Optional[str] = None) -> str:
     """Brand `org_id` for the catalog query.
 
-    The custom JWT carries `org_id` when set; otherwise we fall back to a
-    deterministic dev org (single-instance V1 — see PROJECT.md §4 "Multi-brand
-    multi-tenancy is V2"). The fallback ensures local dev / unauth-token
-    flows still serve a catalog without a Supabase org row provisioning step.
+    Reads (in order): the auth-resolved triple's `org_id`, the user's
+    ``user_metadata.org_id``, then a deterministic dev org (single-instance
+    V1 — see PROJECT.md §4 "Multi-brand multi-tenancy is V2"). The fallback
+    ensures local dev / unauth-token flows still serve a catalog without a
+    Supabase org row provisioning step.
     """
-    org_id = user.get("org_id") or user.get("orgId")
     if org_id:
         return str(org_id)
-    # Single-instance V1: derive a stable org_id so queries return rows
-    # seeded under a known UUID. Tests override via mocks.
-    return "00000000-0000-0000-0000-000000000001"
+    metadata = getattr(user, "user_metadata", None) or {}
+    return str(metadata.get("org_id") or "00000000-0000-0000-0000-000000000001")
 
 
-def _resolve_distributor_id(user: dict[str, Any]) -> Optional[str]:
+def _resolve_distributor_id(user: Any) -> Optional[str]:
     """Return the caller's `distributor_id` if they're a distributor user."""
-    role = (user.get("role") or "").lower()
+    role = resolve_role(user).lower()
     if role == "admin":
         return None  # Brand admin sees base_price
-    did = user.get("distributorId") or user.get("distributor_id")
+    metadata = getattr(user, "user_metadata", None) or {}
+    did = metadata.get("distributor_id") or metadata.get("distributorId")
     return str(did) if did else None
 
 
@@ -76,7 +76,7 @@ def list_products(
     q: str | None = None,
     sort: str | None = Query(None, pattern="^(name|price)$"),
     inStockOnly: bool | None = None,
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """List products with filter / search / sort / in-stock filtering.
 
@@ -88,8 +88,9 @@ def list_products(
       • sort: "name" (default) | "price".
       • inStockOnly: filter to in-stock products only.
     """
+    user, _token, auth_org_id = auth
     db = get_admin_client()
-    org_id = _resolve_org_id(user)
+    org_id = _resolve_org_id(user, auth_org_id)
     distributor_id = _resolve_distributor_id(user)
     items = products_service.list_products(
         db,
@@ -105,11 +106,12 @@ def list_products(
 
 @router.get("/categories")
 def list_categories(
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """List categories with per-category product counts."""
+    user, _token, auth_org_id = auth
     db = get_admin_client()
-    org_id = _resolve_org_id(user)
+    org_id = _resolve_org_id(user, auth_org_id)
     items = products_service.list_categories(db, org_id=org_id)
     return {"data": items}
 
@@ -117,11 +119,12 @@ def list_categories(
 @router.get("/{product_id}")
 def get_product(
     product_id: str,
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Fetch a single product with effective pricing applied."""
+    user, _token, auth_org_id = auth
     db = get_admin_client()
-    org_id = _resolve_org_id(user)
+    org_id = _resolve_org_id(user, auth_org_id)
     distributor_id = _resolve_distributor_id(user)
     product = products_service.get_product(
         db,

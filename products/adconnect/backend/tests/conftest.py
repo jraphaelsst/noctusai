@@ -135,8 +135,9 @@ def bind_adconnect_user(
 
       - ``role`` (``customer`` / ``admin`` / ``owner``) → ``user_metadata.role``.
       - ``distributor_id`` → ``user_metadata.extra["distributor_id"]``;
-        AdConnect's `auth_deps.get_current_user` surfaces it as
-        ``user["distributorId"]`` (camelCase JS-style).
+        AdConnect routers read it via ``user.user_metadata["distributor_id"]``
+        (post-canonical migration 2026-05-11; the pre-migration shape
+        surfaced it as ``user["distributorId"]`` dict-key).
       - ``org_id`` defaults to `ORG_ID_BRAND` (the canonical test brand).
 
     Distributor-scoped routes 403 when ``distributor_id`` is None.

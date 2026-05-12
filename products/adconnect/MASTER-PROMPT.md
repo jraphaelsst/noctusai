@@ -30,7 +30,7 @@ B2B marketplace connecting a brand to its distributor network. Distributors log 
 - **admin** -- brand-side administration surface.
 
 ### Auth
-- **auth** -- distributor invitation acceptance + `/me` endpoint. Custom JWT retired (Option A locked in Phase 0); SSO inherited from seed's `make_get_current_user` factory.
+- **auth** -- distributor invitation acceptance + `/me` endpoint. Custom JWT retired (Option A locked in Phase 0); SSO consumed via canonical `app/dependencies.py` (`make_get_current_user` + `make_get_current_user_org` + `make_require_role` factories), the 3-product-formalized shape mirroring `products/erp-imobiliario/backend/app/dependencies.py` + `products/personal-finance/backend/app/dependencies.py` + `products/youtube-crawler/backend/app/dependencies.py`. The dict-wrapper `app/auth_deps.py` retired 2026-05-11 in `projects/adconnect-migration/` Phase 2; every router consumes `Depends(get_current_user_org)` returning a `(user, token, org_id)` triple.
 
 ## Production state (post-MVP, 2026-05-10)
 

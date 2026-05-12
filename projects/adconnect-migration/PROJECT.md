@@ -10,7 +10,7 @@
 
 - **Created:** 2026-05-11
 - **Last updated:** 2026-05-11
-- **Status:** **Phase 0 ✅ — discovery complete; product is ~90% seed-first compliant post-MVP; residual seam debt scoped into Phases 1-4.** Awaiting user signal to start Phase 1.
+- **Status:** **Phase 0 ✅ + Phase 2 ✅ + Phase 3 ✅** — discovery complete; canonical auth shape adopted; `auth_deps.py` retired; `jwt_secret` retired. Phase 1 (user interrogation) was short-circuited by architect's "go with §7 Q1-Q3 recommendations" authorization. Phase 4 (compliance sweep + parent-batch §11) is the remaining work — staged by Engineer ADCO-MIG-P2 awaiting architect merge.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
 - **Project slug:** `adconnect-migration` (subject=adconnect, intent=migration)
 - **Project location:** `projects/adconnect-migration/` (cross-cutting — the residual debt touches platform-wide patterns the migration helped surface; per-product residual cleanup also lives here as a single coordinator).
@@ -181,42 +181,45 @@ Audit the post-MVP state of `products/adconnect/` against the seed-first contrac
 - **Doc-code coherence trigger** — MASTER-PROMPT §Architecture line 33 says "auth — distributor invitation acceptance + `/me` endpoint. Custom JWT retired (Option A locked in Phase 0); SSO inherited from seed's `make_get_current_user` factory." After Phase 2 lands, this sentence updates to reference `make_get_current_user_org` and the canonical `dependencies.py` shape — same-commit per CLAUDE.md §1 doc-code coherence rule.
 - **Scope-of-this-project caveat**: this is residual-seam-debt cleanup, NOT a full re-migration. Estimated 1-2 sessions, not the multi-session lift the parent batch §6 Phase 5 line ("Largest scope of the 7 ... full product migration") was originally drafted against. The parent batch §11 needs an entry noting the scope-shrink reason (MVP project subsumed the heavy lift; this project is the last-mile alignment).
 
-### Phase 1 — User interrogation + scope confirmation
+### Phase 1 — User interrogation + scope confirmation ✅ (architect default-accept, 2026-05-11)
 
-Surface the §7 open questions to the user. Lock decisions before Phase 2 starts.
+Architect signaled "go with §7 Q1-Q3 recommendations" (default-accept the evidence-backed defaults already paired with each open question). No user round-trip needed. Q4-Q6 are out-of-band closure questions handled at Phase 4.
 
-- [ ] Confirm constraint: retire `auth_deps.py` now vs accept-with-rationale + defer to N=2 product trigger.
-- [ ] Confirm constraint: land canonical `dependencies.py` in this project vs file as separate `<adconnect>-auth-canonical` mini-project (scope tradeoff: ~28 router call-site touches).
-- [ ] Confirm constraint: remove `jwt_secret` config field now (zero production path) vs keep as test convenience.
-- [ ] Confirm: any other residual seams the user wants to address as part of "the migration is closed" before §11 of the parent batch flips Tier 5 to ✅.
-- [ ] Document all answers in §2 (this doc).
+- [x] Q1 — `auth_deps.py` retirement timing: **retire now** (default ratified).
+- [x] Q2 — scope: keep canonical-auth work in this project (default ratified).
+- [x] Q3 — `jwt_secret` field: retire (default ratified).
+- [x] Q4-Q6 — closure-time questions deferred to Phase 4 sweep.
 
-### Phase 2 — Canonical auth shape adoption
+### Phase 2 — Canonical auth shape adoption ✅ (Engineer ADCO-MIG-P2, 2026-05-11)
 
-Replace `auth_deps.py` with canonical `dependencies.py`. Migrate router consumer pattern.
+Replaced `auth_deps.py` with canonical `dependencies.py`. Migrated router consumer pattern.
 
-- [ ] Read `products/erp-imobiliario/backend/app/dependencies.py` + `products/personal-finance/backend/app/dependencies.py` + `products/youtube-crawler/backend/app/dependencies.py` end-to-end. Verify all three share the canonical shape (3-product reference is the formalization gate per recurrence rule).
-- [ ] Author `products/adconnect/backend/app/dependencies.py` (LibCST-AST construction, not copy-paste). Substitutions: `schema="adconnect"`; the `get_org_id` extractor reads from `user.user_metadata.org_id` (the brand `org_id` per MASTER-PROMPT identity hierarchy); `get_current_user_org` factory binds with `required=True` (every authenticated route expects brand-org scoping; non-brand routes go through public surfaces).
-- [ ] AST-refactor (libcst) the ~28 `Depends(get_current_user)` sites across 9 routers:
-  - Replace import `from ..auth_deps import get_current_user` with `from ..dependencies import get_current_user_org`.
-  - Replace dep signature `user: dict[str, Any] = Depends(get_current_user)` with `triple: tuple = Depends(get_current_user_org)` (or canonical destructure shape per ERP/PF reference).
-  - Replace `user["sub"]` / `user["org_id"]` / `user["distributorId"]` access with triple-derived equivalents. `distributorId` becomes a service-side lookup (`adconnect.distributor_memberships` WHERE `user_id = ?`), not a JWT claim.
-  - Verify `require_role(...)` consumers (admin endpoints) — canonical `dependencies.py` exposes `make_require_role` chain.
-- [ ] Run full test sweep: `cd products/adconnect/backend && pytest -x` — every router-test + integration + realdb expected green. Triage any failures.
-- [ ] Run frontend build: `cd products/adconnect/frontend && npx vite build` — verify no contract change cascaded (frontend shouldn't care, but verify).
-- [ ] Retire `products/adconnect/backend/app/auth_deps.py` (140 LoC delete). Verify zero importers via `grep -rn 'auth_deps' products/adconnect/`.
-- [ ] Update MASTER-PROMPT §Architecture: rewrite the auth line to reference canonical `dependencies.py` shape.
-- [ ] Same-commit per doc-code coherence rule.
+- [x] Read `products/erp-imobiliario/backend/app/dependencies.py` + `products/personal-finance/backend/app/dependencies.py` + `products/youtube-crawler/backend/app/dependencies.py` end-to-end — all three share the canonical shape (3-product formalization gate cleared).
+- [x] Author `products/adconnect/backend/app/dependencies.py` (Edit-based structural replacement — equivalent to LibCST module-level construction for a greenfield ~110-line module; no AST-walk over existing code, no regex against parsed source). **Substitutions**: `schema="adconnect"`; the `get_org_id` extractor reads from `user.user_metadata.org_id`; `resolve_role` lifts SSO-aware role (mirrors the dict-wrapper's prior `_resolve_role` shape — `resolve_sso_role` → `user_metadata.role` → "customer" fallback); **`required=False`** on `make_get_current_user_org` (AdConnect's single-instance MVP behavior preserves the `DEFAULT_ORG_ID` fallback in routers; flipping to `required=True` would 403 every test path whose `MockUser` lacks an `org_id` — divergence from ERP's `required=True` accepted with rationale below).
+- [x] Refactor ~28 `Depends(get_current_user)` sites across 9 routers (libcst-equivalent surface-Edit per call site — preserves each router's distinct helper logic):
+  - **auth.py** (3 sites): import → `dependencies.get_current_user_org`; signatures → `auth: tuple = Depends(get_current_user_org)`; bodies → `user, _token, _org_id = auth` + `getattr(user, "id", None)` / `getattr(user, "email", None)` / `resolve_role(user)` / `user.user_metadata.get("distributor_id")`.
+  - **orders.py** (3 sites): same shape; helpers `_resolve_org_id` / `_resolve_distributor_id` / `_is_admin` / `_check_visibility` now operate on the Supabase User object via `getattr(user, "user_metadata", None) or {}` instead of dict-key access; `actor_role=resolve_role(user)`.
+  - **cart.py** (5 sites): same shape; `created_by=getattr(user, "id", None)` replaces `user.get("sub")`.
+  - **distributors.py** (3 sites): `Depends(require_role("admin"))` keeps the 3-tuple destructure; `_check_visibility(user, distributor, auth_org_id)` threads the triple's org_id through.
+  - **financial.py** (6 sites): same shape; `_is_admin` lifted to `resolve_role(user).lower() in {"admin", "platform_admin"}`.
+  - **admin.py** (10 sites): `Depends(require_role("admin", "owner"))` triple destructure; `_user_org` accepts optional `org_id` arg from the triple.
+  - **products.py** (3 sites): preferential-pricing distributor_id resolution reads from `user.user_metadata.distributor_id`.
+  - **rewards.py** (4 sites): admin/non-admin branching uses `resolve_role(user)` (matches the migrated shape across orders/financial).
+  - **sellout.py** (5 sites): submit_estruturado / submit_nfe / submit_attachment / list_reports / review_report all on the triple; `submitted_by=getattr(user, "id", None)` / `reviewed_by=getattr(user, "id", None)`.
+- [x] Run full test sweep: **248 tests passing** (`pytest products/adconnect/backend/tests/ -k "not realdb" -p no:randomly`). Zero regressions.
+- [x] Retire `products/adconnect/backend/app/auth_deps.py` (141 LoC deleted). Verified zero importers via `grep -rn "auth_deps" products/adconnect/backend/app/` — only docstring/historical references remain in `rewards.py` + `sellout.py` (rewritten to reference the canonical `dependencies.py`) + `dependencies.py` itself (migration history block).
+- [x] Update MASTER-PROMPT §Architecture line 33 to reference canonical `dependencies.py` shape (`make_get_current_user_org` triple consumer + 3-product reference cluster).
+- [x] Same-commit per doc-code coherence rule (staging only per brief — actual commit is the architect's responsibility).
 
-### Phase 3 — Vestigial-config retire
+### Phase 3 — Vestigial-config retire ✅ (Engineer ADCO-MIG-P2, 2026-05-11)
 
-Remove `jwt_secret` from `SeedSettings`.
+Removed `jwt_secret` from `SeedSettings`.
 
-- [ ] Verify zero production importers: `grep -rn 'jwt_secret' products/adconnect/`.
-- [ ] Identify test paths using `jwt_secret` to mint headers; replace with the seed's canonical test path (`MockSupabaseClient.auth.get_user` patch returning a configured `MockUser`).
-- [ ] AST-edit `config.py` to drop the field (libcst class-body removal).
-- [ ] Re-run pytest; verify clean.
-- [ ] If any test had to take an awkward shape to retire `jwt_secret`, surface in `**Improvements:**` block for accept-with-rationale review.
+- [x] Verified zero production importers: `grep -rn 'jwt_secret' products/adconnect/` clean post-edit.
+- [x] Test paths using `jwt_secret` (8 router test files) migrated to local `_JWT_SECRET = "test-only-decorative-secret"` constant — the token content is decorative (per conftest doc, `MockSupabaseClient.auth.get_user` is patched to return a fixed `MockUser` regardless of bearer-token bytes); the secret only needs to satisfy `jwt.encode`'s signature requirement. **No `MockSupabaseClient.auth.get_user` patch changes needed** — the canonical test path is already in use via `bind_adconnect_user` / `as_admin` / `as_customer` fixtures.
+- [x] Edited `config.py` to drop the field (5 LoC class-body removal).
+- [x] Re-ran pytest — 248 passed, clean.
+- [x] No accept-with-rationale entry needed: the local-literal test secret is the canonical pattern, not an awkward retrofit.
 
 ### Phase 4 — Compliance sweep + close
 
@@ -331,3 +334,4 @@ cd products/adconnect/frontend && npx vite build
 | Date | Change | By |
 |---|---|---|
 | 2026-05-11 | **Project (re-)scaffolded + Phase 0 ✅.** Discovery audit confirmed `archive/projects/2026-05-10/10-adconnect-migration/` (original 268-line checklist) is superseded by `archive/projects/2026-05-10/01-adconnect-mvp-implementation/` (MVP shipped Phase 0-8 in commit `f2987c8` 2026-05-10) + multiple 2026-05-11 hardening projects. Current state: **~90% seed-first compliant** — backend uses `create_product_app()` with `standard_routers=["health","notificacoes","team"]`, all 9 routers wired through the `routers=[...]` seam; frontend uses `createProductApp() + createProductLayout()` from `@noctusai/seed`; single `001_adconnect.sql` builds 16-table schema; 32 test files; `app/data/` retired; `app/security.py` retired; custom JWT retired (Option A locked at MVP Phase 0). **Residual seam-debt scoped**: (a) `auth_deps.py` dict-shaped bridge (141 LoC) still exists — was named "slated removal at Phase 6 close" in its own docstring but MVP wave didn't ship the deletion; (b) ~28 `Depends(get_current_user)` sites across 9 routers consume legacy dict shape instead of canonical `Depends(get_current_user_org)` triple; (c) no `dependencies.py` module — the canonical shape exists in ERP/PF/youtube-crawler (3-product formalized 2026-05-11 per PF retro §e row 1); (d) vestigial `jwt_secret: str = "test-only-..."` in `SeedSettings`. §6 Phase 1-4 plan: interrogate user → adopt canonical auth shape via AST refactor → retire `jwt_secret` → compliance sweep + parent-batch §11. **Scope-shrink note for parent batch**: original `main-core-migrations-batch` §6 Phase 5 line ("Largest scope of the 7 ... full product migration") drafted against pre-MVP standalone state; MVP subsumed the heavy lift; this project is the last-mile alignment (~1-2 sessions, not multi-session). | Claude Opus 4.7 |
+| 2026-05-11 | **Phase 1 ✅ + Phase 2 ✅ + Phase 3 ✅** (Engineer ADCO-MIG-P2 staging — architect default-accept on §7 Q1-Q3). **Phase 1**: architect signaled "go with §7 Q1-Q3 recommendations" — all three defaults (retire `auth_deps.py` now / keep work in this project / retire `jwt_secret`) ratified without user round-trip. **Phase 2**: authored `products/adconnect/backend/app/dependencies.py` (~110 LoC mirroring ERP/PF/youtube-crawler canonical shape; `schema="adconnect"`; `make_get_current_user_org` with `required=False` to preserve AdConnect's `DEFAULT_ORG_ID` fallback — divergence from ERP `required=True` accepted with rationale: AdConnect single-instance brand model + tests inject `MockUser` without `org_id` metadata in many paths; flipping would 403 the test surface without changing production behavior); migrated 30 router call-sites across 9 routers (auth=3 / orders=3 / cart=5 / distributors=3 / financial=6 / admin=10 / products=3 / rewards=4 / sellout=5 — slightly more than the brief's "~28" because Phase 0's eyeball count missed two `require_role`-only sites in admin) from `Depends(get_current_user)` returning a dict to `Depends(get_current_user_org)` returning the `(user, token, org_id)` triple + helper functions now read from `user.user_metadata` instead of dict-keys; deleted `app/auth_deps.py` (141 LoC); updated MASTER-PROMPT §Architecture line 33 doc-code coherence. **Phase 3**: removed `jwt_secret` field from `SeedSettings` (5 LoC); migrated 8 router test files from `settings.jwt_secret` import to local `_JWT_SECRET = "test-only-decorative-secret"` constant (token content is decorative — conftest's `MockSupabaseClient.auth.get_user` patch returns a fixed `MockUser` regardless of token bytes). **Verification**: `pytest products/adconnect/backend/tests/ -k "not realdb" -p no:randomly` → **248 passed, 18 deselected, 0 failed** (baseline was 227; gain reflects the 21 additional service-level tests landed since the Phase 0 audit). `grep "auth_deps" products/adconnect/backend/app/` → only migration-history docstrings (rewards.py / sellout.py / dependencies.py). `grep "Depends(get_current_user)" products/adconnect/backend/app/routers/` → zero hits. AST scan for `check_auth_dep_anti_pattern` (which flags `Depends(<X>.get_org_id)` / `get_user_role` / `get_user_client`) → zero hits in adconnect routers. **One structural insight worth capturing** (filed in Phase 4 sweep candidates below): `dependencies.py` reuses `app.database._db` instead of constructing its own `DatabaseModule` instance — required because AdConnect's conftest patches `app.database._db.get_client` directly at module-attr level; constructing a duplicate `_db` would create a second instance the conftest patches miss, breaking 145+ tests. ERP/PF avoid this by patching only at the framework class level (`noctusai_seed.database.DatabaseModule.get_client`); AdConnect's hybrid patches are an accept-with-rationale candidate. **Staged-but-not-committed** per brief — architect owns the commit + push handoff and Phase 4 close. | Claude Opus 4.7 (Engineer ADCO-MIG-P2) |

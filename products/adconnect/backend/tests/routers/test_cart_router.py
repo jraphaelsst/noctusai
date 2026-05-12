@@ -21,8 +21,6 @@ from typing import Any
 import jwt
 import pytest
 
-from app.config import settings
-
 # `_bind_user_metadata` was lifted into the AdConnect conftest as
 # `bind_adconnect_user` (Phase 1 of `adconnect-test-conftest-distributor-binding`).
 # `ORG_ID` / `DIST_A_ID` constants likewise live in the conftest now —
@@ -35,10 +33,15 @@ from tests.conftest import (
 )
 
 
+# Token content is decorative — `MockSupabaseClient.auth.get_user` is patched
+# to return a fixed MockUser regardless. Any HS256-signed header parses.
+_JWT_SECRET = "test-only-decorative-secret"
+
+
 def _make_token(payload: dict[str, Any]) -> str:
     body = dict(payload)
     body["exp"] = datetime.now(timezone.utc) + timedelta(minutes=30)
-    return jwt.encode(body, settings.jwt_secret, algorithm="HS256")
+    return jwt.encode(body, _JWT_SECRET, algorithm="HS256")
 
 
 def _distributor_headers(distributor_id: str = DIST_A_ID) -> dict[str, str]:

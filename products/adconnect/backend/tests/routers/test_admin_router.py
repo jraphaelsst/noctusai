@@ -31,17 +31,18 @@ DIST_A = "11111111-1111-1111-1111-111111111111"
 DIST_B = "22222222-2222-2222-2222-222222222222"
 
 
+_JWT_SECRET = "test-only-decorative-secret"
+
+
 def _make_token(payload: dict[str, Any]) -> str:
     """Mint a header-shape JWT (token content is ignored — `auth.get_user`
     is patched to return a fixed MockUser regardless)."""
     import jwt
     from datetime import datetime, timedelta, timezone
 
-    from app.config import settings
-
     body = dict(payload)
     body["exp"] = datetime.now(timezone.utc) + timedelta(minutes=30)
-    return jwt.encode(body, settings.jwt_secret, algorithm="HS256")
+    return jwt.encode(body, _JWT_SECRET, algorithm="HS256")
 
 
 def _bearer(role: str) -> dict[str, str]:

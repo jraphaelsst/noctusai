@@ -20,8 +20,6 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import settings
-
 from tests.conftest import (
     ORG_ID_BRAND as ORG_ID,
     DIST_A_ID,
@@ -30,10 +28,15 @@ from tests.conftest import (
 )
 
 
+# Token content is decorative — `MockSupabaseClient.auth.get_user` is patched
+# to return a fixed MockUser regardless. Any HS256-signed header parses.
+_JWT_SECRET = "test-only-decorative-secret"
+
+
 def _make_token(payload: dict[str, Any]) -> str:
     body = dict(payload)
     body["exp"] = datetime.now(timezone.utc) + timedelta(minutes=30)
-    return jwt.encode(body, settings.jwt_secret, algorithm="HS256")
+    return jwt.encode(body, _JWT_SECRET, algorithm="HS256")
 
 
 def _admin_headers() -> dict[str, str]:

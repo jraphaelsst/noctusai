@@ -8,11 +8,12 @@ Three submission endpoints (per PROJECT.md §6 Phase 4):
   - GET  /api/sellout                — list reports (own / all-by-org)
   - PATCH /api/sellout/{id}/review   — brand admin review
 
-Auth uses the existing custom-JWT shim in `app.auth_deps` until Phase 1
-swaps to seed SSO. RLS-style scoping is enforced in service code: a
-distributor user only ever sees their own rows; admin sees everything in
-their org. The `org_id` defaults to `"adconnect-default"` until the
-identity foundation lands a real org_id on the JWT.
+Auth uses the canonical `Depends(get_current_user_org)` triple from
+`app.dependencies` (the dict-wrapper `app.auth_deps` retired 2026-05-11).
+RLS-style scoping is enforced in service code: a distributor user only
+ever sees their own rows; admin sees everything in their org. The
+`org_id` defaults to `"adconnect-default"` until the identity foundation
+lands a real org_id on the JWT.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ from fastapi import (
     status,
 )
 
-from ..auth_deps import get_current_user, require_role
+from ..dependencies import get_current_user_org, require_role, resolve_role
 from ..database import _db
 from ..schemas.sellout import (
     SelloutEstruturadoIn,
@@ -72,19 +73,28 @@ def _db_for_user() -> Any:
     return client
 
 
-def _user_distributor(user: dict[str, Any]) -> Optional[str]:
-    return user.get("distributorId") or user.get("distributor_id")
+def _user_distributor(user: Any) -> Optional[str]:
+    metadata = getattr(user, "user_metadata", None) or {}
+    did = metadata.get("distributor_id") or metadata.get("distributorId")
+    return str(did) if did else None
 
 
-def _user_org(user: dict[str, Any]) -> str:
-    return user.get("orgId") or user.get("org_id") or DEFAULT_ORG_ID
+def _user_org(user: Any, org_id: Optional[str] = None) -> str:
+    """Read brand ``org_id`` from the auth-resolved triple's ``org_id``
+    (canonical), falling back to ``user.user_metadata.org_id``, then the
+    single-instance default."""
+    if org_id:
+        return str(org_id)
+    metadata = getattr(user, "user_metadata", None) or {}
+    return str(metadata.get("org_id") or DEFAULT_ORG_ID)
 
 
 @router.post("/submit", response_model=SelloutOut, status_code=status.HTTP_201_CREATED)
 async def submit_estruturado(
     body: SelloutEstruturadoIn,
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
+    user, _token, auth_org_id = auth
     distributor_id = body.distributor_id or _user_distributor(user)
     if not distributor_id:
         raise HTTPException(400, "distributor_id obrigatório")
@@ -92,9 +102,9 @@ async def submit_estruturado(
     try:
         row = await sellout_service.submit_estruturado(
             db,
-            org_id=_user_org(user),
+            org_id=_user_org(user, auth_org_id),
             distributor_id=distributor_id,
-            submitted_by=user.get("sub"),
+            submitted_by=getattr(user, "id", None),
             valor_total=body.valor_total,
             quantidade_itens=body.quantidade_itens,
             periodo_inicio=body.periodo_inicio,
@@ -120,16 +130,17 @@ async def submit_nfe(
     periodo_inicio: Optional[str] = Form(None),
     periodo_fim: Optional[str] = Form(None),
     observacoes: Optional[str] = Form(None),
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
+    user, _token, auth_org_id = auth
     xml_bytes = await file.read()
     db = _db_for_user()
     try:
         row = await sellout_service.submit_nfe(
             db,
-            org_id=_user_org(user),
+            org_id=_user_org(user, auth_org_id),
             distributor_id=distributor_id,
-            submitted_by=user.get("sub"),
+            submitted_by=getattr(user, "id", None),
             xml_bytes=xml_bytes,
             filename=file.filename or "sellout.xml",
             periodo_inicio=periodo_inicio,
@@ -152,16 +163,17 @@ async def submit_attachment(
     periodo_inicio: Optional[str] = Form(None),
     periodo_fim: Optional[str] = Form(None),
     observacoes: Optional[str] = Form(None),
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
+    user, _token, auth_org_id = auth
     file_bytes = await file.read()
     db = _db_for_user()
     try:
         row = await sellout_service.submit_attachment(
             db,
-            org_id=_user_org(user),
+            org_id=_user_org(user, auth_org_id),
             distributor_id=distributor_id,
-            submitted_by=user.get("sub"),
+            submitted_by=getattr(user, "id", None),
             file_bytes=file_bytes,
             filename=file.filename or "sellout.bin",
             content_type=file.content_type or "application/octet-stream",
@@ -176,11 +188,12 @@ async def submit_attachment(
 
 @router.get("/list", response_model=SelloutListOut)
 def list_reports(
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
+    user, _token, _org_id = auth
     db = _db_for_user()
     distributor_id = _user_distributor(user)
-    role = user.get("role")
+    role = resolve_role(user)
     builder = db.table(SELLOUT_TABLE).select("*")
     if role == "admin":
         # Tenant scoping for admin runs through RLS:
@@ -202,8 +215,9 @@ def list_reports(
 async def review_report(
     body: SelloutReviewIn,
     report_id: str = Path(...),
-    user: dict[str, Any] = Depends(require_role("admin")),
+    auth: tuple = Depends(require_role("admin")),
 ) -> dict[str, Any]:
+    user, _token, _role = auth
     db = _db_for_user()
     try:
         row = await sellout_service.review(
@@ -211,7 +225,7 @@ async def review_report(
             relatorio_id=report_id,
             status=body.status,
             review_notes=body.review_notes,
-            reviewed_by=user.get("sub"),
+            reviewed_by=getattr(user, "id", None),
             org_id=_user_org(user),
         )
     except sellout_service.SubmissionError as exc:

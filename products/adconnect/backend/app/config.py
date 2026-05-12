@@ -12,14 +12,5 @@ class SeedSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:adconnect"
 
-    # Test-only JWT secret. Production auth goes through the seed's
-    # `make_get_current_user` factory (Supabase-backed), NOT a custom
-    # JWT verifier. This field exists ONLY so tests can mint signed
-    # tokens for header-shape compatibility — `MockSupabaseClient.auth.
-    # get_user` is patched to ignore the token content and return a
-    # configured MockUser. Do NOT reintroduce `app/security.py` or any
-    # custom JWT verification path keyed off this secret.
-    jwt_secret: str = "test-only-jwt-secret-do-not-use-in-prod"
-
 
 settings = SeedSettings()

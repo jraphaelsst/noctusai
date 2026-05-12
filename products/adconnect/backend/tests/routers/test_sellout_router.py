@@ -12,6 +12,9 @@ import pytest
 from tests.conftest import bind_adconnect_user
 
 
+_JWT_SECRET = "test-only-decorative-secret"
+
+
 def _make_token(payload: dict) -> str:
     """Mint a test JWT. Production auth runs through the seed's
     `make_get_current_user` factory (Supabase-backed); the `client`
@@ -19,10 +22,9 @@ def _make_token(payload: dict) -> str:
     `bind_adconnect_user(...)` is the actual control surface."""
     import jwt
     from datetime import datetime, timedelta, timezone
-    from app.config import settings
     body = dict(payload)
     body["exp"] = datetime.now(timezone.utc) + timedelta(minutes=30)
-    return jwt.encode(body, settings.jwt_secret, algorithm="HS256")
+    return jwt.encode(body, _JWT_SECRET, algorithm="HS256")
 
 
 def _admin_token() -> str:

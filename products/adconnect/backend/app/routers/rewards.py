@@ -7,7 +7,8 @@ Endpoints:
   - POST  /api/rewards/redeem             — request redemption (status=pendente)
   - PATCH /api/rewards/redeem/{id}/process — brand admin approves/rejects/marks paid
 
-Auth uses the existing custom-JWT shim in `app.auth_deps`.
+Auth uses the canonical `Depends(get_current_user_org)` triple from
+`app.dependencies` (the dict-wrapper `app.auth_deps` retired 2026-05-11).
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
-from ..auth_deps import get_current_user, require_role
+from ..dependencies import get_current_user_org, require_role, resolve_role
 from ..database import _db as _db_module
 from ..schemas.rewards import (
     RedemptionOut,
@@ -55,27 +56,36 @@ def _db() -> Any:
     return client
 
 
-def _user_distributor(user: dict[str, Any]) -> Optional[str]:
-    return user.get("distributorId") or user.get("distributor_id")
+def _user_distributor(user: Any) -> Optional[str]:
+    metadata = getattr(user, "user_metadata", None) or {}
+    did = metadata.get("distributor_id") or metadata.get("distributorId")
+    return str(did) if did else None
 
 
-def _user_org(user: dict[str, Any]) -> str:
-    return user.get("orgId") or user.get("org_id") or DEFAULT_ORG_ID
+def _user_org(user: Any, org_id: Optional[str] = None) -> str:
+    """Read brand ``org_id`` from the auth-resolved triple's ``org_id``
+    (canonical), falling back to ``user.user_metadata.org_id``, then the
+    single-instance default."""
+    if org_id:
+        return str(org_id)
+    metadata = getattr(user, "user_metadata", None) or {}
+    return str(metadata.get("org_id") or DEFAULT_ORG_ID)
 
 
 @router.get("/ledger", response_model=RewardLedgerOut)
 def get_ledger(
-    user: dict[str, Any] = Depends(get_current_user),
     distributor_id: Optional[str] = Query(None),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
+    user, _token, auth_org_id = auth
     db = _db()
-    role = user.get("role")
+    role = resolve_role(user)
     target_did = distributor_id or _user_distributor(user)
     if not target_did and role != "admin":
         raise HTTPException(403, "Sem distribuidor associado")
     builder = db.table(LEDGER_TABLE).select("*")
     if role == "admin":
-        builder = builder.eq("org_id", _user_org(user))
+        builder = builder.eq("org_id", _user_org(user, auth_org_id))
         if target_did:
             builder = builder.eq("distributor_id", target_did)
     else:
@@ -86,12 +96,13 @@ def get_ledger(
 
 
 @router.get("/rules", response_model=RewardRulesListOut)
-def get_rules(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+def get_rules(auth: tuple = Depends(get_current_user_org)) -> dict[str, Any]:
+    user, _token, auth_org_id = auth
     db = _db()
     res = (
         db.table(REGRAS_TABLE)
         .select("*")
-        .eq("org_id", _user_org(user))
+        .eq("org_id", _user_org(user, auth_org_id))
         .eq("ativa", True)
         .execute()
     )
@@ -103,8 +114,9 @@ def get_rules(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any
 )
 def request_redemption(
     body: RedemptionRequestIn,
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
+    user, _token, auth_org_id = auth
     distributor_id = body.distributor_id or _user_distributor(user)
     if not distributor_id:
         raise HTTPException(400, "distributor_id obrigatório")
@@ -112,9 +124,9 @@ def request_redemption(
         raise HTTPException(400, "Valor precisa ser positivo")
     db = _db()
     payload = {
-        "org_id": _user_org(user),
+        "org_id": _user_org(user, auth_org_id),
         "distributor_id": distributor_id,
-        "requested_by": user.get("sub"),
+        "requested_by": getattr(user, "id", None),
         "tipo": body.tipo,
         "valor": body.valor,
         "pedido_ref": body.pedido_ref,
@@ -131,15 +143,16 @@ def request_redemption(
 def process_redemption(
     body: RedemptionProcessIn,
     redemption_id: str = Path(...),
-    user: dict[str, Any] = Depends(require_role("admin")),
+    auth: tuple = Depends(require_role("admin")),
 ) -> dict[str, Any]:
+    user, _token, _role = auth
     if body.status not in {"aprovado", "rejeitado", "pago"}:
         raise HTTPException(400, "status inválido")
     db = _db()
     payload: dict[str, Any] = {
         "status": body.status,
         "review_notes": body.review_notes,
-        "reviewed_by": user.get("sub"),
+        "reviewed_by": getattr(user, "id", None),
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     }
     if body.status == "pago":

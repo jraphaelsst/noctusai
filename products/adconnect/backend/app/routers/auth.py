@@ -25,7 +25,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ..auth_deps import get_current_user
+from ..dependencies import get_current_user_org, resolve_role
 from .. import database as _database
 from ..schemas.identity import AcceptDistributorInviteIn, MembershipOut
 
@@ -55,7 +55,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.get("/me")
-def me(current: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+def me(auth: tuple = Depends(get_current_user_org)) -> dict[str, Any]:
     """Return the current user as the dict-shape legacy callers expect.
 
     The seed framework owns the canonical session payload at
@@ -63,11 +63,13 @@ def me(current: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     preserve the AdConnect-specific projection (`{ id, email, role,
     distributorId }`) historic frontend code reads.
     """
+    user, _token, _org_id = auth
+    metadata = getattr(user, "user_metadata", None) or {}
     return {
-        "id": current.get("sub"),
-        "email": current.get("email"),
-        "role": current.get("role"),
-        "distributorId": current.get("distributorId"),
+        "id": getattr(user, "id", None),
+        "email": getattr(user, "email", None),
+        "role": resolve_role(user),
+        "distributorId": metadata.get("distributor_id"),
     }
 
 
@@ -78,7 +80,7 @@ def me(current: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
 )
 def accept_distributor_invite(
     body: AcceptDistributorInviteIn,
-    current: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Convert a brand-issued invitation into a distributor membership.
 
@@ -96,7 +98,9 @@ def accept_distributor_invite(
       - 410 if the token is expired or already accepted/canceled.
       - 403 if the invitation's org doesn't own the named distributor.
     """
-    if not current.get("sub"):
+    user, _token, _org_id = auth
+    user_id = getattr(user, "id", None)
+    if not user_id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessao invalida")
 
     admin = _get_admin_client()
@@ -145,7 +149,7 @@ def accept_distributor_invite(
     membership_resp = (
         admin.table("distributor_memberships")
         .insert({
-            "user_id": current["sub"],
+            "user_id": user_id,
             "distributor_id": body.distributor_id,
             "role": body.role,
         })

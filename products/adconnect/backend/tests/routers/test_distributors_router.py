@@ -23,8 +23,6 @@ from typing import Any
 
 import jwt
 
-from app.config import settings
-
 from tests.conftest import (
     ORG_ID_BRAND as ORG_ID,
     OTHER_ORG_ID,
@@ -34,10 +32,19 @@ from tests.conftest import (
 )
 
 
+# Token content is decorative — `MockSupabaseClient.auth.get_user` is patched
+# to return a fixed MockUser regardless of the bearer-token bytes (see
+# `tests/conftest.py` docstring). Any HS256-signed header parses cleanly;
+# the secret is a local literal because the canonical auth path uses the
+# seed's `make_get_current_user` factory (Supabase-backed), not a custom
+# JWT verifier.
+_JWT_SECRET = "test-only-decorative-secret"
+
+
 def _make_token(payload: dict[str, Any]) -> str:
     body = dict(payload)
     body["exp"] = datetime.now(timezone.utc) + timedelta(minutes=30)
-    return jwt.encode(body, settings.jwt_secret, algorithm="HS256")
+    return jwt.encode(body, _JWT_SECRET, algorithm="HS256")
 
 
 def _admin_headers(org_id: str = ORG_ID) -> dict[str, str]:

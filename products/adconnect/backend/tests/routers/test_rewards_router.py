@@ -14,15 +14,17 @@ import pytest
 from tests.conftest import bind_adconnect_user
 
 
+_JWT_SECRET = "test-only-decorative-secret"
+
+
 def _make_token(payload: dict) -> str:
     """Mint a test JWT (header-shape only — `mock.auth.get_user` ignores
     token content; the binding is the actual control surface)."""
     import jwt
     from datetime import datetime, timedelta, timezone
-    from app.config import settings
     body = dict(payload)
     body["exp"] = datetime.now(timezone.utc) + timedelta(minutes=30)
-    return jwt.encode(body, settings.jwt_secret, algorithm="HS256")
+    return jwt.encode(body, _JWT_SECRET, algorithm="HS256")
 
 
 def _admin_token() -> str:

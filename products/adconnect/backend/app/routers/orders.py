@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 
-from ..auth_deps import get_current_user, require_role
+from ..dependencies import get_current_user_org, resolve_role
 from ..database import _db as _db_module
 from ..schemas.orders import (
     OrderListOut,
@@ -59,21 +59,27 @@ def _db() -> Any:
     return client
 
 
-def _resolve_org_id(user: dict[str, Any]) -> str:
-    org_id = user.get("org_id") or user.get("orgId")
-    return str(org_id) if org_id else DEFAULT_ORG_ID
+def _resolve_org_id(user: Any, org_id: Optional[str] = None) -> str:
+    """Read brand ``org_id`` from the auth-resolved triple's ``org_id``
+    (canonical), falling back to ``user.user_metadata.org_id``, then the
+    single-instance default."""
+    if org_id:
+        return str(org_id)
+    metadata = getattr(user, "user_metadata", None) or {}
+    return str(metadata.get("org_id") or DEFAULT_ORG_ID)
 
 
-def _resolve_distributor_id(user: dict[str, Any]) -> Optional[str]:
-    did = user.get("distributorId") or user.get("distributor_id")
+def _resolve_distributor_id(user: Any) -> Optional[str]:
+    metadata = getattr(user, "user_metadata", None) or {}
+    did = metadata.get("distributor_id") or metadata.get("distributorId")
     return str(did) if did else None
 
 
-def _is_admin(user: dict[str, Any]) -> bool:
-    return (user.get("role") or "").lower() == "admin"
+def _is_admin(user: Any) -> bool:
+    return resolve_role(user).lower() == "admin"
 
 
-def _check_visibility(user: dict[str, Any], pedido: dict[str, Any]) -> None:
+def _check_visibility(user: Any, pedido: dict[str, Any]) -> None:
     """Allow the row's distributor or any admin in the same org."""
     if _is_admin(user):
         # Admin → check the pedido's distributor belongs to admin's org.
@@ -93,16 +99,17 @@ def _check_visibility(user: dict[str, Any], pedido: dict[str, Any]) -> None:
 
 @router.get("", response_model=OrderListOut)
 def list_orders(
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """List pedidos.
 
     • Brand admin (`role=admin`): all pedidos in their org's distributor set.
     • Distributor user: only their own.
     """
+    user, _token, org_id = auth
     db = _db()
     if _is_admin(user):
-        rows = orders_service.list_for_org(db, org_id=_resolve_org_id(user))
+        rows = orders_service.list_for_org(db, org_id=_resolve_org_id(user, org_id))
         return {"data": rows}
     distributor_id = _resolve_distributor_id(user)
     if not distributor_id:
@@ -116,9 +123,10 @@ def list_orders(
 @router.get("/{order_id}", response_model=OrderOut)
 def get_order(
     order_id: str = Path(...),
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Fetch a single order with line items."""
+    user, _token, _org_id = auth
     db = _db()
     pedido = orders_service.get_pedido_with_items(db, pedido_id=order_id)
     if pedido is None:
@@ -131,7 +139,7 @@ def get_order(
 def transition_order_status(
     body: OrderStatusTransitionIn,
     order_id: str = Path(...),
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Transition a pedido's status.
 
@@ -139,13 +147,14 @@ def transition_order_status(
     can move any status forward; distributor can only `cancelado` from
     early states (rascunho / enviado).
     """
+    user, _token, _org_id = auth
     db = _db()
     try:
         return orders_service.transition_status(
             db,
             pedido_id=order_id,
             new_status=body.status,
-            actor_role=user.get("role") or "",
+            actor_role=resolve_role(user),
         )
     except orders_service.OrderError as exc:
         msg = str(exc)

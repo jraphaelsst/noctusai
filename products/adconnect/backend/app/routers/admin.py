@@ -33,7 +33,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 
-from ..auth_deps import require_role
+from ..dependencies import require_role
 from ..database import _db as _db_module
 from ..schemas.admin import (
     AdminDistributorCreateIn,
@@ -83,12 +83,14 @@ def _db() -> Any:
     return client
 
 
-def _user_org(user: dict[str, Any]) -> str:
-    return (
-        user.get("orgId")
-        or user.get("org_id")
-        or DEFAULT_ORG_ID
-    )
+def _user_org(user: Any, org_id: Optional[str] = None) -> str:
+    """Read brand ``org_id`` from the auth-resolved triple's ``org_id``
+    (canonical), falling back to ``user.user_metadata.org_id``, then the
+    single-instance default."""
+    if org_id:
+        return str(org_id)
+    metadata = getattr(user, "user_metadata", None) or {}
+    return str(metadata.get("org_id") or DEFAULT_ORG_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -98,10 +100,11 @@ def _user_org(user: dict[str, Any]) -> str:
 
 @router.get("/dashboard", response_model=DashboardMetricsOut)
 def dashboard(
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """Cross-cutting metrics: distributors, pedidos this month, sellout,
     rewards, invoices. Single round-trip dashboard payload."""
+    user, _token, _role = auth
     db = _db()
     return admin_service.dashboard_metrics(db, org_id=_user_org(user))
 
@@ -113,9 +116,10 @@ def dashboard(
 
 @router.get("/distributors", response_model=AdminDistributorListOut)
 def list_distributors_with_metrics(
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """Full distributor list with metrics per row."""
+    user, _token, _role = auth
     db = _db()
     rows = admin_service.distributor_list_with_metrics(
         db, org_id=_user_org(user)
@@ -130,9 +134,10 @@ def list_distributors_with_metrics(
 )
 def create_distributor(
     body: AdminDistributorCreateIn,
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """Onboard a new distributor under the brand admin's org."""
+    user, _token, _role = auth
     db = _db()
     payload = body.model_dump(exclude_none=True)
     payload["org_id"] = _user_org(user)
@@ -160,9 +165,10 @@ def create_distributor(
 def update_distributor(
     body: AdminDistributorPatchIn,
     distributor_id: str = Path(...),
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """Update one distributor (CNPJ / contact / status / tier)."""
+    user, _token, _role = auth
     db = _db()
     payload = body.model_dump(exclude_none=True)
     if not payload:
@@ -195,9 +201,10 @@ def update_distributor(
 
 @router.get("/sellout/queue", response_model=AdminSelloutQueueOut)
 def sellout_review_queue(
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """Sellout reports awaiting review (status pendente or em_analise)."""
+    user, _token, _role = auth
     db = _db()
     rows = admin_service.sellout_queue(db, org_id=_user_org(user))
     return {"data": rows}
@@ -210,10 +217,11 @@ def sellout_review_queue(
 
 @router.get("/reward-rules", response_model=RewardRuleListOut)
 def list_reward_rules(
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
     only_active: bool = Query(False),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """List reward rules. Admin sees inactive too (V2-deferred filter)."""
+    user, _token, _role = auth
     db = _db()
     rows = admin_service.list_reward_rules(
         db, org_id=_user_org(user), only_active=only_active
@@ -228,9 +236,10 @@ def list_reward_rules(
 )
 def create_reward_rule(
     body: RewardRuleIn,
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """Create a reward rule."""
+    user, _token, _role = auth
     db = _db()
     payload = body.model_dump(mode="json", exclude_none=True)
     payload["org_id"] = _user_org(user)
@@ -246,9 +255,10 @@ def create_reward_rule(
 def update_reward_rule(
     body: RewardRuleIn,
     rule_id: str = Path(...),
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """Edit a reward rule. Body is RewardRuleIn (full upsert payload)."""
+    user, _token, _role = auth
     db = _db()
     payload = body.model_dump(mode="json", exclude_none=True)
     payload["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -272,7 +282,7 @@ def update_reward_rule(
 )
 def delete_reward_rule(
     rule_id: str = Path(...),
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ):
     """Soft-delete: flip ativa=false. Hard-delete is V2-deferred (audit trail
     matters more than space in V1).
@@ -285,6 +295,7 @@ def delete_reward_rule(
     The truthy class triggers the 204-must-not-have-body assertion at
     ``fastapi/routing.py:506``. Setting ``response_model=None`` short-circuits
     the placeholder resolution. See findings.md → §interesting-findings."""
+    user, _token, _role = auth
     db = _db()
     res = (
         db.table(admin_service.REGRAS_TABLE)
@@ -309,14 +320,15 @@ def delete_reward_rule(
 
 @router.get("/invoices", response_model=AdminInvoiceListOut)
 def list_invoices(
-    user: dict[str, Any] = Depends(require_role("admin", "owner")),
     invoice_status: Optional[InvoiceStatus] = Query(None, alias="status"),
     distributor_id: Optional[str] = Query(None),
     due_from: Optional[str] = Query(None),
     due_to: Optional[str] = Query(None),
+    auth: tuple = Depends(require_role("admin", "owner")),
 ) -> dict[str, Any]:
     """List faturas across all distributors in the brand admin's org.
     Filters: status, distributor_id, due_date range."""
+    user, _token, _role = auth
     db = _db()
     rows = admin_service.list_invoices_with_filters(
         db,

@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 
-from ..auth_deps import get_current_user
+from ..dependencies import get_current_user_org, resolve_role
 from ..config import settings
 from ..rate_limit import limiter
 from ..database import _db as _db_module
@@ -69,22 +69,28 @@ def _db() -> Any:
     return client
 
 
-def _resolve_org_id(user: dict[str, Any]) -> str:
-    org_id = user.get("org_id") or user.get("orgId")
-    return str(org_id) if org_id else DEFAULT_ORG_ID
+def _resolve_org_id(user: Any, org_id: Optional[str] = None) -> str:
+    """Read brand ``org_id`` from the auth-resolved triple's ``org_id``
+    (canonical), falling back to ``user.user_metadata.org_id``, then the
+    single-instance default."""
+    if org_id:
+        return str(org_id)
+    metadata = getattr(user, "user_metadata", None) or {}
+    return str(metadata.get("org_id") or DEFAULT_ORG_ID)
 
 
-def _resolve_distributor_id(user: dict[str, Any]) -> Optional[str]:
-    did = user.get("distributorId") or user.get("distributor_id")
+def _resolve_distributor_id(user: Any) -> Optional[str]:
+    metadata = getattr(user, "user_metadata", None) or {}
+    did = metadata.get("distributor_id") or metadata.get("distributorId")
     return str(did) if did else None
 
 
-def _is_admin(user: dict[str, Any]) -> bool:
-    role = (user.get("role") or "").lower()
+def _is_admin(user: Any) -> bool:
+    role = resolve_role(user).lower()
     return role in {"admin", "platform_admin"}
 
 
-def _check_visibility(user: dict[str, Any], fatura: dict[str, Any]) -> None:
+def _check_visibility(user: Any, fatura: dict[str, Any]) -> None:
     """Allow the row's distributor or any admin in the same org."""
     if _is_admin(user):
         return
@@ -117,17 +123,18 @@ def _get_nfe_provider() -> NFeProvider:
 @router.get("/invoices", response_model=FaturaListOut)
 def list_invoices(
     status: Optional[str] = None,
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """List faturas.
 
     • Brand admin (`role=admin`): all faturas in their org's distributor set.
     • Distributor user: only their own.
     """
+    user, _token, auth_org_id = auth
     db = _db()
     if _is_admin(user):
         rows = financial_service.list_for_org(
-            db, org_id=_resolve_org_id(user), status=status
+            db, org_id=_resolve_org_id(user, auth_org_id), status=status
         )
         return {"data": rows}
     distributor_id = _resolve_distributor_id(user)
@@ -141,13 +148,14 @@ def list_invoices(
 
 @router.get("/balance")
 def get_balance(
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Distributor's open / overdue / paid totals.
 
     Mirrors the legacy mock surface so the frontend's existing balance card
     keeps working post-Phase 5 swap.
     """
+    user, _token, _org_id = auth
     db = _db()
     distributor_id = _resolve_distributor_id(user)
     if not distributor_id:
@@ -165,9 +173,10 @@ def get_balance(
 @router.get("/invoices/{fatura_id}", response_model=FaturaOut)
 def get_invoice(
     fatura_id: str = Path(...),
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Fetch a single invoice with NF-e + Stripe state."""
+    user, _token, _org_id = auth
     db = _db()
     fatura = financial_service.get_fatura(db, fatura_id=fatura_id)
     if fatura is None:
@@ -184,9 +193,10 @@ def get_invoice(
 @router.post("/invoices", response_model=FaturaOut, status_code=201)
 def create_invoice(
     body: FaturaIn,
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Create a draft invoice for a pedido (admin only)."""
+    user, _token, _org_id = auth
     if not _is_admin(user):
         raise HTTPException(403, "Apenas brand admin pode criar faturas")
     db = _db()
@@ -208,9 +218,10 @@ def create_invoice(
 def issue_invoice(
     body: IssueRequest,
     fatura_id: str = Path(...),
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Issue NF-e + create Stripe invoice (admin only). Idempotent."""
+    user, _token, _org_id = auth
     if not _is_admin(user):
         raise HTTPException(403, "Apenas brand admin pode emitir faturas")
     db = _db()
@@ -232,9 +243,10 @@ def issue_invoice(
 def cancel_invoice(
     body: CancelRequest,
     fatura_id: str = Path(...),
-    user: dict[str, Any] = Depends(get_current_user),
+    auth: tuple = Depends(get_current_user_org),
 ) -> dict[str, Any]:
     """Cancel an issued invoice (admin only). Justificativa required."""
+    user, _token, _org_id = auth
     if not _is_admin(user):
         raise HTTPException(403, "Apenas brand admin pode cancelar faturas")
     db = _db()
