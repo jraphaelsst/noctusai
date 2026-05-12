@@ -34,23 +34,23 @@ B2B marketplace connecting a brand to its distributor network. Distributors log 
 
 ## Production state (post-MVP, 2026-05-10)
 
-Backend is 100% Supabase-backed. Single `001_adconnect.sql` builds the full schema (16 tables in topological order: identity → catalog → sellout → orders → rewards → financial). All routers DB-backed with constructor-time `prefix=` (FastAPI 0.115 wildcard-route bug structurally fixed). Frontend ships 9 distributor pages + 5 React Query hooks against live endpoints.
+Backend 100% Supabase-backed. Single `001_adconnect.sql` builds the full schema (16 tables in topological order: identity → catalog → sellout → orders → rewards → financial). All routers DB-backed with constructor-time `prefix=` (FastAPI 0.115 wildcard-route bug structurally fixed). Frontend ships 9 distributor pages + 5 React Query hooks against live endpoints.
 
-- 208 mock-backed tests passing; realdb suites scaffolded; 9 LGPD flags landed.
-- Brand admin V1 operates the marketplace via `/api/admin/*` — V2 (the brand-side UI) is a separate follow-up project.
-- NF-e issuance via `FocusNFeProvider` Real adapter (lazy-imported httpx; sandbox vs prod via `ambiente=`); cancel + status round-trip implemented.
-- Stripe pattern inherited from `products/core` (cross-product Python import is infeasible; SDK called directly with idempotency keys derived from `fatura.id`).
+- ✅ 208 mock-backed tests passing; realdb suites scaffolded; 9 LGPD flags landed.
+- ✅ Brand admin V1 operates the marketplace via `/api/admin/*` — V2 (brand-side UI) ≡ separate follow-up project.
+- ✅ NF-e issuance via `FocusNFeProvider` Real adapter (lazy-imported httpx; sandbox vs prod via `ambiente=`); cancel + status round-trip implemented.
+- ✅ Stripe pattern inherited from `products/core` (cross-product Python import infeasible; SDK called directly with idempotency keys derived from `fatura.id`).
 
 ## Rules
 
-- The seed framework is non-negotiable — all domain routers stay attached through `create_product_app()`'s `routers=[...]` seam. Never re-wire CORS, exception handlers, or middleware locally.
-- Single `001_adconnect.sql` is the fresh-start migration. New schema changes edit 001 in-place + ship additive `002+` patches for live DBs (single-001 convention; `KB § PATTERNS/database-rls.md`).
-- Constructor-time `APIRouter(prefix=...)` everywhere. NEVER `router.prefix = ...` post-construction (FastAPI 0.115 silently no-ops it — Phase 2-6 structural fix).
-- Module-level `from ..database import X` binds at import time and defeats conftest patches. Use `_db.get_client()` lazy attribute access in services.
-- Recurrence on rewards/sellout/financial/NF-e primitives must absorb to `noctusai_lib.domain.*` per the recurrence rule if mailing/PF/ERP/etc. grow similar engines.
-- LGPD-first: distributor PII (CNPJ, addresses, financial state, NF-e XML) is flagged at every write site via `noctus.dev.lgpd_flag`.
-- Rate-limit policies: prefer named imports from `noctusai_lib.api.rate_limit_policies` (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL`) over inline `"30/minute"` literals. Adconnect already config-drives the financial webhook (`settings.webhook_rate_limit`); future limiter decorators should adopt the canonical module so per-policy tuning lifts to one seed-side change.
-- Doc-code coherence: when a tool/script/MCP-tool referenced in this doc changes behavior, update this MASTER-PROMPT in the same commit — discover drift via `grep -rn "<tool-name>" products/adconnect/`. (CLAUDE.md §1 — doc-code coherence rule.)
+- Seed framework non-negotiable — domain routers attach through `create_product_app()`'s `routers=[...]` seam. ¬ re-wire CORS, exception handlers, or middleware locally.
+- Single `001_adconnect.sql` is the fresh-start migration. Schema changes edit 001 in-place ∧ ship additive `002+` patches for live DBs (single-001 convention; → `KB § PATTERNS/database-rls.md`).
+- Constructor-time `APIRouter(prefix=...)` everywhere. ¬ `router.prefix = ...` post-construction (FastAPI 0.115 silently no-ops it — Phase 2-6 structural fix).
+- Module-level `from ..database import X` binds at import time ∧ defeats conftest patches. Use `_db.get_client()` lazy attribute access in services.
+- Recurrence on rewards/sellout/financial/NF-e primitives ⇒ absorb to `noctusai_lib.domain.*` per the recurrence rule if mailing/PF/ERP grow similar engines.
+- LGPD-first: distributor PII (CNPJ, addresses, financial state, NF-e XML) flagged at every write site via `noctus.dev.lgpd_flag`.
+- Rate-limit policies: prefer named imports from `noctusai_lib.api.rate_limit_policies` (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL`) over inline `"30/minute"` literals. Adconnect already config-drives the financial webhook (`settings.webhook_rate_limit`); future limiter decorators adopt the canonical module so per-policy tuning lifts to one seed-side change.
+- Doc-code coherence: tool/script/MCP-tool Δ referenced here ⇒ update this MASTER-PROMPT in the same commit — discover drift via `grep -rn "<tool-name>" products/adconnect/`. (CLAUDE.md §1 — doc-code coherence rule.)
 
 ## Testing
 
@@ -59,16 +59,16 @@ cd products/adconnect/backend && pytest
 cd products/adconnect/frontend && npx vite build
 ```
 
-Framework-test suites inherit from `noctusai_lib.testing` (FrameworkEndpointsSuite / TeamFlowSuite / NotificationFlowSuite / AuthBoundarySuite). Adconnect overrides `TeamFlowSuite.test_list_members_returns_data` because the product's `client` fixture binds `MockUser(org_id=ORG_ID_BRAND)` instead of seed-default `test-org-123`. As of 2026-05-11 the suite ships a `expected_org_id: ClassVar[str]` class attribute — the override can be simplified to `expected_org_id = ORG_ID_BRAND` (no method override needed). Follow-up cleanup, tracked under recurrence-rule N=2+ if other products surface the same shape.
+Framework-test suites inherit from `noctusai_lib.testing` (FrameworkEndpointsSuite / TeamFlowSuite / NotificationFlowSuite / AuthBoundarySuite). Adconnect overrides `TeamFlowSuite.test_list_members_returns_data` because the product's `client` fixture binds `MockUser(org_id=ORG_ID_BRAND)` ≠ seed-default `test-org-123`. As of 2026-05-11 the suite ships an `expected_org_id: ClassVar[str]` class attribute — override simplifies to `expected_org_id = ORG_ID_BRAND` (¬ method override). Follow-up cleanup tracked under recurrence-rule N=2+ if other products surface the same shape.
 
-Seed mocks: `MockSupabaseClient` (2026-05-11) deep-copies caller inputs at storage time so UPDATE/DELETE write-propagation doesn't mutate module-level fixture dicts; `_eval_is` now handles PostgREST IS-NULL semantics; `_FilterMixin.not_` actually negates. Adconnect tests that hit `.is_(..., None)` or `.not_(...)` no longer need local workarounds.
+Seed mocks: `MockSupabaseClient` (2026-05-11) deep-copies caller inputs at storage time so UPDATE ∨ DELETE write-propagation ¬ mutates module-level fixture dicts; `_eval_is` handles PostgREST IS-NULL semantics; `_FilterMixin.not_` actually negates. Adconnect tests hitting `.is_(..., None)` ∨ `.not_(...)` ¬ need local workarounds.
 
 ## Common commands
 
-- Compliance review (LGPD / webhook-pins / status-assertion / and 10 new detectors added 2026-05-11): `noctus.dev.review --product adconnect`. New detectors include `check_doc_tool_reference_drift` (this doc), `check_no_silent_ok_comment`, `check_auth_dep_anti_pattern`, `check_mcp_path_via_settings`, `check_mcp_write_tool_worktree_arg`, `check_pipefail_grep_q`, `check_archive_staleness`, `check_dispatcher_staleness`, `check_branch_orphan`, `check_gitignore_drift` — live inventory: `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`.
-- Cleanup triage (cross-product / cross-tool / intra-file hygiene): `noctus.hound.scan`.
-- Storage triage (artifacts / environments / stale worktrees): `bash scripts/mole.sh scan`.
-- Fresh-clone bootstrap auto-hydrates every `products/*/backend/requirements.txt` into the shared venv (`scripts/bootstrap-worktree.sh` + `scripts/setup.sh`, 2026-05-11) — no per-product `pip install -r` step needed.
+- Compliance review (LGPD / webhook-pins / status-assertion / 10 new detectors added 2026-05-11): `noctus.dev.review --product adconnect`. New detectors: `check_doc_tool_reference_drift` (this doc), `check_no_silent_ok_comment`, `check_auth_dep_anti_pattern`, `check_mcp_path_via_settings`, `check_mcp_write_tool_worktree_arg`, `check_pipefail_grep_q`, `check_archive_staleness`, `check_dispatcher_staleness`, `check_branch_orphan`, `check_gitignore_drift` — live inventory: `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`.
+- Cleanup triage (cross-product ∨ cross-tool ∨ intra-file hygiene): `noctus.hound.scan`.
+- Storage triage (artifacts ∨ environments ∨ stale worktrees): `bash scripts/mole.sh scan`.
+- Fresh-clone bootstrap auto-hydrates every `products/*/backend/requirements.txt` into the shared venv (`scripts/bootstrap-worktree.sh` + `scripts/setup.sh`, 2026-05-11) — ¬ per-product `pip install -r` step needed.
 
 ## Dependencies
 

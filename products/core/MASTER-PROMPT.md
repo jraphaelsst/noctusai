@@ -75,17 +75,17 @@ AcceptInvite, AccountSettings, BillingSettings, CheckoutCancel, CheckoutSuccess,
 ## Development Guidelines
 
 - Follow shared patterns from noctusai_lib (auth, roles, invitations, responses, exceptions)
-- Router -> Service -> Schema pattern; routers are thin, business logic in services
-- **Schemas live under `app/schemas/` as 21 per-domain modules** (5-wave extraction, commit `09ea826`, 2026-05-11). Add a new module rather than appending to an existing one; one `BaseModel` cluster per file. `app/schemas/__init__.py` is the canonical re-export surface for stable identifiers — keep it tidy.
+- Router → Service → Schema pattern; routers thin, business logic in services
+- **Schemas live under `app/schemas/` as 21 per-domain modules** (5-wave extraction, commit `09ea826`, 2026-05-11). Add a new module rather than appending; one `BaseModel` cluster per file. `app/schemas/__init__.py` is the canonical re-export surface — keep it tidy.
 - RLS policies use `(SELECT auth.uid())` pattern on all tables
 - Portuguese for business domain names, English for technical/framework code
 - Use `get_current_admin()` for all admin-only routes
-- `audit_logs` service must log all sensitive operations (user changes, billing events)
+- `audit_logs` service ⇒ log all sensitive operations (user changes, billing events)
 - Webhook delivery uses retry with exponential backoff
-- N+1 zero tolerance: use `.in_("id", ids)` for batch reads, `.insert(rows)` for batch writes
+- N+1 zero tolerance: `.in_("id", ids)` for batch reads, `.insert(rows)` for batch writes
 - All product notification proxies route through Core's `public.notifications` table
-- **Rate-limit policies are canonical.** `team.py` + `onboarding.py` consume `DEFAULT_AUTH_RL` from `noctusai_lib.api.rate_limit_policies`. New auth/team/invite routes MUST import `DEFAULT_AUTH_RL`; new webhook routes use `DEFAULT_WEBHOOK_RL`; admin/portal routes use `DEFAULT_PORTAL_RL`; LLM-touching routes use `DEFAULT_AI_RL`. Inline `@limiter.limit("N/min")` strings are an N=2 trigger.
-- **Doc-code coherence at commit time.** When you change a script / MCP tool / keeper detector / CLI flag that this MASTER-PROMPT or `KB § backend/01-CORE.md` references by name, update the prose in the SAME commit. `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ products/core/` first. → CLAUDE.md §1 "Doc-code coherence" + `KB § PATTERNS/methodology-codification-pipeline.md`
+- **Rate-limit policies are canonical.** `team.py` ∧ `onboarding.py` consume `DEFAULT_AUTH_RL` from `noctusai_lib.api.rate_limit_policies`. New auth/team/invite routes MUST import `DEFAULT_AUTH_RL`; webhook routes → `DEFAULT_WEBHOOK_RL`; admin/portal routes → `DEFAULT_PORTAL_RL`; LLM-touching routes → `DEFAULT_AI_RL`. Inline `@limiter.limit("N/min")` strings ≡ N=2 trigger.
+- **Doc-code coherence at commit time.** Script / MCP tool / keeper detector / CLI flag Δ referenced by this MASTER-PROMPT ∨ `KB § backend/01-CORE.md` ⇒ update prose in SAME commit. `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ products/core/` first. → CLAUDE.md §1 "Doc-code coherence" + `KB § PATTERNS/methodology-codification-pipeline.md`
 
 ## Testing
 
@@ -110,6 +110,6 @@ Tests live under `products/core/backend/tests/` (45 files; grew from 23 post-Pha
 
 ## Methodology hooks (2026-05-11 refresh)
 
-- **Codification pipeline.** New rules that emerge from core work route through 4 stages: emerges in conversation → memory entry → KB pattern doc + CLAUDE.md pointer → `check_*` keeper detector with colocated test. Don't let a rule stall at memory if it has a deterministic predicate + recurrence ≥ 3 + clear remediation. Today's batch added 10 new keeper detectors covering hygiene + codification gaps — discover via `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`. → `KB § PATTERNS/methodology-codification-pipeline.md`
-- **Bootstrap auto-hydrate.** Fresh worktrees + clones run `scripts/bootstrap-worktree.sh` / `scripts/setup.sh`; both auto-hydrate hooks + venv + npm without manual steps. If a hook is missing in your worktree, re-run setup before touching code — don't commit around a missing pre-commit.
-- **Branching-first orchestration.** Multi-router or multi-service changes in core (e.g., the schemas extraction) belong in waves of focused engineer chunks, not a single sprawling brief. Architect plans; engineers execute. Wave N+1 dispatches after Wave N FF-merges. → CLAUDE.md §1 + `KB § PATTERNS/branching-and-merging.md`
+- **Codification pipeline.** s1 emerges → s2 memory → s3 KB+CLAUDE.md → s4 `check_*` keeper detector with colocated test. Promote when: deterministic predicate ∧ N≥3 ∧ remediation defined. Today's batch added 10 new keeper detectors covering hygiene + codification gaps — discover via `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`. → `KB § PATTERNS/methodology-codification-pipeline.md`
+- **Bootstrap auto-hydrate.** Fresh worktrees ∧ clones run `scripts/bootstrap-worktree.sh` ∨ `scripts/setup.sh`; both auto-hydrate hooks + venv + npm without manual steps. Missing hook in worktree ⇒ re-run setup before touching code; ¬ commit around a missing pre-commit.
+- **Branching-first orchestration.** Multi-router ∨ multi-service changes in core (e.g. the schemas extraction) ⇒ waves of focused engineer chunks, ¬ a single sprawling brief. Architect plans; engineers execute. Wave N+1 dispatches after Wave N FF-merges. → CLAUDE.md §1 + `KB § PATTERNS/branching-and-merging.md`

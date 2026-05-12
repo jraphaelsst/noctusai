@@ -45,14 +45,14 @@ Domain implementation tracked in `projects/youtube-crawler-domain-implementation
 
 ## Rules
 
-- The seed framework is non-negotiable — all domain routers attach through `create_product_app()`'s `standard_routers=[...]` seam. Never re-wire CORS, exception handlers, or middleware locally.
-- Single `001_youtube_crawler.sql` is the fresh-start migration. New schema changes edit 001 in-place during the implementation project + ship additive `002+` patches for live DBs (single-001 convention; `KB § PATTERNS/database-rls.md`).
-- Auth via the canonical factory: `Depends(get_current_user_org)` wired in `app/dependencies.py` via `make_get_current_user_org`. Never wire `ProductDependencies.{get_org_id,get_user_role,get_user_client}` through `Depends(...)` — positional args become required query params (`KB § PATTERNS/backend.md § Auth — canonical pattern`).
-- LGPD-first: operator PII (Google email, refresh token, channel handle) is flagged at every write site via `noctus.dev.lgpd_flag`. The Fernet column is LGPD-sensitive — masked in audit logs.
+- Seed framework non-negotiable — domain routers attach through `create_product_app()`'s `standard_routers=[...]` seam. ¬ re-wire CORS, exception handlers, ∨ middleware locally.
+- Single `001_youtube_crawler.sql` is the fresh-start migration. Schema changes edit 001 in-place during the implementation project ∧ ship additive `002+` patches for live DBs (single-001 convention; → `KB § PATTERNS/database-rls.md`).
+- Auth via the canonical factory: `Depends(get_current_user_org)` wired in `app/dependencies.py` via `make_get_current_user_org`. ¬ wire `ProductDependencies.{get_org_id,get_user_role,get_user_client}` through `Depends(...)` — positional args become required query params (→ `KB § PATTERNS/backend.md § Auth — canonical pattern`).
+- LGPD-first: operator PII (Google email, refresh token, channel handle) flagged at every write site via `noctus.dev.lgpd_flag`. Fernet column is LGPD-sensitive — masked in audit logs.
 - Refresh-token encryption uses the seed's vault primitive (`noctusai_lib.integrations.<vault>` if it ships at adoption time; otherwise file the seed real-adapter project per "Verify the seed ships it" rule).
 - Rate-limit policies: prefer named imports from `noctusai_lib.api.rate_limit_policies` (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL`) over inline `"30/minute"` literals.
-- Webhook receivers (if Google Pub/Sub adopted for Drive change notification) follow the 5-pin compliance contract (`KB § PATTERNS/webhook-signatures.md`); the seed ships the canonical receiver shape at `products/seed/backend/app/routers/webhook_router.py`.
-- Doc-code coherence: when a tool/script/MCP-tool referenced in this doc changes behavior, update this MASTER-PROMPT in the same commit — discover drift via `grep -rn "<tool-name>" products/youtube-crawler/`. (CLAUDE.md §1 — doc-code coherence rule.)
+- Webhook receivers (if Google Pub/Sub adopted for Drive change notification) follow the 5-pin compliance contract (→ `KB § PATTERNS/webhook-signatures.md`); seed ships the canonical receiver shape at `products/seed/backend/app/routers/webhook_router.py`.
+- Doc-code coherence: tool/script/MCP-tool Δ referenced here ⇒ update this MASTER-PROMPT in the same commit — discover drift via `grep -rn "<tool-name>" products/youtube-crawler/`. (CLAUDE.md §1 — doc-code coherence rule.)
 
 ## Testing
 

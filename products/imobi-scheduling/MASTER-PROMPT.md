@@ -56,7 +56,7 @@ Folded into noc on 2026-05-11 from sibling repo `whatsapp-google-scheduling/` (d
 
 - **Slug:** `imobi-scheduling`.
 - **Ports:** backend `8011`, frontend `8160` (next contiguous slot per `RESERVED_RANGES`).
-- **Frontend in v1:** DEFER (WhatsApp-only; admin UI is a follow-up project).
+- **Frontend in v1:** ⏳ DEFER (WhatsApp-only; admin UI ≡ follow-up project).
 - **Single-agency RLS:** single-agency v1; multi-tenant when a second agency arrives.
 - **Standalone:** shares conventions with `erp-imobiliario` but no cross-product data dep.
 - **Locale:** pt-BR only in v1.
@@ -64,31 +64,31 @@ Folded into noc on 2026-05-11 from sibling repo `whatsapp-google-scheduling/` (d
 
 ## Imobi-Specific Patterns
 
-- **WhatsApp 5-pin compliance.** `webhook_router.py` + `whatsapp_router.py` enforce HMAC-SHA256 verification before any side effect. Empty `IMOBI_WHATSAPP_WEBHOOK_SECRET` engages bypass-mode + WARN (early dev only).
-- **Working hours.** Morning 09:00-12:00, afternoon 13:30-16:30; lunch (12:00-13:30) is the implicit gap between two `WorkingWindow` objects, NOT a `BlockedInterval`. Configurable via `IMOBI_SCHEDULING_*` env vars.
-- **Real-estate vocabulary mapping.** `condominium_id` ↔ scheduling-engine `location_id`, `media_crew_user_id` ↔ `assignee_id`, `travel_buffer_minutes` ↔ transition cost. Kept consumer-side so the seed scheduling primitive stays domain-neutral.
-- **Lifespan idempotence.** `app/lifespan.py::on_startup` short-circuits when `SUPABASE_SERVICE_ROLE_KEY` is unset; logs WARN, skips worker start. WhatsApp inbounds drop with WARN in that mode.
+- **WhatsApp 5-pin compliance.** `webhook_router.py` + `whatsapp_router.py` enforce HMAC-SHA256 verification before any side effect. Empty `IMOBI_WHATSAPP_WEBHOOK_SECRET` ⇒ bypass-mode + WARN (early dev only).
+- **Working hours.** Morning 09:00-12:00, afternoon 13:30-16:30; lunch (12:00-13:30) is the implicit gap between two `WorkingWindow` objects, ≠ `BlockedInterval`. Configurable via `IMOBI_SCHEDULING_*` env vars.
+- **Real-estate vocabulary mapping.** `condominium_id` ↔ scheduling-engine `location_id`, `media_crew_user_id` ↔ `assignee_id`, `travel_buffer_minutes` ↔ transition cost. Kept consumer-side so seed scheduling primitive stays domain-neutral.
+- **Lifespan idempotence.** `app/lifespan.py::on_startup` short-circuits when `SUPABASE_SERVICE_ROLE_KEY` unset; logs WARN, skips worker start. WhatsApp inbounds drop with WARN in that mode.
 - **Worktree-local schema cache.** `tests/conftest.py::_prime_schema_cache_from_worktree` walks from the conftest's own `__file__` to find the worktree's migrations, then calls `set_cache_for_tests(...)` at import time. Closes a `_find_repo_root` slip surfaced by DDD → DDD2 in Phase 9 (filed as seed-level P0 — `NOCTUSAI_REPO_ROOT` env should win the tie).
-- **Single 001 migration + additive 002.** `001_imobi_scheduling.sql` builds the full 17-table schema. `002_appointment_audit_columns.sql` is the additive Phase 9 patch (cancellation/reschedule columns). `002_invitations_accepted_columns.sql` is a parallel additive patch for invitations. Phase numbering may pile up additive `00X_*.sql` patches; greenfield rewrites of `001` are forbidden post-go-live.
-- **Tool registry.** 3 OpenAI tool descriptors (lookup_property / propose_appointment / confirm_appointment) registered in `app/services/tool_registry.py`. Stub impls run when no `SchedulingService` is injected (preserves dispatch-loop tests); live impls dispatched via `_LIVE_IMPLEMENTATIONS` when the conversation module is configured.
+- **Single 001 migration + additive 002.** `001_imobi_scheduling.sql` builds the full 17-table schema. `002_appointment_audit_columns.sql` ≡ additive Phase 9 patch (cancellation ∨ reschedule columns). `002_invitations_accepted_columns.sql` ≡ parallel additive patch for invitations. Phase numbering may pile up additive `00X_*.sql` patches; greenfield rewrites of `001` ¬ allowed post-go-live.
+- **Tool registry.** 3 OpenAI tool descriptors (lookup_property / propose_appointment / confirm_appointment) registered in `app/services/tool_registry.py`. Stub impls run when no `SchedulingService` injected (preserves dispatch-loop tests); live impls dispatched via `_LIVE_IMPLEMENTATIONS` when conversation module configured.
 
 ## Standard Routers Mounted
 
-`["health", "notificacoes", "team"]` — health is unauthenticated; `notificacoes` proxies to core; `team` enables future admin invitations. The product also mounts three custom routers via `routers=[...]`: `example_router` (CRUD scaffold placeholder; lift-or-delete at N=2), `webhook_router` (signed-receiver scaffold; canonical 5-pin reference), `whatsapp_router` (WAHA inbound via seed factory). `whatsapp_webhook` promotion to standard-router shape is deferred until N=2 (mailing / therapy adopting WhatsApp).
+`["health", "notificacoes", "team"]` — health unauthenticated; `notificacoes` proxies to core; `team` enables future admin invitations. Product also mounts three custom routers via `routers=[...]`: `example_router` (CRUD scaffold placeholder; lift-or-delete at N=2), `webhook_router` (signed-receiver scaffold; canonical 5-pin reference), `whatsapp_router` (WAHA inbound via seed factory). `whatsapp_webhook` promotion to standard-router shape deferred until N=2 (mailing ∨ therapy adopting WhatsApp).
 
 ## Frontend (deferred)
 
-The scaffold tool always emits a frontend folder. The v1 folder is a placeholder — no admin UI built. Future "v1 admin UI" follow-up project will either populate it (operators / condominiums / properties / services / crew) or formally delete. Tracked as accept-with-rationale (PROJECT.md Phase 0 close).
+Scaffold tool always emits a frontend folder. v1 folder ≡ placeholder — no admin UI built. Future "v1 admin UI" follow-up project will populate (operators / condominiums / properties / services / crew) ∨ formally delete. Tracked as [A] (PROJECT.md Phase 0 close).
 
 ## Development Guidelines
 
-- Follow shared patterns from `noctusai_lib` (auth, roles, invitations, responses, exceptions); see `CLAUDE/backend.md` + `KB § PATTERNS/backend.md`.
-- Router → Service → Schema split; routers are thin, business logic in services.
+- Follow shared patterns from `noctusai_lib` (auth, roles, invitations, responses, exceptions); → `CLAUDE/backend.md` + `KB § PATTERNS/backend.md`.
+- Router → Service → Schema split; routers thin, business logic in services.
 - RLS policies use `((SELECT auth.jwt()) ->> 'org_id')::uuid` subquery form (Phase 3 baseline).
 - Portuguese for business domain names (corretor, condominio, agendamento); English for technical/framework code.
-- N+1 zero tolerance: batch all reads and writes; the scheduling engine pre-fetches condominium coords on lifespan startup.
-- LGPD: every conversation_message + tool_call_audit row is PII-bearing; redaction at write time + retention follows agency policy.
-- Worktree tests: when running pytest under `.claude/worktrees/...`, `conftest.py` self-primes the schema cache from worktree migrations (don't bypass it).
+- N+1 zero tolerance: batch all reads ∧ writes; scheduling engine pre-fetches condominium coords on lifespan startup.
+- LGPD: every conversation_message ∧ tool_call_audit row is PII-bearing; redaction at write time + retention follows agency policy.
+- Worktree tests: when running pytest under `.claude/worktrees/...`, `conftest.py` self-primes the schema cache from worktree migrations (¬ bypass).
 
 ## Testing
 
@@ -100,13 +100,13 @@ cd products/imobi-scheduling/backend && pytest
 
 ## Contract Notes (Phases 0-14 — 2026-05-10 to 2026-05-11)
 
-- **Single agency v1**: every RLS policy scopes on `((SELECT auth.jwt()) ->> 'org_id')::uuid`. Adding a second agency requires a refactor (per-row `agency_id`) — NOT a per-product code change.
-- **`SchedulingService.AuditWriter` adapter**: the seed's `AuditWriter` signature differs from `AuditRecord`'s 1-arg callable shape; the product ships the bridging adapter consumer-side. P1 seed follow-up filed.
-- **`configure_conversation_module` carve-out**: the seed chatbot module is constructor-based; we ship a consumer-side factory. Lift-to-seed at N=2 when therapy / mailing adopt.
-- **Calendar / Maps as Fake by default**: empty Google env vars → Fake adapters. Production deployment MUST set `GOOGLE_CALENDAR_OAUTH_*` + `GOOGLE_MAPS_API_KEY` + `GOOGLE_CALENDAR_DEFAULT_CALENDAR_ID`.
-- **Redis as Fake by default**: empty `REDIS_URL` → in-memory `FakeRedis`. Acceptable for dev; production MUST set a managed Redis URL (conversation memory + rate-limit + anomaly counters all consume it).
-- **Frontend deferred**: scaffolded frontend folder is a placeholder; a follow-up "v1 admin UI" project will populate or delete it.
-- **Migration 002 additive convention**: future schema changes after go-live land as additive `00N_*.sql` patches; greenfield rewrites of `001` are forbidden.
+- **Single agency v1**: every RLS policy scopes on `((SELECT auth.jwt()) ->> 'org_id')::uuid`. Second agency ⇒ refactor (per-row `agency_id`); ¬ a per-product code change.
+- **`SchedulingService.AuditWriter` adapter**: seed `AuditWriter` signature ≠ `AuditRecord`'s 1-arg callable shape; product ships the bridging adapter consumer-side. P1 seed follow-up filed.
+- **`configure_conversation_module` carve-out**: seed chatbot module is constructor-based; we ship a consumer-side factory. Lift-to-seed at N=2 when therapy ∨ mailing adopt.
+- **Calendar / Maps as Fake by default**: empty Google env vars ⇒ Fake adapters. Production deployment MUST set `GOOGLE_CALENDAR_OAUTH_*` + `GOOGLE_MAPS_API_KEY` + `GOOGLE_CALENDAR_DEFAULT_CALENDAR_ID`.
+- **Redis as Fake by default**: empty `REDIS_URL` ⇒ in-memory `FakeRedis`. OK for dev; production MUST set a managed Redis URL (conversation memory + rate-limit + anomaly counters all consume it).
+- **Frontend deferred**: scaffolded frontend folder is a placeholder; follow-up "v1 admin UI" project will populate ∨ delete it.
+- **Migration 002 additive convention**: future schema changes post-go-live land as additive `00N_*.sql` patches; greenfield rewrites of `001` ¬ allowed.
 
 ## Dependencies
 

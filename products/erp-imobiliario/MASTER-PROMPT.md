@@ -100,21 +100,21 @@ Dashboard, Imoveis, ImovelDetalhes, Clientes, ClienteDetalhes, Funil, Contratos,
 ## Development Guidelines
 
 - Follow shared patterns from noctusai_lib (auth, roles, invitations, responses, exceptions)
-- Router -> Service -> Schema pattern; routers are thin, business logic in services
+- Router → Service → Schema pattern; routers thin, business logic in services
 - RLS policies use `(SELECT auth.uid())` pattern on all tables
 - Portuguese for business domain names, English for technical/framework code
-- Use `get_org_id(user)` for org extraction -- never access metadata directly
-- N+1 zero tolerance: batch all reads and writes
+- Use `get_org_id(user)` for org extraction — ¬ access metadata directly
+- N+1 zero tolerance: batch all reads ∧ writes
 - DELETE endpoints require pre-check for related data before deletion
 - Search endpoints accept `busca` query parameter for full-text search
 
 ## Methodology evolution (2026-05-11)
 
 ### Codification pipeline
-Methodology rules now route deliberately through a 4-stage path: **Stage 1 emerges → Stage 2 memory entry → Stage 3 KB pattern doc + CLAUDE.md pointer → Stage 4 `check_*` keeper detector with colocated test**. Codification criteria = deterministic predicate + recurrence ≥3 + clear remediation. Rules that legitimately stay at Stage 3 (judgment / context-dependent / aesthetic / pilot) are catalogued. When a new ERP-specific rule emerges, route it instead of letting it stall at memory. → `KB § PATTERNS/methodology-codification-pipeline.md`.
+**s1 emerges → s2 memory → s3 KB+CLAUDE.md → s4 `check_*` keeper detector with colocated test.** Promote when: deterministic predicate ∧ N≥3 ∧ remediation defined. Rules legitimately at s3 (judgment / context-dependent / aesthetic / pilot) catalogued. New ERP-specific rule emerges ⇒ route it; ¬ stall at memory. → `KB § PATTERNS/methodology-codification-pipeline.md`.
 
 ### Doc-code coherence rule (CLAUDE.md §1)
-Updating a tool means updating its docs in the **same change**. Whenever a coding tool (script / MCP tool / keeper detector / CLI command) changes behavior — new flag, new mode, renamed detector, different severity — every doc that references it MUST update in the same commit: KB pattern docs, Situation→Tool maps, CLAUDE.md pointers, INDEX.md, inline `--help`, README / MASTER-PROMPT references. Discovery grep: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/*/README.md`. **This MASTER-PROMPT counts** — any ERP-targeted tool rename triggers an update here.
+Tool Δ ⇒ doc Δ SAME commit. New flag ∨ new mode ∨ renamed detector ∨ different severity ⇒ every doc references it updates in same commit: KB pattern docs, Situation→Tool maps, CLAUDE.md pointers, INDEX.md, inline `--help`, README ∧ MASTER-PROMPT refs. Discovery: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/*/README.md`. **This MASTER-PROMPT counts** — any ERP-targeted tool rename triggers an update here.
 
 ### 10 new keeper detectors today (live discovery)
 Run `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py` for the canonical list. Notable additions relevant to ERP touch-zones:

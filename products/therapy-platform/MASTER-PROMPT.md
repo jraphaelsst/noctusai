@@ -134,11 +134,11 @@ Closed-out during `therapy-platform-wiring` Phases 6.b/7.a/8.b. The 8 renames:
 
 ## DTO Contract — Pattern E
 
-193 routes have **no** `response_model=` declaration; the DTO contract is implicit via `success_response()` / `paginated_response()` wrappers + per-service mapper functions (e.g. `_therapist_row_to_dto`, `_clinic_row_to_dto`, `_patient_row_to_dto`, `_appointment_row_to_dto`). Mappers carry the schema contract — cataloged as accept-with-rationale during the wiring close.
+193 routes have **no** `response_model=` declaration; DTO contract implicit via `success_response()` ∨ `paginated_response()` wrappers + per-service mapper functions (e.g. `_therapist_row_to_dto`, `_clinic_row_to_dto`, `_patient_row_to_dto`, `_appointment_row_to_dto`). Mappers carry the schema contract — cataloged as [A] during the wiring close.
 
 ## AI Pipeline
 
-Orchestrated by `ai_pipeline` service. **All four steps call `noctusai_lib.llm` — never the OpenAI SDK directly.** Clinical text passes `cache=False` to the lib, which short-circuits the response cache before any hashing (LGPD hard rule: Art. 11 sensitive data never enters a cache key).
+Orchestrated by `ai_pipeline` service. **All four steps call `noctusai_lib.llm` — ¬ the OpenAI SDK directly.** Clinical text passes `cache=False` to the lib, which short-circuits the response cache before any hashing (LGPD hard rule: Art. 11 sensitive data ¬ enters a cache key).
 
 1. **Transcription** — `transcribe_audio(audio_bytes, ...)` (Whisper under the hood)
 2. **Summary** — `chat_completion(messages, cache=False, ...)` for session summary
@@ -146,7 +146,7 @@ Orchestrated by `ai_pipeline` service. **All four steps call `noctusai_lib.llm` 
 4. **Crisis detection** — keyword analysis + `chat_completion(cache=False)` for escalation signals
 5. **Attachment analysis** — `analyze_image(...)` for vision, `transcribe_audio(...)` for audio uploads
 
-Four LGPD concerns currently tracked in `LGPD-WARNINGS.md` (patient-clinical-text-in-llm-prompt, longitudinal-clinical-aggregation, patient-audio-to-whisper, patient-attachment-to-llm) — each requires a documented mitigation before the feature is considered production-ready.
+Four LGPD concerns tracked in `LGPD-WARNINGS.md` (patient-clinical-text-in-llm-prompt, longitudinal-clinical-aggregation, patient-audio-to-whisper, patient-attachment-to-llm) — each requires a documented mitigation before the feature ≡ production-ready.
 
 Prompt hierarchy: per-therapist > per-clinic > global default.
 
@@ -178,16 +178,16 @@ Pattern-D consolidation: direct-fetch pages bypassing hooks were replaced by nam
 ## Development Guidelines
 
 - Follow shared patterns from noctusai_lib (auth, roles, invitations, responses, exceptions).
-- Use `require_role()` (the product-bound factory in `dependencies.py`) for every endpoint — never re-introduce inline `_require_admin` / `_require_role` helpers.
+- Use `require_role()` (product-bound factory in `dependencies.py`) for every endpoint — ¬ re-introduce inline `_require_admin` / `_require_role` helpers.
 - Bulk-resolve identities via `fetch_user_identities(db, user_ids)` before iterating DTO mapper loops — N+1 zero tolerance.
-- Router -> Service -> Schema pattern; routers are thin, business logic in services.
+- Router → Service → Schema pattern; routers thin, business logic in services.
 - RLS policies use `(SELECT auth.uid())` pattern on all tables.
 - Portuguese for business domain names, English for technical/framework code; backend route prefixes use English per Pattern A (carve-outs documented above).
-- Use `clinic_id` for tenant isolation (NOT `org_id`). Independent therapists have `clinic_id = NULL`.
+- Use `clinic_id` for tenant isolation (≠ `org_id`). Independent therapists have `clinic_id = NULL`.
 - Use `log_action()` for audit logging on sensitive operations.
 - Clinical data requires extra care: LGPD compliance, encryption at rest, data deletion support.
-- Stripe Connect: platform is the "connected account" facilitator; therapists/clinics onboard as connected accounts.
-- LiveKit room tokens are short-lived and scoped to specific session + participant.
+- Stripe Connect: platform is the "connected account" facilitator; therapists ∨ clinics onboard as connected accounts.
+- LiveKit room tokens short-lived ∧ scoped to specific session + participant.
 
 ## Testing
 
@@ -195,50 +195,45 @@ Pattern-D consolidation: direct-fetch pages bypassing hooks were replaced by nam
 cd products/therapy-platform/backend && pytest
 ```
 
-**1336 passed, 14 skipped** at `therapy-platform-wiring` close (2026-05-11). 64 test files across routers + services. Status-code-assertion rule enforced (every body-asserting test pins `.status_code` first).
+**1336 ✅, 14 skipped** at `therapy-platform-wiring` close (2026-05-11). 64 test files across routers + services. Status-code-assertion rule enforced (every body-asserting test pins `.status_code` first).
 
 ### Test-suite hardening — 2026-05-11
 
 Two engineer commits closed the OOS therapy test failures surfaced by the seed mock predicate refresh:
 
-- **Engineer T (`ef01f57`)** — `test(therapy): close 10 OOS tenancy/predicate gaps surfaced by LATENT-FIX-THERAPY-2`. Four distinct sub-causes:
+- **Engineer T (`ef01f57`)** — `test(therapy): close 10 OOS tenancy/predicate gaps surfaced by LATENT-FIX-THERAPY-2`. Four sub-causes:
   1. Tenancy-seed gap (clinic_id rows missing from fixture state).
-  2. `is_("null")` literal-string predicate gap (the gap Q's seed mock fix closed structurally).
-  3. `BackgroundTask` core_db resolution path (background side-effect didn't resolve the right client in test).
-  4. Tests asserting against the OLD seed-mock predicate bug instead of correct PostgREST IS-NULL semantics.
-- **Engineer Y (`f5d386e`)** — `chore(therapy/tests): Phase 3 — replace "null" literal-string shims with None now that seed mock _eval_is handles IS-NULL`. Swept 6 `"null"` literal-string shims to `None` after Q's seed mock fix (`f3aabfd`, see *Methodology — 2026-05-11* below) made the workaround obsolete.
+  2. `is_("null")` literal-string predicate gap (closed structurally by Q's seed mock fix).
+  3. `BackgroundTask` core_db resolution path (background side-effect ¬ resolve the right client in test).
+  4. Tests asserting against OLD seed-mock predicate bug ≠ correct PostgREST IS-NULL semantics.
+- **Engineer Y (`f5d386e`)** — `chore(therapy/tests): Phase 3 — replace "null" literal-string shims with None now that seed mock _eval_is handles IS-NULL`. Swept 6 `"null"` literal-string shims → `None` after Q's seed mock fix (`f3aabfd`, see *Methodology — 2026-05-11* below) made the workaround obsolete.
 
-Net effect: the shim disappears, callers pass `None` (real PostgREST contract), and the seed mock's `_eval_is` honours `IS NULL` natively. **Don't reintroduce the `"null"` literal shim** — it now silently misroutes (returns rows that should be excluded).
+Net effect: the shim disappears, callers pass `None` (real PostgREST contract), ∧ the seed mock's `_eval_is` honours `IS NULL` natively. **¬ reintroduce the `"null"` literal shim** — it now silently misroutes (returns rows that should be excluded).
 
 ## Methodology — 2026-05-11
 
-This section captures live-methodology pieces that landed today and bear on how you work in this product.
+Live-methodology pieces that landed today ∧ bear on how you work in this product.
 
-### 1. Codification pipeline (Stage 1→4)
+### 1. Codification pipeline (s1→s4)
 
-A new pattern doc — `KB § PATTERNS/methodology-codification-pipeline.md` — names the 4-stage path that turns a conversation rule into a deterministic keeper detector:
+New pattern doc — `KB § PATTERNS/methodology-codification-pipeline.md` — names the 4-stage path: **s1 emerges → s2 memory → s3 KB+CLAUDE.md → s4 `check_*` keeper detector with colocated test.** Promote when: deterministic predicate ∧ N≥3 ∧ remediation defined.
 
-1. **Stage 1 — emerges** in conversation.
-2. **Stage 2 — memory entry** (durable across sessions).
-3. **Stage 3 — KB pattern doc + CLAUDE.md (or topical) pointer** (three-way sync).
-4. **Stage 4 — `check_*` keeper detector with colocated regression test** (deterministic enforcement).
-
-The keeper is framed as the **codification layer** of the methodology — not a regulatory silo. Codification criteria: deterministic predicate + recurrence ≥3 + clear remediation. Rules that legitimately stay at Stage 3 (judgment-dependent / context-dependent / methodology-in-pilot / aesthetic) are explicitly documented. When a new rule emerges while you're inside therapy, route it deliberately through the stages — *don't let it stall at memory*.
+Keeper ≡ **codification layer** of the methodology — ¬ regulatory silo. Rules legitimately at s3 (judgment-dependent / context-dependent / methodology-in-pilot / aesthetic) explicitly documented. New rule emerges while inside therapy ⇒ route it deliberately through the stages — *¬ stall at memory*.
 
 ### 2. Doc-code coherence (NEW universal rule)
 
-Three-way-sync (KB ↔ CLAUDE.md ↔ memory) is now extended one layer: **tool-code ↔ doc-prose stays coherent in the SAME commit.** When a coding tool's behavior changes (new flag / new mode / renamed detector / different severity), every doc that references it MUST update with the code:
+Three-way-sync (KB ↔ CLAUDE.md ↔ memory) extended one layer: **tool-code ↔ doc-prose stays coherent in the SAME commit.** Coding tool behavior Δ (new flag ∨ new mode ∨ renamed detector ∨ different severity) ⇒ every doc that references it MUST update with the code:
 
 - KB pattern docs
 - Situation→Tool maps (most-stale-prone surface)
 - CLAUDE.md routing pointers describing behavior
 - INDEX.md scope descriptions
 - Inline `--help` text
-- README / MASTER-PROMPT references in product folders (**including this file**)
+- README ∨ MASTER-PROMPT references in product folders (**including this file**)
 
-Discovery recipe: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/*/README.md`. The pre-commit hook does not yet enforce this — agent-discipline at Stage 3, with candidates `check_doc_tool_reference_drift` (already Stage 4) + `check_mcp_tool_argument_drift` (tracked).
+Discovery recipe: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/*/README.md`. Pre-commit hook ¬ enforce this yet — agent-discipline at s3, with candidates `check_doc_tool_reference_drift` (already s4) + `check_mcp_tool_argument_drift` (tracked).
 
-**Therapy implication:** when you change a therapy script's `--help`, a hook's behavior, or any tool the MASTER-PROMPT here cites, update the prose in this file in the same commit.
+**Therapy implication:** therapy script `--help` Δ ∨ hook behavior Δ ∨ any tool the MASTER-PROMPT here cites Δ ⇒ update the prose in this file in the same commit.
 
 ### 3. Keeper detectors — 10 new checks (live registry)
 
@@ -263,20 +258,20 @@ Run `noctus.dev.validate_product slug=therapy-platform` to surface any therapy-s
 
 ### 4. Seed mock predicate fix — Q's commit `f3aabfd`
 
-`fix(seed/mocks): _eval_is PostgREST IS-NULL + _FilterMixin.not_ negation (Option A soft compat)` landed today at the seed layer. Two predicate gaps closed:
+`fix(seed/mocks): _eval_is PostgREST IS-NULL + _FilterMixin.not_ negation (Option A soft compat)` landed at seed layer. Two predicate gaps closed:
 
-- **`_eval_is`** — the seed `MockSupabaseClient` now correctly evaluates PostgREST `.is_("col", None)` as `IS NULL` (previously misrouted, requiring `"null"` literal-string shims in tests).
-- **`_FilterMixin.not_`** — negation chain (`.not_.is_(...)`) now flips correctly.
+- **`_eval_is`** — seed `MockSupabaseClient` correctly evaluates PostgREST `.is_("col", None)` as `IS NULL` (previously misrouted, requiring `"null"` literal-string shims in tests).
+- **`_FilterMixin.not_`** — negation chain (`.not_.is_(...)`) flips correctly.
 
 **Downstream impact in therapy:**
 - Engineer Y's Phase 3 sweep (commit `f5d386e`) removed all 6 `"null"` literal-string shims from therapy tests.
-- Engineer T's Phase 2 (commit `ef01f57`) tests that asserted against the OLD bug were rewritten to assert against correct PostgREST contract.
+- Engineer T's Phase 2 (commit `ef01f57`) tests asserting against OLD bug rewritten ↔ correct PostgREST contract.
 
-**Anti-pattern alert:** never reintroduce `is_("col", "null")` — pass `None`. The seed mock now matches the real PostgREST behavior; the workaround silently breaks results.
+**Anti-pattern alert:** ¬ reintroduce `is_("col", "null")` — pass `None`. Seed mock matches real PostgREST behavior; the workaround silently breaks results.
 
 ### 5. Canonical rate-limit policies — `DEFAULT_AUTH_RL` (therapy adopted)
 
-The seed layer ships canonical policies in `noctusai_lib.api.rate_limit_policies`. **Therapy's `app/routers/auth.py` now imports + uses `DEFAULT_AUTH_RL`** at three endpoints (lines 82 / 95 / 119):
+Seed layer ships canonical policies in `noctusai_lib.api.rate_limit_policies`. **Therapy's `app/routers/auth.py` imports ∧ uses `DEFAULT_AUTH_RL`** at three endpoints (lines 82 / 95 / 119):
 
 ```python
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
@@ -286,17 +281,17 @@ from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
 async def login(...): ...
 ```
 
-**Convention:** *never* hand-author per-product rate-limit strings on auth endpoints. Adopt the canonical seed policy. New auth-shape endpoints in therapy must pull from `noctusai_lib.api.rate_limit_policies`; deviation triages as formalize / refactor / accept-with-rationale per the recurrence rule.
+**Convention:** ¬ hand-author per-product rate-limit strings on auth endpoints. Adopt the canonical seed policy. New auth-shape endpoints in therapy MUST pull from `noctusai_lib.api.rate_limit_policies`; deviation triages [F] ∨ [R] ∨ [A] per the recurrence rule.
 
 ### 6. Bootstrap auto-hydrate
 
-`scripts/bootstrap-worktree.sh` and `scripts/bootstrap-seed-workspace.sh` now auto-hydrate the sibling workspace surface: stale-worktree cleanup runs **before** hydration; ensures the 8 noc surfaces (CLAUDE.md, CLAUDE/, KNOWLEDGE-BASE/, .claude/, mcp/, seed/, noctusai_lib/, templates/) symlink in cleanly without manual steps.
+`scripts/bootstrap-worktree.sh` ∧ `scripts/bootstrap-seed-workspace.sh` auto-hydrate the sibling workspace surface: stale-worktree cleanup runs **before** hydration; ensures the 8 noc surfaces (CLAUDE.md, CLAUDE/, KNOWLEDGE-BASE/, .claude/, mcp/, seed/, noctusai_lib/, templates/) symlink in cleanly without manual steps.
 
-**Therapy implication:** if you spin up an isolated test workspace to debug a therapy issue, the bootstrap script handles the noc surface inheritance — *don't trim*. Per-product focus belongs here in MASTER-PROMPT.md, not in pruning the inherited surface.
+**Therapy implication:** isolated test workspace to debug a therapy issue ⇒ bootstrap script handles the noc surface inheritance — *¬ trim*. Per-product focus belongs here in MASTER-PROMPT.md, ¬ in pruning the inherited surface.
 
 ## Chatbot operational-readiness — N=2 inheritor candidate
 
-The therapy chatbot (`whatsapp_therapy` router + `chatbot_*` services) is an **N=2 inheritor candidate** for `KB § PATTERNS/chatbot-operational-readiness.md` — the production-hardening checklist first adopted by `imobi-scheduling`. The pattern bundles:
+Therapy chatbot (`whatsapp_therapy` router + `chatbot_*` services) is an **N=2 inheritor candidate** for `KB § PATTERNS/chatbot-operational-readiness.md` — production-hardening checklist first adopted by `imobi-scheduling`. The pattern bundles:
 
 - Retries on transient external writes via `retry_call` composing seed `RetryPolicy`.
 - Structured logs auto-wired by `create_product_app`.
@@ -305,27 +300,27 @@ The therapy chatbot (`whatsapp_therapy` router + `chatbot_*` services) is an **N
 - Supabase managed backups.
 - Metrics-sink seam with `NoopCounter` default.
 
-**When you next touch the therapy chatbot wiring, evaluate the checklist + file `therapy-chatbot-operational-readiness` follow-up** (or accept-with-rationale individual items). N=2 → triage time per the recurrence rule.
+**Next touch of therapy chatbot wiring ⇒ evaluate checklist + file `therapy-chatbot-operational-readiness` follow-up** (∨ [A] individual items). N=2 ⇒ triage time per recurrence rule.
 
 ## Known Follow-ups (filed during wiring)
 
-8 follow-up projects + 3 accept-with-rationale entries surfaced during `therapy-platform-wiring` close:
+8 follow-up projects + 3 [A] entries surfaced during `therapy-platform-wiring` close:
 
 | Slug | Surface |
 |------|---------|
 | `therapy-public-directory-wiring` | `ClinicDirectory.tsx` + `TherapistDirectory.tsx` static placeholders → wire to backend |
-| `therapy-public-directory-auth-semantic` (accept-with-rationale) | JWT-vs-publicRoutes mismatch on directory pages |
+| `therapy-public-directory-auth-semantic` [A] | JWT-vs-publicRoutes mismatch on directory pages |
 | `therapy-auth-router-orphan-cleanup` | 7 auth endpoints fully orphan; retire-vs-migrate decision |
 | `therapy-admin-invitations-management` | Admin invitations list+cancel UX |
 | `therapy-clinic-settings-misrouting` | HIGH-PRIORITY silent-drop bug: bank/CNPJ/email/commission → branding endpoint |
 | `therapy-clinic-rooms-management-wiring` | 5 orphan rooms routes (no `pages/clinic/Rooms.tsx`) |
 | `therapy-clinic-therapist-config-wiring` | 3 orphan clinic-admin therapist-config routes |
 | `therapy-clinic-dashboard-bi-wiring` | Static `pages/clinic/Dashboard.tsx` + therapist-only BI gate |
-| `therapy-clinic-jwt-derived-clinic-id` (accept-with-rationale) | `useClinicTherapists` derives `clinic_id` client-side |
+| `therapy-clinic-jwt-derived-clinic-id` [A] | `useClinicTherapists` derives `clinic_id` client-side |
 | `therapy-patient-dto-enrichment-unified` | Subsumes `therapist-patient-dto-enrichment`; N=3 across admin/therapist/clinic |
 | `therapy-lgpd-patient-portal-wiring` | 3 unconsumed `lgpd.py` routes |
 | `therapy-matching-embed-deprecation-removal` | Split-route removal after consumer migration |
-| Pattern E DTO-contract-via-mappers (accept-with-rationale) | 193 routes have no `response_model`; mappers carry the contract |
+| Pattern E DTO-contract-via-mappers [A] | 193 routes have no `response_model`; mappers carry the contract |
 
 ## Dependencies
 

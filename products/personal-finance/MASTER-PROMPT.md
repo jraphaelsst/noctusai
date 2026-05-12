@@ -64,13 +64,13 @@ Dashboard, Contas, ContaDetalhes, Categorias, Operacoes, Orcamentos, OrcamentoDe
 ## Development Guidelines
 
 - Follow shared patterns from noctusai_lib (auth, roles, invitations, responses, exceptions)
-- Router -> Service -> Schema pattern; routers are thin, business logic in services
+- Router → Service → Schema pattern; routers thin, business logic in services
 - RLS policies use `(SELECT auth.uid())` pattern on all tables
 - Portuguese for business domain names, English for technical/framework code
-- Use `get_org_id(user)` for org extraction -- never access metadata directly
-- N+1 zero tolerance: batch all reads and writes
-- Schema name is hyphenated (`personal-finance`), requiring `ClientOptions(schema="personal-finance")` in Supabase client calls
-- Recurring transaction processing must be idempotent (scheduler may retry)
+- Use `get_org_id(user)` for org extraction — ¬ access metadata directly
+- N+1 zero tolerance: batch all reads ∧ writes
+- Schema name hyphenated (`personal-finance`) ⇒ `ClientOptions(schema="personal-finance")` in Supabase client calls
+- Recurring transaction processing MUST be idempotent (scheduler may retry)
 
 ## Testing
 
@@ -115,60 +115,57 @@ router auto-mounts `/api/health` (unauthenticated); `ai_outputs` provides
 
 ## Methodology Evolution (2026-05-11)
 
-Methodology platform-side changes landed today; PF inherits them via the seed
-and `noctusai_lib`. PF-specific impact summarized below:
+Platform-side methodology changes landed today; PF inherits via seed ∧
+`noctusai_lib`. PF-specific impact:
 
 - **Codification pipeline** (`KB § PATTERNS/methodology-codification-pipeline.md`) —
-  conversation rules now route deliberately through Stage 1 (emerge) →
-  Stage 2 (memory) → Stage 3 (KB + CLAUDE.md pointer) → Stage 4 (`check_*`
-  keeper detector + colocated test). When a PF-flavored slip recurs at N≥3
-  with a deterministic predicate, expect a detector — not just a memory entry.
-- **Doc-code coherence** — when a tool's behavior changes (script / MCP /
-  keeper detector / CLI flag), every doc that references it updates in the
-  **same commit**, including this MASTER-PROMPT. Stale tool references here
-  are now treated as silent-error shape.
+  s1 emerges → s2 memory → s3 KB+CLAUDE.md → s4 `check_*` keeper +
+  colocated test. PF-flavored slip recurs at N≥3 with deterministic
+  predicate ⇒ expect a detector, ¬ just a memory entry.
+- **Doc-code coherence** — tool Δ ⇒ doc Δ **same commit**, including
+  this MASTER-PROMPT. Stale tool refs here ≡ silent-error shape.
 - **10 new keeper detectors** — landed in `mcp/noctusai/keeper/` today;
   PF participates in the platform-wide compliance sweep. Run
   `noctus.dev.review` against `products/personal-finance/` to surface any
-  new findings under the codification queue. Highest leverage for PF: the
-  detectors covering rate-limit policy usage and frontend type discipline
+  new findings under the codification queue. Highest leverage for PF:
+  detectors covering rate-limit policy usage ∧ frontend type discipline
   (see below).
 - **Seed mock predicate fix** — `MockSupabaseClient` now deep-copies caller
   inputs at write time (`MockRequestBuilder.__init__`); module-level fixture
   dicts no longer leak across tests. PF backend tests inherit the fix
-  transparently; the 595-pass baseline is on the patched mock.
-- **Canonical rate-limit policies — PF `ai.py` now imports `DEFAULT_AI_RL`**
+  transparently; 595-pass baseline is on the patched mock.
+- **Canonical rate-limit policies — PF `ai.py` imports `DEFAULT_AI_RL`**
   from `noctusai_lib.api.rate_limit_policies`. The four AI endpoints
   (`/transacoes/{id}/categorize`, `/transacoes/{id}/recurring-flag`,
-  `/monthly-narrative`, `/monthly-narrative/send`) all use `@limiter.limit(DEFAULT_AI_RL)`
-  in place of bespoke `"<N>/minute"` strings. Future PF AI endpoints MUST
-  inherit the canonical policy unless a justified carve-out is logged in
-  `KB § PATTERNS/accept-with-rationale.md`.
-- **Bootstrap auto-hydrate** — `bootstrap-worktree.sh` now auto-hydrates
-  frontend node_modules pre-dispatch; PF frontend builds / vitest runs
+  `/monthly-narrative`, `/monthly-narrative/send`) all use
+  `@limiter.limit(DEFAULT_AI_RL)` in place of bespoke `"<N>/minute"`
+  strings. Future PF AI endpoints MUST inherit the canonical policy unless
+  a justified [A] carve-out is logged in `KB § PATTERNS/accept-with-rationale.md`.
+- **Bootstrap auto-hydrate** — `bootstrap-worktree.sh` auto-hydrates
+  frontend node_modules pre-dispatch; PF frontend builds ∧ vitest runs
   function in fresh worktrees without the prior manual install step.
-  (The deferred `worktree-bootstrap-frontend-deps` follow-up from Engineer
-  J's commit message is closed by this platform change.)
+  (Deferred `worktree-bootstrap-frontend-deps` follow-up from Engineer
+  J's commit message closed by this platform change.)
 
 ### PF-specific: frontend hook type discipline (Engineer J, commit `53890a7`)
 
 Companion to the backend `StrictHttpModel` rollout. Loose
 `Record<string, any>` query-param accumulators in PF hooks tolerated typos
 at compile time even though backend now `extra="forbid"`s unknown keys —
-the same shape as the `feedback_pydantic_silent_drop_kills_writes` slip,
-but on the read side.
+same shape as `feedback_pydantic_silent_drop_kills_writes` slip, but on
+the read side.
 
 - **9 hooks** tightened (`useAtivos`, `useCategorias`, `useContas`,
   `useMetas`, `useOperacoes`, `useOrcamentos`, `usePatrimonio`,
   `useRecorrentes`, `useTransacoes`). **12 loose typings → 0** in
   `products/personal-finance/frontend/src/hooks/**`.
 - Each `Record<string, any>` accumulator replaced with either the existing
-  `Filtros*` interface from the same file or a narrow inline type
+  `Filtros*` interface from the same file ∨ a narrow inline type
   (e.g. `{ ativo?: boolean }`, `{ tipo?: string }`).
-- Mutation hooks (`api.post` / `api.patch`) were already well-typed
+- Mutation hooks (`api.post` / `api.patch`) already well-typed
   (`Partial<T>` + inline shapes); no body-side tightening needed.
 - **Convention going forward**: new PF hooks declare query-param shapes
-  via a `Filtros<Entity>` interface (or narrow inline type) — never
+  via a `Filtros<Entity>` interface (∨ narrow inline type) — ¬
   `Record<string, any>` / `Record<string, unknown>`. Backend `extra="forbid"`
   will 422 the typo; frontend `tsc` should refuse to compile it in the
   first place. Two-layer defense.

@@ -33,28 +33,28 @@ AI-first design: every feature should be buildable with AI assistance and eventu
 ## Development Guidelines
 
 - Follow shared patterns from `noctusai_lib` — auth, invitations, notifications, responses
-- Router -> Service pattern: business logic in services, routers are thin
-- RLS policies use `(SELECT auth.uid())` pattern — all tables are user-scoped
+- Router → Service pattern: business logic in services, routers thin
+- RLS policies use `(SELECT auth.uid())` pattern — all tables user-scoped
 - Portuguese for business domain (`tarefas`, `metas`, `notas`), English for technical
-- N+1 zero tolerance: batch reads with `.in_()`, batch writes with `.insert(rows)`
+- N+1 zero tolerance: batch reads `.in_()`, batch writes `.insert(rows)`
 - Mobile-first responsive design: test at 375/768/1440px
 - Toasts via `sonner` only
 - TanStack Query for server state, Zustand for UI state
-- **AI/LLM endpoints use canonical rate-limit policy** — `from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL` and `@limiter.limit(DEFAULT_AI_RL)`. Daily-life's `app/routers/ai.py` already consumes this for both `extract-tasks` and the weekly-review endpoint. Never inline `"30/minute"` — names encode INTENT, not the literal value.
+- **AI/LLM endpoints use canonical rate-limit policy** — `from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL` ∧ `@limiter.limit(DEFAULT_AI_RL)`. `app/routers/ai.py` already consumes this for `extract-tasks` ∧ weekly-review endpoints. ¬ inline `"30/minute"` — names encode INTENT, not the literal value.
 
 ## Methodology updates (2026-05-11)
 
-These platform-wide changes affect this product directly; consult before editing.
+Platform-wide changes affecting this product; consult before editing.
 
-1. **Codification pipeline** (`KB § PATTERNS/methodology-codification-pipeline.md`) — the 4-stage path from conversation rule → memory entry → KB pattern + CLAUDE.md pointer → keeper `check_*` detector with colocated test. When a daily-life-specific pattern recurs ≥3 times, route it deliberately through the stages instead of letting it stall at memory.
-2. **Doc-code coherence rule** (CLAUDE.md §1) — updating a tool means updating its docs in the SAME commit. If you change a script / MCP tool / keeper detector that this MASTER-PROMPT references, update this file in the same change.
+1. **Codification pipeline** (`KB § PATTERNS/methodology-codification-pipeline.md`) — s1 emerges → s2 memory → s3 KB+CLAUDE.md → s4 `check_*` keeper detector. Daily-life pattern recurs at N≥3 ⇒ route through stages; ¬ stall at memory.
+2. **Doc-code coherence rule** (CLAUDE.md §1) — tool Δ ⇒ doc Δ SAME commit. Script ∨ MCP tool ∨ keeper detector Δ referenced here ⇒ update this file in same change.
 3. **10 new keeper detectors today** — run `noctus.dev.validate` after touching this product to see which fire. Live discovery: `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`. Names (warning severity unless noted):
-   - Stage 4 batch (`e6893e9`): `check_no_silent_ok_comment`, `check_auth_dep_anti_pattern`, `check_mcp_path_via_settings`, `check_mcp_write_tool_worktree_arg`, `check_pipefail_grep_q`, `check_doc_tool_reference_drift`.
+   - s4 batch (`e6893e9`): `check_no_silent_ok_comment`, `check_auth_dep_anti_pattern`, `check_mcp_path_via_settings`, `check_mcp_write_tool_worktree_arg`, `check_pipefail_grep_q`, `check_doc_tool_reference_drift`.
    - Hygiene-compliance (`8b1fcc0`): `check_archive_staleness`, `check_dispatcher_staleness`, `check_branch_orphan`, `check_gitignore_drift`.
-4. **Seed mock predicate fix (`45be944` + `f3aabfd`)** — `MockSelectBuilder.execute()` now applies accumulated `.eq` / `.in_` / `.is_` / `.gt` / `.neq` predicates on SELECT (previously SELECT returned every seeded row, tests passed by accident). `_eval_is` handles PostgREST IS-NULL; `_FilterMixin.not_` supports negation. **Daily-life test fixtures must seed `org_id`, `user_id`, and any other filter columns the route applies** — phantom passes are no longer possible.
-5. **TeamFlowSuite `expected_org_id` (commit `f2b0336`)** — daily-life adopted the suite. `tests/integration/test_e2e_flows.py::TestTeamFlow(TeamFlowSuite)` inherits with `expected_org_id = "test-org-123"` explicitly set to document the conftest binding. The previous 17-line `TestTeamFrameworkEndpoints` duplicate (latently failing in baseline because members were seeded without `org_id`) was deleted. Use the suite — do NOT re-introduce the duplicate.
-6. **Canonical rate-limit policies (`9fc6ee2`)** — daily-life's `app/routers/ai.py` now consumes `DEFAULT_AI_RL` from `noctusai_lib.api.rate_limit_policies`. Future AI endpoints in this product import the same constant. Per-product tuning would lift to a one-line seed change.
-7. **Bootstrap auto-hydrate (`2a1ad89`)** — `scripts/bootstrap-worktree.sh` Step `[4/4]` (and `scripts/setup.sh` Step 4/6) now auto-enumerates every `products/*/backend/requirements.txt` and pip-installs into the shared venv. Adding a new dep to `products/daily-life/backend/requirements.txt` is sufficient — fresh worktrees pick it up at hydrate time. No more manual `pip install` round-trips.
+4. **Seed mock predicate fix (`45be944` + `f3aabfd`)** — `MockSelectBuilder.execute()` now applies accumulated `.eq` / `.in_` / `.is_` / `.gt` / `.neq` predicates on SELECT (previously SELECT returned every seeded row; tests passed by accident). `_eval_is` handles PostgREST IS-NULL; `_FilterMixin.not_` supports negation. **Daily-life test fixtures MUST seed `org_id`, `user_id`, ∧ any other filter columns the route applies** — phantom passes no longer possible.
+5. **TeamFlowSuite `expected_org_id` (commit `f2b0336`)** — daily-life adopted the suite. `tests/integration/test_e2e_flows.py::TestTeamFlow(TeamFlowSuite)` inherits with `expected_org_id = "test-org-123"` explicitly set to document the conftest binding. Previous 17-line `TestTeamFrameworkEndpoints` duplicate (latently failing because members were seeded without `org_id`) deleted. Use the suite — ¬ re-introduce the duplicate.
+6. **Canonical rate-limit policies (`9fc6ee2`)** — `app/routers/ai.py` consumes `DEFAULT_AI_RL` from `noctusai_lib.api.rate_limit_policies`. Future AI endpoints inherit the same constant. Per-product tuning lifts to one-line seed change.
+7. **Bootstrap auto-hydrate (`2a1ad89`)** — `scripts/bootstrap-worktree.sh` Step `[4/4]` (∧ `scripts/setup.sh` Step 4/6) auto-enumerates every `products/*/backend/requirements.txt` ∧ pip-installs into the shared venv. Adding a new dep to `products/daily-life/backend/requirements.txt` suffices — fresh worktrees pick it up at hydrate time. No manual `pip install` round-trips.
 
 ## Pages and Status
 

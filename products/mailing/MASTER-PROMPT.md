@@ -116,16 +116,16 @@ Per-page UI integration for M1/M2/M5/M6/M7 (buttons in campaign / template edito
 
 ## Methodology evolution (2026-05-11 refresh)
 
-This section snapshots platform-wide methodology pieces that landed today and how they apply to mailing. Open the cited KB depth on demand — do not pre-load.
+Snapshot of platform-wide methodology pieces that landed today ∧ how they apply to mailing. Open cited KB depth on demand — ¬ pre-load.
 
-### 1. Codification pipeline — Stage 4 is where rules become enforceable
-Conversation rules graduate through 4 stages: **emerges → memory entry → KB pattern doc + CLAUDE.md pointer → `check_*` keeper detector with colocated regression test**. The keeper is the **codification layer** of the methodology (not a regulatory silo). Mailing-relevant criteria: deterministic predicate + recurrence ≥3 + clear remediation. When a slip surfaces inside mailing (services / routers / hooks), the right move is to route it through this pipeline rather than fix-and-forget. → `KB § PATTERNS/methodology-codification-pipeline.md`
+### 1. Codification pipeline — s4 is where rules become enforceable
+**s1 emerges → s2 memory → s3 KB+CLAUDE.md → s4 `check_*` keeper detector with colocated test.** Keeper ≡ **codification layer** of methodology (¬ regulatory silo). Criteria: deterministic predicate ∧ N≥3 ∧ remediation defined. Slip surfaces inside mailing (services / routers / hooks) ⇒ route through this pipeline ¬ fix-and-forget. → `KB § PATTERNS/methodology-codification-pipeline.md`
 
 ### 2. Doc-code coherence — extension of three-way sync
-When mailing tooling, scripts, or referenced MCP detectors change behavior (new flag, renamed mode, different severity), every doc that references them updates in the **same commit** — including this MASTER-PROMPT.md if it names the surface. "I'll update the doc later" is forbidden. Discovery: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/mailing/MASTER-PROMPT.md`. Codification candidates: `check_doc_tool_reference_drift` (Stage 4 today, broader `check_mcp_tool_argument_drift` pending). → `KB § PATTERNS/methodology-codification-pipeline.md § 8`
+Tool Δ ⇒ doc Δ **same commit** — including this MASTER-PROMPT.md if it names the surface. "I'll update the doc later" ¬ allowed. Discovery: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/mailing/MASTER-PROMPT.md`. Codification candidates: `check_doc_tool_reference_drift` (s4 today; broader `check_mcp_tool_argument_drift` pending). → `KB § PATTERNS/methodology-codification-pipeline.md § 8`
 
 ### 3. Keeper detector population — what fires across mailing today
-The keeper module at `mcp/noctusai/tools/noctus/dev/compliance.py` exports 32 `check_*` detectors (live count via `noctus.dev.outline_python compliance.py`). The 12 most recently codified — and the ones most likely to fire on routine mailing edits — are:
+The keeper module at `mcp/noctusai/tools/noctus/dev/compliance.py` exports 32 `check_*` detectors (live count via `noctus.dev.outline_python compliance.py`). The 12 most recently codified — ∧ the ones most likely to fire on routine mailing edits — are:
 
 | Detector | What it catches in mailing context |
 |---|---|
@@ -142,19 +142,19 @@ The keeper module at `mcp/noctusai/tools/noctus/dev/compliance.py` exports 32 `c
 | `check_detector_has_regression_test` | meta-detector — every new keeper rule ships with `Test<CamelCase>` colocated |
 | `check_doc_tool_reference_drift` | KB doc references to `bash scripts/<name>.sh <mode>` that don't resolve |
 
-Run `noctus.dev.validate_product products/mailing` to fire the full battery against mailing. Triage results with formalize / refactor / accept-with-rationale.
+Run `noctus.dev.validate_product products/mailing` to fire the full battery against mailing. Triage results with [F] / [R] / [A].
 
 ### 4. Seed mock predicate fix — MockSupabaseClient now deep-copies inputs
-`MockRequestBuilder.__init__` deep-copies `_data` at storage time so write-propagation (UPDATE / DELETE) on mailing tests no longer mutates module-level fixture dicts. Net effect for mailing test suites: fixture-pollution bugs disappear; if a mailing test was previously green by accident due to shared mutable state, the fix may surface a latent assertion. Diagnostic recipe when triaging: 2-second `pytest <single-test>` classifies pollution vs genuine bug.
+`MockRequestBuilder.__init__` deep-copies `_data` at storage time so write-propagation (UPDATE ∨ DELETE) on mailing tests no longer mutates module-level fixture dicts. Net effect for mailing test suites: fixture-pollution bugs disappear; if a mailing test was previously green by accident due to shared mutable state, the fix may surface a latent assertion. Diagnostic recipe when triaging: 2-second `pytest <single-test>` classifies pollution vs genuine bug.
 
 ### 5. Canonical rate-limit policies — `DEFAULT_AI_RL` is mailing's source of truth
-`products/mailing/backend/app/routers/ai.py` now imports `DEFAULT_AI_RL` from `noctusai_lib.api.rate_limit_policies` and decorates 7 of 8 endpoints with `@limiter.limit(DEFAULT_AI_RL)`. The single intentional deviation (`@limiter.limit("10/minute")` at line 128) is a **carve-out**: surface it in the next robustness pass (formalize as `DEFAULT_AI_RL_TIGHT` policy, or document at `KB § PATTERNS/accept-with-rationale.md`). New mailing AI endpoints MUST default to `DEFAULT_AI_RL`; bespoke literals are a triage trigger.
+`products/mailing/backend/app/routers/ai.py` imports `DEFAULT_AI_RL` from `noctusai_lib.api.rate_limit_policies` ∧ decorates 7 of 8 endpoints with `@limiter.limit(DEFAULT_AI_RL)`. The single intentional deviation (`@limiter.limit("10/minute")` at line 128) is a **carve-out**: surface it in the next robustness pass (formalize as `DEFAULT_AI_RL_TIGHT` policy, ∨ document at `KB § PATTERNS/accept-with-rationale.md`). New mailing AI endpoints MUST default to `DEFAULT_AI_RL`; bespoke literals are a triage trigger.
 
 ### 6. Bootstrap auto-hydrate
-Fresh worktrees hydrate via `scripts/bootstrap-worktree.sh` — pre-hydrate sweep removes stale `.claude/worktrees/agent-*/` (any whose branch is merged to `origin/main`). Mailing engineer briefs do not need a separate hydration step; the orchestrator's dispatch flow handles it.
+Fresh worktrees hydrate via `scripts/bootstrap-worktree.sh` — pre-hydrate sweep removes stale `.claude/worktrees/agent-*/` (any whose branch is merged to `origin/main`). Mailing engineer briefs ¬ need a separate hydration step; orchestrator's dispatch flow handles it.
 
 ### 7. Chatbot operational readiness — mailing is an N=2 inheritor candidate
-Mailing is **explicitly named** as an N=2 inheritor candidate in `KB § PATTERNS/chatbot-operational-readiness.md` (alongside therapy / PF). First adopter is `imobi-scheduling`. The pattern is a 6-piece production-hardening checklist for chatbot products with external writes:
+Mailing **explicitly named** as N=2 inheritor candidate in `KB § PATTERNS/chatbot-operational-readiness.md` (alongside therapy ∨ PF). First adopter ≡ `imobi-scheduling`. Pattern = 6-piece production-hardening checklist for chatbot products with external writes:
 
 1. **Retries** on transient external writes via `retry_call` composing seed `RetryPolicy` (lift to seed at N=2 — mailing's outbound triggers it)
 2. **Structured logs** auto-wired by `create_product_app`
@@ -163,7 +163,7 @@ Mailing is **explicitly named** as an N=2 inheritor candidate in `KB § PATTERNS
 5. **Supabase managed backups** documented
 6. **Metrics sink** seam wired at call sites; default `NoopCounter` (lift to platform-metrics project at N=2)
 
-When mailing's send engine / webhook receiver / Resend Batch dispatcher acquires retry+metrics requirements, **do not rebuild from scratch** — inherit verbatim from imobi-scheduling's shape and trigger the seed-side lifts for retry (§2) + metrics (§6). The send engine's `app/services/send_service.py` Resend Batch API call is the most natural retry seam; `webhook_service.py` is the metrics-sink seam. → `KB § PATTERNS/chatbot-operational-readiness.md § 9 First adopter`
+Mailing's send engine ∨ webhook receiver ∨ Resend Batch dispatcher acquires retry+metrics requirements ⇒ ¬ rebuild from scratch — inherit verbatim from imobi-scheduling's shape ∧ trigger the seed-side lifts for retry (§2) + metrics (§6). Send engine's `app/services/send_service.py` Resend Batch API call is the most natural retry seam; `webhook_service.py` is the metrics-sink seam. → `KB § PATTERNS/chatbot-operational-readiness.md § 9 First adopter`
 
 ## Testing
 
