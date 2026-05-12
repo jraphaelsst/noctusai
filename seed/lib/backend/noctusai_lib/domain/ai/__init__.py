@@ -52,6 +52,14 @@ from .consent import (
     upsert_decision,
 )
 from .outputs import AIOutput, persist_output, fetch_outputs_for, safe_persist_indicator
+from .tool_audit import (
+    AuditRecord,
+    AuditStatus,
+    AuditWriter,
+    apply_feature_redaction,
+    make_audit_writer,
+    now_utc,
+)
 
 __all__ = [
     # P1 indicator pattern (Phase 3)
@@ -79,4 +87,11 @@ __all__ = [
     "configure_consent_module",
     "is_consent_module_configured",
     "reset_consent_module_for_test",
+    # LLM tool-call audit (llm-tool-audit-rollout, 2026-05-11)
+    "AuditRecord",
+    "AuditStatus",
+    "AuditWriter",
+    "apply_feature_redaction",
+    "make_audit_writer",
+    "now_utc",
 ]

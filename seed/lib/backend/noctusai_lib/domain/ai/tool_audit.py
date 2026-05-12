@@ -193,10 +193,63 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def apply_feature_redaction(
+    record: AuditRecord,
+    *,
+    redact_arguments: Optional[Callable[[Any], Any]] = None,
+    redact_result: Optional[Callable[[Any], Any]] = None,
+) -> AuditRecord:
+    """Return a new `AuditRecord` with arguments/result run through
+    the feature's redactor callables.
+
+    Defensive: if a redactor raises, log + fall back to dropping the value
+    rather than persist unredacted PII (LGPD-safe failure mode). The
+    record is *replaced* not mutated — callers can keep the raw record
+    for non-audit observability (e.g. logging at debug level).
+    """
+    new_args = record.arguments
+    new_result = record.result
+    if redact_arguments is not None:
+        try:
+            new_args = redact_arguments(record.arguments)
+        except Exception as exc:
+            logger.warning(
+                "tool_audit: redact_arguments raised for tool=%s; dropping value: %s",
+                record.tool_name,
+                exc,
+            )
+            new_args = None
+    if redact_result is not None:
+        try:
+            new_result = redact_result(record.result)
+        except Exception as exc:
+            logger.warning(
+                "tool_audit: redact_result raised for tool=%s; dropping value: %s",
+                record.tool_name,
+                exc,
+            )
+            new_result = None
+    return AuditRecord(
+        tool_name=record.tool_name,
+        status=record.status,
+        duration_ms=record.duration_ms,
+        started_at=record.started_at,
+        arguments=new_args,
+        result=new_result,
+        error=record.error,
+        correlation_id=record.correlation_id,
+        gpt_call_id=record.gpt_call_id,
+        tool_call_id=record.tool_call_id,
+        conversation_id=record.conversation_id,
+        user_id=record.user_id,
+    )
+
+
 __all__ = [
     "AuditRecord",
     "AuditStatus",
     "AuditWriter",
+    "apply_feature_redaction",
     "make_audit_writer",
     "now_utc",
 ]

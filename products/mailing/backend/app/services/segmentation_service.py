@@ -21,11 +21,64 @@ texts are sent but not cached at the LLM-key level.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Optional
 
+from noctusai_lib.domain.ai import get_feature
+from noctusai_lib.domain.ai.tool_audit import (
+    AuditRecord,
+    apply_feature_redaction,
+    now_utc,
+)
 from noctusai_lib.integrations.llm import chat_completion, generate_embedding
 
+from app.services.audit_hook import get_audit_writer
+
 logger = logging.getLogger(__name__)
+
+
+def _record_audit(
+    feature_key: str,
+    tool_name: str,
+    *,
+    arguments: Any,
+    result: Any,
+    status: str,
+    duration_ms: int,
+    error: Optional[str] = None,
+    org_id: Optional[str] = None,
+) -> None:
+    """Best-effort: build AuditRecord, apply feature redactors, write via
+    the lazy audit hook. Never raises. See `app/services/ai_service.py`
+    for the canonical shape (mailing keeps two thin copies — one per
+    LLM-dispatching service module — rather than introducing a cross-
+    service helper module for two consumers)."""
+    try:
+        record = AuditRecord(
+            tool_name=tool_name,
+            status=status,
+            duration_ms=duration_ms,
+            started_at=now_utc(),
+            arguments=arguments,
+            result=result,
+            error=error,
+            conversation_id=org_id,
+        )
+        feature = get_feature(feature_key)
+        if feature is not None:
+            record = apply_feature_redaction(
+                record,
+                redact_arguments=feature.redact_arguments,
+                redact_result=feature.redact_result,
+            )
+        writer = get_audit_writer()
+        writer(record)
+    except Exception:
+        logger.exception(
+            "mailing.segmentation: audit write failed for feature=%s tool=%s",
+            feature_key,
+            tool_name,
+        )
 
 MODEL = "gpt-4o-mini"
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -201,8 +254,29 @@ async def segment_contacts(
     A `metadata.cluster` field carries the integer cluster index so the UI
     can colour/group identically-segmented contacts even before LLM naming
     completes.
+
+    **Audit (llm-tool-audit-rollout Phase 3).** One audit row lands per
+    invocation, mirroring the M3 feature consent key
+    `mailing.segment_contacts`. Contact data is aggregated to counts by
+    `_summarize_contacts_arg` (LGPD — see `ai_consent_features.py`).
     """
+    started = time.perf_counter()
+    arguments: dict[str, Any] = {
+        "contacts": contacts,
+        "threshold": threshold,
+        "max_segments": max_segments,
+        "org_id": org_id,
+    }
     if not contacts:
+        _record_audit(
+            "mailing.segment_contacts",
+            "segment_contacts",
+            arguments=arguments,
+            result=[],
+            status="success",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            org_id=org_id,
+        )
         return []
 
     # 1. Embedding texts.
@@ -214,13 +288,24 @@ async def segment_contacts(
         for t in texts:
             emb = await generate_embedding(t, model=EMBEDDING_MODEL, org_id=org_id)
             embeddings.append(emb)
-    except Exception:
+    except Exception as exc:
         logger.warning("mailing.segment_contacts: embedding step unavailable")
         empty = _empty_output()
-        return [
+        fallback_out = [
             {**empty, "_contact_id": c["id"], "metadata": {"cluster": -1}}
             for c in contacts
         ]
+        _record_audit(
+            "mailing.segment_contacts",
+            "segment_contacts",
+            arguments=arguments,
+            result=fallback_out,
+            status="failure",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            error=f"embedding unavailable: {exc!s}",
+            org_id=org_id,
+        )
+        return fallback_out
 
     # 3. Cluster.
     assignments = _greedy_cluster(
@@ -257,4 +342,13 @@ async def segment_contacts(
             "prompt_version": PROMPT_VERSION_SEGMENT,
             "metadata": {"cluster": cluster_idx},
         })
+    _record_audit(
+        "mailing.segment_contacts",
+        "segment_contacts",
+        arguments=arguments,
+        result=out,
+        status="success",
+        duration_ms=int((time.perf_counter() - started) * 1000),
+        org_id=org_id,
+    )
     return out

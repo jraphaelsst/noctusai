@@ -32,25 +32,25 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
 | Core | 28 | 12 | 26 | 0 | 45 | 485 |
-| ERP | 59 | 52 | 67 | 66 | 113 | 1,666 |
-| PF | 15 | 17 | 30 | 16 | 46 | 467 |
+| ERP | 59 | 52 | 67 | 66 | 113 | 1,673 |
+| PF | 15 | 18 | 30 | 16 | 48 | 482 |
 | Therapy | 40 | 45 | 65 | 33 | 81 | 1,120 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 6 | 7 | 11 | 7 | 15 | 201 |
-| Mailing | 10 | 10 | 21 | 9 | 17 | 194 |
+| Mailing | 10 | 11 | 21 | 9 | 19 | 202 |
 | AdConnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Media Scheduling | 5 | 8 | 10 | 3 | 17 | 86 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 13 | 8 | 1 | 22 | 273 |
-| **Total** | **177** | **177** | **275** | **141** | **392** | **4,783** |
+| **Total** | **177** | **179** | **275** | **141** | **396** | **4,813** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (12):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed` + `adconnect` + `dev_team` + `media_scheduling` + `youtube_crawler` + `imobi_scheduling`.
-- **Tables: 311** distributed across the schemas.
+- **Tables: 313** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.
