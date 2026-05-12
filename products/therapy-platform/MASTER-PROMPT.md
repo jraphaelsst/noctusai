@@ -197,6 +197,116 @@ cd products/therapy-platform/backend && pytest
 
 **1336 passed, 14 skipped** at `therapy-platform-wiring` close (2026-05-11). 64 test files across routers + services. Status-code-assertion rule enforced (every body-asserting test pins `.status_code` first).
 
+### Test-suite hardening — 2026-05-11
+
+Two engineer commits closed the OOS therapy test failures surfaced by the seed mock predicate refresh:
+
+- **Engineer T (`ef01f57`)** — `test(therapy): close 10 OOS tenancy/predicate gaps surfaced by LATENT-FIX-THERAPY-2`. Four distinct sub-causes:
+  1. Tenancy-seed gap (clinic_id rows missing from fixture state).
+  2. `is_("null")` literal-string predicate gap (the gap Q's seed mock fix closed structurally).
+  3. `BackgroundTask` core_db resolution path (background side-effect didn't resolve the right client in test).
+  4. Tests asserting against the OLD seed-mock predicate bug instead of correct PostgREST IS-NULL semantics.
+- **Engineer Y (`f5d386e`)** — `chore(therapy/tests): Phase 3 — replace "null" literal-string shims with None now that seed mock _eval_is handles IS-NULL`. Swept 6 `"null"` literal-string shims to `None` after Q's seed mock fix (`f3aabfd`, see *Methodology — 2026-05-11* below) made the workaround obsolete.
+
+Net effect: the shim disappears, callers pass `None` (real PostgREST contract), and the seed mock's `_eval_is` honours `IS NULL` natively. **Don't reintroduce the `"null"` literal shim** — it now silently misroutes (returns rows that should be excluded).
+
+## Methodology — 2026-05-11
+
+This section captures live-methodology pieces that landed today and bear on how you work in this product.
+
+### 1. Codification pipeline (Stage 1→4)
+
+A new pattern doc — `KB § PATTERNS/methodology-codification-pipeline.md` — names the 4-stage path that turns a conversation rule into a deterministic keeper detector:
+
+1. **Stage 1 — emerges** in conversation.
+2. **Stage 2 — memory entry** (durable across sessions).
+3. **Stage 3 — KB pattern doc + CLAUDE.md (or topical) pointer** (three-way sync).
+4. **Stage 4 — `check_*` keeper detector with colocated regression test** (deterministic enforcement).
+
+The keeper is framed as the **codification layer** of the methodology — not a regulatory silo. Codification criteria: deterministic predicate + recurrence ≥3 + clear remediation. Rules that legitimately stay at Stage 3 (judgment-dependent / context-dependent / methodology-in-pilot / aesthetic) are explicitly documented. When a new rule emerges while you're inside therapy, route it deliberately through the stages — *don't let it stall at memory*.
+
+### 2. Doc-code coherence (NEW universal rule)
+
+Three-way-sync (KB ↔ CLAUDE.md ↔ memory) is now extended one layer: **tool-code ↔ doc-prose stays coherent in the SAME commit.** When a coding tool's behavior changes (new flag / new mode / renamed detector / different severity), every doc that references it MUST update with the code:
+
+- KB pattern docs
+- Situation→Tool maps (most-stale-prone surface)
+- CLAUDE.md routing pointers describing behavior
+- INDEX.md scope descriptions
+- Inline `--help` text
+- README / MASTER-PROMPT references in product folders (**including this file**)
+
+Discovery recipe: `grep -rn "<tool-name>" KNOWLEDGE-BASE/ CLAUDE.md CLAUDE/ projects/ products/*/README.md`. The pre-commit hook does not yet enforce this — agent-discipline at Stage 3, with candidates `check_doc_tool_reference_drift` (already Stage 4) + `check_mcp_tool_argument_drift` (tracked).
+
+**Therapy implication:** when you change a therapy script's `--help`, a hook's behavior, or any tool the MASTER-PROMPT here cites, update the prose in this file in the same commit.
+
+### 3. Keeper detectors — 10 new checks (live registry)
+
+Generated 2026-05-11 via `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py`. These are the recently-added detectors most relevant when working in therapy:
+
+| Detector | What it catches |
+|----------|-----------------|
+| `check_test_status_assertion` | Body-asserting tests (`.text` / `.json()` / `.content`) without a `.status_code` pin in the same method — defends against the false-green slip. |
+| `check_unknown_table_references` | `<X>.table("name")` callsites where `name` is not declared by any `CREATE TABLE` in product migrations. |
+| `check_function_search_path_pinned` | `CREATE FUNCTION` blocks in product migrations missing pinned `search_path` (Postgres security hygiene). |
+| `check_admin_endpoint_service_role_bypass` | Admin-client `.table("T")` callsites where T lacks a `service_role_bypass` RLS policy. |
+| `check_slowapi_with_pep563` | Files combining `@limiter.limit` (slowapi) with `from __future__ import annotations` — the runtime-resolution footgun. |
+| `check_no_silent_ok_comment` | The literal `# silent-ok` annotation in production code (escape hatch retired platform-wide). |
+| `check_auth_dep_anti_pattern` | `Depends(ProductDependencies.get_org_id/get_user_role/get_user_client)` — the positional-args → 422 query-param trap. **Therapy carve-out:** therapy uses `require_role()` (factory-bound), not `get_current_user_org` — this detector flags the cross-platform anti-shape; therapy's `make_require_role` is the correct surface here. |
+| `check_mcp_path_via_settings` | `Path(__file__).parents[N]` in MCP tool modules — must import `REPO_ROOT, PRODUCTS_DIR` from `settings` instead. |
+| `check_mcp_write_tool_worktree_arg` | MCP write tools (`create_*`, `update_*`, `delete_*`, `set_*`, …) missing the explicit `worktree_path` parameter. |
+| `check_doc_tool_reference_drift` | KB doc references to `bash scripts/<name>.sh <mode>` where the referenced mode no longer exists in the script (the codification of the doc-code coherence rule). |
+
+Adjacent detectors active in therapy: `check_archive_staleness`, `check_dispatcher_staleness`, `check_branch_orphan`, `check_gitignore_drift`, `check_pipefail_grep_q`, `check_section_7_placeholder_consistency`, `check_detector_has_regression_test`.
+
+Run `noctus.dev.validate_product slug=therapy-platform` to surface any therapy-side hits.
+
+### 4. Seed mock predicate fix — Q's commit `f3aabfd`
+
+`fix(seed/mocks): _eval_is PostgREST IS-NULL + _FilterMixin.not_ negation (Option A soft compat)` landed today at the seed layer. Two predicate gaps closed:
+
+- **`_eval_is`** — the seed `MockSupabaseClient` now correctly evaluates PostgREST `.is_("col", None)` as `IS NULL` (previously misrouted, requiring `"null"` literal-string shims in tests).
+- **`_FilterMixin.not_`** — negation chain (`.not_.is_(...)`) now flips correctly.
+
+**Downstream impact in therapy:**
+- Engineer Y's Phase 3 sweep (commit `f5d386e`) removed all 6 `"null"` literal-string shims from therapy tests.
+- Engineer T's Phase 2 (commit `ef01f57`) tests that asserted against the OLD bug were rewritten to assert against correct PostgREST contract.
+
+**Anti-pattern alert:** never reintroduce `is_("col", "null")` — pass `None`. The seed mock now matches the real PostgREST behavior; the workaround silently breaks results.
+
+### 5. Canonical rate-limit policies — `DEFAULT_AUTH_RL` (therapy adopted)
+
+The seed layer ships canonical policies in `noctusai_lib.api.rate_limit_policies`. **Therapy's `app/routers/auth.py` now imports + uses `DEFAULT_AUTH_RL`** at three endpoints (lines 82 / 95 / 119):
+
+```python
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
+
+@router.post("/login")
+@limiter.limit(DEFAULT_AUTH_RL)  # canonical seed policy
+async def login(...): ...
+```
+
+**Convention:** *never* hand-author per-product rate-limit strings on auth endpoints. Adopt the canonical seed policy. New auth-shape endpoints in therapy must pull from `noctusai_lib.api.rate_limit_policies`; deviation triages as formalize / refactor / accept-with-rationale per the recurrence rule.
+
+### 6. Bootstrap auto-hydrate
+
+`scripts/bootstrap-worktree.sh` and `scripts/bootstrap-seed-workspace.sh` now auto-hydrate the sibling workspace surface: stale-worktree cleanup runs **before** hydration; ensures the 8 noc surfaces (CLAUDE.md, CLAUDE/, KNOWLEDGE-BASE/, .claude/, mcp/, seed/, noctusai_lib/, templates/) symlink in cleanly without manual steps.
+
+**Therapy implication:** if you spin up an isolated test workspace to debug a therapy issue, the bootstrap script handles the noc surface inheritance — *don't trim*. Per-product focus belongs here in MASTER-PROMPT.md, not in pruning the inherited surface.
+
+## Chatbot operational-readiness — N=2 inheritor candidate
+
+The therapy chatbot (`whatsapp_therapy` router + `chatbot_*` services) is an **N=2 inheritor candidate** for `KB § PATTERNS/chatbot-operational-readiness.md` — the production-hardening checklist first adopted by `imobi-scheduling`. The pattern bundles:
+
+- Retries on transient external writes via `retry_call` composing seed `RetryPolicy`.
+- Structured logs auto-wired by `create_product_app`.
+- Health endpoint via `standard_routers=["health"]` (therapy already opted-in).
+- `DEPLOYMENT.md` shape (per-product ops runbook).
+- Supabase managed backups.
+- Metrics-sink seam with `NoopCounter` default.
+
+**When you next touch the therapy chatbot wiring, evaluate the checklist + file `therapy-chatbot-operational-readiness` follow-up** (or accept-with-rationale individual items). N=2 → triage time per the recurrence rule.
+
 ## Known Follow-ups (filed during wiring)
 
 8 follow-up projects + 3 accept-with-rationale entries surfaced during `therapy-platform-wiring` close:
