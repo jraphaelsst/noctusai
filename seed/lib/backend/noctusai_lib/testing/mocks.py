@@ -347,7 +347,41 @@ def _eval_lte(row: dict, col: str, value: Any) -> bool:
 
 
 def _eval_is(row: dict, col: str, value: Any) -> bool:
-    return row.get(col) is value
+    """PostgREST `IS` semantics with a soft compat layer.
+
+    Real PostgREST `.is_("col", "null")` evaluates to `WHERE col IS NULL`.
+    `.is_("col", "true")` / `.is_("col", "false")` evaluate to identity checks
+    against SQL TRUE/FALSE. The wire-format string sentinels (`"null"` /
+    `"true"` / `"false"`) are how the SDK encodes the IS-NULL / IS-TRUE / IS-
+    FALSE operands.
+
+    The old behavior — Python's `is` identity check — happened to work for
+    `.is_(col, None)` because `None is None`, but completely failed for the
+    canonical PostgREST `.is_(col, "null")` shape that production code uses.
+
+    **Soft compat layer (THE-MOCK-SHIM-CLEANUP transitional).** Until therapy
+    tests get swept to use `"deleted_at": None` (their natural shape), seeds
+    of `"deleted_at": "null"` (Engineer T's shim against the old broken
+    `_eval_is`) must continue passing. We OR PostgREST-correct semantics with
+    a literal-string fallback so both shim-seeded and natural-None rows
+    match. Phase 3 of `seed-mock-predicate-completeness` removes the shim;
+    until then both shapes are accepted.
+
+    Non-sentinel values (other strings, numbers, etc.) fall through to
+    literal equality — matches PostgREST's behavior of routing those to a
+    plain `=` comparison and matches the old `is`-identity behavior for the
+    `value is None` case (`None == None` → True; mismatched dates → False).
+    """
+    cell = row.get(col)
+    if value == "null":
+        # PostgREST IS-NULL + Engineer T shim compat.
+        return cell is None or cell == "null"
+    if value == "true":
+        return cell is True or cell == "true"
+    if value == "false":
+        return cell is False or cell == "false"
+    # Non-sentinel: literal equality. Preserves `.is_(col, None)` (None==None).
+    return cell == value
 
 
 def _eval_like(row: dict, col: str, value: Any) -> bool:
@@ -446,14 +480,41 @@ _PREDICATE_EVALUATORS = {
 
 
 def _row_matches_predicates(
-    row: dict, predicates: list[tuple[str, str, Any]]
+    row: dict, predicates: list[tuple]
 ) -> bool:
     """Evaluate every predicate against `row`; AND-conjoin. Empty list
     returns True (match-all, matches PostgREST).
+
+    Predicate tuple shape is either:
+      - 3-tuple `(op, col, value)` — un-negated; legacy shape, still accepted.
+      - 4-tuple `(op, col, value, negated)` — `negated=True` inverts the
+        evaluator's result for that predicate (`.not_.eq(...)` etc.).
+
+    **`.not_` negation semantics on un-evaluated ops.** Unsupported ops
+    (or_/fts/text_search/filter/overlaps/contained_by) accumulate as match-
+    all (no literal evaluator). With `negated=True` they'd flip to match-
+    nothing — but since they're already a no-op semantically, we honor the
+    flag literally: `not_.or_(...)` filters out every row. Tests that opt
+    in via log capture still see the debug log fire. This matches Python's
+    natural negation (`not match-all` == match-none), which is the
+    documented stance per Phase 1 risk mitigation.
+
+    **`.not_.in_(col, [...])` PostgREST nuance.** Real PostgREST `.not_.in_`
+    returns rows whose col NOT IN the list AND ALSO excludes rows where
+    col IS NULL. The mock uses Python's natural negation (`not (cell in
+    list)`) which DOES include rows with `cell=None` (None is not in the
+    list). Documented in `_eval_in` + this docstring; if a product needs
+    PostgREST-exact semantics, file a follow-up. Same call-site stance as
+    Engineer T's other PostgREST-vs-Python negotiation cases.
     """
     if not predicates:
         return True
-    for op, col, value in predicates:
+    for pred in predicates:
+        if len(pred) == 4:
+            op, col, value, negated = pred
+        else:
+            op, col, value = pred
+            negated = False
         evaluator = _PREDICATE_EVALUATORS.get(op)
         if evaluator is None:
             # Unsupported op — match-all fallback. Logged at debug so tests
@@ -465,8 +526,14 @@ def _row_matches_predicates(
                 col,
                 predicates,
             )
+            if negated:
+                # `not match-all` == match-none — honor the flag literally.
+                return False
             continue
-        if not evaluator(row, col, value):
+        result = evaluator(row, col, value)
+        if negated:
+            result = not result
+        if not result:
             return False
     return True
 
@@ -536,6 +603,11 @@ class _FilterMixin:
     _schema: Optional[str] = None
     _table: Optional[str] = None
     _predicates: list  # populated by __init__ on concrete builders
+    # `_next_negate` is the consumed-on-next-call flag set by `.not_`. The
+    # flag lives on the mixin (default False) so concrete builders that
+    # don't set it explicitly still answer falsey. Reset after every
+    # `_record` so chained `.not_.eq(...).eq(...)` only negates the first.
+    _next_negate: bool = False
 
     def _check_col(self, col: str, op: str) -> None:
         if self._validate_schema:
@@ -544,10 +616,18 @@ class _FilterMixin:
                 strict_unknown_tables=self._strict_unknown_tables,
             )
 
+    def _consume_negate(self) -> bool:
+        """Return + reset the `_next_negate` flag set by `.not_`."""
+        negated = bool(getattr(self, "_next_negate", False))
+        self._next_negate = False
+        return negated
+
     def _record(self, op: str, col: str, value: Any) -> None:
-        """Append (op, col, value) to the predicate list. Filter methods
-        accept extra positional / keyword args (postgrest SDK compat) but
-        only the first value is used for predicate evaluation.
+        """Append `(op, col, value, negated)` to the predicate list. The
+        `negated` flag is consumed from `_next_negate` (set by `.not_`) and
+        reset for the next call. Filter methods accept extra positional /
+        keyword args (postgrest SDK compat) but only the first value is
+        used for predicate evaluation.
         """
         # `_predicates` is set on every concrete builder __init__; the
         # `getattr` guard tolerates a future builder that forgets to wire it.
@@ -555,7 +635,7 @@ class _FilterMixin:
         if preds is None:
             preds = []
             self._predicates = preds
-        preds.append((op, col, value))
+        preds.append((op, col, value, self._consume_negate()))
 
     def eq(self, col, value=None, *a, **k):
         self._check_col(col, "eq")
@@ -649,9 +729,20 @@ class _FilterMixin:
                 )
         # `match({col: val, ...})` is logically AND of `eq` per key. Record
         # each pair as a literal `eq` predicate so UPDATE/DELETE filter
-        # correctly.
+        # correctly. Negation note: real PostgREST `.not_.match({a:1, b:2})`
+        # is `NOT (a=1 AND b=2)`. The decomposition can't preserve that
+        # exactly without an OR-aware predicate evaluator. We instead apply
+        # the negate flag to EACH decomposed eq — yielding `(a!=1 AND b!=2)`,
+        # which is stricter than PostgREST's `NOT (a=1 AND b=2)`. Documented
+        # divergence; if a product needs the exact PostgREST shape, file a
+        # follow-up. Snapshot the flag once at match() entry so all pairs
+        # see the same value, then reset.
+        negate_all = self._consume_negate()
         if isinstance(query, Mapping):
             for k_, v_ in query.items():
+                # Restore-and-consume per pair so `_record`'s consumption
+                # path stays uniform.
+                self._next_negate = negate_all
                 self._record("eq", str(k_), v_)
         return self
 
@@ -666,6 +757,19 @@ class _FilterMixin:
 
     @property
     def not_(self):
+        """Negate the NEXT filter call.
+
+        Real PostgREST `.not_.eq(...)` flips the predicate (rows where col
+        != value). The flag is consumed by the next `_record(...)` call
+        (i.e. the next `.eq` / `.in_` / `.is_` / `.neq` / etc. on the
+        chain) and reset after — so `.not_.eq(a, x).eq(b, y)` negates only
+        the first eq.
+
+        Kept as a `@property` (matches the postgrest SDK shape `.not_.eq(...)`
+        used at every call site in the workspace). The property side-effect
+        sets `_next_negate`; the returned `self` lets the chain continue.
+        """
+        self._next_negate = True
         return self
 
 

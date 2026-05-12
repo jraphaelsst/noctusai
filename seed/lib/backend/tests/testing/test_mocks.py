@@ -446,3 +446,328 @@ def test_select_filter_returns_snapshot_not_shared_reference():
 
     ids = sorted(r["id"] for r in second.data)
     assert ids == ["x1", "x2"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 (seed-mock-predicate-completeness) — `_eval_is` PostgREST IS-NULL /
+# IS-TRUE / IS-FALSE semantics + soft compat layer for Engineer T's shim seeds
+# ---------------------------------------------------------------------------
+
+
+def test_eval_is_null_matches_python_none():
+    """Real PostgREST `.is_("col", "null")` evaluates to SQL `WHERE col IS NULL`.
+
+    Before the fix, the mock used Python's `is` operator literally —
+    `row.get("deleted_at") is "null"` (the wire-format sentinel string) — so
+    seeds with the natural shape `deleted_at=None` never matched. Phase 1
+    routes `value == "null"` to the IS-NULL check.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "items",
+        [
+            {"id": "x1", "deleted_at": None},
+            {"id": "x2", "deleted_at": "2026-01-01"},
+            {"id": "x3", "deleted_at": None},
+        ],
+    )
+
+    result = db.table("items").select("*").is_("deleted_at", "null").execute()
+
+    ids = sorted(r["id"] for r in result.data)
+    assert ids == ["x1", "x3"]
+
+
+def test_eval_is_null_does_not_match_non_null():
+    """Negative case — `deleted_at=<truthy string>` is NOT NULL, so the row
+    is filtered out by `.is_("deleted_at", "null")`.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "items",
+        [
+            {"id": "x1", "deleted_at": "2026-05-11"},
+            {"id": "x2", "deleted_at": "2024-12-31"},
+        ],
+    )
+
+    result = db.table("items").select("*").is_("deleted_at", "null").execute()
+
+    assert result.data == []
+
+
+def test_eval_is_true_matches_python_true():
+    """Real PostgREST `.is_("col", "true")` evaluates to SQL `WHERE col IS TRUE`."""
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "flags",
+        [
+            {"id": "f1", "is_active": True},
+            {"id": "f2", "is_active": False},
+            {"id": "f3", "is_active": True},
+        ],
+    )
+
+    result = db.table("flags").select("*").is_("is_active", "true").execute()
+
+    ids = sorted(r["id"] for r in result.data)
+    assert ids == ["f1", "f3"]
+
+
+def test_eval_is_true_does_not_match_false_or_none():
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "flags",
+        [
+            {"id": "f1", "is_active": False},
+            {"id": "f2", "is_active": None},
+        ],
+    )
+
+    result = db.table("flags").select("*").is_("is_active", "true").execute()
+
+    assert result.data == []
+
+
+def test_eval_is_false_matches_python_false():
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "flags",
+        [
+            {"id": "f1", "is_active": True},
+            {"id": "f2", "is_active": False},
+            {"id": "f3", "is_active": False},
+        ],
+    )
+
+    result = db.table("flags").select("*").is_("is_active", "false").execute()
+
+    ids = sorted(r["id"] for r in result.data)
+    assert ids == ["f2", "f3"]
+
+
+def test_eval_is_false_does_not_match_true_or_none():
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "flags",
+        [
+            {"id": "f1", "is_active": True},
+            {"id": "f2", "is_active": None},
+        ],
+    )
+
+    result = db.table("flags").select("*").is_("is_active", "false").execute()
+
+    assert result.data == []
+
+
+def test_eval_is_literal_string_compat_for_shim_seeds():
+    """**Soft compat layer (THE-MOCK-SHIM-CLEANUP transitional).**
+
+    Engineer T (commit `ef01f57`, 2026-05-11) added 5 therapy test seeds
+    with the literal-string shim `"deleted_at": "null"` as a workaround
+    against the old broken `_eval_is`. The new `_eval_is` MUST keep those
+    rows matching `.is_("deleted_at", "null")` so Engineer T's tests don't
+    regress. Phase 3 (THE-MOCK-SHIM-CLEANUP) will sweep those seeds to
+    `None`; until then both shapes pass.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "items",
+        [
+            {"id": "x1", "deleted_at": "null"},  # Shim shape
+            {"id": "x2", "deleted_at": None},     # Natural shape
+            {"id": "x3", "deleted_at": "2026-05-11"},
+        ],
+    )
+
+    result = db.table("items").select("*").is_("deleted_at", "null").execute()
+
+    # Both shim-seeded and naturally-None rows match. The non-NULL row drops.
+    ids = sorted(r["id"] for r in result.data)
+    assert ids == ["x1", "x2"]
+
+
+def test_eval_is_with_python_none_value_still_works():
+    """Backward-compat: existing call sites use `.is_(col, None)` (the SDK
+    overload that takes the Python literal). Falls through to the equality
+    fallback (None == None → True). Mirrors the pre-Phase-1 behavior for
+    that call shape.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "items",
+        [
+            {"id": "x1", "deleted_at": None},
+            {"id": "x2", "deleted_at": "2026-01-01"},
+        ],
+    )
+
+    result = db.table("items").select("*").is_("deleted_at", None).execute()
+
+    ids = [r["id"] for r in result.data]
+    assert ids == ["x1"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — `_FilterMixin.not_` flag-based negation
+# ---------------------------------------------------------------------------
+
+
+def test_not_eq_inverts_the_next_predicate():
+    """Real PostgREST `.not_.eq(col, x)` returns rows where col != x. Before
+    Phase 1, `.not_` was a `@property → return self` no-op — `.not_.eq(...)`
+    behaved identically to `.eq(...)`. The fix routes the flag through
+    `_record` so the predicate tuple carries `negated=True`.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "items",
+        [
+            {"id": "x1", "status": "active"},
+            {"id": "x2", "status": "archived"},
+            {"id": "x3", "status": "active"},
+        ],
+    )
+
+    result = db.table("items").select("*").not_.eq("status", "active").execute()
+
+    ids = [r["id"] for r in result.data]
+    assert ids == ["x2"]
+
+
+def test_not_in_inverts_the_next_predicate():
+    """`.not_.in_(col, [...])` returns rows whose col is NOT in the list.
+
+    Documented divergence from real PostgREST: real PostgREST also excludes
+    rows where col IS NULL. We use Python's natural negation (None is not
+    in the list → row survives `not in`). See `_row_matches_predicates`
+    docstring.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "appointments",
+        [
+            {"id": "a1", "status": "waiting"},
+            {"id": "a2", "status": "cancelled"},
+            {"id": "a3", "status": "done"},
+            {"id": "a4", "status": "late_cancelled"},
+        ],
+    )
+
+    result = (
+        db.table("appointments")
+        .select("*")
+        .not_.in_("status", ["cancelled", "late_cancelled"])
+        .execute()
+    )
+
+    ids = sorted(r["id"] for r in result.data)
+    assert ids == ["a1", "a3"]
+
+
+def test_not_is_null_yields_is_not_null_semantics():
+    """`.not_.is_(col, "null")` returns rows where col IS NOT NULL — the
+    PostgREST canonical IS-NOT-NULL shape used by therapy production code
+    (`appointment_service.py`, `audio_retention_service.py`, etc.).
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "items",
+        [
+            {"id": "x1", "rejection_reason": None},
+            {"id": "x2", "rejection_reason": "insufficient_evidence"},
+            {"id": "x3", "rejection_reason": None},
+            {"id": "x4", "rejection_reason": "duplicate"},
+        ],
+    )
+
+    result = (
+        db.table("items")
+        .select("*")
+        .not_.is_("rejection_reason", "null")
+        .execute()
+    )
+
+    ids = sorted(r["id"] for r in result.data)
+    assert ids == ["x2", "x4"]
+
+
+def test_not_chain_reset_only_negates_first_predicate():
+    """`.not_.eq(a, x).eq(b, y)` negates ONLY the first eq — the flag is
+    consumed at the first `_record` call and reset. The second eq is a
+    regular literal eq.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "items",
+        [
+            {"id": "x1", "status": "active", "tier": "gold"},
+            {"id": "x2", "status": "archived", "tier": "gold"},
+            {"id": "x3", "status": "archived", "tier": "silver"},
+            {"id": "x4", "status": "active", "tier": "silver"},
+        ],
+    )
+
+    # `status != "active" AND tier == "gold"` — only x2 matches.
+    result = (
+        db.table("items")
+        .select("*")
+        .not_.eq("status", "active")
+        .eq("tier", "gold")
+        .execute()
+    )
+
+    ids = [r["id"] for r in result.data]
+    assert ids == ["x2"]
+
+
+def test_not_double_only_negates_each_target_predicate():
+    """Real-world shape from `erp/campo.py:243` —
+    `.not_.is_("latitude", "null").not_.is_("longitude", "null")` — each
+    `.not_` negates ONLY its immediately-following predicate. Flag reset
+    is essential.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "campos",
+        [
+            {"id": "c1", "latitude": -23.5, "longitude": -46.6},
+            {"id": "c2", "latitude": None, "longitude": -46.6},
+            {"id": "c3", "latitude": -23.5, "longitude": None},
+            {"id": "c4", "latitude": None, "longitude": None},
+        ],
+    )
+
+    result = (
+        db.table("campos")
+        .select("*")
+        .not_.is_("latitude", "null")
+        .not_.is_("longitude", "null")
+        .execute()
+    )
+
+    ids = [r["id"] for r in result.data]
+    assert ids == ["c1"]
+
+
+def test_not_eq_through_delete_filter_path():
+    """The negate flag must work through the UPDATE/DELETE filter path too
+    (MockFilterBuilder inherits from `_FilterMixin`). Delete rows where
+    `status != "archived"` — keeps the archived row.
+    """
+    db = MockSupabaseClient(validate_schema=False)
+    db.set_table_data(
+        "items",
+        [
+            {"id": "x1", "status": "active"},
+            {"id": "x2", "status": "archived"},
+            {"id": "x3", "status": "draft"},
+        ],
+    )
+
+    db.table("items").delete().not_.eq("status", "archived").execute()
+
+    remaining = db.table("items").select("*").execute()
+    ids = [r["id"] for r in remaining.data]
+    assert ids == ["x2"]
