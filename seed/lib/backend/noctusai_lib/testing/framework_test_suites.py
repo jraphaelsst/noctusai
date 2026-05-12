@@ -204,12 +204,22 @@ class TeamFlowSuite:
     """
 
     def test_list_members_returns_data(self, client):
-        """Authenticated user can list org members."""
+        """Authenticated user can list org members.
+
+        Seeded rows include ``org_id`` matching the conftest-bound
+        ``MockUser(org_id="test-org-123")`` so the production
+        ``.eq("org_id", org_id)`` filter in
+        ``noctusai_seed.routers._create_team_router`` returns both rows
+        instead of empty. Without ``org_id`` the filter drops every row
+        and ``len(data) == 2`` fails.
+        """
         client._mock_supabase.set_table_data("noctus_users", [
             {"id": "u1", "nome": "Alice", "email": "alice@test.com",
-             "org_role": "owner", "avatar_url": None, "created_at": "2026-01-01T00:00:00Z"},
+             "org_id": "test-org-123", "org_role": "owner",
+             "avatar_url": None, "created_at": "2026-01-01T00:00:00Z"},
             {"id": "u2", "nome": "Bob", "email": "bob@test.com",
-             "org_role": "member", "avatar_url": None, "created_at": "2026-01-02T00:00:00Z"},
+             "org_id": "test-org-123", "org_role": "member",
+             "avatar_url": None, "created_at": "2026-01-02T00:00:00Z"},
         ])
         resp = client.get("/api/team")
         assert resp.status_code == 200
