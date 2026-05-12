@@ -21,6 +21,7 @@ email-delivery endpoint was retired in daily-life-wiring Phase 1.)
 from __future__ import annotations
 
 import logging
+import time as _time
 from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
@@ -43,6 +44,42 @@ _TEMPLATE_DIR = email_template_dir(__file__)
 
 MODEL = "gpt-4o-mini"
 PROMPT_VERSION = "daily-life-weekly-review@v1"
+
+# Tool / consent-feature identifiers — exposed for tests + audit-row joins.
+TOOL_NAME_WEEKLY_REVIEW = "daily_life.weekly_review.generate_narrative"
+FEATURE_KEY_WEEKLY_REVIEW = "daily_life.weekly_review"
+
+
+def _write_audit(
+    *,
+    arguments: dict,
+    result,
+    status: str,
+    duration_ms: int,
+    error: Optional[str] = None,
+) -> None:
+    """Best-effort audit-row write — same posture as
+    `daily_brief_service._write_audit`. Lazy import so missing SQLAlchemy
+    stack never breaks the user-facing dispatch."""
+    try:
+        from app.services.audit_hook import build_audit_record, get_audit_writer
+
+        writer = get_audit_writer()
+        record = build_audit_record(
+            feature_key=FEATURE_KEY_WEEKLY_REVIEW,
+            tool_name=TOOL_NAME_WEEKLY_REVIEW,
+            status=status,
+            duration_ms=duration_ms,
+            arguments=arguments,
+            result=result,
+            error=error,
+        )
+        writer(record)
+    except Exception:  # noqa: BLE001 — audit is best-effort by contract
+        logger.exception(
+            "daily_life.weekly_review: audit-row write failed (best-effort, "
+            "tool dispatch unaffected)"
+        )
 
 
 # accept-with-rationale: Per-product `_render_bodies` + `_generate_narrative` digest wrappers retained at N=4 in KB § PATTERNS/accept-with-rationale.md
@@ -84,14 +121,51 @@ async def _generate_narrative(
         f"{tasks_pending} pendentes, {focus_minutes} min em foco, {notas_count} notas. "
         f"Sem narrativa detalhada — LLM indisponível para esta janela."
     )
-    return await digest_narrative(
-        system=system,
-        user_prompt=user_prompt,
-        model=MODEL,
-        cache=False,  # Personal-narrative-adjacent (LGPD posture).
-        org_id=org_id,
-        fallback=fallback,
+    # Audit payload — `_scrub_weekly_review_args` keeps counters + period_label,
+    # redacts user_label + habit-streak names (free-form, user-authored).
+    audit_args = {
+        "user_label": user_label,
+        "period_label": period_label,
+        "tasks_completed": tasks_completed,
+        "tasks_pending": tasks_pending,
+        "tasks_cancelled": tasks_cancelled,
+        "habit_streaks": habit_streaks,
+        "notas_count": notas_count,
+        "focus_minutes": focus_minutes,
+        "prompt_version": PROMPT_VERSION,
+        "org_id": org_id,
+    }
+    started = _time.monotonic()
+    try:
+        narrative = await digest_narrative(
+            system=system,
+            user_prompt=user_prompt,
+            model=MODEL,
+            cache=False,  # Personal-narrative-adjacent (LGPD posture).
+            org_id=org_id,
+            fallback=fallback,
+        )
+    except Exception as exc:
+        _write_audit(
+            arguments=audit_args,
+            result={"narrative": fallback, "fallback": True},
+            status="failure",
+            duration_ms=int((_time.monotonic() - started) * 1000),
+            error=type(exc).__name__,
+        )
+        raise
+    # `digest_narrative` returns the fallback string itself on LLM failure
+    # (no exception raised). We can't distinguish success-with-LLM from
+    # fallback-on-LLM-failure at this layer reliably — record as success
+    # since narrative was produced. The redaction lambda drops the body
+    # before storage regardless.
+    _write_audit(
+        arguments=audit_args,
+        result={"narrative": narrative},
+        status="success",
+        duration_ms=int((_time.monotonic() - started) * 1000),
     )
+    return narrative
 
 
 async def _fetch_window(

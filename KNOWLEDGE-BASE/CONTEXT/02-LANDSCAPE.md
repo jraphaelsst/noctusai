@@ -36,21 +36,21 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | PF | 15 | 18 | 30 | 16 | 48 | 482 |
 | Therapy | 40 | 45 | 65 | 33 | 81 | 1,120 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
-| Daily Life | 6 | 7 | 11 | 7 | 15 | 201 |
+| Daily Life | 6 | 8 | 11 | 7 | 17 | 216 |
 | Mailing | 10 | 11 | 21 | 9 | 19 | 202 |
 | AdConnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Media Scheduling | 5 | 8 | 10 | 3 | 17 | 86 |
 | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
 | Imobi Scheduling | 3 | 13 | 8 | 1 | 22 | 273 |
-| **Total** | **177** | **179** | **275** | **141** | **396** | **4,813** |
+| **Total** | **177** | **180** | **275** | **141** | **398** | **4,828** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (12):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed` + `adconnect` + `dev_team` + `media_scheduling` + `youtube_crawler` + `imobi_scheduling`.
-- **Tables: 313** distributed across the schemas.
+- **Tables: 314** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

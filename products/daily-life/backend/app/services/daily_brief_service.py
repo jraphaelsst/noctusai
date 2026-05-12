@@ -25,6 +25,7 @@ that opts in. Hook is `staleTime`-cached for 15 minutes, then refreshed.
 from __future__ import annotations
 
 import logging
+import time as _time
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
 
@@ -34,6 +35,41 @@ logger = logging.getLogger(__name__)
 
 MODEL = "gpt-4o-mini"
 PROMPT_VERSION = "daily-life-daily-brief@v1"
+
+# Tool / consent-feature identifiers — exposed for tests + audit-row joins.
+TOOL_NAME_DAILY_BRIEF = "daily_life.daily_brief.generate_summary"
+FEATURE_KEY_DAILY_BRIEF = "daily_life.daily_brief"
+
+
+def _write_audit(
+    *,
+    arguments: dict,
+    result,
+    status: str,
+    duration_ms: int,
+    error: Optional[str] = None,
+) -> None:
+    """Best-effort audit-row write. Lazy import so missing SQLAlchemy stack
+    never breaks the user-facing dispatch."""
+    try:
+        from app.services.audit_hook import build_audit_record, get_audit_writer
+
+        writer = get_audit_writer()
+        record = build_audit_record(
+            feature_key=FEATURE_KEY_DAILY_BRIEF,
+            tool_name=TOOL_NAME_DAILY_BRIEF,
+            status=status,
+            duration_ms=duration_ms,
+            arguments=arguments,
+            result=result,
+            error=error,
+        )
+        writer(record)
+    except Exception:  # noqa: BLE001 — audit is best-effort by contract
+        logger.exception(
+            "daily_life.daily_brief: audit-row write failed (best-effort, "
+            "tool dispatch unaffected)"
+        )
 
 
 def _aggregate(window: dict[str, Any]) -> dict[str, Any]:
@@ -174,6 +210,21 @@ async def _generate_summary(
         f"Tarefas concluídas ontem: {agg['yesterday_completed']}\n"
         f"Itens em destaque:\n{samples_text}"
     )
+    # Audit payload — `_scrub_daily_brief_args` keeps numeric counters +
+    # `prompt_version` and replaces sample titles + user_label with `[REDACTED]`.
+    audit_args = {
+        "user_label": user_label,
+        "tasks_today": agg["tasks_today"],
+        "events_today": agg["events_today"],
+        "habits_pending": agg["habits_pending"],
+        "yesterday_completed": agg["yesterday_completed"],
+        "task_samples": agg.get("task_samples"),
+        "event_samples": agg.get("event_samples"),
+        "habit_samples": agg.get("habit_samples"),
+        "prompt_version": PROMPT_VERSION,
+        "org_id": org_id,
+    }
+    started = _time.monotonic()
     try:
         text = await chat_completion(
             messages=[
@@ -191,15 +242,30 @@ async def _generate_summary(
         if len(text) > 200:
             cut = text[:200].rsplit(" ", 1)[0]
             text = cut + "…"
+        _write_audit(
+            arguments=audit_args,
+            result={"summary": text},
+            status="success",
+            duration_ms=int((_time.monotonic() - started) * 1000),
+        )
         return text
-    except Exception:
+    except Exception as exc:
         logger.warning("daily_life.daily_brief: LLM unavailable — using template fallback")
         if agg["tasks_today"] == 0 and agg["habits_pending"] == 0 and agg["events_today"] == 0:
-            return "Sem itens agendados para hoje."
-        return (
-            f"Hoje: {agg['tasks_today']} tarefas, {agg['habits_pending']} hábitos "
-            f"e {agg['events_today']} eventos. Ontem você concluiu {agg['yesterday_completed']} tarefas."
+            fallback = "Sem itens agendados para hoje."
+        else:
+            fallback = (
+                f"Hoje: {agg['tasks_today']} tarefas, {agg['habits_pending']} hábitos "
+                f"e {agg['events_today']} eventos. Ontem você concluiu {agg['yesterday_completed']} tarefas."
+            )
+        _write_audit(
+            arguments=audit_args,
+            result={"summary": fallback, "fallback": True},
+            status="failure",
+            duration_ms=int((_time.monotonic() - started) * 1000),
+            error=type(exc).__name__,
         )
+        return fallback
 
 
 async def build_brief(
