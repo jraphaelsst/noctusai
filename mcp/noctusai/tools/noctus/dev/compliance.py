@@ -3378,6 +3378,738 @@ def check_gitignore_drift(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Stage-4 codification batch (2026-05-11) — 6 detectors promoting Stage-3
+# methodology rules. Filed by `projects/keeper-stage4-codification-batch/`.
+#
+# The seventh table entry in §4 of the project doc (`check_no_self_monkeypatch`)
+# was already codified earlier; this batch lands the remaining six.
+#
+# Each detector:
+#   - takes `repo_root: Path | None = None` and falls back to module-level REPO_ROOT,
+#   - emits the standard {product, file, issue, severity} finding shape,
+#   - severity defaults to `warning` (Stage-4 calibration: warn first, ratchet later),
+#   - ships a colocated `Test<CamelCase>` class in
+#     `mcp/noctusai/tests/test_compliance_codification_batch.py`.
+# ---------------------------------------------------------------------------
+
+
+# Production code roots scanned for the literal `# silent-ok` comment.
+# Tests are excluded — test files may carry the literal inside a docstring
+# describing the rule (negative regression). The "production code" framing
+# matches `check_silent_errors`'s `_walk_python_files` helper but the
+# silent-ok check is broader (any file type, not just .py).
+_SILENT_OK_SCAN_ROOTS: tuple[str, ...] = (
+    "products",
+    "seed",
+    "mcp",
+    "noctusai_lib",
+    "scripts",
+)
+
+# Exclude tests directories at every depth + vendored deps + cache dirs.
+_SILENT_OK_EXCLUDED_PARTS: frozenset[str] = frozenset({
+    "tests", "__pycache__", "node_modules", ".venv", "venv",
+    "dist", "build", ".git", ".pytest_cache", ".mypy_cache",
+})
+
+# File extensions worth scanning for the literal — keep narrow to code files.
+_SILENT_OK_SCAN_EXTS: frozenset[str] = frozenset({
+    ".py", ".sh", ".ts", ".tsx", ".js", ".jsx",
+})
+
+# Files that legitimately reference the literal in docstrings / regex / prose
+# describing the rule itself. Each one is the file that *defines or
+# documents* the silent-ok rule; the literal there is a citation, not a
+# silenced exception. Keep this list tight — every entry is reviewed.
+_SILENT_OK_FILE_ALLOWLIST: frozenset[str] = frozenset({
+    "mcp/noctusai/tools/noctus/dev/compliance.py",  # defines the detector + check_silent_errors
+})
+
+# The literal pattern. Inline form `# silent-ok` or `# silent-ok: reason`.
+# Must appear as an actual line-comment (the `#` starts a comment, not
+# inside a string). Approximate via "stripped line starts with `#` OR a
+# `#` is preceded by whitespace AND the rest matches".
+_SILENT_OK_LITERAL_RE = re.compile(r"#\s*silent-ok\b", re.IGNORECASE)
+
+
+def check_no_silent_ok_comment(repo_root: Path | None = None) -> list[dict]:
+    """Detect the literal `# silent-ok` annotation in production code.
+
+    The `# silent-ok: <reason>` escape hatch was retired platform-wide
+    2026-04-28 per user directive ("i dont want any silent-ok sign accross
+    the platform"). Per `feedback_silent_ok_is_not_a_substitute_for_logging`,
+    every `except` handler must log via `logger.<level>(...)`, raise, or
+    surface the error through a return value — no exceptions.
+
+    This detector is narrower than `check_silent_errors` (which scans
+    handler bodies via AST): it pins the LITERAL `# silent-ok` comment so
+    that any reappearance — even on a line that does the right thing —
+    surfaces loudly. The marker is a signal that someone thought the
+    escape hatch still existed.
+
+    Scope: production code roots (`products/`, `seed/`, `mcp/`,
+    `noctusai_lib/`, `scripts/`). Test files are excluded — they may
+    legitimately quote the literal inside a docstring describing the
+    rule (the existing `Test<...>` regression suites do this).
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for scan_root in _SILENT_OK_SCAN_ROOTS:
+        base = root / scan_root
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            parts = path.parts
+            if any(part in _SILENT_OK_EXCLUDED_PARTS for part in parts):
+                continue
+            if path.suffix not in _SILENT_OK_SCAN_EXTS:
+                continue
+            try:
+                relative = str(path.relative_to(root))
+            except ValueError:
+                relative = str(path)
+            if relative in _SILENT_OK_FILE_ALLOWLIST:
+                # The detector + docstrings of the rule reference the literal
+                # legitimately; this allowlist keeps the citation-in-the-rule
+                # file from flagging itself.
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            for line_no, line in enumerate(content.splitlines(), start=1):
+                if not _SILENT_OK_LITERAL_RE.search(line):
+                    continue
+                product_label = (
+                    relative.split("/", 2)[1]
+                    if relative.startswith("products/")
+                    else "<root>"
+                )
+                issues.append({
+                    "product": product_label,
+                    "file": relative,
+                    "issue": (
+                        f"`{relative}:{line_no}` carries `# silent-ok` "
+                        f"annotation. The escape hatch was retired 2026-04-28: "
+                        f"every except must `logger.<level>(...)`, `raise`, or "
+                        f"surface the error via a return value. Replace with "
+                        f"`logger.debug(...)` (silent unless `NOCTUSAI_DEBUG=1`) "
+                        f"or the appropriate `logger.warning(...)`. Per "
+                        f"`feedback_silent_ok_is_not_a_substitute_for_logging`."
+                    ),
+                    "severity": "warning",
+                })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_auth_dep_anti_pattern` — flags the 422-trap shape that wires
+# `ProductDependencies.{get_org_id,get_user_role,get_user_client}` through
+# `Depends(...)`. Per `feedback_auth_factory_pattern`, the canonical wiring
+# is `Depends(get_current_user_org)` from `make_get_current_user_org`.
+# `ProductDependencies.{...}` instance methods take positional args and
+# turn into FastAPI query-param requirements when wired via `Depends(...)`
+# — the route then returns 422 unless `?user=...&token=...` is supplied.
+# ---------------------------------------------------------------------------
+
+
+# Attribute names whose use inside `Depends(...)` is the 422-trap shape.
+_AUTH_DEP_ANTIPATTERN_ATTRS: frozenset[str] = frozenset({
+    "get_org_id",
+    "get_user_role",
+    "get_user_client",
+})
+
+
+def _walk_router_python_files(root: Path):
+    """Yield every `*.py` file under `products/*/backend/app/routers/` —
+    the population where the auth-dep antipattern can land.
+    """
+    products = root / "products"
+    if not products.exists():
+        return
+    excluded_parts: set[str] = {
+        "__pycache__", ".venv", "venv", "node_modules", ".git",
+        ".pytest_cache", "tests", "migrations",
+    }
+    for product_dir in products.iterdir():
+        if not product_dir.is_dir() or product_dir.name.startswith("."):
+            continue
+        routers_dir = product_dir / "backend" / "app" / "routers"
+        if not routers_dir.exists():
+            continue
+        for path in routers_dir.rglob("*.py"):
+            if any(part in excluded_parts for part in path.parts):
+                continue
+            yield path
+
+
+def _is_depends_call_on_product_deps(call: ast.Call) -> tuple[bool, str | None]:
+    """Return (matches, attr_name).
+
+    True iff `call` is `Depends(<X>.<attr>)` where `attr` is one of
+    `_AUTH_DEP_ANTIPATTERN_ATTRS`. Bare-attribute case (`Depends(get_org_id)`)
+    is NOT matched — the AST would need an import-map walk to know if it's
+    `ProductDependencies.get_org_id`, and the antipattern in the wild
+    always uses the dotted form. Conservative: false negatives over noise.
+    """
+    func = call.func
+    if not isinstance(func, ast.Name) or func.id != "Depends":
+        return False, None
+    if not call.args:
+        return False, None
+    arg = call.args[0]
+    if isinstance(arg, ast.Attribute) and arg.attr in _AUTH_DEP_ANTIPATTERN_ATTRS:
+        return True, arg.attr
+    return False, None
+
+
+def check_auth_dep_anti_pattern(repo_root: Path | None = None) -> list[dict]:
+    """Detect `Depends(ProductDependencies.get_org_id)` / `get_user_role` /
+    `get_user_client` — the 422-trap auth-wiring shape.
+
+    Per `feedback_auth_factory_pattern`: every product wires auth via the
+    `make_get_current_user_org` factory, exposed as `get_current_user_org`
+    and consumed as `Depends(get_current_user_org)`. The
+    `ProductDependencies.{get_org_id, get_user_role, get_user_client}`
+    instance methods take positional args; wiring them through `Depends(...)`
+    turns those positionals into FastAPI query parameters and the route
+    422s unless `?user=...&token=...` is supplied.
+
+    Imperative use (no `Depends(...)` wrapper) is permitted — callers can
+    invoke these methods directly inside a handler body. The detector
+    only flags the `Depends(...)` shape.
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for path in _walk_router_python_files(root):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        try:
+            tree = ast.parse(content, filename=str(path))
+        except SyntaxError as exc:
+            logger.debug("compliance: cannot parse %s (%s)", path, exc)
+            continue
+
+        try:
+            relative = str(path.relative_to(root))
+        except ValueError:
+            relative = str(path)
+        product_label = (
+            relative.split("/", 2)[1]
+            if relative.startswith("products/")
+            else "<unknown>"
+        )
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            matches, attr = _is_depends_call_on_product_deps(node)
+            if not matches:
+                continue
+            line_no = getattr(node, "lineno", 0) or 0
+            issues.append({
+                "product": product_label,
+                "file": relative,
+                "issue": (
+                    f"`{relative}:{line_no}` wires "
+                    f"`Depends(ProductDependencies.{attr})` — the 422-trap "
+                    f"shape (positional args become query params). Use "
+                    f"`Depends(get_current_user_org)` from the "
+                    f"`make_get_current_user_org` factory instead. Per "
+                    f"`feedback_auth_factory_pattern` + `KB § PATTERNS/backend.md "
+                    f"§ Auth — canonical pattern`. Imperative use of "
+                    f"`ProductDependencies.{attr}(...)` (without `Depends`) "
+                    f"is fine."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_mcp_path_via_settings` — flags `Path(__file__).parents[N]` in MCP
+# tool modules. Per `feedback_mcp_path_constants_from_settings`, MCP tools
+# must import `REPO_ROOT` / `PRODUCTS_DIR` from `settings` rather than
+# recompute the root via `parents[N]` — the latter is brittle across
+# directory moves and was the recurrence Phase 3 surfaced in 18 of 24
+# modules.
+# ---------------------------------------------------------------------------
+
+
+def _walk_mcp_tool_files(root: Path):
+    """Yield every `*.py` file under `mcp/noctusai/tools/` — the population
+    where the parents[N] anti-pattern lives.
+
+    Exclude `__pycache__` + the MCP server entrypoint (`server.py` is at a
+    higher level; tools is the boundary).
+    """
+    base = root / "mcp" / "noctusai" / "tools"
+    if not base.exists():
+        return
+    excluded_parts: set[str] = {"__pycache__", ".venv", "venv"}
+    for path in base.rglob("*.py"):
+        if any(part in excluded_parts for part in path.parts):
+            continue
+        yield path
+
+
+def _is_path_parents_n_call(node: ast.AST) -> bool:
+    """True iff `node` is the `Path(__file__).parents[N]` subscript shape.
+
+    The shape: `Subscript(value=Attribute(value=Call(func=Name('Path'),
+    args=[Name('__file__')]), attr='parents'), slice=<Constant int>)`.
+    """
+    if not isinstance(node, ast.Subscript):
+        return False
+    value = node.value
+    if not isinstance(value, ast.Attribute) or value.attr != "parents":
+        return False
+    call = value.value
+    if not isinstance(call, ast.Call):
+        return False
+    if not isinstance(call.func, ast.Name) or call.func.id != "Path":
+        return False
+    if not call.args:
+        return False
+    arg = call.args[0]
+    if not isinstance(arg, ast.Name) or arg.id != "__file__":
+        return False
+    return True
+
+
+def check_mcp_path_via_settings(repo_root: Path | None = None) -> list[dict]:
+    """Detect `Path(__file__).parents[N]` in MCP tool modules.
+
+    Per `feedback_mcp_path_constants_from_settings`: MCP tools must import
+    `REPO_ROOT` / `PRODUCTS_DIR` from `settings` rather than recompute the
+    root via `parents[N]`. The latter is brittle — a directory move silently
+    shifts the depth and a `parents[3]` becomes `parents[4]`. Phase 3 of
+    `mcp-path-centralization` (2026-05-XX) surfaced the recurrence in
+    18 of 24 modules.
+
+    Scope: `mcp/noctusai/tools/**/*.py`. The shape detected:
+    `Path(__file__).parents[N]` (any integer subscript). The fix is always
+    the same — `from settings import REPO_ROOT, PRODUCTS_DIR` at module top
+    and use those constants.
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for path in _walk_mcp_tool_files(root):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        try:
+            tree = ast.parse(content, filename=str(path))
+        except SyntaxError as exc:
+            logger.debug("compliance: cannot parse %s (%s)", path, exc)
+            continue
+
+        try:
+            relative = str(path.relative_to(root))
+        except ValueError:
+            relative = str(path)
+
+        for node in ast.walk(tree):
+            if not _is_path_parents_n_call(node):
+                continue
+            line_no = getattr(node, "lineno", 0) or 0
+            issues.append({
+                "product": "<mcp>",
+                "file": relative,
+                "issue": (
+                    f"`{relative}:{line_no}` uses "
+                    f"`Path(__file__).parents[N]` to compute a root path. "
+                    f"Import `REPO_ROOT` / `PRODUCTS_DIR` from `settings` "
+                    f"instead — `parents[N]` is brittle across directory "
+                    f"moves and was the recurrence in 18 of 24 tool modules "
+                    f"surfaced by `mcp-path-centralization` Phase 3. Per "
+                    f"`feedback_mcp_path_constants_from_settings`."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_mcp_write_tool_worktree_arg` — flags MCP tool defs whose name
+# implies write-side semantics but the function signature omits a
+# `worktree_path: str | None = None` parameter. Per
+# `feedback_mcp_write_tools_resolve_caller_root`, MCP stdio is fixed-CWD;
+# write tools called from an engineer's worktree must take an explicit
+# `worktree_path` argument or the side effect lands in the wrong tree.
+# ---------------------------------------------------------------------------
+
+
+# Function-name PREFIXES that imply write-side semantics on filesystem
+# state (or repository state that mole-style worktree path matters for).
+# Heuristic — false negatives over noise. The prefix must START the name
+# (after any leading underscore strip); a verb buried mid-name does NOT
+# count. This calibration deliberately drops `delete`, `archive`-as-prefix
+# (covers `archive(...)` but not `archive_staleness`) — see calibration
+# notes in the project doc §11.
+_MCP_WRITE_TOOL_NAME_PREFIXES: tuple[str, ...] = (
+    "archive",
+    "scaffold",
+    "absorb",
+    "set_proposal_status",
+    "file_proposal",
+    "promote",
+    "reserve_port_range",
+    "create_testing_ground",
+    "build_parallel",
+    "vite_build",
+    "phase_learning_log",
+    "phase_learning_consume",
+    "batch_speed_gain_log",
+    "batch_speed_gain_update",
+    "review_session",
+)
+
+# Function-name prefixes that mean "this is read-side; do NOT flag" even
+# if the rest of the name happens to contain a write-verb token. Reserved
+# for namespaced families like `check_archive_staleness` where the verb
+# is the SCOPE, not the action.
+_MCP_READ_PREFIX_GUARDS: tuple[str, ...] = (
+    "check_",   # `check_archive_staleness` is a detector, not a writer
+    "get_",     # `get_proposal_template` reads a template
+    "list_",    # `list_proposals` lists, doesn't write
+    "read_",
+    "fetch_",
+    "find_",
+    "scan_",
+    "outline_", # `outline_python` reads source
+)
+
+
+def _function_name_implies_write(name: str) -> bool:
+    """Heuristic: True iff `name` starts with a write-verb prefix and is
+    not gated by a read-prefix guard.
+
+    Stripped of any single leading underscore so private helpers like
+    `_archive_internal` are recognized.
+    """
+    bare = name.lstrip("_")
+    if any(bare.startswith(guard) for guard in _MCP_READ_PREFIX_GUARDS):
+        return False
+    return any(bare.startswith(prefix) for prefix in _MCP_WRITE_TOOL_NAME_PREFIXES)
+
+
+def _signature_has_param(fn: ast.FunctionDef | ast.AsyncFunctionDef, param: str) -> bool:
+    """True if `fn`'s signature declares a parameter named `param`
+    (positional, kw-only, or vararg-skipped). Conservative: scans all of
+    args / posonlyargs / kwonlyargs.
+    """
+    args = fn.args
+    all_args = list(args.args) + list(args.posonlyargs) + list(args.kwonlyargs)
+    return any(a.arg == param for a in all_args)
+
+
+def check_mcp_write_tool_worktree_arg(repo_root: Path | None = None) -> list[dict]:
+    """Detect MCP tool functions whose name implies write-side semantics
+    but the signature omits a `worktree_path` parameter.
+
+    Per `feedback_mcp_write_tools_resolve_caller_root`: MCP stdio runs in
+    a fixed CWD (the MCP server's startup workspace). Write tools called
+    from an engineer's worktree MUST accept `worktree_path: str | None`
+    so the caller can route the side effect to the right tree. Without
+    the parameter, the side effect either lands in the wrong workspace
+    or the tool resolves a stale root.
+
+    Scope: every top-level `def` / `async def` under `mcp/noctusai/tools/`
+    whose name contains a write-verb (archive / scaffold / absorb /
+    set_proposal_status / etc). Public helpers and private (`_*`) names
+    are not exempt — both paths can be reached as MCP tools.
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for path in _walk_mcp_tool_files(root):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        try:
+            tree = ast.parse(content, filename=str(path))
+        except SyntaxError as exc:
+            logger.debug("compliance: cannot parse %s (%s)", path, exc)
+            continue
+
+        try:
+            relative = str(path.relative_to(root))
+        except ValueError:
+            relative = str(path)
+
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _function_name_implies_write(node.name):
+                continue
+            if _signature_has_param(node, "worktree_path"):
+                continue
+            line_no = getattr(node, "lineno", 0) or 0
+            issues.append({
+                "product": "<mcp>",
+                "file": relative,
+                "issue": (
+                    f"`{relative}:{line_no}` defines `{node.name}(...)` — "
+                    f"a write-side MCP tool name — but the signature has no "
+                    f"`worktree_path: str | None = None` parameter. MCP stdio "
+                    f"is fixed-CWD; engineers calling this tool from a "
+                    f"worktree need an explicit path arg to route the side "
+                    f"effect. Add `worktree_path: str | None = None` and "
+                    f"resolve writes relative to it. Per "
+                    f"`feedback_mcp_write_tools_resolve_caller_root`."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_pipefail_grep_q` — flags `cmd | grep -q ...` patterns in shell
+# scripts that ALSO have `set -[eo].*pipefail`. Discovered 2026-05-11 by
+# Engineer M during mole.sh enumeration fix: `grep -q` exits immediately
+# on first match, the upstream pipeline's writer gets SIGPIPE (exit 141),
+# and `pipefail` propagates the 141 — silently breaking the script.
+# Use `if cmd | grep -qx 'X' >/dev/null` with an output-consuming wrapper,
+# or split the pipeline (capture output to var, test the var).
+# ---------------------------------------------------------------------------
+
+
+_PIPEFAIL_RE = re.compile(r"set\s+-[eu]*o\s+pipefail|set\s+-[eu]*opipefail|set\s+-o\s+pipefail")
+_GREP_Q_PIPE_RE = re.compile(r"\|\s*grep\s+(?:-[a-zA-Z]*q|-q[a-zA-Z]*)\b")
+
+
+def check_pipefail_grep_q(repo_root: Path | None = None) -> list[dict]:
+    """Detect the SIGPIPE-141 footgun: `cmd | grep -q ...` under
+    `set -o pipefail`.
+
+    Why this fires: `grep -q` exits 0 immediately on the first match and
+    closes its stdin. The upstream `cmd` writer gets SIGPIPE (exit 141)
+    when it next writes. With `pipefail` active, that 141 bubbles up as
+    the pipeline's exit code — the surrounding `if` / `&&` short-circuits
+    or aborts the script. Surfaced 2026-05-11 by Engineer M's
+    `mole.sh` enumeration fix.
+
+    Mitigations:
+      - Split the pipeline: `out=$(cmd); echo "$out" | grep -q ...`.
+      - Consume the full stream: `cmd | grep -q ... | cat >/dev/null`.
+      - Use `grep` without `-q` and rely on `grep`'s normal exit code.
+
+    Scope: `scripts/*.sh`. Same-file co-occurrence: both `pipefail` and
+    a `| grep -q` pattern must appear in the same script (otherwise the
+    footgun doesn't fire). Each `| grep -q` occurrence becomes a finding.
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    scripts_dir = root / "scripts"
+    if not scripts_dir.exists():
+        return issues
+
+    for path in scripts_dir.glob("*.sh"):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        if not _PIPEFAIL_RE.search(content):
+            continue
+        try:
+            relative = str(path.relative_to(root))
+        except ValueError:
+            relative = str(path)
+
+        for line_no, raw in enumerate(content.splitlines(), start=1):
+            # Skip comment-only lines (a comment showing the antipattern as
+            # an example shouldn't fire). Lines that put a `#` AFTER code
+            # still count — strip trailing comments.
+            stripped = raw.lstrip()
+            if stripped.startswith("#"):
+                continue
+            # Snap off trailing `#...` comments so an inline example in a
+            # comment can't fire — but only when the `#` is whitespace-
+            # preceded (avoid eating `--option` flags that include `#`).
+            comment_match = re.search(r"(?<=\s)#", raw)
+            scan_line = raw[: comment_match.start()] if comment_match else raw
+            if not _GREP_Q_PIPE_RE.search(scan_line):
+                continue
+            issues.append({
+                "product": "<scripts>",
+                "file": relative,
+                "issue": (
+                    f"`{relative}:{line_no}` runs `... | grep -q ...` under "
+                    f"`set -o pipefail`. `grep -q` exits 0 on first match "
+                    f"and SIGPIPEs the upstream writer (exit 141); pipefail "
+                    f"propagates 141 and silently breaks the script. Split "
+                    f"the pipeline (`out=$(cmd); echo \"$out\" | grep -q`), "
+                    f"consume the full stream (`| cat >/dev/null`), or drop "
+                    f"`-q` and use grep's normal exit. Surfaced 2026-05-11 "
+                    f"by Engineer M's `mole.sh` enumeration fix."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_doc_tool_reference_drift` — flags `bash scripts/<name>.sh <mode>`
+# references in KB docs that point at a `<mode>` no longer recognized by
+# the script. Per the doc-code coherence rule (`feedback_doc_code_coherence_rule`):
+# updating a tool means updating its docs in the SAME change.
+# ---------------------------------------------------------------------------
+
+
+# Reference shape recognized in KB doc tables / prose:
+#   `bash scripts/<name>.sh <mode>` where `<mode>` is a POSITIONAL token
+# (not a flag — flags like `--force` are not the rename surface we worry
+# about). Skip captures that begin with `-`; downstream flags are
+# tolerated as drift-free.
+#
+# The detector confirms `<script>.sh` exists at `scripts/<name>.sh` and
+# that the script body contains the literal token `<mode>`. False
+# positives are acceptable only when the script dispatches `<mode>` via
+# a variable lookup the detector can't follow; we keep the heuristic
+# simple (literal token search) and accept that.
+_DOC_TOOL_REF_RE = re.compile(
+    r"bash\s+(scripts/(?P<script>[\w\-]+\.sh))\s+(?P<mode>[A-Za-z_][\w\-]*)\b",
+)
+
+# Docs in scope. Initial calibration: the most-stale-prone surface per the
+# doc-code coherence rule. The list is intentionally small — adding to it
+# is part of formalizing new doc surfaces, not a flag-the-world default.
+_DOC_TOOL_REF_SCOPE: tuple[str, ...] = (
+    "KNOWLEDGE-BASE/CONTEXT/PATTERNS/methodology-codification-pipeline.md",
+)
+
+
+def check_doc_tool_reference_drift(repo_root: Path | None = None) -> list[dict]:
+    """Detect KB doc references to `bash scripts/<name>.sh <mode>` where
+    `<mode>` is not recognized by the script.
+
+    Why: the doc-code coherence rule (`feedback_doc_code_coherence_rule`)
+    requires KB pattern docs + Situation→Tool maps to stay in lockstep
+    with tool-code. The most-stale-prone surface is the Situation→Tool
+    map in `KB § PATTERNS/methodology-codification-pipeline.md § 8` —
+    that's the initial calibration scope. Add to `_DOC_TOOL_REF_SCOPE`
+    as additional doc surfaces become stale-prone.
+
+    Heuristic: literal `bash scripts/<name>.sh <mode>` match. The detector
+    confirms `<name>.sh` exists at `scripts/<name>.sh` and that the script
+    body contains the token `<mode>`. A mismatch on either is drift.
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    scripts_dir = root / "scripts"
+    script_cache: dict[str, str] = {}
+
+    def _script_body(script_name: str) -> str | None:
+        if script_name in script_cache:
+            return script_cache[script_name]
+        path = scripts_dir / script_name
+        if not path.exists() or not path.is_file():
+            script_cache[script_name] = ""
+            return None
+        try:
+            body = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            script_cache[script_name] = ""
+            return None
+        script_cache[script_name] = body
+        return body
+
+    for doc_rel in _DOC_TOOL_REF_SCOPE:
+        doc_path = root / doc_rel
+        if not doc_path.exists() or not doc_path.is_file():
+            continue
+        try:
+            doc_content = doc_path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", doc_path, exc)
+            continue
+
+        lines = doc_content.splitlines()
+        for line_no, line in enumerate(lines, start=1):
+            for m in _DOC_TOOL_REF_RE.finditer(line):
+                script = m.group("script")            # "scripts/foo.sh"
+                script_name = m.group(2)              # "foo.sh"
+                mode = m.group("mode")
+                body = _script_body(script_name)
+                if body is None:
+                    issues.append({
+                        "product": "<docs>",
+                        "file": doc_rel,
+                        "issue": (
+                            f"`{doc_rel}:{line_no}` references "
+                            f"`bash {script} {mode}` but `{script}` does "
+                            f"not exist. Either the script was renamed/"
+                            f"deleted or the doc references a stale name. "
+                            f"Per `feedback_doc_code_coherence_rule`."
+                        ),
+                        "severity": "warning",
+                    })
+                    continue
+                # Look for the mode as a standalone token. Use word-boundary
+                # match so `scan` isn't satisfied by `scanner` in the script.
+                if re.search(rf"\b{re.escape(mode)}\b", body):
+                    continue
+                issues.append({
+                    "product": "<docs>",
+                    "file": doc_rel,
+                    "issue": (
+                        f"`{doc_rel}:{line_no}` references "
+                        f"`bash {script} {mode}` but `{script_name}` does "
+                        f"not mention the token `{mode}`. Either the mode "
+                        f"was renamed in the script or the doc is stale. "
+                        f"Per `feedback_doc_code_coherence_rule` — updating "
+                        f"a tool means updating its docs in the SAME change."
+                    ),
+                    "severity": "warning",
+                })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -3668,6 +4400,13 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_dispatcher_staleness())
     all_issues.extend(check_branch_orphan())
     all_issues.extend(check_gitignore_drift())
+    # Stage-4 codification batch — `keeper-stage4-codification-batch` Phase 1.
+    all_issues.extend(check_no_silent_ok_comment())
+    all_issues.extend(check_auth_dep_anti_pattern())
+    all_issues.extend(check_mcp_path_via_settings())
+    all_issues.extend(check_mcp_write_tool_worktree_arg())
+    all_issues.extend(check_pipefail_grep_q())
+    all_issues.extend(check_doc_tool_reference_drift())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

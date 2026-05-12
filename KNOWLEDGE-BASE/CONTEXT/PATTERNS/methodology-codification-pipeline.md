@@ -261,6 +261,12 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 | Per-phase learnings not logged | `phase_state_consistency` global check | `noctus.dev.review` (global mode) | Stage 4 keeper (global) |
 | Seed version stamps stale | `seed_version_propagation` global check | `noctus.dev.review` | Stage 4 keeper (global) |
 | Detector regression test missing for a `check_*` | `meta_detector_regression_test_presence` | `noctus.dev.review` | Stage 4 keeper (meta) |
+| Literal `# silent-ok` annotation present in production code (escape hatch retired 2026-04-28) | `check_no_silent_ok_comment` | `noctus.dev.review` (global mode) → replace with `logger.<level>(...)` / `raise` / surface via return value | Stage 4 keeper (global) |
+| Router uses `Depends(ProductDependencies.{get_org_id,get_user_role,get_user_client})` (422-trap shape) | `check_auth_dep_anti_pattern` | `noctus.dev.review` → migrate to `Depends(get_current_user_org)` via the `make_get_current_user_org` factory | Stage 4 keeper (per-product routers) |
+| MCP tool computes root via `Path(__file__).parents[N]` instead of `from settings import REPO_ROOT` | `check_mcp_path_via_settings` | `noctus.dev.review` → import `REPO_ROOT` / `PRODUCTS_DIR` from `settings` | Stage 4 keeper (MCP scope) |
+| MCP write-side tool def lacks `worktree_path: str` arg (engineer can't route side-effect into worktree) | `check_mcp_write_tool_worktree_arg` | `noctus.dev.review` → add `worktree_path: str \| None = None` + resolve writes relative to it | Stage 4 keeper (MCP scope) |
+| Shell script has `cmd \| grep -q ...` under `set -o pipefail` (SIGPIPE-141 footgun, Engineer M discovery 2026-05-11) | `check_pipefail_grep_q` | `noctus.dev.review` → split pipeline, consume full stream, or drop `-q` | Stage 4 keeper (scripts scope) |
+| KB doc references `bash scripts/<name>.sh <mode>` but `<mode>` no longer exists in the script (doc-code coherence drift) | `check_doc_tool_reference_drift` | `noctus.dev.review` → update either the doc or the script in the same change | Stage 4 keeper (KB doc scope) |
 
 ### Project / dispatch operations
 

@@ -85,7 +85,9 @@ User directive 2026-05-11: *"codify it all"* — promote every Stage 3 rule that
 
 ## 6. Phase plan
 
-### Phase 1 — Engineer P implements 7 detectors (single engineer, single PR)
+### Phase 1 — Engineer P implements 7 detectors ✅ DONE 2026-05-11 (Engineer P)
+
+**Improvements:** two calibration items captured + addressed in-pass — self-allowlist for `check_no_silent_ok_comment` (detector matched its own definition); prefix-match + read-prefix-guard list for `check_mcp_write_tool_worktree_arg`. Meta-finding: `check_no_self_monkeypatch` was already codified pre-batch — Stage 3 inventory needs fresh sweep against live `_detector_function_names()` before future codification batches.
 
 **1.1** Read `compliance.py` end-to-end. Identify the `KeeperFinding` dict shape (per K's earlier finding: it's a dict with `{product, file, issue, severity}` keys, not a class). Match existing globals pattern.
 
@@ -155,3 +157,18 @@ bash scripts/verify-kb-sync.sh
 ## 11. Change log
 
 - **2026-05-11** — Project filed. Engineer P dispatch authorized (single engineer, batched scope, file-bound to compliance.py). Architect explicitly chose serial-batched over parallel-N-engineers because compliance.py is one file — see §1 + §2. Future codification batches become parallel once compliance.py is split into per-category modules (separate project).
+- **2026-05-11 — Phase 1 complete (Engineer P, ready-for-commit).** Landed 6 net-new detectors + 31 tests + KB §8 amendments + 6 memory-entry Stage-4 status flags + 1 new memory file. Detector #2 from §4 table (`check_no_self_monkeypatch`) was already codified prior to this batch (compliance.py line ~1526) — engineer recognized the no-op + reaffirmed the Stage-4 status in its memory entry. Net detectors landed: 6 of 7 (1 was already codified).
+  - **`check_no_silent_ok_comment`** — literal `# silent-ok` comment scan across production code roots. Self-allowlist for `compliance.py` (defines the detector + documents the rule; citation, not silenced exception). Calibration: file allowlist surfaced as needed during real-repo dry-run.
+  - **`check_auth_dep_anti_pattern`** — AST scan routers for `Depends(ProductDependencies.{get_org_id,get_user_role,get_user_client})`. Imperative use permitted. Closes the 3rd-defense-layer that the 2026-05-06 design called out.
+  - **`check_mcp_path_via_settings`** — AST scan `mcp/noctusai/tools/**/*.py` for `Path(__file__).parents[N]`. Singular `.parent` permitted (common in `__file__`-relative test setup).
+  - **`check_mcp_write_tool_worktree_arg`** — AST scan MCP tool defs; write-prefix names without `worktree_path` param. Calibration: prefix-based match (not contains-based) + read-prefix guards (`check_`, `get_`, `list_`, `read_`, `fetch_`, `find_`, `scan_`, `outline_`) suppress false positives.
+  - **`check_pipefail_grep_q`** — `| grep -q` in `scripts/*.sh` under `set -[eo].*pipefail`. Comment-line + trailing-comment stripping in place. NEW memory entry `feedback_pipefail_grep_q_footgun.md` filed capturing M's discovery 2026-05-11.
+  - **`check_doc_tool_reference_drift`** — `bash scripts/<name>.sh <mode>` references in KB doc surfaces (initial scope: `methodology-codification-pipeline.md`). Mode regex requires `[A-Za-z_]`-leading token so flag-style args (`--force`) are skipped.
+  - **Calibration findings flagged for Phase 2 triage:**
+    - `check_no_silent_ok_comment`: 0 findings on the current repo (post-self-allowlist).
+    - `check_auth_dep_anti_pattern`: 0 findings.
+    - `check_mcp_path_via_settings`: 0 findings (Phase 3 cleanup already drained the recurrence).
+    - `check_mcp_write_tool_worktree_arg`: 4 findings — `scaffold_interrogate`, `reserve_port_range`, `create_testing_ground` (all in scaffold.py), `review_session` (in session_review.py). Architect to triage: some may be legitimate read-side tools that the verb-prefix heuristic over-flagged; remediation either tightens prefix list or adds the missing `worktree_path` arg.
+    - `check_pipefail_grep_q`: 2 findings — `scripts/verify-kb-sync.sh:96`, `scripts/cleanup-stale-worktrees.sh:292`. Both genuine SIGPIPE-141 candidates; remediate via pipeline split or `cat`-drain.
+    - `check_doc_tool_reference_drift`: 0 findings (mode regex tightened to skip flag-style args after first dry-run surfaced false positives on `--force`).
+  - **Tests:** 31 new tests in `test_compliance_codification_batch.py`, ≥3 per detector + edge cases (positive-fires, negative-doesn't-fire, async coverage, missing-target dirs, comment-line negative, word-boundary partial match). Full suite: 159/159 passing across `test_compliance.py` + `test_compliance_codification_batch.py` + `test_compliance_hygiene.py` + `test_compliance_prod.py`. `TestSeedCompliance::test_all_products_compliant` still passes (globals don't enter per-product score by preexisting design — additions don't regress the 100-gate).
