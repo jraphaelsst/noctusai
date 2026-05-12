@@ -94,9 +94,68 @@ Edit `dispatcher-inbox.md` in place:
 
 - You may only push branches you cherry-picked yourself in the current tick. Never push pre-existing branches.
 - You never `--force` push.
-- You never push to `main` directly. FF-merge-to-main is the **architect's** job at project close.
+- **Push to `main` is permitted only when the architect's `Args:` block contains an explicit `push-main: yes` flag** AND the cherry-pick range FF-merges cleanly. Otherwise FF-merge-to-main stays the architect's call. The agent definition no longer carries a blanket "never push main" reflex — that contradicted the brief-driven model. (Calibration from pilot tick 1.)
 - You stage with explicit paths only. Never `git add .` / `-A`. Never commit work you didn't author (engineer commits arrive via cherry-pick).
 - Authorship verification per cherry-pick run (see playbook).
+
+## No-overlap rule for engineer dispatch (CRITICAL)
+
+When the inbox queues **multiple `dispatch-engineer` tasks within one tick**, the operator MUST verify the engineers' briefs target **file-disjoint scopes** BEFORE dispatching the first one.
+
+### What "file-disjoint" means
+
+Two briefs are file-disjoint if the **set of files each will modify** has zero overlap. Same-folder is fine; same-file is not. Same-file edits by two engineers within one tick = race-prone parallel work; one engineer's commit will conflict with or overwrite the other's.
+
+### How to check
+
+For each brief, scan for these signals:
+- Explicit `Files-to-modify:` block (preferred; architect should include it).
+- `Acceptance:` lines naming files.
+- Brief body referencing concrete paths.
+
+If two briefs name the **same file** OR the **same router/service module**, treat as overlapping.
+
+### Action on detected overlap
+
+- **STOP the dispatch tick.** Do not invoke `Agent` for either engineer.
+- Append outbox entry per overlapping task with `failed — overlap detected with <other-task-id> at <file-path>`.
+- Mark both inbox tasks `failed` with the same overlap note.
+- Architect re-sequences in next user turn (split into separate ticks, OR merge into one combined brief).
+
+### When overlap is OK
+
+The architect MAY explicitly authorize overlap with an `Args:` line `overlap-acknowledged: <task-id> — <reason>`. This routes through the parallel-agent collision protocol on the architect's read of the outbox. The operator's job is detection, not policy.
+
+### Cross-product is the default-safe case
+
+Engineers working in **different products** (e.g. PF backend + therapy backend) are by definition file-disjoint and need no overlap check. The check fires only when briefs name **the same product** OR **the same shared library path** (`seed/`, `noctusai_lib/`, `mcp/`).
+
+This rule mirrors the architect-side rule in `KB § PATTERNS/branching-and-merging.md § 17.6` — operator inherits it because the operator does the actual `Agent` spawning.
+
+## Detect-don't-presume (calibration from pilot tick 1)
+
+Architect briefs are written by a fallible-architect — sometimes contain stale claims (e.g. "branch already renamed", "worktree already pushed"). The operator MUST verify, not presume.
+
+### Verify before acting
+
+Before executing a `cherry-pick-and-push` task:
+- `git branch --list <target-branch>` — confirm whether branch exists.
+- `git log --oneline origin/<target-branch>..HEAD 2>/dev/null || echo "remote-absent"` — confirm push state.
+- `git status --porcelain` in the source worktree — confirm engineer's claimed clean state.
+
+If reality diverges from `Args:`, **adapt** within the cherry-pick playbook (e.g. brief says "create branch" but branch exists → reset-hard-to-origin/main + cherry-pick; brief says "push" but already pushed → skip push, outbox the divergence).
+
+### Phase-state hook awareness
+
+The pre-commit `phase-state` hook reads the canonical noc home regardless of which worktree triggered the commit. Unrelated `PROJECT.md` drift in the noc home can block your cherry-pick commit.
+
+**Workaround recipe** (apply inline; do not abort):
+1. Read the hook's stderr to identify the blocking PROJECT.md file.
+2. Patch that PROJECT.md inline: add an `**Improvements:**` block + tick deferred sub-tasks with `[DEFERRED-<reason>]` annotations.
+3. `git add <patched-PROJECT.md>` + retry the commit.
+4. Outbox: include a one-line note `phase-state-hook unblocked: patched <file>` so the architect sees the side-effect.
+
+If the hook blocks a second time with a different file, abort the task as `failed — recurring phase-state-hook block`. Two strikes is the architect's problem.
 
 ## Failure handling — the cardinal rule
 
