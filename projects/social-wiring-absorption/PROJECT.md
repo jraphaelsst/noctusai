@@ -137,11 +137,13 @@ The win: one consolidated, production-functional CMS product on noc's house sing
 - [x] W1.E7 token_store + dev-auth(flag-gated) + frontend topology/auth-ready → `security/`+`noctusai_seed/`+`seed/.../frontend` (110; `dafc38b`)
 - Integration: held shared deltas committed (`a77602c`); full-suite oracle green (2 non-W1 failures categorized in findings → Wave 2/test-infra).
 
-### Wave 2 — Port social-wiring product (depends W1)
-- [ ] W2.1 Port media-wiring backend (routers/services/migrations) consuming reconciled seed
-- [ ] W2.2 Absorb `mailing` domain as `email_marketing` module
-- [ ] W2.3 Absorb `imobi-scheduling` domain as `scheduling` module
-- [ ] W2.4 CMS frontend adaptation (pages/nav/hooks → product scope)
+### Wave 2 — Port social-wiring product ⏳ (depends W1)
+- [x] W2.1 ✅ base media-wiring backend (`1808b99`) — 10 routers/21 services/4 adapter subpkgs/5 schemas; single `001` (ref 002-008 folded); **MODULES registration seam** (`MODULES: list[Callable[[],ModuleRegistration]]`; migration markers `-- W2.2/W2.3 tables — ADD BELOW`); 69/70 router+integ (1 = scaffold team-e2e seed-drift `[A]`). Fixed W0.3 scaffold conftest over-substitution.
+- [ ] W2.2 Absorb `mailing` → `app/modules/email_marketing/` (in flight) — consumes seed digest/llm; returns register()+migration-SQL+MODULES-line as text.
+- [ ] W2.3 Absorb `imobi-scheduling` → `app/modules/scheduling/` (in flight) — consumes seed scheduling/chatbot/whatsapp/google; returns register()+migration-SQL+MODULES-line as text.
+- [x] W2.4 ✅ CMS frontend (`<commit in W2.4>`) — 7 pages/7 hooks/components, CMS nav, apiBase house-model, README/MASTER-PROMPT rewritten, package.json name fixed; unblocked by DEP-B seed-frontend WA hooks.
+- [ ] W2.5 Seed-reconcile the local `services/{calendar,drive_api,meta,routing}`+`credential_store` to Wave-1 `noctusai_lib.integrations.*`+`security.token_store` (in flight) — W2.1-deferred focused dep chunk; behavior-preserving (tests = oracle).
+- Architect integration (post W2.2/W2.3/W2.5 FF): splice the two migration SQL blocks under their `001` markers; append the 2 MODULES register lines in `main.py`; merge any `requirements.txt` deltas — all returned-as-text by the engineers (shared-file deltas held, Wave-1 pattern).
 
 ### Wave 3 — Adapt PILOT consumers to reconciled seed ✅ (depends W1; parallels W2)
 > **Pilot-products-first cadence** (NEW platform rule, [[feedback_pilot_products_first]]): seed ripples prove on 3 canonical pilots — `erp-imobiliario` · `therapy-platform` · `social-wiring` — + `core` (control-plane, always-in). Non-pilots are NOT adapted per-change; they extend in Wave 3b only after pilots are green. *(User: "use erp, therapy and social wiring as canonical pilots… instead of working on every product at the same time. It's consuming time and tokens.")* PF/daily-life Wave-3 engineers were stopped + their partial edits reset to pristine the moment this rule landed.
