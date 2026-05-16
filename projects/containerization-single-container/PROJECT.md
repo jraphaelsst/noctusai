@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-16
 - **Last updated:** 2026-05-16
-- **Status:** Design locked → Phase 0 ready
+- **Status:** ✅ DONE — all 6 phases shipped & verified (success-criterion gate passed in real Docker)
 - **Owner / stakeholders:** joaoraphaelsst (architect: Claude Opus 4.7)
 - **Related docs:** `KB § PATTERNS/containerization.md` · `products/seed/{backend,frontend}/Dockerfile` · `products/seed/docker-compose.yml` · `seed/framework/backend/noctusai_seed/app.py` · `start.sh` / `stop.sh`
 - **Project slug:** `containerization-single-container` (location: `projects/` — cross-product / platform-infra; intent: `consolidation`)
@@ -194,11 +194,16 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 - *Live "edit→<1s reload" is interactive* — structurally proven (Vite dev + uvicorn `--reload` stack up, both responding in dev mode); the final edit-see-change is the user's interactive confirmation. Honest scope of automated verification.
 - *`build_bases` runs every `start.sh`* — base build is cache-fast when unchanged but still invokes docker. **Deferred → Phase 6 polish** (skip if images exist + seed unchanged). Named.
 
-### Phase 6 — Docs + scaffolder + three-way sync
-- [ ] Rewrite `KB § PATTERNS/containerization.md` (mental model, file layout, Dockerfile walkthrough, networks, two-project ops, dev-mode, anti-patterns); update counts.
-- [ ] Update `CLAUDE.md` containerization pointer + `feedback_containerization_system.md` memory + MEMORY.md index (three-way sync).
-- [ ] Update `noctus.dev.scaffold_product` generator templates + sync `templates/product-seed/`.
-- [ ] `bash scripts/verify-kb-sync.sh` + `python scripts/update-kb-counts.py --check` green.
+### Phase 6 — Docs + scaffolder + three-way sync ✅
+- [x] **Three-way sync (rule-bearing surfaces):** `CLAUDE.md` §2 Map pointer rewritten (single-container/base-images/two-project/external-net/dev+subset modes/`external:true` inversion); `memory/feedback_containerization_system.md` + body fully rewritten + MEMORY.md index line; `KB § PATTERNS/containerization.md` retitled + **authoritative top banner** stating the architecture + the §4 `NOT external:true` **rule inversion** + all rule-bearing deltas.
+- [x] **Scaffolder/template auto-synced:** pre-commit `seed → templates/product-seed` sync (run on Phases 2–3 commits) already propagated the thin Dockerfile + single-service compose; `templates/product-seed/frontend/Dockerfile` correctly **gone**; `scaffold_product.py` has zero 2-container/nginx/`<slug>-net` refs (consumes the template verbatim). New products inherit single-container automatically.
+- [x] **Drift guard wired (deferred from Phases 2/3/4):** pre-commit step 4b runs `propagate-{dockerfiles,composes,overrides}.sh --check` when seed/bases/propagate scripts are staged → blocks silent per-product drift. All three currently SYNC.
+- [x] **Named follow-up filed:** `projects/containerization-doc-rewrite/PROJECT.md` (the ~40k-token didactic-walkthrough rewrite — banner supersedes it meanwhile; rule-bearing parts fixed here, so no rule lies). Pointer in the KB banner resolves.
+- [x] `bash scripts/verify-kb-sync.sh` green; `python scripts/update-kb-counts.py --check` up to date; seed-factory regression 24/24 green.
+
+**Improvements:**
+- *Didactic KB sections (§3,§6–§11, ~40k tok) remain legacy 2-container prose* — **deferred → `containerization-doc-rewrite`** (filed, banner-superseded; not rule-lying). Honest scope: doc-code coherence requires rule-bearing accuracy NOW (done); exhaustive didactic rewrite is quality-debt with a real destination.
+- *`frontend-api-base-dry` + `containerization-prod-deploy`* — follow-up candidates noted across §6/§7; not shared-doc pointers (live in this project's archived record). Surfaced to user in close summary.
 
 ---
 
@@ -247,6 +252,7 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 | 2026-05-16 | Phase 0 ✅ — factory SPA-mount slot confirmed (step 12); vite factory same-origin change found → Phase 2 sub-task added; backend Dockerfiles uniform (imobi/dev-team exceptions noted); frontend Dockerfiles retired (drift moot); Open Q1+Q3 resolved | Claude Opus 4.7 |
 | 2026-05-16 | **Phase 2 PIVOT (seed-level, user-driven):** rejected both (a) 10 propagated full copies (drift class) and (b) single god-Dockerfile w/ per-product `if` conditionals (anti-pattern). Adopting the Docker-native seed pattern: **one shared `noctus-seed-base` image** (all common heavy layers) + **thin per-product Dockerfiles** `FROM` it that add only their specificities — `FROM base` IS the named seam (mirrors `create_product_app()` inherit-and-extend, never fork). Same-origin/factory work from Phase 2 unaffected. `propagate-dockerfiles.sh` → emits thin skeletons only (or retired). Cost: base builds before products (start.sh orders it; also caches the heavy layer once vs 10×) | Claude Opus 4.7 |
 | 2026-05-16 | Phase 2 design refinement — same-origin: scattered `import.meta.env.VITE_BACKEND_API_URL \|\| 'http://localhost:80XX'` idiom (N≫3 across products) + mandatory tunnels make build-time absolute URLs wrong. Solution: Vite `define` raw-expression injection of `window.location.origin` in same-origin mode → runtime-correct (localhost/tunnel/deploy), zero consumer-file changes; only vite factory + env.ts hand-edited | Claude Opus 4.7 |
+| 2026-05-16 | Phase 6 ✅ — three-way sync (CLAUDE.md pointer + memory + KB authoritative banner incl. `external:true` rule inversion); scaffolder/template auto-synced (frontend Dockerfile gone); pre-commit drift-guard wired (propagate-*.sh --check); `containerization-doc-rewrite` follow-up filed; verifiers green. **PROJECT COMPLETE.** | Claude Opus 4.7 |
 | 2026-05-16 | Phase 5 ✅ — start.sh/stop.sh two-project rewrite (ensure_net + build_bases + subset + dev + sweep_dev_projects). **Success-criterion gate PASSED**: real `noctus-seed` container = /api/health 200 + SPA + SPA-fallback on ONE port; dev mode = uvicorn --reload + Vite HMR 2-container stack; stop.sh clean teardown. Lifecycle collision bug (fixed container_name across fleet/dev projects) caught by smoke + fixed inline | Claude Opus 4.7 |
 | 2026-05-16 | Phase 4 ✅ — seed-inherited dev-mode override (uvicorn --reload backend overlay + Vite-HMR sidecar from the shared frontend base; SERVE_SPA_DIR="" ⇒ Phase-1 API-only fail-soft); `propagate-overrides.sh` → 10 (imobi included; dev port=backend+1000; base image name protected). Standalone compose+override `config -q` clean. Live HMR → Phase 5 (named) | Claude Opus 4.7 |
 | 2026-05-16 | Phase 3 ✅ — single-service canonical compose + `propagate-composes.sh`; root split into `noctusai-products` + `noctusai-infra` (external `noctus-net`); atomic `git rm` of 10 frontend Dockerfiles + nginx template + stale overrides (23 del; `config -q` proves no dangling refs); imobi-scheduling folded; Open Q2/Q3 resolved. KB "NOT external:true" rule inverts → Phase 6 sync | Claude Opus 4.7 |

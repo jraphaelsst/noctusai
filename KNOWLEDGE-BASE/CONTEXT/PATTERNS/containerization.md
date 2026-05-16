@@ -1,16 +1,47 @@
-# Containerization — multi-layer compose orchestration
+# Containerization — single container per product
 
-> **What this is.** The body of the platform: how every product becomes
-> a portable container, how containers wire into a fleet, and how the
-> fleet ships intact to any host. Built around `docker compose include:`
-> with a registry-driven root orchestrator + per-product fragments + a
-> shared platform network.
+> **⚠️ ARCHITECTURE (2026-05-16, project `containerization-single-container`).**
+> Migrated from 2-container-per-product (backend uvicorn + frontend
+> nginx) to **ONE container per product**: uvicorn serves the API **and**
+> the built SPA on one port via the seed factory `serve_spa` /
+> `SERVE_SPA_DIR` seam. Consequences that **override the legacy prose
+> below** (§§3, 6–11 didactic walkthrough is being rewritten — tracked as
+> the named follow-up `containerization-doc-rewrite`; the **rule-bearing**
+> sections §1/§2/§4/§5 + §11a below ARE current):
 >
-> **Why it exists.** Native `./start.sh` (uvicorn + vite) is fast for
-> dev iteration but tied to whatever the laptop has installed. The
-> container path is the **reproducible, deployable** twin: same image
-> on dev laptop, staging, prod, or a teammate's machine. They coexist;
-> use whichever fits the moment.
+> - **Shared seed base images** `noctus-seed-{backend,frontend}-base`
+>   (`seed/docker/Dockerfile.*-base`, built by
+>   `scripts/build-base-images.sh`) + **thin per-product Dockerfiles**
+>   that `FROM` them. `FROM base` IS the named seam — the Docker analog
+>   of `create_product_app()` (inherit-and-extend, never fork; NOT
+>   propagated full copies, NOT a god-Dockerfile with per-product `if`).
+> - **Two compose projects:** `docker-compose.yml` (`name:
+>   noctusai-products`, 10 single-container products) +
+>   `docker-compose.infra.yml` (`name: noctusai-infra`,
+>   Redis/WAHA/Postgres). Each product = one Docker-Desktop row = the
+>   1-click on/off UX; whole-fleet = the project-level switch.
+> - **`noctus-net` is `external: true`** — created once by `start.sh`.
+>   This **INVERTS** the legacy "§4: NOT `external: true`" rule (the
+>   two-project split means no single project may own the shared fabric).
+> - Per-product `<slug>-net` is **removed** (one container ⇒ nothing to
+>   isolate frontend-from-backend).
+> - Same-origin SPA: `vite.config.factory.ts` define-injects
+>   `window.location.origin` under `VITE_SAME_ORIGIN=1` (tunnel/deploy-
+>   correct, zero consumer changes).
+> - `<slug>-tunnel` is **mandatory in the pattern** (every product
+>   compose ships it) but profile-gated (`tunnel-<slug>`/`tunnel-all`).
+> - `./start.sh` whole fleet · `./start.sh <slug>...` subset ·
+>   `./start.sh dev <slug>` (Vite-HMR sidecar + uvicorn `--reload` via
+>   the seed-inherited `docker-compose.override.yml`) ·
+>   `tunnel`/`build`/`native` retained. **A product is EITHER fleet OR
+>   dev** (fixed `container_name` is global; `start.sh dev` pre-empts the
+>   fleet instance; `stop.sh` sweeps standalone dev projects).
+> - Propagation: `scripts/propagate-{dockerfiles,composes,overrides}.sh`
+>   (each `--check`); `products/seed/` is canonical.
+>
+> **Why native still exists.** `./start.sh native` (uvicorn + vite on
+> host) remains the fastest hot-reload path; the container path is the
+> reproducible/deployable twin. They coexist.
 
 ---
 

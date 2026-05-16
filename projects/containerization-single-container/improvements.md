@@ -5,9 +5,9 @@
 > This file captures **improvement opportunities discovered while implementing each phase** — things future iterations of *this* phase should consider. It is NOT a preview of upcoming phase tasks (those live in the plan itself). When a phase is refactored or revisited, open this file first.
 
 **Plan:** `PROJECT.md`
-**Plan status:** Design locked → Phase 0 ready
-**Completed phases:** 6 of 7.
-**Phases with recorded improvements:** 6 of 6 completed.
+**Plan status:** ✅ DONE — all 6 phases shipped & verified (success-criterion gate passed in real Docker)
+**Completed phases:** 7 of 7.
+**Phases with recorded improvements:** 7 of 7 completed.
 
 ## Improvements by phase
 
@@ -59,6 +59,11 @@ none — read-only audit phase; discoveries logged in §11 + `findings.md`.
 - *Fixed `container_name` couples project lifecycles* — mitigated (pre-empt + sweep + "EITHER fleet OR dev" mental model documented). Dropping `container_name` for compose-default project-scoped names would be structurally cleaner BUT breaks the tunnel-log `grep noctus-<slug>-tunnel` + ops muscle memory. **Accept-with-rationale** (documented; revisit if it recurs).
 - *Live "edit→<1s reload" is interactive* — structurally proven (Vite dev + uvicorn `--reload` stack up, both responding in dev mode); the final edit-see-change is the user's interactive confirmation. Honest scope of automated verification.
 - *`build_bases` runs every `start.sh`* — base build is cache-fast when unchanged but still invokes docker. **Deferred → Phase 6 polish** (skip if images exist + seed unchanged). Named.
+
+### Phase 6 — Docs + scaffolder + three-way sync
+
+- *Didactic KB sections (§3,§6–§11, ~40k tok) remain legacy 2-container prose* — **deferred → `containerization-doc-rewrite`** (filed, banner-superseded; not rule-lying). Honest scope: doc-code coherence requires rule-bearing accuracy NOW (done); exhaustive didactic rewrite is quality-debt with a real destination.
+- *`frontend-api-base-dry` + `containerization-prod-deploy`* — follow-up candidates noted across §6/§7; not shared-doc pointers (live in this project's archived record). Surfaced to user in close summary.
 
 ## Deferred items (from §4 Out of scope)
 

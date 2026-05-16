@@ -113,6 +113,25 @@ if [[ -x "$REPO_ROOT/scripts/verify-kb-sync.sh" ]]; then
     fi
 fi
 
+# ─── 4b. Containerization propagation drift (blocking, when seed staged) ─
+# Project: containerization-single-container. The seed at products/seed/
+# is canonical; the 10 per-product backend Dockerfiles + composes +
+# overrides are GENERATED. If the canonical seed (or a propagate script)
+# is staged but the generated files weren't re-propagated, they drift
+# silently. Each propagate-*.sh --check exits non-zero on drift.
+if git diff --cached --name-only | grep -qE '^products/seed/(backend/Dockerfile|docker-compose\.(yml|override\.yml))$|^scripts/propagate-.*\.sh$|^seed/docker/Dockerfile\.'; then
+    for chk in propagate-dockerfiles propagate-composes propagate-overrides; do
+        if [[ -x "$REPO_ROOT/scripts/$chk.sh" ]]; then
+            if ! bash "$REPO_ROOT/scripts/$chk.sh" --check >/dev/null 2>&1; then
+                echo "[pre-commit] $chk drift — per-product files stale vs products/seed/." >&2
+                echo "[pre-commit] Run: bash scripts/$chk.sh   then re-stage. Commit aborted." >&2
+                exit 1
+            fi
+        fi
+    done
+    echo "[pre-commit] containerization propagation: in sync."
+fi
+
 # ─── 5. Phase-state consistency (blocking, only when PROJECT.md staged) ──
 # Per `keeper-phase-state-consistency-detector` (shipped 2026-04-28) +
 # `KB § PATTERNS/project-execution.md § 2 Self-check before claiming a
