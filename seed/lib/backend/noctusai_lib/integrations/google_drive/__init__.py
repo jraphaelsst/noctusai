@@ -30,18 +30,54 @@ is auth-agnostic; the factory routes.
     file_id = parse_drive_url(user_supplied_url)
     meta = await drive.download(file_id, dest=tmp_path / file_id)
     # ... then hand `dest` to youtube_orchestrator.upload(...)
+
+**Read/inspection surface (added 2026-05-16, `social-wiring-absorption`
+Wave 1.E3 — reconciled from the workspace `drive_api/` package).** A
+SECOND Protocol `DriveReader` (search / list_recent / get_file /
+read_file content extraction) ships alongside the download surface —
+they are different operations with different consumers (chatbot
+"inspect my Drive" vs. upload-pipeline download-to-disk), so the
+download contract is NOT overloaded. `compute_content_stats(...)` is
+the LLM-counting-trap fix (precompute aggregates in Python; the tool
+description forbids the model from recounting long structured data).
+
+    reader = make_drive_reader(oauth_credentials=creds)   # or api_key=
+    hit = (await reader.search("cronograma")).hits[0]
+    content = await reader.read_file(hit.id)              # Sheets->CSV
+    stats = compute_content_stats(content.data.decode(),
+                                  rendered_as=content.rendered_as)
 """
 
+from noctusai_lib.integrations.google_drive.content_stats import (
+    compute_content_stats,
+)
 from noctusai_lib.integrations.google_drive.factory import make_drive_downloader
 from noctusai_lib.integrations.google_drive.fake import FakeDriveDownloader
+from noctusai_lib.integrations.google_drive.fake_reader import FakeDriveReader
 from noctusai_lib.integrations.google_drive.mappers import parse_drive_url
 from noctusai_lib.integrations.google_drive.protocol import DriveDownloader
+from noctusai_lib.integrations.google_drive.reader_factory import make_drive_reader
+from noctusai_lib.integrations.google_drive.reader_types import (
+    DriveFileContent,
+    DriveReader,
+    DriveSearchHit,
+    DriveSearchResult,
+)
 from noctusai_lib.integrations.google_drive.types import DriveFile
 
 __all__ = [
+    # Download surface (existing).
     "DriveDownloader",
     "DriveFile",
     "FakeDriveDownloader",
     "make_drive_downloader",
     "parse_drive_url",
+    # Read/inspection surface (added 2026-05-16).
+    "DriveReader",
+    "DriveSearchHit",
+    "DriveSearchResult",
+    "DriveFileContent",
+    "FakeDriveReader",
+    "make_drive_reader",
+    "compute_content_stats",
 ]
