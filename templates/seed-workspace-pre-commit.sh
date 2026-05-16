@@ -21,6 +21,12 @@
 #     entry staged in the same commit. Sandbox/ is the carve-out for
 #     genuine throwaway.
 #
+#   Rule 3 — PROMOTIONS.md is derived, never hand-maintained.
+#     PROMOTIONS.md MUST equal `.promotions/gen-index.py --check` output.
+#     A hand-kept parallel index drifts (the social-wiring-absorption
+#     W0.2 audit found 7-of-14 manifests indexed). Refuse the commit if
+#     the index is stale; tell the author to regenerate + stage it.
+#
 # See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md for the design.
 
 set -euo pipefail
@@ -134,8 +140,33 @@ for path in "${STAGED_ADDED[@]}"; do
   fi
 done
 
+# Rule 3 — PROMOTIONS.md must be the derived form of .promotions/*.md.
+# Runs the workspace-local generator copy in --check mode (no write).
+# Only enforced when a .promotions/ change OR PROMOTIONS.md itself is
+# staged (the only ways the index can go stale within a commit).
+violations_index=()
+GEN="$WORKSPACE_ROOT/.promotions/gen-index.py"
+if [[ -f "$GEN" ]]; then
+  index_relevant=false
+  for path in "${STAGED_ALL[@]}"; do
+    if [[ "$path" == .promotions/*.md || "$path" == "PROMOTIONS.md" ]]; then
+      index_relevant=true
+      break
+    fi
+  done
+  if $index_relevant; then
+    PY="$(command -v python3 || command -v python || true)"
+    if [[ -n "$PY" ]]; then
+      if ! "$PY" "$GEN" --workspace "$WORKSPACE_ROOT" --check >/dev/null 2>&1; then
+        violations_index+=("PROMOTIONS.md is stale vs .promotions/*.md")
+      fi
+    fi
+  fi
+fi
+
 # Report + refuse.
-if [[ ${#violations_symlink[@]} -gt 0 || ${#violations_promotion[@]} -gt 0 ]]; then
+if [[ ${#violations_symlink[@]} -gt 0 || ${#violations_promotion[@]} -gt 0 \
+      || ${#violations_index[@]} -gt 0 ]]; then
   echo ""
   echo "REFUSED: seed-workspace pre-commit hook"
   echo ""
@@ -159,6 +190,21 @@ if [[ ${#violations_symlink[@]} -gt 0 || ${#violations_promotion[@]} -gt 0 ]]; t
     echo "  Every non-sandbox addition needs a matching .promotions/<slug>.md"
     echo "  entry staged in the same commit, OR the file should live under"
     echo "  sandbox/ (the throwaway carve-out)."
+    echo "  See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest."
+    echo ""
+  fi
+  if [[ ${#violations_index[@]} -gt 0 ]]; then
+    echo "Rule 3 — PROMOTIONS.md is derived, never hand-maintained — VIOLATED:"
+    for v in "${violations_index[@]}"; do
+      echo "  - $v"
+    done
+    echo ""
+    echo "  PROMOTIONS.md is auto-derived from .promotions/*.md (the single"
+    echo "  source of truth). Regenerate + stage it:"
+    echo ""
+    echo "      python3 .promotions/gen-index.py --workspace ."
+    echo "      git add PROMOTIONS.md"
+    echo ""
     echo "  See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest."
     echo ""
   fi

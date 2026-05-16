@@ -218,28 +218,39 @@ else
   echo "==> .gitignore already exists; not touching"
 fi
 
-# ----- PROMOTIONS.md index -----
-if [[ ! -f "$TARGET/PROMOTIONS.md" ]]; then
-  echo "==> Creating PROMOTIONS.md (promotion-manifest index)"
-  cat > "$TARGET/PROMOTIONS.md" <<EOF
-# Promotion Manifest — $NAME
+# ----- .promotions/ manifest template -----
+# Authors drop one copy per promotable capability. Shipped by default so
+# the absorption map is a convention, not tribal knowledge.
+MANIFEST_TPL_SRC="$NOC_HOME/templates/seed-workspace-promotions-MANIFEST-TEMPLATE.md"
+MANIFEST_TPL_DST="$TARGET/.promotions/MANIFEST-TEMPLATE.md"
+if [[ -f "$MANIFEST_TPL_SRC" ]]; then
+  echo "==> Installing .promotions/MANIFEST-TEMPLATE.md"
+  cp "$MANIFEST_TPL_SRC" "$MANIFEST_TPL_DST"
+else
+  echo "    WARN: $MANIFEST_TPL_SRC missing — manifest template NOT installed"
+fi
 
-Index of additions in this seed workspace that are candidates for
-promotion into noc. One line per entry; full metadata in
-\`.promotions/<slug>.md\`.
+# ----- .promotions/gen-index.py (self-contained generator copy) -----
+# scripts/ is NOT a symlinked surface, so the workspace pre-commit needs a
+# local copy to run `--check`. The generator imports its manifest parser
+# from the symlinked mcp/ surface, so a copy stays DRY against noc.
+GEN_SRC="$NOC_HOME/scripts/gen-promotions-index.py"
+GEN_DST="$TARGET/.promotions/gen-index.py"
+if [[ -f "$GEN_SRC" ]]; then
+  echo "==> Installing .promotions/gen-index.py (PROMOTIONS.md generator)"
+  cp "$GEN_SRC" "$GEN_DST"
+  chmod +x "$GEN_DST"
+else
+  echo "    WARN: $GEN_SRC missing — promotions generator NOT installed"
+fi
 
-Format mirrors \`MEMORY.md\` — pointer-only, ≤150 chars per line.
-
-See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest.
-
-## Pending
-
-_(none yet)_
-
-## Promoted
-
-_(none yet)_
-EOF
+# ----- PROMOTIONS.md index (DERIVED — never hand-maintained) -----
+# Generated from .promotions/*.md so the index can never drift from the
+# manifest dir (the social-wiring-absorption W0.2 stale-index slip class).
+echo "==> Generating PROMOTIONS.md (derived from .promotions/)"
+if [[ -f "$GEN_SRC" ]]; then
+  python3 "$GEN_SRC" --workspace "$TARGET" \
+    || echo "    WARN: PROMOTIONS.md generation failed (non-fatal at bootstrap)"
 fi
 
 # ----- pre-commit hook -----

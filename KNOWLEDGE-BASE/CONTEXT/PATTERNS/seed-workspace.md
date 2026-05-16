@@ -206,7 +206,16 @@ promoted_on: not-yet                        # OR ISO date when promoted
 <prose — what to wire up, what to test, what migrations to run>
 ```
 
-`PROMOTIONS.md` at the workspace root is the index — one line per `.promotions/` entry, same shape as `MEMORY.md`.
+`PROMOTIONS.md` at the workspace root is the index — but it is a **DERIVED artifact, never hand-maintained.** A hand-kept parallel index drifts: the social-wiring-absorption W0.2 audit found the originating workspace's hand-written `PROMOTIONS.md` listed only **7 of 14** manifests. The `.promotions/` directory is the single source of truth; `PROMOTIONS.md` is regenerated from it.
+
+**Generation contract (mirrors `update-kb-counts.py` / `verify-kb-sync.sh`):**
+
+- **Generator:** `scripts/gen-promotions-index.py` — scans `.promotions/*.md`, reuses the canonical manifest parser from `mcp/noctusai/tools/noctus/dev/promotion.py` (so the index and `noctus.dev.promote_from_seed_workspace` never diverge on what a manifest means), and (re)emits `PROMOTIONS.md` as `Pending` / `Promoted` tables (slug · destination · readiness · promoted_on) between `<!-- promotions:start -->` / `<!-- promotions:end -->` markers. Prose outside the markers is preserved. Unparseable manifests are surfaced under a "Needs attention" section, never silently dropped.
+- **`--check` mode** (`python scripts/gen-promotions-index.py --workspace . --check`) exits non-zero on drift — wired into the seed-workspace pre-commit hook as **Rule 3** (`templates/seed-workspace-pre-commit.sh`): a commit touching `.promotions/*.md` or `PROMOTIONS.md` is refused if the index is stale, with the regen command in the message.
+- **Shipped by default by bootstrap:** `bootstrap-seed-workspace.sh` drops `.promotions/MANIFEST-TEMPLATE.md` (the per-capability manifest shape — author copies one file per promotable capability) + `.promotions/gen-index.py` (a self-contained generator copy, since `scripts/` is not a symlinked surface) and generates the initial `PROMOTIONS.md`. The generator copy stays DRY against noc by importing its parser from the symlinked `mcp/` surface.
+- **Colocated test:** `mcp/noctusai/tests/test_gen_promotions_index.py` (regression-test-the-detector discipline; same `spec_from_file_location` convention as `test_render_history.py`).
+
+Net effect: the absorption map is now an **automatic, derived** artifact of the seed-workspace scaffolding system — a future noc absorption is pre-mapped + drift-proof by construction, not by hand-discipline.
 
 The `seed_first_analysis` block is filled at **addition time**, not at promotion time — invoking the six-question checklist at the moment of authorship surfaces design questions before the file's shape ossifies. Skipping this in the manifest is a design smell that the pre-commit hook does not catch (humans + agents enforce).
 
@@ -257,7 +266,7 @@ What bootstrap does (in order):
 7. Plants `.noctusai-workspace` marker (workspace_kind=seed, noctusai_home=<path>).
 8. Creates `.env` (NOCTUSAI_HOME pointer; gitignored).
 9. Creates `.gitignore` (excludes `.noctusai-state/`, `.env`).
-10. Creates `PROMOTIONS.md` index stub.
+10. Drops `.promotions/MANIFEST-TEMPLATE.md` + `.promotions/gen-index.py`, then **generates** `PROMOTIONS.md` from `.promotions/` (derived; never a hand-written stub).
 11. Copies pre-commit hook into `.githooks/pre-commit`.
 12. Renders README from `templates/seed-workspace-README.md` (substitutes `{{WORKSPACE_NAME}}`, `{{NOCTUSAI_HOME}}`, `{{CREATED_AT}}`).
 13. Drops docker artifacts from `templates/seed-workspace-docker/`: `Dockerfile`, `Dockerfile.frontend`, `docker-compose.yml`, `.dockerignore`, `.env.example`, `start.sh`, `stop.sh` — all carrying `{{PRODUCT_SLUG}}` / `{{PRODUCT_NAME}}` / `{{BACKEND_PORT}}` / `{{FRONTEND_PORT}}` placeholders. `start.sh` + `stop.sh` are `chmod +x` at copy-time. Substitution happens later when the user runs `noctus.dev.scaffold_product` (see "Docker scaffolding" below).
