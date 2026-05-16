@@ -7,9 +7,20 @@ the framework's database module rather than product-level modules.
 import sys as _sys
 from pathlib import Path as _Path
 
-_LIB = _Path(__file__).resolve().parents[4] / "social_wiring" / "lib" / "backend"
-if str(_LIB) not in _sys.path:
-    _sys.path.insert(0, str(_LIB))
+_REPO = _Path(__file__).resolve().parents[4]
+_LIB = _REPO / "seed" / "lib" / "backend"
+_FRAMEWORK = _REPO / "seed" / "framework" / "backend"
+# Add BOTH seed source roots to sys.path FIRST. `purge_shadowing_editable_finders`
+# (called below) drops the `noctusai_seed` editable finder too (its mapping
+# points at seed/framework/backend, outside `_LIB`), so without
+# `_FRAMEWORK` on the path `import noctusai_seed` fails at collection. The
+# `_LIB`-only shim the W0.3 scaffold/reference carried predates the
+# separate-finders layout — this restores framework resolution by path.
+# (Cross-product test-infra follow-up: fold `noctusai_seed` path-restore
+# into the shared shim — out of this product's scope.)
+for _p in (_FRAMEWORK, _LIB):
+    if str(_p) not in _sys.path:
+        _sys.path.insert(0, str(_p))
 import importlib.util as _ilu  # noqa: E402
 _spec = _ilu.spec_from_file_location(
     "_bootstrap_conftest_helpers",
@@ -47,10 +58,13 @@ def client():
         MockUser(org_id="test-org-123")
     ))
 
-    with patch("app.database._db.get_client", return_value=mock_sb), \
-         patch("app.database._db.get_core_client", return_value=mock_sb), \
-         patch("app.database._db.get_admin_client", return_value=mock_sb), \
-         patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
+    # Canonical seed-level patch (mirrors products/personal-finance
+    # conftest). Class-level patch on DatabaseModule covers every
+    # DatabaseModule instance — both app.database._db and the separate
+    # instance dependencies.py builds — so we never resolve
+    # `app.database._db` at collection time (which broke the older
+    # product-level-patch shape the W0.3 scaffold/reference carried).
+    with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
 

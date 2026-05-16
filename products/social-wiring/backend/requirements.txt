@@ -21,3 +21,23 @@ redis==5.0.1
 
 # Testing
 pytest-asyncio>=0.21.0
+
+# ─── Social Wiring integration deps (from validated reference source) ───
+openai>=1.40.0
+
+# YouTube Data API v3 (youtube_service)
+google-api-python-client>=2.120.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+
+# Token encryption at rest (credential_store / token vault)
+cryptography>=42.0.0
+
+# Google Drive download fallback (gdrive_service)
+gdown>=5.1.0
+
+# PDF text extraction + page rasterization (media_service multimodal).
+# pdfminer.six covers text-PDFs; PyMuPDF rasterizes scanned-image PDFs
+# (e.g. CNH) so they can flow through the vision model.
+pdfminer.six>=20231228
+PyMuPDF>=1.24.0
