@@ -6,8 +6,8 @@
 
 **Plan:** `PROJECT.md`
 **Plan status:** Design locked → Phase 0 ready
-**Completed phases:** 3 of 7.
-**Phases with recorded improvements:** 3 of 3 completed.
+**Completed phases:** 4 of 7.
+**Phases with recorded improvements:** 4 of 4 completed.
 
 ## Improvements by phase
 
@@ -41,6 +41,13 @@ none — read-only audit phase; discoveries logged in §11 + `findings.md`.
 - *seed canonical keeps `{{BACKEND_*_EXTRA}}` marker comments* — harmless `#` lines when seed builds standalone; they're the template seams. Accept-with-rationale (spine-file template markers; cheap; documented here).
 - *`frontend-dev` `EXPOSE 5273` is a placeholder port* — real dev-sidecar ports defined in **Phase 4**.
 
+### Phase 3 — Canonical compose (single service, mandatory tunnel, external net) + root split
+
+- *`noctus-net: external: true` ⇒ standalone `cd products/<x> && docker compose up` needs `docker network create noctus-net` first.* Documented in every compose header; start.sh automates (Phase 5). **Accept-with-rationale** — the necessary tradeoff of the two-project split (KB rule "NOT external:true" inverts under this project — Phase 6 KB rewrite captures the inversion).
+- *Per-product + root `docker-compose.prod.yml` left untouched* — now stale vs single-container. Explicitly **out of scope** (prod-deploy pipeline). **Deferred → follow-up project candidate `containerization-prod-deploy`** (named, not silent).
+- *Stale per-product overrides removed* — standalone dev-mode is broken until **Phase 4** recreates the seed-inherited override. Sequenced + named (Phase 4 is the immediate next phase).
+- *Both `propagate-*.sh --check` not yet pre-commit-wired* — **Phase 6**.
+
 ## Deferred items (from §4 Out of scope)
 
 _Work deliberately scoped out of this plan. Track as candidates for future plans, not as improvements to existing phases._
@@ -51,6 +58,7 @@ _Work deliberately scoped out of this plan. Track as candidates for future plans
 
 ## Open questions still blocking
 
-- **Same-origin VITE rewiring depth** — does dropping cross-origin break any product whose frontend hardcodes an absolute API URL? — answer in Phase 0 (audit `vite.config.factory.ts` + per-product `VITE_*`).
-- **Two root files vs compose `profiles`/`-p` for the project split** — settle in Phase 3 (lean: separate `-p noctusai-products` / `-p noctusai-infra` invocations from `start.sh`; `include:` stays within products).
-- **`imobi-scheduling` override absence** — fold into the standardized pattern (Phase 3/4) or accept-with-rationale? Lean: fold (standardization is the project's point).
+- ✅ **Same-origin VITE rewiring depth** — RESOLVED Phase 2: `window.location.origin` define-injection; zero consumer changes; tunnel-correct.
+- ✅ **Two root files vs profiles for the project split** — RESOLVED Phase 3: two root files (`docker-compose.yml` `name: noctusai-products` + `docker-compose.infra.yml` `name: noctusai-infra`); `include:` within products.
+- ✅ **`imobi-scheduling` shape** — RESOLVED Phase 3: folded into the standardized pattern (compose regenerated; override comes Phase 4 like every product).
+- **`docker-compose.prod.yml` staleness** — out of scope here; needs a `containerization-prod-deploy` follow-up — decided by user / post-close.

@@ -1,25 +1,49 @@
-# core per-product compose fragment.
+# core compose — SINGLE CONTAINER (generated from products/seed/docker-compose.yml; edit there + re-propagate).
 #
-# Generated from the canonical pattern at products/seed/docker-compose.yml.
-# Use standalone (this product only) or orchestrated by repo-root compose
-# (all products together — root file uses `include:` to pull this in).
+# Project: containerization-single-container. This file at products/core/
+# is the reference; every other product's docker-compose.yml is generated
+# from it by scripts/propagate-composes.sh (slug + port substitution +
+# per-product VITE args). When the pattern evolves, edit THIS file and
+# re-propagate.
 #
-# Build context is `../..` so seed/ + product code are both reachable.
+# One service `<slug>` (was <slug>-backend + <slug>-frontend): uvicorn
+# serves the API AND the built SPA on ONE port (the seed factory
+# `serve_spa` seam — Phase 1). nginx + the per-product `<slug>-net`
+# private network are gone (nothing to isolate — it's one container).
+#
+# `<slug>-tunnel` is MANDATORY in the standardized pattern (always wired)
+# but profile-gated (only RUNS when asked) — "wired in, consumed when
+# needed". Cloudflare quick-tunnel for webhook/OAuth/demo testing.
+#
+# Network: `noctus-net` is now `external: true` — the two-project split
+# (noctusai-products / noctusai-infra) means the shared fabric is created
+# ONCE outside any single compose project. start.sh ensures it exists
+# (`docker network create noctus-net`) before any `up`. Standalone use
+# (`cd products/seed && docker compose up`) requires it pre-created:
+#   docker network create noctus-net   # one-time
+#
+# Build context = repo root (seed bases + product code reachable). The
+# image inherits the shared seed bases — run scripts/build-base-images.sh
+# first (start.sh orders this in Phase 5).
 
 services:
-  core-backend:
+  core:
     build:
       context: ../..
       dockerfile: products/core/backend/Dockerfile
-    container_name: noctus-core-backend
-    image: ghcr.io/jraphaelsst/noctus-core-backend:${NOCTUS_IMAGE_TAG:-dev}
+      # VITE_* build-arg bridge — public browser config from root .env.
+      # VITE_BACKEND_API_URL + VITE_PRODUCT_SCHEMA are factory-injected
+      # (no arg). Per-product block; seed default = VITE_CORE_URL.
+      args:
+        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
+    container_name: noctus-core
+    image: ghcr.io/jraphaelsst/noctus-core:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
       - "8000:8000"
     networks:
       - noctus-net
-      - core-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
@@ -28,47 +52,19 @@ services:
       retries: 3
       start_period: 20s
 
-  core-frontend:
-    build:
-      context: ../..
-      dockerfile: products/core/frontend/Dockerfile
-      # VITE_* build-arg contract — see KB § PATTERNS/containerization.md
-      # § VITE_* build-arg contract. Every VITE_* in code must be both ARG
-      # (in Dockerfile) and args: (here), sourced from `.env` via ${...}.
-      args:
-        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
-    container_name: noctus-core-frontend
-    image: ghcr.io/jraphaelsst/noctus-core-frontend:${NOCTUS_IMAGE_TAG:-dev}
-    ports:
-      - "5173:5173"
-    depends_on:
-      core-backend:
-        condition: service_healthy
-    networks:
-      - core-net
-    restart: unless-stopped
-
-
-  core-tunnel:
-    # Cloudflare quick-tunnel — ephemeral *.trycloudflare.com URL pointing
-    # at this product's backend. Profile-gated so it's opt-in (cost: one
-    # extra container; benefit: webhook/OAuth callback testing without a
-    # full deploy). Pattern from noctusai-youtube-crawler.
+  seed-tunnel:
+    # Cloudflare quick-tunnel → ephemeral *.trycloudflare.com pointing at
+    # this product's single container. `--protocol http2` forces TCP from
+    # the start (QUIC/UDP dies behind NATs in ~5min and cannot
+    # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
     container_name: noctus-core-tunnel
-    # `--protocol http2` forces TCP from the start. The default `auto` tries
-    # QUIC/UDP first; home/office NATs frequently kill the UDP connection
-    # within ~5 minutes ("timeout: no recent network activity"), and
-    # cloudflared's auto-reconnect cannot re-register the quick-tunnel
-    # hostname once it's been dropped — DNS goes NXDOMAIN forever even
-    # though the container stays "Up". HTTP2 is the documented long-running
-    # fallback. See KB § PATTERNS/containerization.md § Troubleshooting.
-    command: tunnel --no-autoupdate --protocol http2 --url http://core-backend:8000
+    command: tunnel --no-autoupdate --protocol http2 --url http://core:8000
     depends_on:
-      core-backend:
+      core:
         condition: service_healthy
     networks:
-      - core-net
+      - noctus-net
     restart: unless-stopped
     profiles:
       - tunnel-core
@@ -77,6 +73,4 @@ services:
 networks:
   noctus-net:
     name: noctus-net
-    driver: bridge
-  core-net:
-    driver: bridge
+    external: true

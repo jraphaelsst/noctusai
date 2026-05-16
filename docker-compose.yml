@@ -1,161 +1,50 @@
-# NoctusAI Platform — root orchestrator compose.
+# NoctusAI — PRODUCTS orchestrator (compose project: noctusai-products).
 #
-# This file orchestrates the full platform: it `include:`s every product's
-# own docker-compose.yml fragment, plus shared platform services (Redis,
-# WAHA when needed) under profiles. Each product can also be brought up
-# alone via its own compose (cd products/<slug> && docker compose up).
+# Project: containerization-single-container. This is one of TWO root
+# projects (the other: docker-compose.infra.yml → noctusai-infra). The
+# split is what gives the Docker Desktop UX: `noctusai-products` is one
+# collapsible group with a project-level on/off, and — because every
+# product is now a SINGLE container — each product is one row toggled in
+# one click. Infra (Redis/WAHA/Postgres) lives in its own group.
 #
-# The product list mirrors start.sh's PRODUCTS registry. When you scaffold
-# a new product, append its compose to the include list below — same
-# discipline as start.sh (one canonical writer, hand-edits only when you
-# know what you're doing).
+# `name:` pins the compose project so Docker Desktop groups deterministically.
 #
 # Usage:
-#   docker compose up                       # all products, no extras
-#   docker compose --profile redis up       # all products + Redis
-#   docker compose --profile postgres up    # all products + local Postgres (offline dev)
-#   docker compose --profile full up        # all products + Redis + WAHA + Postgres
-#   docker compose --profile minimal up     # core + erp only (smoke)
+#   ./start.sh                       # whole fleet (this project + infra)
+#   ./start.sh <slug> [<slug>...]    # product subset (Phase 5)
+#   docker compose up                # all products (no infra)
+#   docker compose --profile tunnel-all up   # + every product's tunnel
+#   docker compose --profile tunnel-core up  # + just core's tunnel
 #
-# Or via start.sh:
-#   ./start.sh --docker [profile]
-#   ./stop.sh  --docker
+# Per-product dev-mode (Vite HMR + uvicorn --reload) is the seed-inherited
+# docker-compose.override.yml, activated per product in Phase 5
+# (`./start.sh dev <slug>`) — deliberately NOT auto-merged here so the
+# default `up` stays the production-shaped single container.
+#
+# `noctus-net` is external (created once by start.sh; the two-project
+# split means no single project owns it). Standalone/CI without start.sh:
+#   docker network create noctus-net   # one-time
+
+name: noctusai-products
 
 include:
   # BEGIN_PRODUCTS_INCLUDE
-  # Each entry uses the extended `path:` list syntax so the per-product
-  # `docker-compose.override.yml` is auto-merged on top of its compose.
-  # Compose's normal auto-load only covers the override sibling of the
-  # invoked file; nested includes do NOT auto-pull their own overrides
-  # (verified empirically — see KB § PATTERNS/containerization.md §11d).
-  # imobi-scheduling has no override file yet (still on a stale "seed-"
-  # service-name shape; tracked as a pre-existing gap — see findings).
-  - path:
-      - products/core/docker-compose.yml
-      - products/core/docker-compose.override.yml
-  - path:
-      - products/erp-imobiliario/docker-compose.yml
-      - products/erp-imobiliario/docker-compose.override.yml
-  - path:
-      - products/personal-finance/docker-compose.yml
-      - products/personal-finance/docker-compose.override.yml
-  - path:
-      - products/therapy-platform/docker-compose.yml
-      - products/therapy-platform/docker-compose.override.yml
-  - path:
-      - products/seed/docker-compose.yml
-      - products/seed/docker-compose.override.yml
-  - path:
-      - products/daily-life/docker-compose.yml
-      - products/daily-life/docker-compose.override.yml
-  - path:
-      - products/mailing/docker-compose.yml
-      - products/mailing/docker-compose.override.yml
-  - path:
-      - products/adconnect/docker-compose.yml
-      - products/adconnect/docker-compose.override.yml
-  - path:
-      - products/dev-team/docker-compose.yml
-      - products/dev-team/docker-compose.override.yml
+  # One entry per product compose (single-container). Overrides are NOT
+  # path-listed here — the dev-mode override is opt-in per Phase 5.
+  - products/core/docker-compose.yml
+  - products/erp-imobiliario/docker-compose.yml
+  - products/personal-finance/docker-compose.yml
+  - products/therapy-platform/docker-compose.yml
+  - products/seed/docker-compose.yml
+  - products/daily-life/docker-compose.yml
+  - products/mailing/docker-compose.yml
+  - products/adconnect/docker-compose.yml
+  - products/dev-team/docker-compose.yml
   - products/imobi-scheduling/docker-compose.yml
-  - path:
-      - products/youtube-crawler/docker-compose.yml
-      - products/youtube-crawler/docker-compose.override.yml
+  - products/youtube-crawler/docker-compose.yml
   # END_PRODUCTS_INCLUDE
-
-services:
-  # ─── Shared platform services ───────────────────────────────────────
-  # Default-off via profiles; products that need them opt in. Pattern
-  # mirrors templates/seed-workspace-docker/docker-compose.yml so the
-  # standalone-workspace and in-noc-orchestrator paths stay consistent.
-
-  redis:
-    image: redis:7-alpine
-    container_name: noctus-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - noctus-net
-    restart: unless-stopped
-    profiles:
-      - redis
-      - full
-
-  waha:
-    # WhatsApp HTTP API — for chatbot-using products (mailing, dev-team
-    # follow-ups, imobi-scheduling). Consumed via the
-    # noctusai_lib.integrations.whatsapp factory; FakeWahaClient fallback
-    # when WAHA_BASE_URL is empty (so non-chatbot products are unaffected).
-    image: devlikeapro/waha:latest
-    platform: linux/amd64
-    container_name: noctus-waha
-    environment:
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
-      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
-      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
-      WHATSAPP_DEFAULT_ENGINE: WEBJS
-    ports:
-      - "3000:3000"
-    volumes:
-      - waha_sessions:/app/.sessions
-    networks:
-      - noctus-net
-    restart: unless-stopped
-    profiles:
-      - waha
-      - full
-
-  postgres:
-    # Local Postgres for offline dev / fully-isolated CI / "fresh laptop
-    # without internet to Supabase" scenarios. Profile-gated so default
-    # `docker compose up` does NOT bring it up — products still talk to
-    # remote Supabase unless their .env overrides SUPABASE_URL to point
-    # at this container.
-    #
-    # Schema init runs ONCE when the postgres_data volume is empty
-    # (postgres entrypoint behavior). To re-init: ./stop.sh volumes &&
-    # ./start.sh local-db.
-    #
-    # Init scripts at scripts/init-local-db/ run in alphabetical order:
-    #   00-extensions.sql      — CREATE EXTENSION (pgcrypto, uuid-ossp, citext)
-    #   00a-supabase-shims.sql — minimal auth.jwt() / roles / extensions
-    #                            schema stubs so migrations referencing
-    #                            Supabase primitives can apply
-    #   01-schemas.sql         — CREATE SCHEMA IF NOT EXISTS per product
-    #                            (regenerated by build-init-local-db.sh)
-    #   02-migrations.sql      — concatenated products/*/backend/migrations/001_*.sql
-    #                            (regenerated by build-init-local-db.sh)
-    image: postgres:16-alpine
-    container_name: noctus-postgres
-    environment:
-      POSTGRES_USER: noctus
-      POSTGRES_PASSWORD: noctus_local
-      POSTGRES_DB: noctus
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-local-db:/docker-entrypoint-initdb.d:ro
-    networks:
-      - noctus-net
-    profiles:
-      - postgres
-      - full
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U noctus -d noctus"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 networks:
   noctus-net:
     name: noctus-net
-    driver: bridge
-
-volumes:
-  redis_data:
-  waha_sessions:
-  postgres_data:
+    external: true

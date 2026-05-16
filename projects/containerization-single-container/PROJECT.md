@@ -158,10 +158,18 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 - *seed canonical keeps `{{BACKEND_*_EXTRA}}` marker comments* — harmless `#` lines when seed builds standalone; they're the template seams. Accept-with-rationale (spine-file template markers; cheap; documented here).
 - *`frontend-dev` `EXPOSE 5273` is a placeholder port* — real dev-sidecar ports defined in **Phase 4**.
 
-### Phase 3 — Canonical compose (single service, mandatory tunnel, external net) + root split
-- [ ] Rewrite `products/seed/docker-compose.yml` → one `<slug>` service, one port, `noctus-net: external: true`, mandatory profile-gated `<slug>-tunnel`; drop frontend service + `<slug>-net`.
-- [ ] Propagate to 10 products; fold `imobi-scheduling` into the pattern (+ add its override later in Phase 4).
-- [ ] Split root: `docker-compose.yml` (project `noctusai-products`, includes 10 product fragments) + `docker-compose.infra.yml` (project `noctusai-infra`: redis/waha/postgres). Shared external `noctus-net`.
+### Phase 3 — Canonical compose (single service, mandatory tunnel, external net) + root split ✅
+- [x] Rewrote `products/seed/docker-compose.yml` → one `seed` service (was `seed-backend`+`seed-frontend`), one port, `noctus-net: external: true`, **mandatory** profile-gated `seed-tunnel` (→ `http://seed:<port>`); dropped frontend service + `seed-net`.
+- [x] `scripts/propagate-composes.sh` (`--check`, bash-3) → 10 product composes; `imobi-scheduling` folded into the pattern (stale `seed-*` shape gone); core/erp VITE arg blocks. Both propagation `--check`s idempotent (clean).
+- [x] Root split: `docker-compose.yml` `name: noctusai-products` (includes 10, override NOT path-listed — opt-in Phase 4) + new `docker-compose.infra.yml` `name: noctusai-infra` (redis/waha/postgres, volumes). Both reference external `noctus-net`. `docker compose config -q` green for both projects.
+- [x] **Atomic retirement** (no broken intermediate): `git rm` 10 frontend Dockerfiles + `seed/framework/frontend/nginx.conf.template` + stale 2-container per-product overrides + root override (23 deletions). `config -q` proves zero dangling refs after deletion.
+- [x] **Open Q2 resolved** → two root files with `name:` project pinning (not profiles). **Open Q3 resolved** → `imobi-scheduling` folded into the standardized pattern.
+
+**Improvements:**
+- *`noctus-net: external: true` ⇒ standalone `cd products/<x> && docker compose up` needs `docker network create noctus-net` first.* Documented in every compose header; start.sh automates (Phase 5). **Accept-with-rationale** — the necessary tradeoff of the two-project split (KB rule "NOT external:true" inverts under this project — Phase 6 KB rewrite captures the inversion).
+- *Per-product + root `docker-compose.prod.yml` left untouched* — now stale vs single-container. Explicitly **out of scope** (prod-deploy pipeline). **Deferred → follow-up project candidate `containerization-prod-deploy`** (named, not silent).
+- *Stale per-product overrides removed* — standalone dev-mode is broken until **Phase 4** recreates the seed-inherited override. Sequenced + named (Phase 4 is the immediate next phase).
+- *Both `propagate-*.sh --check` not yet pre-commit-wired* — **Phase 6**.
 
 ### Phase 4 — Dev-mode override (seed-inherited) + propagate
 - [ ] `products/seed/docker-compose.override.yml`: `seed-frontend-dev` (vite `--host` + src bind-mount + HMR port) + backend `command: uvicorn --reload` overlay + src bind-mount; profile-gated to the active product.
@@ -185,9 +193,10 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 
 ## 7. Open questions
 
-1. **Same-origin VITE rewiring depth** — does dropping cross-origin break any product whose frontend hardcodes an absolute API URL? — answer in Phase 0 (audit `vite.config.factory.ts` + per-product `VITE_*`).
-2. **Two root files vs compose `profiles`/`-p` for the project split** — settle in Phase 3 (lean: separate `-p noctusai-products` / `-p noctusai-infra` invocations from `start.sh`; `include:` stays within products).
-3. **`imobi-scheduling` override absence** — fold into the standardized pattern (Phase 3/4) or accept-with-rationale? Lean: fold (standardization is the project's point).
+1. ✅ **Same-origin VITE rewiring depth** — RESOLVED Phase 2: `window.location.origin` define-injection; zero consumer changes; tunnel-correct.
+2. ✅ **Two root files vs profiles for the project split** — RESOLVED Phase 3: two root files (`docker-compose.yml` `name: noctusai-products` + `docker-compose.infra.yml` `name: noctusai-infra`); `include:` within products.
+3. ✅ **`imobi-scheduling` shape** — RESOLVED Phase 3: folded into the standardized pattern (compose regenerated; override comes Phase 4 like every product).
+4. **`docker-compose.prod.yml` staleness** — out of scope here; needs a `containerization-prod-deploy` follow-up — decided by user / post-close.
 
 ---
 
@@ -227,5 +236,6 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 | 2026-05-16 | Phase 0 ✅ — factory SPA-mount slot confirmed (step 12); vite factory same-origin change found → Phase 2 sub-task added; backend Dockerfiles uniform (imobi/dev-team exceptions noted); frontend Dockerfiles retired (drift moot); Open Q1+Q3 resolved | Claude Opus 4.7 |
 | 2026-05-16 | **Phase 2 PIVOT (seed-level, user-driven):** rejected both (a) 10 propagated full copies (drift class) and (b) single god-Dockerfile w/ per-product `if` conditionals (anti-pattern). Adopting the Docker-native seed pattern: **one shared `noctus-seed-base` image** (all common heavy layers) + **thin per-product Dockerfiles** `FROM` it that add only their specificities — `FROM base` IS the named seam (mirrors `create_product_app()` inherit-and-extend, never fork). Same-origin/factory work from Phase 2 unaffected. `propagate-dockerfiles.sh` → emits thin skeletons only (or retired). Cost: base builds before products (start.sh orders it; also caches the heavy layer once vs 10×) | Claude Opus 4.7 |
 | 2026-05-16 | Phase 2 design refinement — same-origin: scattered `import.meta.env.VITE_BACKEND_API_URL \|\| 'http://localhost:80XX'` idiom (N≫3 across products) + mandatory tunnels make build-time absolute URLs wrong. Solution: Vite `define` raw-expression injection of `window.location.origin` in same-origin mode → runtime-correct (localhost/tunnel/deploy), zero consumer-file changes; only vite factory + env.ts hand-edited | Claude Opus 4.7 |
+| 2026-05-16 | Phase 3 ✅ — single-service canonical compose + `propagate-composes.sh`; root split into `noctusai-products` + `noctusai-infra` (external `noctus-net`); atomic `git rm` of 10 frontend Dockerfiles + nginx template + stale overrides (23 del; `config -q` proves no dangling refs); imobi-scheduling folded; Open Q2/Q3 resolved. KB "NOT external:true" rule inverts → Phase 6 sync | Claude Opus 4.7 |
 | 2026-05-16 | Phase 2 ✅ — seed-level single-container images: 2 shared base images + thin per-product inheritors (`FROM base` = the seam); same-origin via vite-define `window.location.origin`; propagate + build-base scripts; `imobi-scheduling` stale shape fixed; dev-team `/opt/dev_team` via splice seam. Verified in real Docker: frontend-base + thin `FROM` chain + in-container same-origin bundle. Backend-base full build deferred → Phase 5 (named) | Claude Opus 4.7 |
 | 2026-05-16 | Phase 1 ✅ — `serve_spa` seam in `noctusai_seed.app` (param + `SERVE_SPA_DIR` env, SPA-fallback `_mount_spa`, fail-soft); `test_serve_spa.py` 9 tests; 35/35 seed-factory regression green. Improvements captured; dotted-route heuristic deferred → Phase 2 | Claude Opus 4.7 |

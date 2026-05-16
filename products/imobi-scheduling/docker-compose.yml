@@ -1,40 +1,49 @@
-# Canonical per-product compose fragment.
+# imobi-scheduling compose — SINGLE CONTAINER (generated from products/seed/docker-compose.yml; edit there + re-propagate).
 #
-# This file at products/seed/docker-compose.yml is the reference; every
-# other product's docker-compose.yml is a copy with slug + ports
-# substituted. Two ways to use it:
+# Project: containerization-single-container. This file at products/imobi-scheduling/
+# is the reference; every other product's docker-compose.yml is generated
+# from it by scripts/propagate-composes.sh (slug + port substitution +
+# per-product VITE args). When the pattern evolves, edit THIS file and
+# re-propagate.
 #
-#   1. Standalone (just this product):
-#        cd products/seed && docker compose up
+# One service `<slug>` (was <slug>-backend + <slug>-frontend): uvicorn
+# serves the API AND the built SPA on ONE port (the seed factory
+# `serve_spa` seam — Phase 1). nginx + the per-product `<slug>-net`
+# private network are gone (nothing to isolate — it's one container).
 #
-#   2. Orchestrated by the platform root (all products together):
-#        docker compose up                          # at repo root
-#        docker compose --profile redis up          # + Redis service
-#        docker compose --profile full up           # + all optional services
+# `<slug>-tunnel` is MANDATORY in the standardized pattern (always wired)
+# but profile-gated (only RUNS when asked) — "wired in, consumed when
+# needed". Cloudflare quick-tunnel for webhook/OAuth/demo testing.
 #
-# Build context is `../..` so seed/ and product code are both reachable
-# from the repo root (vite.config.factory + seed editable installs both
-# need the repo-root layout preserved during build).
+# Network: `noctus-net` is now `external: true` — the two-project split
+# (noctusai-products / noctusai-infra) means the shared fabric is created
+# ONCE outside any single compose project. start.sh ensures it exists
+# (`docker network create noctus-net`) before any `up`. Standalone use
+# (`cd products/seed && docker compose up`) requires it pre-created:
+#   docker network create noctus-net   # one-time
 #
-# Networks:
-#   noctus-net   shared platform fabric — declared external so the root
-#                compose can create it once and every product joins it.
-#   seed-net     product-private — backend ↔ frontend isolation by default.
+# Build context = repo root (seed bases + product code reachable). The
+# image inherits the shared seed bases — run scripts/build-base-images.sh
+# first (start.sh orders this in Phase 5).
 
 services:
-  seed-backend:
+  imobi-scheduling:
     build:
       context: ../..
-      dockerfile: products/seed/backend/Dockerfile
-    container_name: noctus-seed-backend
-    image: noctus-seed-backend:dev
+      dockerfile: products/imobi-scheduling/backend/Dockerfile
+      # VITE_* build-arg bridge — public browser config from root .env.
+      # VITE_BACKEND_API_URL + VITE_PRODUCT_SCHEMA are factory-injected
+      # (no arg). Per-product block; seed default = VITE_CORE_URL.
+      args:
+        VITE_CORE_URL: ${VITE_CORE_URL:-}
+    container_name: noctus-imobi-scheduling
+    image: ghcr.io/jraphaelsst/noctus-imobi-scheduling:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     ports:
       - "8011:8011"
     networks:
       - noctus-net
-      - seed-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8011/api/health"]
@@ -43,50 +52,25 @@ services:
       retries: 3
       start_period: 20s
 
-  seed-frontend:
-    build:
-      context: ../..
-      dockerfile: products/seed/frontend/Dockerfile
-    container_name: noctus-seed-frontend
-    image: noctus-seed-frontend:dev
-    ports:
-      - "8160:8160"
-    depends_on:
-      seed-backend:
-        condition: service_healthy
-    networks:
-      - seed-net
-    restart: unless-stopped
-
-
   seed-tunnel:
-    # Cloudflare quick-tunnel — ephemeral *.trycloudflare.com URL pointing
-    # at this product's backend. Profile-gated so it's opt-in (cost: one
-    # extra container; benefit: webhook/OAuth callback testing without a
-    # full deploy). Pattern from noctusai-youtube-crawler.
+    # Cloudflare quick-tunnel → ephemeral *.trycloudflare.com pointing at
+    # this product's single container. `--protocol http2` forces TCP from
+    # the start (QUIC/UDP dies behind NATs in ~5min and cannot
+    # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
-    container_name: noctus-seed-tunnel
-    # `--protocol http2` forces TCP from the start. The default `auto` tries
-    # QUIC/UDP first; home/office NATs frequently kill the UDP connection
-    # within ~5 minutes ("timeout: no recent network activity"), and
-    # cloudflared's auto-reconnect cannot re-register the quick-tunnel
-    # hostname once it's been dropped — DNS goes NXDOMAIN forever even
-    # though the container stays "Up". HTTP2 is the documented long-running
-    # fallback. See KB § PATTERNS/containerization.md § Troubleshooting.
-    command: tunnel --no-autoupdate --protocol http2 --url http://seed-backend:8011
+    container_name: noctus-imobi-scheduling-tunnel
+    command: tunnel --no-autoupdate --protocol http2 --url http://imobi-scheduling:8011
     depends_on:
-      seed-backend:
+      imobi-scheduling:
         condition: service_healthy
     networks:
-      - seed-net
+      - noctus-net
     restart: unless-stopped
     profiles:
-      - tunnel-seed
+      - tunnel-imobi-scheduling
       - tunnel-all
 
 networks:
   noctus-net:
     name: noctus-net
-    driver: bridge
-  seed-net:
-    driver: bridge
+    external: true
