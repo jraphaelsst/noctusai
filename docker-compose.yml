@@ -42,6 +42,9 @@ include:
   - products/dev-team/docker-compose.yml
   - products/imobi-scheduling/docker-compose.yml
   - products/youtube-crawler/docker-compose.yml
+  - path:
+      - products/social-wiring/docker-compose.yml
+      - products/social-wiring/docker-compose.override.yml
   # END_PRODUCTS_INCLUDE
 
 networks:

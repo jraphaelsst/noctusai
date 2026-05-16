@@ -1,0 +1,44 @@
+# OpenSSL configuration that caps outbound TLS at version 1.2.
+#
+# Why this exists:
+#
+# OpenSSL 3.5.x (the version shipped in our Python 3.11 container image,
+# 3.5.5 27 Jan 2026 at time of writing) negotiates TLS 1.3 with the
+# post-quantum hybrid key exchange (ML-KEM-768 / Kyber-768). Cloudflare's
+# edge supported this experimentally, then rolled back support in some
+# regions, producing a mid-handshake reset that OpenSSL surfaces as
+# "UNEXPECTED_EOF_WHILE_READING" — same fingerprint regardless of
+# whether the caller is curl, Python httpx, or anything else.
+#
+# Symptoms this resolves (all from inside the container):
+#   curl: (35) TLS connect error: ... unexpected eof while reading
+#   ssl.SSLEOFError: [SSL: UNEXPECTED_EOF_WHILE_READING]
+#   openai.APIConnectionError: Connection error.
+#
+# Same code from the macOS host (using the host's OpenSSL build)
+# completes fine — so the issue is specifically the container's TLS
+# stack, not a network problem.
+#
+# This config is loaded via the OPENSSL_CONF env var (set in
+# docker-compose.yml on the `app` service). It supplements rather than
+# replaces the system openssl.cnf — only the SSL section is overridden.
+#
+# When the upstream OpenSSL + Cloudflare PQ ciphers stabilize, this
+# carve-out can be removed and TLS 1.3 re-enabled.
+
+openssl_conf = openssl_init
+
+[openssl_init]
+ssl_conf = ssl_sect
+
+[ssl_sect]
+system_default = system_default_sect
+
+[system_default_sect]
+# Cap max TLS at 1.2; allow 1.0/1.1 disabled by default in OpenSSL 3.
+MinProtocol = TLSv1.2
+MaxProtocol = TLSv1.2
+# Conservative cipher list — Cloudflare-safe, well-tested with OpenSSL
+# 3.x. Excludes 3DES + RC4 + EXPORT (all already off by default in
+# modern OpenSSL but listed explicitly for documentation).
+CipherString = HIGH:!aNULL:!MD5:!RC4:!3DES:!EXPORT

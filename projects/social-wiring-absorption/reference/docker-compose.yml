@@ -1,0 +1,215 @@
+# YouTube Crawler — full-stack docker-compose for the testing-ground workspace.
+#
+# Services
+#   app          FastAPI backend (port 8010)
+#   frontend     React/Vite static bundle served by nginx (port 8150)
+#   redis        Upload-job queue + cache (port 6379, internal)
+#   waha         WhatsApp HTTP API (port 3000) — optional, for real WAHA testing
+#   tunnel       Cloudflare tunnel — optional (profile `tunnel`)
+#
+# Profiles
+#   default      app + frontend + redis + waha (full stack online for testing)
+#   tunnel       adds the cloudflared tunnel exposing app to the internet
+#   minimal      app + redis only (skip waha + frontend for backend-only smoke)
+#
+# Build context
+#   The Dockerfiles use additional context `noc` to pull the seed packages
+#   from the noc repo (the workspace's `seed/` is a symlink, which Docker
+#   COPY can't follow). Set NOCTUSAI_HOME in .env or shell env so the
+#   compose file can reach the noc repo.
+#
+# Quick start
+#   cp .env.example .env     # edit secrets
+#   docker compose up        # full stack
+#   docker compose --profile minimal up  # backend + redis only
+
+services:
+  # ─── YouTube Crawler backend ────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        noc: ${NOCTUSAI_HOME:-/Users/rapha/Documents/repository/NoctusAI/noctusai}
+    image: youtube-crawler-app:dev
+    environment:
+      # YouTube
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      YOUTUBE_REDIRECT_URI: ${YOUTUBE_REDIRECT_URI:-http://localhost:8010/api/youtube/oauth/callback}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:8150}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      WHATSAPP_CHATBOT_ENABLED: ${WHATSAPP_CHATBOT_ENABLED:-true}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      # SMTP
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # WAHA (consumed via noctusai_lib.integrations.whatsapp factory)
+      WAHA_BASE_URL: ${WAHA_BASE_URL:-http://waha:3000}
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_SESSION: ${WAHA_SESSION:-default}
+      WAHA_DASHBOARD_URL: ${WAHA_DASHBOARD_URL:-http://localhost:3000/dashboard}
+      WAHA_WEBHOOK_URL: ${WAHA_WEBHOOK_URL:-}
+      WAHA_WEBHOOK_HMAC_SECRET: ${WAHA_WEBHOOK_HMAC_SECRET:-}
+      # Supabase
+      DATABASE_BACKEND: ${DATABASE_BACKEND:-sqlite}
+      SQLITE_PATH: ${SQLITE_PATH:-tmp/dev.sqlite3}
+      LOCAL_DEV_ORG_ID: ${LOCAL_DEV_ORG_ID:-00000000-0000-4000-8000-000000000001}
+      LOCAL_DEV_USER_ID: ${LOCAL_DEV_USER_ID:-00000000-0000-4000-8000-000000000001}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_KEY: ${SUPABASE_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      # Vista CRM
+      VISTA_BASE_URL: ${VISTA_BASE_URL:-}
+      VISTA_API_KEY: ${VISTA_API_KEY:-}
+      CRM_BASE_URL: ${CRM_BASE_URL:-}
+      CRM_API_KEY: ${CRM_API_KEY:-}
+      # Cloudflare tunnel
+      TUNNEL_HOSTNAME: ${TUNNEL_HOSTNAME:-}
+      # Google integrations (Calendar OAuth + service-account + Maps)
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:8010/api/calendar/oauth/callback}
+      GOOGLE_OAUTH_ACCOUNT_EMAIL: ${GOOGLE_OAUTH_ACCOUNT_EMAIL:-}
+      GOOGLE_OAUTH_SCOPES: ${GOOGLE_OAUTH_SCOPES:-auto}
+      GOOGLE_SERVICE_ACCOUNT_FILE: ${GOOGLE_SERVICE_ACCOUNT_FILE:-}
+      GOOGLE_CALENDAR_DEFAULT_ID: ${GOOGLE_CALENDAR_DEFAULT_ID:-primary}
+      GOOGLE_CALENDAR_DEFAULT_TIMEZONE: ${GOOGLE_CALENDAR_DEFAULT_TIMEZONE:-America/Sao_Paulo}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # Meta (Facebook + Instagram) read-only Graph API
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      # System User Token: prod-grade auth for BM-owned assets. When
+      # set, used INSTEAD of OAuth (which can't see BM-owned Pages).
+      META_SYSTEM_USER_TOKEN: ${META_SYSTEM_USER_TOKEN:-}
+      META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-http://localhost:8010/api/meta/oauth/callback}
+      META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v21.0}
+      META_OAUTH_SCOPES: ${META_OAUTH_SCOPES:-auto}
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      # LLM (seed defaults from create_product_app lifespan)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "8010:8010"
+    volumes:
+      # Bind product code for hot reload — uvicorn --reload picks up changes
+      - ./products/youtube-crawler/backend/app:/app/products/youtube-crawler/backend/app
+      - ./products/youtube-crawler/backend/apply_sqlite_migrations.py:/app/products/youtube-crawler/backend/apply_sqlite_migrations.py
+      # Bind the seed (noc) so seed-level edits land in the container
+      # without a rebuild or docker cp. A `docker restart app` picks them
+      # up (seed churn is rarer than product code; --reload still watches
+      # the product app-dir for the common case).
+      - ${NOCTUSAI_HOME:-/Users/rapha/Documents/repository/NoctusAI/noctusai}/seed/lib/backend/noctusai_lib:/app/_seed/lib/backend/noctusai_lib
+      - ${NOCTUSAI_HOME:-/Users/rapha/Documents/repository/NoctusAI/noctusai}/seed/framework/backend/noctusai_seed:/app/_seed/framework/backend/noctusai_seed
+      - ./tmp:/app/tmp
+      - ./tmp/uploads:/app/tmp/uploads
+      # Google service-account JSON + OAuth-client JSON (gitignored).
+      - ./secrets:/app/secrets:ro
+      # TLS 1.2 cap for outbound calls (OpenSSL 3.5 + Cloudflare PQ
+      # interop workaround — see conf/openssl-tls12.cnf).
+      - ./conf/openssl-tls12.cnf:/etc/openssl-tls12.cnf:ro
+    depends_on:
+      redis:
+        condition: service_started
+    command: >
+      sh -c "if [ \"${DATABASE_BACKEND:-sqlite}\" = \"sqlite\" ]; then
+      python products/youtube-crawler/backend/apply_sqlite_migrations.py;
+      fi;
+      uvicorn app.main:app
+      --host 0.0.0.0 --port 8010 --reload
+      --app-dir products/youtube-crawler/backend"
+
+  # ─── YouTube Crawler frontend ───────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      additional_contexts:
+        noc: ${NOCTUSAI_HOME:-/Users/rapha/Documents/repository/NoctusAI/noctusai}
+      args:
+        # Baked into the Vite bundle at build time (import.meta.env).
+        # Sourced from the root .env by compose interpolation.
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+    image: youtube-crawler-frontend:dev
+    ports:
+      - "8150:8150"
+    depends_on:
+      app:
+        condition: service_started
+
+  # ─── Redis (upload job queue + caching) ─────────────────────────────
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  # ─── WAHA (WhatsApp HTTP API) ───────────────────────────────────────
+  # Apple Silicon needs the ARM image. The generic latest tag is amd64-only
+  # and runs under Docker emulation, which can leave WEBJS stuck in STARTING.
+  waha:
+    image: ${WAHA_IMAGE:-devlikeapro/waha:arm}
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+    ports:
+      - "3000:3000"
+    volumes:
+      - waha_sessions:/app/.sessions
+
+  # ─── Reverse proxy ──────────────────────────────────────────────────
+  # Fronts every public-facing surface (backend API + frontend SPA +
+  # WAHA HTTP API) on a single port so the Cloudflare Quick Tunnel can
+  # hand out ONE URL for the whole stack:
+  #   <tunnel>/api/*    → backend (FastAPI)
+  #   <tunnel>/docs     → backend (Swagger UI)
+  #   <tunnel>/waha/*   → WAHA dashboard + API
+  #   <tunnel>/*        → frontend SPA (with React Router fallback)
+  # Exposed on host port 8090 so you can hit http://localhost:8090
+  # locally and get the same single-URL view that the tunnel offers.
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      app:
+        condition: service_started
+      frontend:
+        condition: service_started
+      waha:
+        condition: service_started
+
+  # ─── Cloudflare tunnel (optional) ───────────────────────────────────
+  # Useful for OAuth callback testing — YouTube/Google won't redirect to
+  # localhost. Run with: docker compose --profile tunnel up
+  #
+  # Now points at the `proxy` service (port 8090) so the public URL
+  # serves the FRONTEND + BACKEND + WAHA on a single hostname. Before
+  # this change the tunnel only fronted the backend at port 8010,
+  # leaving the frontend reachable only at localhost:8150.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --protocol http2 --url http://proxy:8090
+    depends_on:
+      proxy:
+        condition: service_started
+    profiles:
+      - tunnel
+
+volumes:
+  redis_data:
+  waha_sessions:
+
+# (MTU override removed — was added as part of an OpenSSL 3.5 + TLS
+# diagnosis trail but didn't fix the underlying large-body issue. The
+# OpenSSL downgrade in Dockerfile (bookworm base → OpenSSL 3.0) is the
+# real fix for the TLS handshake half; the remaining large-body issue
+# is independent of MTU. Documented in
+# .promotions/openssl-tls-workaround.md.)

@@ -1,0 +1,46 @@
+FROM node:20-slim AS build
+
+WORKDIR /app
+
+# Seed frontend factory + lib packages — pulled from the noc additional
+# build context so the relative `../../../seed/framework/frontend/` import
+# in vite.config.ts resolves at build time.
+COPY --from=noc seed ./seed
+
+# Product frontend
+COPY products/youtube-crawler/frontend/package.json ./products/youtube-crawler/frontend/package.json
+COPY products/youtube-crawler/frontend/package-lock.json* ./products/youtube-crawler/frontend/
+WORKDIR /app/products/youtube-crawler/frontend
+RUN npm install --no-audit --no-fund
+
+COPY products/youtube-crawler/frontend ./
+
+# Supabase config is a BUILD-TIME concern for Vite (import.meta.env is
+# inlined at `vite build`). Without these the seed's createProductSupabase
+# throws on boot and the whole SPA renders blank. Values come from the
+# root .env via compose build.args (see docker-compose.yml). Only the two
+# boot-critical vars are baked — the backend URL stays runtime-detected
+# (apiBase.ts) so one artifact works for direct/proxy/tunnel.
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_PUBLISHABLE_KEY
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
+# VITE_BACKEND_API_URL intentionally NOT baked: the seed infra api
+# client now runtime-detects same-origin (proxy/tunnel) vs direct-dev
+# port. Baking an absolute URL forces cross-origin → CORS-blocked
+# behind the proxy. Set it ONLY for a non-co-located backend deploy.
+RUN npx vite build
+
+# ─── Runtime stage: nginx serves the built static bundle ─────────────────
+FROM nginx:alpine
+COPY --from=build /app/products/youtube-crawler/frontend/dist /usr/share/nginx/html
+
+# Custom site config — listens on 8150 + SPA fallback (try_files
+# ... /index.html) so React Router routes like /chat, /upload,
+# /videos resolve on direct load and page refresh instead of
+# returning the default-nginx 404 the user saw at localhost:8150/chat.
+COPY products/youtube-crawler/frontend/nginx/default.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 8150
+
+CMD ["nginx", "-g", "daemon off;"]
