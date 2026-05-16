@@ -33,6 +33,24 @@ export interface ProductEnv {
   CORE_URL: string;
   /** Core platform backend API URL (for SSO token exchange) */
   CORE_API_URL: string;
+  /**
+   * Dev-only: when 'true', the frontend skips the Landing/Login redirect
+   * and synthesizes a fixed dev session (pairs with the backend
+   * `SEED_DEV_AUTH` bypass). MUST be unset/false in production builds —
+   * a loud console banner fires whenever it activates. Vite inlines this
+   * at build time like the other VITE_* vars.
+   */
+  DEV_AUTOLOGIN: boolean;
+  /**
+   * Deployment topology: is this product attached to the Core platform?
+   * Core-attached (default, true) → Core-only surfaces like
+   * `/api/me/consents` are available. Standalone (false) → those
+   * surfaces are absent; seed hooks that depend on them no-op instead of
+   * toasting a backend-down error. Mirrors how `apiBase` reasons about
+   * topology. Default true preserves existing SSO/Core-attached behavior
+   * for every current product; standalone deploys opt out.
+   */
+  CORE_ATTACHED: boolean;
 }
 
 /** All required VITE_ var names with descriptions and defaults */
@@ -67,6 +85,18 @@ export const ENV_VARS: Record<keyof ProductEnv, { viteKey: string; description: 
     required: false,
     defaultDev: 'http://localhost:8000',
   },
+  DEV_AUTOLOGIN: {
+    viteKey: 'VITE_DEV_AUTOLOGIN',
+    description: 'Dev-only auto-login bypass (pairs with backend SEED_DEV_AUTH) — NEVER set in prod',
+    required: false,
+    defaultDev: 'false',
+  },
+  CORE_ATTACHED: {
+    viteKey: 'VITE_CORE_ATTACHED',
+    description: 'Topology: true=attached to Core platform (default), false=standalone (no Core-only endpoints)',
+    required: false,
+    defaultDev: 'true',
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -90,6 +120,15 @@ export const env: ProductEnv = {
   get BACKEND_API_URL() { return import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000'; },
   get CORE_URL() { return getViteVar('VITE_CORE_URL') || 'http://localhost:5173'; },
   get CORE_API_URL() { return getViteVar('VITE_CORE_API_URL') || 'http://localhost:8000'; },
+  // Read the LITERAL member expression so Vite's build-time inline
+  // applies (same reason as BACKEND_API_URL above). String 'true' →
+  // boolean true; anything else (incl. unset) → false. Default-OFF so a
+  // prod build with the var absent never auto-logs-in.
+  get DEV_AUTOLOGIN() { return import.meta.env.VITE_DEV_AUTOLOGIN === 'true'; },
+  // Default-true: an UNSET var means "Core-attached" so every existing
+  // product keeps current behavior. Only an explicit 'false' opts into
+  // standalone (Core-only surfaces no-op).
+  get CORE_ATTACHED() { return import.meta.env.VITE_CORE_ATTACHED !== 'false'; },
 };
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@noctusai/seed/infra';
+import { env } from '../../env';
 
 export interface ConsentItem {
   key: string;
@@ -44,10 +45,45 @@ export interface ConsentCatalogResponse {
 
 export const CONSENTS_QUERY_KEY = ['me', 'consents'] as const;
 
+/** Empty catalog — what a standalone (no-Core) deploy degrades to. */
+const EMPTY_CATALOG: ConsentCatalogResponse = { items: [], pending: 0 };
+
+/**
+ * `/api/me/consents` is a **Core-platform** endpoint. Two seed-owned
+ * degradations so a standalone product deploy stops toasting a
+ * backend-down error on every page load:
+ *
+ * 1. **Topology-aware (primary).** When `env.CORE_ATTACHED` is false
+ *    the hook is disabled and resolves to an empty catalog — the
+ *    consent UI simply has nothing to show (it is a Core feature).
+ * 2. **404-swallow (floor).** Even Core-attached, a 404 (endpoint
+ *    genuinely absent) resolves to the empty catalog instead of
+ *    surfacing an error — degrade silently, never toast "servidor
+ *    indisponível" for a structurally-absent Core surface.
+ *
+ * A real transient error (500, network) still surfaces so genuine
+ * outages are not masked.
+ */
 export function useConsents() {
+  const coreAttached = env.CORE_ATTACHED;
   return useQuery<ConsentCatalogResponse, Error>({
     queryKey: CONSENTS_QUERY_KEY,
-    queryFn: async () => api.get<ConsentCatalogResponse>('/api/me/consents'),
+    queryFn: async () => {
+      try {
+        return await api.get<ConsentCatalogResponse>('/api/me/consents');
+      } catch (err) {
+        // The shared api client throws `Error("[404] ...")`. Treat a
+        // 404 as "no consent catalog here" (structurally absent on
+        // standalone), not as a failure.
+        if (err instanceof Error && err.message.startsWith('[404]')) {
+          return EMPTY_CATALOG;
+        }
+        throw err;
+      }
+    },
+    // Topology gate: no Core → don't even fire the request.
+    enabled: coreAttached,
+    initialData: coreAttached ? undefined : EMPTY_CATALOG,
     staleTime: 60_000,
     // Catalog is small (≤ 30 items today); retry once on transient errors.
     retry: 1,

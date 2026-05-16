@@ -50,6 +50,37 @@ class ProductSettings(BaseAppSettings):
     # legitimate burst exceeds the default.
     webhook_rate_limit: str = "60/minute"
 
+    # ── Dev-auth (pre-seeded local identity) ──────────────────────────
+    # Explicit, double-gated bypass for "scaffolded product runs
+    # end-to-end on day one" (see noctusai_seed.dev_auth). MUST be off in
+    # production: a `seed_dev_auth=True` in a non-debug env still cannot
+    # activate (the factory requires BOTH this flag AND `debug`). Set
+    # `SEED_DEV_AUTH=true` on the local/template .env, never on prod
+    # compose/CI. `local_dev_user_id` / `local_dev_org_id` let a product
+    # pin the synthesized identity to its own seeded org row when it has
+    # one; defaults are fixed sentinels otherwise.
+    seed_dev_auth: bool = False
+    local_dev_user_id: str = ""
+    local_dev_org_id: str = ""
+
+    @field_validator("seed_dev_auth")
+    @classmethod
+    def validate_seed_dev_auth(cls, v, info):
+        """Fail loud if dev-auth is requested in a production-shaped env.
+
+        Mirrors the ``jwt_secret`` guard: a non-debug deploy that still
+        carries ``SEED_DEV_AUTH=true`` is a misconfiguration that would
+        otherwise become a silent auth backdoor.
+        """
+        debug = info.data.get("debug", True) if info.data else True
+        if v and not debug:
+            raise ValueError(
+                "SECURITY ERROR: SEED_DEV_AUTH is true but debug is off. "
+                "The dev-auth bypass must NEVER be enabled in production. "
+                "Unset SEED_DEV_AUTH (or set DEBUG=true only in local dev)."
+            )
+        return v
+
     @field_validator("jwt_secret")
     @classmethod
     def validate_jwt_secret(cls, v, info):

@@ -25,6 +25,7 @@ import {
 } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { ApiClient } from './api';
+import { useAuthReady } from './auth';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ export function createNotificationHooks(
 ) {
   function useNotificacoes(page = 1, pageSize = 20, apenasNaoLidas = false) {
     const { user } = useAuthStore();
+    const authReady = useAuthReady();
 
     return useQuery({
       queryKey: ['notificacoes', page, pageSize, apenasNaoLidas],
@@ -68,13 +70,17 @@ export function createNotificationHooks(
           pagination: result.pagination,
         };
       },
-      enabled: !!user,
+      // Gate on auth-ready AND a user: the first fetch must not race
+      // ahead of the restored session (else 401 → spurious
+      // "servidor indisponível" toast on every standalone page load).
+      enabled: authReady && !!user,
       staleTime: 30 * 1000,
     });
   }
 
   function useContagemNaoLidas() {
     const { user } = useAuthStore();
+    const authReady = useAuthReady();
 
     return useQuery({
       queryKey: ['notificacoes-contagem'],
@@ -82,7 +88,7 @@ export function createNotificationHooks(
         const result = await api.get('/api/notificacoes/contagem');
         return result as ContagemNaoLidas;
       },
-      enabled: !!user,
+      enabled: authReady && !!user,
       refetchInterval: 30000,
       staleTime: 30 * 1000,
     });

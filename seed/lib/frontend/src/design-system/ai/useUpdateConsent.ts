@@ -24,6 +24,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 
+import { env } from '../../env';
 import { CONSENTS_QUERY_KEY, type ConsentCatalogResponse } from './useConsents';
 
 export interface UpdateConsentInput {
@@ -39,6 +40,11 @@ export function useUpdateConsent() {
   const qc = useQueryClient();
   return useMutation<void, Error, UpdateConsentInput, OptimisticContext>({
     mutationFn: async ({ key, granted }) => {
+      // Standalone (no Core) → `/api/me/consents/{key}` is absent.
+      // No-op rather than 404-toast; mirrors `useConsents`'s
+      // topology-aware degradation. The UI is hidden in this topology
+      // anyway, but a misbehaving caller still must not error.
+      if (!env.CORE_ATTACHED) return;
       await api.put(`/api/me/consents/${encodeURIComponent(key)}`, { granted });
     },
     onMutate: async ({ key, granted }): Promise<OptimisticContext> => {

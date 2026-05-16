@@ -6,7 +6,7 @@ export { createApiClient, extractErrorMessage } from './api';
 export type { ApiClient, CreateApiClientOptions } from './api';
 
 // Auth
-export { useSupabaseAuthInit } from './auth';
+export { useSupabaseAuthInit, useAuthReady } from './auth';
 
 // SSO
 export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining } from './sso';
@@ -47,7 +47,7 @@ export { env, validateEnv, generateEnvExample, ENV_VARS } from './env';
 export type { ProductEnv } from './env';
 
 // Supabase
-export { createProductSupabase } from './supabase';
+export { createProductSupabase, assertSupabaseBuildEnv } from './supabase';
 
 // Components
 export { ErrorBoundary, withErrorBoundary, SSOCallback, createAuthProvider, FakeModeBadge } from './components/index';

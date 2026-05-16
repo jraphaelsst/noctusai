@@ -18,6 +18,10 @@ from noctusai_seed.app import create_product_app
 from noctusai_seed.config import ProductSettings
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
+from noctusai_seed.dev_auth import (
+    dev_auth_enabled,
+    make_dev_auth_get_current_user,
+)
 from noctusai_seed.health import (
     HealthCheckHook,
     HealthEndpointConfig,
@@ -31,6 +35,9 @@ __all__ = [
     "ProductSettings",
     "create_database_module",
     "create_dependencies",
+    # Dev-only pre-seeded auth (double-gated; hard-off in production)
+    "make_dev_auth_get_current_user",
+    "dev_auth_enabled",
     # Ops endpoints (`/_health` + `/_ready` baked into create_product_app)
     "HealthCheckHook",
     "HealthEndpointConfig",
