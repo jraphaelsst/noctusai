@@ -1,135 +1,70 @@
 # syntax=docker/dockerfile:1.7
-# dev-team backend Dockerfile.
+# dev-team — thin product image (generated from products/seed/backend/Dockerfile; edit there + re-propagate).
 #
-# Generated from the canonical pattern at products/seed/backend/Dockerfile.
-# When the platform pattern evolves, update seed/ first and propagate.
+# Project: containerization-single-container. Single container: uvicorn
+# serves the API AND the built SPA on ONE port (the seed factory's
+# `serve_spa` seam, fed by SERVE_SPA_DIR). The common heavy layers live in
+# the shared bases (seed/docker/Dockerfile.{backend,frontend}-base) — this
+# file only adds THIS product's specificities. `FROM noctus-seed-*-base`
+# IS the named seam (inherit-and-extend, never fork).
 #
-# Build context: repo root.
-# Build:    docker compose build dev-team-backend
-# Standalone: docker build --build-arg GIT_SHA=$(git rev-parse HEAD) \
-#               -f products/dev-team/backend/Dockerfile -t noctus-dev-team-backend .
+# Prereq: the base images exist (scripts/build-base-images.sh; start.sh
+# orders this before product images). Build context: repo root.
 #
-# Multi-stage layout:
-#   builder  — installs dev headers + compiles all Python wheels into /opt/venv.
-#   runtime  — copies the prebuilt venv + minimal shared-object runtime libs.
-#
-# Result: final image carries only what the app needs at execution time.
-# Build-time tooling (build-essential, *-dev headers, git, pkg-config) is
-# left behind in the builder stage and dropped by Docker.
+# Per-product variance lives ONLY here (kept tiny, product-owned):
+#   • the VITE_* build-arg block (public browser config bridged from .env)
+#   • the product port (EXPOSE / uvicorn --port / healthcheck)
+#   • any product extras (e.g. dev-team adds /opt/dev_team — see its file)
 
 ARG GIT_SHA=dev
 
-# ╔════════════════════════════════════════════════════════════════════════╗
-# ║ Stage 1 — builder: dev headers + wheel compilation                     ║
-# ╚════════════════════════════════════════════════════════════════════════╝
-FROM python:3.11-slim AS builder
+# ── frontend-build: this product's SPA bundle ───────────────────────────
+FROM noctus-seed-frontend-base:dev AS frontend-build
+WORKDIR /app
+# Single-container ⇒ same-origin: the vite factory injects
+# window.location.origin as the API base (tunnel/deploy-correct, zero
+# per-file changes). Native/two-port dev leaves this unset.
+ENV VITE_SAME_ORIGIN=1
+# VITE_* build-arg contract — public browser config only; bridged from
+# .env via compose `args:`. VITE_BACKEND_API_URL + VITE_PRODUCT_SCHEMA are
+# factory-injected (no arg). {{VITE_ARGS}}
+ARG VITE_CORE_URL=
+ENV VITE_CORE_URL=${VITE_CORE_URL}
+COPY products/dev-team/frontend/package*.json ./products/dev-team/frontend/
+WORKDIR /app/products/dev-team/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund
+COPY products/dev-team/frontend ./
+RUN npm run build   # → /app/products/dev-team/frontend/dist
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_INPUT=1
-
-# Build-time system packages: compiler + dev headers for native extensions
-# (cryptography → libffi-dev; psycopg2 → libpq-dev; weasyprint et al → cairo /
-# pango / gdk-pixbuf / girepository dev headers); git for any git+ deps.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        libffi-dev \
-        libpq-dev \
-        git \
-        pkg-config \
-        libcairo2-dev \
-        libgirepository1.0-dev \
-        libpango1.0-dev \
-        libgdk-pixbuf-2.0-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Isolated venv so we can copy it verbatim into the runtime stage and avoid
-# leaking pip / setuptools artifacts into the runtime image.
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:${PATH}" \
-    VIRTUAL_ENV="/opt/venv"
-
+# ── runtime: API + SPA on one port ──────────────────────────────────────
+FROM noctus-seed-backend-base:dev AS runtime
+ARG GIT_SHA
+LABEL org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.title="noctus-dev-team"
 WORKDIR /app
 
-# ─── Layer 1: seed packages (changes infrequently, cached aggressively) ─
-COPY seed/lib/backend ./seed/lib/backend
-COPY seed/framework/backend ./seed/framework/backend
+# Product-specific Python deps (seed lib/framework already in the base
+# venv; strip the `-e seed/` editable lines — they're inherited).
+COPY products/dev-team/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install \
-    -e ./seed/lib/backend \
-    -e ./seed/framework/backend
-
-# ─── dev-team engine package (slug-specific) ────────────────────────────
+    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
+    && pip install -r /tmp/req.clean.txt
+# dev-team: the agno engine, editable-installed alongside the product.
 COPY dev_team /opt/dev_team
 RUN --mount=type=cache,target=/root/.cache/pip pip install -e /opt/dev_team
 
-# ─── Layer 2: product-specific dependencies ─────────────────────────────
-# Strip already-installed seed editables to avoid pip resolver re-build.
-COPY products/dev-team/backend/requirements.txt /tmp/requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
-    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/requirements.clean.txt \
-    && pip install -r /tmp/requirements.clean.txt
-
-# ╔════════════════════════════════════════════════════════════════════════╗
-# ║ Stage 2 — runtime: prebuilt venv + minimal shared-object libs          ║
-# ╚════════════════════════════════════════════════════════════════════════╝
-FROM python:3.11-slim AS runtime
-
-ARG GIT_SHA
-
-# OCI image labels (KB § PATTERNS/containerization.md §11 #7-backend).
-# revision is stamped via `--build-arg GIT_SHA=$(git rev-parse HEAD)` at build.
-LABEL org.opencontainers.image.source="https://github.com/jraphaelsst/noctusai" \
-      org.opencontainers.image.revision="${GIT_SHA}"
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:${PATH}" \
-    VIRTUAL_ENV="/opt/venv"
-
-# Runtime-only system packages: shared-object versions of the libraries the
-# wheels linked against in the builder stage, plus curl for the healthcheck.
-# Crucially: NO `-dev` packages, NO build-essential, NO git, NO pkg-config.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libffi8 \
-        libpq5 \
-        libcairo2 \
-        libpango-1.0-0 \
-        libpangocairo-1.0-0 \
-        libgdk-pixbuf-2.0-0 \
-        libgirepository-1.0-1 \
-        curl \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-# Copy the prebuilt venv from the builder. Because the seed packages were
-# installed editable (`pip install -e`), the venv's egg-link files reference
-# the seed/ source tree on disk — so the source must also be present in the
-# runtime image at the same paths.
-COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /app/seed /app/seed
-COPY --from=builder /opt/dev_team /opt/dev_team
-
-# ─── Layer 3: product code (changes most often) ─────────────────────────
+# Product backend code + the built SPA.
 COPY products/dev-team/backend/ ./products/dev-team/backend/
+COPY --from=frontend-build /app/products/dev-team/frontend/dist ./products/dev-team/frontend/dist
+ENV SERVE_SPA_DIR=/app/products/dev-team/frontend/dist
 
-# Non-root user (security baseline for production-shape images).
-RUN useradd -m -u 1000 noctus \
-    && chown -R noctus:noctus /app /opt/venv
+# Non-root user — LAST (so the pip install above could write the venv).
+RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app /opt/venv
 USER noctus
 
 EXPOSE 8009
-
-# Per-product healthcheck override — see KB § PATTERNS/containerization.md §11c. dev-team registers `agno_ping` readiness_hook via HealthEndpointConfig; probe targets the seed-native `/_ready` aggregate. Tuned timeout=10s + start_period=30s for agno warmup. The compose healthcheck overrides this at runtime; Dockerfile copy stays in sync so `docker run` (without compose) still gets the deeper probe.
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -fsS http://localhost:8009/_ready || exit 1
-
-CMD ["uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8009", \
-     "--app-dir", "products/dev-team/backend"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8009/api/health || exit 1
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
+     "--port", "8009", "--app-dir", "products/dev-team/backend"]

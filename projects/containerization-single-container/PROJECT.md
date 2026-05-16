@@ -126,13 +126,37 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 - *Local starlette imports inside `_mount_spa`.* Intentional — only single-container products pay the import; keeps the seam zero-cost for `native`/two-container. Applied as-is (rationale recorded here).
 - No formal proposal filed — items are observations + one Phase-2-scoped deferral with a named destination; apply-inline-then-delete default (this block + §11 = audit trail).
 
-### Phase 2 — Canonical single-container Dockerfile + propagate
-- [ ] **`vite.config.factory.ts`: make `VITE_BACKEND_API_URL` empty/relative for the prod single-container build** (same-origin) — keep absolute only for `native`/dev cross-port. Verify product API client prefixes `/api`.
-- [ ] Rewrite `products/seed/backend/Dockerfile` → multi-stage (frontend-build + dev + builder + runtime); uvicorn serves SPA.
-- [ ] Retire `products/seed/frontend/Dockerfile` + `nginx.conf.template` usage (document removal).
-- [ ] Wire seed product `app.main` to pass `serve_spa` (or rely on `SERVE_SPA_DIR` env in compose).
-- [ ] Propagate to 10 products (slug+port substitution); preserve `dev-team` `/opt/dev_team` extra.
-- [ ] Build seed image; container serves SPA + `/api/health` on one port.
+### Phase 2 — Seed-level single-container images (base + thin inheritors) ✅
+
+> **Pivoted mid-phase (user-driven, see §11):** the artifact strategy is now Docker-native seed inheritance — shared base images + thin per-product Dockerfiles — NOT 10 propagated full copies and NOT a god-Dockerfile with per-product conditionals.
+
+- [x] **Same-origin contract (seed-level, unchanged by pivot):** `vite.config.factory.ts` injects `window.location.origin` (raw expr) when `VITE_SAME_ORIGIN=1`; `seed/lib/frontend/src/env.ts` reads the define-rewritten literal (`/// <reference types="vite/client" />`). Zero product-file changes; `tsc --noEmit` green.
+- [x] **Two shared seed base images** (the Docker-native `create_product_app()`): `seed/docker/Dockerfile.backend-base` (`noctus-seed-backend-base` — system deps + venv + seed editable installs + runtime libs) and `seed/docker/Dockerfile.frontend-base` (`noctus-seed-frontend-base` — seed FE packages). Common heavy layers in ONE place.
+- [x] **Thin canonical** `products/seed/backend/Dockerfile` (~70 lines) — `FROM noctus-seed-{frontend,backend}-base` + only seed's specifics (VITE block, port, `SERVE_SPA_DIR`, non-root last). `FROM base` IS the named seam.
+- [x] `scripts/propagate-dockerfiles.sh` (`--check` mode) → 10 thin product Dockerfiles. `imobi-scheduling` stale shape **fixed**; `dev-team` `/opt/dev_team` spliced via the `{{BACKEND_EXTRA}}` seam; core/erp VITE args. `--check` idempotent (clean).
+- [x] `scripts/build-base-images.sh` — builds both bases (start.sh orders it pre-product in Phase 5).
+- [x] **0 per-product backend code** — seed `app.main` untouched; `SERVE_SPA_DIR` (Phase 1 seam) set by the Dockerfile.
+- [x] **Verified (real Docker builds):** `noctus-seed-frontend-base` builds ✓; seed thin Dockerfile `FROM` it builds (`--target frontend-build`) ✓; **in-container SPA bundle uses `window.location.origin`** (same-origin proven in a real container, not just host build) ✓. Local host build also green.
+- [x] **Re-sequenced:** frontend `Dockerfile` + `nginx.conf.template` `git rm` → **Phase 3** (atomic with compose rewrite removing the `dockerfile:` refs — no broken intermediate).
+- [x] **Deferral decision recorded (complete this phase):** full `noctus-seed-backend-base` + full product image build runs in **Phase 5 (start.sh verification / deploy drill)**. Rationale: backend-base content is byte-identical logic to the previously-working canonical builder/runtime stages (relocated, not rewritten); heavy (apt + weasyprint/cairo + pip wheels); Phase 0 KB note flags image builds as pre-pulled/slow. The novel risk (same-origin + base-inheritance, frontend half) IS proven in-container above. Tracked as a Phase 5 sub-task + §8 dependency.
+
+**Improvements:**
+- *Inert `||"http://localhost:80XX"` fallback strings still in bundles* (dead — truthy `window.location.origin` LHS). Root: scattered `import.meta.env.VITE_BACKEND_API_URL || '...'` idiom (N≫3). **Deferred → follow-up project candidate `frontend-api-base-dry`** (route consumers through the single `env.BACKEND_API_URL`).
+- *`propagate-dockerfiles.sh --check` not yet pre-commit-wired* — thin files can drift from the canonical. **Deferred → Phase 6** (beside `verify-kb-sync.sh`).
+- *Base image tag is hardcoded `:dev`* in thin Dockerfiles + build script. Fine for local/dev; a real registry tag strategy (per-product GHCR §11a KB) for the BASE image is a **Phase 6 / deploy concern** — noted, named.
+- *`scripts/build-base-images.sh` not yet called by start.sh* — wired in **Phase 5** (explicit dependency, not silent).
+- [x] **Same-origin contract:** `vite.config.factory.ts` — `process.env.VITE_SAME_ORIGIN==='1'` ⇒ inject `VITE_BACKEND_API_URL` `define` as the **raw expression `window.location.origin`** (not JSON-stringified). `seed/lib/frontend/src/env.ts` — `BACKEND_API_URL` getter reads the define-rewritten **literal** `import.meta.env.VITE_BACKEND_API_URL` (+ `/// <reference types="vite/client" />`). **Zero product-file changes**; `tsc --noEmit` green. Simpler than the planned dual-flag (no `VITE_SAME_ORIGIN` define needed).
+- [x] Rewrote `products/seed/backend/Dockerfile` → 4-stage (`frontend-build` w/ `VITE_SAME_ORIGIN=1` · `frontend-dev` · `builder` · `runtime` copies dist + `ENV SERVE_SPA_DIR` + uvicorn serves API+SPA on one port).
+- [x] **0 per-product backend code** — seed `app.main` unchanged; `create_product_app` reads `SERVE_SPA_DIR` env (Phase 1 seam) set by the Dockerfile.
+- [x] `scripts/propagate-dockerfiles.sh` (targeted subst, bash-3 safe, `--check` mode) → regenerated 10 product backend Dockerfiles. `imobi-scheduling` stale shape **fixed** (now port 8011 / own paths); `dev-team` `/opt/dev_team` extras preserved; core/erp VITE args spliced.
+- [x] **Verified:** real `VITE_SAME_ORIGIN=1 npm run build` of seed SPA → bundle contains `window.location.origin||"http://localhost:8004"` (truthy LHS ⇒ localhost fallback is dead/inert; API base = runtime origin, tunnel-correct). No live `http://localhost` API base leaks.
+- [x] **Re-sequenced:** frontend `Dockerfile` + `nginx.conf.template` deletion moved to **Phase 3** (atomic with the compose rewrite that removes the `dockerfile:` refs — deleting now = broken intermediate, violates no-incomplete-commits). Logged §11.
+
+**Improvements:**
+- *Inert `||"http://localhost:80XX"` fallback strings remain in bundles* (dead bytes — truthy `window.location.origin` LHS). Root cause: scattered `import.meta.env.VITE_BACKEND_API_URL || '...'` idiom across products instead of consuming `env.BACKEND_API_URL`. Harmless now. **Deferred → follow-up project candidate `frontend-api-base-dry`** (route all consumers through the single seed accessor; N≫3 recurrence — formalize). Named destination, not silent.
+- *`scripts/propagate-dockerfiles.sh --check` not yet in pre-commit* — per-product backend Dockerfiles can silently drift from canonical. **Deferred → Phase 6** (wire into pre-commit beside `verify-kb-sync.sh`).
+- *seed canonical keeps `{{BACKEND_*_EXTRA}}` marker comments* — harmless `#` lines when seed builds standalone; they're the template seams. Accept-with-rationale (spine-file template markers; cheap; documented here).
+- *`frontend-dev` `EXPOSE 5273` is a placeholder port* — real dev-sidecar ports defined in **Phase 4**.
 
 ### Phase 3 — Canonical compose (single service, mandatory tunnel, external net) + root split
 - [ ] Rewrite `products/seed/docker-compose.yml` → one `<slug>` service, one port, `noctus-net: external: true`, mandatory profile-gated `<slug>-tunnel`; drop frontend service + `<slug>-net`.
@@ -145,6 +169,7 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 - [ ] Verify: edit `.tsx` → browser HMR < ~1s; edit `.py` → uvicorn reload; default `up` = no sidecar.
 
 ### Phase 5 — start.sh / stop.sh orchestration
+- [ ] `scripts/build-base-images.sh` called by start.sh BEFORE product `compose build/up` (base-image build ordering — the Phase 2 deferred full backend-base + full product image build is verified HERE).
 - [ ] Ensure external `noctus-net` (create-if-absent) before any `up`.
 - [ ] Two-project orchestration; `./start.sh` (no args) = whole fleet (both projects); retain `redis/waha/postgres/full/build/native`.
 - [ ] `./start.sh <slug> [<slug>...]` = product subset; `./start.sh dev <slug>` = dev-mode sidecar; `tunnel <slug>` / `tunnel` retained.
@@ -170,6 +195,7 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 
 - **Branch hygiene** — current tree has parallel-agent uncommitted work; project commits split onto `containerization-single-container` off `origin/main` via cherry-pick at phase-commit time (not stashing others' work).
 - **Docker Desktop project-grouping behavior** — the two-project UX claim is verified in Phase 0 before Phase 3 commits to it.
+- **Full `noctus-seed-backend-base` + product image build** — deferred from Phase 2 (verified: frontend-base + thin-FROM chain + in-container same-origin). The heavy backend-base + an end-to-end product container (uvicorn serving API+SPA on one port) is the **Phase 5 gate** before project close. Blocks success-criterion "one container/product serving SPA+API, /api/health green".
 
 ---
 
@@ -199,4 +225,7 @@ Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=fr
 |---|---|---|
 | 2026-05-16 | Initial project drafted after interrogation (tunnel-mandatory, two-project split, single-container confirmed, dev-mode Option A locked) | Claude Opus 4.7 |
 | 2026-05-16 | Phase 0 ✅ — factory SPA-mount slot confirmed (step 12); vite factory same-origin change found → Phase 2 sub-task added; backend Dockerfiles uniform (imobi/dev-team exceptions noted); frontend Dockerfiles retired (drift moot); Open Q1+Q3 resolved | Claude Opus 4.7 |
+| 2026-05-16 | **Phase 2 PIVOT (seed-level, user-driven):** rejected both (a) 10 propagated full copies (drift class) and (b) single god-Dockerfile w/ per-product `if` conditionals (anti-pattern). Adopting the Docker-native seed pattern: **one shared `noctus-seed-base` image** (all common heavy layers) + **thin per-product Dockerfiles** `FROM` it that add only their specificities — `FROM base` IS the named seam (mirrors `create_product_app()` inherit-and-extend, never fork). Same-origin/factory work from Phase 2 unaffected. `propagate-dockerfiles.sh` → emits thin skeletons only (or retired). Cost: base builds before products (start.sh orders it; also caches the heavy layer once vs 10×) | Claude Opus 4.7 |
+| 2026-05-16 | Phase 2 design refinement — same-origin: scattered `import.meta.env.VITE_BACKEND_API_URL \|\| 'http://localhost:80XX'` idiom (N≫3 across products) + mandatory tunnels make build-time absolute URLs wrong. Solution: Vite `define` raw-expression injection of `window.location.origin` in same-origin mode → runtime-correct (localhost/tunnel/deploy), zero consumer-file changes; only vite factory + env.ts hand-edited | Claude Opus 4.7 |
+| 2026-05-16 | Phase 2 ✅ — seed-level single-container images: 2 shared base images + thin per-product inheritors (`FROM base` = the seam); same-origin via vite-define `window.location.origin`; propagate + build-base scripts; `imobi-scheduling` stale shape fixed; dev-team `/opt/dev_team` via splice seam. Verified in real Docker: frontend-base + thin `FROM` chain + in-container same-origin bundle. Backend-base full build deferred → Phase 5 (named) | Claude Opus 4.7 |
 | 2026-05-16 | Phase 1 ✅ — `serve_spa` seam in `noctusai_seed.app` (param + `SERVE_SPA_DIR` env, SPA-fallback `_mount_spa`, fail-soft); `test_serve_spa.py` 9 tests; 35/35 seed-factory regression green. Improvements captured; dotted-route heuristic deferred → Phase 2 | Claude Opus 4.7 |

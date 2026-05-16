@@ -1,68 +1,68 @@
 # syntax=docker/dockerfile:1.7
-# Canonical NoctusAI product backend Dockerfile.
+# imobi-scheduling — thin product image (generated from products/seed/backend/Dockerfile; edit there + re-propagate).
 #
-# This file at products/seed/ is the reference; every other product's
-# backend/Dockerfile is a copy with slug + port substituted. When the
-# pattern needs to evolve, update this file first and propagate.
+# Project: containerization-single-container. Single container: uvicorn
+# serves the API AND the built SPA on ONE port (the seed factory's
+# `serve_spa` seam, fed by SERVE_SPA_DIR). The common heavy layers live in
+# the shared bases (seed/docker/Dockerfile.{backend,frontend}-base) — this
+# file only adds THIS product's specificities. `FROM noctus-seed-*-base`
+# IS the named seam (inherit-and-extend, never fork).
 #
-# Build context: repo root (so seed/ + product code are reachable).
-# Build:    docker compose build seed-backend
-# Standalone: docker build -f products/seed/backend/Dockerfile -t noctus-seed-backend .
+# Prereq: the base images exist (scripts/build-base-images.sh; start.sh
+# orders this before product images). Build context: repo root.
+#
+# Per-product variance lives ONLY here (kept tiny, product-owned):
+#   • the VITE_* build-arg block (public browser config bridged from .env)
+#   • the product port (EXPOSE / uvicorn --port / healthcheck)
+#   • any product extras (e.g. dev-team adds /opt/dev_team — see its file)
 
-FROM python:3.11-slim AS base
+ARG GIT_SHA=dev
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# ── frontend-build: this product's SPA bundle ───────────────────────────
+FROM noctus-seed-frontend-base:dev AS frontend-build
+WORKDIR /app
+# Single-container ⇒ same-origin: the vite factory injects
+# window.location.origin as the API base (tunnel/deploy-correct, zero
+# per-file changes). Native/two-port dev leaves this unset.
+ENV VITE_SAME_ORIGIN=1
+# VITE_* build-arg contract — public browser config only; bridged from
+# .env via compose `args:`. VITE_BACKEND_API_URL + VITE_PRODUCT_SCHEMA are
+# factory-injected (no arg). {{VITE_ARGS}}
+ARG VITE_CORE_URL=
+ENV VITE_CORE_URL=${VITE_CORE_URL}
+COPY products/imobi-scheduling/frontend/package*.json ./products/imobi-scheduling/frontend/
+WORKDIR /app/products/imobi-scheduling/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund
+COPY products/imobi-scheduling/frontend ./
+RUN npm run build   # → /app/products/imobi-scheduling/frontend/dist
 
-# System packages: gcc + libffi for cryptography (Fernet, JWT signing),
-# libpq for psycopg2 if used, curl for healthcheck, git for any git+ deps.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        libffi-dev \
-        libpq-dev \
-        curl \
-        git \
-        pkg-config \
-        libcairo2-dev \
-        libgirepository1.0-dev \
-        libpango1.0-dev \
-        libgdk-pixbuf-2.0-dev \
-    && rm -rf /var/lib/apt/lists/*
-
+# ── runtime: API + SPA on one port ──────────────────────────────────────
+FROM noctus-seed-backend-base:dev AS runtime
+ARG GIT_SHA
+LABEL org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.title="noctus-imobi-scheduling"
 WORKDIR /app
 
-# ─── Layer 1: seed packages (changes infrequently, cached aggressively) ─
-COPY seed/lib/backend ./seed/lib/backend
-COPY seed/framework/backend ./seed/framework/backend
+# Product-specific Python deps (seed lib/framework already in the base
+# venv; strip the `-e seed/` editable lines — they're inherited).
+COPY products/imobi-scheduling/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install \
-    -e ./seed/lib/backend \
-    -e ./seed/framework/backend
+    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
+    && pip install -r /tmp/req.clean.txt
+# (no product extras)
 
-# ─── Layer 2: product-specific dependencies ─────────────────────────────
-# Strip already-installed seed editables to avoid pip resolver re-build.
-COPY products/seed/backend/requirements.txt /tmp/requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
-    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/requirements.clean.txt \
-    && pip install -r /tmp/requirements.clean.txt
+# Product backend code + the built SPA.
+COPY products/imobi-scheduling/backend/ ./products/imobi-scheduling/backend/
+COPY --from=frontend-build /app/products/imobi-scheduling/frontend/dist ./products/imobi-scheduling/frontend/dist
+ENV SERVE_SPA_DIR=/app/products/imobi-scheduling/frontend/dist
 
-# ─── Layer 3: product code (changes most often) ─────────────────────────
-COPY products/seed/backend/ ./products/seed/backend/
-
-# Non-root user (security baseline for production-shape images).
-RUN useradd -m -u 1000 noctus \
-    && chown -R noctus:noctus /app
+# Non-root user — LAST (so the pip install above could write the venv).
+RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app /opt/venv
 USER noctus
 
-EXPOSE 8004
-
-# Healthcheck uses the seed-provided /api/health endpoint (every product
-# inherits it via createProductApp() / create_product_app()).
+EXPOSE 8011
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8004/api/health || exit 1
-
-CMD ["uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8004", \
-     "--app-dir", "products/seed/backend"]
+    CMD curl -fsS http://localhost:8011/api/health || exit 1
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
+     "--port", "8011", "--app-dir", "products/imobi-scheduling/backend"]

@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.7
+# noctus-seed-frontend-base — the SHARED frontend spine image.
+#
+# Project: containerization-single-container. Carries the seed frontend
+# packages (the @noctusai/seed + @noctusai/lib Vite alias targets) with
+# their deps installed — the part identical for every product. Each
+# product's image does `FROM noctus-seed-frontend-base AS frontend-build`
+# and adds ONLY its own manifest + source + `npm run build`.
+#
+# Build context: repo root (the Vite alias factory resolves @noctusai/seed
+# + @noctusai/lib into seed/framework/frontend/src + seed/lib/frontend/src).
+# Built by scripts/build-base-images.sh before product images.
+
+FROM node:20-alpine AS base
+WORKDIR /app
+# Seed frontend packages + their deps so tailwind/jiti resolve transitive
+# packages when product code imports the seed factory (Node resolution
+# walks UP from the factory file's directory).
+COPY seed/framework/frontend ./seed/framework/frontend
+COPY seed/lib/frontend ./seed/lib/frontend
+WORKDIR /app/seed/framework/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund --include=peer
+WORKDIR /app/seed/lib/frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-audit --no-fund --include=peer
+WORKDIR /app
+LABEL org.opencontainers.image.source="https://github.com/jraphaelsst/noctusai" \
+      org.opencontainers.image.title="noctus-seed-frontend-base"

@@ -16,6 +16,11 @@ Curated knowledge from execution. Five categories: slips · errors · mistakes �
 
 - **`caplog` can't see seed-logged WARNINGs.** `create_product_app()` calls `configure_logging()` which reconfigures handlers/propagation, so pytest's `caplog` never receives `noctusai_seed.app` records (they appear in captured stdout via the app's own handler). Don't assert fail-soft via log capture in seed-factory tests — assert the *observable* contract (no crash + API still 200 + nothing mounted). Asserting the log would require monkeypatching our logging config = forbidden. (Phase 1)
 
+## Interesting findings (cont.)
+
+- **Vite `define` raw-expression injection = tunnel-correct same-origin with zero consumer changes.** Setting the `import.meta.env.VITE_BACKEND_API_URL` define to the *un-stringified* text `window.location.origin` makes every literal reference resolve to the runtime origin — correct under localhost, *.trycloudflare.com tunnels and any deploy host. The scattered `|| 'http://localhost:80XX'` fallbacks become inert (truthy LHS). Bracket access (`env['X']`) is NOT define-rewritten — only the literal member expression is; that's why `env.ts` needed the one-line switch to the literal. (Phase 2)
+- **The seed-faithful Docker pattern is base-image + thin inheritors, not copies and not a god-file.** `FROM noctus-seed-*-base` is the exact Docker analog of `create_product_app()`'s inherit-and-extend: common heavy layers in one base, product specificities in a ~70-line product file via a named seam (`{{BACKEND_EXTRA}}` splice for dev-team). Eliminates the propagated-copy drift class AND avoids per-product `if` conditionals in a shared file. Also caches the heavy layer once instead of 10×. (Phase 2 pivot — user-driven)
+
 ## Slips / errors / mistakes
 
 - **Branch switch blocked by parallel-agent uncommitted work** (`LGPD-WARNINGS.md` et al). Did NOT stash/sweep others' work (authorship + collision discipline). Resolution path: split `containerization-single-container` off `origin/main` and cherry-pick own commits at phase-commit time. Not a methodology gap — the safety net (refusing to disturb parallel work) worked as intended.

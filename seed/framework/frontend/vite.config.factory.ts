@@ -94,6 +94,20 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
   const resolvedBackendPort = backendPort || productInfo?.backend || 8000;
   const resolvedSchema = productInfo?.schema || "public";
 
+  // Single-container mode (project: containerization-single-container).
+  // The Docker prod frontend-build stage exports VITE_SAME_ORIGIN=1 — the
+  // SPA is then served by uvicorn on the SAME origin as the API, so the
+  // API base must be the *runtime* origin (correct for localhost, for
+  // *.trycloudflare.com tunnels, and for any deploy host). We inject it as
+  // the RAW expression `window.location.origin` (NOT JSON.stringify) so
+  // every literal `import.meta.env.VITE_BACKEND_API_URL` in product + seed
+  // code is define-rewritten to it with zero per-file changes. Native /
+  // two-port dev keeps the absolute localhost URL.
+  const sameOrigin = process.env.VITE_SAME_ORIGIN === "1";
+  const backendApiUrlDefine = sameOrigin
+    ? "window.location.origin"
+    : JSON.stringify(`http://localhost:${resolvedBackendPort}`);
+
   const config: UserConfig = {
     server: {
       host: "0.0.0.0",
@@ -109,7 +123,7 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
     // Inject product-specific env vars that differ per product.
     // These override anything in .env for this specific product.
     define: {
-      "import.meta.env.VITE_BACKEND_API_URL": JSON.stringify(`http://localhost:${resolvedBackendPort}`),
+      "import.meta.env.VITE_BACKEND_API_URL": backendApiUrlDefine,
       "import.meta.env.VITE_PRODUCT_SCHEMA": JSON.stringify(resolvedSchema),
     },
 

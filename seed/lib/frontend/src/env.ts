@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * Shared environment variable configuration for NoctusAI products.
  *
@@ -80,7 +81,13 @@ function getViteVar(viteKey: string): string | undefined {
 export const env: ProductEnv = {
   get SUPABASE_URL() { return getViteVar('VITE_SUPABASE_URL') || ''; },
   get SUPABASE_PUBLISHABLE_KEY() { return getViteVar('VITE_SUPABASE_PUBLISHABLE_KEY') || ''; },
-  get BACKEND_API_URL() { return getViteVar('VITE_BACKEND_API_URL') || 'http://localhost:8000'; },
+  // Read the LITERAL `import.meta.env.VITE_BACKEND_API_URL` so Vite's
+  // `define` (vite.config.factory) rewrites it: absolute
+  // http://localhost:<port> in dev/native, or `window.location.origin`
+  // in single-container same-origin mode. getViteVar()'s bracket access
+  // is NOT define-rewritten — this one getter reads the member
+  // expression directly. → project: containerization-single-container.
+  get BACKEND_API_URL() { return import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000'; },
   get CORE_URL() { return getViteVar('VITE_CORE_URL') || 'http://localhost:5173'; },
   get CORE_API_URL() { return getViteVar('VITE_CORE_API_URL') || 'http://localhost:8000'; },
 };
