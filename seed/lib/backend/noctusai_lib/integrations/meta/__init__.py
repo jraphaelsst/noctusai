@@ -1,0 +1,144 @@
+"""Meta (Facebook + Instagram) Graph API adapter — canonical
+Protocol + Fake + Real(OAuth, dual-auth) + factory + introspection seam.
+
+Lifted into seed 2026-05-16 by `projects/social-wiring-absorption/`
+Wave 1.E4 from the live-validated `noctusai-youtube-crawler`
+`feat/meta-integrations` + `integration/oauth-discovery` branches
+(end-to-end validated against a real One Consultoria FB Page + IG
+account). Sibling to `google_calendar/`, `google_maps/`,
+`google_drive/`, `vista/`. First Meta-side surface in noc.
+
+**What ships:**
+- Value objects: `FacebookPage`, `InstagramAccount`, `FacebookPost`,
+  `InstagramMedia`, `PostInsights`, `MetaConnectionStatus`.
+- Contract: `MetaAdapter` (Protocol) — read-only v1.
+- `FakeMetaAdapter` — deterministic in-memory; dev/test default.
+- `MetaOAuthAdapter` — live Graph, **dual auth**: System User Token
+  (production; required for Business-Portfolio-owned assets) →
+  OAuth credential-store fallback (end-user path). `auth_mode`
+  discriminator surfaced on `status()`.
+- `MetaCredentialResolver` Protocol + `OAuthMetaCredentials` —
+  product-injected per-tenant OAuth token lookup (mirrors
+  `CalendarCredentialResolver`).
+- Pure mappers + `parse_graph_datetime` (handles `+0000` offset).
+- `MetaGraphError` (`is_auth_error` / `is_rate_limited`).
+- Scope auto-discovery: `META_KITCHEN_SINK_SCOPES`,
+  `resolve_oauth_scopes`, `discover_app_permissions`.
+- `make_meta_router(...)` — `/api/meta/{status,scopes}` seam.
+
+**Default factory** (`get_meta_adapter`): selection priority
+`system_user` → `user_oauth` → `Fake`:
+- `system_user_token` set → `MetaOAuthAdapter` (`auth_mode="system_user"`).
+  No `org_id` / resolver needed (token is workspace-global).
+- resolver present AND `resolver.get_credentials(org_id)` non-None →
+  `MetaOAuthAdapter` (`auth_mode="user_oauth"`).
+- neither → `FakeMetaAdapter` (safe dev/test fallback).
+
+Posting (FB Page post, IG publish) is **out of scope** (read-only
+v1; Meta App Review gates the write scopes). The Protocol is shaped
+for additive extension. TikTok + webhook subscriptions are separate
+future modules (`integrations/tiktok/`, `integrations/meta/webhooks/`).
+
+OAuth start/callback is the generic `noctusai_lib.security.oauth`
+router's job (consumed as-is — this package does not duplicate the
+dance; it ships only the read-only introspection seam).
+"""
+
+from noctusai_lib.integrations.meta._meta_api import (
+    META_KITCHEN_SINK_SCOPES,
+    MetaGraphError,
+    discover_app_permissions,
+    exchange_code_for_token,
+    exchange_for_long_lived,
+    resolve_oauth_scopes,
+)
+from noctusai_lib.integrations.meta.credentials import (
+    MetaCredentialResolver,
+    OAuthMetaCredentials,
+)
+from noctusai_lib.integrations.meta.fake_adapter import FakeMetaAdapter
+from noctusai_lib.integrations.meta.mappers import (
+    ig_account_from_body,
+    ig_media_from_body,
+    insights_from_body,
+    page_from_body,
+    parse_graph_datetime,
+    post_from_body,
+)
+from noctusai_lib.integrations.meta.router import make_meta_router
+from noctusai_lib.integrations.meta.types import (
+    FacebookPage,
+    FacebookPost,
+    InstagramAccount,
+    InstagramMedia,
+    MetaAdapter,
+    MetaConnectionStatus,
+    PostInsights,
+)
+
+
+def get_meta_adapter(
+    *,
+    system_user_token: str | None = None,
+    resolver: MetaCredentialResolver | None = None,
+    org_id: str | None = None,
+    graph_version: str | None = None,
+) -> MetaAdapter:
+    """Return a Meta adapter wired per the auth-resolution priority.
+
+    Priority: System User Token (production; workspace-global) →
+    OAuth credential store (end-user) → `FakeMetaAdapter` (dev/test).
+
+    `system_user_token` — when set, the adapter runs in `system_user`
+    mode and needs no `org_id`/`resolver` (the token is workspace
+    global, one System User serves every consumer).
+
+    `resolver` + `org_id` — the user-OAuth fallback; the adapter
+    resolves the stored long-lived token per tenant. The adapter is
+    still constructed (so `status()` can report a useful error) but
+    falls back to `FakeMetaAdapter` only when there is NEITHER a
+    System User Token NOR a resolver.
+    """
+
+    from noctusai_lib.integrations.meta._meta_api import DEFAULT_GRAPH_VERSION
+    from noctusai_lib.integrations.meta.oauth_adapter import MetaOAuthAdapter
+
+    version = graph_version or DEFAULT_GRAPH_VERSION
+
+    if system_user_token:
+        return MetaOAuthAdapter(
+            system_user_token=system_user_token, graph_version=version
+        )
+    if resolver is not None:
+        return MetaOAuthAdapter(
+            resolver=resolver, org_id=org_id, graph_version=version
+        )
+    return FakeMetaAdapter()
+
+
+__all__ = [
+    "FacebookPage",
+    "FacebookPost",
+    "FakeMetaAdapter",
+    "InstagramAccount",
+    "InstagramMedia",
+    "META_KITCHEN_SINK_SCOPES",
+    "MetaAdapter",
+    "MetaConnectionStatus",
+    "MetaCredentialResolver",
+    "MetaGraphError",
+    "OAuthMetaCredentials",
+    "PostInsights",
+    "discover_app_permissions",
+    "exchange_code_for_token",
+    "exchange_for_long_lived",
+    "get_meta_adapter",
+    "ig_account_from_body",
+    "ig_media_from_body",
+    "insights_from_body",
+    "make_meta_router",
+    "page_from_body",
+    "parse_graph_datetime",
+    "post_from_body",
+    "resolve_oauth_scopes",
+]
