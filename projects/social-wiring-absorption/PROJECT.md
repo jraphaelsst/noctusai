@@ -182,7 +182,7 @@ The win: one consolidated, production-functional CMS product on noc's house sing
 
 - Wave 1 FF-merge gates Waves 2 & 3. Wave 2+3 green gates Wave 4. W0.2 gates W7.
 - `noctus.dev.scaffold_product` must produce a house-container, seed-factory skeleton (W0.3).
-- W0.2 (bring-in-home) gates everything: no Wave depends on reading the originating workspace after W0.2 — the project must be self-contained from the in-home reference set onward.
+- W0.2 brought manifests+notes in-home but NOT the validated source — W1.E1 proved a true reconcile/port needs the source. **Resolved by W0.5** (195-file validated source tree in-home at `reference/source/`). From W0.5 onward the project is genuinely workspace-independent; no later wave reads the originating workspace.
 - Pre-commit KB-sync hook will block on dangling pointers when the 4 products are scrubbed (Wave 4) — KB/CLAUDE updates must land in the same commits.
 
 ---
