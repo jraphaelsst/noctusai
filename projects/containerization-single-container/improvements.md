@@ -6,8 +6,8 @@
 
 **Plan:** `PROJECT.md`
 **Plan status:** Design locked → Phase 0 ready
-**Completed phases:** 5 of 7.
-**Phases with recorded improvements:** 5 of 5 completed.
+**Completed phases:** 6 of 7.
+**Phases with recorded improvements:** 6 of 6 completed.
 
 ## Improvements by phase
 
@@ -53,6 +53,12 @@ none — read-only audit phase; discoveries logged in §11 + `findings.md`.
 - *Dev sidecar runs `npm install` at every container start* — slow first paint each `up`. Acceptable for dev (node_modules can be a named volume later). **Deferred → Phase 5/6 polish** (named).
 - *`propagate-overrides.sh --check` not pre-commit-wired* — joins the other two in **Phase 6**.
 - *Standalone-with-override is always dev* (no prod-shape standalone without `-f` gymnastics) — by design (matches prior KB intent: cd-into-product = hacking it); prod shape validated via the fleet/image build. Accept-with-rationale (header-documented).
+
+### Phase 5 — start.sh / stop.sh orchestration
+
+- *Fixed `container_name` couples project lifecycles* — mitigated (pre-empt + sweep + "EITHER fleet OR dev" mental model documented). Dropping `container_name` for compose-default project-scoped names would be structurally cleaner BUT breaks the tunnel-log `grep noctus-<slug>-tunnel` + ops muscle memory. **Accept-with-rationale** (documented; revisit if it recurs).
+- *Live "edit→<1s reload" is interactive* — structurally proven (Vite dev + uvicorn `--reload` stack up, both responding in dev mode); the final edit-see-change is the user's interactive confirmation. Honest scope of automated verification.
+- *`build_bases` runs every `start.sh`* — base build is cache-fast when unchanged but still invokes docker. **Deferred → Phase 6 polish** (skip if images exist + seed unchanged). Named.
 
 ## Deferred items (from §4 Out of scope)
 

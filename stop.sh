@@ -40,32 +40,59 @@ docker_pre_check() {
 # ──────────────────────────────────────────────────────────────────────
 # Docker modes (default + explicit)
 # ──────────────────────────────────────────────────────────────────────
+# Two compose projects (project: containerization-single-container):
+#   noctusai-products → docker-compose.yml
+#   noctusai-infra    → docker-compose.infra.yml
+# Both reference the external `noctus-net` (created by start.sh). Stopping
+# does NOT remove the external network (other projects may share it).
+# --profile '*' is not a thing; --remove-orphans clears profile-gated
+# tunnel/infra containers from a prior run regardless of active profile.
+PROD_C=(compose -f "$ROOT_DIR/docker-compose.yml")
+INFRA_C=(compose -f "$ROOT_DIR/docker-compose.infra.yml")
+
+# A product run in dev mode (`./start.sh dev <slug>`) lives in its OWN
+# standalone compose project (the product dir name), NOT noctusai-products.
+# Sweep those too so `./stop.sh` is symmetric with every start path.
+sweep_dev_projects() {
+  local f
+  for f in "$ROOT_DIR"/products/*/docker-compose.yml; do
+    [ -f "$f" ] || continue
+    docker compose -f "$f" down --remove-orphans >/dev/null 2>&1 || true
+  done
+}
+
 case "$MODE" in
   docker)
     docker_pre_check
-    echo "==> docker compose down (todos os profiles)"
-    # --remove-orphans handles tunnel containers from a previous tunnel run
-    # whose profile isn't active in the current invocation.
-    cd "$ROOT_DIR" && docker compose down --remove-orphans
+    echo "==> down noctusai-products + noctusai-infra + dev projects (volumes preservados)"
+    docker "${PROD_C[@]}" down --remove-orphans
+    docker "${INFRA_C[@]}" down --remove-orphans
+    sweep_dev_projects
     echo ""
     echo "NoctusAI Platform — containers parados (volumes preservados)."
     echo "  Reiniciar:        ./start.sh"
     echo "  Remover volumes:  ./stop.sh volumes"
     echo "  Limpeza total:    ./stop.sh prune"
+    echo "  (rede 'noctus-net' preservada — docker network rm noctus-net p/ remover)"
     exit 0
     ;;
   volumes)
     docker_pre_check
-    echo "==> docker compose down -v --remove-orphans (containers + volumes)"
-    cd "$ROOT_DIR" && docker compose down -v --remove-orphans
+    echo "==> down -v noctusai-products + noctusai-infra (containers + volumes)"
+    docker "${PROD_C[@]}" down -v --remove-orphans
+    docker "${INFRA_C[@]}" down -v --remove-orphans
+    sweep_dev_projects
     echo "NoctusAI Platform — containers + volumes removidos."
     exit 0
     ;;
   prune)
     docker_pre_check
-    echo "==> docker compose down --rmi all -v --remove-orphans (containers + imagens + volumes)"
-    cd "$ROOT_DIR" && docker compose down --rmi all -v --remove-orphans
+    echo "==> down --rmi all -v (containers + imagens + volumes, ambos os projetos)"
+    docker "${PROD_C[@]}" down --rmi all -v --remove-orphans
+    docker "${INFRA_C[@]}" down --rmi all -v --remove-orphans
+    sweep_dev_projects
     echo "NoctusAI Platform — containers + imagens + volumes removidos."
+    echo "  (rede 'noctus-net' preservada; imagens base noctus-seed-*-base nao removidas)"
     exit 0
     ;;
   native)
