@@ -18,7 +18,9 @@ from typing import Protocol
 from noctusai_lib.integrations.youtube.types import (
     Channel,
     ListResult,
+    PrivacyStatus,
     Video,
+    VideoUpload,
 )
 
 
@@ -42,6 +44,7 @@ class YoutubeClient(Protocol):
     | `list_channel_videos` | ~2 / page of 50 | Two API calls: `playlistItems.list` (1 unit) returns up to 50 video IDs, then `videos.list` (1 unit) fetches details for the batch. The cheap path. |
     | `get_video` | 1 | `videos.list` with one ID is 1 unit. |
     | `search` | **100** | `search.list` is 100 units per page (1% of daily quota per call). PREFER `list_channel_videos` for channel-scoped listings. |
+    | `upload_video` | **1600** | `videos.insert` (resumable) — the single most expensive call in the API; ≈6 uploads exhaust a fresh 10,000/day quota. Requires OAuth (an API key cannot write). |
 
     The `ListResult.quota_units_consumed` field carries the per-call
     cost so consumers can budget against the daily quota."""
@@ -94,6 +97,45 @@ class YoutubeClient(Protocol):
         For channel-scoped listings (newest videos from one channel),
         use `list_channel_videos(channel_id)` instead — same data, ~50×
         cheaper."""
+        ...
+
+    async def upload_video(
+        self,
+        *,
+        file_path: str,
+        title: str,
+        description: str = "",
+        tags: list[str] | None = None,
+        privacy_status: PrivacyStatus = "private",
+        category_id: str = "22",
+    ) -> VideoUpload:
+        """Upload a local video file to YouTube (resumable `videos.insert`).
+
+        **Quota cost: 1600 units** — the most expensive call in the
+        API. Budget against the daily 10,000-unit quota via the
+        returned `VideoUpload.quota_units_consumed`.
+
+        **Requires OAuth** — `videos.insert` is a write; an API-key-only
+        client cannot upload. The Real adapter raises `ValueError` at
+        call time if no OAuth credentials were supplied.
+
+        Args:
+            file_path: Absolute path to the local video file. The Real
+                adapter streams it via a resumable `MediaFileUpload`
+                (no full in-memory buffering).
+            title: `snippet.title`. **Truncated to
+                `TITLE_MAX_LEN` (100) chars** by the adapter — YouTube
+                rejects longer titles outright.
+            description: `snippet.description` (≤5000 chars; default "").
+            tags: `snippet.tags`. `None` → no tags.
+            privacy_status: `status.privacyStatus` —
+                `"private"` (default; nothing goes public implicitly) /
+                `"unlisted"` / `"public"`.
+            category_id: `snippet.categoryId`. Default `"22"`
+                (People & Blogs) — a safe always-available category.
+
+        Returns a `VideoUpload` with the new `video_id`, canonical
+        watch `url`, and `quota_units_consumed=1600`."""
         ...
 
 

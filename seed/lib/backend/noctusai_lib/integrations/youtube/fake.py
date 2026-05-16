@@ -34,10 +34,14 @@ assert against it after a sequence of calls.
 from __future__ import annotations
 
 from noctusai_lib.integrations.youtube.types import (
+    TITLE_MAX_LEN,
+    UPLOAD_QUOTA_UNITS,
     Channel,
     ListResult,
     Playlist,
+    PrivacyStatus,
     Video,
+    VideoUpload,
 )
 
 
@@ -60,6 +64,10 @@ class FakeYoutubeClient:
         self.videos: dict[str, Video] = dict(videos or {})
         self.playlists: dict[str, Playlist] = dict(playlists or {})
         self.quota_units_consumed: int = 0
+        self.uploaded: list[VideoUpload] = []
+        """Every `upload_video` call appends here, in order — tests
+        assert against it without going near googleapiclient."""
+        self._upload_seq: int = 0
 
     # ---- Quota helper ----------------------------------------------------
 
@@ -144,6 +152,37 @@ class FakeYoutubeClient:
             next_page_token=next_token,
             quota_units_consumed=cost,
         )
+
+    async def upload_video(
+        self,
+        *,
+        file_path: str,
+        title: str,
+        description: str = "",
+        tags: list[str] | None = None,
+        privacy_status: PrivacyStatus = "private",
+        category_id: str = "22",
+    ) -> VideoUpload:
+        """1600 quota units (mirrors `videos.insert`).
+
+        Deterministic: video ids are `fake-upload-1`, `fake-upload-2`,
+        … in call order. Title is clipped to `TITLE_MAX_LEN` exactly
+        like the Real adapter so tests catch over-long titles without
+        a network round-trip. The result is also appended to
+        `self.uploaded` for post-hoc assertions. `file_path` is not
+        read — the fake never touches the filesystem."""
+        self._charge(UPLOAD_QUOTA_UNITS)
+        self._upload_seq += 1
+        video_id = f"fake-upload-{self._upload_seq}"
+        result = VideoUpload(
+            video_id=video_id,
+            title=title[:TITLE_MAX_LEN],
+            url=f"https://www.youtube.com/watch?v={video_id}",
+            privacy_status=privacy_status,
+            quota_units_consumed=UPLOAD_QUOTA_UNITS,
+        )
+        self.uploaded.append(result)
+        return result
 
 
 __all__ = ["FakeYoutubeClient"]

@@ -13,9 +13,20 @@ the same day, surfacing the real cost of the duplication. See
 for the historical entry, and `KB § INTEGRATIONS/vista.md § 5` for the
 full Vista contract this module implements.
 
+**Fake + factory added 2026-05-16** (`social-wiring-absorption` Wave 1)
+to complete the canonical Protocol+Fake+Real+factory IO-module shape —
+previously only the Real client (`VistaClient`) shipped, forcing every
+network-free consumer to hand-roll a stub. The Real client's behavior
+was verified unchanged against the validated workspace usage (live
+`/imoveis/detalhes?imovel=ONE10121`, showcase normalizers) — no
+functional reconcile was needed; the gap was solely the missing
+Fake + factory.
+
 Public surface:
 
-- `VistaClient` — async typed client + 7-class error hierarchy
+- `VistaClient` — async typed Real client + 7-class error hierarchy
+- `FakeVistaClient` — deterministic in-memory dev/test stand-in
+- `make_vista_client(...)` — Fake/Real factory (the single seam)
 - `extract_items` — normalize Vista's dict-keyed-by-id envelope
 - `VistaCallResult` — successful-request carrier
 - 4 mappers: `vista_imovel_to_showcase`, `vista_imovel_detalhes_to_showcase`,
@@ -39,6 +50,8 @@ from .client import (
     VistaUpstreamError,
     extract_items,
 )
+from .factory import make_vista_client
+from .fake import FakeVistaClient
 from .normalizers import (
     vista_agencia_to_showcase,
     vista_imovel_detalhes_to_showcase,
@@ -57,8 +70,10 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "DEFAULT_PAGE_SIZE",
     "PAGINATION_KEYS",
-    # Client + result carrier
+    # Client + result carrier + factory
     "VistaClient",
+    "FakeVistaClient",
+    "make_vista_client",
     "VistaCallResult",
     "extract_items",
     # 7-class error hierarchy (catch-order matters — leaves before parent)

@@ -22,11 +22,16 @@ from typing import Any
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload
 
 from noctusai_lib.integrations.youtube.types import (
+    TITLE_MAX_LEN,
+    UPLOAD_QUOTA_UNITS,
     Channel,
     ListResult,
+    PrivacyStatus,
     Video,
+    VideoUpload,
 )
 
 logger = logging.getLogger(__name__)
@@ -339,6 +344,72 @@ class RealYoutubeClient:
             items=videos,
             next_page_token=response.get("nextPageToken"),
             quota_units_consumed=100,
+        )
+
+    async def upload_video(
+        self,
+        *,
+        file_path: str,
+        title: str,
+        description: str = "",
+        tags: list[str] | None = None,
+        privacy_status: PrivacyStatus = "private",
+        category_id: str = "22",
+    ) -> VideoUpload:
+        """**1600 quota units** (`videos.insert`, resumable).
+
+        Requires OAuth credentials — `videos.insert` is a write call;
+        an API-key-only client cannot upload. Raises `ValueError` at
+        call time when no OAuth credentials were supplied (fail loud,
+        per the no-silent-errors rule). The local file is streamed via
+        a resumable `MediaFileUpload` so large videos don't buffer in
+        memory."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.upload_video requires oauth_credentials "
+                "(videos.insert is a write; an API key cannot upload)"
+            )
+
+        clipped_title = title[:TITLE_MAX_LEN]
+        body: dict[str, Any] = {
+            "snippet": {
+                "title": clipped_title,
+                "description": description,
+                "categoryId": category_id,
+            },
+            "status": {"privacyStatus": privacy_status},
+        }
+        if tags:
+            body["snippet"]["tags"] = tags
+
+        media = MediaFileUpload(file_path, resumable=True)
+        try:
+            request = (
+                self._service()
+                .videos()
+                .insert(part="snippet,status", body=body, media_body=media)
+            )
+            response: dict[str, Any] | None = None
+            while response is None:
+                # Resumable upload: drive the chunked transfer to
+                # completion. next_chunk() returns (status, response);
+                # response stays None until the final chunk lands.
+                _status, response = request.next_chunk()
+        except HttpError as exc:
+            logger.warning(
+                "youtube.upload_video_http_error title=%r status=%s",
+                clipped_title,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        video_id = response.get("id", "")
+        return VideoUpload(
+            video_id=video_id,
+            title=clipped_title,
+            url=f"https://www.youtube.com/watch?v={video_id}",
+            privacy_status=privacy_status,
+            quota_units_consumed=UPLOAD_QUOTA_UNITS,
         )
 
 

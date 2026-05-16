@@ -615,3 +615,105 @@ def test_list_result_default_empty() -> None:
     assert result.items == []
     assert result.next_page_token is None
     assert result.quota_units_consumed == 0
+
+
+# ============================================================================
+# Upload surface — Fake
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fake_upload_video_deterministic_id_and_quota() -> None:
+    from noctusai_lib.integrations.youtube import UPLOAD_QUOTA_UNITS, VideoUpload
+
+    fake = FakeYoutubeClient()
+    result = await fake.upload_video(
+        file_path="/tmp/x.mp4", title="My video", description="d"
+    )
+    assert isinstance(result, VideoUpload)
+    assert result.video_id == "fake-upload-1"
+    assert result.url == "https://www.youtube.com/watch?v=fake-upload-1"
+    assert result.privacy_status == "private"
+    assert result.quota_units_consumed == UPLOAD_QUOTA_UNITS == 1600
+    assert fake.quota_units_consumed == 1600
+    assert fake.uploaded == [result]
+
+    second = await fake.upload_video(file_path="/tmp/y.mp4", title="Two")
+    assert second.video_id == "fake-upload-2"
+    assert fake.quota_units_consumed == 3200
+    assert fake.uploaded == [result, second]
+
+
+@pytest.mark.asyncio
+async def test_fake_upload_video_clips_title_to_100() -> None:
+    fake = FakeYoutubeClient()
+    long_title = "A" * 250
+    result = await fake.upload_video(file_path="/tmp/x.mp4", title=long_title)
+    assert len(result.title) == 100
+
+
+@pytest.mark.asyncio
+async def test_fake_upload_video_respects_privacy_status() -> None:
+    fake = FakeYoutubeClient()
+    result = await fake.upload_video(
+        file_path="/tmp/x.mp4", title="t", privacy_status="unlisted"
+    )
+    assert result.privacy_status == "unlisted"
+
+
+# ============================================================================
+# Upload surface — Real (mocked transport)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_requires_oauth() -> None:
+    client = RealYoutubeClient(api_key="key-only")
+    with pytest.raises(ValueError, match="requires oauth_credentials"):
+        await client.upload_video(file_path="/tmp/x.mp4", title="t")
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_calls_insert_resumable() -> None:
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    # Resumable loop: first next_chunk → (status, None), then final chunk.
+    insert_request.next_chunk.side_effect = [
+        (MagicMock(), None),
+        (MagicMock(), {"id": "newvid42"}),
+    ]
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch(
+        "noctusai_lib.integrations.youtube.real.MediaFileUpload"
+    ) as media_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        result = await client.upload_video(
+            file_path="/tmp/v.mp4",
+            title="X" * 250,
+            description="desc",
+            tags=["a", "b"],
+            privacy_status="public",
+            category_id="22",
+        )
+
+    media_mock.assert_called_once_with("/tmp/v.mp4", resumable=True)
+    insert_kwargs = service.videos.return_value.insert.call_args.kwargs
+    assert insert_kwargs["part"] == "snippet,status"
+    body = insert_kwargs["body"]
+    assert len(body["snippet"]["title"]) == 100  # clipped
+    assert body["snippet"]["tags"] == ["a", "b"]
+    assert body["status"]["privacyStatus"] == "public"
+    assert result.video_id == "newvid42"
+    assert result.url == "https://www.youtube.com/watch?v=newvid42"
+    assert result.quota_units_consumed == 1600
+
+
+def test_fake_and_real_satisfy_upload_surface() -> None:
+    fake: YoutubeClient = FakeYoutubeClient()
+    real: YoutubeClient = RealYoutubeClient(api_key="x")
+    assert hasattr(fake, "upload_video")
+    assert hasattr(real, "upload_video")
