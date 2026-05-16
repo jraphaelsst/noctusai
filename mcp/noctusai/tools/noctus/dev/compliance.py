@@ -4136,6 +4136,535 @@ def check_doc_tool_reference_drift(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_seed_export_membership` — a symbol a validated product imports from
+# the seed package surface (`noctusai_lib`/`noctusai_seed` backend,
+# `@noctusai/lib`/`@noctusai/seed` frontend) MUST be in that package's
+# public export surface (`__all__` for the backend package `__init__.py`,
+# the re-export list in `seed/lib/frontend/src/index.ts`). A symbol that
+# resolves to a module FILE but is absent from the public surface is a
+# "reconciled-but-invisible" half-ship: the consumer happens to work via a
+# deep import, but the seam is not actually published.
+#
+# N=2 evidence (social-wiring-absorption):
+#   (a) W1.E2 — `lid_auth.py` shipped to `noctusai_lib.integrations.whatsapp`
+#       with code present but ZERO `__all__` membership + no colocated tests.
+#   (b) W2.4/DEP-B — `createWhatsApp{Connection,Intake}Hooks` + 6 types
+#       consumed by validated product hooks but absent from
+#       `seed/lib/frontend/src/index.ts`.
+#
+# Extends the verify-the-seed-ships-it rule (`feedback_verify_seed_ships_it`)
+# from "file presence" to "public export-surface membership".
+#
+# Severity: `warning` (the consumer works via deep import today; the gap is
+# a missed seam publication, not a runtime break).
+# ---------------------------------------------------------------------------
+
+
+# Backend: a `from <pkg-path> import <name>` is checked ONLY when
+# <pkg-path> resolves to a PACKAGE (`<dir>/__init__.py`) that declares a
+# literal `__all__`. That package's `__all__` IS its published public
+# surface; a symbol a product pulls from it that is absent from `__all__`
+# is the reconciled-but-invisible half-ship (lid_auth shape: the package
+# `__init__.py` re-imports nothing / forgets the symbol, the consumer
+# works only via a deeper path). A `from <pkg>.<module> import <name>`
+# where `<module>.py` is a plain module is a *legitimate deep import*
+# (the symbol is a top-level def there) and is NOT flagged — only the
+# package-surface omission is the rule.
+#
+# import-root → that package's source root dir (relative to repo root).
+_SEED_BACKEND_PACKAGE_ROOTS: dict[str, str] = {
+    "noctusai_lib": "seed/lib/backend/noctusai_lib",
+    "noctusai_seed": "seed/framework/backend/noctusai_seed",
+}
+
+# Frontend: each seed specifier resolves to its OWN package index; a
+# `import { ... } from '<spec>'` is checked against THAT index's
+# re-export surface. `@noctusai/seed` is the framework frontend (it
+# publishes `createProductApp`/`createProductLayout`/...); `@noctusai/lib`
+# is the lib frontend — distinct surfaces, distinct index.ts files.
+_SEED_FRONTEND_INDEX_BY_SPEC: dict[str, str] = {
+    "@noctusai/lib": "seed/lib/frontend/src/index.ts",
+    "@noctusai/seed": "seed/framework/frontend/src/index.ts",
+}
+
+_SEED_EXPORT_SCAN_EXCLUDED_PARTS: frozenset[str] = frozenset({
+    "__pycache__", ".venv", "venv", "node_modules", ".git",
+    ".pytest_cache", "dist", "build", "tests", "__tests__",
+})
+
+
+def _parse_dunder_all(init_path: Path) -> set[str] | None:
+    """Return the set of names in a package `__init__.py`'s top-level
+    `__all__`, or None if the file can't be parsed / has no `__all__`.
+
+    Only a literal list/tuple/set of string constants is understood — a
+    computed `__all__` returns None (the detector then conservatively
+    skips: false negatives over noise).
+    """
+    try:
+        tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=str(init_path))
+    except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot parse %s for __all__ (%s)", init_path, exc)
+        return None
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        targets = [t for t in node.targets if isinstance(t, ast.Name) and t.id == "__all__"]
+        if not targets:
+            continue
+        value = node.value
+        if not isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            return None
+        names: set[str] = set()
+        for elt in value.elts:
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                names.add(elt.value)
+            else:
+                # Non-literal element (splat, name, f-string) → can't
+                # reason statically; skip this package.
+                return None
+        return names
+    return None
+
+
+def _imported_seed_symbols_backend(
+    py_path: Path,
+) -> list[tuple[str, str, str, int]]:
+    """Yield `(pkg_root, module_dotted, symbol, lineno)` for every
+    `from <module_dotted> import <sym>` where the top component of
+    <module_dotted> is a tracked seed backend package.
+
+    `import *` is skipped (no single symbol). The caller decides whether
+    <module_dotted> resolves to a *package* (then `__all__` membership is
+    the rule) or a plain module (legitimate deep import — not flagged).
+    """
+    out: list[tuple[str, str, str, int]] = []
+    try:
+        tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+    except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot parse %s (%s)", py_path, exc)
+        return out
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        pkg_root = node.module.split(".", 1)[0]
+        if pkg_root not in _SEED_BACKEND_PACKAGE_ROOTS:
+            continue
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            out.append((pkg_root, node.module, alias.name, node.lineno))
+    return out
+
+
+_FRONTEND_IMPORT_RE = re.compile(
+    r"import\s+(?:type\s+)?\{(?P<names>[^}]*)\}\s+from\s+['\"](?P<spec>[^'\"]+)['\"]",
+    re.DOTALL,
+)
+# Re-export / export surface lines in index.ts:
+#   export { a, b as c } from './x';   export type { T } from './y';
+#   export { foo };                     export const bar = ...
+_FRONTEND_EXPORT_BRACE_RE = re.compile(
+    r"export\s+(?:type\s+)?\{(?P<names>[^}]*)\}",
+)
+_FRONTEND_EXPORT_DECL_RE = re.compile(
+    r"export\s+(?:default\s+)?"
+    r"(?:const|let|var|function|class|interface|type|enum)\s+"
+    r"(?P<name>[A-Za-z_$][\w$]*)",
+)
+_FRONTEND_EXPORT_STAR_RE = re.compile(r"export\s+\*\s+from")
+
+
+def _frontend_index_export_surface(index_path: Path) -> set[str] | None:
+    """Parse `seed/lib/frontend/src/index.ts` and return the set of
+    publicly re-exported identifiers. Returns None if the file has a bare
+    `export * from ...` (the surface is then non-enumerable statically →
+    conservatively skip to avoid false positives).
+    """
+    try:
+        content = index_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot read %s (%s)", index_path, exc)
+        return None
+    if _FRONTEND_EXPORT_STAR_RE.search(content):
+        return None
+    surface: set[str] = set()
+    for m in _FRONTEND_EXPORT_BRACE_RE.finditer(content):
+        for raw in m.group("names").split(","):
+            tok = raw.strip()
+            if not tok:
+                continue
+            # `a as b` exposes `b`; `a` exposes `a`.
+            exposed = tok.split(" as ")[-1].strip() if " as " in tok else tok
+            if exposed:
+                surface.add(exposed)
+    for m in _FRONTEND_EXPORT_DECL_RE.finditer(content):
+        surface.add(m.group("name"))
+    return surface
+
+
+def _imported_frontend_seed_symbols(
+    ts_path: Path,
+) -> list[tuple[str, str, int]]:
+    """Yield `(specifier, symbol, lineno)` for every
+    `import { ... } from '<spec>'` where <spec> is a tracked seed frontend
+    specifier. A bare-specifier subpath import
+    (`@noctusai/lib/something`) is skipped — only the package root
+    specifier publishes via `index.ts`.
+    """
+    out: list[tuple[str, str, int]] = []
+    try:
+        content = ts_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot read %s (%s)", ts_path, exc)
+        return out
+    for m in _FRONTEND_IMPORT_RE.finditer(content):
+        spec = m.group("spec")
+        if spec not in _SEED_FRONTEND_INDEX_BY_SPEC:
+            continue
+        lineno = content.count("\n", 0, m.start()) + 1
+        for raw in m.group("names").split(","):
+            tok = raw.strip()
+            if not tok:
+                continue
+            # `import { a as b }` consumes the exported name `a`.
+            consumed = tok.split(" as ")[0].strip()
+            if consumed:
+                out.append((spec, consumed, lineno))
+    return out
+
+
+def check_seed_export_membership(repo_root: Path | None = None) -> list[dict]:
+    """A symbol a product imports from the seed package surface must be in
+    that package's public export surface (`__all__` backend / `index.ts`
+    re-exports frontend).
+
+    Catches the "reconciled-but-invisible" half-ship: code lifted into a
+    seed module file but never published in the package's `__all__` /
+    `index.ts`, so the seam is not actually offered to other products even
+    though one deep-importing consumer happens to work.
+
+    Per `feedback_seed_export_membership_keeper` — extends the
+    verify-the-seed-ships-it rule from file-presence to export-surface
+    membership. N=2 evidenced by social-wiring-absorption W1.E2 (lid_auth)
+    + W2.4/DEP-B (frontend WA hooks).
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    products_dir = root / "products"
+
+    # ---- Backend: resolve `<pkg>.<a>.<b>` → that package's `__init__.py`
+    # `__all__`. Only flag when the imported module path is a PACKAGE that
+    # declares a literal `__all__` and the symbol is absent from it (the
+    # reconciled-but-invisible half-ship). A path that resolves to a plain
+    # `<module>.py` is a legitimate deep import and is never flagged.
+    _all_cache: dict[str, set[str] | None] = {}
+
+    def _package_dir_and_all(
+        pkg_root: str, module_dotted: str,
+    ) -> tuple[Path | None, set[str] | None]:
+        """Return `(package_dir, __all__set)` where `package_dir` is the
+        on-disk dir for the imported PACKAGE path (or None if it does not
+        resolve to a package-with-literal-`__all__`), and `__all__set` is
+        that package's literal `__all__` (or None).
+        """
+        if module_dotted in _all_cache:
+            return _all_cache[module_dotted]
+        src_root = root / _SEED_BACKEND_PACKAGE_ROOTS[pkg_root]
+        # Map `noctusai_lib.integrations.whatsapp` → src_root/integrations/whatsapp
+        rest = module_dotted.split(".")[1:]
+        target_dir = src_root.joinpath(*rest) if rest else src_root
+        init_path = target_dir / "__init__.py"
+        result: tuple[Path | None, set[str] | None]
+        if target_dir.is_dir() and init_path.exists():
+            result = (target_dir, _parse_dunder_all(init_path))
+        else:
+            # Plain module (`<...>.py`) or unresolvable — not a package
+            # public-surface; legitimate deep import. Skip.
+            result = (None, None)
+        _all_cache[module_dotted] = result
+        return result
+
+    def _is_submodule_name(pkg_dir: Path, name: str) -> bool:
+        """True iff `name` is itself a submodule/subpackage of `pkg_dir`
+        (`pkg_dir/<name>.py` or `pkg_dir/<name>/__init__.py`). Such a
+        `from <pkg> import <name>` is a *module import*, NOT a symbol
+        re-export — Python imports submodules regardless of `__all__`, so
+        the half-ship rule does not apply.
+        """
+        return (pkg_dir / f"{name}.py").exists() or (
+            pkg_dir / name / "__init__.py"
+        ).exists()
+
+    # ---- Frontend: per-specifier index surface. `@noctusai/lib` and
+    # `@noctusai/seed` resolve to DIFFERENT index.ts files. ----
+    frontend_surface_by_spec: dict[str, set[str] | None] = {}
+    for spec, idx_rel in _SEED_FRONTEND_INDEX_BY_SPEC.items():
+        idx_path = root / idx_rel
+        frontend_surface_by_spec[spec] = (
+            _frontend_index_export_surface(idx_path)
+            if idx_path.exists() else None
+        )
+
+    if not products_dir.exists():
+        return issues
+
+    for product_dir in sorted(products_dir.iterdir()):
+        if not product_dir.is_dir() or product_dir.name.startswith("."):
+            continue
+        slug = product_dir.name
+
+        # Backend product source.
+        backend_app = product_dir / "backend" / "app"
+        if backend_app.exists():
+            for py_path in backend_app.rglob("*.py"):
+                if any(p in _SEED_EXPORT_SCAN_EXCLUDED_PARTS for p in py_path.parts):
+                    continue
+                for pkg_root, mod_dotted, sym, lineno in (
+                    _imported_seed_symbols_backend(py_path)
+                ):
+                    pkg_dir, surface = _package_dir_and_all(pkg_root, mod_dotted)
+                    if surface is None or pkg_dir is None:
+                        # Not a package-with-literal-`__all__` (plain
+                        # module deep import / computed __all__ / missing)
+                        # → can't / shouldn't assert; skip.
+                        continue
+                    if sym in surface:
+                        continue
+                    if _is_submodule_name(pkg_dir, sym):
+                        # `from <pkg> import <submodule>` — a module
+                        # import, governed by import machinery not
+                        # `__all__`. Not the half-ship rule.
+                        continue
+                    try:
+                        rel = str(py_path.relative_to(root))
+                    except ValueError:
+                        rel = str(py_path)
+                    issues.append({
+                        "product": slug,
+                        "file": rel,
+                        "issue": (
+                            f"`{rel}:{lineno}` imports `{sym}` from package "
+                            f"`{mod_dotted}` but `{sym}` is NOT in that "
+                            f"package's `__all__`. Reconciled-but-invisible "
+                            f"half-ship: the import resolves via the package "
+                            f"but the symbol is not in its published "
+                            f"surface. Add `{sym}` to "
+                            f"`{mod_dotted}.__all__` (or re-export it from "
+                            f"the package `__init__.py`). Per "
+                            f"`feedback_seed_export_membership_keeper`."
+                        ),
+                        "severity": "warning",
+                    })
+
+        # Frontend product source.
+        frontend_src = product_dir / "frontend" / "src"
+        if frontend_src.exists():
+            for ts_path in frontend_src.rglob("*"):
+                if not ts_path.is_file():
+                    continue
+                if ts_path.suffix not in {".ts", ".tsx"}:
+                    continue
+                if any(
+                    p in _SEED_EXPORT_SCAN_EXCLUDED_PARTS
+                    for p in ts_path.parts
+                ):
+                    continue
+                for spec, sym, lineno in _imported_frontend_seed_symbols(ts_path):
+                    surface = frontend_surface_by_spec.get(spec)
+                    if surface is None:
+                        # That specifier's index is missing / non-enumerable
+                        # (`export *`) → conservatively skip.
+                        continue
+                    if sym in surface:
+                        continue
+                    try:
+                        rel = str(ts_path.relative_to(root))
+                    except ValueError:
+                        rel = str(ts_path)
+                    idx_rel = _SEED_FRONTEND_INDEX_BY_SPEC[spec]
+                    issues.append({
+                        "product": slug,
+                        "file": rel,
+                        "issue": (
+                            f"`{rel}:{lineno}` imports `{sym}` from "
+                            f"`{spec}` but `{sym}` is NOT re-exported from "
+                            f"`{idx_rel}`. Reconciled-but-invisible "
+                            f"half-ship: the import works but the seam is "
+                            f"not published. Add `{sym}` to the `index.ts` "
+                            f"re-export surface. Per "
+                            f"`feedback_seed_export_membership_keeper`."
+                        ),
+                        "severity": "warning",
+                    })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_hardcoded_product_slug_set` — a seed test
+# (`seed/lib/backend/tests/`) must NOT freeze a literal tuple/set/list of
+# product slugs; it must derive the product set from
+# `parse_products_registry()` (the single source of truth). A frozen literal
+# goes stale the moment a product is added/removed/consolidated.
+#
+# N=2 evidence (social-wiring-absorption W3.5): `test_cors_registry` +
+# `test_per_product_cors_sentinel` both froze product-slug tuples/sets that
+# went stale when `media-scheduling` was consolidated — surfacing as CORS
+# assertion failures attributed (twice) to the wrong commit before git-`-S`
+# settled it.
+#
+# Severity: `warning`.
+# ---------------------------------------------------------------------------
+
+
+# Known product slugs the detector recognizes as the "product set" marker.
+# A literal collection containing ≥ this many of these is a frozen slug set.
+# Derived from the live products/ tree at scan time so the detector itself
+# does NOT freeze a literal (it would otherwise violate its own rule).
+_SLUG_LITERAL_MIN_HITS: int = 3
+
+# Test files that legitimately enumerate slugs for a non-registry reason
+# (e.g. a fixture mapping slug→schema) can carry a rationale keyword in a
+# nearby comment / docstring; mirrors the `check_mock_schema_validation`
+# opt-out guardrail.
+_SLUG_LITERAL_RATIONALE_RE = re.compile(
+    r"slug-literal-ok|registry-exempt|not-a-product-set",
+    re.IGNORECASE,
+)
+
+
+def _live_product_slugs(root: Path) -> set[str]:
+    """Set of product directory names under `products/` — the live fleet.
+    Used as the recognizer corpus so the detector does not itself freeze a
+    product-slug literal (which would violate the rule it enforces).
+    """
+    products = root / "products"
+    if not products.exists():
+        return set()
+    return {
+        d.name for d in products.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    }
+
+
+def _string_constants_in_collection(node: ast.AST) -> list[str] | None:
+    """If `node` is a List/Tuple/Set literal of string constants, return
+    the strings; else None.
+    """
+    if not isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return None
+    out: list[str] = []
+    for elt in node.elts:
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            out.append(elt.value)
+        else:
+            return None
+    return out
+
+
+def check_hardcoded_product_slug_set(repo_root: Path | None = None) -> list[dict]:
+    """Seed tests must derive product sets from `parse_products_registry()`,
+    never freeze a product-slug literal.
+
+    A literal tuple/set/list under `seed/lib/backend/tests/` that contains
+    ≥3 live product slugs is a frozen product-slug set: it goes stale the
+    moment the fleet changes (product added / removed / consolidated) and
+    produces misattributed assertion failures.
+
+    Opt-out: a `slug-literal-ok` / `registry-exempt` / `not-a-product-set`
+    rationale keyword in a nearby comment or docstring (mirrors the
+    `check_mock_schema_validation` guardrail) — for the rare legitimate
+    slug→x fixture mapping.
+
+    Per `feedback_hardcoded_product_slug_set_keeper`. N=2 evidenced by
+    social-wiring-absorption W3.5 (cors_registry + per_product_cors_sentinel).
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    seed_tests = root / "seed" / "lib" / "backend" / "tests"
+    if not seed_tests.exists():
+        return issues
+
+    live_slugs = _live_product_slugs(root)
+    if not live_slugs:
+        # No fleet to compare against — cannot reason; skip.
+        return issues
+
+    # NB: `_SEED_EXPORT_SCAN_EXCLUDED_PARTS` includes "tests" — but this
+    # detector scans *inside* `seed/lib/backend/tests/` deliberately, so we
+    # only exclude transient/build dirs here, never the tests tree itself.
+    _slug_excluded = _SEED_EXPORT_SCAN_EXCLUDED_PARTS - {"tests", "__tests__"}
+    for py_path in seed_tests.rglob("*.py"):
+        if any(p in _slug_excluded for p in py_path.parts):
+            continue
+        try:
+            content = py_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", py_path, exc)
+            continue
+        if _SLUG_LITERAL_RATIONALE_RE.search(content):
+            continue
+        try:
+            tree = ast.parse(content, filename=str(py_path))
+        except SyntaxError as exc:
+            logger.debug("compliance: cannot parse %s (%s)", py_path, exc)
+            continue
+
+        try:
+            rel = str(py_path.relative_to(root))
+        except ValueError:
+            rel = str(py_path)
+
+        for node in ast.walk(tree):
+            collection: ast.AST | None = None
+            if isinstance(node, ast.Assign):
+                collection = node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                collection = node.value
+            else:
+                continue
+            strings = _string_constants_in_collection(collection)
+            if strings is None:
+                continue
+            hits = sorted(set(strings) & live_slugs)
+            if len(hits) < _SLUG_LITERAL_MIN_HITS:
+                continue
+            lineno = getattr(collection, "lineno", node.lineno)
+            issues.append({
+                "product": "<seed-tests>",
+                "file": rel,
+                "issue": (
+                    f"`{rel}:{lineno}` freezes a literal collection of "
+                    f"product slugs ({len(hits)} live slugs: "
+                    f"{', '.join(hits[:5])}{'…' if len(hits) > 5 else ''}). "
+                    f"A frozen product-slug literal goes stale when the "
+                    f"fleet changes (product added/removed/consolidated) "
+                    f"and misattributes assertion failures. Derive from "
+                    f"`parse_products_registry()` "
+                    f"(`noctusai_lib.config.cors_registry`) — the single "
+                    f"source of truth — instead. If this is a legitimate "
+                    f"non-product-set mapping, add a `slug-literal-ok` "
+                    f"rationale comment. Per "
+                    f"`feedback_hardcoded_product_slug_set_keeper`."
+                ),
+                "severity": "warning",
+            })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -4433,6 +4962,9 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_mcp_write_tool_worktree_arg())
     all_issues.extend(check_pipefail_grep_q())
     all_issues.extend(check_doc_tool_reference_drift())
+    # social-wiring-absorption W5.7a / W5.9a Stage-4 codification.
+    all_issues.extend(check_seed_export_membership())
+    all_issues.extend(check_hardcoded_product_slug_set())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

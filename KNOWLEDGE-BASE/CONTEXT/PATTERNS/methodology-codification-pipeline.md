@@ -149,6 +149,20 @@ This is the **N=3 → MUST formalize** rule firing directly. Codification became
 
 Stage 4 is in flight, not yet landed. When it does, the housekeeping rules become indistinguishable from the LGPD rules: same module, same detector shape, same proposal pipeline.
 
+### 4.6 Seed export-surface membership
+
+- **Stage 1:** social-wiring-absorption W1.E2 found `lid_auth.py` lifted into `noctusai_lib.integrations.whatsapp` with code present but ZERO `__all__` membership + no colocated tests — a "reconciled-but-invisible" half-ship (the deep import worked, the seam was unpublished). W2.4/DEP-B found `createWhatsApp{Connection,Intake}Hooks` + 6 types consumed by validated product hooks but absent from `seed/lib/frontend/src/index.ts`. N=2, same shape, both surfaces.
+- **Stage 2:** memory `feedback_seed_export_membership_keeper`.
+- **Stage 3:** this entry + the verify-the-seed-ships-it rule it extends (`feedback_verify_seed_ships_it` — file-presence → public-export-surface membership).
+- **Stage 4:** `check_seed_export_membership` in `compliance.py`. For each symbol a product imports from a seed *package* path (`from noctusai_lib.x.y import sym` where `x/y/` is a package with a literal `__all__`, or a `@noctusai/lib` / `@noctusai/seed` frontend import), assert membership in that package's `__all__` (backend) / `index.ts` re-export surface (frontend, per-specifier — `@noctusai/lib` and `@noctusai/seed` resolve to *different* index.ts files). Severity `warning`. **Calibration that mattered:** the predicate must (a) resolve to the *exact imported package*, not the lean lazy root `__all__`; (b) exempt `from <pkg> import <submodule>` (a module import — `__all__` does not govern submodule importability; this was a real N=4 FP class — therapy/PF/mailing/social-wiring all `from noctusai_lib.api import scheduler`); (c) skip `export *` / computed-`__all__` (non-enumerable → false-negatives over noise). Without all three the detector emitted 685 false positives; with them, 0 on the reconciled tree (it fires only on a genuine future regression).
+
+### 4.7 Hardcoded product-slug set in seed tests
+
+- **Stage 1:** social-wiring-absorption W3.5 — `test_cors_registry` + `test_per_product_cors_sentinel` both froze literal product-slug tuples/sets that went stale when `media-scheduling` was consolidated, surfacing as CORS assertion failures *misattributed twice* to the wrong commit before `git log -S` settled it. N=2.
+- **Stage 2:** memory `feedback_hardcoded_product_slug_set_keeper`.
+- **Stage 3:** this entry.
+- **Stage 4:** `check_hardcoded_product_slug_set` in `compliance.py`. Flags any `seed/lib/backend/tests/` literal list/tuple/set containing ≥3 live product slugs (the recognizer corpus is derived from the live `products/` tree at scan time — the detector itself must not freeze a slug literal, or it would violate its own rule). Remediation: derive from `parse_products_registry()` (`noctusai_lib.config.cors_registry`). Opt-out: a `slug-literal-ok` / `registry-exempt` / `not-a-product-set` rationale keyword (mirrors the `check_mock_schema_validation` guardrail) for the rare legitimate slug→x fixture. Severity `warning`. W3.5 already root-fixed `test_cors_registry` (registry-derived assertion, `c9e1abb`); the detector still fires correctly on the remaining `test_per_product_cors_sentinel` frozen literal until the W4 teardown re-homes it.
+
 ---
 
 ## 5. What CAN'T be codified — and why that's fine

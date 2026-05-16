@@ -229,6 +229,8 @@ Regression tests pin behavior that **broke once and might break again**. Without
 | `check_seed_version_propagation` | (functions, override) | `mcp/noctusai/tests/test_seed_version_propagation.py` |
 | `check_detector_has_regression_test` | `TestCheckDetectorHasRegressionTest` | `mcp/noctusai/tests/test_compliance.py` |
 | `check_test_status_assertion` | `TestCheckTestStatusAssertion` | `mcp/noctusai/tests/test_test_status_assertion_detector.py` |
+| `check_seed_export_membership` | `TestCheckSeedExportMembership` | `mcp/noctusai/tests/test_seed_export_and_slug_set_detectors.py` |
+| `check_hardcoded_product_slug_set` | `TestCheckHardcodedProductSlugSet` | `mcp/noctusai/tests/test_seed_export_and_slug_set_detectors.py` |
 
 **Adding a new detector?** The recipe (and the order matters):
 
