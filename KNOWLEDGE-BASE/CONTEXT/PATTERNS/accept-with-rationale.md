@@ -569,6 +569,16 @@ state change, not a removal.
 
 ---
 
+## Entries from `social-wiring-absorption` Wave 2 (filed 2026-05-16)
+
+### social-wiring keeps 4 validated adapter subpackages product-local (seed-convergence deferred) — N=1
+
+`products/social-wiring/backend/app/services/{calendar,meta,routing,drive_api}/` + `credential_store.py` are kept **product-local**, NOT converged onto the Wave-1 reconciled seed `noctusai_lib.integrations.{google_calendar,google_maps,google_drive,meta}` + `security.token_store`, even though the absorption's goal is "consume the seed".
+
+**Rationale.** Two independent engineers (W2.5, W2.5b) proved (zero-edit, surfaced) the workspace↔seed contract gap is **4 coupling axes**: credential-read (bridgeable) · OAuth credential-WRITE path (router `store.upsert(provider=…)`; seed has no provider-constant/write seam — OAuth delegated to `security.oauth`) · `isinstance` adapter-type labeling (seed classes ≠ workspace classes) · **Meta method-set capability gap** (Wave-1.E4 seed Meta dropped `me()`/`get_page()` — a dropped capability, not a rename). The 69-test oracle asserts `app.services.meta` *internals*, so deleting the subpackages destroys the regression oracle. Forcing convergence now would lose validated behavior + the oracle, for a product that is **already real-world-functional** with these validated local implementations (the user's explicit "deliver functional in real world" + "theirs validated" requirements). N=1 (only social-wiring) — below the seed-absorb threshold; the subpackages' own design docs already say "absorb at N=2".
+
+**Named destination (NOT a silent fork).** Follow-up project `projects/seed-adapter-convergence/` — gated on the seed FIRST shipping: Meta `me()`/`get_page()` capability + a `credential_store=`-convenience factory path + an OAuth-credential-WRITE seam (provider-constant + callback-write contract). Recurrence flips this `accept`→`formalize` the moment a 2nd product needs the same convergence. Verify-the-seed-ships-it 4th-shape (consumer-method-set + write-path compat) is the codification that would have caught the Wave-1.E4 under-ship at reconcile time.
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.
