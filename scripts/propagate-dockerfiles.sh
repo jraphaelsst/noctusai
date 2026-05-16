@@ -52,6 +52,7 @@ stale = False
 for slug, port in PRODUCTS:
     s = canon
     s = s.replace("products/seed/", f"products/{slug}/")
+    s = s.replace("PRODUCT_SLUG=seed", f"PRODUCT_SLUG={slug}")
     s = s.replace("8004", port)
     s = s.replace(SEED_VITE, VITE.get(slug, SEED_VITE))
     s = s.replace(

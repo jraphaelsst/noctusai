@@ -50,10 +50,10 @@ docker_pre_check() {
 PROD_C=(compose -f "$ROOT_DIR/docker-compose.yml")
 INFRA_C=(compose -f "$ROOT_DIR/docker-compose.infra.yml")
 
-# A product run in dev mode (`./start.sh dev <slug>`) lives in its OWN
-# standalone compose project (the product dir name), NOT noctusai-products.
-# Sweep those too so `./stop.sh` is symmetric with every start path.
-sweep_dev_projects() {
+# A product brought up standalone (`cd products/<slug> && docker compose
+# up`) lives in its OWN compose project (the product dir name), NOT
+# noctusai-products. Sweep those too so `./stop.sh` is symmetric.
+sweep_standalone_projects() {
   local f
   for f in "$ROOT_DIR"/products/*/docker-compose.yml; do
     [ -f "$f" ] || continue
@@ -64,10 +64,10 @@ sweep_dev_projects() {
 case "$MODE" in
   docker)
     docker_pre_check
-    echo "==> down noctusai-products + noctusai-infra + dev projects (volumes preservados)"
+    echo "==> down noctusai-products + noctusai-infra + standalone (volumes preservados)"
     docker "${PROD_C[@]}" down --remove-orphans
     docker "${INFRA_C[@]}" down --remove-orphans
-    sweep_dev_projects
+    sweep_standalone_projects
     echo ""
     echo "NoctusAI Platform — containers parados (volumes preservados)."
     echo "  Reiniciar:        ./start.sh"
@@ -81,7 +81,7 @@ case "$MODE" in
     echo "==> down -v noctusai-products + noctusai-infra (containers + volumes)"
     docker "${PROD_C[@]}" down -v --remove-orphans
     docker "${INFRA_C[@]}" down -v --remove-orphans
-    sweep_dev_projects
+    sweep_standalone_projects
     echo "NoctusAI Platform — containers + volumes removidos."
     exit 0
     ;;
@@ -90,7 +90,7 @@ case "$MODE" in
     echo "==> down --rmi all -v (containers + imagens + volumes, ambos os projetos)"
     docker "${PROD_C[@]}" down --rmi all -v --remove-orphans
     docker "${INFRA_C[@]}" down --rmi all -v --remove-orphans
-    sweep_dev_projects
+    sweep_standalone_projects
     echo "NoctusAI Platform — containers + imagens + volumes removidos."
     echo "  (rede 'noctus-net' preservada; imagens base noctus-seed-*-base nao removidas)"
     exit 0

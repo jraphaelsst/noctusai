@@ -44,7 +44,9 @@ Pure documentation; no code/seed surface. §3a confirmed N/A — correctly doc-b
 
 **In scope:** rewrite the didactic sections of `KB § PATTERNS/containerization.md` to single-container; remove the superseding banner once the body is consistent; refresh ASCII diagrams; update `KB § INDEX.md` scope line if the title/desc changed.
 
-**Out of scope:** any code change (the migration is done); `docker-compose.prod.yml` strategy (separate `containerization-prod-deploy` candidate).
+**Also in scope (added 2026-05-16):** the legacy body still references `docker-compose.override.yml` / `./start.sh dev <slug>` / Vite-HMR sidecar — all **removed** by the follow-on `containerization-single-env` change (ONE container, ONE shape: Dockerfile `runtime-watch` target = `vite build --watch` + `uvicorn --reload`, no override, no `dev` command). The rewrite must reflect single-env, not the interim dev-sidecar design.
+
+**Out of scope:** any code change (both migrations are done); `docker-compose.prod.yml` strategy (separate `containerization-prod-deploy` candidate).
 
 ---
 

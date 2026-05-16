@@ -64,5 +64,41 @@ USER noctus
 EXPOSE 8006
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:8006/api/health || exit 1
+# Default CMD = plain uvicorn over the BAKED dist → this image is a
+# self-contained, shippable artifact (deploy/CI run it as-is).
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
      "--port", "8006", "--app-dir", "products/mailing/backend"]
+
+# ── runtime-watch: SAME single container, local live-rebuild ────────────
+# ONE container, ONE shape, ONE command (`./start.sh`). The local
+# per-product compose builds THIS target + bind-mounts source; the user
+# never picks a mode. Adds node (so the one container can rebuild the
+# SPA itself) + the watch entrypoint: `vite build --watch` keeps dist
+# fresh, `uvicorn --reload` reloads .py. Deploy still uses the slim
+# `runtime` above (node absent there). Source is bind-mounted at run, so
+# THIS target is intentionally not a shippable artifact — `runtime` is.
+FROM runtime AS runtime-watch
+USER root
+# Node for the in-container SPA rebuild. NodeSource keeps it one layer;
+# only the local image carries it (deploy = `runtime`).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+         | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+         > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+# Frontend deps installed HERE (glibc) — esbuild/vite ship platform
+# binaries; the alpine frontend-base node_modules are not ABI-portable.
+COPY products/mailing/frontend/package*.json ./products/mailing/frontend/
+RUN --mount=type=cache,target=/root/.npm \
+    cd products/mailing/frontend \
+    && npm install --no-audit --no-fund
+COPY seed/docker/local-watch.sh /usr/local/bin/local-watch
+RUN chmod +x /usr/local/bin/local-watch \
+    && chown -R noctus:noctus /app
+USER noctus
+ENV PRODUCT_SLUG=mailing PRODUCT_PORT=8006
+ENTRYPOINT ["/usr/local/bin/local-watch"]

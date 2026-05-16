@@ -30,14 +30,23 @@
 >   correct, zero consumer changes).
 > - `<slug>-tunnel` is **mandatory in the pattern** (every product
 >   compose ships it) but profile-gated (`tunnel-<slug>`/`tunnel-all`).
+> - **NO dev/prod split — ONE container, ONE shape always**
+>   (project `containerization-single-env`, superseded the earlier
+>   2-container dev sidecar). The local per-product compose builds the
+>   Dockerfile **`runtime-watch`** target with source bind-mounted:
+>   `seed/docker/local-watch.sh` runs `vite build --watch` +
+>   `uvicorn --reload` in the *same single container* — live feedback,
+>   no sidecar, no `dev` command, no separate project. Deploy/CI build
+>   the default slim **`runtime`** target (baked dist, node absent =
+>   the shippable artifact). `docker-compose.override.yml` +
+>   `propagate-overrides.sh` were **removed**.
 > - `./start.sh` whole fleet · `./start.sh <slug>...` subset ·
->   `./start.sh dev <slug>` (Vite-HMR sidecar + uvicorn `--reload` via
->   the seed-inherited `docker-compose.override.yml`) ·
->   `tunnel`/`build`/`native` retained. **A product is EITHER fleet OR
->   dev** (fixed `container_name` is global; `start.sh dev` pre-empts the
->   fleet instance; `stop.sh` sweeps standalone dev projects).
-> - Propagation: `scripts/propagate-{dockerfiles,composes,overrides}.sh`
->   (each `--check`); `products/seed/` is canonical.
+>   `tunnel`/`build`/`native` retained.
+> - Propagation: `scripts/propagate-{dockerfiles,composes}.sh`
+>   (each `--check`); `products/seed/` is canonical. (The legacy
+>   didactic body still references `docker-compose.override.yml` /
+>   `dev <slug>` — banner-superseded; folded into the
+>   `containerization-doc-rewrite` follow-up.)
 >
 > **Why native still exists.** `./start.sh native` (uvicorn + vite on
 > host) remains the fastest hot-reload path; the container path is the

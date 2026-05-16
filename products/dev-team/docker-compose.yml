@@ -31,15 +31,26 @@ services:
     build:
       context: ../..
       dockerfile: products/dev-team/backend/Dockerfile
-      # VITE_* build-arg bridge — public browser config from root .env.
-      # VITE_BACKEND_API_URL + VITE_PRODUCT_SCHEMA are factory-injected
-      # (no arg). Per-product block; seed default = VITE_CORE_URL.
+      # ONE container, ONE shape (project: containerization-single-env).
+      # The local fleet builds the `runtime-watch` target: same single
+      # container, plus node + the watch entrypoint (vite build --watch +
+      # uvicorn --reload). No `dev` command, no sidecar, no separate
+      # project. Deploy/CI build the default `runtime` target (slim,
+      # baked dist, plain uvicorn — node absent) — that's the shippable
+      # image; this compose is the LOCAL orchestration.
+      target: runtime-watch
       args:
         VITE_CORE_URL: ${VITE_CORE_URL:-}
     container_name: noctus-dev-team
     image: ghcr.io/jraphaelsst/noctus-dev-team:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
+    # Source bind-mounted → edits reflect with no rebuild: vite
+    # build --watch refreshes dist/, uvicorn --reload restarts on .py.
+    volumes:
+      - ./backend:/app/products/dev-team/backend
+      - ./frontend:/app/products/dev-team/frontend
+      - ../../seed:/app/seed
     ports:
       - "8009:8009"
     networks:

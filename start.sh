@@ -10,7 +10,8 @@
 # Modes:
 #   ./start.sh                     whole fleet (all products, one container each)
 #   ./start.sh <slug> [<slug>...]  ONLY these products (subset)
-#   ./start.sh dev <slug>          one product in dev mode (Vite HMR + uvicorn --reload)
+#   (no `dev` mode — every local container live-rebuilds: vite build
+#    --watch + uvicorn --reload, source bind-mounted. One shape always.)
 #   ./start.sh redis               fleet + Redis (infra project)
 #   ./start.sh waha                fleet + WAHA
 #   ./start.sh local-db            fleet + local Postgres
@@ -37,7 +38,8 @@ fi
 # Product registry — format: "slug:Display Name:backend_port:frontend_port"
 # Single-container: the product is served on backend_port (API + SPA).
 # frontend_port is retained for the native legacy mode + the port sweeper;
-# the dev-mode Vite sidecar uses backend_port + 1000.
+# frontend_port is retained only for the native legacy path + the port
+# sweeper (single-container mode publishes just backend_port).
 # BEGIN_PRODUCTS_REGISTRY
 PRODUCTS=(
   "core:Core:8000:5173"
@@ -132,36 +134,11 @@ else
   }
 
   # ----- mode handling -----
-  if [[ "$MODE" == "dev" ]]; then
-    DEV_SLUG="${2:-}"
-    if [[ -z "$DEV_SLUG" ]] || ! is_registered_slug "$DEV_SLUG"; then
-      echo "ERRO: './start.sh dev <slug>' requer um slug registrado." >&2
-      exit 1
-    fi
-    IFS=':' read -r _ _ DEV_BP _ <<< "$(printf '%s\n' "${PRODUCTS[@]}" | grep "^$DEV_SLUG:")"
-    DEV_FE=$(( DEV_BP + 1000 ))
-    echo "============================================"
-    echo "  NoctusAI — DEV MODE: $DEV_SLUG (Vite HMR + uvicorn --reload)"
-    echo "============================================"
-    ensure_net
-    build_bases
-    # A product is EITHER in the fleet (prod, project noctusai-products)
-    # OR in dev (standalone project) — never both. The compose
-    # `container_name` is a fixed value, so the dev container can't claim
-    # it while a fleet instance holds it. Pre-empt any fleet instance of
-    # THIS product (leaves the rest of the fleet untouched).
-    docker rm -f "noctus-$DEV_SLUG" "noctus-$DEV_SLUG-tunnel" >/dev/null 2>&1 || true
-    # Standalone product compose auto-merges docker-compose.override.yml
-    # (the dev override). Run from the product dir.
-    ( cd "$ROOT_DIR/products/$DEV_SLUG" && docker compose up -d --build )
-    echo ""
-    echo "  API     → http://localhost:$DEV_BP"
-    echo "  SPA HMR → http://localhost:$DEV_FE   (edite .tsx → recarrega <1s)"
-    echo "  .py edits → uvicorn --reload"
-    echo "  logs: cd products/$DEV_SLUG && docker compose logs -f"
-    echo "  stop: cd products/$DEV_SLUG && docker compose down"
-    exit 0
-  fi
+  # NOTE: there is NO `dev` mode. ONE container, ONE shape
+  # (project: containerization-single-env). Every local product
+  # container builds the `runtime-watch` target with source bind-mounted
+  # → `vite build --watch` + `uvicorn --reload` give live feedback with
+  # no second container, no `dev` command, no separate project.
 
   # Subset: first arg is a registered slug → bring up ONLY those products.
   if is_registered_slug "$MODE"; then
@@ -220,7 +197,7 @@ else
       ;;
     *)
       echo "ERRO: modo desconhecido '$MODE'." >&2
-      echo "  Use: fleet | <slug...> | dev <slug> | redis | waha | local-db | full | tunnel [slug] | build | native" >&2
+      echo "  Use: fleet | <slug...> | redis | waha | local-db | full | tunnel [slug] | build | native" >&2
       exit 1
       ;;
   esac
