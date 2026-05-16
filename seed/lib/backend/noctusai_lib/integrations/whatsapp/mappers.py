@@ -9,6 +9,7 @@ output shape stays uniform.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from noctusai_lib.integrations.whatsapp.types import (
     WhatsAppIgnoredEvent,
@@ -74,6 +75,60 @@ def phone_from_chat_id(chat_id: str) -> str:
     """Inverse of `chat_id_for_phone`."""
     phone = chat_id.split("@", 1)[0]
     return f"+{phone}" if phone and not phone.startswith("+") else phone
+
+
+def rewrite_vendor_media_url(
+    url: str,
+    *,
+    external_base_url: str,
+    internal_base_url: str,
+) -> str:
+    """Rewrite a WAHA-emitted media URL from its external host to the
+    docker-internal host.
+
+    Production bug (SESSION-NOTES §4.3, workspace commit ``fedd4cf``):
+    WAHA emits media URLs against its OWN external-facing hostname
+    (e.g. ``http://localhost:3000/api/files/...``) because WAHA assumes
+    the consumer is the operator's browser. From inside the ``app``
+    container ``localhost:3000`` IS the app — the TCP connection fails.
+
+    WAHA media-URL response shape (validated live; reproduced here
+    because the workspace ``backend/WAHA_RESPONSE_FORMATS.md`` is NOT
+    in-home — Wave 2 product-port MUST carry that file):
+
+        payload.media.url == "<WAHA_EXTERNAL_BASE>/api/files/<session>/<id>.<ext>"
+        # e.g. "http://localhost:3000/api/files/default/false_..._3EB0.oga"
+
+    Rule: when ``url``'s scheme+host+port matches ``external_base_url``,
+    swap them for ``internal_base_url``'s (path/query/fragment kept
+    verbatim). External CDN URLs (anything NOT matching the external
+    base authority) pass through UNCHANGED — same shape applies to any
+    vendor emitting self-referential URLs (Supabase storage, MinIO).
+
+    No-ops safely (returns ``url`` unchanged) when either base is empty
+    or ``url`` is not absolute.
+    """
+    if not url or not external_base_url or not internal_base_url:
+        return url
+
+    parsed = urlsplit(url)
+    if not parsed.scheme or not parsed.netloc:
+        return url  # relative URL — nothing to rewrite.
+
+    ext = urlsplit(external_base_url)
+    if parsed.netloc != ext.netloc:
+        return url  # external CDN / other host — pass through unchanged.
+
+    internal = urlsplit(internal_base_url)
+    return urlunsplit(
+        (
+            internal.scheme or parsed.scheme,
+            internal.netloc or parsed.netloc,
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
 
 
 def first_text(payload: dict[str, Any], *keys: str) -> str:

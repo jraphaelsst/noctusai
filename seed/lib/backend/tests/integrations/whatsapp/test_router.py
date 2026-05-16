@@ -13,10 +13,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from noctusai_lib.integrations.redis import make_fake_redis_client
 from noctusai_lib.integrations.whatsapp import (
     WhatsAppInboundMessage,
     WhatsAppSettings,
     create_whatsapp_webhook_router,
+    get_webhook_dedup,
 )
 
 
@@ -80,6 +82,42 @@ def test_router_dedupes_repeated_provider_message_id() -> None:
     assert first.json() == {"status": "accepted"}
     assert second.json() == {"status": "duplicate"}
     assert len(captured) == 1
+
+
+def test_router_uses_injected_redis_dedup_seam() -> None:
+    """Injected SETNX dedup seam pre-filters the WAHA duplicate-event
+    race (message + message.any) — SESSION-NOTES §4.1."""
+    captured: list[WhatsAppInboundMessage] = []
+
+    async def on_message(inbound: WhatsAppInboundMessage) -> None:
+        captured.append(inbound)
+
+    redis = make_fake_redis_client()
+    dedup = get_webhook_dedup(redis_client=redis)
+
+    app = FastAPI()
+    app.include_router(
+        create_whatsapp_webhook_router(
+            WhatsAppSettings(base_url="http://waha", webhook_hmac_secret=None),
+            on_message,
+            dedup=dedup,
+        ),
+        prefix="/webhooks/whatsapp",
+    )
+    client = TestClient(app)
+    payload = _valid_payload("waha-dup-id")
+
+    first = client.post("/webhooks/whatsapp", json=payload)
+    second = client.post("/webhooks/whatsapp", json=payload)
+
+    assert first.status_code == 200
+    assert first.json() == {"status": "accepted"}
+    assert second.status_code == 200
+    assert second.json() == {"status": "duplicate"}
+    assert len(captured) == 1
+    # The SETNX key is durable in the (fake) Redis — restart-tolerant
+    # shape; the DB UNIQUE backstop is the chatbot message_store seam.
+    assert redis.get("wa:dedup:waha-dup-id") == "1"
 
 
 def test_router_returns_ignored_for_non_message_event() -> None:

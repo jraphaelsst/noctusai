@@ -23,10 +23,14 @@ HTTP plumbing + signature verification + idempotency.
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable, Set
+from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
+from noctusai_lib.integrations.whatsapp.dedup import (
+    InMemoryWebhookDedup,
+    WebhookDedup,
+)
 from noctusai_lib.integrations.whatsapp.mappers import parse_waha_inbound_message
 from noctusai_lib.integrations.whatsapp.settings import WhatsAppSettings
 from noctusai_lib.integrations.whatsapp.types import (
@@ -46,17 +50,27 @@ def create_whatsapp_webhook_router(
     on_message: InboundHandler,
     *,
     signature_header: str = "X-Webhook-Hmac-SHA256",
+    dedup: WebhookDedup | None = None,
 ) -> APIRouter:
     """Build a FastAPI APIRouter that accepts WAHA inbound webhooks.
 
     Behavior:
     - Verifies HMAC-SHA256 hex signature when
       `settings.webhook_hmac_secret` is set; rejects with 401 on mismatch.
-    - Idempotency: in-process set of seen `provider_message_id` values.
-      Reorder-safe across worker restart only when consumers wire their
-      own DB-backed dedup; this layer's set is best-effort within a
-      single process. (Sibling stored seen IDs in Redis ZSET; that's
-      Phase 3 chatbot-framework scope, not router scope.)
+    - **Persistent dedup pre-filter** (SESSION-NOTES §4.1): WAHA
+      subscribes the webhook to BOTH ``message`` AND ``message.any``,
+      so the same ``provider_message_id`` arrives twice within
+      milliseconds. The `dedup` seam's `claim(...)` is checked right
+      after parse (and before `on_message`) so the duplicate returns
+      200 in ~25ms without invoking the consumer / OpenAI. Inject a
+      `RedisWebhookDedup` (via `get_webhook_dedup(redis_client=...)`)
+      for cross-process restart-tolerant dedup; the DB
+      ``UNIQUE(provider_message_id)`` backstop (chatbot
+      ``message_store`` seam, Engineer CHATBOT) is the consumer's
+      restart-survival layer composed inside `on_message`. When no
+      `dedup` is supplied this layer falls back to a process-local
+      `InMemoryWebhookDedup` (best-effort within one process — same
+      guarantee the prior in-process `set()` gave, now via the seam).
     - Calls `on_message(inbound)` exactly once per fresh
       `provider_message_id`.
     - Returns 200 on success, 200 on ignored events (per WAHA's
@@ -64,7 +78,7 @@ def create_whatsapp_webhook_router(
       not trigger retries).
     """
     router = APIRouter()
-    seen_ids: Set[str] = set()
+    _dedup: WebhookDedup = dedup if dedup is not None else InMemoryWebhookDedup()
 
     @router.post("")
     async def waha_inbound(
@@ -108,14 +122,13 @@ def create_whatsapp_webhook_router(
                 detail=str(exc),
             ) from exc
 
-        if inbound.provider_message_id and inbound.provider_message_id in seen_ids:
+        if inbound.provider_message_id and not _dedup.claim(
+            inbound.provider_message_id
+        ):
             logger.debug(
                 "WhatsApp inbound dedup hit: %s", inbound.provider_message_id
             )
             return {"status": "duplicate"}
-
-        if inbound.provider_message_id:
-            seen_ids.add(inbound.provider_message_id)
 
         await on_message(inbound)
         return {"status": "accepted"}

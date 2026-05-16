@@ -14,7 +14,58 @@ from noctusai_lib.integrations.whatsapp import (
     chat_id_for_phone,
     parse_waha_inbound_message,
     phone_from_chat_id,
+    rewrite_vendor_media_url,
 )
+
+
+# ---- rewrite_vendor_media_url (SESSION-NOTES §4.3, workspace fedd4cf) ----
+
+
+def test_rewrite_swaps_external_host_for_internal() -> None:
+    out = rewrite_vendor_media_url(
+        "http://localhost:3000/api/files/default/false_3EB0.oga",
+        external_base_url="http://localhost:3000",
+        internal_base_url="http://waha:3000",
+    )
+    assert out == "http://waha:3000/api/files/default/false_3EB0.oga"
+
+
+def test_rewrite_keeps_path_query_fragment_verbatim() -> None:
+    out = rewrite_vendor_media_url(
+        "http://localhost:3000/api/files/x.jpg?token=abc#frag",
+        external_base_url="http://localhost:3000",
+        internal_base_url="http://waha:3000",
+    )
+    assert out == "http://waha:3000/api/files/x.jpg?token=abc#frag"
+
+
+def test_rewrite_passes_external_cdn_url_unchanged() -> None:
+    cdn = "https://cdn.example.com/media/abc.jpg"
+    assert (
+        rewrite_vendor_media_url(
+            cdn,
+            external_base_url="http://localhost:3000",
+            internal_base_url="http://waha:3000",
+        )
+        == cdn
+    )
+
+
+def test_rewrite_noop_on_relative_or_empty_bases() -> None:
+    assert (
+        rewrite_vendor_media_url(
+            "/api/files/x", external_base_url="http://localhost:3000",
+            internal_base_url="http://waha:3000",
+        )
+        == "/api/files/x"
+    )
+    assert (
+        rewrite_vendor_media_url(
+            "http://localhost:3000/api/x", external_base_url="",
+            internal_base_url="http://waha:3000",
+        )
+        == "http://localhost:3000/api/x"
+    )
 
 
 def test_parse_waha_payload_from_nested_event() -> None:

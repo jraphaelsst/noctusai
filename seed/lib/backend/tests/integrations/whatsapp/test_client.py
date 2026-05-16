@@ -151,3 +151,50 @@ def test_download_media_sync_raises_on_5xx(monkeypatch: pytest.MonkeyPatch) -> N
     client = WahaClient(base_url="https://waha.test", api_key="k")
     with pytest.raises(httpx.HTTPStatusError):
         client.download_media_sync("https://waha.test/media/x")
+
+
+# ---- vendor media-URL rewrite (SESSION-NOTES §4.3) --------------------------
+
+
+def test_download_media_sync_rewrites_external_host_to_internal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = MagicMock()
+    fake_client.__enter__.return_value = fake_client
+    fake_client.__exit__.return_value = False
+    response = _make_response(200)
+    response.content = b"oga-bytes"
+    fake_client.get.return_value = response
+    monkeypatch.setattr(httpx, "Client", lambda **_: fake_client)
+
+    # base_url = docker-internal host the app reaches; external_base_url
+    # = the host WAHA emits in media URLs.
+    client = WahaClient(
+        base_url="http://waha:3000",
+        api_key="k",
+        external_base_url="http://localhost:3000",
+    )
+    client.download_media_sync(
+        "http://localhost:3000/api/files/default/false_3EB0.oga"
+    )
+
+    called_url = fake_client.get.call_args[0][0]
+    assert called_url == "http://waha:3000/api/files/default/false_3EB0.oga"
+
+
+def test_download_media_sync_noop_rewrite_when_single_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = MagicMock()
+    fake_client.__enter__.return_value = fake_client
+    fake_client.__exit__.return_value = False
+    response = _make_response(200)
+    response.content = b"x"
+    fake_client.get.return_value = response
+    monkeypatch.setattr(httpx, "Client", lambda **_: fake_client)
+
+    # external_base_url defaults to base_url ⇒ rewrite is a no-op.
+    client = WahaClient(base_url="https://waha.test", api_key="k")
+    client.download_media_sync("https://waha.test/media/abc")
+
+    assert fake_client.get.call_args[0][0] == "https://waha.test/media/abc"
