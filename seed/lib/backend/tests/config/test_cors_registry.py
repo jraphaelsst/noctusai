@@ -266,31 +266,36 @@ def test_settings_registry_own_missing_slug_falls_back_to_alts() -> None:
     assert s.cors_origins_list == [f"http://localhost:{p}" for p in LOCALHOST_ALT_PORTS]
 
 
-def test_settings_core_migration_resolves_to_13_origins() -> None:
-    """`@registry:all` must resolve to the same 13-origin set CORE-ORIGINS enumerated.
+def test_settings_core_migration_resolves_to_the_live_product_origin_set() -> None:
+    """`@registry:all` must allow every live-product frontend origin.
 
     Regression-pin: before this seam, `products/core/backend/app/config.py`
     hardcoded a 13-origin string covering 5173, 3000, and 11 frontend ports.
     Migrating to `@registry:all` must produce the same set (order doesn't
     matter — CORSMiddleware compares membership, not order).
+
+    The expected set is NOT a frozen 13-port literal: it is *derived from
+    the live `start.sh PRODUCTS` registry* (the same source `@registry:all`
+    reads). Hardcoding the literal is exactly what made this test go stale —
+    `http://localhost:8140` belonged to `media-scheduling`, which commit
+    `b91043f` (ms-merge) consolidated into `imobi-scheduling` and removed
+    from the registry. The old literal kept asserting a port no live product
+    serves, so the test failed for a *correct* product-set change. Driving
+    the expected set off the registry (mirroring the production resolution
+    path) means future fleet add/remove can't re-stale this assertion — the
+    invariant is "every registered frontend + the localhost alts is
+    allowed", not "exactly these N ports forever".
     """
     s = BaseAppSettings(cors_origins="@registry:all")
     resolved = set(s.cors_origins_list)
-    pre_migration = {
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:8080",
-        "http://localhost:8090",
-        "http://localhost:8095",
-        "http://localhost:8100",
-        "http://localhost:8110",
-        "http://localhost:8120",
-        "http://localhost:8123",
-        "http://localhost:8130",
-        "http://localhost:8140",
-        "http://localhost:8150",
-        "http://localhost:8160",
-    }
-    # Every pre-migration origin must still be allowed.
-    missing = pre_migration - resolved
-    assert not missing, f"Sentinel dropped origins: {sorted(missing)}"
+
+    expected = {f"http://localhost:{p}" for p in LOCALHOST_ALT_PORTS}
+    for entry in parse_products_registry():
+        expected.add(f"http://localhost:{entry['frontend_port']}")
+
+    # Every live registry origin (+ localhost alts) must be allowed.
+    missing = expected - resolved
+    assert not missing, f"Sentinel dropped live-registry origins: {sorted(missing)}"
+    # And the sentinel must not invent origins beyond the registry + alts.
+    extra = resolved - expected
+    assert not extra, f"Sentinel produced non-registry origins: {sorted(extra)}"

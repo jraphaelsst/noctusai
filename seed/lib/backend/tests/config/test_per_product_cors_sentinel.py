@@ -47,6 +47,17 @@ from noctusai_lib.config.settings import BaseAppSettings
 
 # Products migrated by CORS-REGISTRY-ROLLOUT (2026-05-11) + PF-CORS-REGISTRY
 # (2026-05-11 follow-up). CORE excluded — uses ``@registry:all``.
+#
+# ``media-scheduling`` was REMOVED here 2026-05-16: it was consolidated into
+# ``imobi-scheduling`` by commit ``b91043f`` (the ms-merge), so
+# ``products/media-scheduling/`` no longer exists and its ``app/config.py``
+# is gone — the sentinel test was failing with ``FileNotFoundError`` on a
+# product that is not part of the fleet. Root fix is to align the slug set
+# with the real product set, not to special-case the missing file. (The
+# ``youtube-crawler``/``mailing``/``imobi-scheduling`` slugs remain valid
+# until the social-wiring-absorption Wave-4 teardown removes those products;
+# they are scrubbed there in lock-step with ``start.sh``/the core
+# product-registration migration.)
 PRODUCT_SLUGS: tuple[str, ...] = (
     "adconnect",
     "daily-life",
@@ -54,7 +65,6 @@ PRODUCT_SLUGS: tuple[str, ...] = (
     "erp-imobiliario",
     "imobi-scheduling",
     "mailing",
-    "media-scheduling",
     "personal-finance",
     "seed",
     "therapy-platform",

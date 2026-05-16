@@ -20,6 +20,28 @@ _spec = _ilu.spec_from_file_location(
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 _mod.purge_shadowing_editable_finders(_LIB)
+# `purge_shadowing_editable_finders` guards BOTH `noctusai_lib` and
+# `noctusai_seed` against a single root (`seed/lib/backend`). That root is
+# correct for `noctusai_lib` but WRONG for `noctusai_seed`: the framework
+# package lives at `seed/framework/backend`, so its legitimate in-repo
+# editable finder resolves *outside* `_LIB` and the helper drops it as if
+# it were a sibling-worktree shadow. Net effect (pre-existing since the
+# helper was generalized to noctusai_seed): every test module that does
+# `from noctusai_seed import ...` fails collection with ModuleNotFoundError.
+# Re-register the *correct* local framework source tree on sys.path and
+# drop the stale cached entries the purge left behind so the next import
+# binds locally. The noctusai_lib sibling-worktree defense stays intact.
+_FRAMEWORK = _Path(__file__).resolve().parents[4] / "seed" / "framework" / "backend"
+if _FRAMEWORK.is_dir():
+    _fw = str(_FRAMEWORK)
+    if _fw not in _sys.path:
+        _sys.path.insert(0, _fw)
+    for _name in [
+        _n
+        for _n in list(_sys.modules)
+        if _n == "noctusai_seed" or _n.startswith("noctusai_seed.")
+    ]:
+        del _sys.modules[_name]
 import contextlib
 import pytest
 
