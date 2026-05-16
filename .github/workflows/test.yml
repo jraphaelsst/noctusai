@@ -225,8 +225,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate root compose (resolves all includes)
-        run: docker compose config --quiet
+      - name: Ensure external noctus-net (compose references it as external)
+        run: docker network inspect noctus-net >/dev/null 2>&1 || docker network create noctus-net
+      - name: Validate noctusai-products (root, resolves all includes)
+        run: docker compose -f docker-compose.yml config --quiet
+      - name: Validate noctusai-infra
+        run: docker compose -f docker-compose.infra.yml config --quiet
       - name: Validate each per-product compose standalone
         run: |
           set -e
@@ -237,79 +241,16 @@ jobs:
       - name: FRAMEWORK_DEPS coverage (every product lists every dep that vite dedupe expects)
         run: python3 scripts/check-framework-deps.py
 
-  prod-render-clean:
-    # Codifies KB § PATTERNS/containerization.md §11d "Prod-overlay
-    # dev-reset discipline" as a CI gate. The dev override
-    # (docker-compose.override.yml) MUST stay fully neutralized when the
-    # prod overlay is applied. Any future override change that
-    # re-introduces a runtime-affecting key without a matching
-    # top-level !reset in docker-compose.prod.yml fails this step before
-    # merge — closes the "discipline lives only in prose" gap that
-    # surfaced 2026-05-11.
-    name: Prod-render clean (no dev-override leaks)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Seed .env from example (compose env_file requires the file to exist)
-        run: cp .env.example .env
-      - name: Render prod compose config
-        run: |
-          NOCTUS_IMAGE_TAG=ci docker compose \
-            -f docker-compose.yml \
-            -f docker-compose.prod.yml \
-            config > /tmp/prod-render.yaml
-      - name: Assert NO dev-override leaks (negative gates)
-        # grep -c returns exit 1 when count is 0 → the `|| true` keeps
-        # the step from failing for the WRONG reason. Patterns are
-        # single-quoted so bash doesn't interpret the `--` or `"`.
-        run: |
-          set -e
-          fail=0
-          for pattern in 'type: bind' '\--reload' 'npm run dev' 'restart: "no"'; do
-            count=$(grep -c "$pattern" /tmp/prod-render.yaml || true)
-            if [ "$count" -gt 0 ]; then
-              echo "FAIL: prod render has $count occurrence(s) of '$pattern' (dev-override leak)"
-              fail=1
-            else
-              echo "OK:   '$pattern' → 0"
-            fi
-          done
-          if [ "$fail" -ne 0 ]; then
-            echo ""
-            echo "Per KB § PATTERNS/containerization.md §11d, every runtime-affecting"
-            echo "key the dev override sets that is NOT also set by the per-product"
-            echo "prod overlay needs an explicit '!reset null' at the top-level of"
-            echo "docker-compose.prod.yml. A leaked key above means a recent dev-override"
-            echo "change skipped the recurrence-rule trigger."
-            exit 1
-          fi
-      - name: Assert prod intent preserved (positive gates)
-        # Confirms the reset wasn't over-aggressive — per-product prod
-        # overlays must still apply restart: always + NODE_ENV: production.
-        # Thresholds match today's fleet: 22 always-restarts, 11 prod NODE_ENVs
-        # (set conservatively at >20 and >10 to absorb single-product churn).
-        run: |
-          set -e
-          always_count=$(grep -c 'restart: always' /tmp/prod-render.yaml || true)
-          nodeenv_count=$(grep -c 'NODE_ENV: production' /tmp/prod-render.yaml || true)
-          echo "restart: always → $always_count (expected >20)"
-          echo "NODE_ENV: production → $nodeenv_count (expected >10)"
-          if [ "$always_count" -le 20 ]; then
-            echo "FAIL: per-product prod overlays no longer apply restart: always — over-reset trap"
-            exit 1
-          fi
-          if [ "$nodeenv_count" -le 10 ]; then
-            echo "FAIL: per-product prod overlays no longer apply NODE_ENV: production — over-reset trap"
-            exit 1
-          fi
-
   docker-images-build:
-    # Full-fleet matrix build per KB § PATTERNS/containerization.md §11f.
-    # 10 products × {backend, frontend} = 20 matrix cells. fail-fast: false
-    # so one heavy product (e.g. dev-team) failing doesn't cancel siblings.
-    # On main pushes: build + push + scan. On PRs: build + scan only
-    # (SARIF uploaded to GH Security tab; never pushes to registry).
-    name: Image — ${{ matrix.product }}-${{ matrix.role }}
+    # SINGLE container per product (KB § PATTERNS/containerization.md).
+    # ONE image per product (no backend/frontend role split) = 11 matrix
+    # cells. Each cell: build the shared seed base images (gha-cached,
+    # shared scope so the heavy layer is built once across the matrix),
+    # then build the product's SLIM `runtime` target (the shippable
+    # artifact — NOT `runtime-watch`), Trivy-scan it, and push
+    # ghcr.io/jraphaelsst/noctus-<slug> on main only after a clean scan.
+    # fail-fast: false so one heavy product can't cancel siblings.
+    name: Image — ${{ matrix.product }}
     runs-on: ubuntu-latest
     needs: docker-compose-validate
     permissions:
@@ -329,7 +270,8 @@ jobs:
           - adconnect
           - dev-team
           - seed
-        role: [backend, frontend]
+          - imobi-scheduling
+          - youtube-crawler
     steps:
       - uses: actions/checkout@v4
 
@@ -341,9 +283,6 @@ jobs:
         run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        # Only authenticate when we'll actually push (main pushes). On PRs
-        # we never push, so logging in would just waste a call + grant
-        # write:packages where it isn't needed.
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
@@ -351,77 +290,68 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build image to local daemon (for scan)
-        # First pass: ALWAYS build with `load: true` so the image is in
-        # the local daemon for Trivy to scan. We don't push here — the
-        # `Push to GHCR` step below pushes from the same buildx cache on
-        # main only. Splitting build → scan → push lets Trivy's exit-code
-        # gate the push (vulnerable image never lands in the registry).
-        # `docker/build-push-action@v5` wires the GHA layer cache backend
-        # (`type=gha`). Cache mode=max keeps every intermediate layer,
-        # trading cache size for fastest rebuilds. The 10GB GHA cache cap
-        # evicts LRU; acceptable for a 20-image fleet sharing base layers.
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: products/${{ matrix.product }}/${{ matrix.role }}/Dockerfile
-          load: true
-          push: false
-          build-args: |
-            GIT_SHA=${{ steps.sha.outputs.short }}
-          tags: |
-            ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:${{ steps.sha.outputs.short }}
-            ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:latest
-          cache-from: type=gha,scope=${{ matrix.product }}-${{ matrix.role }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.product }}-${{ matrix.role }}
+      - name: Build shared seed base images
+        # The product Dockerfile does `FROM noctus-seed-{backend,frontend}-base:dev`.
+        # Build them into the local daemon (`--load`) with a SHARED gha
+        # cache scope so the first matrix cell populates it and the rest
+        # are cache hits — the heavy layer (apt + cairo/weasyprint + pip
+        # wheels + seed npm) is paid once across the fleet.
+        run: |
+          docker buildx build --load \
+            -f seed/docker/Dockerfile.backend-base \
+            -t noctus-seed-backend-base:dev \
+            --build-arg GIT_SHA=${{ steps.sha.outputs.short }} \
+            --cache-from type=gha,scope=seed-backend-base \
+            --cache-to type=gha,mode=max,scope=seed-backend-base .
+          docker buildx build --load \
+            -f seed/docker/Dockerfile.frontend-base \
+            -t noctus-seed-frontend-base:dev \
+            --cache-from type=gha,scope=seed-frontend-base \
+            --cache-to type=gha,mode=max,scope=seed-frontend-base .
+
+      - name: Build product image — slim `runtime` target (for scan)
+        # `--target runtime` = the shippable artifact (baked dist, node
+        # absent, plain uvicorn). NOT `runtime-watch` (that's the local
+        # bind-mount dev shape). `--load` so Trivy can scan it locally;
+        # push happens later, main-only, gated on a clean scan.
+        run: |
+          docker buildx build --load \
+            --target runtime \
+            -f products/${{ matrix.product }}/backend/Dockerfile \
+            -t ghcr.io/jraphaelsst/noctus-${{ matrix.product }}:${{ steps.sha.outputs.short }} \
+            -t ghcr.io/jraphaelsst/noctus-${{ matrix.product }}:latest \
+            --build-arg GIT_SHA=${{ steps.sha.outputs.short }} \
+            --cache-from type=gha,scope=${{ matrix.product }} \
+            --cache-to type=gha,mode=max,scope=${{ matrix.product }} .
 
       - name: Scan image with Trivy (HIGH,CRITICAL — fail on findings)
-        # Pinned to a specific tag instead of @master so a Trivy upstream
-        # change can't surprise CI silently. Bump cadence: review every
-        # 3-6 months for new severities + scanner-engine improvements.
-        # `exit-code: 1` ensures vulnerable images break the build before
-        # the push step gets to run — vulnerable images never publish.
-        # Image is in the local daemon from the build step above.
+        # Pinned action; exit-code 1 so a vulnerable image fails the
+        # build BEFORE the push step → never lands in the registry.
         id: scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:${{ steps.sha.outputs.short }}
+          image-ref: ghcr.io/jraphaelsst/noctus-${{ matrix.product }}:${{ steps.sha.outputs.short }}
           format: sarif
-          output: trivy-${{ matrix.product }}-${{ matrix.role }}.sarif
+          output: trivy-${{ matrix.product }}.sarif
           severity: HIGH,CRITICAL
           exit-code: '1'
           ignore-unfixed: true
 
       - name: Upload Trivy SARIF to GH Security tab
-        # SARIF upload runs on every build (PR or main) so security
-        # findings land in the GH Security tab regardless of push gating.
-        # `if: always()` so a failed Trivy scan still uploads the report
-        # — that's the value: see exactly which CVE failed the build.
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: trivy-${{ matrix.product }}-${{ matrix.role }}.sarif
-          category: trivy-${{ matrix.product }}-${{ matrix.role }}
+          sarif_file: trivy-${{ matrix.product }}.sarif
+          category: trivy-${{ matrix.product }}
 
       - name: Push to GHCR (main only, scan-clean only)
-        # Gated on main push AND a clean Trivy scan: build-push-action's
-        # `cache-from` reuses the layers from the build step above, so
-        # this is a fast cache-hit re-export rather than a second full
-        # build. The image is identical to what Trivy just scanned.
+        # Image already built + scanned in the local daemon; just push
+        # the two tags. Reached only if Trivy passed (exit-code 1 above
+        # would have failed the job).
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: products/${{ matrix.product }}/${{ matrix.role }}/Dockerfile
-          push: true
-          build-args: |
-            GIT_SHA=${{ steps.sha.outputs.short }}
-          tags: |
-            ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:${{ steps.sha.outputs.short }}
-            ghcr.io/jraphaelsst/noctus-${{ matrix.product }}-${{ matrix.role }}:latest
-          cache-from: type=gha,scope=${{ matrix.product }}-${{ matrix.role }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.product }}-${{ matrix.role }}
+        run: |
+          docker push ghcr.io/jraphaelsst/noctus-${{ matrix.product }}:${{ steps.sha.outputs.short }}
+          docker push ghcr.io/jraphaelsst/noctus-${{ matrix.product }}:latest
 
   trivy-fs-scan:
     # Filesystem-level dependency scan. Complements the per-image scan

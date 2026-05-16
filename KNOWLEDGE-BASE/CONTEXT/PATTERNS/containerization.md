@@ -447,23 +447,22 @@ name; only `image:` carries the registry path.
 
 ## 11b · CI workflow
 
-CI builds **one image per product** (the slim `runtime` target — the
-shippable artifact, not `runtime-watch`), in a GitHub Actions matrix
-(`fail-fast: false` so a heavy product can't cancel siblings;
-`type=gha` layer cache, per-product `scope`). Each image is Trivy-scanned
-for `HIGH,CRITICAL` (pinned action version, `ignore-unfixed: true`,
-`exit-code: 1` so a vulnerable image fails the build **before** push and
-never reaches the registry); SARIF uploads to the Security tab on every
-run. On `main`, each cell logs in to GHCR and pushes `:<short-sha>` +
-`:latest` after a clean scan; PR builds are verify-only.
-
-> **Alignment note.** The `.github/workflows/` files predate the
-> single-container migration and may still reference a 10×{backend,
-> frontend} = 20-image matrix + the `runtime` vs frontend split. Bringing
-> the workflow to one-image-per-product (build the `runtime` target,
-> push `ghcr.io/jraphaelsst/noctus-<slug>`) is tracked under the
-> `containerization-prod-deploy` follow-up candidate — not silently
-> assumed done here.
+`.github/workflows/test.yml` job `docker-images-build` builds **one
+image per product** — an 11-cell matrix (`fail-fast: false` so a heavy
+product can't cancel siblings). Each cell: build the shared seed base
+images (`noctus-seed-{backend,frontend}-base`, gha-cached under a
+*shared* scope so the heavy layer is paid once across the matrix), then
+`docker buildx build --target runtime` the product (the slim shippable
+artifact — **not** `runtime-watch`), Trivy-scan `HIGH,CRITICAL`
+(pinned action, `ignore-unfixed`, `exit-code: 1` so a vulnerable image
+fails **before** push and never reaches the registry; SARIF → Security
+tab every run), and on `main` only `docker push
+ghcr.io/jraphaelsst/noctus-<slug>:<short-sha>` + `:latest` after a clean
+scan. PR builds are verify-only. `docker-compose-validate` validates
+both root projects + every per-product compose. There is **no prod
+compose overlay** — the `runtime` image is self-contained and shippable
+as-is; a server orchestration file is deliberately not carried until
+there is a real deploy target (don't gold-plate speculative infra).
 
 ---
 
@@ -492,4 +491,11 @@ run. On `main`, each cell logs in to GHCR and pushes `:<short-sha>` +
 - Canonical artifacts — `products/seed/backend/Dockerfile` · `products/seed/docker-compose.yml`
 - Base images — `seed/docker/Dockerfile.{backend,frontend}-base` · `seed/docker/local-watch.sh`
 - Propagation — `scripts/propagate-{dockerfiles,composes}.sh` · `scripts/build-base-images.sh`
-- Migration history — `archive/projects/2026-05-16/01-containerization-single-container/` (2→1 container) + the `containerization-single-env` change (removed the dev/prod split)
+- CI — `.github/workflows/test.yml` job `docker-images-build` (one image/product, slim `runtime` target, Trivy-gated GHCR push)
+
+> History note: this architecture replaced a 2-container-per-product
+> shape (separate backend uvicorn + frontend nginx, per-product
+> `<slug>-net`, a Vite-HMR dev sidecar). That context is recorded here
+> in-line on purpose — **do not** point at `projects/` or `archive/`
+> folders for it; they are not persisted long-term (see the durable-doc
+> rule in `KB § 01-PHILOSOPHY.md`).

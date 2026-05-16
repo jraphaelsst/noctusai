@@ -600,6 +600,41 @@ See `07-GAMIFICATION.md` for full patterns + the shipped ERP metas service (code
 
 ---
 
+## Durable docs are self-contained — never anchor knowledge to `projects/`/`archive/`
+
+Durable surfaces — KB (`KNOWLEDGE-BASE/`), `CLAUDE.md` / `CLAUDE/*.md`,
+memory — outlive any project. `projects/<slug>/` folders are
+**archived on close** and `archive/` is **not persisted long-term**
+(it is trimmed / vanishes over time). So a durable doc that says *"see
+`archive/projects/2026-05-16/01-foo/PROJECT.md`"* or *"tracked under the
+`foo-bar` follow-up"* becomes a **dangling pointer to nothing** — the
+knowledge it gestured at is lost exactly when a future reader needs it.
+
+**Rule.** When a durable doc needs context that currently lives in a
+project/findings/proposal, **inline the durable substance** into the
+durable doc. Reference **code and files** (`seed/...`,
+`scripts/...`, `.github/workflows/...`) and **dated architectural
+facts** ("replaced a 2-container shape on 2026-05-16"), never project
+slugs or `archive/`/`projects/` paths. A migration's *rationale* that
+matters going forward is durable content — write it where it survives,
+not as a pointer to a folder that won't.
+
+**Allowed exceptions:** ephemeral working docs (a live `PROJECT.md`,
+`findings.md`, `dispatcher-inbox.md`) may cross-reference each other and
+sibling projects freely — they share the same short lifetime. The
+`project-history/ledger.ndjson` is the *one* sanctioned durable index of
+closed work (append-only, never trimmed); cite it, not the archived
+folder. The accept-with-rationale catalog (`KB § PATTERNS/
+accept-with-rationale.md`) is the durable home for decisions that must
+survive folder deletion — route there instead of pointing at the
+project.
+
+**Slip shape:** "see the project for details" / "follow-up candidate
+`x`" in a KB/CLAUDE.md/memory file. Fix: lift the detail in, delete the
+pointer. → companion to *Write for a zero-context reader* (that rule is
+spatial — assume no conversation; this one is temporal — assume the
+project folder is already gone).
+
 ## Docs stay in sync — three-way sync across KB, CLAUDE.md, and memory
 
 Every commit that changes behavior updates the relevant docs:
