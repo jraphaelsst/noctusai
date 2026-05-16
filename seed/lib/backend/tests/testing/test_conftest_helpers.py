@@ -9,6 +9,12 @@ Scenarios covering the parallel-worktree shadow-purge contract:
 (e) idempotency — calling twice in one process is safe and a no-op the second time;
 (f) generalization — finders for BOTH `noctusai_lib` AND `noctusai_seed` are purged in
     a single call (2026-05-11 regression for the multi-package shape Engineer W surfaced).
+(g) per-package-root — under the post-axis-swap two-root layout (`noctusai_lib` at
+    seed/lib/backend, `noctusai_seed` at seed/framework/backend), a *legitimate*
+    `noctusai_seed` finder mapping to seed/framework/backend is PRESERVED (not dropped
+    just because it differs from local_lib_root=seed/lib/backend), while a
+    sibling-worktree `noctusai_seed` finder is still purged (2026-05-16 regression,
+    Engineer DEP-A — the bug that broke `import noctusai_seed` across all products).
 
 Each test snapshots and restores `sys.meta_path` + `sys.modules` so
 side-effects do not leak between tests.
@@ -246,4 +252,104 @@ def test_both_noctusai_lib_and_noctusai_seed_finders_are_purged(isolated_meta_pa
     assert seed_finder not in sys.meta_path, (
         "default package_names must purge noctusai_seed finders too "
         "(2026-05-11 generalization regression)"
+    )
+
+
+def test_legitimate_noctusai_seed_finder_under_framework_root_is_preserved(
+    isolated_meta_path, tmp_path
+):
+    """(g) Post-axis-swap two-root layout: the LEGITIMATE noctusai_seed finder survives.
+
+    THIS is the regression test for the 2026-05-16 bug (Engineer DEP-A).
+    After the ``seed/{lib,framework}`` axis-swap, ``noctusai_seed`` lives
+    at ``<repo>/seed/framework/backend/noctusai_seed`` while
+    ``noctusai_lib`` stays at ``<repo>/seed/lib/backend/noctusai_lib``.
+    Every product conftest passes ``local_lib_root = seed/lib/backend``.
+
+    Pre-fix, the helper validated *both* packages against that single
+    ``seed/lib/backend`` root, so the legitimate ``noctusai_seed``
+    finder (correctly mapping to ``seed/framework/backend/noctusai_seed``)
+    failed ``startswith(seed/lib/backend)``, was dropped, and was purged
+    from ``sys.modules`` — breaking ``import noctusai_seed`` for the whole
+    pytest session across every product.
+
+    Post-fix, each package is validated against ITS OWN legitimate root,
+    so this finder is preserved while the genuine sibling-worktree
+    ``noctusai_seed`` finder is still purged.
+    """
+    repo = tmp_path / "repo_worktree"
+    local_lib = repo / "seed" / "lib" / "backend"
+    local_lib.mkdir(parents=True)
+    framework_seed = repo / "seed" / "framework" / "backend" / "noctusai_seed"
+    framework_seed.mkdir(parents=True)
+    local_lib_pkg = local_lib / "noctusai_lib"
+    local_lib_pkg.mkdir()
+
+    # Legitimate finders for THIS worktree — both must survive.
+    legit_lib_finder = _make_class_mapping_finder(
+        str(local_lib_pkg), package="noctusai_lib"
+    )
+    legit_seed_finder = _make_class_mapping_finder(
+        str(framework_seed), package="noctusai_seed"
+    )
+    # A sibling-worktree noctusai_seed finder — must still be purged.
+    sibling_seed = (
+        tmp_path / "other_worktree" / "seed" / "framework" / "backend" / "noctusai_seed"
+    )
+    sibling_seed.mkdir(parents=True)
+    shadow_seed_finder = _make_class_mapping_finder(
+        str(sibling_seed), package="noctusai_seed"
+    )
+
+    sys.meta_path.append(legit_lib_finder)
+    sys.meta_path.append(legit_seed_finder)
+    sys.meta_path.append(shadow_seed_finder)
+
+    # Default args (no explicit package_roots) — the per-package-root
+    # default must already encode the two-root layout.
+    purge_shadowing_editable_finders(local_lib)
+
+    assert legit_lib_finder in sys.meta_path, (
+        "legitimate noctusai_lib finder (seed/lib/backend) must be preserved"
+    )
+    assert legit_seed_finder in sys.meta_path, (
+        "legitimate noctusai_seed finder (seed/framework/backend) must be "
+        "PRESERVED — dropping it is the 2026-05-16 axis-swap bug that broke "
+        "`import noctusai_seed` across all products"
+    )
+    assert shadow_seed_finder not in sys.meta_path, (
+        "sibling-worktree noctusai_seed finder must STILL be purged — the "
+        "genuine shadow protection must remain intact after the per-package-root fix"
+    )
+
+
+def test_explicit_package_roots_override_is_honored(isolated_meta_path, tmp_path):
+    """(g') An explicit ``package_roots`` map overrides the default layout.
+
+    Backward-compat / extensibility check: a consumer with a custom
+    layout can pass ``package_roots`` and the helper validates each
+    package against the supplied relative root rather than the default.
+    """
+    repo = tmp_path / "repo_worktree"
+    local_lib = repo / "seed" / "lib" / "backend"
+    local_lib.mkdir(parents=True)
+    custom_root = repo / "custom" / "place" / "noctusai_seed"
+    custom_root.mkdir(parents=True)
+
+    legit_finder = _make_class_mapping_finder(
+        str(custom_root), package="noctusai_seed"
+    )
+    sys.meta_path.append(legit_finder)
+
+    purge_shadowing_editable_finders(
+        local_lib,
+        package_roots={
+            "noctusai_lib": ("seed", "lib", "backend"),
+            "noctusai_seed": ("custom", "place"),
+        },
+    )
+
+    assert legit_finder in sys.meta_path, (
+        "explicit package_roots map must be honored — finder under the "
+        "supplied custom root must be preserved"
     )
