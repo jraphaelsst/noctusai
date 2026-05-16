@@ -19,6 +19,19 @@ Public surface:
 - `memory_to_chat_messages` + `format_conversation_for_transcript`
   (Phase 5 — mappers.py).
 - `summarize_conversation` (Phase 6 — summary.py; opt-in capability).
+- `OpenAIToolOrchestrator` + `FakeToolOrchestrator` + `ToolOrchestrator`
+  + `OrchestratorTool` + `make_tool_orchestrator` + `memory_key_for`
+  + `append_memory` (social-wiring-absorption W1.E1 — openai_orchestrator.py;
+  composes `LLMDispatcher`, surface-agnostic, session_id-keyed).
+- `MessageStore` + `SupabaseMessageStore` + `FakeMessageStore`
+  + `StoredMessage` + `DuplicateMessage` + `make_message_store`
+  (W1.E1 — message_store.py; durable conversation_messages +
+  UNIQUE(provider_message_id) dedup oracle).
+- `ResponseRegistry` + `FakeResponseRegistry` + `make_response_registry`
+  + `json_shape` + `shape_fingerprint` + `sample_key`
+  (W1.E1 — response_registry.py; vendor-neutral connector-shape registry).
+- `compute_content_stats` + `SchemaHint`
+  (W1.E1 — content_stats.py; LLM-counting-trap fix, pure-logic).
 
 LLM-input helpers (`image_bytes_to_data_url`, `audio_bytes_to_named_buffer`)
 moved to `noctusai_lib.integrations.llm.inputs` — vendor-shape, not
@@ -31,12 +44,41 @@ from noctusai_lib.domain.chatbot.buffer import (
     RedisBufferClient,
     make_in_memory_buffer_client,
 )
+from noctusai_lib.domain.chatbot.content_stats import (
+    SchemaHint,
+    compute_content_stats,
+)
 from noctusai_lib.domain.chatbot.llm_dispatcher import (
     AuditWriter,
     LLMDispatcher,
     ToolCall,
     ToolHandler,
     ToolResult,
+)
+from noctusai_lib.domain.chatbot.message_store import (
+    DuplicateMessage,
+    FakeMessageStore,
+    MessageStore,
+    StoredMessage,
+    SupabaseMessageStore,
+    make_message_store,
+)
+from noctusai_lib.domain.chatbot.openai_orchestrator import (
+    FakeToolOrchestrator,
+    OpenAIToolOrchestrator,
+    OrchestratorTool,
+    ToolOrchestrator,
+    append_memory,
+    make_tool_orchestrator,
+    memory_key_for,
+)
+from noctusai_lib.domain.chatbot.response_registry import (
+    FakeResponseRegistry,
+    ResponseRegistry,
+    json_shape,
+    make_response_registry,
+    sample_key,
+    shape_fingerprint,
 )
 from noctusai_lib.domain.chatbot.mappers import (
     format_conversation_for_transcript,
@@ -55,14 +97,35 @@ __all__ = [
     "ConversationBufferService",
     "ConversationProcessor",
     "ConversationWorker",
+    "DuplicateMessage",
+    "FakeMessageStore",
+    "FakeResponseRegistry",
+    "FakeToolOrchestrator",
     "LLMDispatcher",
+    "MessageStore",
+    "OpenAIToolOrchestrator",
+    "OrchestratorTool",
     "QueuedConversationMessage",
     "RedisBufferClient",
+    "ResponseRegistry",
+    "SchemaHint",
+    "StoredMessage",
+    "SupabaseMessageStore",
     "ToolCall",
     "ToolHandler",
+    "ToolOrchestrator",
     "ToolResult",
+    "append_memory",
+    "compute_content_stats",
     "format_conversation_for_transcript",
+    "json_shape",
     "make_in_memory_buffer_client",
+    "make_message_store",
+    "make_response_registry",
+    "make_tool_orchestrator",
+    "memory_key_for",
     "memory_to_chat_messages",
+    "sample_key",
+    "shape_fingerprint",
     "summarize_conversation",
 ]
