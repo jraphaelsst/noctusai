@@ -39,6 +39,19 @@ export type {
   SetCredentialsBody,
 } from './llm';
 
+// WhatsApp connection-admin + intake-monitor hooks
+export { createWhatsAppConnectionHooks, createWhatsAppIntakeHooks } from './whatsapp';
+export type {
+  WhatsAppConnection,
+  WhatsAppQr,
+  WhatsAppWebhookResult,
+  ConfigureWebhookBody,
+  IntakeConversation,
+  IntakeMessage,
+  IntakeConversationDetail,
+  IntakeCancelResult,
+} from './whatsapp';
+
 // Query client
 export { createQueryClient } from './query-client';
 
