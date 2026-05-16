@@ -58,6 +58,7 @@ from .client import (
 from .config import KeyProvider, LLMConfig
 from .embeddings import generate_embedding
 from .vision import analyze_image
+from .refusal import analyze_image_with_refusal_retry, looks_like_refusal
 from .budget import (
     compute_spend_usd,
     compute_status as compute_budget_status,
@@ -146,6 +147,8 @@ __all__ = [
     "generate_embedding",
     "transcribe_audio",
     "analyze_image",
+    "looks_like_refusal",
+    "analyze_image_with_refusal_retry",
     # Response cache (Phase 8)
     "CacheBackend",
     "InMemoryCacheBackend",

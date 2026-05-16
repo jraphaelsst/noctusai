@@ -46,6 +46,16 @@ dependencies = [
     # 2026-05-04 (seed-hardening Phase 1 close — Engineer A's bystander finding)
     # so a future transitive drop doesn't quietly break both modules.
     "cryptography>=42.0",
+    # PDF intake — noctusai_lib.integrations.media.OpenAIMediaResolver text
+    # extraction (PyMuPDF page.get_text(), matching erp-imobiliario's
+    # certidoes_service convention) + rasterize-then-vision fallback for
+    # scanned docs. pdfminer.six is the secondary text fallback. Both
+    # already used by erp-imobiliario; promoted to the seed 2026-05-16
+    # (social-wiring-absorption Wave 1.E5) so every chatbot product gets
+    # multimodal PDF intake without touching requirements.txt. Lazily
+    # imported — the Fake media path stays importable if these are absent.
+    "PyMuPDF>=1.24.0",
+    "pdfminer.six>=20231228",
 ]
 
 [tool.setuptools.packages.find]
