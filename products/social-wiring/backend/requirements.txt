@@ -41,3 +41,12 @@ gdown>=5.1.0
 # (e.g. CNH) so they can flow through the vision model.
 pdfminer.six>=20231228
 PyMuPDF>=1.24.0
+
+# ─── W2.2 email_marketing module (absorbed from `mailing`) ───
+# Resend transactional/marketing email API; APScheduler drives the
+# send-loop / scheduled-campaign / automation jobs (via the seed
+# noctusai_lib.api.scheduler); SQLAlchemy backs the per-product
+# tool_call_audit ORM class.
+resend>=2.0.0
+APScheduler>=3.10.0
+sqlalchemy>=2.0.0

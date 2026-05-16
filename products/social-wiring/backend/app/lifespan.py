@@ -40,6 +40,10 @@ from uuid import UUID
 
 from app.config import settings
 from app.dependencies import get_admin_client
+from app.modules.email_marketing.scheduler import (
+    start_scheduler,
+    stop_scheduler,
+)
 from app.services.conversation_module import (
     configure_conversation_module,
     start_worker,
@@ -94,6 +98,15 @@ async def on_startup() -> None:
             "DownloadCache orphan sweep skipped (Redis unreachable?)."
         )
 
+    # email_marketing (W2.2) scheduler — send-loop / scheduled-campaign /
+    # automation jobs were registered on the seed scheduler at module
+    # registration time (``email_marketing.register()`` → ``scheduler.
+    # configure()``). Start the seed APScheduler here. ``start_scheduler``
+    # is idempotent (no-op if already running). N=1 lifespan-seam need
+    # (only W2.2) → direct splice, NOT a ModuleRegistration lifespan seam
+    # (HOLDING.md W2.3 decision).
+    start_scheduler()
+
     logger.info(
         "Social Wiring lifespan startup: ConversationModule ready (org_id=%s).",
         org_id,
@@ -103,6 +116,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     """Stop the worker. Safe to call when startup short-circuited."""
     await stop_worker()
+    stop_scheduler()
     logger.info("Social Wiring lifespan shutdown complete.")
 
 
