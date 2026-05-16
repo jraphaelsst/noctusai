@@ -124,16 +124,18 @@ The win: one consolidated, production-functional CMS product on noc's house sing
 - [x] W0.1 Originating workspace snapshot-committed (transient safety during the process; NOT a durable anchor — superseded by W0.2 bring-in-home).
 - [x] W0.2 Bring-in-home + completeness audit ✅ — 40 artifacts copied to `reference/` + `reference/COMPLETENESS-AUDIT.md`; verdict **READY**; 12-item UNMAPPED-useful list captured; project now self-contained. 2 slips logged in findings.md.
 - [x] W0.3 Scaffold `social-wiring` ✅ — 58 files at `products/social-wiring/`, core seed-row migration `032`, start.sh `social-wiring:Social Wiring:8011:8160`. **3 issues carried:** (a) README.md+MASTER-PROMPT.md LLM-rewrite failed → seed-template content remains, redo in Wave 2; (b) scaffold template emits `docker-compose.override.yml` registration = drift vs single-env containerization (removed) → fix in Wave 5/6 + doc-code-coherence finding; (c) ports 8011/8160 collide with imobi-scheduling until Wave 4 teardown frees them (transient, build paused).
-- [ ] W0.4 Author Wave-1 engineer briefs (one per disjoint seed package) referencing `engineer-default.md`.
+- [x] W0.4 Author Wave-1 engineer briefs (master-tree, file-disjoint, zero engineer git ops).
+- [x] W0.5 Bring validated product SOURCE in-home (195 files → `reference/source/`); project now fully workspace-independent.
 
-### Wave 1 — Full seed reconcile (parallel, file-disjoint)
-- [ ] W1.E1 chatbot/orchestrator + message_store + response_registry + content-stats → `noctusai_lib/domain/chatbot/`
-- [ ] W1.E2 whatsapp/WAHA reconcile + @lid auth + vendor-URL rewrite + persistent dedup → `noctusai_lib/integrations/whatsapp/`
-- [ ] W1.E3 google calendar+maps+drive reconcile + scope auto-discovery + introspection → `noctusai_lib/integrations/google*`
-- [ ] W1.E4 Meta FB/IG read adapter (NEW) + dual-auth (SystemUser+OAuth) + scopes → `noctusai_lib/integrations/meta/`
-- [ ] W1.E5 multimodal media: audio/vision reconcile + PDF (PyMuPDF) + video keyframe (ffmpeg) + refusal-retry → `noctusai_lib/integrations/media|llm/`
-- [ ] W1.E6 YouTube upload extension + Vista parity → `noctusai_lib/integrations/youtube|vista/`
-- [ ] W1.E7 credential-store→seed + dev-auth+sqlite + vite-supabase-build-arg + standalone-frontend degradation → `noctusai_seed/` + `seed/.../frontend`
+### Wave 1 — Full seed reconcile ✅ (master-tree parallel; 7 engineers; 1430 lib + 75 framework tests green)
+- [x] W1.E1 chatbot orchestrator+message_store+response_registry+content_stats → `noctusai_lib/domain/chatbot/` (72; commit `11eb9d5`)
+- [x] W1.E2 whatsapp @lid+vendor-URL-rewrite+SETNX dedup+response_registry → `noctusai_lib/integrations/whatsapp/` (93; `5b3bd07`)
+- [x] W1.E3 google scope-discovery + Drive-read; Calendar/Maps already validated (no-op) → `google_*` (112; `56b2d32`+`ef5d42f`)
+- [x] W1.E4 Meta FB/IG read adapter [NEW] + dual-auth + scopes → `noctusai_lib/integrations/meta/` (40; `77613f4`)
+- [x] W1.E5 multimodal media + PDF/video-keyframe + refusal-retry → `noctusai_lib/integrations/{media,llm}/` (38; `8e0b27d`)
+- [x] W1.E6 YouTube upload surface + Vista Fake/factory (INDEPENDENT modules) → `youtube/` + `vista/` (51; `b941623`)
+- [x] W1.E7 token_store + dev-auth(flag-gated) + frontend topology/auth-ready → `security/`+`noctusai_seed/`+`seed/.../frontend` (110; `dafc38b`)
+- Integration: held shared deltas committed (`a77602c`); full-suite oracle green (2 non-W1 failures categorized in findings → Wave 2/test-infra).
 
 ### Wave 2 — Port social-wiring product (depends W1)
 - [ ] W2.1 Port media-wiring backend (routers/services/migrations) consuming reconciled seed
@@ -154,6 +156,7 @@ The win: one consolidated, production-functional CMS product on noc's house sing
 - [ ] W5.4 Full-reconcile-to-validated-source precedent + SEED-NEEDS fixes documented (KB + memory; accept-with-rationale where judgment-bound).
 - [ ] W5.5 **Dedupe + amend the EXISTING general parallel-dev rule (NOT a new absorption rule).** The user flagged a likely duplicate/misplaced rule. (a) Audit the overlapping memory entries — `feedback_worktree_base_verification`, `feedback_parallel_agent_collision_protocol`, `feedback_branching_first_orchestration`, `feedback_wave_dispatch_and_pause_on_dependency` — + KB §16/§17 + the CLAUDE.md §1 bullets; identify the duplicate/misplaced one and consolidate. (b) Amend the canonical worktree-base rule (three-way sync: KB §16.7 + CLAUDE.md + memory) to additionally cover **uncommitted/branch-only authoritative inputs are invisible to `isolation:worktree` (branches from origin/main)** → pre-dispatch the inputs must be committed-to-base OR master-tree-parallel OR inlined. This is platform-wide dev methodology; absorption only consumes it. Recurrence with the existing worktree-base entry → formalize.
 - [ ] W5.6 Improvement-queue (scout) — bundled proposal in `proposals/`; route #1 stale-PROMOTIONS→W5.2, #2 scaffold-override-drift→doc-code-coherence (W2+), #3 `safely_run` dispatch helper (N=6) + #4 `dependencies.py` boilerplate (N=7-8)→Wave 3 disjoint (exclude the 4 doomed products), re-run `noctus.seed.report` after W1 FF to re-baseline.
+- [ ] W5.7 W1-surfaced codification candidates: (a) extend verify-the-seed-ships-it to assert `__all__` membership not just file presence (E2 lid_auth half-ship) — s4 keeper; (b) `check_dockerfile_vite_supabase_args` keeper (E7) — s4; (c) file a `seed-sqlite-dev-backend` follow-up project (E7: noc has no SQLite dev-backend infra; SEED-NEEDS §1 described the workspace, not noc); (d) `VistaClientProtocol` follow-up (E6: vista Real-only, touches ERP/mcp consumers); (e) reconcile `compute_content_stats` N=2 dup (chatbot generic vs google_drive) at Wave 2.
 
 ### Wave 6 — Containerization resume
 - [ ] W6.1 Refactor docker/compose/start.sh for the new consolidated topology (4 products gone, social-wiring in).
@@ -215,5 +218,6 @@ The win: one consolidated, production-functional CMS product on noc's house sing
 | 2026-05-16 | Recon (3 Explore agents + 8 handoff notes) + 3-question interrogation; originating workspace snapshot-committed (transient); PROJECT.md drafted; wave structure locked | Claude Opus 4.7 |
 | 2026-05-16 | Folded 3 follow-up constraints: bring ALL in-home + zero durable workspace-path refs; user retires workspace manually (sign-off only, no deletion by us); author a durable absorption playbook (W5.1) for future agents | Claude Opus 4.7 |
 | 2026-05-16 | W0.1+W0.2 ✅ — 40 artifacts in-home, project self-contained, completeness verdict READY; architect fixes applied (count→set phrasing; WAHA_RESPONSE_FORMATS carry-forward flagged for W1.E2/W2) | Claude Opus 4.7 |
+| 2026-05-16 | **Wave 1 ✅** — 7 engineers, master-tree parallel, 1430 lib + 75 framework tests green; per-package commits `11eb9d5`/`5b3bd07`/`56b2d32`+`ef5d42f`/`77613f4`/`8e0b27d`/`b941623`/`dafc38b` + integration `a77602c`. W0.5 source-in-home (`71b9dab`). 13 suite failures categorized: 12 pre-existing test-infra (noctusai_seed exec_module shadow, not W1), 1 W0.3-scaffold CORS side-effect (`localhost:8140` dropped → Wave 2/4). Wave-1 cross-engineer lessons → findings + W5.7. | Claude Opus 4.7 |
 | 2026-05-16 | W0.3 ✅ scaffold (branch `feat/social-wiring-absorption` off origin/main); 3 issues carried (README/MASTER rewrite, override-drift, port overlap). Added §6a Continuous tracks: Improvements engine (collision-free) + Autonomous throughput (user override). | Claude Opus 4.7 |
 | 2026-05-16 | Wave-1 false start: `isolation:worktree` branches from origin/main → engineers blind to branch-only/untracked inputs (META hard-stopped, correct; 6 others stopped clean, no commits). Correction: master-tree-parallel, no engineer git ops. Brought 9 root handoff notes in-home (committed, self-contained). Added principle 7 (integrations independent; combos orchestrated at product layer). Scout queue transcribed → findings + W5.5/W5.6. | Claude Opus 4.7 |
