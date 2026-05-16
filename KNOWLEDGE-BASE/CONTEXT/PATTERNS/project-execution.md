@@ -616,6 +616,18 @@ The SQLite log is the **per-project record**; the catalog / KB / memory are the 
 
 ---
 
+## 2.12 Pilot-products-first refactor cadence (2026-05-16)
+
+When a seed / shared-lib / framework change ripples to consumers, do **NOT** adapt all ~10 products in the same wave. Prove the change on **3 canonical pilots — `erp-imobiliario`, `therapy-platform`, `social-wiring`** (chosen because together they exercise most seams: ERP = heavy domain + Vista + PDF; therapy = chatbot + payments + messaging; social-wiring = the consolidated multi-integration CMS — WhatsApp/chatbot/Google/Meta/YouTube/media). `core` is control-plane infra (every product depends on it) — it stays **always-in** alongside the pilots, not a "pilot" itself.
+
+**Rule.** Ripple-wave N adapts/validates **{erp-imobiliario, therapy-platform, social-wiring} (+ core if control-plane touched)** ONLY. Non-pilots extend in an explicit **later wave gated on pilots-green** — mechanical by then, because the pilots de-risked the shape. Deferring a non-pilot here is **not** a silent error: the named destination is the extend wave; don't leave partial non-pilot adaptations in the tree (reset to the pristine reconciled baseline).
+
+**Why.** "Every change → refactor every product" burns time + tokens for low signal. Empirically (social-wiring-absorption Wave 1, 2026-05-16) most non-pilot "breakage" is either pre-existing baseline or absorbed by **additive-only** seed exports — PF showed *zero* reconcile-induced breakage when Wave-1 changes were additive. The pilots are the high-signal canaries; full-fleet adaptation is churn until they validate.
+
+**Pilot selection is fixed** unless the change touches a seam none of the 3 exercise — then add the minimal extra pilot that does and state why. Companion to §2.7 (recurrence — *formalize-to-seed still fires*; this only scopes the *validation/adaptation fan-out*, not whether you fix the root) and `CLAUDE.md §1 Branching-first / Wave-based dispatch`. Memory: `feedback_pilot_products_first`. Codification candidate: a `noctus.dev` advisory warning when a ripple-wave dispatches beyond pilots+core.
+
+---
+
 ## 3. Phase-by-phase cadence
 
 Default cadence: **execute exactly one phase, then stop.** Wait for the user to say "continue" / "next phase" / "do phase N" before advancing.
