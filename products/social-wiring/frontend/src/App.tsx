@@ -1,29 +1,49 @@
 /**
- * Social Wiring App — the simplest possible product.
+ * Social Wiring App — media-wiring CMS.
  *
- * Infrastructure comes from @/infra (one file, one createProductInfra call).
- * Structure comes from createProductApp + createProductLayout.
+ * Infrastructure comes from @noctusai/seed/infra (one createProductInfra
+ * call). Structure comes from createProductApp + createProductLayout.
  * This file only defines pages and nav — zero boilerplate.
+ *
+ * Nav mirrors the live-validated CMS source (ported in Wave 2.4):
+ *   Principal     · Dashboard / Agente / Vídeos / Upload
+ *   WhatsApp      · Conexão / Monitor
+ *   Configuração  · Configurações / Equipe
+ * pt-BR copy preserved verbatim from the validated workspace.
  */
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Share2, Boxes } from "lucide-react";
+import {
+  LayoutDashboard,
+  Users,
+  Home,
+  MessageCircle,
+  PlaySquare,
+  Settings as SettingsIcon,
+  Settings2,
+  Smartphone,
+  Activity,
+  Upload as UploadIcon,
+  Share2,
+} from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
 const Login = lazy(() => import("@/pages/Login"));
 const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
+const Chat = lazy(() => import("@/pages/Chat"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
+const Settings = lazy(() => import("@/pages/Settings"));
+const Upload = lazy(() => import("@/pages/Upload"));
+const Videos = lazy(() => import("@/pages/Videos"));
+const Conexao = lazy(() => import("@/pages/Conexao"));
+const Monitor = lazy(() => import("@/pages/Monitor"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-// Placeholder domain page — rename + replace per
-// `products/seed/frontend/src/pages/Example.tsx`. Backend mirror at
-// `app/routers/example_router.py`.
-const Example = lazy(() => import("@/pages/Example"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -34,7 +54,28 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Example", href: "/example", icon: Boxes, route: "example" },
+      { name: "Agente", href: "/chat", icon: MessageCircle, route: "chat" },
+      { name: "Vídeos", href: "/videos", icon: PlaySquare, route: "videos" },
+      { name: "Upload", href: "/upload", icon: UploadIcon, route: "upload" },
+    ],
+  },
+  {
+    key: "whatsapp",
+    label: "WhatsApp",
+    icon: Smartphone,
+    defaultOpen: true,
+    items: [
+      { name: "Conexão", href: "/conexao", icon: Smartphone, route: "conexao" },
+      { name: "Monitor", href: "/monitor", icon: Activity, route: "monitor" },
+    ],
+  },
+  {
+    key: "config",
+    label: "Configuração",
+    icon: Settings2,
+    defaultOpen: false,
+    items: [
+      { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
   },
@@ -48,7 +89,28 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Example", href: "/example", icon: Boxes },
+      { name: "Agente", href: "/chat", icon: MessageCircle },
+      { name: "Vídeos", href: "/videos", icon: PlaySquare },
+      { name: "Upload", href: "/upload", icon: UploadIcon },
+    ],
+  },
+  {
+    key: "whatsapp",
+    label: "WhatsApp",
+    icon: Smartphone,
+    defaultOpen: true,
+    items: [
+      { name: "Conexão", href: "/conexao", icon: Smartphone },
+      { name: "Monitor", href: "/monitor", icon: Activity },
+    ],
+  },
+  {
+    key: "config",
+    label: "Configuração",
+    icon: Settings2,
+    defaultOpen: false,
+    items: [
+      { name: "Configurações", href: "/configuracoes", icon: SettingsIcon },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
   },
@@ -66,8 +128,19 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
-    { path: "/example", component: Example },
+    { path: "/videos", component: Videos },
+    { path: "/upload", component: Upload },
+    { path: "/conexao", component: Conexao },
+    { path: "/monitor", component: Monitor },
     { path: "/equipe", component: Equipe },
+    { path: "/configuracoes", component: Settings },
+  ],
+  // /chat is public — the backend chat router is unauthenticated by
+  // current product direction, so the frontend route matches that
+  // posture. When real auth lands on /api/chat/*, move /chat back
+  // into the `routes` array.
+  publicRoutes: [
+    { path: "/chat", component: Chat },
   ],
   Layout,
   ...infra.appConfig,

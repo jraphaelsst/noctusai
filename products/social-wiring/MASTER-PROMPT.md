@@ -1,75 +1,106 @@
 # Social Wiring — MASTER-PROMPT
 
-> Authoritative development guide for the seed reference product.
+> Authoritative development guide for the `social-wiring` product.
 
 ## Purpose
 
-Minimal reference implementation proving the NoctusAI seed framework works end-to-end. The simplest possible product — just the spine, no domain logic. When the seed breaks, the framework broke. When creating a new product, the seed is the pattern to follow.
+A media-wiring-into-one-place **CMS**. It consolidates four formerly
+separate concerns into ONE seed-factory, single-container noc product
+and wires them together for an operator: a surface-agnostic OpenAI
+chatbot (WhatsApp via WAHA **and** an in-app `/chat` page), multimodal
+media intake + YouTube upload/catalog, email-marketing (absorbed from
+the retired `mailing` product), and real-estate scheduling (absorbed
+from the retired `imobi-scheduling` product).
+
+The cross-product capabilities are NOT product-local: chatbot, Google
+Calendar/Maps/Drive, Meta FB/IG (read), multimodal media, the Fernet
+credential vault and the WhatsApp connector all live in
+`noctusai_lib`/`noctusai_seed` (reconciled to the live-validated source
+in Wave 1). This product is the CMS skin + the three domain modules
+that compose those seed capabilities.
 
 ## Architecture
 
-**Born from the seed framework.** This product has ZERO domain code. Everything comes from the framework.
+**Born from the seed framework.** App shell, auth, layout, routing,
+notifications, health, team and LLM access all come from the factory —
+the product owns only its three domain modules + the CMS frontend.
 
-### Backend (19 lines in main.py)
+### Backend
 
 ```
-products/seed/backend/app/
-  main.py              → create_product_app("Social Wiring", "social_wiring", settings)
-  config.py            → SeedSettings(ProductSettings) — no extra fields
-  database.py          → create_database_module(settings, "social_wiring")
-  dependencies.py      → create_dependencies(db)
-  rate_limit.py        → create_product_limiter(settings)
-  routers/             → EMPTY — framework provides health, team, notifications
+products/social-wiring/backend/app/
+  main.py          → create_product_app("Social Wiring", "social_wiring", settings)
+  config.py        → ProductSettings subclass
+  database.py      → create_database_module(settings, "social_wiring")
+  dependencies.py  → create_dependencies(db)
+  routers/         → media_wiring · email_marketing · scheduling domain routers
+                     (chat / dashboard / videos / upload / whatsapp / settings / meta / calendar)
 ```
 
 ### Frontend (App.tsx uses framework factories)
 
 ```
-products/seed/frontend/src/
-  App.tsx              → createProductApp() + createProductLayout()
-  vite.config.ts       → createViteConfig({ port: 8160 }) — 3 lines
-  pages/               → Dashboard (stack status), Equipe (team), Landing, Login, etc.
-  hooks/               → useNotificacoes (from seed lib)
-  components/          → NotificationBell, ErrorBoundary, AuthProvider (from seed lib)
-  NO Layout.tsx        → framework provides it via createProductLayout()
+products/social-wiring/frontend/src/
+  App.tsx          → createProductApp() + createProductLayout() — CMS nav below
+  main.tsx         → validateEnv() + assertSupabaseBuildEnv() before render
+  vite.config.ts   → createViteConfig({ port: 8160 }) — 3 lines
+  lib/apiBase.ts   → runtime-detected same-origin base (house single-container)
+  lib/api.ts       → re-export seed `api` client (test seam)
+  pages/           → Dashboard · Chat · Videos · Upload · Conexao · Monitor · Settings · Equipe + auth pages
+  hooks/           → useDashboard/useVideos/useSettings/useChat/useUpload (api or fetch)
+                     useWhatsAppConnection/useWhatsAppIntake (bind seed @noctusai/lib factories)
+  components/       → ui/ shadcn primitives + MetricCard/UploadZone/VideoCard/ViewsChart
 ```
+
+**Nav (pt-BR, verbatim from validated source):**
+
+| Group | Pages |
+|---|---|
+| Principal | Dashboard · Agente (`/chat`, public) · Vídeos · Upload |
+| WhatsApp | Conexão · Monitor |
+| Configuração | Configurações · Equipe |
 
 ### Database
 
-Schema: `seed` — only `status_pagina` (feature flags) and `invitations` (team invites). Zero domain tables.
+Schema: `social_wiring`. Domain tables for the video catalog,
+upload jobs, chatbot conversations/messages (dedup via
+`UNIQUE(provider_message_id)`), email campaigns/automations, and
+scheduling appointments. RLS scoped to the product.
+
+## Seed seams consumed (do NOT re-implement product-locally)
+
+- Chatbot orchestrator + message_store + response_registry — `noctusai_lib.domain.chatbot`
+- WhatsApp WAHA connector + @lid auth + SETNX dedup — `noctusai_lib.integrations.whatsapp`
+- Google Calendar/Maps/Drive + scope-discovery — `noctusai_lib.integrations.google_*`
+- Meta FB/IG read adapter — `noctusai_lib.integrations.meta`
+- Multimodal media (audio/vision/PDF/keyframe) — `noctusai_lib.integrations.{media,llm}`
+- YouTube upload + Vista CRM client — `noctusai_lib.integrations.{youtube,vista}`
+- Fernet credential vault — `noctusai_lib.security.token_store`
+- Frontend WhatsApp hooks — `createWhatsAppConnectionHooks` / `createWhatsAppIntakeHooks` from `@noctusai/lib`
+- `assertSupabaseBuildEnv` — `@noctusai/lib` (boot-critical VITE_SUPABASE_* build-arg contract)
 
 ## What the framework provides automatically
 
-- `/api/health` — health check
-- `/api/team` — team management (invite, accept, list, cancel, remove)
-- `/api/notificacoes` — notification proxy to core
-- `/api/llm/providers`, `/api/llm/models`, `/api/llm/preferences` — shared LLM router from `noctusai_seed.llm_router`
-- Multi-provider LLM access: `create_product_app()` auto-wires `configure_credentials()` + `configure_llm(default_llm_config())` + `shutdown_llm()` in lifespan. Products inherit `noctusai_lib.llm.chat_completion` / `generate_embedding` / `transcribe_audio` / `analyze_image` with zero plumbing. Override only when the product needs different defaults: `create_product_app(..., llm_config=default_llm_config(default_chat_model="gpt-4o"))`.
-- CORS, Sentry, exception handlers, middleware, rate limiting, logging
-- Sidebar, Header, AppShell, page status filtering, SSO context, trial/license warnings
+- `/api/health` · `/api/team` · `/api/notificacoes` · `/api/llm/*`
+- Multi-provider LLM access auto-wired in lifespan (`chat_completion` / `generate_embedding` / `transcribe_audio` / `analyze_image`)
+- CORS, Sentry, exception handlers, middleware, rate limiting, structured logging
+- Sidebar, Header, AppShell, page-status filtering, SSO context, trial/license warnings
 - TooltipProvider, QueryClientProvider, AuthProvider, ErrorBoundary, Suspense
-
-## Template Auto-Sync
-
-The seed is the source for `templates/product-seed/`. Post-commit hook runs `scripts/sync-seed-template.sh`:
-1. Copies seed → template
-2. Replaces values with `{{PLACEHOLDERS}}`
-3. Template always in sync
-
-Do NOT edit `templates/product-seed/` directly.
 
 ## Rules
 
-- Keep the seed minimal — zero domain logic
-- Any new framework feature must work in the seed first
-- Changes to the seed propagate to the template automatically
-- 6 tests must always pass
+- Cross-product capabilities live in seed; the product is the CMS + domain modules only. Per-product code count for a cross-cutting concern is **0** (factory inheritance).
+- Sibling-validated wins conflicts during the absorption (Wave 1 reconcile precedent).
+- House single-container model — ONE container; no `Dockerfile.frontend`, no 2-container proxy. `serve_spa` serves SPA + API on one port.
+- Do NOT bake `VITE_BACKEND_API_URL` (runtime-detected). DO pass `VITE_SUPABASE_*` as Docker build-args in the image stage that runs `vite build`.
+- pt-BR UI copy preserved; integrations stay independent seed modules — cross-integration workflows compose at the chatbot-tool / product layer.
 
 ## Testing
 
 ```bash
-cd products/seed/backend && pytest  # 6 tests
-cd products/seed/frontend && npx vite build  # must build clean
+cd products/social-wiring/backend && pytest
+cd products/social-wiring/frontend && npx tsc --noEmit
+cd products/social-wiring/frontend && npx vite build   # must build clean
 ```
 
 ## Dependencies

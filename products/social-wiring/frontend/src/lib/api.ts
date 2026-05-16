@@ -10,11 +10,13 @@
  *   2. Domain-call wrappers live here when the wire shape is awkward
  *      (e.g., translating `{items, next_cursor}` into a paginator).
  *
- * Mirrors the 4-product convention (core, dev-team, ERP, PF, therapy).
+ * Mirrors the 5-product convention (core, dev-team, ERP, PF, therapy).
  *
- * TODO(new-product): add typed wrapper functions per domain endpoint
- * (e.g., `listExamples()`, `createExample(payload)`). The hooks in
- * `src/hooks/` then call these wrappers instead of `api.get(url)`
- * directly — keeps URL strings + payload shapes in one place.
+ * The ported CMS hooks (useDashboard / useVideos / useSettings /
+ * useWhatsApp*) call `api` from `@noctusai/seed/infra` directly today
+ * (live-validated shape). Streaming/multipart paths (useChat,
+ * useUpload) use raw `fetch` via `@/lib/apiBase` on purpose — the
+ * seed `api` client is JSON-only. Typed per-domain wrappers can land
+ * here when a wire shape gets awkward (e.g. cursor pagination).
  */
 export { api } from "@noctusai/seed/infra";
