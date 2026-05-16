@@ -24,7 +24,9 @@ Usage::
 """
 import importlib
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path, PurePosixPath
 from typing import Callable, Optional, Sequence
 
 from fastapi import FastAPI
@@ -60,6 +62,7 @@ def create_product_app(
     standard_routers: Sequence[str] = (),
     consent_features: Optional[str] = None,
     health_config: Optional[HealthEndpointConfig] = None,
+    serve_spa: Optional[str] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -133,6 +136,18 @@ def create_product_app(
             only — keep them network-free); readiness checks may include
             DB / Redis / vendor pings. Hook exceptions are caught + logged
             at WARN, never escalated to a 500.
+        serve_spa: Single-container mode. Absolute/relative path to a built
+            SPA bundle directory (must contain `index.html`). When set (or
+            when the `SERVE_SPA_DIR` env var is set — the param wins), the
+            built frontend is mounted at `/` AFTER every API/ops route, with
+            an SPA fallback (unknown *extension-less* path → `index.html` so
+            client-side routing works; a missing *asset* path → real 404 so
+            broken bundles surface). `/api/*`, `/_health`, `/_ready`,
+            `/docs` keep priority — mounts are matched after routes.
+            Default `None` → no mount (two-container / `native` dev mode,
+            where Vite serves the frontend on its own port). If set but the
+            directory has no `index.html`, the framework logs a WARNING and
+            continues serving the API only (no silent failure, no crash).
 
     Returns:
         Configured FastAPI application instance.
@@ -281,6 +296,15 @@ def create_product_app(
     #     prefix is reserved for ops surfaces).
     mount_health_endpoints(app, health_config or HealthEndpointConfig())
 
+    # 12. Single-container mode — serve the built SPA from this process.
+    #     Mounted LAST so every API/ops route (steps 9-11) wins; the mount
+    #     only catches what no route matched. `serve_spa=` param beats the
+    #     `SERVE_SPA_DIR` env var (compose injects the env in the prod
+    #     image; tests/products may pass the param explicitly).
+    spa_dir = serve_spa or os.environ.get("SERVE_SPA_DIR")
+    if spa_dir:
+        _mount_spa(app, Path(spa_dir))
+
     from noctusai_seed._version import __seed_version__
     from noctusai_lib._version import __lib_version__
     logger.info(
@@ -291,6 +315,53 @@ def create_product_app(
         __lib_version__,
     )
     return app
+
+
+def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
+    """Mount a built SPA bundle at ``/`` with client-side-routing fallback.
+
+    Single-container mode (Phase 1 of ``containerization-single-container``):
+    uvicorn serves both the API and the frontend so each product is one
+    container on one port. Behaviour:
+
+    - ``/`` and real files under ``spa_dir`` → served by StaticFiles.
+    - An unknown *extension-less* path (e.g. ``/dashboard/clients``) → the
+      SPA's ``index.html`` so the client-side router can take over.
+    - An unknown path that *looks like an asset* (has a filename extension,
+      e.g. ``/assets/app-abc123.js``) → real 404. Returning ``index.html``
+      for a missing ``.js`` would hand the browser HTML with a JS MIME type
+      and produce a confusing parse error instead of a clean 404.
+
+    Fail-soft: a misconfigured ``serve_spa`` (no ``index.html``) logs a
+    WARNING and leaves the API mounted — no crash, no silent pass.
+    """
+    index_file = spa_dir / "index.html"
+    if not (spa_dir.is_dir() and index_file.is_file()):
+        logger.warning(
+            "serve_spa=%s but %s is missing — SPA not mounted; API still served",
+            spa_dir,
+            index_file,
+        )
+        return
+
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from starlette.responses import FileResponse
+    from starlette.staticfiles import StaticFiles
+
+    class _SPAStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope):
+            try:
+                return await super().get_response(path, scope)
+            except StarletteHTTPException as exc:
+                # Only rescue genuine "no such path" 404s, and only when the
+                # request is for a client route (no file extension). Real
+                # missing assets keep their 404.
+                if exc.status_code == 404 and not PurePosixPath(path).suffix:
+                    return FileResponse(index_file)
+                raise
+
+    app.mount("/", _SPAStaticFiles(directory=str(spa_dir), html=True), name="spa")
+    logger.info("SPA served from %s (single-container mode)", spa_dir)
 
 
 def _is_coroutine(fn) -> bool:

@@ -1,0 +1,202 @@
+# Containerization → single-container-per-product — Project Document
+
+> Living document. Phase plan is suggestive; revise + log in §11 as work proceeds.
+
+- **Created:** 2026-05-16
+- **Last updated:** 2026-05-16
+- **Status:** Design locked → Phase 0 ready
+- **Owner / stakeholders:** joaoraphaelsst (architect: Claude Opus 4.7)
+- **Related docs:** `KB § PATTERNS/containerization.md` · `products/seed/{backend,frontend}/Dockerfile` · `products/seed/docker-compose.yml` · `seed/framework/backend/noctusai_seed/app.py` · `start.sh` / `stop.sh`
+- **Project slug:** `containerization-single-container` (location: `projects/` — cross-product / platform-infra; intent: `consolidation`)
+
+---
+
+## 1. Context & Purpose
+
+Today the fleet runs **2–3 containers per product**: `<slug>-backend` (uvicorn), `<slug>-frontend` (nginx serving the built Vite SPA), and an opt-in `<slug>-tunnel`. 10 products → ~20 app containers + tunnel + shared infra ≈ 24 flat rows in the Docker Desktop dashboard, all under one `noctusai` compose project. Working on a single product (e.g. an ERP feature) means the whole fleet is up, and there is **no per-product on/off switch** — profiles only gate redis/waha/postgres/tunnel.
+
+The win: **one container per product** (uvicorn serves the API *and* the built SPA on one port; nginx and the per-product private network disappear), the fleet split into **two compose projects** — `noctusai-products` (all products) and `noctusai-infra` (redis/waha/postgres) — so each product is a single dashboard row toggled in one click, the whole fleet is one project-level switch, and infra is independently controlled. Plus a **standardized, always-wired (profile-gated) tunnel** on every product and an opt-in **Docker dev-mode** (Vite HMR + uvicorn `--reload`) for the product under active development.
+
+---
+
+## 2. Confirmed constraints
+
+- **Single container per product** — uvicorn serves API + the pre-built SPA bundle on one port; nginx + `<slug>-net` removed. *(User confirmed this === their original "single container per product".)*
+- **Tunnel = mandatory in the standardized pattern, profile-gated for activation** — every product's compose ships the `<slug>-tunnel` service block (wired in, part of the canonical seed pattern), still `profiles: [tunnel-<slug>, tunnel-all]` so it only *runs* when asked. *(Rules out the current "optional / some products lack it" state; `imobi-scheduling` must be folded into the pattern.)*
+- **Two compose projects, not per-product projects** — `noctusai-products` + `noctusai-infra`. *(User's idea; works *because of* single-container: each product = 1 container = 1 row = 1-click. Simpler than per-product projects; the `external: true` network inversion shrinks to the products↔infra boundary only.)*
+- **Whole-fleet entrypoint retained** — `./start.sh` (no args) + the `noctusai-products` project-level switch both bring everything up. *(User explicit.)*
+- **Dev mode = Option A (Vite-dev sidecar, seed-inherited)** — `docker-compose.override.yml` adds, for the active product only, a `vite dev --host` HMR sidecar + bind-mounted `uvicorn --reload`; default/prod stays one container. *(User selected over native-only and over both.)*
+
+---
+
+## 3. Design principles
+
+1. **Seed-first by construction.** Pattern changes land in `products/seed/` + `seed/framework/backend/noctusai_seed/` first, then propagate to the 10 products. Per-product Dockerfiles/composes stay slug+port-substituted copies — zero per-product *logic*.
+2. **One process, one container** (Docker idiom). uvicorn serving static is one process; no supervisord/nginx multiproc.
+3. **Production-shaped default, dev-mode opt-in.** Bare `up` = the prod image (built SPA, single container). HMR is an explicit override, never the default.
+4. **Same-origin frontend.** SPA served by the backend ⇒ API calls become same-origin relative (`/api/...`); the cross-origin `VITE_*_API_URL` wiring simplifies (empty/relative).
+5. **One canonical writer per ops surface.** `start.sh`/`stop.sh`, root composes, and the seed Dockerfile are single-source; hand-edits only inside sentinels.
+
+---
+
+## 3a. Seed-first analysis (REQUIRED)
+
+1. **Contract identical for every product?** **YES** — every product is a `create_product_app()` FastAPI + a Vite SPA; "serve the built SPA from uvicorn" is uniform.
+2. **Data source product-specific?** **NO** — this is infra/packaging, no product data.
+3. **Placement product-specific?** **NO** — the SPA-serve seam lives in the seed factory; the Dockerfile/compose pattern is canonical at `products/seed/`.
+4. **Visibility / permission rule the same?** **YES** — uniform; static-mount + SPA fallback identical everywhere.
+5. **Seam already in seed?** **NO** — `create_product_app()` has no static-serve seam yet (Phase 1 adds `serve_spa`); Dockerfile/compose patterns exist but in 2-container shape (Phases 2–3 reshape).
+6. **Default-on or opt-in?** **DEFAULT-ON** — single-container is the new universal shape; dev-mode sidecar is the opt-in.
+
+**Litmus — per-product code count:** **0 lines of per-product logic.** Each product keeps a generated Dockerfile/compose (slug+port substituted — same as today); the behavioral seam is 100% in seed. ✅ pure cross-product concern.
+
+**Phase plan implications:** §6 phases work **in seed** (factory seam, canonical Dockerfile, canonical compose, canonical override, ops scripts), then mechanically propagate. No product-by-product walk = correct.
+
+---
+
+## 4. Scope
+
+**In scope:**
+- Seed factory `serve_spa` seam (StaticFiles mount + SPA catch-all that never shadows `/api`).
+- Single multi-stage canonical Dockerfile (node build → python runtime serves; `dev` stage for vite) + propagation to 10 products; old frontend Dockerfile + `nginx.conf.template` retired.
+- Single-service-per-product canonical compose (drop frontend service + `<slug>-net`; mandatory profile-gated tunnel; one port; `noctus-net` → `external: true`) + propagation; `imobi-scheduling` folded into pattern.
+- Root compose split → `noctusai-products` + `noctusai-infra` (separate project names; shared external `noctus-net`).
+- Seed `docker-compose.override.yml` dev-mode sidecar (Vite HMR + uvicorn `--reload`) + propagation.
+- `start.sh`/`stop.sh`: ensure external `noctus-net`; two-project orchestration; `./start.sh <slug>...` subsets; `./start.sh dev <slug>`; retain whole-fleet + `tunnel`/`tunnel-all`.
+- Three-way doc sync (KB containerization.md + CLAUDE.md/topical + memory) + `scaffold_product` generator + `templates/product-seed` sync + `verify-kb-sync`.
+
+**Out of scope (with reason):**
+- Production deploy pipeline / GHCR publishing changes — per-product registry strategy stays as locked (§11a KB); not touched here.
+- Horizontal frontend/backend independent scaling — single-tenant dev fleet; irrelevant now (catalogued accept-with-rationale if it ever matters).
+- `dev-team`'s extra `/opt/dev_team` editable install — preserved as-is in its Dockerfile; audited in Phase 0, not redesigned.
+
+---
+
+## 5. Architecture / Data Model
+
+**Single-container image (per product, canonical at `products/seed/`):**
+
+```
+Stage 1 (node:20-alpine, "frontend-build"): build SPA → /app/.../dist
+Stage 2 (node:20-alpine, "dev"):            vite dev server (override-selected)
+Stage 3 (python:3.11-slim, "builder"):      compile wheels → /opt/venv
+Stage 4 (python:3.11-slim, "runtime"):      venv + product code + COPY --from=frontend-build dist
+                                            CMD uvicorn ... (serves /api + StaticFiles SPA)
+```
+
+**Factory seam** — `create_product_app(..., serve_spa: Path | None = None)` (or env `SERVE_SPA_DIR`): when set, mount `StaticFiles(directory=dist, html=True)` at `/` AFTER all API routers, plus an SPA catch-all returning `index.html` for non-`/api` non-asset paths (404→index for client routing). `/api/*`, `/_ready`, health stay owned by FastAPI.
+
+**Networks:** `noctus-net` → `external: true` (pre-created once by `start.sh`: `docker network create noctus-net` if absent). `<slug>-net` deleted (no second product container to isolate). Cross-product calls + infra still on `noctus-net`.
+
+**Ports:** one published port per product = the existing backend port (8000, 8001, 8002, …). Old frontend ports (5173/8080/8090/…) **freed**. Single-origin ⇒ SPA fetches `/api` relative.
+
+**Two projects:**
+
+| Project | Members | Lifecycle |
+|---|---|---|
+| `noctusai-products` | 10 single-container products (+ opt-in `<slug>-tunnel`) | project switch = whole fleet; each row = one product 1-click |
+| `noctusai-infra` | redis · waha · postgres (profile-gated) | toggled independently |
+
+**Dev mode (override, seed-inherited):** `docker-compose.override.yml` defines a `<slug>-frontend-dev` (vite `--host`, frontend src bind-mount, HMR port) + backend overlay (`command: uvicorn --reload`, src bind-mount). Activated per-product via `./start.sh dev <slug>` (override + profile scoping); absent by default.
+
+---
+
+## 6. Implementation phases
+
+### Phase 0 — Audit (read actual files, confirm assumptions) ✅
+- [x] Read `create_product_app()` fully — router order = std(9) → product(10) → health `/_*`(11); no existing catch-all. **SPA mount = new step 12, after health.** Clean insertion point.
+- [x] Inspect `vite.config.factory.ts` — **FINDING:** factory injects `VITE_BACKEND_API_URL` as absolute `http://localhost:${backendPort}` via `define:`. Single-container is same-origin ⇒ this must become empty/relative so product code resolves `/api/...`. **New Phase 2 sub-task added.** (Answers Open Q1: yes, factory `define` changes; localized.)
+- [x] Diff backend Dockerfiles vs seed — 9 products Δ=15 (faithful slug+port copies); `dev-team` Δ=26 (`/opt/dev_team` extra, preserve); `imobi-scheduling` Δ=77 (stale, never slug-substituted).
+- [x] Frontend Dockerfiles Δ=57–76 — **moot:** Phase 2 retires the frontend Dockerfile entirely (folded into multi-stage). No propagation needed there.
+- [x] `VITE_*` args — products pass only `VITE_CORE_URL` (+ core/erp `VITE_CORE_API_URL`): cross-product SSO links, **unaffected**. The product's *own* API is the factory-injected var (the one changing).
+- [x] `imobi-scheduling/docker-compose.yml` = stale copy: `seed-backend/frontend/tunnel` service names + `noctus-seed-*` containers but imobi ports (8011/8160), no override. **Decision: fold into pattern** (Open Q3 resolved → fold).
+- [x] Docker Desktop groups by `com.docker.compose.project` label (established behavior; one project = one collapsible group + one project-level switch + per-container controls). Two-project UX claim holds.
+- [x] §6 revised in-place; §11 logged.
+
+**Improvements:** none — read-only audit phase; discoveries logged in §11 + `findings.md`.
+
+### Phase 1 — Seed factory `serve_spa` seam ✅
+- [x] Added `serve_spa: Optional[str]` kw-only param + `SERVE_SPA_DIR` env fallback (param wins) to `create_product_app()` (step 12, after `mount_health_endpoints`).
+- [x] `_mount_spa()` helper: `_SPAStaticFiles(html=True)` at `/`; 404 + extension-less → `index.html` (client routing); 404 + has-extension → real 404; fail-soft WARNING + API-only if no `index.html`.
+- [x] `tests/test_serve_spa.py` — 9 tests: seam-off `/`→404 + API intact; root→index; real asset; client route→index; missing asset→404; `/_health` wins; env honoured; param beats env; fail-soft. Status-code asserted alongside body (status-assertion rule). 35/35 green incl. health + standard-routers regression.
+
+**Improvements:**
+- *Asset-vs-route heuristic = filename suffix.* A client route whose last segment contains a dot (e.g. `/reports/2024.q1`) would be misclassified as an asset → 404 instead of `index.html`. Acceptable now (rare in our products' route shapes). **Deferred → Phase 2**: when wiring real products, eyeball each product's router paths; if any dotted client route exists, switch the heuristic to an explicit assets-prefix check (`/assets/`, `/static/`) instead of suffix.
+- *`SERVE_SPA_DIR` is un-namespaced.* Other env in the platform uses no consistent prefix either, so left as-is for discoverability; noting in case a future env-var audit standardizes (→ accept-with-rationale if it recurs).
+- *Local starlette imports inside `_mount_spa`.* Intentional — only single-container products pay the import; keeps the seam zero-cost for `native`/two-container. Applied as-is (rationale recorded here).
+- No formal proposal filed — items are observations + one Phase-2-scoped deferral with a named destination; apply-inline-then-delete default (this block + §11 = audit trail).
+
+### Phase 2 — Canonical single-container Dockerfile + propagate
+- [ ] **`vite.config.factory.ts`: make `VITE_BACKEND_API_URL` empty/relative for the prod single-container build** (same-origin) — keep absolute only for `native`/dev cross-port. Verify product API client prefixes `/api`.
+- [ ] Rewrite `products/seed/backend/Dockerfile` → multi-stage (frontend-build + dev + builder + runtime); uvicorn serves SPA.
+- [ ] Retire `products/seed/frontend/Dockerfile` + `nginx.conf.template` usage (document removal).
+- [ ] Wire seed product `app.main` to pass `serve_spa` (or rely on `SERVE_SPA_DIR` env in compose).
+- [ ] Propagate to 10 products (slug+port substitution); preserve `dev-team` `/opt/dev_team` extra.
+- [ ] Build seed image; container serves SPA + `/api/health` on one port.
+
+### Phase 3 — Canonical compose (single service, mandatory tunnel, external net) + root split
+- [ ] Rewrite `products/seed/docker-compose.yml` → one `<slug>` service, one port, `noctus-net: external: true`, mandatory profile-gated `<slug>-tunnel`; drop frontend service + `<slug>-net`.
+- [ ] Propagate to 10 products; fold `imobi-scheduling` into the pattern (+ add its override later in Phase 4).
+- [ ] Split root: `docker-compose.yml` (project `noctusai-products`, includes 10 product fragments) + `docker-compose.infra.yml` (project `noctusai-infra`: redis/waha/postgres). Shared external `noctus-net`.
+
+### Phase 4 — Dev-mode override (seed-inherited) + propagate
+- [ ] `products/seed/docker-compose.override.yml`: `seed-frontend-dev` (vite `--host` + src bind-mount + HMR port) + backend `command: uvicorn --reload` overlay + src bind-mount; profile-gated to the active product.
+- [ ] Propagate override to all products (incl. the now-missing `imobi-scheduling`).
+- [ ] Verify: edit `.tsx` → browser HMR < ~1s; edit `.py` → uvicorn reload; default `up` = no sidecar.
+
+### Phase 5 — start.sh / stop.sh orchestration
+- [ ] Ensure external `noctus-net` (create-if-absent) before any `up`.
+- [ ] Two-project orchestration; `./start.sh` (no args) = whole fleet (both projects); retain `redis/waha/postgres/full/build/native`.
+- [ ] `./start.sh <slug> [<slug>...]` = product subset; `./start.sh dev <slug>` = dev-mode sidecar; `tunnel <slug>` / `tunnel` retained.
+- [ ] `stop.sh` symmetric (per-project + per-subset; `volumes`/`prune` preserved).
+
+### Phase 6 — Docs + scaffolder + three-way sync
+- [ ] Rewrite `KB § PATTERNS/containerization.md` (mental model, file layout, Dockerfile walkthrough, networks, two-project ops, dev-mode, anti-patterns); update counts.
+- [ ] Update `CLAUDE.md` containerization pointer + `feedback_containerization_system.md` memory + MEMORY.md index (three-way sync).
+- [ ] Update `noctus.dev.scaffold_product` generator templates + sync `templates/product-seed/`.
+- [ ] `bash scripts/verify-kb-sync.sh` + `python scripts/update-kb-counts.py --check` green.
+
+---
+
+## 7. Open questions
+
+1. **Same-origin VITE rewiring depth** — does dropping cross-origin break any product whose frontend hardcodes an absolute API URL? — answer in Phase 0 (audit `vite.config.factory.ts` + per-product `VITE_*`).
+2. **Two root files vs compose `profiles`/`-p` for the project split** — settle in Phase 3 (lean: separate `-p noctusai-products` / `-p noctusai-infra` invocations from `start.sh`; `include:` stays within products).
+3. **`imobi-scheduling` override absence** — fold into the standardized pattern (Phase 3/4) or accept-with-rationale? Lean: fold (standardization is the project's point).
+
+---
+
+## 8. Dependencies & blockers
+
+- **Branch hygiene** — current tree has parallel-agent uncommitted work; project commits split onto `containerization-single-container` off `origin/main` via cherry-pick at phase-commit time (not stashing others' work).
+- **Docker Desktop project-grouping behavior** — the two-project UX claim is verified in Phase 0 before Phase 3 commits to it.
+
+---
+
+## 9. Success criteria
+
+- `docker compose` (default) → exactly **one container per product**, serving SPA + API on one port; `/api/health` green.
+- Docker Desktop shows `noctusai-products` (per-product 1-click rows + project-level whole-fleet switch) and a separate `noctusai-infra` group.
+- Every product compose ships a profile-gated `<slug>-tunnel`; `./start.sh tunnel <slug>` works for all 10.
+- `./start.sh dev <slug>` → `.tsx` HMR + `.py` reload; default `up` has no sidecar.
+- `./start.sh <slug>` brings up just that product; `./start.sh` brings the whole fleet.
+- Cross-product calls + infra still reachable over external `noctus-net`.
+- Backend pytest + every touched frontend `vite build` green; KB-sync verifiers green; three-way sync complete.
+
+---
+
+## 10. How to use this plan
+
+- Single source of truth for progress; live-tick `- [ ]` → `- [x]` immediately.
+- Phase-by-phase by default — pause for "continue" between phases unless throughput requested.
+- Phase 0 first (audit), then implement seed, then propagate, then docs.
+
+---
+
+## 11. Change log
+
+| Date | Change | By |
+|---|---|---|
+| 2026-05-16 | Initial project drafted after interrogation (tunnel-mandatory, two-project split, single-container confirmed, dev-mode Option A locked) | Claude Opus 4.7 |
+| 2026-05-16 | Phase 0 ✅ — factory SPA-mount slot confirmed (step 12); vite factory same-origin change found → Phase 2 sub-task added; backend Dockerfiles uniform (imobi/dev-team exceptions noted); frontend Dockerfiles retired (drift moot); Open Q1+Q3 resolved | Claude Opus 4.7 |
+| 2026-05-16 | Phase 1 ✅ — `serve_spa` seam in `noctusai_seed.app` (param + `SERVE_SPA_DIR` env, SPA-fallback `_mount_spa`, fail-soft); `test_serve_spa.py` 9 tests; 35/35 seed-factory regression green. Improvements captured; dotted-route heuristic deferred → Phase 2 | Claude Opus 4.7 |
