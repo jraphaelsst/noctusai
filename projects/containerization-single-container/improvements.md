@@ -6,8 +6,8 @@
 
 **Plan:** `PROJECT.md`
 **Plan status:** Design locked → Phase 0 ready
-**Completed phases:** 4 of 7.
-**Phases with recorded improvements:** 4 of 4 completed.
+**Completed phases:** 5 of 7.
+**Phases with recorded improvements:** 5 of 5 completed.
 
 ## Improvements by phase
 
@@ -47,6 +47,12 @@ none — read-only audit phase; discoveries logged in §11 + `findings.md`.
 - *Per-product + root `docker-compose.prod.yml` left untouched* — now stale vs single-container. Explicitly **out of scope** (prod-deploy pipeline). **Deferred → follow-up project candidate `containerization-prod-deploy`** (named, not silent).
 - *Stale per-product overrides removed* — standalone dev-mode is broken until **Phase 4** recreates the seed-inherited override. Sequenced + named (Phase 4 is the immediate next phase).
 - *Both `propagate-*.sh --check` not yet pre-commit-wired* — **Phase 6**.
+
+### Phase 4 — Dev-mode override (seed-inherited) + propagate
+
+- *Dev sidecar runs `npm install` at every container start* — slow first paint each `up`. Acceptable for dev (node_modules can be a named volume later). **Deferred → Phase 5/6 polish** (named).
+- *`propagate-overrides.sh --check` not pre-commit-wired* — joins the other two in **Phase 6**.
+- *Standalone-with-override is always dev* (no prod-shape standalone without `-f` gymnastics) — by design (matches prior KB intent: cd-into-product = hacking it); prod shape validated via the fleet/image build. Accept-with-rationale (header-documented).
 
 ## Deferred items (from §4 Out of scope)
 
