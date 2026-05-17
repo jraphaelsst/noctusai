@@ -189,6 +189,7 @@ consumers are green. Teardown discipline:
   alarm. Resolve by **verifying, not assuming**: `git show <earlier-commit>
   --stat` BEFORE concluding a later group "didn't happen", and grep the
   *content form* not the slug count.
+- **Teardown grep scope — provenance + generated artifacts (N≥24, social-wiring 2026-05-16):** the reference-scrub must NOT be limited to functional/import/registration/compose/port refs. It MUST `grep -rnE 'products/<doomed-slug>/'` over **ALL surviving `products/ seed/ mcp/ scripts/ KNOWLEDGE-BASE/`** — provenance comments/docstrings/prose path-pointers ("Mirror of `products/<deleted>/…`") are a `durable-docs-self-contained` violation invisible to the 8-cmd content-form check. Redate them (`the retired <product>, consolidated into <new> <date>`), NOT delete. AND **regenerate every generated artifact whose generator scans the product tree** (`build-init-local-db.sh`, `cli.py --catalog`, outline-corpus baseline) — a generated file can't be hand-redated; re-derive from already-scrubbed source. Sanctioned exclusions: `reference/`, `.integration-holding/`, `archive/`, `ledger.ndjson`, `accept-with-rationale.md`, `.backup/` (gitignored), already-dated-retired lines. Codification candidate: `check_dangling_deleted_product_path` (s4 — `products/<slug>/` literal where slug ∉ live registry ∧ line not dated-retired ∧ not under sanctioned-exclusion).
 
 ### Gate 9 · Container refactor → user-gated workspace retirement
 
