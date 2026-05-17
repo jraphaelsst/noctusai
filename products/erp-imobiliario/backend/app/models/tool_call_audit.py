@@ -6,8 +6,8 @@ Bound to `noctusai_lib.domain.ai.tool_audit.AuditRecord` via the
 `KB § PATTERNS/llm-tool-audit.md` for the canonical pattern.
 
 Column shape mirrors `noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template`
-verbatim (and the reference adopter at
-`products/media-scheduling/backend/app/models/tool_call_audit.py`);
+verbatim (originally the reference adopter in the retired `media-scheduling`
+product, consolidated into `social-wiring` 2026-05-16);
 arguments / result are JSONB so `AuditRecord.to_row_kwargs()` plays
 straight through.
 

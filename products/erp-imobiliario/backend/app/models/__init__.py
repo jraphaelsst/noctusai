@@ -8,7 +8,7 @@ contract requires.
 ERP's primary data path is the Supabase admin client (Pydantic-typed
 PostgREST rows handled in `app/services/*.py`); SQLAlchemy is used here
 *only* for the `ToolCallAudit` table so the seed audit writer can persist
-rows. Mirror of `products/media-scheduling/backend/app/models/__init__.py`
+rows. Mirror of the original reference adopter (retired `media-scheduling`, consolidated into `social-wiring` 2026-05-16)
 — hybrid Supabase + minimal SQLAlchemy layout.
 
 The actual schema lives in `migrations/030_tool_call_audits.sql` (mirrored

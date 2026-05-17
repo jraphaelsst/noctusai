@@ -1,7 +1,7 @@
 """Tool-call audit integration — product `ToolCallAudit` ORM ⇄ seed writer.
 
-Mirror of `products/media-scheduling/backend/tests/services/test_audit_hook.py`
-(the reference adopter). What we verify here:
+Mirror of the original reference adopter (retired `media-scheduling`,
+consolidated into `social-wiring` 2026-05-16). What we verify here:
   - `make_audit_writer(session, ToolCallAudit)` produces a writer that
     persists `AuditRecord` fields into the product's table.
   - DB exceptions are swallowed (best-effort guarantee — never break LLM
