@@ -16,10 +16,11 @@
 #   docker compose --profile tunnel-all up   # + every product's tunnel
 #   docker compose --profile tunnel-core up  # + just core's tunnel
 #
-# Per-product dev-mode (Vite HMR + uvicorn --reload) is the seed-inherited
-# docker-compose.override.yml, activated per product in Phase 5
-# (`./start.sh dev <slug>`) — deliberately NOT auto-merged here so the
-# default `up` stays the production-shaped single container.
+# NO dev/prod split — ONE container, ONE shape always (per
+# KB § PATTERNS/containerization.md). The local per-product compose
+# builds the Dockerfile `runtime-watch` target with source bind-mounted
+# (vite build --watch + uvicorn --reload in the SAME single container);
+# deploy/CI build the slim `runtime` target. There is no override file.
 #
 # `noctus-net` is external (created once by start.sh; the two-project
 # split means no single project owns it). Standalone/CI without start.sh:
@@ -29,8 +30,8 @@ name: noctusai-products
 
 include:
   # BEGIN_PRODUCTS_INCLUDE
-  # One entry per product compose (single-container). Overrides are NOT
-  # path-listed here — the dev-mode override is opt-in per Phase 5.
+  # One entry per product compose (single-container). No override files —
+  # the single shape is the seed-inherited per-product docker-compose.yml.
   - products/core/docker-compose.yml
   - products/erp-imobiliario/docker-compose.yml
   - products/personal-finance/docker-compose.yml
@@ -39,9 +40,7 @@ include:
   - products/daily-life/docker-compose.yml
   - products/adconnect/docker-compose.yml
   - products/dev-team/docker-compose.yml
-  - path:
-      - products/social-wiring/docker-compose.yml
-      - products/social-wiring/docker-compose.override.yml
+  - products/social-wiring/docker-compose.yml
   # END_PRODUCTS_INCLUDE
 
 networks:

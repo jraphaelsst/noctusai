@@ -158,6 +158,26 @@ if [ "$DRY_RUN" != "--dry" ]; then
             perl -pi -e 's|noctus-seed-frontend|noctus-{{PRODUCT_SLUG}}-frontend|g' "$file" 2>/dev/null || true
         fi
 
+        # Prose-surface-specific (README.md / MASTER-PROMPT.md): these
+        # carry `products/seed/backend`, `products/seed/frontend` PATH
+        # references (run/test/build commands, dir trees). The live seed's
+        # own copy is correct as `products/seed/...`, but the TEMPLATE copy
+        # must placeholderize so scaffold.py's mechanical substitution
+        # rewrites them to `products/<slug>/...`. Without this the new
+        # product's README/MASTER-PROMPT leak literal `products/seed/...`
+        # (the slug-substitution defect pinned by
+        # test_scaffold.py::TestSlugPlaceholder).
+        case "$file" in
+            */README.md|*/MASTER-PROMPT.md)
+                perl -pi -e 's|products/seed/|products/{{PRODUCT_SLUG}}/|g' "$file" 2>/dev/null || true
+                # Backtick-quoted schema ref (`schema: \`seed\``) — the
+                # generic "seed" / 'seed' schema rewrites above only match
+                # quote chars, not backticks. Prose surfaces use Markdown
+                # backtick code spans, so placeholderize that form too.
+                perl -pi -e 's/`seed`/`{{SCHEMA_NAME}}`/g' "$file" 2>/dev/null || true
+                ;;
+        esac
+
         # SQL-specific: bare schema refs (e.g. CREATE SCHEMA seed; seed.table;
         # SET search_path = seed, public). \bseed\b only — won't match identifiers
         # like idx_seed_invitations_org (underscore is a word char, no boundary).

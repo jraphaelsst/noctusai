@@ -19,10 +19,7 @@ class SocialWiringSettings(ProductSettings):
     UI surface that reports configuration health.
     """
 
-    cors_origins: str = (
-        "http://localhost:8010,http://localhost:8150,"
-        "http://localhost:5173,http://localhost:3000"
-    )
+    cors_origins: str = "@registry:own:social-wiring"
 
     # ─── YouTube OAuth ─────────────────────────────────────────────────
     youtube_client_id: str = ""

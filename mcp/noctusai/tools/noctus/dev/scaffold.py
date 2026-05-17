@@ -1172,14 +1172,10 @@ def _register_in_root_compose(*, slug: str, repo_root: Path) -> dict:
         }
 
     head, body, tail = match.group(1), match.group(2), match.group(3)
-    # Multi-line `path:` block: extended include syntax so the per-product
-    # `docker-compose.override.yml` is auto-merged at root. See
-    # KB § PATTERNS/containerization.md §11d "Dev override compose".
-    entry = (
-        f"  - path:\n"
-        f"      - products/{slug}/docker-compose.yml\n"
-        f"      - products/{slug}/docker-compose.override.yml"
-    )
+    # Single-line include: the house single-container model has NO override
+    # files — ONE container, ONE shape always. See
+    # KB § PATTERNS/containerization.md ("NO dev/prod split").
+    entry = f"  - products/{slug}/docker-compose.yml"
 
     # Idempotency — match any line whose path segment ends with /<slug>/.
     slug_token = f"/{slug}/docker-compose.yml"
