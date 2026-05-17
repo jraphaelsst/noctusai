@@ -65,7 +65,7 @@ class TestAvailablePorts:
     def test_used_ports_include_known(self):
         ports = list_available_ports()
         assert 8000 in ports["used_backend"]  # Core
-        assert 8006 in ports["used_backend"]  # Mailing
+        assert 8001 in ports["used_backend"]  # ERP Imobiliario
 
 
 class TestScaffold:
@@ -376,17 +376,17 @@ class TestReservedRangesDocstring:
         slugs = {slug for _, slug in RESERVED_RANGES}
         # Spot-check known products from start.sh.
         for must_have in ("core", "erp-imobiliario", "personal-finance",
-                          "therapy-platform", "seed", "daily-life", "mailing"):
+                          "therapy-platform", "seed", "daily-life", "adconnect"):
             assert must_have in slugs, f"{must_have} missing from RESERVED_RANGES"
 
     def test_table_includes_both_be_and_fe_ports(self):
         ports = {p for p, _ in RESERVED_RANGES}
         # Backend 8000-range present.
         assert 8000 in ports
-        assert 8006 in ports
+        assert 8001 in ports
         # Frontend 5173 + 8080-range.
         assert 5173 in ports
-        assert 8120 in ports
+        assert 8080 in ports
 
 
 class TestScaffoldEmitsProductsSeedRow:
@@ -475,7 +475,7 @@ set -e
 # BEGIN_PRODUCTS_REGISTRY
 PRODUCTS=(
   "core:Core:8000:5173"
-  "mailing:Mailing:8006:8120"
+  "sample-app:Sample App:8401:8501"
 )
 # END_PRODUCTS_REGISTRY
 
@@ -515,7 +515,7 @@ class TestScaffoldRegistersInStartSh:
         updated = start_sh.read_text()
         # Original entries preserved.
         assert '"core:Core:8000:5173"' in updated
-        assert '"mailing:Mailing:8006:8120"' in updated
+        assert '"sample-app:Sample App:8401:8501"' in updated
         # New entry appended inside the sentinels.
         assert '"new-thing-test:New Thing:8197:8297"' in updated
         # Sentinels intact.
@@ -532,8 +532,8 @@ class TestScaffoldRegistersInStartSh:
         start_sh = tmp_path / "start.sh"
         # Pre-seed the registry with the slug we'll try to scaffold.
         seeded = _FIXTURE_START_SH.replace(
-            '"mailing:Mailing:8006:8120"',
-            '"mailing:Mailing:8006:8120"\n  "dup-slug-test:Old Name:8000:9000"',
+            '"sample-app:Sample App:8401:8501"',
+            '"sample-app:Sample App:8401:8501"\n  "dup-slug-test:Old Name:8000:9000"',
         )
         start_sh.write_text(seeded)
 
@@ -888,7 +888,7 @@ class TestDeleteProduct:
         assert '"doomed-test:' not in after, after
         # Pre-existing fixture entries still there — surgical removal.
         assert '"core:Core:8000:5173"' in after
-        assert '"mailing:Mailing:8006:8120"' in after
+        assert '"sample-app:Sample App:8401:8501"' in after
         # Sentinels intact.
         assert "# BEGIN_PRODUCTS_REGISTRY" in after
         assert "# END_PRODUCTS_REGISTRY" in after

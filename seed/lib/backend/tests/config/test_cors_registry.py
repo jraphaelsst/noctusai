@@ -121,9 +121,13 @@ def test_parse_default_path_resolves_when_repo_layout_present() -> None:
     `_default_start_sh()` arithmetic needs updating.
     """
     entries = parse_products_registry()
-    # In this repo the fleet has ≥ 10 products. Threshold gives some
-    # headroom for fleet shrinkage without making the assertion brittle.
-    assert len(entries) >= 10
+    # In this repo the fleet has ≥ 8 products (9 as of 2026-05-16, after
+    # `social-wiring-absorption` Wave 4 retired media-scheduling /
+    # youtube-crawler / mailing / imobi-scheduling into social-wiring).
+    # Threshold keeps headroom for further fleet shrinkage without making
+    # the smoke-test brittle; it asserts the four-parents-up heuristic
+    # still finds a populated start.sh, not an exact fleet size.
+    assert len(entries) >= 8
     slugs = {e["slug"] for e in entries}
     assert "core" in slugs
 

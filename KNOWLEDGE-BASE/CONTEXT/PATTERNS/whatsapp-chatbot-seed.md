@@ -376,6 +376,8 @@ Run: `cd seed/lib/backend && pytest tests/{integrations,domain/chatbot}/`.
   framework when the bot proposes appointment slots.
 - `projects/whatsapp-seed-absorption/PROJECT.md` — origin project (will
   be deleted at close; see git history for the original).
-- Future: first-consumer wiring at
-  `projects/imobi-scheduling-bot-creation/` (real-estate scheduling bot
-  on top of this seed).
+- First consumer was the `imobi-scheduling` real-estate scheduling bot
+  (wired 2026-05-11 on top of this seed), absorbed into
+  `products/social-wiring/app/modules/scheduling/` on 2026-05-16
+  (`social-wiring-absorption` Wave 4); the seed is durable, the consumer
+  moved.

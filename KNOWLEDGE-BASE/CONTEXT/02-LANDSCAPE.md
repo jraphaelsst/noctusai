@@ -13,11 +13,10 @@
 | **Therapy** | `products/therapy-platform/` | Online therapy: video sessions, scheduling, clinical AI, wallets, messaging | 8003/8095 | `therapy` |
 | **Seed** | `products/seed/` | Minimal reference implementation proving the shared stack | 8004/8100 | `seed` |
 | **Daily Life** | `products/daily-life/` | Personal productivity hub: tasks, goals, habits, schedule, notes | 8005/8110 | `daily_life` |
-| **Mailing** | `products/mailing/` | Email marketing: contacts, lists, templates, campaigns, automations | 8006/8120 | `mailing` |
 | **AdConnect** | `products/adconnect/` | B2B ad-inventory marketplace (custom JWT auth; MVP in flight on `adconnect-mvp-implementation`) | 8007/8130 | `adconnect` |
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
-| **YouTube Crawler** | `products/youtube-crawler/` | YouTube Data API v3 + Drive + WAHA + SMTP — quota-aware uploads with Fernet-encrypted refresh tokens (scaffolded 2026-05-05; containerized 2026-05-10 follow-up of `containerization-backlog-closure`) | 8008/8150 | `youtube_crawler` |
-| **Imobi Scheduling** | `products/imobi-scheduling/` | WhatsApp chatbot scheduling real-estate media crews via OpenAI tool-loop + Google Calendar + Maps travel-time; first chatbot consumer of `noctusai_lib.{integrations.whatsapp,domain.chatbot,domain.scheduling}`; folded 2026-05-11 from sibling repo `whatsapp-google-scheduling/` via `projects/imobi-scheduling-bot-creation/`; consolidated 2026-05-11 by deleting earlier `media-scheduling` port (same product, divergent shapes — imobi was the canonical cleaner adopter); single-agency v1, WhatsApp-only (admin UI deferred) | 8011/8160 | `imobi_scheduling` |
+
+> **Retired 2026-05-16** (`social-wiring-absorption` Wave 4): `media-scheduling`, `youtube-crawler`, `mailing`, `imobi-scheduling` were consolidated into **`social-wiring`** (`products/social-wiring/`). Email-marketing → `social-wiring/app/modules/email_marketing/`; WhatsApp-scheduling → `social-wiring/app/modules/scheduling/`. Core un-registration: forward migration `products/core/backend/migrations/033_retire_consolidated_products.sql` (013/028 immutable). Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
 
 > **Port allocation table** of record: `RESERVED_RANGES` in `mcp/noctusai/tools/noctus/dev/scaffold.py`. The `noctus.dev.reserve_port_range` MCP tool consults that list when scaffolding new products; this table mirrors it.
 
@@ -36,19 +35,16 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Therapy | 40 | 46 | 65 | 33 | 83 | 1,138 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 6 | 8 | 11 | 7 | 17 | 216 |
-| Mailing | 10 | 11 | 21 | 9 | 19 | 202 |
 | AdConnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| YouTube Crawler | 1 | 2 | 7 | 0 | 6 | 27 |
-| Imobi Scheduling | 3 | 13 | 8 | 1 | 22 | 273 |
-| **Total** | **173** | **177** | **265** | **138** | **391** | **4,836** |
+| **Total** | **159** | **151** | **229** | **128** | **344** | **4,334** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas (11):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `mailing` + `seed` + `adconnect` + `dev_team` + `youtube_crawler` + `imobi_scheduling`.
-- **Tables: 335** distributed across the schemas.
+- **Schemas (8):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `seed` + `adconnect` + `dev_team`.
+- **Tables: 298** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

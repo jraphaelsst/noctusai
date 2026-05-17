@@ -226,5 +226,5 @@ Run: `cd seed/lib/backend && pytest tests/domain/scheduling/`.
 - `KB § PATTERNS/seed-lib-layout.md` — 6-layer rule (`domain/` is the right placement).
 - `KB § 04-SHARED-LIBRARY.md` — catalog entry.
 - `projects/scheduling-engine-seed/PROJECT.md` — origin project (deleted at close; see git history).
-- Future: `projects/imobi-scheduling-bot-creation/` Phase 7 — first consumer wiring.
+- First consumer was the `imobi-scheduling` chatbot (wired 2026-05-11), absorbed into `products/social-wiring/app/modules/scheduling/` on 2026-05-16 (`social-wiring-absorption` Wave 4); the scheduling primitive is durable, the consumer moved.
 - Future: MCP wrapper as `platform.business.scheduling.suggest_slots` per `mcp-server-fastmcp-switch` Phase 5.

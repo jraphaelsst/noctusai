@@ -428,23 +428,17 @@ RESERVED_RANGES: list[tuple[int, str]] = [
     (8003, "therapy-platform"),
     (8004, "seed"),
     (8005, "daily-life"),
-    (8006, "mailing"),
     (8007, "adconnect"),
     (8009, "dev-team"),
-    (8010, "youtube-crawler"),
-    (8096, "media-scheduling"),
-    # Frontend ports (5173 + 8080-range)
     (5173, "core"),                # Core frontend (Vite default)
     (8080, "erp-imobiliario"),     # ERP frontend
     (8090, "personal-finance"),    # PF frontend
     (8095, "therapy-platform"),    # Therapy frontend
     (8100, "seed"),                # Seed frontend
     (8110, "daily-life"),          # Daily Life frontend
-    (8120, "mailing"),             # Mailing frontend
     (8123, "dev-team"),            # Dev Team frontend (off-pattern: see vite.config.ts)
     (8130, "adconnect"),           # AdConnect frontend
-    (8140, "media-scheduling"),    # Media Scheduling frontend
-    (8150, "youtube-crawler"),     # YouTube Crawler frontend
+         # YouTube Crawler frontend
 ]
 
 

@@ -182,7 +182,7 @@ Every LLM-tool-using product MUST satisfy:
 
 First consumers of this checklist:
 
-- `projects/imobi-scheduling-bot-creation/` Phase 9 (production-readiness pass).
+- Production-readiness pass first shipped in the `imobi-scheduling` bot (2026-05-11), absorbed into `products/social-wiring/app/modules/scheduling/` on 2026-05-16 (`social-wiring-absorption` Wave 4).
 - Any future LLM-tool product (template for §3a Seed-first analysis to
   cite this pattern when designing).
 
@@ -211,7 +211,7 @@ products inherit it verbatim at N=2).
 
 ### 7.1 Per-conversation rate limiter
 
-**File**: `products/imobi-scheduling/backend/app/services/conversation_rate_limit.py`
+**File**: `products/social-wiring/app/modules/scheduling/.../conversation_rate_limit.py` *(absorbed from the retired `imobi-scheduling` product 2026-05-16, `social-wiring-absorption` Wave 4)*
 
 The seed's `noctusai_lib.api.rate_limit.create_limiter` covers per-IP
 HTTP throttling (slowapi-backed). For chat platforms (WAHA, Slack,
@@ -235,7 +235,7 @@ for `KB § PATTERNS/seed-lib-layout.md § api`.
 
 ### 7.2 Output sanitization seam
 
-**File**: `products/imobi-scheduling/backend/app/services/sanitization.py`
+**File**: `products/social-wiring/app/modules/scheduling/.../sanitization.py` *(absorbed from the retired `imobi-scheduling` product 2026-05-16, `social-wiring-absorption` Wave 4)*
 
 Patterns redacted (Brazilian context):
 
@@ -261,7 +261,7 @@ redactors → primitives layer per `KB § PATTERNS/seed-lib-layout.md`).
 
 ### 7.3 Prompt-injection test patterns
 
-**File**: `products/imobi-scheduling/backend/tests/security/test_prompt_injection.py`
+**File**: `products/social-wiring/.../tests/security/test_prompt_injection.py` *(absorbed from the retired `imobi-scheduling` product 2026-05-16, `social-wiring-absorption` Wave 4)*
 
 Adversarial input catalogue (7 shapes — parametrize across them):
 
@@ -294,7 +294,7 @@ code. Assertions verify:
 
 ### 7.4 Anomaly detection (counter-based threshold)
 
-**File**: `products/imobi-scheduling/backend/app/services/anomaly.py`
+**File**: `products/social-wiring/app/modules/scheduling/.../anomaly.py` *(absorbed from the retired `imobi-scheduling` product 2026-05-16, `social-wiring-absorption` Wave 4)*
 
 Scope: tool-dispatch volume per conversation. Defaults: **20 dispatches
 per 60s per conversation** — order-of-magnitude above normal booking

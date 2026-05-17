@@ -79,7 +79,6 @@ const PRODUCT_MAP: Record<number, { backend: number; schema: string }> = {
   8095: { backend: 8003, schema: "therapy" },          // therapy-platform
   8100: { backend: 8004, schema: "seed" },             // seed
   8110: { backend: 8005, schema: "daily_life" },       // daily-life
-  8120: { backend: 8006, schema: "mailing" },          // mailing
   8130: { backend: 8007, schema: "adconnect" },        // adconnect
 };
 

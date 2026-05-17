@@ -45,38 +45,36 @@ from noctusai_lib.config.cors_registry import (
 from noctusai_lib.config.settings import BaseAppSettings
 
 
-# Products migrated by CORS-REGISTRY-ROLLOUT (2026-05-11) + PF-CORS-REGISTRY
-# (2026-05-11 follow-up). CORE excluded — uses ``@registry:all``.
-#
-# ``media-scheduling`` was REMOVED here 2026-05-16: it was consolidated into
-# ``imobi-scheduling`` by commit ``b91043f`` (the ms-merge), so
-# ``products/media-scheduling/`` no longer exists and its ``app/config.py``
-# is gone — the sentinel test was failing with ``FileNotFoundError`` on a
-# product that is not part of the fleet. Root fix is to align the slug set
-# with the real product set, not to special-case the missing file. (The
-# ``youtube-crawler``/``mailing``/``imobi-scheduling`` slugs remain valid
-# until the social-wiring-absorption Wave-4 teardown removes those products;
-# they are scrubbed there in lock-step with ``start.sh``/the core
-# product-registration migration.)
-PRODUCT_SLUGS: tuple[str, ...] = (
-    "adconnect",
-    "daily-life",
-    "dev-team",
-    "erp-imobiliario",
-    "imobi-scheduling",
-    "mailing",
-    "personal-finance",
-    "seed",
-    "therapy-platform",
-    "youtube-crawler",
-)
-
-
 # Resolve `products/` once. This file lives at
 # `seed/lib/backend/tests/config/test_per_product_cors_sentinel.py`, so
 # parents[0]=config, [1]=tests, [2]=backend, [3]=lib, [4]=seed, [5]=repo-root.
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _PRODUCTS_DIR = _REPO_ROOT / "products"
+
+
+# CORS-migrated product slugs are DERIVED from the live ``start.sh``
+# registry (the single source of truth) rather than frozen, so the set
+# stays correct when products join or are retired without a manual edit.
+# ``core`` is excluded (uses the ``@registry:all`` sentinel). Each slug
+# is filesystem-guarded: a registry row whose ``backend/app/config.py``
+# is absent (e.g. mid-teardown) is skipped instead of
+# ``FileNotFoundError``-ing the suite. Root fix landed by
+# social-wiring-absorption Wave 4 (2026-05-16), resolving the
+# ``check_hardcoded_product_slug_set`` true-positive that previously
+# froze ``media-scheduling``/``imobi-scheduling``/``mailing``/
+# ``youtube-crawler`` literals here.
+def _derive_product_slugs() -> tuple[str, ...]:
+    slugs: list[str] = []
+    for entry in parse_products_registry():
+        slug = entry["slug"]
+        if slug == "core":
+            continue
+        if (_PRODUCTS_DIR / slug / "backend" / "app" / "config.py").is_file():
+            slugs.append(slug)
+    return tuple(sorted(slugs))
+
+
+PRODUCT_SLUGS: tuple[str, ...] = _derive_product_slugs()
 
 
 @pytest.fixture(scope="module")

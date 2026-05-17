@@ -102,7 +102,7 @@ shape just changes when the decision moves.
 - **Recorded by:** PF wiring Phase 6 engineer (worktree-agent-a0ae8b7bce8e0cd0f, 2026-05-11) — design-batch question Q-equipe resolved.
 
 ### ERP metas digest does NOT use `noctusai_lib.domain.digest`
-- **Subject:** `KB § 04-SHARED-LIBRARY.md § domain/digest` shared library used by `core` audit-digest, `personal-finance` monthly narrative, `daily-life` weekly review, `mailing` campaign debrief — but NOT ERP metas digest.
+- **Subject:** `KB § 04-SHARED-LIBRARY.md § domain/digest` shared library used by `core` audit-digest, `personal-finance` monthly narrative, `daily-life` weekly review, `social-wiring` email-marketing campaign debrief (absorbed from the retired `mailing` product 2026-05-16) — but NOT ERP metas digest.
 - **Decision:** ERP metas digest keeps its own `metas_digest_service.py` shape; does not consume the seed-lib `domain/digest` contract.
 - **Reason:** ERP metas digest has no LLM narrative path and preserves a bespoke return shape (3-tier VGV cascade + per-team breakdown). Forcing it through the seed-lib contract would either bloat the contract or destroy the bespoke shape the gamification UI consumes.
 - **Scope:** `products/erp-imobiliario/backend/app/services/metas_digest_service.py` + `routers/metas_digest.py`.
@@ -193,7 +193,7 @@ shape just changes when the decision moves.
 - **Subject:** development-environment convenience for `verify_hmac_*` / Svix helpers.
 - **Decision:** when a webhook secret env var is unset, accept the payload with a structured WARNING log instead of rejecting.
 - **Reason:** dev environments often run the bot without the real provider configured; failing closed would block local testing. CI/prod must set the secret; the WARNING surfaces the unsafe state observably.
-- **Scope:** consumer-side pattern (e.g. `products/mailing/backend/app/routers/webhooks.py`); documented as the universal rule in `KB § PATTERNS/webhook-signatures.md § Universal rules`.
+- **Scope:** consumer-side pattern (e.g. `products/social-wiring/app/modules/email_marketing/.../routers/webhooks.py` — absorbed from the retired `mailing` product 2026-05-16); documented as the universal rule in `KB § PATTERNS/webhook-signatures.md § Universal rules`.
 - **Revisit trigger:** a production deploy ever runs without the secret AND processes traffic — at that point the WARNING wasn't loud enough; tighten to a startup check / fail-fast in production.
 - **Recorded by:** `KB § PATTERNS/webhook-signatures.md`.
 
@@ -254,7 +254,7 @@ shape just changes when the decision moves.
 
 ### Per-product `app/scheduler.py` at N=3 — **FORMALIZED** in `noctusai_lib.api.scheduler`
 
-- **Subject:** `products/mailing/backend/app/scheduler.py`, `products/personal-finance/backend/app/scheduler.py`, and `products/therapy-platform/backend/app/scheduler.py` previously each carried their own APScheduler instance + lifecycle.
+- **Subject:** `products/social-wiring/app/modules/email_marketing/.../scheduler.py` (absorbed from the retired `mailing` product 2026-05-16), `products/personal-finance/backend/app/scheduler.py`, and `products/therapy-platform/backend/app/scheduler.py` previously each carried their own APScheduler instance + lifecycle.
 - **Decision (retired 2026-05-03):** **FORMALIZED.** The seed-side primitive at `seed/lib/backend/noctusai_lib/api/scheduler.py` now owns `register(name, fn, hours/minutes/seconds/cron=...)` + `start_scheduler` + `stop_scheduler`. All 3 product `app/scheduler.py` files collapsed to thin wrappers (job functions + a `configure()` registration call + re-export of the seed-side `start_scheduler`/`stop_scheduler` so `main.py`'s lifespan wiring is unchanged).
 - **Reason for the original accept:** the formalization needed a focused initiative (design the seed-lib API; migrate 3 products one-by-one; exercise cron + interval triggers; preserve the test baseline). Filed as `projects/seed-side-scheduler-primitive/` and now executed.
 - **Scope:** retired. Outcome shipped at `seed/lib/backend/noctusai_lib/api/scheduler.py` + `seed/lib/backend/tests/test_scheduler.py` (14 tests) + product wrapper migrations.
@@ -273,7 +273,7 @@ shape just changes when the decision moves.
 - **Subject:** TypeScript `"strict": true` in each product frontend's `products/<product>/frontend/tsconfig.json`. Today every product frontend ships `strict: false` (or inherits a non-strict base).
 - **Decision:** per-product TS strict mode is **opt-in over time, NOT a coordinated campaign**. Strict-quality types are enforced at the seed boundary only (`seed/lib/frontend/` + `seed/framework/frontend/`, both `strict: true`, gated by `.github/workflows/seed-typecheck.yml` — see `KB § 03-SEED-ARCHITECTURE.md § Seed Contract § 5. Contract enforcement § 1`).
 - **Reason:** 8 product frontends × ~2-3h each ≈ 16-24h of mostly mechanical `!`-non-null-assertion fixes that *mask* the same null risk rather than removing it. The high-leverage subset — cross-product type contracts in `@noctusai/lib` + `@noctusai/seed` — already lands at the seed boundary and propagates to every consumer via raw-source `.ts` import (no build step, no `.d.ts` emission, so the strict-quality of seed types directly affects what each product sees). Per-product strict adds quality-of-life inside each product but does not tighten any cross-product contract. The per-product flip is the kind of work an individual maintainer can opt into when they're touching a frontend deeply — not a platform-wide deliverable that pays off the coordination cost.
-- **Scope:** `products/{core,erp-imobiliario,personal-finance,therapy-platform,daily-life,mailing,seed,dev-team}/frontend/tsconfig.json`.
+- **Scope:** `products/{core,erp-imobiliario,personal-finance,therapy-platform,daily-life,social-wiring,seed,dev-team}/frontend/tsconfig.json` (`mailing` consolidated into `social-wiring` 2026-05-16).
 - **Revisit trigger:** a product team **independently** flips `strict: true` in their `tsconfig.json` and closes the resulting errors at their own pace — that's the per-product happy path and doesn't change this catalog. Recurrence fires (flip toward **FORMALIZED**) when **3+ product frontends** end up at `strict: true` on their own (signals a coordinated push is warranted) OR a **real null-safety incident** in production is traced to a non-strict product file (signals the seed-boundary gate isn't catching enough).
 - **Recorded by:** `projects/strict-mode-migration/PROJECT.md` Phase 5 close (2026-05-10). Original 8-frontend campaign drafted 2026-04-27 was retired here after the 2026-05-03 cost/leverage audit; seed-boundary gate shipped Phases 1-4 of the same project.
 
@@ -321,10 +321,10 @@ state change, not a removal.
 
 ### Per-product `_render_bodies` + `_generate_narrative` digest wrappers retained at N=4 (AMENDED 2026-05-10)
 
-- **Subject:** four products (`core/audit_digest_service.py`, `daily-life/weekly_review_service.py`, `mailing/campaign_debrief_service.py`, `personal-finance/monthly_narrative_service.py`) carry per-product `_render_bodies(...)` and `_generate_narrative(...)` overrides. Originally module-level wrappers (2026-05-03); **as of 2026-05-10, refactored to be methods of `XDigestService(BaseDigestService)` subclasses** — see `KB § PATTERNS/digest-seed.md`. The methods themselves still bind product-specific context-dict keys + LLM prompt strings to the seed primitive's `narrative(...)` / `render_digest_pair(...)` calls.
+- **Subject:** four products (`core/audit_digest_service.py`, `daily-life/weekly_review_service.py`, `social-wiring/email_marketing/campaign_debrief_service.py` — absorbed from the retired `mailing` 2026-05-16, `personal-finance/monthly_narrative_service.py`) carry per-product `_render_bodies(...)` and `_generate_narrative(...)` overrides. Originally module-level wrappers (2026-05-03); **as of 2026-05-10, refactored to be methods of `XDigestService(BaseDigestService)` subclasses** — see `KB § PATTERNS/digest-seed.md`. The methods themselves still bind product-specific context-dict keys + LLM prompt strings to the seed primitive's `narrative(...)` / `render_digest_pair(...)` calls.
 - **Decision:** keep both methods per-subclass. `_render_bodies` binds product-specific context-dict keys to the seed primitive's `context=` arg; `_generate_narrative` binds product-specific LLM `system` + `user_prompt` strings.
 - **Reason:** the wrappers are the *domain-binding boundary*. The LLM prompts (security-audit narrative vs. weekly habit review vs. campaign metrics vs. monthly cashflow) are fundamentally per-product; abstracting them through a `prompt_factory` indirection would either bloat the seed-lib API with per-domain prompt knowledge or split the prompt from its data-shape (creating a brittle two-piece API). The recurrence-rule's MUST-formalize threshold (N≥3) fired here, but Phase 0 audit found the formalize-target was the *primitives* (2026-05-03) and the *orchestrator template* (2026-05-10) — which is what shipped. The remaining per-method overrides are correctly per-product code.
-- **Scope:** `products/{core,daily-life,mailing,personal-finance}/backend/app/services/*_digest_service.py` (or equivalent name). ERP excluded per the existing "ERP metas digest does NOT use `noctusai_lib.domain.digest`" entry above.
+- **Scope:** `products/{core,daily-life,social-wiring,personal-finance}/backend/app/services/*_digest_service.py` (or equivalent name; `mailing` consolidated into `social-wiring/email_marketing` 2026-05-16). ERP excluded per the existing "ERP metas digest does NOT use `noctusai_lib.domain.digest`" entry above.
 - **Revisit trigger:** the existing 4 method-overrides start sharing identical prompt-shape boilerplate (e.g. all begin with the same system-prompt prefix), at which point pull the prefix into a `digest_system_preamble` helper. The N=5 narrative-using digest trigger is satisfied at the orchestration layer (`BaseDigestService`); per-method overrides remain accept-with-rationale.
 - **Recorded by:** `projects/digest-helpers-absorption/` PROJECT CLOSE (2026-05-03; commit `07afb18`). **Amended 2026-05-10** with `seed-digest-base-class` branch merge — wrapper sites moved from module-level functions to subclass methods of `BaseDigestService`. The boundary rationale stands; only the surface shape changed.
 
@@ -429,6 +429,8 @@ state change, not a removal.
 ## Entries from `media-scheduling-port-resume` (closed 2026-05-04)
 
 > **DELETED 2026-05-11.** The `media-scheduling` product was deleted in favor of `imobi-scheduling` (same product, divergent shapes; imobi was the canonical cleaner adopter — single 001 migration, Supabase-native audit adapter, factory-shaped WhatsApp router, 393 tests passing, DEPLOYMENT.md). All file-paths cited in the entries below point to deleted code. Entries kept for **methodology archaeology** — the rationales (LID-auth at N=1 stays product-side; dispatcher mutation vs per-call `tool_handler=`; hybrid SQLAlchemy+Pydantic at the seed-audit-contract boundary; etc.) remain relevant when the next product hits the same shape. Their **revisit triggers** still fire — imobi-scheduling re-instantiates the WhatsApp/Calendar/Maps surface and inherits the open questions. If/when N=2 fires, the move-to-seed conversation re-opens; cite this catalog block for context.
+>
+> **UPDATE 2026-05-16 (`social-wiring-absorption` Wave 4):** `imobi-scheduling` itself was subsequently consolidated into **`products/social-wiring/`** and retired. Any `products/imobi-scheduling/...` or `products/media-scheduling/...` path cited below resolves, for live code, to the absorbed module under `products/social-wiring/app/modules/scheduling/`. The rationales and revisit triggers remain durable as written; treat the cited paths as historical provenance, not live pointers. Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
 
 ### LID-aware first-inbound auth stays product-side
 
@@ -469,6 +471,8 @@ state change, not a removal.
 ---
 
 ## Entries from `seed-hardening-from-youtube-crawler` (in progress 2026-05-04)
+
+> **RETIRED 2026-05-16 (`social-wiring-absorption` Wave 4).** The `youtube-crawler` product was consolidated into **`products/social-wiring/`** and retired. The hardening *rationales* below are durable methodology (Trivy non-runtime CVE accepts, test-class dedup, etc.) and their revisit triggers still fire; any `products/youtube-crawler/...` path is historical provenance, not a live pointer — the equivalent live surface is the seed `products/seed/backend/Dockerfile` slim image + `products/social-wiring/`. Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
 
 ### `TestSqlTemplatesIntegration` test class duplicated in `test_scaffold.py` and `test_scaffold_migration.py`
 
@@ -530,6 +534,8 @@ state change, not a removal.
 ---
 
 ## Entries from `mailing-wiring` Phase 2 (filed 2026-05-11)
+
+> **RETIRED 2026-05-16 (`social-wiring-absorption` Wave 4).** The `mailing` product was consolidated into **`products/social-wiring/app/modules/email_marketing/`** and retired; the `mailing-wiring` project (Phases 0-2 ✅, Phases 3-5 superseded by the absorption) was never separately ledgered — a verbatim snapshot of its `PROJECT.md` + the closed proposal-eval set is preserved at `projects/social-wiring-absorption/.integration-holding/W4.0-preservation/`, and disposition is recorded in `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`. **These 4 entries are the durable substance of that incomplete project and MUST survive.** For live code, every `products/mailing/...` path below resolves to the absorbed `products/social-wiring/app/modules/email_marketing/...` module (`useSettings.ts`/`Equipe.tsx`/`Unsubscribe.tsx`/`routers/{lists,automations,analytics,ai}.py` and the GET-verify endpoint moved with the absorption); the decisions + revisit triggers remain valid as written. Treat the cited `products/mailing/...` and `products/mailing/projects/mailing-wiring/PROJECT.md` paths as historical provenance.
 
 ### Settings/verify `GET /api/settings/domains/{id}/verify` is mutation-shaped (idempotent re-verify)
 

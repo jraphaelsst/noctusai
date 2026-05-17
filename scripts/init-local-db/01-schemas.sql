@@ -20,21 +20,15 @@ CREATE SCHEMA IF NOT EXISTS dev_team;
 -- from: products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql
 CREATE SCHEMA IF NOT EXISTS erp;
 
--- from: products/imobi-scheduling/backend/migrations/001_imobi_scheduling.sql
-CREATE SCHEMA IF NOT EXISTS imobi_scheduling;
-
--- from: products/mailing/backend/migrations/001_mailing.sql
-CREATE SCHEMA IF NOT EXISTS mailing;
-
 -- from: products/personal-finance/backend/migrations/001_personal_finance.sql
 CREATE SCHEMA IF NOT EXISTS "personal-finance";
 
 -- from: products/seed/backend/migrations/001_seed.sql
 CREATE SCHEMA IF NOT EXISTS seed;
 
+-- from: products/social-wiring/backend/migrations/001_social-wiring.sql
+CREATE SCHEMA IF NOT EXISTS social_wiring;
+
 -- from: products/therapy-platform/backend/migrations/001_therapy_platform.sql
 CREATE SCHEMA IF NOT EXISTS therapy;
-
--- from: products/youtube-crawler/backend/migrations/001_seed.sql
-CREATE SCHEMA IF NOT EXISTS youtube_crawler;
 

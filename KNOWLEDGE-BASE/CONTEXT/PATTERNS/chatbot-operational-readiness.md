@@ -14,8 +14,12 @@
 > `production-hardening` + `operational-dashboards` planning artifacts
 > (preserved here so the pattern survives the sibling's deletion).
 >
-> First adopter: `imobi-scheduling`. Adoption-ready: any chatbot with
-> external writes — therapy bot, mailing dispatcher, PF coach bot.
+> First adopter: `imobi-scheduling`, absorbed into
+> `products/social-wiring/app/modules/scheduling/` on 2026-05-16
+> (`social-wiring-absorption` Wave 4 — the imobi-scheduling product was
+> retired; the pattern is durable, the adopter path moved). Adoption-ready:
+> any chatbot with external writes — therapy bot, social-wiring email
+> dispatcher, PF coach bot.
 
 ---
 
@@ -51,8 +55,10 @@ jobs. That shape doesn't help an *in-flight blocking call* — the
 calling code can't yield and come back later, it needs the result now.
 
 **Pattern: product-side `retry_call(...)` wrapper composing the seed's
-`RetryPolicy`** at the consumer side. First adopter ships at
-`products/imobi-scheduling/backend/app/services/retry.py`. Shape:
+`RetryPolicy`** at the consumer side. First adopter shipped at
+`products/imobi-scheduling/backend/app/services/retry.py`, absorbed into
+`products/social-wiring/app/modules/scheduling/.../retry.py` on 2026-05-16
+(`social-wiring-absorption` Wave 4). Shape:
 
 ```python
 from noctusai_lib.domain.jobs.retry_policy import RetryPolicy
@@ -92,7 +98,7 @@ windows. The first-adopter constants (calibrate per backend):
   asyncio.to_thread(retry_call, ...)`.
 
 **N=2 destination.** When the second consumer needs the same shape
-(mailing's outbound / therapy's calendar invites), absorb to
+(social-wiring email-marketing outbound / therapy's calendar invites), absorb to
 `noctusai_lib.primitives.retry` (the primitives layer per
 `KB § PATTERNS/seed-lib-layout.md`).
 
@@ -250,17 +256,21 @@ destination) per the no-silent-errors rule.
 
 ---
 
-## 9. First adopter — imobi-scheduling
+## 9. First adopter — imobi-scheduling (absorbed into social-wiring)
 
-Phase 10 of `projects/imobi-scheduling-bot-creation/` is the first
-walkthrough of this pattern. Concrete artifacts:
+The first walkthrough of this pattern shipped in the `imobi-scheduling`
+product (2026-05-11). That product was retired on 2026-05-16
+(`social-wiring-absorption` Wave 4) and its scheduling chatbot absorbed
+into `products/social-wiring/app/modules/scheduling/`. The pattern is
+durable; the canonical artifacts now live at the social-wiring paths:
 
-- `products/imobi-scheduling/backend/app/services/retry.py`
-- `products/imobi-scheduling/backend/app/services/metrics.py`
-- `products/imobi-scheduling/DEPLOYMENT.md`
-- `products/imobi-scheduling/backend/app/logging_config.py` (re-export)
-- Calendar wrappers in `app/services/calendar.py` adopt `retry_call`
-  at create/update/delete.
+- `products/social-wiring/app/modules/scheduling/.../retry.py`
+- `products/social-wiring/app/modules/scheduling/.../metrics.py`
+- `products/social-wiring/DEPLOYMENT.md`
+- `products/social-wiring/.../logging_config.py` (re-export)
+- Calendar wrappers in the scheduling module adopt `retry_call` at
+  create/update/delete.
 
-Future adopters (therapy / mailing / PF) inherit the pattern verbatim;
-N=2 triggers the seed-side lifts noted in §2 (retry) and §7 (metrics).
+Future adopters (therapy / social-wiring email-marketing / PF) inherit
+the pattern verbatim; N=2 triggers the seed-side lifts noted in §2
+(retry) and §7 (metrics).

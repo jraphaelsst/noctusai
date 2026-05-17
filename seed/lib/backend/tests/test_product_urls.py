@@ -15,66 +15,66 @@ class TestResolveProductUrl:
     Empty/missing → raise ValueError (no silent fallback)."""
 
     def test_per_product_env_wins_over_pattern_and_db(self, monkeypatch):
-        monkeypatch.setenv("PRODUCT_URL_MEDIA_SCHEDULING", "https://ms.example.com")
+        monkeypatch.setenv("PRODUCT_URL_SAMPLE_PRODUCT", "https://ms.example.com")
         monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.fallback.com")
         result = resolve_product_url(
-            "media-scheduling",
+            "sample-product",
             db_url_base="http://localhost:8140",
         )
         assert result == "https://ms.example.com"
 
     def test_pattern_used_when_no_per_product_env(self, monkeypatch):
-        monkeypatch.delenv("PRODUCT_URL_MEDIA_SCHEDULING", raising=False)
+        monkeypatch.delenv("PRODUCT_URL_SAMPLE_PRODUCT", raising=False)
         monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.noctus.ai")
         result = resolve_product_url(
-            "media-scheduling",
+            "sample-product",
             db_url_base="http://localhost:8140",
         )
-        assert result == "https://media-scheduling.noctus.ai"
+        assert result == "https://sample-product.noctus.ai"
 
     def test_pattern_substitutes_underscored_slug(self, monkeypatch):
-        monkeypatch.delenv("PRODUCT_URL_MEDIA_SCHEDULING", raising=False)
+        monkeypatch.delenv("PRODUCT_URL_SAMPLE_PRODUCT", raising=False)
         monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://app.example.com/{slug_underscored}")
-        result = resolve_product_url("media-scheduling")
-        assert result == "https://app.example.com/media_scheduling"
+        result = resolve_product_url("sample-product")
+        assert result == "https://app.example.com/sample_product"
 
     def test_pattern_handles_both_placeholders_in_one_string(self, monkeypatch):
-        monkeypatch.delenv("PRODUCT_URL_MEDIA_SCHEDULING", raising=False)
+        monkeypatch.delenv("PRODUCT_URL_SAMPLE_PRODUCT", raising=False)
         monkeypatch.setenv(
             "PRODUCT_URL_PATTERN",
             "https://{slug}.example.com/api/{slug_underscored}",
         )
-        result = resolve_product_url("media-scheduling")
-        assert result == "https://media-scheduling.example.com/api/media_scheduling"
+        result = resolve_product_url("sample-product")
+        assert result == "https://sample-product.example.com/api/sample_product"
 
     def test_db_fallback_when_no_env(self, monkeypatch):
-        monkeypatch.delenv("PRODUCT_URL_MEDIA_SCHEDULING", raising=False)
+        monkeypatch.delenv("PRODUCT_URL_SAMPLE_PRODUCT", raising=False)
         monkeypatch.delenv("PRODUCT_URL_PATTERN", raising=False)
         result = resolve_product_url(
-            "media-scheduling",
+            "sample-product",
             db_url_base="http://localhost:8140",
         )
         assert result == "http://localhost:8140"
 
     def test_raises_when_all_sources_missing(self, monkeypatch):
-        monkeypatch.delenv("PRODUCT_URL_MEDIA_SCHEDULING", raising=False)
+        monkeypatch.delenv("PRODUCT_URL_SAMPLE_PRODUCT", raising=False)
         monkeypatch.delenv("PRODUCT_URL_PATTERN", raising=False)
         with pytest.raises(ValueError) as exc:
-            resolve_product_url("media-scheduling", db_url_base=None)
+            resolve_product_url("sample-product", db_url_base=None)
         # Error message must surface the env var name to fix it AND the
         # alternatives — silent fallback is forbidden, so the caller has
         # everything they need to fix the gap.
-        assert "PRODUCT_URL_MEDIA_SCHEDULING" in str(exc.value)
+        assert "PRODUCT_URL_SAMPLE_PRODUCT" in str(exc.value)
         assert "PRODUCT_URL_PATTERN" in str(exc.value)
         assert "url_base" in str(exc.value)
 
     def test_raises_when_db_url_base_is_empty_string(self, monkeypatch):
         # Empty string is treated identically to None — both indicate "no
         # value", neither should be silently used as a URL.
-        monkeypatch.delenv("PRODUCT_URL_MEDIA_SCHEDULING", raising=False)
+        monkeypatch.delenv("PRODUCT_URL_SAMPLE_PRODUCT", raising=False)
         monkeypatch.delenv("PRODUCT_URL_PATTERN", raising=False)
         with pytest.raises(ValueError):
-            resolve_product_url("media-scheduling", db_url_base="")
+            resolve_product_url("sample-product", db_url_base="")
 
     def test_raises_on_empty_slug(self):
         with pytest.raises(ValueError) as exc:

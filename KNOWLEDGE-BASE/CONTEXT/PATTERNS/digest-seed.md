@@ -24,14 +24,14 @@ class WeeklyReviewService(BaseDigestService):
 
 ## Types
 
-- **`DigestWindow`** — loose envelope (`start`, `end`, `org_id`, `extra: dict`). `extra` carries non-uniform per-product context (e.g. `campaign_id` for mailing) so subclasses pass opaque envelopes between their own methods without forcing a sealed schema on the base.
+- **`DigestWindow`** — loose envelope (`start`, `end`, `org_id`, `extra: dict`). `extra` carries non-uniform per-product context (e.g. `campaign_id` for the social-wiring email-marketing debrief) so subclasses pass opaque envelopes between their own methods without forcing a sealed schema on the base.
 - **`DigestResult`** — uniform return: `(digest, narrative, summary, recipients)`. The base's `run(window)` template method returns this shape; per-service top-level wrappers may repackage at the edge for legacy callers.
 
 ## Adopters (4)
 
 - `core/audit_digest_service.py` → `AuditDigestService`
 - `daily-life/weekly_review_service.py` → `WeeklyReviewService`
-- `mailing/campaign_debrief_service.py` → `CampaignDebriefService` (uses internal `_CampaignNotFound` sentinel for the Optional-return path; wrapper translates back to `None`)
+- `social-wiring/app/modules/email_marketing/.../campaign_debrief_service.py` → `CampaignDebriefService` (uses internal `_CampaignNotFound` sentinel for the Optional-return path; wrapper translates back to `None`) — *absorbed from the retired `mailing` product into `social-wiring/email_marketing`, 2026-05-16 (`social-wiring-absorption` Wave 4); the digest pattern is durable, only the adopter path moved.*
 - `personal-finance/monthly_narrative_service.py` → `MonthlyNarrativeService`
 
 **Public APIs preserved verbatim.** Every existing module-level `build_X` / `send_X` function still exists at the same import path with its original signature + return-tuple shape. Class delegates internally; **27 test imports across 4 services untouched**. This is the **internal-uniform / edge-adapt** pattern — when public APIs differ in subtle ways (3-tuple vs dict vs Optional[3-tuple] vs 4-tuple), normalize internally + adapt at the edge.

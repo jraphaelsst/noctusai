@@ -48,11 +48,8 @@ PRODUCTS=(
   "therapy-platform:Therapy Platform:8003:8095"
   "seed:Seed:8004:8100"
   "daily-life:Daily Life:8005:8110"
-  "mailing:Mailing:8006:8120"
   "adconnect:AdConnect:8007:8130"
   "dev-team:Dev Team:8009:8123"
-  "imobi-scheduling:Imobi Scheduling:8011:8160"
-  "youtube-crawler:YouTube Crawler:8008:8150"
   "social-wiring:Social Wiring:8011:8160"
 )
 # END_PRODUCTS_REGISTRY

@@ -288,7 +288,7 @@ result = await build_and_send(
 return {**result, "summary": summary}
 ```
 
-**Adopters (4):** `products/core/.../audit_digest_service.py`, `products/personal-finance/.../monthly_narrative_service.py`, `products/daily-life/.../weekly_review_service.py`, `products/mailing/.../campaign_debrief_service.py`. ERP metas digest does NOT use `domain/digest` — it has no LLM narrative and preserves a bespoke return shape; documented accept-with-rationale in the closed project.
+**Adopters (4):** `products/core/.../audit_digest_service.py`, `products/personal-finance/.../monthly_narrative_service.py`, `products/daily-life/.../weekly_review_service.py`, `products/social-wiring/app/modules/email_marketing/.../campaign_debrief_service.py` (absorbed from the retired `mailing` product 2026-05-16, `social-wiring-absorption` Wave 4). ERP metas digest does NOT use `domain/digest` — it has no LLM narrative and preserves a bespoke return shape; documented accept-with-rationale in the closed project.
 
 **Adoption pattern (P3 from ai-expansion §5a).** Products ship per-service Jinja templates in `app/email_templates/` (live next to `app/services/`), inherit from the lib base, and call `render()` to produce both bodies. Send-and-fallback machinery comes from `send_digest`.
 
@@ -325,7 +325,7 @@ result = await send_digest(digest, recipient=user.email, org_id=org_id, log_pref
 | `products/core/.../audit_digest_service.py` | `audit_digest.{html,txt}.j2` | Extends lib base. C2 weekly audit-log narrative. |
 | `products/personal-finance/.../monthly_narrative_service.py` | `monthly_narrative.{html,txt}.j2` | Extends lib base. P2-opp PF monthly. |
 | `products/daily-life/.../weekly_review_service.py` | `weekly_review.{html,txt}.j2` | Extends lib base. D6 Friday review. |
-| `products/mailing/.../campaign_debrief_service.py` | `campaign_debrief.{html,txt}.j2` | Extends lib base. M4 post-send debrief. |
+| `products/social-wiring/app/modules/email_marketing/.../campaign_debrief_service.py` | `campaign_debrief.{html,txt}.j2` | Extends lib base. Post-send debrief. Absorbed from the retired `mailing` product 2026-05-16. |
 
 **Dep:** `jinja2>=3.1.0` in `seed/lib/backend/pyproject.toml` (added 2026-04-25 alongside the helper).
 
@@ -475,7 +475,7 @@ Shipped 2026-04-26 by ai-expansion Phase 19. Platform-wide opt-in/opt-out for AI
 |---|---|---|---|
 | PF — `<MonthlyNarrativeCard/>` (`products/personal-finance/frontend/src/components/MonthlyNarrativeCard.tsx`) | existing `useMonthlyNarrative()` | `pages/Dashboard.tsx` (above KPI cards) | `digest:pf:monthly:YYYY-MM` |
 | Daily Life — `<WeeklyReviewCard/>` (`products/daily-life/frontend/src/components/WeeklyReviewCard.tsx`) | existing `useWeeklyReview()` | `pages/Dashboard.tsx` (below daily content) | `digest:daily_life:weekly:YYYY-Www` |
-| Mailing — `<CampaignDebriefSection/>` (`products/mailing/frontend/src/components/CampaignDebriefSection.tsx`) | new `useCampaignDebrief(campaignId)` | `pages/CampaignDetail.tsx` (only for sent campaigns) | `digest:mailing:debrief:<campaign_id>` |
+| Social-Wiring email-marketing — `<CampaignDebriefSection/>` (`products/social-wiring/frontend/src/.../CampaignDebriefSection.tsx`; absorbed from the retired `mailing` product 2026-05-16) | new `useCampaignDebrief(campaignId)` | `pages/CampaignDetail.tsx` (only for sent campaigns) | `digest:mailing:debrief:<campaign_id>` |
 | Core — `<AdminAuditDigest/>` (`products/core/frontend/src/pages/admin/AdminAuditDigest.tsx`) | new inline `useAuditDigestPreview(orgId, periodDays)` | new `/admin/audit-digest` route + sidebar entry | `digest:audit:<period>d` |
 
 **Per-product code count: ~10-30 lines per surface** — wrapper component + placement code. Legitimately domain-specific (different data sources, different placements, different gating); NOT replication. The `<DigestCard/>` container itself is the seed-first absorption.
