@@ -484,6 +484,54 @@ there is a real deploy target (don't gold-plate speculative infra).
 
 ---
 
+## 12a · Divergent-architecture absorptions MUST refactor to the house model
+
+An **incoming product whose container architecture differs from noc's
+single-container house model MUST be refactored to it on absorption** —
+not consumed as-is, not wrapped, not special-cased in the fleet.
+
+The house model is one container per product: uvicorn serves API + the
+built SPA on one port via the seed factory `serve_spa` / `SERVE_SPA_DIR`
+seam, `FROM noctus-seed-*-base` is the named seam, two compose projects
+(`noctusai-products` / `noctusai-infra`) on the external `noctus-net`.
+A product that arrives as a **2-container backend+nginx+proxy** topology
+(the shape the social-wiring sibling carried — separate uvicorn + nginx
+SPA host + a standalone single-URL proxy, per-product `<slug>-net`, a
+Vite-HMR dev sidecar) does NOT get a carve-out: it is rewritten to the
+single-container shape during the absorption's container-refactor gate
+(Gate 9 of `KB § GUIDES/absorb-seed-workspace.md`).
+
+Why a rule and not just "it'll work out":
+
+- A divergent topology in the fleet breaks the **one-container = one
+  Docker-Desktop 1-click row** invariant the two-project split depends
+  on, and the same-origin SPA contract (`window.location.origin` define-
+  injection) — both are load-bearing for tunnel/deploy correctness.
+- **Newly-scaffolded products inherit the house model by construction**
+  (`noctus.dev.scaffold_product` → `templates/product-seed/`), so this
+  cannot recur for noc-native products. The rule exists for the
+  *absorption* case — externally-developed workspaces evolve their own
+  container shape and the divergence is only discovered at absorption.
+- Fold only the still-relevant bits of the divergent infra: SPA fallback
+  is already covered by `serve_spa`; a separate `proxy/nginx.conf` is
+  redundant under the house model and is dropped. The profile-gated
+  `<slug>-tunnel` already replaces a hand-rolled single-URL proxy.
+
+**Live doc-code-coherence note (2026-05-16):** the scaffold template was
+observed emitting a `docker-compose.override.yml` registration that
+drifts from the single-env house model — a real scaffold defect surfaced
+by the social-wiring teardown verification. *The code fix is owned by the
+scaffold-fix work; this section owns the rule* — an absorbed product's
+compose must be the canonical single-service shape, override-free.
+
+> History note: this rule was extracted from the social-wiring absorption
+> (2026-05-16), where the sibling workspace's 2-container+proxy topology
+> was refactored to the house model as the final absorption gate. Dated
+> fact recorded in-line on purpose — do not anchor it to a `projects/` or
+> `archive/` folder (not persisted long-term).
+
+---
+
 ## 13 · References
 
 - Seed factory `serve_spa` seam — `seed/framework/backend/noctusai_seed/app.py`

@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import (  # noqa: E402
+    check_hardcoded_fleet_size_literal,
     check_hardcoded_product_slug_set,
     check_seed_export_membership,
 )
@@ -344,4 +345,125 @@ class TestCheckHardcodedProductSlugSet:
             tmp_path, 'X = ("core", "erp-imobiliario", "therapy-platform")\n',
         )
         issues = check_hardcoded_product_slug_set(tmp_path)
+        assert issues == []
+
+
+# ---------------------------------------------------------------------------
+# check_hardcoded_fleet_size_literal
+# ---------------------------------------------------------------------------
+
+
+class TestCheckHardcodedFleetSizeLiteral:
+    """Seed tests must not assert a frozen fleet-size numeric literal —
+    the numeric-axis twin of `check_hardcoded_product_slug_set`.
+    """
+
+    def _mk_seed_test(self, tmp_path: Path, py: str, *, name: str = "test_x.py") -> None:
+        td = tmp_path / "seed" / "lib" / "backend" / "tests" / "config"
+        td.mkdir(parents=True, exist_ok=True)
+        (td / name).write_text(py)
+
+    def test_flags_len_gte_fleet_floor(self, tmp_path):
+        # The test_cors_registry.py:130 shape (`assert len(entries) >= 8`),
+        # enclosing function is fleet-semantic (mentions products_registry).
+        self._mk_seed_test(
+            tmp_path,
+            "def test_products_registry_populated():\n"
+            "    entries = load_products_registry_entries()\n"
+            "    assert len(entries) >= 8\n",
+        )
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "warning"
+        assert issues[0]["product"] == "<seed-tests>"
+        assert "parse_products_registry" in issues[0]["issue"]
+
+    def test_flags_len_eq_and_gt(self, tmp_path):
+        # `>= 10` (cors_origins) and `== 12` (fleet) — both frozen counts.
+        self._mk_seed_test(
+            tmp_path,
+            "def test_a():\n"
+            "    # cors_origins for every product\n"
+            "    assert len(origins) >= 10\n"
+            "def test_b():\n"
+            "    # fleet size\n"
+            "    assert len(products) == 12\n",
+        )
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert len(issues) == 2, issues
+
+    def test_flags_const_on_left(self, tmp_path):
+        # `8 <= len(x)` — len() on the right side; fleet-semantic function.
+        self._mk_seed_test(
+            tmp_path,
+            "def test_fleet_floor():\n    assert 8 <= len(slugs)\n",
+        )
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert len(issues) == 1, issues
+
+    def test_does_not_flag_below_floor(self, tmp_path):
+        # `len(headers) == 3` — far below the fleet floor (5); an unrelated
+        # bound, not a fleet count.
+        self._mk_seed_test(
+            tmp_path,
+            "def test_h():\n"
+            "    # cors_origins header check\n"
+            "    assert len(headers) == 3\n",
+        )
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert issues == [], issues
+
+    def test_does_not_flag_non_fleet_count(self, tmp_path):
+        # The W5.9a calibration FP: `len(token_data) == 280` is a token
+        # count, not a fleet literal — no fleet-semantic token nearby.
+        self._mk_seed_test(
+            tmp_path,
+            "def test_ai_output_shape():\n"
+            "    tokens = call_model()\n"
+            "    assert len(tokens) == 280\n",
+        )
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert issues == [], issues
+
+    def test_does_not_flag_registry_derived(self, tmp_path):
+        # The W3.5 root-fix shape: the count is computed from the registry
+        # in the same function → not frozen → does not stale.
+        self._mk_seed_test(
+            tmp_path,
+            "from noctusai_lib.config.cors_registry import parse_products_registry\n"
+            "def test_derived():\n"
+            "    entries = parse_products_registry()\n"
+            "    assert len(entries) >= len(entries)\n",
+        )
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert issues == [], issues
+
+    def test_rationale_keyword_opts_out(self, tmp_path):
+        # Fleet-semantic (mentions products_registry) but rationale-tagged:
+        # a legitimate non-fleet count that happens to live near fleet code.
+        self._mk_seed_test(
+            tmp_path,
+            "# fleet-size-ok: 7 is the retry-cap, not a product count\n"
+            "def test_products_registry_retry():\n"
+            "    assert len(attempts) <= 7\n",
+        )
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert issues == [], issues
+
+    def test_non_len_comparison_ignored(self, tmp_path):
+        # A plain numeric assert with no `len()` is not a fleet-size claim.
+        self._mk_seed_test(
+            tmp_path,
+            "def test_n():\n    assert status_code == 200\n",
+        )
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert issues == [], issues
+
+    def test_no_seed_tests_dir_no_error(self, tmp_path):
+        (tmp_path / "products" / "core").mkdir(parents=True)
+        issues = check_hardcoded_fleet_size_literal(tmp_path)
+        assert issues == []
+
+    def test_missing_repo_root_no_error(self, tmp_path):
+        issues = check_hardcoded_fleet_size_literal(tmp_path / "nope")
         assert issues == []

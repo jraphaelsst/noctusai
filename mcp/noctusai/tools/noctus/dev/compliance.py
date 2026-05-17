@@ -4665,6 +4665,213 @@ def check_hardcoded_product_slug_set(repo_root: Path | None = None) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# `check_hardcoded_fleet_size_literal` — a seed test
+# (`seed/lib/backend/tests/`) must NOT assert a frozen *fleet-size* numeric
+# literal (`len(...) >= 10`, `== 12`, `> 8`, …) against a registry-derived
+# collection. A frozen count goes stale the moment a product is added /
+# removed / consolidated — exactly the same failure class as a frozen
+# product-slug set (`check_hardcoded_product_slug_set`), but on the numeric
+# axis rather than the string-collection axis.
+#
+# N=3 evidence (social-wiring-absorption W3.5/W4):
+#   - `test_per_product_cors_sentinel.py` `PRODUCT_SLUGS` (slug axis →
+#     covered by `check_hardcoded_product_slug_set`; the *count* it implies
+#     is the same staleness vector).
+#   - `test_cors_registry.py:130` `assert len(entries) >= 8` and `:247`
+#     `assert len(origins) >= 10` — frozen fleet-size floors that needed
+#     hand-editing when `media-scheduling`/`youtube-crawler`/`mailing`/
+#     `imobi-scheduling` were consolidated into `social-wiring`.
+#   - `test_scaffold.py` `RESERVED_RANGES` / used-ports expectations —
+#     frozen fleet-derived numeric expectations with the same drift vector.
+#
+# Predicate (deterministic): inside `seed/lib/backend/tests/`, an
+# `ast.Compare` whose left operand is a `len(<call|name>)` call and whose
+# comparator is an integer `ast.Constant` ≥ `_FLEET_SIZE_FLOOR` — UNLESS
+# the comparison's `len()` argument is itself registry-derived in the same
+# function (a comprehension/call referencing `parse_products_registry` /
+# `cors_registry`) or a rationale keyword opts out. Mirrors
+# `check_hardcoded_product_slug_set`'s shape exactly.
+#
+# Severity: `warning`.
+# ---------------------------------------------------------------------------
+
+
+# A `len(...) <op> N` where N ≥ this floor is treated as a fleet-size
+# expectation (the noc fleet is ≈8-12 products; a smaller literal is far
+# more likely an unrelated bound like a header count or retry cap and is
+# left alone — false-positive suppression, mirroring `_SLUG_LITERAL_MIN_HITS`).
+_FLEET_SIZE_FLOOR: int = 5
+
+# Same opt-out family as the slug-set detector — a nearby rationale keyword
+# marks a legitimate non-fleet count (mirrors `check_mock_schema_validation`
+# and `check_hardcoded_product_slug_set`).
+_FLEET_SIZE_RATIONALE_RE = re.compile(
+    r"fleet-size-ok|registry-exempt|not-a-fleet-count",
+    re.IGNORECASE,
+)
+
+# Tokens that, if they appear anywhere in the enclosing function source,
+# mean the `len()` argument is registry-derived (single source of truth) —
+# the count is computed, not frozen, so it does NOT stale.
+_REGISTRY_DERIVED_TOKENS = ("parse_products_registry", "cors_registry")
+
+# POSITIVE ANCHOR (false-positive suppression — the W5.9a calibration
+# lesson): a bare `len(x) == 20` is almost always an unrelated bound
+# (token count, buffer size, listing length). It is only a *fleet-size*
+# literal if the count is semantically a count of products / CORS origins
+# / registry rows. We require the enclosing-function source to mention at
+# least one fleet-semantic token. This mirrors how
+# `check_hardcoded_product_slug_set` requires actual live slug *strings*
+# present (a positive content anchor), not merely "a numeric literal".
+# Substring (not \b-anchored) — snake_case identifiers like
+# `test_products_registry_populated` have `_` word-chars on both sides of
+# the token, so word-boundary anchors would miss them. Plain substring
+# match mirrors `_REGISTRY_DERIVED_TOKENS`'s `in`-test semantics.
+_FLEET_SEMANTIC_RE = re.compile(
+    r"(?:parse_products_registry|cors_registry|cors_origin|"
+    r"products_registry|product_slug|fleet|start\.sh|"
+    r"registry_all|registry_own|@registry)",
+    re.IGNORECASE,
+)
+
+
+def _len_call_arg(node: ast.AST) -> ast.AST | None:
+    """If `node` is a `len(<x>)` call, return `<x>`; else None."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "len"
+        and len(node.args) == 1
+    ):
+        return node.args[0]
+    return None
+
+
+def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[dict]:
+    """Seed tests must not assert a frozen fleet-size numeric literal.
+
+    A `len(<collection>) <op> N` (with N ≥ `_FLEET_SIZE_FLOOR`) under
+    `seed/lib/backend/tests/` freezes a count that goes stale the instant
+    the fleet changes (product added / removed / consolidated) — the same
+    drift vector as a frozen product-slug set, on the numeric axis. Derive
+    the bound from `parse_products_registry()` (the single source of truth)
+    or assert a structural invariant ("populated", "non-empty") instead.
+
+    Suppression (no false positives):
+      - the `len()` argument is registry-derived within the enclosing
+        function (a `parse_products_registry` / `cors_registry` reference);
+      - a `fleet-size-ok` / `registry-exempt` / `not-a-fleet-count`
+        rationale keyword appears nearby (mirrors the slug-set detector);
+      - N < `_FLEET_SIZE_FLOOR` (small bounds are almost never fleet-size).
+
+    Per `feedback_hardcoded_fleet_size_literal_keeper`. N=3 evidenced by
+    social-wiring-absorption (cors_registry `>=8`/`>=10`, scaffold
+    RESERVED_RANGES, per_product_cors_sentinel count).
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    seed_tests = root / "seed" / "lib" / "backend" / "tests"
+    if not seed_tests.exists():
+        return issues
+
+    _excluded = _SEED_EXPORT_SCAN_EXCLUDED_PARTS - {"tests", "__tests__"}
+    for py_path in seed_tests.rglob("*.py"):
+        if any(p in _excluded for p in py_path.parts):
+            continue
+        try:
+            content = py_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", py_path, exc)
+            continue
+        if _FLEET_SIZE_RATIONALE_RE.search(content):
+            continue
+        try:
+            tree = ast.parse(content, filename=str(py_path))
+        except SyntaxError as exc:
+            logger.debug("compliance: cannot parse %s (%s)", py_path, exc)
+            continue
+
+        try:
+            rel = str(py_path.relative_to(root))
+        except ValueError:
+            rel = str(py_path)
+
+        # Map every node to its enclosing FunctionDef so we can check
+        # whether the count is registry-derived in the same function.
+        func_src_by_node: dict[int, str] = {}
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                try:
+                    fn_src = ast.get_source_segment(content, fn) or ""
+                except (ValueError, TypeError):
+                    fn_src = ""
+                for child in ast.walk(fn):
+                    func_src_by_node[id(child)] = fn_src
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+                continue
+            op = node.ops[0]
+            if not isinstance(op, (ast.GtE, ast.Gt, ast.Eq, ast.LtE, ast.Lt)):
+                continue
+            # Identify which side is `len(...)` and which is the int const.
+            len_arg = _len_call_arg(node.left)
+            const_node = node.comparators[0]
+            if len_arg is None:
+                len_arg = _len_call_arg(node.comparators[0])
+                const_node = node.left
+            if len_arg is None:
+                continue
+            if not (
+                isinstance(const_node, ast.Constant)
+                and isinstance(const_node.value, int)
+                and not isinstance(const_node.value, bool)
+            ):
+                continue
+            if const_node.value < _FLEET_SIZE_FLOOR:
+                continue
+            fn_src = func_src_by_node.get(id(node), "")
+            # Registry-derived in the enclosing function → computed, not
+            # frozen → does not stale → suppress.
+            if any(tok in fn_src for tok in _REGISTRY_DERIVED_TOKENS):
+                continue
+            # Positive anchor: only a *fleet-semantic* count can stale on a
+            # fleet change. A bare `len(x) == 20` (token count, buffer
+            # size, listing length) is not a fleet literal — suppress
+            # unless the enclosing function references a fleet/registry
+            # concept (the W5.9a live-FP-sweep calibration lesson).
+            if not _FLEET_SEMANTIC_RE.search(fn_src):
+                continue
+            lineno = getattr(node, "lineno", 0)
+            issues.append({
+                "product": "<seed-tests>",
+                "file": rel,
+                "issue": (
+                    f"`{rel}:{lineno}` asserts a frozen fleet-size literal "
+                    f"(`len(...) {type(op).__name__} {const_node.value}`). "
+                    f"A frozen fleet count goes stale when the fleet changes "
+                    f"(product added/removed/consolidated) and misattributes "
+                    f"assertion failures. Derive the bound from "
+                    f"`parse_products_registry()` "
+                    f"(`noctusai_lib.config.cors_registry`) — the single "
+                    f"source of truth — or assert a structural invariant "
+                    f"(non-empty / populated) instead. If this is a "
+                    f"legitimate non-fleet count, add a `fleet-size-ok` "
+                    f"rationale comment. Per "
+                    f"`feedback_hardcoded_fleet_size_literal_keeper`."
+                ),
+                "severity": "warning",
+            })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -4965,6 +5172,9 @@ def check_all_products() -> tuple[int, list]:
     # social-wiring-absorption W5.7a / W5.9a Stage-4 codification.
     all_issues.extend(check_seed_export_membership())
     all_issues.extend(check_hardcoded_product_slug_set())
+    # social-wiring-absorption W5.9-rest — numeric-axis twin of the
+    # slug-set keeper (frozen fleet-size literals stale on consolidation).
+    all_issues.extend(check_hardcoded_fleet_size_literal())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

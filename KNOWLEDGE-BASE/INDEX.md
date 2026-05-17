@@ -66,6 +66,7 @@ KNOWLEDGE-BASE/
 │   │   ├── new-product.md
 │   │   ├── seed-first-design.md
 │   │   ├── deploy-workspace-online.md  ← "put X online" drill: verify docker artifacts → fill .env → docker compose up → verify; trigger phrases
+│   │   ├── absorb-seed-workspace.md    ← absorb a separately-developed seed-workspace into noc as one product; 10 gates (snapshot → in-home → audit → interrogate → scaffold → full seed-reconcile → port+pilot-first → consumer-adapt → teardown → container-refactor → user-gated retirement); written from the proven social-wiring absorption 2026-05-16
 │   │   └── google-oauth-setup.md       ← Google Cloud Console OAuth client + Calendar API + redirect URI + env wiring; first adopter therapy-platform; reusable for any future product
 │   ├── INTEGRATIONS/       ← per-vendor integration references (auth, endpoints, error model, adapter contract)
 │   │   └── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
@@ -152,6 +153,7 @@ KNOWLEDGE-BASE/
 | Creating a new product | `CONTEXT/GUIDES/new-product.md` |
 | Seed-first design checklist (cross-product projects — REQUIRED at authoring time) | `CONTEXT/GUIDES/seed-first-design.md` |
 | Putting a workspace product online for testing — the "deploy" drill (verify docker artifacts → fill `.env` → `docker compose up` → verify); trigger phrases the agent should recognise | `CONTEXT/GUIDES/deploy-workspace-online.md` |
+| Absorbing a separately-developed seed-workspace into noc as one product — the repeatable 10-gate procedure (Gate 0 snapshot-preserve + sanctioned `--no-verify` · Gate 1 bring-source-in-home BEFORE plan depends on it + worktree-base-vs-uncommitted-inputs trap · Gate 2 completeness audit / UNMAPPED-useful · Gate 3 interrogate disposition before deletion · Gate 4 scaffold house-container · Gate 5 full seed-reconcile sibling-validated-wins + verify-the-seed-ships-it 4 shapes + master-tree-parallel zero-git + git-stash-forbidden · Gate 6 port + pilot-first + pause-on-dependency · Gate 7 mechanical consumer-adapt + git-log-S-before-attribution · Gate 8 teardown preservation-FIRST + hazard-group commits + registry-derive + content-form dangling-ref verify + KB-count-autostage footgun · Gate 9 container-refactor + user-gated workspace retirement); written from the proven social-wiring absorption 2026-05-16; self-contained | `CONTEXT/GUIDES/absorb-seed-workspace.md` |
 | Google Cloud Console OAuth setup — Calendar API (project + consent screen + Calendar API enablement + Web client + redirect URI registration + scopes + env-var wiring + smoke test + troubleshooting); first adopter therapy-platform per-therapist `/api/scheduling/gcal/*`; reusable for any future product needing user-delegated GCal | `CONTEXT/GUIDES/google-oauth-setup.md` |
 | Vista CRM REST API (auth, query convention, response envelope, error hierarchy, endpoint inventory, adapter contract, per-tenant calibration gap) | `CONTEXT/INTEGRATIONS/vista.md` |
 | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |

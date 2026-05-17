@@ -11,6 +11,11 @@
 
 During the social-wiring absorption (2026-05-16), Wave-1 reconciled the seed Google/Meta/credential integrations to a **resolver-Protocol architecture**. social-wiring's validated OAuth-write-coupled adapters (`app/services/{calendar,meta,routing,drive_api}` + `credential_store.py`) are **contract-incompatible** with that seed shape on 4 axes (credential-read · OAuth credential-WRITE path · `isinstance` adapter-type labeling · Meta method-set capability gap — Wave-1.E4 dropped `me()`/`get_page()`). Two engineers (W2.5/W2.5b) proved a forced convergence would destroy validated behavior + the 69-test internal oracle. Decision: keep those 4 product-local at N=1, converge later — here.
 
+### 1a. Routed-in adjacent seed-adapter follow-ups (W5.7-rest / W5.9-rest, 2026-05-16 — recorded here to avoid a duplicate stub)
+
+- **`VistaClientProtocol`** (Wave-1.E6) — `noctusai_lib.integrations/vista/` shipped Real-only pre-W1; Fake+factory were added during W1 but a `VistaClientProtocol` is still deferred (touches the ERP showcase + `mcp/vista` consumers). W2.5 extended the requirement: verify-the-seed-ships-it must assert the *factory signature the named consumer needs*, not merely a same-name factory — the Vista convergence inherits that 4th-shape check.
+- **`ts-morph` → seed-frontend devDeps** — `ts-morph` (TS AST-edit tool, AST-first rule) belongs in the seed-frontend `devDependencies` so every product frontend inherits it rather than each re-adding; route the dependency-placement with this convergence's frontend-adapter pass (same seed-frontend surface).
+
 ## 2. Prerequisites (seed work FIRST — this project is gated on all three)
 
 1. **Seed Meta capability gap.** `noctusai_lib.integrations.meta` must ship `me()` + `get_page(page_id)` + `auth_mode` (Wave-1.E4 reconcile renamed+dropped these vs the validated workspace adapter). Without it, social-wiring's `meta_router`/`whatsapp_intake_service` consumers cannot converge.
