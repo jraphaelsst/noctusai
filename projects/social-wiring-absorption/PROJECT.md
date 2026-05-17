@@ -178,9 +178,11 @@ The win: one consolidated, production-functional CMS product on noc's house sing
 - [ ] W5.9-rest: (b) tool-code-coherence — a tool that moves a package root must update its guards same-change (axis-swap × `purge_shadowing_editable_finders`); (c) `@supabase/supabase-js` version-lockstep follow-up project (W3.1).
 - [ ] W5.7-rest: (b) `check_dockerfile_vite_supabase_args` keeper (E7) — s4; (c) `seed-sqlite-dev-backend` follow-up project (E7); (d) `VistaClientProtocol` follow-up (E6) — extended by W2.5 to *factory-signature-compat* (verify-seed-ships-it must assert the signature the named consumer needs, not just same-name); (e) `compute_content_stats` N=2 dedup at Wave-2 integration; (f) N=2 imobi seed-lift triage (retry_call/PII-redactor/conv-rate-limiter/anomaly/supabase-audit-writer — recurrence vs email_marketing's audit).
 
-### Wave 6 — Containerization resume
-- [ ] W6.1 Refactor docker/compose/start.sh for the new consolidated topology (4 products gone, social-wiring in).
-- [ ] W6.2 Resume the fleet build; verify house single-container model green.
+### Wave 6 — Containerization resume (the original task that started this project)
+- [ ] W6.0 **MUST-FIX (SW-SCAFFOLD-FIX surfaced, not worked around):** `products/social-wiring/docker-compose.yml` service is named `seed` / `container_name: noctus-seed` (slug unsubstituted at scaffold — the `*-tunnel` IS correct `social-wiring-tunnel`) → **fleet container-name collision with the real seed product**. Substitute service/container → `social-wiring`/`noctus-social-wiring`; fix the scaffold-substitution-gap root (same family as SW-SCAFFOLD-FIX defect 3 — `sync-seed-template.sh` / `scaffold.py`) so future products don't inherit it. Also route: optional port-sanitation of `config.py` non-CORS `localhost:8010` OAuth-redirect defaults (`youtube/meta/google_oauth_redirect_uri` — overridden by .env/tunnel, behavior-preserving-skipped) → fold here or a follow-up.
+- [ ] W6.1 Refactor docker/compose/start.sh for the new consolidated topology (4 products gone, social-wiring in); regenerate `init-local-db` + propagate scripts (already done in Wave-4 Group(a) — verify in-sync).
+- [ ] W6.2 Resume the fleet build (the originally-paused `./start.sh full`); verify house single-container model green (social-wiring boots 137 routes; no `noctus-seed` collision).
+- [ ] W6.3 Test-coverage follow-up (routed): no test pins `_register_in_root_compose` house-include shape → a `Test*RootCompose*` scaffold test (s4 keeper-adjacent; would have caught the override-drift at author time).
 
 ### Wave 7 — Completeness sign-off (NOT a deletion step)
 - [ ] W7.1 Final completeness re-check vs W0.2: assert every useful artifact is in-home + every manifest absorbed → W7.2 deliver an explicit "safe to delete the workspace" sign-off to the user. **The user deletes the originating workspace manually — we never do.**
