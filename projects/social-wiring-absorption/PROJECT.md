@@ -159,8 +159,11 @@ The win: one consolidated, production-functional CMS product on noc's house sing
 ### Wave 3b — Extend to non-pilots (GATED on Wave 3 pilots green; mechanical by then)
 - [ ] personal-finance · daily-life · adconnect · dev-team (+ any other survivors) — apply the now-de-risked adaptation shape proven on the pilots. Deferred by the pilot-first rule (named destination, NOT a silent skip). Confirmed-safe signal: Wave-1 seed changes were additive-only exports → PF showed zero reconcile-induced breakage (baseline failures pre-existing).
 
-### Wave 4 — Teardown (depends W2+W3 green)
-- [ ] W4.1 Delete 4 products · W4.2 sanitize compose/start.sh/ports · W4.3 core product-registration migration · W4.4 KB/CLAUDE/seed-test/accept-with-rationale/LGPD-WARNINGS scrub.
+### Wave 4 — Teardown (HARD-GATED on Wave-2-full-green via TEST-ISO + W3 green; irreversible)
+**Pre-computed** — execute `projects/social-wiring-absorption/.integration-holding/WAVE4-TEARDOWN-MANIFEST.md` (W4-RECON, `1b439e0`): ordered checklist + 8-cmd verification; no surviving-code import of a doomed product (no hard blocker).
+- [ ] W4.0 **RISK-A preservation FIRST (security/data sub-gate, before any `rm`):** W0.2 audited only the *sibling* workspace — `noctus.dev.archive` (or ledger-record) the in-noc unabsorbed content: `products/mailing/projects/mailing-wiring/PROJECT.md` (incomplete, not ledgered), `products/youtube-crawler/projects/youtube-crawler-domain-implementation/PROJECT.md`, the 32 KB mailing proposal-eval set; re-home + re-verify `LGPD-WARNINGS.md:18` imobi plaintext-OAuth entry (never path-delete a live security warning).
+- [ ] W4.1 Delete 4 product dirs (`media-scheduling` = `rm -rf`, already git-untracked; others `git rm`) · W4.2 sanitize compose/start.sh/ports/`init-local-db` (regenerate, don't hand-edit) · W4.3 NEW forward migration `033_retire_consolidated_products.sql` (`DELETE … WHERE slug IN (…)`) + Supabase MCP mirror — NOT a historical-migration edit · W4.4 KB/CLAUDE-twin/seed-test-slug-literal (registry-derive the W5.9a sentinel **same commit as dir-delete**)/accept-with-rationale/ledger scrub.
+- Hazard groupings (same-commit): sentinel-slug↔dir-delete · migration-file↔Supabase-mirror · KB-rehome↔CLAUDE-pointer-twins (verify-kb-sync gate).
 
 ### Wave 5 — Methodology codification (three-way sync; parallels W2-W4)
 - [ ] W5.1 **Absorption playbook** — author `KB § GUIDES/absorb-seed-workspace.md` (repeatable end-to-end procedure: snapshot → bring-in-home → completeness audit → scaffold → full-reconcile waves → port → consumer-adapt → teardown → container-refactor → user-gated workspace retirement) + CLAUDE.md §3 routing pointer + memory entry + MEMORY.md index. The explicit how-to for future agents.
