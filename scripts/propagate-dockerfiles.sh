@@ -26,6 +26,7 @@ PRODUCTS = [
     ("core", "8000"), ("erp-imobiliario", "8001"),
     ("personal-finance", "8002"), ("therapy-platform", "8003"),
     ("daily-life", "8005"), ("adconnect", "8007"), ("dev-team", "8009"),
+    ("social-wiring", "8011"),
 ]
 
 SEED_VITE = "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"

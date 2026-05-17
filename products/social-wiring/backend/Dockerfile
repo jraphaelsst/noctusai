@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# seed — CANONICAL thin product image (the reference every product mirrors).
+# social-wiring — thin product image (generated from products/seed/backend/Dockerfile; edit there + re-propagate).
 #
 # Project: containerization-single-container. Single container: uvicorn
 # serves the API AND the built SPA on ONE port (the seed factory's
@@ -30,45 +30,44 @@ ENV VITE_SAME_ORIGIN=1
 # factory-injected (no arg). {{VITE_ARGS}}
 ARG VITE_CORE_URL=
 ENV VITE_CORE_URL=${VITE_CORE_URL}
-COPY products/seed/frontend/package*.json ./products/seed/frontend/
-WORKDIR /app/products/seed/frontend
+COPY products/social-wiring/frontend/package*.json ./products/social-wiring/frontend/
+WORKDIR /app/products/social-wiring/frontend
 RUN --mount=type=cache,target=/root/.npm \
     npm install --no-audit --no-fund
-COPY products/seed/frontend ./
-RUN npm run build   # → /app/products/seed/frontend/dist
+COPY products/social-wiring/frontend ./
+RUN npm run build   # → /app/products/social-wiring/frontend/dist
 
 # ── runtime: API + SPA on one port ──────────────────────────────────────
 FROM noctus-seed-backend-base:dev AS runtime
 ARG GIT_SHA
 LABEL org.opencontainers.image.revision="${GIT_SHA}" \
-      org.opencontainers.image.title="noctus-seed"
+      org.opencontainers.image.title="noctus-social-wiring"
 WORKDIR /app
 
 # Product-specific Python deps (seed lib/framework already in the base
 # venv; strip the `-e seed/` editable lines — they're inherited).
-COPY products/seed/backend/requirements.txt /tmp/requirements.txt
+COPY products/social-wiring/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
     && pip install -r /tmp/req.clean.txt
-# {{BACKEND_EXTRA}} — product extras (e.g. dev-team: COPY dev_team +
-# pip install -e /opt/dev_team). Seed has none.
+# (no product extras)
 
 # Product backend code + the built SPA.
-COPY products/seed/backend/ ./products/seed/backend/
-COPY --from=frontend-build /app/products/seed/frontend/dist ./products/seed/frontend/dist
-ENV SERVE_SPA_DIR=/app/products/seed/frontend/dist
+COPY products/social-wiring/backend/ ./products/social-wiring/backend/
+COPY --from=frontend-build /app/products/social-wiring/frontend/dist ./products/social-wiring/frontend/dist
+ENV SERVE_SPA_DIR=/app/products/social-wiring/frontend/dist
 
 # Non-root user — LAST (so the pip install above could write the venv).
 RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app /opt/venv
 USER noctus
 
-EXPOSE 8004
+EXPOSE 8011
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8004/api/health || exit 1
+    CMD curl -fsS http://localhost:8011/api/health || exit 1
 # Default CMD = plain uvicorn over the BAKED dist → this image is a
 # self-contained, shippable artifact (deploy/CI run it as-is).
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
-     "--port", "8004", "--app-dir", "products/seed/backend"]
+     "--port", "8011", "--app-dir", "products/social-wiring/backend"]
 
 # ── runtime-watch: SAME single container, local live-rebuild ────────────
 # ONE container, ONE shape, ONE command (`./start.sh`). The local
@@ -93,13 +92,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 # Frontend deps installed HERE (glibc) — esbuild/vite ship platform
 # binaries; the alpine frontend-base node_modules are not ABI-portable.
-COPY products/seed/frontend/package*.json ./products/seed/frontend/
+COPY products/social-wiring/frontend/package*.json ./products/social-wiring/frontend/
 RUN --mount=type=cache,target=/root/.npm \
-    cd products/seed/frontend \
+    cd products/social-wiring/frontend \
     && npm install --no-audit --no-fund
 COPY seed/docker/local-watch.sh /usr/local/bin/local-watch
 RUN chmod +x /usr/local/bin/local-watch \
     && chown -R noctus:noctus /app
 USER noctus
-ENV PRODUCT_SLUG=seed PRODUCT_PORT=8004
+ENV PRODUCT_SLUG=social-wiring PRODUCT_PORT=8011
 ENTRYPOINT ["/usr/local/bin/local-watch"]

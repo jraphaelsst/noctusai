@@ -27,7 +27,7 @@
 # first (start.sh orders this in Phase 5).
 
 services:
-  seed:
+  {{PRODUCT_SLUG}}:
     build:
       context: ../..
       dockerfile: products/{{PRODUCT_SLUG}}/backend/Dockerfile
@@ -41,8 +41,8 @@ services:
       target: runtime-watch
       args:
         VITE_CORE_URL: ${VITE_CORE_URL:-}
-    container_name: noctus-seed
-    image: ghcr.io/jraphaelsst/noctus-seed:${NOCTUS_IMAGE_TAG:-dev}
+    container_name: noctus-{{PRODUCT_SLUG}}
+    image: ghcr.io/jraphaelsst/noctus-{{PRODUCT_SLUG}}:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     # Source bind-mounted → edits reflect with no rebuild: vite
@@ -70,9 +70,9 @@ services:
     # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
     container_name: noctus-{{PRODUCT_SLUG}}-tunnel
-    command: tunnel --no-autoupdate --protocol http2 --url http://seed:{{BACKEND_PORT}}
+    command: tunnel --no-autoupdate --protocol http2 --url http://{{PRODUCT_SLUG}}:{{BACKEND_PORT}}
     depends_on:
-      seed:
+      {{PRODUCT_SLUG}}:
         condition: service_healthy
     networks:
       - noctus-net

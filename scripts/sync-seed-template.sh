@@ -156,6 +156,45 @@ if [ "$DRY_RUN" != "--dry" ]; then
             perl -pi -e 's|products/seed/|products/{{PRODUCT_SLUG}}/|g' "$file" 2>/dev/null || true
             perl -pi -e 's|noctus-seed-backend|noctus-{{PRODUCT_SLUG}}-backend|g' "$file" 2>/dev/null || true
             perl -pi -e 's|noctus-seed-frontend|noctus-{{PRODUCT_SLUG}}-frontend|g' "$file" 2>/dev/null || true
+            # Single-container shape: the canonical seed compose names its
+            # ONE service `seed` (service key), `container_name: noctus-seed`,
+            # `image: …/noctus-seed:`, the tunnel host `--url http://seed:`,
+            # and `depends_on:\n      seed:`. The `noctus-seed-` rule above
+            # (trailing dash) deliberately does NOT match these dash-less
+            # forms. Earlier sync left them literal — that is the
+            # scaffold-substitution gap that shipped social-wiring with
+            # service/container `seed` (fleet name-collision, W6.0). These
+            # anchored rules mirror scripts/propagate-composes.sh exactly so
+            # a scaffolded product's compose is slug-correct day one.
+            # The seed SOURCE bind-mount `../../seed:/app/seed` and the
+            # `seed factory` / `seed bases` prose comments use no anchor a
+            # rule below matches, so they survive untouched.
+            perl -0pi -e 's/\n  seed:\n/\n  {{PRODUCT_SLUG}}:\n/g' "$file" 2>/dev/null || true
+            perl -0pi -e 's/\n      seed:\n/\n      {{PRODUCT_SLUG}}:\n/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/container_name: noctus-seed$/container_name: noctus-{{PRODUCT_SLUG}}/g' "$file" 2>/dev/null || true
+            perl -pi -e 's|image: ghcr\.io/jraphaelsst/noctus-seed:|image: ghcr.io/jraphaelsst/noctus-{{PRODUCT_SLUG}}:|g' "$file" 2>/dev/null || true
+            perl -pi -e 's|--url http://seed:|--url http://{{PRODUCT_SLUG}}:|g' "$file" 2>/dev/null || true
+        fi
+
+        # Dockerfile-specific: the thin per-product Dockerfile carries
+        # `products/seed/...` COPY paths, `PRODUCT_SLUG=seed`,
+        # `title="noctus-seed"`, and the `# seed — CANONICAL` header — all
+        # product-specific and must placeholderize so scaffold.py's
+        # mechanical `{{PRODUCT_SLUG}}` pass rewrites them per product.
+        # The SHARED-seed tokens (`noctus-seed-{backend,frontend}-base`,
+        # `seed/docker/...`, `-e seed/`, `seed lib/framework` prose) carry
+        # NO `products/seed/` / `PRODUCT_SLUG=seed` / `title="noctus-seed"`
+        # anchor, so they survive untouched. Mirrors
+        # scripts/propagate-dockerfiles.sh exactly. Same scaffold-
+        # substitution-gap family as the compose block (W6.0): an
+        # un-placeholdered Dockerfile ships a verbatim-seed image on the
+        # seed port — a hard fleet collision.
+        if [[ "$(basename "$file")" == Dockerfile ]]; then
+            perl -pi -e 's|products/seed/|products/{{PRODUCT_SLUG}}/|g' "$file" 2>/dev/null || true
+            perl -pi -e 's/PRODUCT_SLUG=seed\b/PRODUCT_SLUG={{PRODUCT_SLUG}}/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/PRODUCT_PORT=8004\b/PRODUCT_PORT={{BACKEND_PORT}}/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/title="noctus-seed"/title="noctus-{{PRODUCT_SLUG}}"/g' "$file" 2>/dev/null || true
+            perl -pi -e 's/^# seed — CANONICAL thin product image \(the reference every product mirrors\)\.$/# {{PRODUCT_SLUG}} — thin product image (FROM the shared seed bases; per-product specifics only)./g' "$file" 2>/dev/null || true
         fi
 
         # Prose-surface-specific (README.md / MASTER-PROMPT.md): these

@@ -1336,3 +1336,126 @@ class TestWorktreeAwarePathResolution:
         assert not target.exists(), f"delete_product did not remove {target}"
         # Result should reference the worktree's directory removal.
         assert "directory_removal" in result
+
+
+# Minimal root docker-compose.yml carrying the include: block sentinels —
+# the house single-container shape (one single-line entry per product, NO
+# override files). Mirrors the real repo-root file's structure.
+_FIXTURE_ROOT_COMPOSE = """\
+# NoctusAI — PRODUCTS orchestrator (compose project: noctusai-products).
+name: noctusai-products
+
+include:
+  # BEGIN_PRODUCTS_INCLUDE
+  # One entry per product compose (single-container). No override files.
+  - products/core/docker-compose.yml
+  # END_PRODUCTS_INCLUDE
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true
+"""
+
+
+class TestScaffoldRegistersInRootCompose:
+    """`_register_in_root_compose` MUST append exactly ONE single-line
+    `- products/<slug>/docker-compose.yml` entry between the
+    BEGIN/END_PRODUCTS_INCLUDE sentinels — the house single-container
+    shape: ONE container, ONE shape, NO `docker-compose.override.yml`,
+    NO multi-line `- path:` include block.
+
+    This is the regression that would have caught the W0.3-scaffold
+    override-drift at author time (SW-SCAFFOLD-FIX): the scaffold template
+    once emitted an `include:` registration with an
+    `override`-paired/`- path:` block that drifted from the single-env
+    house model documented in KB § PATTERNS/containerization.md
+    ("NO dev/prod split — ONE container, ONE shape always"). Pin the shape
+    so it can never silently regress.
+    """
+
+    def _write(self, tmp_path: Path, body: str = _FIXTURE_ROOT_COMPOSE) -> Path:
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text(body)
+        return compose
+
+    def test_appends_single_line_house_shape_entry(self, tmp_path):
+        compose = self._write(tmp_path)
+
+        result = scaffold_module._register_in_root_compose(
+            slug="new-thing-test", repo_root=tmp_path
+        )
+
+        assert "entry" in result, result
+        assert result["entry"] == "- products/new-thing-test/docker-compose.yml"
+
+        updated = compose.read_text()
+        # Pre-existing entry preserved.
+        assert "  - products/core/docker-compose.yml" in updated
+        # New entry is a single line, exactly the house shape.
+        assert "  - products/new-thing-test/docker-compose.yml" in updated
+        # Sentinels intact + entry landed BETWEEN them.
+        begin = updated.index("# BEGIN_PRODUCTS_INCLUDE")
+        end = updated.index("# END_PRODUCTS_INCLUDE")
+        entry_at = updated.index("- products/new-thing-test/docker-compose.yml")
+        assert begin < entry_at < end, updated
+
+    def test_no_override_no_path_block_emitted(self, tmp_path):
+        """The house model has NO override files: the registration must
+        NOT introduce `docker-compose.override.yml` nor a multi-line
+        `- path:` include block (the exact W0.3 override-drift defect)."""
+        compose = self._write(tmp_path)
+
+        scaffold_module._register_in_root_compose(
+            slug="no-override-test", repo_root=tmp_path
+        )
+
+        updated = compose.read_text()
+        assert "docker-compose.override.yml" not in updated, updated
+        # No YAML mapping-form include entry (`- path:`) — single string only.
+        assert "- path:" not in updated, updated
+        assert "override:" not in updated, updated
+        # Exactly one line for the new slug, and it is the string form.
+        slug_lines = [
+            ln for ln in updated.splitlines()
+            if "no-override-test" in ln
+        ]
+        assert slug_lines == [
+            "  - products/no-override-test/docker-compose.yml"
+        ], slug_lines
+
+    def test_idempotent_when_slug_already_registered(self, tmp_path):
+        seeded = _FIXTURE_ROOT_COMPOSE.replace(
+            "  - products/core/docker-compose.yml",
+            "  - products/core/docker-compose.yml\n"
+            "  - products/dup-test/docker-compose.yml",
+        )
+        compose = self._write(tmp_path, seeded)
+
+        result = scaffold_module._register_in_root_compose(
+            slug="dup-test", repo_root=tmp_path
+        )
+
+        assert "skipped" in result, result
+        assert "already registered" in result["skipped"]
+        body = compose.read_text()
+        assert body.count("- products/dup-test/docker-compose.yml") == 1, body
+
+    def test_skips_when_sentinels_missing(self, tmp_path):
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text("name: noctusai-products\ninclude: []\n")
+
+        result = scaffold_module._register_in_root_compose(
+            slug="no-sentinels-test", repo_root=tmp_path
+        )
+
+        assert "skipped" in result, result
+        assert "sentinels" in result["skipped"]
+
+    def test_skips_when_compose_absent(self, tmp_path):
+        result = scaffold_module._register_in_root_compose(
+            slug="no-compose-test", repo_root=tmp_path
+        )
+
+        assert "skipped" in result, result
+        assert "does not exist" in result["skipped"]

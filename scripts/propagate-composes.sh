@@ -18,6 +18,7 @@ PRODUCTS = [
     ("core", "8000"), ("erp-imobiliario", "8001"),
     ("personal-finance", "8002"), ("therapy-platform", "8003"),
     ("daily-life", "8005"), ("adconnect", "8007"), ("dev-team", "8009"),
+    ("social-wiring", "8011"),
 ]
 SEED_VITE = "      args:\n        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
 VITE = {
@@ -40,6 +41,13 @@ for slug, port in PRODUCTS:
     s = s.replace("products/seed/", f"products/{slug}/")
     # tunnel profile
     s = s.replace("tunnel-seed", f"tunnel-{slug}")
+    # tunnel SERVICE KEY (2-space indent) — the canonical seed compose
+    # names it `seed-tunnel`; substitute to `<slug>-tunnel` so the
+    # propagated file matches the scaffold/template shape (closes the
+    # latent tunnel-service-key half of the scaffold-substitution gap —
+    # same family as W6.0). Do this BEFORE the bare `seed:` service-key
+    # rule so `\n  seed-tunnel:\n` is consumed first.
+    s = s.replace("\n  seed-tunnel:\n", f"\n  {slug}-tunnel:\n")
     # service key (2-space indent) + depends_on ref (6-space indent)
     s = s.replace("\n  seed:\n", f"\n  {slug}:\n")
     s = s.replace("\n      seed:\n", f"\n      {slug}:\n")

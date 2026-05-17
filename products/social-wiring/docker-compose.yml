@@ -1,4 +1,4 @@
-# Canonical per-product compose fragment — SINGLE CONTAINER.
+# social-wiring compose — SINGLE CONTAINER (generated from products/seed/docker-compose.yml; edit there + re-propagate).
 #
 # Project: containerization-single-container. This file at products/social-wiring/
 # is the reference; every other product's docker-compose.yml is generated
@@ -27,7 +27,7 @@
 # first (start.sh orders this in Phase 5).
 
 services:
-  seed:
+  social-wiring:
     build:
       context: ../..
       dockerfile: products/social-wiring/backend/Dockerfile
@@ -41,8 +41,8 @@ services:
       target: runtime-watch
       args:
         VITE_CORE_URL: ${VITE_CORE_URL:-}
-    container_name: noctus-seed
-    image: ghcr.io/jraphaelsst/noctus-seed:${NOCTUS_IMAGE_TAG:-dev}
+    container_name: noctus-social-wiring
+    image: ghcr.io/jraphaelsst/noctus-social-wiring:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     # Source bind-mounted → edits reflect with no rebuild: vite
@@ -70,9 +70,9 @@ services:
     # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
     container_name: noctus-social-wiring-tunnel
-    command: tunnel --no-autoupdate --protocol http2 --url http://seed:8011
+    command: tunnel --no-autoupdate --protocol http2 --url http://social-wiring:8011
     depends_on:
-      seed:
+      social-wiring:
         condition: service_healthy
     networks:
       - noctus-net
