@@ -23,15 +23,17 @@ for _p in (_FRAMEWORK, _LIB):
     if str(_p) not in _sys.path:
         _sys.path.insert(0, str(_p))
 
-import importlib.util as _ilu  # noqa: E402
-
-_spec = _ilu.spec_from_file_location(
-    "_bootstrap_conftest_helpers",
-    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
-)
-_mod = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-_mod.purge_shadowing_editable_finders(_LIB)
+# Seed shadow-finder purge is owned by the parent `tests/conftest.py`,
+# which runs `purge_shadowing_editable_finders` ONCE for the whole
+# `tests/` tree before any test or child conftest. This conftest must
+# NOT re-run it: a collection-time re-purge here fires AFTER the parent
+# conftest + seed pytest11 plugin populated the process-global seed
+# singletons (consent catalog / bound deps / scheduler jobstore) and
+# would delete `noctusai_lib.*` / `noctusai_seed.*` from `sys.modules`,
+# swapping those singletons out from under the cached `app.*` modules —
+# the ~55-failure full-directory-run cascade. The shared subtree
+# `tests/modules/conftest.py` adds a belt-and-suspenders autouse
+# snapshot/restore. See its docstring for the full mechanism.
 
 import pytest  # noqa: E402
 from unittest.mock import MagicMock, patch  # noqa: E402
