@@ -12,9 +12,9 @@ The :func:`noctusai_lib.api.auth.make_get_current_user_org` factory binds the
 ``(user, token, org_id)`` triple resolution at module load. Routers consume the
 resulting closure-bound dep via ``Depends(get_current_user_org)`` instead of
 the imperative ``Header(authorization) + await get_current_user(authorization)``
-shape — see ``KB § PATTERNS/backend.md § Auth — canonical pattern`` and the
-youtube-crawler reference at
-``products/youtube-crawler/backend/app/dependencies.py``.
+shape — see ``KB § PATTERNS/backend.md § Auth — canonical pattern`` (the
+original reference adopter was the retired ``youtube-crawler`` product,
+consolidated into ``social-wiring`` 2026-05-16).
 
 Migration history: AdConnect's MVP (2026-05-10, commit ``f2987c8``) shipped a
 dict-wrapper bridge at ``app/auth_deps.py`` to bound Phase 1's blast-radius

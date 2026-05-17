@@ -24,8 +24,9 @@ When `postgres_url` is unset the audit writer is a noop — every dispatch
 still completes, the audit row simply isn't written. Mirrors the seed's
 best-effort semantics one level out.
 
-Mirrors `products/media-scheduling/backend/app/services/audit_hook.py`
-verbatim except for the docstring product references.
+Mirrors the original reference adopter (retired `media-scheduling`,
+consolidated into `social-wiring` 2026-05-16) verbatim except for the
+docstring product references.
 """
 from __future__ import annotations
 

@@ -1,7 +1,8 @@
 """Pytest configuration for dev-team product backend tests.
 
-Mirrors the canonical conftest used across NoctusAI products (see
-products/mailing/backend/tests/conftest.py for the reference). Patches the
+Mirrors the canonical conftest used across NoctusAI products (the
+original reference was the retired `mailing` product, consolidated into
+`social-wiring` 2026-05-16). Patches the
 seed's database getters so we can spin a TestClient against a mock
 Supabase instance — no live DB needed.
 """

@@ -3,9 +3,9 @@
 Lifted from the per-product Google-OAuth code that today lives in
 `integrations/google_calendar/oauth_adapter.py` (server-side token
 refresh via the `google.oauth2.credentials` package) and the hand-rolled
-`/oauth/google/{init,callback}` router in
-`products/media-scheduling/backend/app/routers/oauth.py` (raw httpx
-calls to `https://oauth2.googleapis.com/token`).
+`/oauth/google/{init,callback}` router originally in the retired
+`media-scheduling` product (consolidated into `social-wiring`
+2026-05-16; raw httpx calls to `https://oauth2.googleapis.com/token`).
 
 This module collapses both into a single canonical surface — the
 authorization-URL builder + the four-method Protocol — so every product

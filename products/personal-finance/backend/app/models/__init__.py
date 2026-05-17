@@ -7,7 +7,8 @@ seed `make_audit_writer(db, ToolCallAudit)` contract — the
 `noctusai_lib.domain.ai.tool_audit` writer requires a typed table class.
 
 See `app.services.audit_hook` for the wiring + lazy-engine pattern,
-mirrored from `products/media-scheduling/backend/app/models/__init__.py`.
+mirrored from the original reference adopter (retired `media-scheduling`,
+consolidated into `social-wiring` 2026-05-16).
 """
 from __future__ import annotations
 

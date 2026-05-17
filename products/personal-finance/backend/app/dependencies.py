@@ -12,8 +12,9 @@ load and use the resulting closure-bound dep at every router site.
 PF was the originator of ``make_get_current_user_org`` (per memory
 ``feedback_auth_factory_pattern``) but until 2026-05-11 still shipped the
 inline async wrapper. This migration (``pf-auth-factory-migration``)
-lifts PF onto the canonical factory shape, mirroring
-``products/youtube-crawler/backend/app/dependencies.py``.
+lifts PF onto the canonical factory shape, mirroring the original
+reference adopter (retired ``youtube-crawler`` product, consolidated
+into ``social-wiring`` 2026-05-16).
 
 See ``KB § PATTERNS/backend.md § Auth — canonical pattern`` for the why.
 """

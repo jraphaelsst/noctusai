@@ -1,6 +1,7 @@
 """``email_marketing`` module scheduler — jobs on the seed primitive.
 
-Three jobs (ported verbatim from ``products/mailing/backend/app/scheduler``):
+Three jobs (ported verbatim from the retired ``mailing`` product's
+scheduler, consolidated into ``social-wiring`` 2026-05-16):
 
   1. Send loop (every 30s) — process queued ``send_logs`` via Resend Batch API
   2. Scheduled campaigns (every 60s) — campaigns with ``scheduled_at <= now``

@@ -1387,8 +1387,12 @@ class TestCheckSlowapiWithPep563:
         slowapi-baseline-cleanup project:
 
           1. ``products/adconnect/backend/app/routers/financial.py``
-          2. ``products/imobi-scheduling/backend/app/routers/webhook_router.py``
-          3. ``products/media-scheduling/backend/app/routers/webhooks.py``
+          2. the retired ``imobi-scheduling`` product's
+             ``routers/webhook_router.py`` (consolidated into
+             ``social-wiring`` 2026-05-16)
+          3. the retired ``media-scheduling`` product's
+             ``routers/webhooks.py`` (consolidated into ``social-wiring``
+             2026-05-16)
           4. ``products/seed/backend/app/routers/webhook_router.py``
           5. ``templates/product-seed/backend/app/routers/webhook_router.py``
              (template mirror — same body as seed)

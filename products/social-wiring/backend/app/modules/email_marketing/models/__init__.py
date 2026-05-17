@@ -10,9 +10,10 @@ table_class)`` requires a SQLAlchemy ORM class bound to a session. This
 module exists only to satisfy that contract — do NOT add other ORM
 models here without moving the module onto a SQLAlchemy-first data path.
 
-Ported from ``products/mailing/backend/app/models`` during the
-social-wiring absorption (Wave 2.2). The audit table now lives in the
-``social_wiring`` schema (was ``mailing``) — see ``SCHEMA`` below.
+Ported from the retired ``mailing`` product's models during the
+social-wiring absorption (consolidated into ``social-wiring`` 2026-05-16,
+Wave 2.2). The audit table now lives in the ``social_wiring`` schema
+(was ``mailing``) — see ``SCHEMA`` below.
 """
 from __future__ import annotations
 

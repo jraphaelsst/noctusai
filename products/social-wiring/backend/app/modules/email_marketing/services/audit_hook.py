@@ -22,9 +22,9 @@ lazily so:
 
 When `postgres_url` is unset the audit writer is a noop — every dispatch
 still completes, the audit row simply isn't written. This matches the
-seed's best-effort semantics one level out. Mirror of
-`products/media-scheduling/backend/app/services/audit_hook.py` per the
-llm-tool-audit-rollout Phase 1 recipe.
+seed's best-effort semantics one level out. Mirror of the original
+reference adopter (retired `media-scheduling`, consolidated into
+`social-wiring` 2026-05-16; llm-tool-audit-rollout Phase 1 recipe).
 """
 from __future__ import annotations
 

@@ -1,8 +1,7 @@
 """Tool-call audit integration — core `ToolCallAudit` ORM ⇄ seed writer.
 
-Mirrors `products/media-scheduling/backend/tests/services/test_audit_hook.py`
-(the canonical reference adopter — see
-`projects/llm-tool-audit-rollout/PROJECT.md` Phase 1).
+Mirrors the original canonical reference adopter (retired `media-scheduling`,
+consolidated into `social-wiring` 2026-05-16; LLM-tool-audit rollout Phase 1).
 
 What we verify here:
   - `make_audit_writer(session, ToolCallAudit)` produces a writer that

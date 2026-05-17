@@ -10,8 +10,9 @@ The schema lives in `migrations/0NN_*.sql`. Models mirror that DDL but
 are NOT the source of truth — never run `Base.metadata.create_all(...)`
 against the live DB.
 
-Pattern mirrors `products/media-scheduling/backend/app/models/__init__.py`
-(canonical reference adopter per `projects/llm-tool-audit-rollout/PROJECT.md`).
+Pattern mirrors the original canonical reference adopter (retired
+`media-scheduling`, consolidated into `social-wiring` 2026-05-16;
+llm-tool-audit-rollout Phase 1).
 """
 from __future__ import annotations
 

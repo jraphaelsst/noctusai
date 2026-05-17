@@ -24,9 +24,9 @@ to `get_audit_writer()` — so:
   - Settings without `postgres_url` get a noop writer (debug log + skip).
   - Tests can override `postgres_url` to point at a fixture DB.
 
-Mirrors `products/media-scheduling/backend/app/services/audit_hook.py`
-shape (canonical reference adopter per `projects/llm-tool-audit-rollout/
-PROJECT.md`).
+Mirrors the original canonical reference adopter's shape (retired
+`media-scheduling`, consolidated into `social-wiring` 2026-05-16;
+llm-tool-audit-rollout Phase 1).
 
 **Q2 seed deferred — redaction lambdas live in this module, not in
 `register_feature`.** PROJECT.md §7 Q2 (require explicit `redact_*` args

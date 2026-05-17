@@ -1,7 +1,7 @@
 """Tool-call audit integration — Daily Life `ToolCallAudit` ORM ⇄ seed writer.
 
-Mirrors the canonical pattern at
-`products/media-scheduling/backend/tests/services/test_audit_hook.py`.
+Mirrors the original canonical reference adopter (retired `media-scheduling`,
+consolidated into `social-wiring` 2026-05-16).
 
 What we verify here:
   - `make_audit_writer(session, ToolCallAudit)` produces a writer that

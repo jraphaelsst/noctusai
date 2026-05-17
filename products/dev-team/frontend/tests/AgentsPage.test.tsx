@@ -2,8 +2,9 @@
  * AgentsPage tests — renders the grid from the listAgents response.
  *
  * Mocks `@noctusai/seed/infra` at the seed boundary (per the canonical
- * pattern in products/mailing/frontend/src/hooks/__tests__/useAI.test.ts)
- * so no real network or supabase wiring is required.
+ * pattern originally from the retired `mailing` product, consolidated
+ * into `social-wiring` 2026-05-16) so no real network or supabase
+ * wiring is required.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";

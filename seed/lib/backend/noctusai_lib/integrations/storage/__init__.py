@@ -30,7 +30,8 @@ during this lift):**
 
 - `products/therapy-platform/backend/app/services/attachment_service.py`
 - `products/erp-imobiliario/backend/app/services/storage_service.py`
-- `products/mailing/backend/app/services/csv_import.py`
+- the retired `mailing` product's `csv_import` service (consolidated
+  into `social-wiring` 2026-05-16)
 
 Migrations to consume the seed surface land as per-product follow-up
 projects (out-of-scope for this lift).

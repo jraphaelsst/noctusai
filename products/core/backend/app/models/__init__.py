@@ -5,8 +5,8 @@ through `db.table(...).select(...).execute()` patterns (`KB § PATTERNS/backend.
 SQLAlchemy is a SECONDARY surface, used only by the seed
 `noctusai_lib.domain.ai.tool_audit.make_audit_writer(db, table_class)`
 contract which requires a typed ORM class for `tool_call_audits`. The
-shape mirrors media-scheduling's hybrid layout (see
-`products/media-scheduling/backend/app/models/__init__.py`).
+shape mirrors the original reference adopter's hybrid layout (retired
+`media-scheduling`, consolidated into `social-wiring` 2026-05-16).
 
 Never run `Base.metadata.create_all(...)` against the live DB — the
 authoritative schema lives in `migrations/0NN_*.sql`.

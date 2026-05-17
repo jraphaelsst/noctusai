@@ -4,7 +4,8 @@ The product is Supabase-client-native — routers + services pass row dicts
 through directly. **SQLAlchemy ORM is a SECONDARY surface** used only by
 the seed `noctusai_lib.domain.ai.tool_audit.make_audit_writer(db, table_class)`
 contract for the tool-call audit trail. Mirrors the hybrid layout settled
-in `products/media-scheduling/backend/app/models/__init__.py`.
+by the original reference adopter (retired `media-scheduling`, consolidated
+into `social-wiring` 2026-05-16).
 
 The actual schema lives in `migrations/00X_*.sql` (mirrored via Supabase
 MCP). The `ToolCallAudit` ORM model mirrors that DDL but is NOT the

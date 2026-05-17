@@ -8,8 +8,9 @@
 -- Schema reference: projects/agno-dev-team-rollout/PROJECT.md §5.4
 --
 -- RLS pattern follows the canonical org_id-from-JWT shape used across the
--- platform (see products/mailing/backend/migrations/002_ai_outputs.sql for
--- the reference). Each event is tagged with the writer's org_id; reads
+-- platform (the original reference was the retired `mailing` product,
+-- consolidated into `social-wiring` 2026-05-16). Each event is tagged
+-- with the writer's org_id; reads
 -- scoped by `org_id = (jwt -> 'org_id')::uuid`.
 -- ============================================================================
 

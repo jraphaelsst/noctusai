@@ -186,7 +186,9 @@ async def test_google_authorization_url_includes_canonical_params():
     assert f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == GOOGLE_AUTH_URL
     qs = parse_qs(parsed.query)
     # The four offline-refresh-token-reliable flags MUST be set; that's
-    # parity with `products/media-scheduling/.../routers/oauth.py::_consent_url`.
+    # parity with the retired `media-scheduling` product's
+    # `routers/oauth.py::_consent_url` (consolidated into `social-wiring`
+    # 2026-05-16).
     assert qs["client_id"] == ["my-client"]
     assert qs["redirect_uri"] == ["https://app.test/oauth/google/callback"]
     assert qs["response_type"] == ["code"]

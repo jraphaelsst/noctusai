@@ -9,10 +9,10 @@ surfaced by ``noctusai_lib.security.webhook_signatures``:
   - invalid JSON body         → 400
 
 Every assertion pins ``response.status_code`` per the keeper-detector
-rule (``check_test_status_assertion``). The helpers mirror what
-``products/mailing/backend/tests/routers/test_webhooks_router.py``
-exercises for the live Resend receiver, so the new product can copy
-the shape verbatim.
+rule (``check_test_status_assertion``). The helpers mirror what the
+live Resend receiver at
+``products/social-wiring/backend/app/modules/email_marketing/routers/webhooks.py``
+exercises, so the new product can copy the shape verbatim.
 """
 from __future__ import annotations
 

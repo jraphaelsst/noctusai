@@ -2,8 +2,8 @@
 
 Promoted per the in-home manifest
 `projects/social-wiring-absorption/reference/.promotions/waha-response-registry.md`
-(workspace origin
-`products/youtube-crawler/backend/app/services/waha_response_registry.py`).
+(originally the `waha_response_registry` service of the retired
+`youtube-crawler` product, consolidated into `social-wiring` 2026-05-16).
 
 Why this exists
 ---------------

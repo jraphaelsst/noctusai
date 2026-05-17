@@ -15,7 +15,7 @@
  * TODO(new-product): rename `Example` → your domain page, replace this
  * body with real content, and (likely) call the backend via a hook
  * like `useExample()` (the canonical shape lives in
- * `products/youtube-crawler/frontend/src/hooks/useVideos.ts`).
+ * `products/social-wiring/frontend/src/hooks/useVideos.ts`).
  */
 import { useAuthStore } from "@noctusai/seed/infra";
 import { Boxes, Sparkles } from "lucide-react";

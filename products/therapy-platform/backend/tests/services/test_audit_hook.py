@@ -10,8 +10,9 @@ Pinning two contracts:
    noop writer when `settings.postgres_url` is empty — every dispatch keeps
    going, debug-log surfaces the gap.
 
-Mirrors `products/media-scheduling/backend/tests/services/test_audit_hook.py`
-shape (canonical reference adopter per `projects/llm-tool-audit-rollout/PROJECT.md`).
+Mirrors the original canonical reference adopter's shape (retired
+`media-scheduling`, consolidated into `social-wiring` 2026-05-16;
+llm-tool-audit-rollout Phase 1).
 """
 from __future__ import annotations
 
