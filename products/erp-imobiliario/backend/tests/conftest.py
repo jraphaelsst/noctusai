@@ -48,14 +48,6 @@ from pathlib import Path
 _LIB = Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
-# `purge_shadowing_editable_finders` (W1.E7 generalization, 2026-05-11) now
-# guards `noctusai_seed` too: it drops the editable finder whose mapping
-# (`seed/framework/backend`) resolves outside `_LIB` (`seed/lib/backend`).
-# Without a path fallback the purge leaves `noctusai_seed` unimportable. Add
-# the framework root to sys.path so the package resolves by path post-purge.
-_FRAMEWORK = Path(__file__).resolve().parents[4] / "seed" / "framework" / "backend"
-if str(_FRAMEWORK) not in sys.path:
-    sys.path.insert(0, str(_FRAMEWORK))
 import importlib.util as _ilu  # noqa: E402
 _spec = _ilu.spec_from_file_location(
     "_bootstrap_conftest_helpers",
