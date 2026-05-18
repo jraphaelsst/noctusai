@@ -5042,6 +5042,104 @@ def _iter_fenced_code_spans(lines: list[str]) -> set[int]:
     return inside
 
 
+# Direct backend requirements whose dependency closure includes a package
+# with NO prebuilt wheel for the fleet build arch (linux/arm64), forcing a
+# pip source-build the slim runtime stage cannot do without the per-slug
+# PIP_RUN toolchain seam. Curated; grows as discovered (same maintenance
+# model as the slug-set / fleet-size curated sets). KB § containerization §3.2a.
+_SOURCE_BUILD_DEP_ROOTS = {
+    # xhtml2pdf → svglib → rlpycairo → pycairo; pycairo has no arm64 wheel
+    # (meson source build). erp-imobiliario, 2026-05-18 fix-on-contact.
+    "xhtml2pdf",
+    "pycairo",
+}
+
+
+def check_product_source_build_dep_pip_seam(
+    repo_root: Path | None = None,
+) -> list[dict]:
+    """A product whose backend requirements pull a source-only (no
+    arm64-wheel) dependency MUST have a per-slug ``PIP_RUN`` toolchain
+    seam in ``scripts/propagate-dockerfiles.sh`` — else the fleet build
+    aborts in the slim runtime stage (``meson … Unknown compiler``):
+    product pip-installs run in the slim runtime (the base *builder*
+    stage has the toolchain; products ``FROM …AS runtime``).
+
+    Stage-4 codification of ``KB § PATTERNS/containerization.md §3.2a``
+    (that section is the remediation; this detector is the "extra layer
+    of checking" ensuring every product follows it). Deterministic:
+    reads each product's ``requirements.txt`` + the ``PIP_RUN = { … }``
+    block of the propagate script. No network, no transitive resolution
+    (``_SOURCE_BUILD_DEP_ROOTS`` encodes the known no-arm64-wheel roots).
+
+    Green at introduction (erp-imobiliario has the seam; no other product
+    carries a source-only root) — guards against (a) a new product adding
+    such a dep with no seam, (b) erp's seam being removed. Severity
+    ``high`` — a missing seam is a hard fleet-build blocker, not a nit.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    prop = root / "scripts" / "propagate-dockerfiles.sh"
+    products_dir = root / "products"
+    if not prop.exists() or not products_dir.exists():
+        return issues
+    try:
+        prop_src = prop.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot read %s (%s)", prop, exc)
+        return issues
+
+    # Deterministic extraction of the per-slug PIP_RUN dict body: a slug
+    # with an entry appears as a quoted key inside `PIP_RUN = { … }`.
+    if "PIP_RUN = {" in prop_src:
+        seam_body = prop_src.split("PIP_RUN = {", 1)[1].split("\n}", 1)[0]
+    else:
+        seam_body = ""
+
+    for d in sorted(products_dir.iterdir()):
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        req = d / "backend" / "requirements.txt"
+        if not req.exists():
+            continue
+        try:
+            req_src = req.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", req, exc)
+            continue
+        pkgs: set[str] = set()
+        for raw in req_src.splitlines():
+            stripped = raw.strip()
+            if not stripped or stripped.startswith(("#", "-")):
+                continue
+            name = re.split(r"[<>=!~;\[\s]", stripped)[0].strip().lower()
+            if name:
+                pkgs.add(name)
+        hits = sorted(pkgs & _SOURCE_BUILD_DEP_ROOTS)
+        if not hits:
+            continue
+        if f'"{d.name}"' in seam_body:
+            continue  # seam present — correctly handled per §3.2a
+        issues.append({
+            "product": d.name,
+            "file": f"products/{d.name}/backend/requirements.txt",
+            "severity": "high",
+            "issue": (
+                f"{d.name} requires source-only dependency(ies) {hits} "
+                f"(no linux/arm64 wheel → pip source-build) but has NO "
+                f'per-slug PIP_RUN toolchain seam for "{d.name}" in '
+                f"scripts/propagate-dockerfiles.sh. The fleet build will "
+                f"abort in the slim runtime stage (`meson … Unknown "
+                f"compiler`). Add a per-slug PIP_RUN entry (install+purge "
+                f"the toolchain in the SAME layer) per "
+                f"KB § PATTERNS/containerization.md §3.2a; if a 2nd "
+                f"product needs a source build, lift the toolchain into "
+                f"the seed backend base builder instead."
+            ),
+        })
+    return issues
+
+
 def check_doc_symbology_drift(repo_root: Path | None = None) -> list[dict]:
     """Dense docs must obey the doc-symbology glossary contract.
 
@@ -5723,6 +5821,10 @@ def check_all_products() -> tuple[int, list]:
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
+    # containerization §3.2a — a product pulling a source-only (no
+    # arm64-wheel) dep needs a per-slug PIP_RUN toolchain seam, else the
+    # fleet build aborts in the slim runtime (2026-05-18 fix-on-contact).
+    all_issues.extend(check_product_source_build_dep_pip_seam())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

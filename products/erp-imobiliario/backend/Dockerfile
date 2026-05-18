@@ -44,8 +44,15 @@ ARG VITE_CORE_URL=
 ENV VITE_CORE_URL=${VITE_CORE_URL}
 COPY products/erp-imobiliario/frontend/package*.json ./products/erp-imobiliario/frontend/
 WORKDIR /app/products/erp-imobiliario/frontend
+# Drop the host lockfile before install: package-lock.json is generated on
+# the dev's machine (darwin-arm64) and PINS the platform-optional native
+# binaries (rollup/esbuild/lightningcss/@swc) to that os/cpu. npm honours
+# the lockfile and SKIPS the linux binary → `vite build` crashes with
+# "Cannot find module '@rollup/rollup-linux-*'" (npm/cli#4828). Removing it
+# lets npm re-resolve optionals for THIS build platform/libc.
 RUN --mount=type=cache,target=/root/.npm \
-    npm install --no-audit --no-fund
+    rm -f package-lock.json \
+    && npm install --no-audit --no-fund
 COPY products/erp-imobiliario/frontend ./
 RUN npm run build   # → /app/products/erp-imobiliario/frontend/dist
 
@@ -60,8 +67,13 @@ WORKDIR /app
 # venv; strip the `-e seed/` editable lines — they're inherited).
 COPY products/erp-imobiliario/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
-    && pip install -r /tmp/req.clean.txt
+    apt-get update \
+    && apt-get install -y --no-install-recommends gcc pkg-config libcairo2-dev \
+    && grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
+    && pip install -r /tmp/req.clean.txt \
+    && apt-get purge -y gcc pkg-config libcairo2-dev \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 # (no product extras)
 
 # Product backend code + the built SPA.
@@ -105,8 +117,12 @@ RUN apt-get update \
 # Frontend deps installed HERE (glibc) — esbuild/vite ship platform
 # binaries; the alpine frontend-base node_modules are not ABI-portable.
 COPY products/erp-imobiliario/frontend/package*.json ./products/erp-imobiliario/frontend/
+# Same lockfile-pins-wrong-platform-optional bug as frontend-build, here on
+# glibc/arm64 — drop the host lock so npm fetches the linux native binary
+# (otherwise local-watch's `vite build` crash-loops the container).
 RUN --mount=type=cache,target=/root/.npm \
     cd products/erp-imobiliario/frontend \
+    && rm -f package-lock.json \
     && npm install --no-audit --no-fund
 COPY seed/docker/local-watch.sh /usr/local/bin/local-watch
 RUN chmod +x /usr/local/bin/local-watch \

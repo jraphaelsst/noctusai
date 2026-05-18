@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.compliance import (  # noqa: E402
     check_hardcoded_fleet_size_literal,
     check_hardcoded_product_slug_set,
+    check_product_source_build_dep_pip_seam,
     check_seed_export_membership,
 )
 
@@ -467,3 +468,85 @@ class TestCheckHardcodedFleetSizeLiteral:
     def test_missing_repo_root_no_error(self, tmp_path):
         issues = check_hardcoded_fleet_size_literal(tmp_path / "nope")
         assert issues == []
+
+
+# ---------------------------------------------------------------------------
+# check_product_source_build_dep_pip_seam
+# ---------------------------------------------------------------------------
+
+
+class TestCheckProductSourceBuildDepPipSeam:
+    """A product whose backend requirements pull a source-only (no
+    arm64-wheel) dep MUST have a per-slug PIP_RUN seam in
+    propagate-dockerfiles.sh — Stage-4 codification of
+    KB § PATTERNS/containerization.md §3.2a.
+    """
+
+    def _scaffold(
+        self, tmp_path: Path, *, slug: str, reqs: str, seam_slugs: list[str]
+    ) -> Path:
+        prop = tmp_path / "scripts" / "propagate-dockerfiles.sh"
+        prop.parent.mkdir(parents=True, exist_ok=True)
+        body = "".join(f'    "{s}": (\n        "RUN ..."\n    ),\n'
+                        for s in seam_slugs)
+        prop.write_text(
+            "SEED_PIP_RUN = (\n    \"RUN pip install\"\n)\n"
+            f"PIP_RUN = {{\n{body}}}\n"
+        )
+        req = tmp_path / "products" / slug / "backend" / "requirements.txt"
+        req.parent.mkdir(parents=True, exist_ok=True)
+        req.write_text(reqs)
+        return tmp_path
+
+    def test_flags_source_only_dep_without_seam(self, tmp_path):
+        # erp-shape: xhtml2pdf present, slug NOT a PIP_RUN key → high.
+        root = self._scaffold(
+            tmp_path, slug="erp-imobiliario",
+            reqs="fastapi==0.115.5\nxhtml2pdf>=0.2.0\nopenai>=1.50.0\n",
+            seam_slugs=[],
+        )
+        issues = check_product_source_build_dep_pip_seam(root)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "high"
+        assert issues[0]["product"] == "erp-imobiliario"
+        assert "xhtml2pdf" in issues[0]["issue"]
+        assert "§3.2a" in issues[0]["issue"]
+
+    def test_no_flag_when_seam_present(self, tmp_path):
+        # Same product + dep, but slug IS a PIP_RUN key → handled, 0.
+        root = self._scaffold(
+            tmp_path, slug="erp-imobiliario",
+            reqs="xhtml2pdf>=0.2.0\n",
+            seam_slugs=["erp-imobiliario"],
+        )
+        assert check_product_source_build_dep_pip_seam(root) == []
+
+    def test_no_flag_when_no_source_only_dep(self, tmp_path):
+        # All-wheel deps → no seam needed, 0.
+        root = self._scaffold(
+            tmp_path, slug="core",
+            reqs="fastapi==0.115.5\nPyJWT==2.12.0\nopenai>=1.50.0\n",
+            seam_slugs=[],
+        )
+        assert check_product_source_build_dep_pip_seam(root) == []
+
+    def test_pycairo_direct_also_flagged(self, tmp_path):
+        root = self._scaffold(
+            tmp_path, slug="daily-life",
+            reqs="pycairo>=1.20.0\n", seam_slugs=[],
+        )
+        issues = check_product_source_build_dep_pip_seam(root)
+        assert len(issues) == 1 and issues[0]["product"] == "daily-life", issues
+
+    def test_missing_propagate_script_no_error(self, tmp_path):
+        # Product tree exists but no propagate script → graceful 0.
+        req = tmp_path / "products" / "x" / "backend" / "requirements.txt"
+        req.parent.mkdir(parents=True, exist_ok=True)
+        req.write_text("xhtml2pdf>=0.2.0\n")
+        assert check_product_source_build_dep_pip_seam(tmp_path) == []
+
+    def test_real_repo_is_green(self):
+        # The live tree must pass: erp has the seam; no other product
+        # carries a source-only root. Guards the 2026-05-18 fix + future.
+        root = Path(__file__).resolve().parents[3]
+        assert check_product_source_build_dep_pip_seam(root) == []

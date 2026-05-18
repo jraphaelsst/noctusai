@@ -42,8 +42,15 @@ ARG VITE_CORE_URL=
 ENV VITE_CORE_URL=${VITE_CORE_URL}
 COPY products/seed/frontend/package*.json ./products/seed/frontend/
 WORKDIR /app/products/seed/frontend
+# Drop the host lockfile before install: package-lock.json is generated on
+# the dev's machine (darwin-arm64) and PINS the platform-optional native
+# binaries (rollup/esbuild/lightningcss/@swc) to that os/cpu. npm honours
+# the lockfile and SKIPS the linux binary → `vite build` crashes with
+# "Cannot find module '@rollup/rollup-linux-*'" (npm/cli#4828). Removing it
+# lets npm re-resolve optionals for THIS build platform/libc.
 RUN --mount=type=cache,target=/root/.npm \
-    npm install --no-audit --no-fund
+    rm -f package-lock.json \
+    && npm install --no-audit --no-fund
 COPY products/seed/frontend ./
 RUN npm run build   # → /app/products/seed/frontend/dist
 
@@ -104,8 +111,12 @@ RUN apt-get update \
 # Frontend deps installed HERE (glibc) — esbuild/vite ship platform
 # binaries; the alpine frontend-base node_modules are not ABI-portable.
 COPY products/seed/frontend/package*.json ./products/seed/frontend/
+# Same lockfile-pins-wrong-platform-optional bug as frontend-build, here on
+# glibc/arm64 — drop the host lock so npm fetches the linux native binary
+# (otherwise local-watch's `vite build` crash-loops the container).
 RUN --mount=type=cache,target=/root/.npm \
     cd products/seed/frontend \
+    && rm -f package-lock.json \
     && npm install --no-audit --no-fund
 COPY seed/docker/local-watch.sh /usr/local/bin/local-watch
 RUN chmod +x /usr/local/bin/local-watch \

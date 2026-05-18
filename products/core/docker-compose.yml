@@ -54,6 +54,14 @@ services:
     volumes:
       - ./backend:/app/products/core/backend
       - ./frontend:/app/products/core/frontend
+      # Anonymous volume — MUST come after the ./frontend bind-mount. The
+      # host frontend/ dir has darwin-arm64 node_modules (or none); without
+      # this it shadows the image's linux node_modules → the watch
+      # entrypoint dies with "vite: not found" or "Cannot find module
+      # '@rollup/rollup-linux-*'". Docker seeds an anonymous volume from
+      # the image layer on first create, so the container keeps its own
+      # platform-correct node_modules while source stays live-editable.
+      - /app/products/core/frontend/node_modules
       - ../../seed:/app/seed
     ports:
       - "8000:8000"

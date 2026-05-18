@@ -58,6 +58,33 @@ DEVTEAM_EXTRA = (
     "RUN --mount=type=cache,target=/root/.cache/pip pip install -e /opt/dev_team\n"
 )
 
+# Per-slug pip RUN block. Default = the canonical (all-wheel deps, slim
+# runtime has no compiler — correct for ~all products). erp-imobiliario
+# (N=1, verified 2026-05-18) pulls `xhtml2pdf → svglib → rlpycairo →
+# pycairo`; pycairo has no arm64 wheel so pip source-builds it via meson,
+# needing gcc + cairo dev headers. Install AND purge the toolchain in the
+# SAME layer → shipped image stays slim. Per-slug seam (mirrors VITE /
+# DEVTEAM_EXTRA), NOT a fleet-wide bloat: only erp's generated Dockerfile
+# carries the toolchain. If a 2nd product needs a source build, lift this
+# into the seed backend base builder instead of growing this dict.
+SEED_PIP_RUN = (
+    "RUN --mount=type=cache,target=/root/.cache/pip \\\n"
+    "    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \\\n"
+    "    && pip install -r /tmp/req.clean.txt"
+)
+PIP_RUN = {
+    "erp-imobiliario": (
+        "RUN --mount=type=cache,target=/root/.cache/pip \\\n"
+        "    apt-get update \\\n"
+        "    && apt-get install -y --no-install-recommends gcc pkg-config libcairo2-dev \\\n"
+        "    && grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \\\n"
+        "    && pip install -r /tmp/req.clean.txt \\\n"
+        "    && apt-get purge -y gcc pkg-config libcairo2-dev \\\n"
+        "    && apt-get autoremove -y \\\n"
+        "    && rm -rf /var/lib/apt/lists/*"
+    ),
+}
+
 stale = False
 for slug, port in PRODUCTS:
     s = canon
@@ -65,6 +92,7 @@ for slug, port in PRODUCTS:
     s = s.replace("PRODUCT_SLUG=seed", f"PRODUCT_SLUG={slug}")
     s = s.replace("8004", port)
     s = s.replace(SEED_VITE, VITE.get(slug, SEED_VITE))
+    s = s.replace(SEED_PIP_RUN, PIP_RUN.get(slug, SEED_PIP_RUN))
     s = s.replace(
         EXTRA_MARKER,
         DEVTEAM_EXTRA if slug == "dev-team" else "# (no product extras)\n",
