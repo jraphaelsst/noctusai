@@ -41,7 +41,7 @@ Stage 4 is **active enforcement** — the rule fires whether or not anyone remem
 
 ## 2. The keeper's role in the pipeline
 
-The keeper is the **Stage 4 layer**. It does one job: deterministic detection + LLM-authored proposals, observation-only. The trio is:
+The keeper is the **Stage 4 layer**. One job: deterministic detection + LLM-authored proposals, observation-only. The trio:
 
 | Module | Stage in the pipeline | What it owns |
 |---|---|---|
@@ -67,7 +67,7 @@ This framing also clarifies why a "fourth identity" is wrong: housekeeping non-c
 
 ## 3. Codification criteria — when a rule earns Stage 4
 
-Not every Stage 3 rule belongs in Stage 4. Three criteria must all hold:
+Not every Stage 3 rule belongs in Stage 4. Three criteria must ALL hold (`3.1 ∧ 3.2 ∧ 3.3`):
 
 ### 3.1 Deterministic predicate
 
@@ -83,7 +83,7 @@ If a junior engineer + a tree-walking script can't agree on whether the rule fir
 
 ### 3.2 Recurring
 
-The rule must fire often enough that "just remember it" is unreliable. The recurrence rule (`KB § PATTERNS/project-execution.md § 2.7`) gives a number: **N=3+ instances → MUST formalize**. The same threshold applies to detectors. A rule that has fired exactly once might be a one-off; a rule that has fired three times is a pattern and earns codification.
+The rule must fire often enough that "just remember it" is unreliable. The recurrence rule (`KB § PATTERNS/project-execution.md § 2.7`) gives a number: **N≥3 ⇒ MUST formalize**. The same threshold applies to detectors. A rule that has fired exactly once might be a one-off; a rule that has fired three times is a pattern and earns codification.
 
 Counterexample: the `feedback_TEMP_*` memory entries are explicitly held at Stage 2/3 because the methodology hasn't yet been validated across multiple instances. Premature codification would lock in a calibration mistake. Codification is the *latest* possible stage, not the earliest.
 
@@ -138,7 +138,7 @@ This one moved quickly through the stages because the incident gave it both the 
 - **Stage 3:** documented as a known-gotcha in the rate-limit KB pattern.
 - **Stage 4:** the `SLOWAPI-PEP563-DETECTOR` engineer added a keeper check that flags files importing `from __future__ import annotations` alongside any `@limiter.limit(...)` usage.
 
-This is the **N=3 → MUST formalize** rule firing directly. Codification became non-optional after the third instance.
+This is the **N≥3 ⇒ MUST formalize** rule firing directly. Codification became non-optional after the third instance.
 
 ### 4.5 Hygiene-compliance (in flight)
 
@@ -208,9 +208,9 @@ Promote when:
 - The KB-first / CLAUDE.md-pointer / three-way-sync routine is justified.
 
 ### From Stage 3 → Stage 4 (when codification criteria are met)
-Promote when:
+Promote when (all three):
 - The rule has a deterministic predicate (§3.1).
-- It has recurred ≥3 times OR is unambiguously the right design for new code (§3.2).
+- It has recurred N≥3 ∨ is unambiguously the right design for new code (§3.2).
 - A clear remediation exists (§3.3).
 
 The promotion itself is a small project — file `projects/<rule-slug>-codification/PROJECT.md` from template, scope §6 to "add `check_*` function + colocated test + KB amendment", dispatch one engineer. The keeper-housekeeping-upgrade is the reference shape.
@@ -236,7 +236,7 @@ The pipeline isn't bureaucracy. It is the **shape of how methodology actually ev
 
 Future agents land in a situation ("the archive looks bloated", "tests are silently passing", "the dispatcher inbox is growing"). They need to know **which tool or script handles this** without re-deriving the pipeline. The table below is intentionally **greppable** — search by symptom-phrase, by tool name, or by stage; every row contains the actual invocation.
 
-If a row references a keeper detector by name (`check_*`), confirm it currently exists via the AST-based discovery method in §10 — the catalog rotates as detectors are added or retired, and this table can lag.
+If a row references a keeper detector by name (`check_*`), confirm it currently exists via the AST-based discovery method in §9 — the catalog rotates as detectors are added or retired, and this table can lag.
 
 ### Workspace hygiene (Stage 4 — keeper hygiene detectors + execution scripts)
 
@@ -306,7 +306,7 @@ If the symptom matches no row, the rule may be at Stage 1-3 (not codified) or ge
 
 ## 9. Discovering current detectors at runtime (AST-based)
 
-The §9 table is hand-curated; the source of truth for *currently active detectors* is the keeper's compliance module. To get a live, never-stale list, use **AST outline tools** rather than re-reading this doc:
+The §8 table is hand-curated; the source of truth for *currently active detectors* is the keeper's compliance module. To get a live, never-stale list, use **AST outline tools** rather than re-reading this doc:
 
 ### Quick canonical detector inventory
 
@@ -320,7 +320,7 @@ The outline returns every top-level function with name + line + signature. Detec
 
 ### Why this matters
 
-The §9 table will lag — new detectors land continuously, retired detectors leave gaps. The KB pattern doc is a **navigation aid**, not a manifest. The AST outline is the manifest. Future agents that need authoritative answers should run the outline command, not trust the static table.
+The §8 table will lag — new detectors land continuously, retired detectors leave gaps. The KB pattern doc is a **navigation aid**, not a manifest. The AST outline is the manifest. Future agents that need authoritative answers should run the outline command, not trust the static table.
 
 This is the same reason the agent reading discipline (`KB § PATTERNS/agent-reading-discipline.md`) prefers `noctus.dev.outline_python` over wide-net grep for symbol discovery in Python files — AST-based queries don't drift with formatting/whitespace and surface the exact function set the runtime knows about.
 
@@ -350,9 +350,9 @@ grep -lE '^#! ?/.*sh' scripts/ | xargs -I {} head -30 {}
 
 Every script in this repo follows the convention of putting a `# Usage:` block at the top. Reading the first 30 lines of each `.sh` file gives the situation → mode mapping for shell-side tools.
 
-### Updating §9 when a detector lands
+### Updating §8 when a detector lands
 
-When a new `check_*` function is added to `compliance.py` (or `hound/scan.py`, or a new tool registers in `mcp/noctusai/tools/`), the engineer SHOULD add a row to §9. The pre-commit hook does **not** enforce this (intentional — false positives in this scope are noisy); it's a discipline rule documented here. If §9 drifts, the AST outline is the safety net.
+When a new `check_*` function is added to `compliance.py` (or `hound/scan.py`, or a new tool registers in `mcp/noctusai/tools/`), the engineer SHOULD add a row to §8. The pre-commit hook does **not** enforce this (intentional — false positives in this scope are noisy); it's a discipline rule documented here. If §8 drifts, the AST outline is the safety net.
 
 ---
 

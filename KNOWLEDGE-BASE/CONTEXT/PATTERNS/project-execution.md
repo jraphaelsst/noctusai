@@ -446,8 +446,8 @@ The thresholds are not negotiable:
 
 | N instances | Outcome (mandatory) |
 |---|---|
-| **N = 2** | **TRIAGE TIME.** Explicit decision per `01-PHILOSOPHY.md § Triage at decision time`: formalize / refactor / accept-with-rationale. "Coincidence" is the only legitimate `accept` outcome at this threshold. The decision is recorded — silently moving on is forbidden. |
-| **N = 3+** | **MUST FORMALIZE.** The pattern lives in seed-lib / seed-framework / a shared library. The minimum acceptable response is filing a follow-up project from `templates/PROJECT-TEMPLATE.md` for the extraction. Silently shipping the 4th instance is forbidden. |
+| **N = 2** | **TRIAGE TIME.** Explicit decision per `01-PHILOSOPHY.md § Triage at decision time`: `[F]` ∨ `[R]` ∨ `[A]` (formalize / refactor / accept-with-rationale). "Coincidence" is the only legitimate `[A]` outcome at this threshold. The decision is recorded — silently moving on is forbidden. |
+| **N ≥ 3** | **MUST FORMALIZE.** The pattern lives in seed-lib / seed-framework / a shared library. The minimum acceptable response is filing a follow-up project from `templates/PROJECT-TEMPLATE.md` for the extraction. Silently shipping the 4th instance is forbidden. |
 
 **When the rule fires (every check should run all three):**
 
