@@ -93,6 +93,11 @@ shape just changes when the decision moves.
 
 ## Active decisions
 
+### `mcp/{meta,google}` retain per-connector seed-pin copies — `_kit.seed_pin` formalized, copies accepted
+- **Subject:** the stale cross-worktree editable-finder eviction logic is **formalized** in `mcp/_kit/seed_pin.py` (`pin_in_tree_seed`, called by `_kit.bootstrap.prepare_sys_path`; N=2 — META-2 + GOOG-2 hand-rolled it; 19 `_kit` tests cover it). The pre-formalization per-connector copies — `mcp/google/conftest.py::_pin_in_tree_noctusai_lib`, `mcp/google/server.py` inline meta_path loop, `mcp/meta/tests/test_smoke.py` inline `_is_noctus_editable_finder` — are **retained, not removed**.
+- **Rationale:** they serve the **pytest-collection entrypoint** (`conftest.py` runs before any `_kit.bootstrap` import) + the server-boot path where they are proven green (connector suites _kit 19 · vista 12 · meta 28 · google 31). `prepare_sys_path` covers the *server* entrypoint, not pytest collection. Removal = zero functional gain + risks 4 green suites; proposed at project wrap-up under a known-unstable harness window ⇒ risk/reward clearly negative. The recurrence rule's requirement (formalize the N=2 duplication into the seed-of-connectors layer) **is done** — these are belt-and-suspenders at a distinct entrypoint.
+- **Named destination (NOT silent):** a `conftest`-delegates-to-`from _kit.seed_pin import pin_in_tree_seed` swap is safe ONLY with a green-suite re-verify per connector, in a healthy-harness session, as a pure dedup. A 3rd connector hand-rolling the logic instead of importing `_kit.seed_pin` flips this `accept`→`formalize` (the helper already exists; the flip is "make consumers use it").
+
 ### PF `Equipe.tsx` direct-fetch retained (no `useTeam` hook extraction)
 - **Subject:** `products/personal-finance/frontend/src/pages/Equipe.tsx` makes 5 direct `api.get/post/delete` calls to the seed `team` standard router instead of going through a `useTeam` hook layer (Pattern D in the PF wiring §5.2.2 systemic-findings classification).
 - **Decision:** Equipe.tsx keeps the 5 direct-fetch callsites; no `hooks/useTeam.ts` is created.

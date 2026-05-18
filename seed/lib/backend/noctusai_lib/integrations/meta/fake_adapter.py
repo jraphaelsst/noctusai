@@ -6,19 +6,35 @@ transparently. `auth_mode` is `"none"` (no real credentials) — but
 can still introspect. Seeded via `seed(...)`; `limit` truncation
 mirrors the real adapter's paging cap.
 
-Read-only v1. When posting lands, the Fake gets no-op write methods
-(the contract grows; the Fake stays network-free)."""
+Write/ads surface: the Fake simulates publish + ads deterministically
+in memory (no network) so MCP / consumer tests exercise the real
+handler path. Published posts/media are recorded on
+`.published_posts` / `.published_media`; ad campaigns / insights are
+served from `seed(...)`. The Fake never raises the App-Review
+permission error — that gate lives on the live adapter only; the Fake
+is the "scope already approved" path."""
 
 from __future__ import annotations
 
 from noctusai_lib.integrations.meta.types import (
+    Ad,
+    AdCampaign,
+    AdCreative,
+    AdCreativeSpec,
+    AdInsights,
+    AdSet,
+    AdSetSpec,
+    AdSpec,
+    CampaignSpec,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
     InstagramMedia,
     MetaConnectionStatus,
     PostInsights,
-)
+    PublishedMedia,
+    PublishedPost,
+    )
 
 
 class FakeMetaAdapter:
@@ -34,6 +50,29 @@ class FakeMetaAdapter:
         self._post_insights: dict[str, PostInsights] = {}
         self._media_insights: dict[str, PostInsights] = {}
         self._me: dict[str, str] = {}
+        # Write-side recorders — deterministic in-memory simulation so
+        # consumer/MCP tests exercise the real publish handler path.
+        self.published_posts: list[PublishedPost] = []
+        self.published_media: list[PublishedMedia] = []
+        self._ad_campaigns_by_account: dict[str, list[AdCampaign]] = {}
+        self._ad_insights: dict[str, AdInsights] = {}
+        self._post_seq = 0
+        self._media_seq = 0
+        # Ads-management recorders — deterministic in-memory CRUD so
+        # MCP/consumer tests exercise the real handler graph with no
+        # network. The Fake NEVER raises the App-Review gate — that
+        # gate lives on the live adapter only; the Fake is the
+        # "scope already approved" path.
+        self.created_campaigns: list = []
+        self.created_ad_sets: list = []
+        self.created_ad_creatives: list = []
+        self.created_ads: list = []
+        self._campaigns_by_id: dict = {}
+        self._ad_sets_by_id: dict = {}
+        self._camp_seq = 0
+        self._adset_seq = 0
+        self._creative_seq = 0
+        self._ad_seq = 0
 
     def seed(
         self,
@@ -45,6 +84,8 @@ class FakeMetaAdapter:
         post_insights: dict[str, PostInsights] | None = None,
         media_insights: dict[str, PostInsights] | None = None,
         me: dict[str, str] | None = None,
+        ad_campaigns_by_account: dict[str, list[AdCampaign]] | None = None,
+        ad_insights: dict[str, AdInsights] | None = None,
     ) -> "FakeMetaAdapter":
         if pages is not None:
             self._pages = list(pages)
@@ -62,6 +103,12 @@ class FakeMetaAdapter:
             self._media_insights = dict(media_insights)
         if me is not None:
             self._me = dict(me)
+        if ad_campaigns_by_account is not None:
+            self._ad_campaigns_by_account = {
+                k: list(v) for k, v in ad_campaigns_by_account.items()
+            }
+        if ad_insights is not None:
+            self._ad_insights = dict(ad_insights)
         return self
 
     def status(self) -> MetaConnectionStatus:
@@ -112,6 +159,141 @@ class FakeMetaAdapter:
         return self._media_insights.get(
             media_id, PostInsights(object_id=media_id)
         )
+
+    # ─── Write / ads surface (deterministic in-memory simulation) ──────
+
+    def publish_facebook_post(
+        self,
+        page_id: str,
+        message: str,
+        link: str | None = None,
+        photo_url: str | None = None,
+    ) -> PublishedPost:
+        self._post_seq += 1
+        post = PublishedPost(
+            id=f"{page_id}_{self._post_seq}",
+            page_id=page_id,
+            message=message,
+            permalink_url=f"https://facebook.com/{page_id}_{self._post_seq}",
+        )
+        self.published_posts.append(post)
+        return post
+
+    def publish_instagram_media(
+        self,
+        ig_user_id: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> PublishedMedia:
+        self._media_seq += 1
+        media = PublishedMedia(
+            id=f"{ig_user_id}_media_{self._media_seq}",
+            ig_user_id=ig_user_id,
+            container_id=f"{ig_user_id}_container_{self._media_seq}",
+            caption=caption,
+            permalink=f"https://instagram.com/p/{ig_user_id}_{self._media_seq}",
+        )
+        self.published_media.append(media)
+        return media
+
+    def list_ad_campaigns(self, ad_account_id: str) -> list[AdCampaign]:
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        return list(
+            self._ad_campaigns_by_account.get(
+                acct, self._ad_campaigns_by_account.get(ad_account_id, [])
+            )
+        )
+
+    def ad_insights(
+        self,
+        object_id: str,
+        level: str,
+        date_preset: str | None = None,
+    ) -> AdInsights:
+        return self._ad_insights.get(
+            object_id, AdInsights(object_id=object_id, level=level)
+        )
+    def create_ad_campaign(self, ad_account_id, spec):
+        self._camp_seq += 1
+        camp = AdCampaign(
+            id=f"camp_{self._camp_seq}",
+            name=spec.name,
+            objective=spec.objective,
+            status=spec.status,
+        )
+        self.created_campaigns.append(camp)
+        self._campaigns_by_id[camp.id] = camp
+        return camp
+
+    def create_ad_set(self, ad_account_id, spec):
+        self._adset_seq += 1
+        ad_set = AdSet(
+            id=f"adset_{self._adset_seq}",
+            name=spec.name,
+            status=spec.status,
+            campaign_id=spec.campaign_id,
+            daily_budget=spec.daily_budget,
+            billing_event=spec.billing_event,
+            optimization_goal=spec.optimization_goal,
+            targeting=dict(spec.targeting),
+        )
+        self.created_ad_sets.append(ad_set)
+        self._ad_sets_by_id[ad_set.id] = ad_set
+        return ad_set
+
+    def create_ad_creative(self, ad_account_id, spec):
+        self._creative_seq += 1
+        creative = AdCreative(
+            id=f"creative_{self._creative_seq}",
+            name=spec.name,
+            object_story_spec=dict(spec.object_story_spec),
+        )
+        self.created_ad_creatives.append(creative)
+        return creative
+
+    def create_ad(self, ad_account_id, spec):
+        self._ad_seq += 1
+        ad = Ad(
+            id=f"ad_{self._ad_seq}",
+            name=spec.name,
+            status=spec.status,
+            adset_id=spec.adset_id,
+            creative_id=spec.creative_id,
+        )
+        self.created_ads.append(ad)
+        return ad
+
+    def update_campaign_status(self, campaign_id, status):
+        prev = self._campaigns_by_id.get(campaign_id)
+        updated = AdCampaign(
+            id=campaign_id,
+            name=prev.name if prev else None,
+            objective=prev.objective if prev else None,
+            status=status,
+            effective_status=status,
+        )
+        self._campaigns_by_id[campaign_id] = updated
+        return updated
+
+    def update_ad_set_budget(self, ad_set_id, daily_budget):
+        prev = self._ad_sets_by_id.get(ad_set_id)
+        updated = AdSet(
+            id=ad_set_id,
+            name=prev.name if prev else None,
+            status=prev.status if prev else None,
+            effective_status=prev.effective_status if prev else None,
+            campaign_id=prev.campaign_id if prev else None,
+            daily_budget=daily_budget,
+            billing_event=prev.billing_event if prev else None,
+            optimization_goal=prev.optimization_goal if prev else None,
+            targeting=dict(prev.targeting) if prev else {},
+        )
+        self._ad_sets_by_id[ad_set_id] = updated
+        return updated
 
 
 __all__ = ["FakeMetaAdapter"]

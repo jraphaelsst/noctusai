@@ -173,5 +173,34 @@ if [[ -n "$STAGED_PROJECT_MD" ]]; then
     fi
 fi
 
+# ─── 6. Outline-ability (blocking, only when source files staged) ───────
+# Keeper `check_files_outlined` + `KB § PATTERNS/ast.md § Always-outline-
+# able platform`. Every staged .py/.ts/.tsx MUST be AST-outline-able so
+# the AST-first / narrow-read tooling is always functional + optimized.
+# Scoped to staged source files (perf — zero overhead on doc-only commits).
+STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '\.(py|pyi|ts|tsx|js|jsx|mjs|cjs)$' || true)
+if [[ -n "$STAGED_SRC" ]]; then
+    if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
+        PY="$REPO_ROOT/venv/bin/python"
+    else
+        MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+        if [[ -n "$MAIN_REPO_GITDIR" ]]; then
+            MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
+            if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
+                PY="$MAIN_REPO_ROOT/venv/bin/python"
+            fi
+        fi
+        PY="${PY:-${PYTHON:-python3}}"
+    fi
+    if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
+        echo "[pre-commit] Checking staged files are AST-outline-able..."
+        if ! "$PY" "$REPO_ROOT/mcp/noctusai/cli.py" --check-outlined; then
+            echo "[pre-commit] Outline-ability check FAILED. Commit aborted." >&2
+            echo "[pre-commit] A staged source file can't be AST-read (SyntaxError/parse). Fix it; run: python mcp/noctusai/cli.py --scan-outlined" >&2
+            exit 1
+        fi
+    fi
+fi
+
 echo "[pre-commit] OK"
 exit 0

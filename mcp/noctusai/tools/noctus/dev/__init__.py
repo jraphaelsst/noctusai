@@ -23,10 +23,13 @@ def register_all(server) -> None:
     from . import context
     from . import cost_evaluation
     from . import diff
+    from . import dispatch_preflight
+    from . import findings
     from . import history
     from . import improvements
     from . import lgpd
     from . import master_prompts
+    from . import mole
     from . import outline
     from . import outline_python
     from . import outline_typescript
@@ -37,8 +40,13 @@ def register_all(server) -> None:
     from . import recurrence
     from . import refs
     from . import review
+    from . import salvage_worktree
     from . import scaffold
+    from . import scaffold_keeper
+    from . import scaffold_mcp_tool
+    from . import scaffold_memory
     from . import scaffold_migration
+    from . import scaffold_seed_adapter
     from . import scan_unified
     from . import session_review
     from . import status
@@ -57,10 +65,13 @@ def register_all(server) -> None:
     context.register(server)
     cost_evaluation.register(server)
     diff.register(server)
+    dispatch_preflight.register(server)
+    findings.register(server)
     history.register(server)
     improvements.register(server)
     lgpd.register(server)
     master_prompts.register(server)
+    mole.register(server)
     outline.register(server)
     outline_python.register(server)
     outline_typescript.register(server)
@@ -71,8 +82,13 @@ def register_all(server) -> None:
     recurrence.register(server)
     refs.register(server)
     review.register(server)
+    salvage_worktree.register(server)
     scaffold.register(server)
+    scaffold_keeper.register(server)
+    scaffold_mcp_tool.register(server)
+    scaffold_memory.register(server)
     scaffold_migration.register(server)
+    scaffold_seed_adapter.register(server)
     scan_unified.register(server)
     session_review.register(server)
     status.register(server)

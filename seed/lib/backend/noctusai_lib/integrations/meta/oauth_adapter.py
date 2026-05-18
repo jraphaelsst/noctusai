@@ -19,8 +19,24 @@ from `/me/accounts` on every call (cheap; avoids token-rotation
 drift). They're cached in-memory per adapter instance so repeated
 calls in one request share the round trip.
 
-Read-only v1. Posting is an additive future extension (new methods
-here + Protocol extension; the Fake gets no-ops).
+Write/ads surface: `publish_facebook_post`,
+`publish_instagram_media` (the 2-step container → `media_publish`
+flow), `list_ad_campaigns`, `ad_insights`, plus the ads-*management*
+graph — `create_ad_campaign` / `create_ad_set` / `create_ad_creative`
+/ `create_ad` (campaign→adset→ad→creative) + `update_campaign_status`
+/ `update_ad_set_budget` (the update endpoints return
+`{"success": true}` only, so the post-update state is read back).
+These were added additively — the read methods above are unchanged.
+**Scope gating:**
+Meta gates the write scopes (`pages_manage_posts`,
+`instagram_content_publish`) and ads scopes (`ads_read`,
+`ads_management`) behind App Review. When the active token lacks the
+gated scope Graph returns a permission error (code `10` / `200`);
+the adapter re-raises it as `MetaGraphError` with
+`requires_app_review` true — **never** a silent or faked success
+(no-silent-errors). Production activation is therefore an App-Review
+deployment gate, not a reason to defer the code (exactly how
+`youtube.upload_video` ships real code behind a credential gate).
 """
 
 from __future__ import annotations
@@ -47,12 +63,32 @@ from noctusai_lib.integrations.meta.mappers import (
     post_from_body,
 )
 from noctusai_lib.integrations.meta.types import (
+    Ad,
+    AdCampaign,
+    AdCreative,
+    AdCreativeSpec,
+    AdInsights,
+    AdSet,
+    AdSetSpec,
+    AdSpec,
+    CampaignSpec,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
     InstagramMedia,
     MetaConnectionStatus,
     PostInsights,
+    PublishedMedia,
+    PublishedPost,
+)
+
+# Default ad-insights metric set — the common spend/delivery KPIs.
+# Graph rejects unknown fields, so this is a conservative core set.
+_AD_INSIGHT_FIELDS = "impressions,reach,spend,clicks,cpc,cpm,ctr"
+_AD_CAMPAIGN_FIELDS = "id,name,objective,status,effective_status"
+_AD_SET_FIELDS = (
+    "id,name,status,effective_status,campaign_id,"
+    "daily_budget,billing_event,optimization_goal,targeting"
 )
 
 logger = logging.getLogger(__name__)
@@ -280,6 +316,457 @@ class MetaOAuthAdapter:
             version=self._version,
         )
         return insights_from_body(media_id, body)
+
+    # ─── Write / ads surface ──────────────────────────────────────────
+
+    def publish_facebook_post(
+        self,
+        page_id: str,
+        message: str,
+        link: str | None = None,
+        photo_url: str | None = None,
+    ) -> PublishedPost:
+        """Publish a post to a Facebook Page.
+
+        Text / link posts go to `POST /{page-id}/feed`; a `photo_url`
+        instead posts to `POST /{page-id}/photos` (Graph fetches the
+        image by URL and attaches the caption as `message`).
+
+        **Production gate:** the `pages_manage_posts` scope is gated
+        behind Meta App Review. If the active Page token lacks it
+        Graph returns a permission error and this method raises
+        `MetaGraphError` with `requires_app_review` true — it never
+        fakes a success. Until the scope is approved this surfaces the
+        gate honestly; the code path is real and complete."""
+
+        token = self._page_token(page_id)
+        if photo_url:
+            body = _meta_api.graph_post(
+                f"{page_id}/photos",
+                access_token=token,
+                data={"url": photo_url, "caption": message},
+                version=self._version,
+            )
+        else:
+            data: dict[str, Any] = {"message": message}
+            if link:
+                data["link"] = link
+            body = _meta_api.graph_post(
+                f"{page_id}/feed",
+                access_token=token,
+                data=data,
+                version=self._version,
+            )
+        post_id = str(body.get("post_id") or body.get("id") or "")
+        if not post_id:
+            raise MetaGraphError(
+                f"Page post publish to {page_id} returned no id",
+                code=200,
+            )
+        permalink: str | None = None
+        try:
+            detail = _meta_api.graph_get(
+                post_id,
+                access_token=token,
+                params={"fields": "permalink_url"},
+                version=self._version,
+            )
+            permalink = detail.get("permalink_url")
+        except MetaGraphError as exc:
+            # Publish already succeeded; the permalink read-back is
+            # best-effort and must not mask the successful write.
+            logger.warning(
+                "FB post %s published; permalink read-back failed: %s",
+                post_id,
+                exc,
+            )
+        return PublishedPost(
+            id=post_id,
+            page_id=page_id,
+            message=message,
+            permalink_url=permalink,
+        )
+
+    def publish_instagram_media(
+        self,
+        ig_user_id: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> PublishedMedia:
+        """Publish an Instagram image — the 2-step Graph flow.
+
+        Step 1 `POST /{ig-user}/media` (image_url + caption) → a media
+        *container* creation id. Step 2 `POST
+        /{ig-user}/media_publish` (creation_id) → the published media
+        id.
+
+        **Production gate:** `instagram_content_publish` is gated
+        behind Meta App Review. Without it Graph returns a permission
+        error and this raises `MetaGraphError` with
+        `requires_app_review` true — never a faked success. The
+        2-step flow is fully implemented and runs end-to-end the
+        moment the scope is approved."""
+
+        token = self._user_token()
+        create_data: dict[str, Any] = {"image_url": image_url}
+        if caption is not None:
+            create_data["caption"] = caption
+        created = _meta_api.graph_post(
+            f"{ig_user_id}/media",
+            access_token=token,
+            data=create_data,
+            version=self._version,
+        )
+        container_id = str(created.get("id") or "")
+        if not container_id:
+            raise MetaGraphError(
+                f"IG media container creation for {ig_user_id} "
+                "returned no creation id",
+                code=200,
+            )
+        published = _meta_api.graph_post(
+            f"{ig_user_id}/media_publish",
+            access_token=token,
+            data={"creation_id": container_id},
+            version=self._version,
+        )
+        media_id = str(published.get("id") or "")
+        if not media_id:
+            raise MetaGraphError(
+                f"IG media_publish for container {container_id} "
+                "returned no media id",
+                code=200,
+            )
+        permalink: str | None = None
+        try:
+            detail = _meta_api.graph_get(
+                media_id,
+                access_token=token,
+                params={"fields": "permalink"},
+                version=self._version,
+            )
+            permalink = detail.get("permalink")
+        except MetaGraphError as exc:
+            logger.warning(
+                "IG media %s published; permalink read-back failed: %s",
+                media_id,
+                exc,
+            )
+        return PublishedMedia(
+            id=media_id,
+            ig_user_id=ig_user_id,
+            container_id=container_id,
+            caption=caption,
+            permalink=permalink,
+        )
+
+    def list_ad_campaigns(self, ad_account_id: str) -> list[AdCampaign]:
+        """List ad campaigns under an ad account (reads — `ads_read`).
+
+        `ad_account_id` is the bare id; the `act_` prefix is added
+        here (`act_{id}/campaigns`). **Production gate:** `ads_read`
+        is App-Review-gated; absent it Graph returns a permission
+        error and the underlying `graph_paged` raises `MetaGraphError`
+        with `requires_app_review` true — never a faked empty list."""
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        rows = _meta_api.graph_paged(
+            f"{acct}/campaigns",
+            access_token=self._user_token(),
+            params={"fields": _AD_CAMPAIGN_FIELDS, "limit": 100},
+            version=self._version,
+        )
+        return [
+            AdCampaign(
+                id=str(r.get("id")),
+                name=r.get("name"),
+                objective=r.get("objective"),
+                status=r.get("status"),
+                effective_status=r.get("effective_status"),
+            )
+            for r in rows
+            if r.get("id")
+        ]
+
+    def ad_insights(
+        self,
+        object_id: str,
+        level: str,
+        date_preset: str | None = None,
+    ) -> AdInsights:
+        """Ad insights for an object (campaign / adset / ad / account).
+
+        `level` is the Graph aggregation level
+        (`account`/`campaign`/`adset`/`ad`). **Production gate:**
+        `ads_read` is App-Review-gated; absent it the call raises
+        `MetaGraphError` with `requires_app_review` true."""
+
+        params: dict[str, Any] = {
+            "fields": _AD_INSIGHT_FIELDS,
+            "level": level,
+        }
+        if date_preset:
+            params["date_preset"] = date_preset
+        body = _meta_api.graph_get(
+            f"{object_id}/insights",
+            access_token=self._user_token(),
+            params=params,
+            version=self._version,
+        )
+        rows = body.get("data") or []
+        metrics: dict[str, float] = {}
+        if rows and isinstance(rows[0], dict):
+            for key, val in rows[0].items():
+                try:
+                    metrics[key] = float(val)
+                except (TypeError, ValueError):
+                    continue
+        return AdInsights(
+            object_id=object_id,
+            level=level,
+            metrics=metrics,
+            raw=list(rows),
+        )
+    # ─── Ads management surface (additive — read/insights/posting
+    #     unchanged; mutations use the App-Review-gated
+    #     ``ads_management`` scope, distinct from ``ads_read``) ───────
+
+    def create_ad_campaign(
+        self, ad_account_id: str, spec: CampaignSpec
+    ) -> AdCampaign:
+        """Create an ad campaign under an ad account (campaign→adset→ad
+        →creative graph, step 1).
+
+        `POST act_{id}/campaigns` with name / objective / status /
+        special_ad_categories (Graph wants the categories JSON-encoded;
+        an empty list is the mandatory explicit "none"). **Production
+        gate:** the `ads_management` scope is App-Review-gated (distinct
+        from the `ads_read` scope the read/insights surface uses).
+        Absent it Graph returns a permission error and `graph_post`
+        raises `MetaGraphError` with `requires_app_review` true — never
+        a faked success."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        body = _meta_api.graph_post(
+            f"{acct}/campaigns",
+            access_token=self._user_token(),
+            data={
+                "name": spec.name,
+                "objective": spec.objective,
+                "status": spec.status,
+                "special_ad_categories": json.dumps(
+                    list(spec.special_ad_categories)
+                ),
+            },
+            version=self._version,
+        )
+        campaign_id = str(body.get("id") or "")
+        if not campaign_id:
+            raise MetaGraphError(
+                f"Campaign create under {acct} returned no id", code=200
+            )
+        return AdCampaign(
+            id=campaign_id,
+            name=spec.name,
+            objective=spec.objective,
+            status=spec.status,
+        )
+
+    def create_ad_set(
+        self, ad_account_id: str, spec: AdSetSpec
+    ) -> AdSet:
+        """Create an ad set under an ad account (graph step 2 — binds
+        to a parent `campaign_id`).
+
+        `POST act_{id}/adsets`. `daily_budget` is the account's minor
+        currency unit (cents); `targeting` is passed through as JSON.
+        Same `ads_management` App-Review gate as `create_ad_campaign`."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        body = _meta_api.graph_post(
+            f"{acct}/adsets",
+            access_token=self._user_token(),
+            data={
+                "name": spec.name,
+                "campaign_id": spec.campaign_id,
+                "daily_budget": spec.daily_budget,
+                "billing_event": spec.billing_event,
+                "optimization_goal": spec.optimization_goal,
+                "targeting": json.dumps(dict(spec.targeting)),
+                "status": spec.status,
+            },
+            version=self._version,
+        )
+        ad_set_id = str(body.get("id") or "")
+        if not ad_set_id:
+            raise MetaGraphError(
+                f"Ad set create under {acct} returned no id", code=200
+            )
+        return AdSet(
+            id=ad_set_id,
+            name=spec.name,
+            status=spec.status,
+            campaign_id=spec.campaign_id,
+            daily_budget=spec.daily_budget,
+            billing_event=spec.billing_event,
+            optimization_goal=spec.optimization_goal,
+            targeting=dict(spec.targeting),
+        )
+
+    def create_ad_creative(
+        self, ad_account_id: str, spec: AdCreativeSpec
+    ) -> AdCreative:
+        """Create an ad creative under an ad account (graph step 3).
+
+        `POST act_{id}/adcreatives`. `object_story_spec` is passed
+        through as JSON. Same `ads_management` App-Review gate."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        body = _meta_api.graph_post(
+            f"{acct}/adcreatives",
+            access_token=self._user_token(),
+            data={
+                "name": spec.name,
+                "object_story_spec": json.dumps(
+                    dict(spec.object_story_spec)
+                ),
+            },
+            version=self._version,
+        )
+        creative_id = str(body.get("id") or "")
+        if not creative_id:
+            raise MetaGraphError(
+                f"Ad creative create under {acct} returned no id",
+                code=200,
+            )
+        return AdCreative(
+            id=creative_id,
+            name=spec.name,
+            object_story_spec=dict(spec.object_story_spec),
+        )
+
+    def create_ad(self, ad_account_id: str, spec: AdSpec) -> Ad:
+        """Create an ad under an ad account (graph leaf — binds an
+        `adset_id` to a `creative_id`).
+
+        `POST act_{id}/ads`. Same `ads_management` App-Review gate."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        body = _meta_api.graph_post(
+            f"{acct}/ads",
+            access_token=self._user_token(),
+            data={
+                "name": spec.name,
+                "adset_id": spec.adset_id,
+                "creative": json.dumps({"creative_id": spec.creative_id}),
+                "status": spec.status,
+            },
+            version=self._version,
+        )
+        ad_id = str(body.get("id") or "")
+        if not ad_id:
+            raise MetaGraphError(
+                f"Ad create under {acct} returned no id", code=200
+            )
+        return Ad(
+            id=ad_id,
+            name=spec.name,
+            status=spec.status,
+            adset_id=spec.adset_id,
+            creative_id=spec.creative_id,
+        )
+
+    def update_campaign_status(
+        self, campaign_id: str, status: str
+    ) -> AdCampaign:
+        """Pause / activate a campaign (`POST /{campaign-id}` with the
+        `status` field). Same `ads_management` App-Review gate.
+
+        The Graph status-update endpoint returns `{"success": true}`,
+        not the campaign object, so the post-update state is read back
+        with a follow-up `graph_get` (the read-back is part of the
+        contract — a status flip without confirmation would be a
+        silent half-success)."""
+
+        _meta_api.graph_post(
+            f"{campaign_id}",
+            access_token=self._user_token(),
+            data={"status": status},
+            version=self._version,
+        )
+        body = _meta_api.graph_get(
+            f"{campaign_id}",
+            access_token=self._user_token(),
+            params={"fields": _AD_CAMPAIGN_FIELDS},
+            version=self._version,
+        )
+        return AdCampaign(
+            id=str(body.get("id") or campaign_id),
+            name=body.get("name"),
+            objective=body.get("objective"),
+            status=body.get("status"),
+            effective_status=body.get("effective_status"),
+        )
+
+    def update_ad_set_budget(
+        self, ad_set_id: str, daily_budget: int
+    ) -> AdSet:
+        """Update an ad set's daily budget (`POST /{adset-id}` with
+        `daily_budget`, the account's minor currency unit). Same
+        `ads_management` App-Review gate. The post-update state is read
+        back (the update endpoint returns `{"success": true}` only)."""
+
+        _meta_api.graph_post(
+            f"{ad_set_id}",
+            access_token=self._user_token(),
+            data={"daily_budget": daily_budget},
+            version=self._version,
+        )
+        body = _meta_api.graph_get(
+            f"{ad_set_id}",
+            access_token=self._user_token(),
+            params={"fields": _AD_SET_FIELDS},
+            version=self._version,
+        )
+        return AdSet(
+            id=str(body.get("id") or ad_set_id),
+            name=body.get("name"),
+            status=body.get("status"),
+            effective_status=body.get("effective_status"),
+            campaign_id=body.get("campaign_id"),
+            daily_budget=body.get("daily_budget"),
+            billing_event=body.get("billing_event"),
+            optimization_goal=body.get("optimization_goal"),
+            targeting=body.get("targeting") or {},
+        )
 
 
 __all__ = ["MetaOAuthAdapter"]

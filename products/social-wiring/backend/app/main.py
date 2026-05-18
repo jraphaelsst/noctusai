@@ -119,13 +119,25 @@ for _register in MODULES:
         if _name not in _standard:
             _standard.append(_name)
 
+# Static, keeper-auditable literal of the standard-router set the MODULES
+# seam resolves at runtime. The MODULES registration stays the runtime
+# source-of-truth; this asserts they agree (loud — no silent drift) and
+# gives check_standard_routers_audit a parseable list literal at the
+# create_product_app call site.
+_STANDARD_ROUTERS = ["health", "notificacoes", "team", "ai_outputs", "ai_feedback"]
+assert _standard == _STANDARD_ROUTERS, (
+    f"standard_routers drift: MODULES resolved {_standard!r} but the "
+    f"keeper-audited literal is {_STANDARD_ROUTERS!r}. Update _STANDARD_ROUTERS "
+    f"to match the MODULES seam (and re-audit)."
+)
+
 app = create_product_app(
     name="Social Wiring",
     schema="social_wiring",
     settings=settings,
     version="0.1.0",
     limiter=limiter,
-    standard_routers=_standard,
+    standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback"],
     routers=_routers,
     # Conversation buffer + worker — boots the seed-backed
     # ConversationBufferService and the polling worker that drains the

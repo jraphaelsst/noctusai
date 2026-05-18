@@ -6124,6 +6124,91 @@ def validate_one_product(
     }
 
 
+_OUTLINE_SUFFIXES = {".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+_OUTLINE_SKIP_DIRS = {
+    "node_modules", ".venv", "venv", "dist", "build", "__pycache__",
+    ".git", ".pytest_cache", ".mypy_cache", ".claude",
+}
+_OUTLINE_SCAN_ROOTS = ("products", "seed", "mcp", "scripts", "noctusai_lib")
+
+
+def _iter_source_files(root: Path):
+    """Yield every outline-eligible source file under the scan roots,
+    skipping vendored / generated / worktree dirs."""
+    for rel_root in _OUTLINE_SCAN_ROOTS:
+        base = root / rel_root
+        if not base.exists():
+            continue
+        for p in base.rglob("*"):
+            if p.suffix.lower() not in _OUTLINE_SUFFIXES:
+                continue
+            if any(part in _OUTLINE_SKIP_DIRS for part in p.parts):
+                continue
+            yield p
+
+
+def check_files_outlined(
+    paths: list[Path] | None = None, repo_root: Path | None = None
+) -> list[dict]:
+    """Keeper: every source file must be AST-outline-able so the
+    AST-first / narrow-read tooling is always functional.
+
+    Predicate: `noctus.dev.outline` on the file must not raise, must not
+    return a dispatch `error`, and (Python) must not carry a
+    `parse_error` (an `ast.parse` SyntaxError). A failing file is one
+    the AST tooling cannot read — committing it degrades the platform's
+    AST optimization, so the pre-commit hook blocks it.
+
+    `paths=None` → full-platform scan (the `noctus.dev.scan_outlined`
+    audit). `paths=[...]` → only those (the pre-commit staged-files
+    gate). Return shape mirrors `check_phase_state_consistency`:
+    `[{"file": rel, "issue": str, "severity": "high"}]`.
+    """
+    root = repo_root or REPO_ROOT
+    from .outline import outline as _outline
+
+    if paths is None:
+        targets = list(_iter_source_files(root))
+    else:
+        targets = [Path(p) for p in paths]
+
+    issues: list[dict] = []
+    for fp in targets:
+        if fp.suffix.lower() not in _OUTLINE_SUFFIXES or not fp.exists():
+            continue
+        if any(part in _OUTLINE_SKIP_DIRS for part in fp.parts):
+            continue
+        try:
+            rel = str(fp.relative_to(root)) if fp.is_absolute() else str(fp)
+        except ValueError:
+            rel = str(fp)
+        try:
+            res = _outline(fp)
+        except Exception as e:  # noqa: BLE001 — un-outline-able by definition
+            issues.append({
+                "file": rel,
+                "issue": f"outline raised {type(e).__name__}: {e}",
+                "severity": "high",
+            })
+            continue
+        if res.get("error"):
+            issues.append({
+                "file": rel,
+                "issue": f"not outline-able: {res['error']}",
+                "severity": "high",
+            })
+            continue
+        result = res.get("result") or {}
+        pe = result.get("parse_error")
+        if pe:
+            issues.append({
+                "file": rel,
+                "issue": f"not AST-outline-able: {pe}",
+                "severity": "high",
+            })
+    return issues
+
+
 def register(server) -> None:
     desc_validate = "Check seed compliance for all products. Returns score 0-100."
 

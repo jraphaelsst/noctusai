@@ -15,6 +15,17 @@ git fetch origin && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]
 
 If divergent: STOP. Return `WORKTREE-BASE-DIVERGE: <head> ≠ <origin>` and do nothing else.
 
+## 1a. Anti-divergence on-disk verification (MANDATORY before any "ready"/success return)
+
+The harness file overlay can report `Edit`/`Write`/`Read` **success while the on-disk git worktree stays clean** — work exists only in the overlay and is **lost** when the agent ends. Real lost-work incidents (≥2): one engineer caught+recovered, one did not and its deliverable vanished. **Your own `git status`/`grep` are served the same diverged overlay, so a naive self-check passes falsely.** Before reporting ready:
+
+1. After staging, run `git -C <worktree> diff --cached --name-only` AND `git -C <worktree> status --porcelain` — your files MUST appear.
+2. `grep`/`cat` the **actual on-disk file** for the change text — not an Edit "success" message.
+3. Disk clean despite Edit "success" → divergence → **re-author via Bash** (`python -c`/libcst for `.py`; heredoc for SQL/prose) and re-verify on disk.
+4. Paste the literal `git diff --cached --name-only` + a `grep -c <marker> <file>` proof line in the return. "Report says done" is not evidence; **on-disk grep is**.
+
+**Architect-side corollary:** the architect verifies every salvaged worktree from its **own separate Bash context** (reads true disk) before committing — never trusts the engineer's report or self-verification block. A salvage `git commit` that says "nothing to commit" is the divergence tell. Divergence-clean worktree ⇒ do NOT loop-redispatch (it recurs) — apply the well-specified change architect-inline from the reliable context.
+
 ## 2. Stage-only contract (CRITICAL)
 
 - `git add` with **explicit paths only** — never `git add .` or `-A`

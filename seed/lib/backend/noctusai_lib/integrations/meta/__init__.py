@@ -10,8 +10,11 @@ account). Sibling to `google_calendar/`, `google_maps/`,
 
 **What ships:**
 - Value objects: `FacebookPage`, `InstagramAccount`, `FacebookPost`,
-  `InstagramMedia`, `PostInsights`, `MetaConnectionStatus`.
-- Contract: `MetaAdapter` (Protocol) — read-only v1.
+  `InstagramMedia`, `PostInsights`, `MetaConnectionStatus`,
+  `PublishedPost`, `PublishedMedia`, `AdCampaign`, `AdInsights`.
+- Contract: `MetaAdapter` (Protocol) — read surface + write/ads
+  surface (publish FB post / publish IG media / list ad campaigns /
+  ad insights).
 - `FakeMetaAdapter` — deterministic in-memory; dev/test default.
 - `MetaOAuthAdapter` — live Graph, **dual auth**: System User Token
   (production; required for Business-Portfolio-owned assets) →
@@ -34,10 +37,19 @@ account). Sibling to `google_calendar/`, `google_maps/`,
   `MetaOAuthAdapter` (`auth_mode="user_oauth"`).
 - neither → `FakeMetaAdapter` (safe dev/test fallback).
 
-Posting (FB Page post, IG publish) is **out of scope** (read-only
-v1; Meta App Review gates the write scopes). The Protocol is shaped
-for additive extension. TikTok + webhook subscriptions are separate
-future modules (`integrations/tiktok/`, `integrations/meta/webhooks/`).
+Posting (FB Page post, IG publish) and ads (campaign listing + ad
+insights) **SHIP** — added additively to the Protocol + Real + Fake;
+pre-existing read-only callers are unaffected. **Production needs the
+write scopes (`pages_manage_posts`, `instagram_content_publish`) and
+ads scopes (`ads_read`) approved through Meta App Review**: when the
+active token lacks a gated scope the live adapter raises
+`MetaGraphError` with `requires_app_review` true — never a silent or
+faked success. The App Review is a deployment-activation gate, not a
+reason to defer the code (mirrors `youtube.upload_video` shipping
+real code behind a credential gate). Full ads *management* (campaign
+create / update) is a separate follow-up. TikTok + webhook
+subscriptions are separate future modules (`integrations/tiktok/`,
+`integrations/meta/webhooks/`).
 
 OAuth start/callback is the generic `noctusai_lib.security.oauth`
 router's job (consumed as-is — this package does not duplicate the
@@ -67,6 +79,8 @@ from noctusai_lib.integrations.meta.mappers import (
 )
 from noctusai_lib.integrations.meta.router import make_meta_router
 from noctusai_lib.integrations.meta.types import (
+    AdCampaign,
+    AdInsights,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
@@ -74,6 +88,8 @@ from noctusai_lib.integrations.meta.types import (
     MetaAdapter,
     MetaConnectionStatus,
     PostInsights,
+    PublishedMedia,
+    PublishedPost,
 )
 
 
@@ -130,6 +146,8 @@ def get_meta_adapter(
 
 
 __all__ = [
+    "AdCampaign",
+    "AdInsights",
     "FacebookPage",
     "FacebookPost",
     "FakeMetaAdapter",
@@ -142,6 +160,8 @@ __all__ = [
     "MetaGraphError",
     "OAuthMetaCredentials",
     "PostInsights",
+    "PublishedMedia",
+    "PublishedPost",
     "discover_app_permissions",
     "exchange_code_for_token",
     "exchange_for_long_lived",

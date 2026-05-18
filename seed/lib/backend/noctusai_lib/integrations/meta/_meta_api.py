@@ -38,6 +38,15 @@ DEFAULT_MAX_PAGES = 5
 _AUTH_ERROR_CODES = {102, 190, 467}
 # Rate-limit Graph codes — per-app / per-user / per-page throttles.
 _RATE_LIMIT_CODES = {4, 17, 32, 613}
+# Permission Graph codes — the token / app lacks the capability for a
+# write or ads call. `10` = application does not have permission for
+# this action; `200` = permissions error (scope not granted). On a
+# write/ads path this almost always means the requested scope is gated
+# behind Meta App Review and has not been approved for the app. The
+# adapter surfaces this as `MetaGraphError.requires_app_review` so the
+# consumer can tell "needs App-Review-approved scope" apart from
+# "token expired" (`is_auth_error`) — never a silent or faked success.
+_PERMISSION_ERROR_CODES = {10, 200}
 
 # Kitchen-sink scope catalog. Versioned with the adapter, NOT in env
 # (env-var scope lists drift across workspaces — session-notes §A.1
@@ -90,6 +99,31 @@ class MetaGraphError(Exception):
     @property
     def is_rate_limited(self) -> bool:
         return self.code in _RATE_LIMIT_CODES
+
+    @property
+    def is_permission(self) -> bool:
+        """The token / app lacks the capability for this action.
+
+        Distinct from `is_auth_error` (token expired / revoked — fix by
+        re-issuing the token) — a permission error means the token is
+        valid but the requested scope was never granted to it."""
+
+        return self.code in _PERMISSION_ERROR_CODES
+
+    @property
+    def requires_app_review(self) -> bool:
+        """A write / ads scope this call needs is gated behind Meta App
+        Review and has not been approved for the app.
+
+        Surfaced so the consumer can branch deterministically: this is
+        a *production-activation* gate (submit the app for App Review,
+        get the write/ads scope approved), NOT a code defect and NOT a
+        transient error. Equal to `is_permission` — the permission
+        codes (`10`, `200`) on a write/ads path always trace to an
+        unapproved gated scope. Never raised as a silent or faked
+        success — the write path fails loud with this flag set."""
+
+        return self.is_permission
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (
@@ -194,6 +228,42 @@ def graph_paged(
     if limit is not None:
         return rows[:limit]
     return rows
+
+
+def graph_post(
+    path: str,
+    *,
+    access_token: str,
+    data: dict[str, Any] | None = None,
+    version: str = DEFAULT_GRAPH_VERSION,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """POST `{GRAPH_BASE}/{version}/{path}` with the token in the body.
+
+    The write twin of `graph_get`. `path` is version-relative (e.g.
+    `"{page_id}/feed"`, `"{ig_user_id}/media"`,
+    `"{ig_user_id}/media_publish"`, `"act_{id}/campaigns"`). The
+    token + form fields go in the POST body (Graph accepts
+    form-encoded writes).
+
+    Raises `MetaGraphError` on a Graph error envelope (even at HTTP
+    200) or a non-JSON body. A permission / unapproved-scope failure
+    surfaces as `MetaGraphError` with `is_permission` /
+    `requires_app_review` true — the caller MUST NOT swallow it into a
+    faked success (no-silent-errors)."""
+
+    form: dict[str, Any] = dict(data or {})
+    form["access_token"] = access_token
+    url = f"{GRAPH_BASE}/{version}/{path.lstrip('/')}"
+    resp = httpx.post(url, data=form, timeout=timeout)
+    body = _parse_json(resp)
+    _raise_for_graph_error(body, http_status=resp.status_code)
+    if not isinstance(body, dict):
+        raise MetaGraphError(
+            f"Expected JSON object from {path}, got {type(body).__name__}",
+            http_status=resp.status_code,
+        )
+    return body
 
 
 # ─── OAuth token chain ────────────────────────────────────────────────────
@@ -341,5 +411,6 @@ __all__ = [
     "exchange_for_long_lived",
     "graph_get",
     "graph_paged",
+    "graph_post",
     "resolve_oauth_scopes",
 ]

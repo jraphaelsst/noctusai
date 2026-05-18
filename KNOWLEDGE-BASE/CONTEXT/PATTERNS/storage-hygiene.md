@@ -1,6 +1,6 @@
 # Storage hygiene — the `mole` and the trio
 
-> **TL;DR.** Third member of the regulatory/curatorial/custodial trio. Keeper guards laws, hound sniffs out hygiene, **mole burrows for storage waste**. Three orthogonal scopes — `artifacts` (regenerable caches/builds), `environments` (venv/node_modules duplication), `worktrees` (stale `.claude/worktrees/agent-*/`). Active by default: pre-dispatch + pre-commit + post-merge.
+> **TL;DR.** Third member of the regulatory/curatorial/custodial trio. Keeper guards laws, hound sniffs out hygiene, **mole burrows for storage waste**. Three orthogonal scopes — `artifacts` (regenerable caches/builds), `environments` (venv/node_modules duplication), `worktrees` (stale `.claude/worktrees/agent-*/`). Active by default: pre-dispatch + pre-commit + post-merge. **MCP-exposed** as `noctus.dev.mole` (`mode=scan|sweep`, `scope`, `force`; `scripts/mole.sh` is the impl, `cleanup-stale-worktrees.sh` shares the worktree predicate). **Safe-gate:** `sweep` deletes only with `force=True`, and only merged-to-`main` (SHA-ancestry|patch-id) worktrees + regenerable artifacts — never uncommitted/unmerged/main/sibling/`.env`/migration content; caller must also confirm no agent is mid-flight in a target worktree (scan → eyeball → force-sweep). Project cleanup is the separate `noctus.dev.archive`.
 
 ---
 

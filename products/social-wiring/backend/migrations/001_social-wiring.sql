@@ -864,3 +864,18 @@ INSERT INTO social_wiring.status_pagina (nome_pagina, status) VALUES
     ('upload', 'producao'),
     ('videos', 'producao')
 ON CONFLICT (nome_pagina) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- service_role_bypass — keeper-audited canonical literal policy name.
+-- These 6 email_marketing tables are written by an admin/service-role
+-- client (app/modules/email_marketing/services/scheduler.py et al.). They
+-- already carry functionally-equivalent em_*_write_service_role policies;
+-- check_admin_endpoint_service_role_bypass enforces the canonical literal
+-- NAME for static auditability. Additive — existing policies untouched.
+-- ─────────────────────────────────────────────────────────────────────
+CREATE POLICY "service_role_bypass" ON social_wiring.contacts               FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON social_wiring.campaigns              FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON social_wiring.automation_enrollments FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON social_wiring.send_logs              FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON social_wiring.sender_domains         FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON social_wiring.unsubscribes           FOR ALL TO service_role USING (true) WITH CHECK (true);

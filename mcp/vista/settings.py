@@ -6,7 +6,8 @@ Design Principle #5 ("The MCP server reads its per-tenant
 inherits from this repo's `.env`"), this module owns Vista's auth
 config independently of the showcase adapter.
 
-Resolution order:
+Resolution order (the dotenv + env precedence machinery now lives in
+`_kit.settings` — vista composes it, identical behavior):
   1. Explicit constructor args to `VistaSettings(...)`
   2. Environment variables `VISTA_BASE_URL` + `VISTA_API_KEY`
   3. `.env` file in the same directory (dev convenience)
@@ -17,27 +18,15 @@ time, per the FastAPI dep-factory pattern noted in vista.md §1).
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-
-def _load_dotenv(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    out: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line or line.lstrip().startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        out[k.strip()] = v.strip().strip('"').strip("'")
-    return out
+from _kit.settings import ConnectorSettings, make_get_settings
 
 
 @dataclass(frozen=True)
-class VistaSettings:
+class VistaSettings(ConnectorSettings):
     """Vista per-tenant config carrier.
 
     Frozen so accidental mutation in tool handlers can't corrupt server
@@ -54,20 +43,15 @@ class VistaSettings:
         return bool(self.base_url) and bool(self.api_key)
 
 
-@lru_cache(maxsize=1)
-def get_settings() -> VistaSettings:
-    """Build VistaSettings from env + co-located .env (cached for the process).
-
-    Env vars win over the dotfile. Call `get_settings.cache_clear()` if
-    you need to re-read after process start (rare — the MCP server is
-    long-lived).
-    """
-    here = Path(__file__).resolve().parent
-    dot = _load_dotenv(here / ".env")
-    return VistaSettings(
-        base_url=os.environ.get("VISTA_BASE_URL") or dot.get("VISTA_BASE_URL"),
-        api_key=os.environ.get("VISTA_API_KEY") or dot.get("VISTA_API_KEY"),
-    )
+# Env wins over the co-located .env; cached for the process. Call
+# `get_settings.cache_clear()` to re-read after process start (rare —
+# the MCP server is long-lived). `timeout_seconds` keeps its dataclass
+# default (not env-mapped — vista's original never read it from env).
+get_settings = make_get_settings(
+    VistaSettings,
+    dotenv_dir=Path(__file__).resolve().parent,
+    env_map={"base_url": "VISTA_BASE_URL", "api_key": "VISTA_API_KEY"},
+)
 
 
 __all__ = ["VistaSettings", "get_settings"]

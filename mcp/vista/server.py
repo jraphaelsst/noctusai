@@ -19,68 +19,39 @@ Tool surface (Phase 1 — see KB § INTEGRATIONS/vista.md § 7):
 Per-tenant calibration (vista.md § 6) runs lazily on first call to
 imoveis/usuarios/agencias and caches per-process. Inspect via
 `vista.diagnostics.show_calibrated_fields`.
+
+The stdio bootstrap (sys.path trick, stderr logging, the Server +
+list_tools + call_tool + run loop) is shared across every connector MCP
+in `_kit.bootstrap` — this module just composes it.
 """
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
 import sys
 from pathlib import Path
 
-# Put `mcp/` on sys.path so `from vista.X import ...` resolves cleanly.
-# (The PyPI `mcp` package shadows our `mcp/` dir as a namespace, so we
-# import the Vista package as top-level `vista` instead — same trick as
-# `mcp/noctusai/server.py`.)
+# Put `mcp/` on sys.path so `from vista.X import ...` AND `from _kit.X
+# import ...` resolve cleanly. (The PyPI `mcp` package shadows our `mcp/`
+# dir as a namespace, so we import the Vista package as top-level `vista`
+# and the shared kit as top-level `_kit` — same trick as
+# `mcp/noctusai/server.py`.) This bare insert MUST happen before the
+# first `_kit` / `vista` import; `_kit.bootstrap.prepare_sys_path`
+# repeats it idempotently for connectors that import the kit differently.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Route logs to stderr — stdio MCP uses stdout for JSON-RPC.
-logging.basicConfig(
-    level=logging.INFO,
-    stream=sys.stderr,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-)
-logger = logging.getLogger("vista-mcp")
+from _kit.bootstrap import configure_stderr_logging, run_stdio_server
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import TextContent
+# Route logs to stderr — stdio MCP uses stdout for JSON-RPC.
+logger = configure_stderr_logging("vista-mcp")
 
 from vista.tools import all_descriptors, all_handlers
 
-server = Server("vista")
 _DESCRIPTORS = all_descriptors()
 _HANDLERS = all_handlers()
 
 
-@server.list_tools()
-async def list_tools():
-    return _DESCRIPTORS
-
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict):
-    handler = _HANDLERS.get(name)
-    if handler is None:
-        msg = {"error": f"unknown tool: {name}", "known_tools": sorted(_HANDLERS.keys())}
-        return [TextContent(type="text", text=json.dumps(msg))]
-    try:
-        result = await handler(arguments or {})
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-    except Exception as e:
-        logger.exception("vista tool %s raised: %s", name, e)
-        err = {"error_class": type(e).__name__, "message": str(e)}
-        return [TextContent(type="text", text=json.dumps(err))]
-
-
 async def _main():
-    logger.info(
-        "vista-mcp starting — %d tools registered: %s",
-        len(_DESCRIPTORS),
-        sorted(_HANDLERS.keys()),
-    )
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    await run_stdio_server("vista", _DESCRIPTORS, _HANDLERS, logger)
 
 
 if __name__ == "__main__":
