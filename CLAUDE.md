@@ -125,6 +125,9 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 
 ### Integrations (KB depth — vendor references)
 - OAuth integration patterns — cross-provider (5-layer model, scope auto-discovery, dual auth backends, single-consent bundling, post-consent introspection, CredentialStore Fernet, G1-G6 gotchas, Meta token-chain + auth-mode matrix, Google↔Meta scope-discovery diff, setup-guide template, in-seed-vs-gap audit) → `KB § INTEGRATIONS/oauth-patterns.md`
+- Meta Graph adapter consume-side (`noctusai_lib.integrations.meta` exact `__all__`; `get_meta_adapter` auth-resolution system_user→user_oauth→Fake; `make_meta_router` seam; read-only-v1 — posting/ads/webhooks out-of-scope) → `KB § INTEGRATIONS/meta.md`
+- WhatsApp connector consume-side (`noctusai_lib.integrations.whatsapp` exact `__all__`; WAHA `get_whatsapp_client` vs Meta-Cloud-API `get_meta_cloud_client`; `create_whatsapp_webhook_router` seam; lid-auth + dedup) → `KB § INTEGRATIONS/whatsapp.md`
+- Google integrations consume-side — Calendar/Maps/YouTube/Drive (each exact `__all__`; resolver/credential-store factory injection; YouTube quota-cost Protocol; Drive dual download+read Protocols; seed-ahead consumer status) → `KB § INTEGRATIONS/google.md`
 - Vista CRM REST API (auth, endpoints, error model, adapter contract, per-tenant calibration gap) → `KB § INTEGRATIONS/vista.md`
 
 ### Per-product details — open only the product you're working on
@@ -166,6 +169,9 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 | Touching gamified UI | `CLAUDE/frontend.md` + `KB § 07-GAMIFICATION.md` |
 | Designing an agent / MCP / skill | `KB § INSTRUCTIONS/00-MASTER.md` |
 | Touching OAuth / scope discovery / credential storage / a Meta or Google integration (token chain, dual auth, scope auto-discovery, post-consent introspection, CredentialStore, redirect-URI gotchas) | `KB § INTEGRATIONS/oauth-patterns.md` (read BEFORE designing — most patterns already ship in `noctusai_lib.{security.oauth,security.token_store,integrations.meta,integrations.google_scopes}`; doc cites paths + the 3 residual gaps) |
+| Wiring a product to **Meta** (Facebook Pages / Instagram Graph) — `get_meta_adapter`, factory auth modes, `make_meta_router`, what `__all__` actually ships | `KB § INTEGRATIONS/meta.md` (read BEFORE wiring — read-only-v1; posting/ads/webhooks out-of-scope-with-destination) |
+| Wiring a product to **WhatsApp** — WAHA `get_whatsapp_client` vs Meta-Cloud-API `get_meta_cloud_client`, webhook-router seam, lid-auth/dedup | `KB § INTEGRATIONS/whatsapp.md` (connector API; chatbot composition recipe is `KB § PATTERNS/whatsapp-chatbot-seed.md`) |
+| Wiring a product to **Google Calendar / Maps / YouTube / Drive** — which `__all__` ships, factory + resolver/credential-store injection, YouTube quota math, Drive dual Protocols | `KB § INTEGRATIONS/google.md` (consume-side; Cloud Console setup is `KB § GUIDES/google-oauth-setup.md`) |
 | Touching Vista CRM (showcase adapter, future MCP server, endpoint surface, field-set calibration) | `KB § INTEGRATIONS/vista.md` |
 | User says "two sessions" / "second Claude" / "architect/operator split" / "run a second window" / wants the inbox+outbox coordination pattern | `KB § PATTERNS/two-session-architect-operator.md` (Session A = Architect, no git; Session B = Operator, owns ALL git + dispatch exec + tail sweeps; coordinate via gitignored `dispatcher-inbox.md` + `dispatcher-outbox.md` at repo root; setup recipe + `/loop` variant + 5-question pilot rubric) |
 | Anything not listed | `KB § INDEX.md` |
