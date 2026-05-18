@@ -40,6 +40,10 @@ CLAUDE.md is a router; KB is depth; MEMORY.md is an index ([[feedback_codebase_s
 
 **Registers are not prose.** accept-with-rationale catalog, ledger, divergence registers = data; their entries are the record. Symbol-tighten exposition, never "compress" a register.
 
+### 3a · Always-doc the trim — provenance, never silent (2026-05-18)
+
+A trim / de-drift / de-dup is **¬ a silent deletion** — it leaves a **tracked provenance breadcrumb in-place**: *when · why · what-was-removed · where-the-source-of-truth-is-now*. Applies to **both** a trim you do now (future-trimming) ∧ a trim already done that you discover lacks a breadcrumb (already-trimmed → add one retroactively, fix-on-contact). Without it a future agent re-adds the drift (the exact failure that produced the AGENT-CONTEXT.md stale roster — a hand-table re-grown after a prior silent removal), or wastes time hunting where the data went. The breadcrumb is short (a `> **Trimmed YYYY-MM-DD (always-doc-the-trim)** …` blockquote at the trim site) ∧ points at the authoritative source. Hand-maintained data that duplicates an auto-derived source is itself a drift generator → trim-to-pointer is the *root* fix, ¬ patch-the-number. This is `no-silent-errors` ∧ `durable-docs-self-contained` applied to the deletion itself. Worked example: AGENT-CONTEXT.md roster trim, this session.
+
 ---
 
 ## 4 · Symbol-first, scan-enforced

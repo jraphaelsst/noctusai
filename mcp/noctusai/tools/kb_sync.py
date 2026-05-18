@@ -288,14 +288,31 @@ def _product_stats(repo: Path, product_path: str) -> dict[str, int]:
 
 
 def _count_mcp_tools(repo: Path) -> int:
-    server = repo / "mcp" / "noctusai" / "server.py"
-    if not server.is_file():
+    """Count registered MCP tools across the hierarchical ``tools/`` package.
+
+    Restructure-proof: the canonical registration idiom is one
+    ``@server.tool`` decorator per tool (FastMCP), plus legacy ``_tool(``
+    alias registrations. The old counter scanned flat ``_tool(`` in
+    ``server.py``; the 2026-05 scripts-mcp-absorption restructure moved
+    registration into ``tools/**`` modules (``server.py`` now just calls
+    ``register_all``), so the old pattern returned 0 — a doc-code-coherence
+    drift surfaced by the 2026-05-18 clean-context onboarding self-test and
+    fixed in-flight. Counting the decorator (exactly one per tool) is the
+    stable invariant regardless of where within ``tools/`` a tool lives.
+    """
+    tools_dir = repo / "mcp" / "noctusai" / "tools"
+    if not tools_dir.is_dir():
         return 0
-    return len(
-        re.findall(
-            r"^\s*_tool\(", server.read_text(encoding="utf-8"), re.MULTILINE
-        )
-    )
+    pat = re.compile(r"^\s*(?:@server\.tool\b|_tool\()", re.MULTILINE)
+    total = 0
+    for py in tools_dir.rglob("*.py"):
+        if ".venv" in py.parts or "__pycache__" in py.parts:
+            continue
+        try:
+            total += len(pat.findall(py.read_text(encoding="utf-8")))
+        except OSError:
+            continue
+    return total
 
 
 def _count_schema_tables(repo: Path) -> dict[str, int]:
@@ -372,7 +389,7 @@ def _render_database(repo: Path) -> str:
 
 def _render_mcp_tools(repo: Path) -> str:
     n = _count_mcp_tools(repo)
-    return f"**{n} tools total** (auto-counted from `mcp/noctusai/server.py`).\n"
+    return f"**{n} tools total** (auto-counted from `mcp/noctusai/tools/`).\n"
 
 
 def _render_agent_context_tools(repo: Path) -> str:

@@ -5,7 +5,7 @@
 
 ## What is NoctusAI?
 
-Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. **7 products**, 1 seed framework, 1 MCP dev toolkit. (AdConnect is a WIP scaffold at `products/adconnect/`, currently gitignored and not part of the live platform.)
+Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. **Multiple products** (authoritative count/roster: `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`, auto-derived from `public.products` — never hand-count here, it drifts), 1 seed framework, 1 MCP dev toolkit. (AdConnect is a WIP scaffold at `products/adconnect/`, currently gitignored and not part of the live platform.)
 
 ## The Seed (most important concept)
 
@@ -19,15 +19,9 @@ Products IMPORT from the seed. They never duplicate it. Read `seed/README.md` fo
 
 ## Products
 
-| Product | Schema | Backend | Frontend | Status |
-|---------|--------|---------|----------|--------|
-| Core | `public` | 8000 | 5173 | Platform hub, auth, billing |
-| ERP Imobiliario | `erp` | 8001 | 8080 | Real estate CRM |
-| Personal Finance | `personal-finance` | 8002 | 8090 | Financial management |
-| Therapy Platform | `therapy` | 8003 | 8095 | Online therapy |
-| Seed | `seed` | 8004 | 8100 | Reference implementation (inactive) |
-| Daily Life | `daily_life` | 8005 | 8110 | Personal productivity |
-| Mailing | `mailing` | 8006 | 8120 | Email marketing & automations |
+**Authoritative product roster (products / schemas / ports / status) → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`** (its `kb-counts:inventory` block is auto-derived from `public.products` — single source of truth).
+
+> **Trimmed 2026-05-18 (always-doc-the-trim — provenance, not silent).** A hand-maintained roster table lived here and **drifted** (listed retired `mailing/8006`; missed `social-wiring`). Per DRY / docs-stay-in-sync, a parallel hand-table is a drift generator — removed, replaced by this pointer to the auto-derived source. Do **not** re-add a product table here; consume `02-LANDSCAPE.md`. Surfaced by the 2026-05-18 clean-context onboarding self-test.
 
 Products are registered in `public.products` table (Supabase). The Core dashboard reads from this table dynamically.
 
@@ -65,7 +59,7 @@ Single root `.env` for everything. Backend vars: `SUPABASE_URL`, `SUPABASE_ANON_
 ## MCP Dev Toolkit
 
 <!-- kb-counts:start:agent_context_tools -->
-0 tools
+97 tools
 <!-- kb-counts:end:agent_context_tools --> exposed as an MCP server at `mcp/noctusai/`. CLI wrapper for humans:
 
 ```bash

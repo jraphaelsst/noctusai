@@ -50,3 +50,5 @@ Each line: *what to read → what you'll know after.* Stop when you have enough 
 ## 5. You're contextualized
 
 You now know: what the platform is, the core docs + where depth lives, the non-negotiable mental model, the trigger phrases. **Proceed with the user's actual task.** Pull depth on-demand via `CLAUDE.md` §2/§3 + `KNOWLEDGE-BASE/INDEX.md` — do not pre-read everything (that wastes tokens; the methodology values lean context). Welcome aboard.
+
+> *Provenance: this ramp is **clean-context-agent-verified** (not asserted) — first validated 2026-05-18 by dispatching a zero-context agent given only "please contextualize"; it passed (oriented after ~2 files) and surfaced 2 doc-drift bugs, fixed in-flight. Re-run that self-test after material changes to the core onboarding docs (memory `feedback_new_session_contextualization`).*
