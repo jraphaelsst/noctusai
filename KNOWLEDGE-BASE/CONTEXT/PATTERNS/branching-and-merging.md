@@ -1652,3 +1652,53 @@ They serve different audiences:
 - KB §17.6 — Engineer-brief Write-authorization template uses `Engineer <LETTER>` as the opening line.
 
 **Three-way-synced 2026-05-11**: this subsection (§20) + memory entry `feedback_engineer_letter_naming.md` + CLAUDE.md §1 universal-rules pointer (no new bullet — KB pointer suffices since §20 is self-contained convention).
+
+---
+
+## 21. Collision-class branching + dispatch-time merge strategy (NEW 2026-05-18)
+
+Refined from the 2026-05-18 multi-branch session (6 isolated branches converging alongside one active parallel agent — "swiss-watch" mode). Core shift: **merge cleanliness is decided at DISPATCH time, ¬ discovered at MERGE time.** Parallelizability of deferred/blocked work is **¬ binary** (disjoint ∨ not) — it is a 3-class taxonomy, each class carrying a fixed strategy.
+
+### 21.1 — The three collision classes
+
+Classify the would-be branch's edit-set against the **parallel-active file set**:
+
+- **C1 file-disjoint** — touches no file the parallel work touches ⇒ **parallel-clean**; trivial FF/merge. *(e.g. `seed-pin-dedup` `mcp/{meta,google}` vs parallel `scripts/`+`mcp/noctusai/`.)*
+- **C2 same-file-additive** — touches shared files but **only additively** (new files + appended lines, ¬ restructuring existing content) ⇒ constrain the engineer to **additive-only in the brief**; the §10.4 concat heuristic then makes the 3-way merge clean *by construction*. *(e.g. `r-rules-kb` new KB docs + appended CLAUDE.md/INDEX pointers; `github-mcp` pointers.)*
+- **C3 same-file-substantive-overlap** — must restructure/edit the same regions of shared code the parallel work edits ⇒ **¬ cleanly branch-parallelizable**. Two valid responses: **(a) re-scope** to a parallel-clean sibling file (same deliverable, C3→C1 — e.g. `platform-compliance-A` scoped to `test_compliance.py` [parallel-clean] ¬ `compliance.py` [parallel-dirty]); **(b) sequence** behind the parallel merge (wave / pause-on-dependency §18).
+
+### 21.2 — Dispatch-time class determination is mandatory ∧ evidence-based
+
+Before branching deferred work: `git diff --name-only` / `git status` the parallel-active set, classify each contended file. Asserting C1 without checking = estimate-off-evidence violation. **The class drives the brief**: C2 ⇒ explicit "additive-only (new files + appended lines, zero restructure)" clause; C3-rescope ⇒ scope to the clean sibling + name the avoided file; C3-sequence ⇒ ¬ dispatch yet.
+
+### 21.3 — Time-dependent base selection
+
+Base is a function of **parallel-agent liveness**, decided per-dispatch:
+- Parallel agent **ACTIVE** ⇒ branch off `origin/main` (stable shared base; the parallel tip is a moving target — stale-base + collision risk).
+- Parallel agent **DONE** ⇒ rebase the not-yet-started worktree onto the final parallel tip (`git -C <wt> reset --hard <feat-tip>`) so merge-back is FF/trivial (no moving target remains). *(e.g. `pc-a` + `mm-close` reset to feat tip once parallel done.)*
+
+### 21.4 — Commit-on-ship for isolated-branch deliverables
+
+A shipped ∧ architect-verified complete task on its own isolated branch is committed **immediately** (per-deliverable commit gate) — ¬ left staged awaiting a batch. Accumulating verified-shipped-uncommitted branches violates terminal-commit-guarantee ∧ risks loss. *(User-corrected 2026-05-18: "you should've already, as you shipped a complete task".)*
+
+### 21.5 — Architect true-disk verification precedes every per-branch commit
+
+Engineer-default §1a corollary, applied **per-branch**: never trust the engineer report; `git -C <wt> diff --cached --name-only` + `grep`/`cat` the on-disk change text from the architect's **own Bash context** before committing each branch. The per-branch discipline that makes a multi-branch convergence reliable rather than hopeful.
+
+### 21.6 — Shared-`.git/hooks` ↔ worktree-base mismatch: sanctioned-bypass protocol (N≥4 2026-05-18)
+
+Worktrees share one `.git/hooks/pre-commit`; a worktree forked off an **older base** has a `cli.py` predating flags the newer installed hook calls (`--check-outlined`, `--update-kb-counts`). Recurred ≥4× in one session. **Standing protocol:** `git commit --no-verify <explicit paths>` + **(a)** the bypass rationale written into the commit body, **(b)** independent verification substituting for the skipped hook (AST-parse the staged `.py`, run `verify-kb-sync` manually, tests green). Structural-fix follow-up (named, ¬ silent): the hook should tolerate-missing-cli-flags ∨ detect base-mismatch — destination = a `scripts/pre-commit`/`cli.py` robustness follow-up. Safety-net→learning→methodology instance (`KB § 01-PHILOSOPHY.md § Safety nets`).
+
+### 21.7 — Closure durable-home routing: accept-catalog ≠ memory
+
+When closing a deferred/blocked project, route the durable substance by **shape**:
+- An **accepted divergence** (a real deviation from ideal, knowingly kept) → `KB § PATTERNS/accept-with-rationale.md`.
+- A **deferred concept with design rationale** (¬ a divergence-acceptance — a future idea parked on evidence) → a self-contained memory entry (`type: project`) + `ledger.ndjson` close record. **NOT** the accept-catalog, **NOT** archive-anchored (durable-docs-self-contained).
+
+Don't default everything to accept-with-rationale — it is for divergences, ¬ deferred concepts. *(User-directed 2026-05-18: "please do not accept with rationale if possible" for `methodology-mirror` closure.)*
+
+### 21.8 — Wave-gated convergence
+
+Don't finalize a multi-branch convergence **or** a phased-push while ANY chunk is still in flight; the **last-running chunk gates converge+push** (wave-based-dispatch §18 applied to the *merge* wave, ¬ just the dispatch wave). Convergence order = least-conflict-first (C1 → C2 → C3-resolved).
+
+**Three-way-synced 2026-05-18**: this section (§21) + memory entry `feedback_collision_class_branching.md` + CLAUDE.md §1 wave-based-dispatch bullet (amended clause + pointer — §21 extends the existing bullet, no new bullet).
