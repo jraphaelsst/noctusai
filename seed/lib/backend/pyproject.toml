@@ -9,6 +9,14 @@ description = "Backend code library for all NoctusAI products"
 requires-python = ">=3.9"
 dependencies = [
     "fastapi>=0.115.0",
+    # FastAPI 0.115.0 declares starlette>=0.37.2,<0.39.0 but the floor-only
+    # transitive resolution let the env pull starlette 1.0.0 (which removed the
+    # Router on_startup/on_shutdown kwargs FastAPI 0.115 still passes) → 14
+    # router tests failed across whatsapp/meta/google_scopes with an identical
+    # `Router.__init__() got an unexpected keyword argument 'on_startup'`.
+    # Explicit bound = the root fix (WA-FIX diagnosis 2026-05-18). Bump in
+    # lock-step with any future fastapi bump.
+    "starlette>=0.37.2,<0.39.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.2",
     "supabase>=2.9.1,<2.10",  # 2.10+ dropped ClientOptions.storage; matches product exact-pin to ==2.9.1
