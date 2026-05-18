@@ -638,6 +638,8 @@ When a seed / shared-lib / framework change ripples to consumers, do **NOT** ada
 
 **Unifies.** defer≠resolve R5 (don't de-scope resolvable work) ∧ commit-on-ship §21.4 (resolution ships in the deliverable's commit) ∧ accept-with-rationale (a real landing only when resolution is genuinely not-now-appropriate — clear-path/recurrence flips `[A]→[F]` resolve). Plan the in-flight resolution at the moment the deferral/accept is *considered*, not at retro.
 
+**Includes ALL in-flight AI↔AI communication artifacts.** `findings.md`, the `.claude/dispatcher.md` Inbox/Outbox, `live-patterns-log.md`, engineer return-notes, in-flight `proposals/*`, the LOUD-surfaced improvements of the always-hardening contract — every machine-authored-and-consumed surface generated *during* execution — is an **in-the-moment capture surface, ¬ a defer-to-retro parking lot**. An entry with a clear resolution/codification/action path is **processed in-flight** — resolved ∨ three-way-codified ∨ actioned in the **same commit/checkpoint** — never left as stale work for a "later synthesis"/"later drain" pass. Only genuinely-unclear / needs-decision items await retro (surfaced, ¬ silent). Append-in-the-moment stays (freshness), but *appended ≠ deferred*: the actionable ones get actioned before the deliverable ships. Stale AI↔AI-comms-for-later = the §2.13 anti-pattern applied to the coordination/knowledge artifacts.
+
 **Anti-patterns.** "I'll file a follow-up for that" when the fix is clear + in-scope + cheap. Accept-with-rationale used as a parking lot for resolvable divergences. Splitting a deliverable's commit from its own clear-path remediation. Discovering at retro a clear fix that should have shipped in the pass.
 
 User directives, verbatim:
