@@ -43,8 +43,9 @@ def _clear_settings_cache():
 
 def test_package_imports():
     import schemas  # noqa: F401
-    from tools import calendar, drive, maps, youtube  # noqa: F401
+    from tools import calendar, drive, gmail, maps, youtube  # noqa: F401
     from noctusai_lib.integrations import (  # noqa: F401
+        gmail as gmail_seed,
         google_calendar,
         google_drive,
         google_maps,
@@ -78,6 +79,9 @@ def test_exact_tool_name_set():
         "google.drive.download",
         "google.drive.search",
         "google.drive.read_file",
+        "google.gmail.send_message",
+        "google.gmail.list_messages",
+        "google.gmail.get_message",
     }
 
 
@@ -106,6 +110,57 @@ def test_settings_oauth_requires_full_trio():
         oauth_refresh_token="rt",
     )
     assert full.oauth_configured is True
+
+
+# ─── Gmail ───────────────────────────────────────────────────────────────
+
+
+def test_gmail_send_blocked_without_confirm():
+    """WRITE GATE: confirm omitted ⇒ typed error, nothing sent."""
+    h = all_handlers()
+    out = _run(
+        h["google.gmail.send_message"](
+            {"to": "x@y.com", "subject": "hi", "body_text": "hello"}
+        )
+    )
+    assert out["sent"] is None
+    assert out["adapter"] == "unconfirmed"
+    assert out["error"]["error_class"] == "PermissionError"
+
+
+def test_gmail_send_with_confirm_uses_fake():
+    h = all_handlers()
+    out = _run(
+        h["google.gmail.send_message"](
+            {
+                "to": "x@y.com",
+                "subject": "hi",
+                "body_text": "hello",
+                "confirm": True,
+            }
+        )
+    )
+    assert out["adapter"] == "fake"
+    assert out["sent"] is not None
+    assert out["sent"]["message_id"]
+    assert out["sent"]["thread_id"]
+    assert "error" not in out
+
+
+def test_gmail_list_messages_no_confirm_gate():
+    h = all_handlers()
+    out = _run(h["google.gmail.list_messages"]({}))
+    assert out["adapter"] == "fake"
+    assert isinstance(out["messages"], list)
+    assert "error" not in out
+
+
+def test_gmail_get_message_missing_returns_null():
+    h = all_handlers()
+    out = _run(h["google.gmail.get_message"]({"message_id": "does-not-exist"}))
+    assert out["adapter"] == "fake"
+    assert out["message"] is None
+    assert "error" not in out
 
 
 # ─── Calendar ────────────────────────────────────────────────────────────

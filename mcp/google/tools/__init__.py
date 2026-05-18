@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from _kit.registry import build_registry
 
-from tools import calendar, drive, maps, youtube
+from tools import calendar, drive, gmail, maps, youtube
 
 
-LEAF_MODULES = (calendar, maps, youtube, drive)
+LEAF_MODULES = (calendar, maps, youtube, drive, gmail)
 
 all_handlers, all_descriptors, register_all = build_registry(LEAF_MODULES)
 

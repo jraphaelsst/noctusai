@@ -365,7 +365,95 @@ class ReadFileOutput(BaseModel):
     adapter: str = Field(description="'fake' (no creds) or 'real'.")
 
 
+# ─── Gmail ───────────────────────────────────────────────────────────────
+
+
+class SendMessageInput(BaseModel):
+    to: str = Field(description="To: header. One or more comma-separated addresses.")
+    subject: str = Field(
+        description="Subject: header (truncated to 998 chars by the adapter)."
+    )
+    body_text: str = Field(description="text/plain body (always sent).")
+    body_html: Optional[str] = Field(
+        default=None,
+        description="Optional text/html body → message becomes multipart/alternative.",
+    )
+    cc: Optional[str] = Field(default=None, description="Optional Cc: (comma-sep).")
+    bcc: Optional[str] = Field(
+        default=None, description="Optional Bcc: (envelope-only, not in headers)."
+    )
+    confirm: bool = Field(
+        default=False,
+        description=(
+            "WRITE GATE — must be explicitly true to send. False (default) "
+            "returns a typed error without sending. Requires the gmail.send "
+            "scope on the real adapter; OAuth-only (no api-key path)."
+        ),
+    )
+
+
+class SendResultModel(BaseModel):
+    message_id: str
+    thread_id: str
+
+
+class SendMessageOutput(BaseModel):
+    sent: Optional[SendResultModel] = None
+    adapter: str = Field(description="'fake' (no OAuth creds) or 'real'.")
+
+
+class GmailMessageModel(BaseModel):
+    id: str
+    thread_id: str
+    from_: str = Field(description="From: header (the dataclass `from_` field).")
+    to: str
+    subject: str
+    snippet: str
+    body_text: str
+    body_html: str
+    received_at: str = Field(description="ISO-8601 datetime string.")
+    label_ids: list[str] = Field(default_factory=list)
+
+
+class ListMessagesInput(BaseModel):
+    query: Optional[str] = Field(
+        default=None, description="Gmail search syntax, e.g. 'is:unread from:x@y'."
+    )
+    label: Optional[str] = Field(
+        default=None, description="Restrict to one label id (INBOX/SENT/...)."
+    )
+    page_token: Optional[str] = Field(
+        default=None, description="Opaque nextPageToken from a prior page."
+    )
+
+
+class ListMessagesOutput(BaseModel):
+    messages: list[GmailMessageModel] = Field(default_factory=list)
+    next_page_token: Optional[str] = None
+    result_size_estimate: int = 0
+    adapter: str = Field(description="'fake' (no OAuth creds) or 'real'.")
+
+
+class GetMessageInput(BaseModel):
+    message_id: str = Field(description="Gmail message id.")
+
+
+class GetMessageOutput(BaseModel):
+    message: Optional[GmailMessageModel] = Field(
+        default=None, description="None when the message is missing/deleted."
+    )
+    adapter: str = Field(description="'fake' (no OAuth creds) or 'real'.")
+
+
 __all__ = [
+    "SendMessageInput",
+    "SendResultModel",
+    "SendMessageOutput",
+    "GmailMessageModel",
+    "ListMessagesInput",
+    "ListMessagesOutput",
+    "GetMessageInput",
+    "GetMessageOutput",
     "CalendarAttendeeModel",
     "CreateEventInput",
     "CreatedEventModel",
