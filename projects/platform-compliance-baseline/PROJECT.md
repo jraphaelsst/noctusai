@@ -49,16 +49,33 @@ mechanically applying per cluster. Decide the **`score==100` gate contract**
 
 ## 6. Implementation phases (wave-based, pilot-first)
 
-- **P0 — categorize + gate decision.** Full 637 dump by detector×product.
-  Resolve §7 (gate contract) WITH the user — it scopes everything downstream.
-- **P1 — silent-except sweep** (seed/mcp first — pilots: erp/therapy/social-
-  wiring + core). Mechanical once the logging convention is reaffirmed.
-- **P2 — test_patch_target refactor** (erp the bulk; DI/inserted_payloads
-  pattern; per test-file clusters, parallelizable).
-- **P3 — therapy high-sev monkeypatch** (same pattern, high priority).
-- **P4 — seed-version-drift detector tolerance** (1-commit stamp lag).
-- **P5 — verify:** `check_all_products()` → target; the 2 gate tests green
-  (or re-specified per §7).
+- **P0 ✅ — categorize + gate decision.** `check_all_products()` ⇒ score
+  100 but 18 high/critical (2 seed-drift `<platform>` + 1 archive-staleness
+  `<root>` = non-deterministic env artifacts; 15 therapy-platform
+  monkeypatch-high). §7 resolved WITH the user ⇒ **(A)**.
+  - [x] Full high/critical dump by product
+  - [x] §7 gate contract resolved with user = (A)
+- **P5 ✅ — gate re-spec + verify (the only gating phase under (A)).**
+  - [x] Both gate tests re-spec'd to regression semantics (libcst,
+        AST-first); absolute score now informational (`print`, not assert)
+  - [x] Committed deterministic baseline `compliance_baseline.json` (12
+        fingerprints) + regenerable `refresh_compliance_baseline.py`
+  - [x] 2 remediation conventions + the new gate pattern formalized in KB
+        (3 docs) + CLAUDE.md §2 + INDEX.md additive pointers; verify-kb-sync ✅
+  - [x] `pytest mcp/noctusai/tests/ -q` ⇒ **1349 passed** (gate tests green
+        under regression semantics; llm-collection fix-on-contact applied)
+- **P1-P4 — NON-gating under (A); deferred-with-destination (NOT executed
+  here).** Mechanical fleet sweeps that *drain* the baseline (shrink it);
+  not required for the gate to be green. Destinations:
+  - **P1 silent-except sweep** → incremental per-pilot follow-up, drain via
+    `KB § PATTERNS/logging-at-except.md`; baseline shrinks per resolved site.
+  - **P2 test_patch_target refactor (erp bulk)** → incremental, drain via
+    `KB § PATTERNS/di-test-seam.md`; parallelizable per test-file cluster.
+  - **P3 therapy high-sev monkeypatch (the 12 baseline fingerprints)** →
+    same DI-seam destination; highest-priority drain candidate.
+  - **P4 seed-version-drift tolerance** → SUPERSEDED: env-artifact classes
+    (seed-drift / archive- / dispatcher-staleness) are now excluded from
+    BOTH the baseline and the live set (no detector change needed).
 
 ## 7. Open questions (USER DECISION — surfaced, not silently chosen)
 
@@ -73,6 +90,10 @@ new keeper detector lowers it by surfacing pre-existing debt. Options:
 - **(C) accept-with-rationale** the 2 gate tests at the current baseline with
   a documented target, no contract change.
 
+**DECISION (locked 2026-05-18 by the user): (A).** Gate re-spec'd to
+regression semantics + absolute score informational. Recorded; scopes the
+project ⇒ only P0/P5 are gating, P1-P4 = non-gating incremental drains.
+
 ## 9. Success criteria
 
 `check_all_products()` at the agreed target; the 2 compliance gate tests
@@ -85,3 +106,15 @@ P0 first, and **resolve §7 with the user before P1** — the gate contract
 scopes the entire project. Fresh worktree; pilot-products-first cadence
 (`KB § PATTERNS/project-execution.md § 2.12`); engineers obey
 `.claude/agents/engineer-default.md`.
+
+---
+
+## 11. Change log
+
+| Date | Entry | By |
+|---|---|---|
+| 2026-05-18 | §7 resolved with user ⇒ **(A)** regression-semantics gate; recorded in §7. P0 ✅ + P5 ✅ (the only gating phases under A). | PC-A |
+| 2026-05-18 | Both `score==100` gate tests re-spec'd via libcst → "no NEW high/critical vs committed `compliance_baseline.json`"; absolute score now informational (`print`, never asserted). New `compliance_baseline.json` (12 deterministic fingerprints) + regenerable `refresh_compliance_baseline.py`. Env-artifact classes (seed-drift/archive-/dispatcher-staleness) excluded both sides ⇒ P4 SUPERSEDED. | PC-A |
+| 2026-05-18 | 3 KB pattern docs added (compliance-regression-baseline + di-test-seam + logging-at-except) + CLAUDE.md §2 + INDEX.md additive pointers; `verify-kb-sync` ✅. 2 remediation conventions formalized as first-class named docs (pointer-shaped, no duplication of the authoritative testing.md/logging.md depth — DRY). | PC-A |
+| 2026-05-18 | fix-on-contact: regenerator's `sys.path.insert(tools/)` shadowed the real `google` SDK → 7 llm test-module collection errors; pre-existing-vs-introduced verified by stash-and-rerun; fixed (package-root path only + importlib-contained helper load). `pytest mcp/noctusai/tests/ -q` ⇒ **1349 passed**. | PC-A |
+| 2026-05-18 | P1-P4 fleet sweeps are NON-gating under (A) — recorded deferred-with-destination (incremental per-pilot drains via the 2 remediation-convention KB docs); NOT executed this session. Gating scope (P0/P5) complete; drain backlog open. | PC-A |

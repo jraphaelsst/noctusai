@@ -23,6 +23,38 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
 
 
+# ---------------------------------------------------------------------------
+# Regression-gate helpers (Option A — `projects/platform-compliance-baseline`
+# §7(A), locked 2026-05-18). The 2 platform-health gate tests assert "no NEW
+# high/critical vs the committed baseline"; the absolute score is informational.
+# `fingerprint` / `is_env_artifact` / `live_high_critical_fingerprints` are
+# imported from the colocated regenerator so the gate and the baseline-refresh
+# compute the live set identically (single source of truth — no drift).
+# ---------------------------------------------------------------------------
+import importlib.util as _ilu
+import json as _json
+
+# Load the colocated regenerator by explicit file path WITHOUT mutating the
+# global sys.path — a tests/-dir sys.path insert shadows the real `google`
+# SDK for sibling llm test modules (caught 2026-05-18). importlib keeps the
+# import contained to this module.
+_rcb_spec = _ilu.spec_from_file_location(
+    "refresh_compliance_baseline",
+    str(Path(__file__).resolve().parent / "refresh_compliance_baseline.py"),
+)
+_rcb = _ilu.module_from_spec(_rcb_spec)
+_rcb_spec.loader.exec_module(_rcb)
+_BASELINE_PATH = _rcb.BASELINE_PATH
+fingerprint = _rcb.fingerprint
+is_env_artifact = _rcb.is_env_artifact
+live_high_critical_fingerprints = _rcb.live_high_critical_fingerprints
+
+
+def _load_baseline_fingerprints() -> set[str]:
+    data = _json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
+    return set(data["fingerprints"])
+
+
 class TestSeedCompliance:
     def test_seed_product_is_compliant(self):
         issues = check_seed_compliance(PRODUCTS_DIR / "seed")
@@ -31,24 +63,39 @@ class TestSeedCompliance:
     def test_mailing_is_compliant(self):
         issues = check_seed_compliance(PRODUCTS_DIR / "mailing")
         assert len(issues) == 0, f"Mailing has issues: {issues}"
-
     def test_all_products_compliant(self):
-        """Platform-wide compliance health gate.
+        """Platform-wide compliance REGRESSION gate (Option A — locked
+        2026-05-18 by the user, ``projects/platform-compliance-baseline``
+        §7(A)).
 
-        Restored to ``score == 100`` on 2026-05-11 after the
-        slowapi-baseline-cleanup project dropped
-        ``from __future__ import annotations`` from the 4 PEP 563
-        baseline files (adconnect/financial, imobi-scheduling +
-        media-scheduling + seed webhook routers). The residual
-        therapy-platform ``ai_pipeline.py`` warning (3-point penalty)
-        averages out across 12 products to 100 after rounding.
-        Baseline pin lives in
-        ``TestCheckSlowapiWithPep563.test_real_repo_baseline_known_cases``.
+        The old ``score == 100`` gate was aspirational, not a regression
+        detector: every new keeper detector retroactively surfaces old
+        pre-existing debt and would red CI. Re-spec:
+
+          * GATE = **no NEW high/critical issue** vs the committed
+            ``tests/compliance_baseline.json`` fingerprint set.
+          * The absolute platform score is tracked **informationally**
+            (printed via ``capsys``/stdout, NEVER asserted).
+
+        Refresh the baseline only via
+        ``tests/refresh_compliance_baseline.py`` when debt is intentionally
+        resolved (shrink) or a new class is triaged-accepted (grow, with a
+        cited decision). See that file's header.
         """
-        score, issues = check_all_products()
-        assert score == 100, (
-            f"Platform score {score} below the strict 100 gate. "
-            f"Issues: {issues}"
+        score, live_fps = live_high_critical_fingerprints()
+        baseline = _load_baseline_fingerprints()
+        new_high_critical = sorted(set(live_fps) - baseline)
+        # Informational only — the absolute score is NOT a gate under (A).
+        print(
+            f"[compliance][informational] platform absolute score={score} "
+            f"high/critical-fingerprints live={len(live_fps)} "
+            f"baseline={len(baseline)} regressions={len(new_high_critical)}"
+        )
+        assert not new_high_critical, (
+            "NEW high/critical compliance issue(s) vs the committed baseline "
+            "(regression — fix the new issue, do NOT silently grow the "
+            f"baseline): {new_high_critical}. Absolute score (informational): "
+            f"{score}."
         )
 
     def test_detects_boilerplate_router(self):
@@ -290,21 +337,19 @@ class TestAIFeatureCompleteness:
         )
         issues = check_ai_feature_completeness(product)
         assert [i for i in issues if "ai_service.py" in i["file"]] == []
-
     def test_real_products_pass_validate(self):
-        """All 8 live products pass the AI-feature-completeness detector —
-        verifies the detector doesn't false-positive on the actually-shipped
-        Tier 1 features.
+        """All live products pass the AI-feature-completeness detector, AND
+        no NEW high/critical compliance regression vs the committed baseline.
 
-        Restored to ``score == 100`` on 2026-05-11 after the
-        slowapi-baseline-cleanup project. See
-        ``TestCheckSlowapiWithPep563.test_real_repo_baseline_known_cases``.
+        Re-spec 2026-05-18 (Option A — ``projects/platform-compliance-
+        baseline`` §7(A)): the broad ``score == 100`` assertion is replaced
+        by the regression gate (no NEW high/critical vs
+        ``tests/compliance_baseline.json``); the absolute score is
+        informational. The narrow AI-feature intent is unchanged.
         """
         score, issues = check_all_products()
-        # The narrow intent: AI-feature-completeness detector finds no
-        # issues in shipped Tier 1 features. Inspect via the detector's
-        # signature phrasing rather than filename matching (which
-        # over-matched ai_router test files).
+        # Narrow intent (unchanged): AI-feature-completeness detector finds
+        # no issues in shipped Tier 1 features.
         ai_feature_issues = [
             i for i in issues
             if "Tier 1" in i.get("issue", "")
@@ -313,10 +358,22 @@ class TestAIFeatureCompleteness:
         assert ai_feature_issues == [], (
             f"AI feature completeness issues: {ai_feature_issues}"
         )
-        # The broad intent: platform health stays at the strict 100 gate.
-        assert score == 100, (
-            f"Platform score {score} below the strict 100 gate. "
-            f"New violations introduced — investigate."
+        # Broad intent (re-spec): regression semantics, not score==100.
+        live_fps = sorted({
+            fingerprint(i) for i in issues
+            if i.get("severity") in ("high", "critical")
+            and not is_env_artifact(i.get("issue", ""))
+        })
+        baseline = _load_baseline_fingerprints()
+        new_high_critical = sorted(set(live_fps) - baseline)
+        print(
+            f"[compliance][informational] platform absolute score={score} "
+            f"regressions={len(new_high_critical)}"
+        )
+        assert not new_high_critical, (
+            "NEW high/critical compliance issue(s) vs the committed baseline "
+            f"(regression — investigate): {new_high_critical}. Absolute "
+            f"score (informational): {score}."
         )
 
 
