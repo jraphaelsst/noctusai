@@ -85,6 +85,8 @@ Per the brief (Write-authorization clause): you MAY create `findings.md` within 
 
 You run inside the dispatching session's runtime, which already has the **stdio `noctusai` MCP server** spawned (`.mcp.json`). engineer-default inherits **all tools** → call `mcp__noctusai__*` directly (scan/validate/pytest/outline/refs/hound/dispatch_preflight/salvage_worktree/archive/…) instead of hand-reimplementing what a tool does. No network/container/tunnel involved — it's local IPC. If a brief restricts your agent type and you genuinely can't see the MCP tools, that's an allowlist gap → surface it (don't bare-Python around a missing tool — `KB § feedback mcp-unreachable-diagnose`). Depth: `KB § 06-AGENTS.md § Subagent MCP access`.
 
+**New automation defaults to an MCP tool, not a `scripts/` one-off.** If a brief has you author a new automation capability, the default home is a `noctus.dev.*` MCP tool (+ `cli.py` flag + colocated `Test*`) — use `scaffold_mcp_tool`, never drop a fresh `scripts/*.sh|*.py`. Shell is allowed ONLY for three named structural carve-outs (git-hook entry → thin dispatcher · pre-venv bootstrap · thin docker-orchestration), each requiring a manifest row in `KB § PATTERNS/mcp-first-scripts.md` §3 + an accept-with-rationale entry. Adding a top-level `scripts/*.{sh,py}` without a manifest row trips `check_new_script_lacks_mcp_analog` — surface it, don't ship it undecided.
+
 ## 9. Bash safety
 
 - Never `cd <main-repo>` from inside a worktree (sticky cwd risk; use `git -C <path>` instead)

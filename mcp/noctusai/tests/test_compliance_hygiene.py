@@ -24,6 +24,7 @@ from tools.noctus.dev.compliance import (  # noqa: E402
     check_branch_orphan,
     check_dispatcher_staleness,
     check_gitignore_drift,
+    check_new_script_lacks_mcp_analog,
 )
 
 
@@ -309,3 +310,72 @@ class TestGitignoreDrift:
         # The whitespace-prefixed line starts with "#" after strip, so it's
         # treated as a comment — all 3 expected paths present → no issues.
         assert issues == [], f"comments must be ignored, got: {issues}"
+
+
+# ---------------------------------------------------------------------------
+# check_new_script_lacks_mcp_analog
+# ---------------------------------------------------------------------------
+
+_DOC_REL = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/mcp-first-scripts.md"
+
+
+class TestNewScriptLacksMcpAnalog:
+    """Every top-level `scripts/*.{sh,py}` MUST have a §3 manifest row;
+    an undecided one → `warning`."""
+
+    def _setup(self, tmp_path: Path, *, manifest_names, disk_names, doc=True):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        for name in disk_names:
+            (scripts / name).write_text("#!/bin/sh\n")
+        if doc:
+            doc_path = tmp_path / _DOC_REL
+            doc_path.parent.mkdir(parents=True)
+            rows = "\n".join(f"| `{n}` | C | → tool |" for n in manifest_names)
+            doc_path.write_text(
+                "# MCP-first scripts\n\n"
+                "## 1. The rule\n\n`scripts/foo.sh` is an example in prose.\n\n"
+                "## 3. Classification manifest\n\n"
+                "| script | bucket | disposition |\n|---|---|---|\n"
+                f"{rows}\n\n"
+                "## 4. Companion rules\n\n| `unrelated.sh` | x | y |\n"
+            )
+        return tmp_path
+
+    def test_classified_script_does_not_flag(self, tmp_path):
+        self._setup(tmp_path, manifest_names=["a.sh", "b.py"],
+                    disk_names=["a.sh", "b.py"])
+        assert check_new_script_lacks_mcp_analog(tmp_path) == []
+
+    def test_unclassified_script_flags_warning(self, tmp_path):
+        self._setup(tmp_path, manifest_names=["a.sh"],
+                    disk_names=["a.sh", "rogue.sh"])
+        issues = check_new_script_lacks_mcp_analog(tmp_path)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "warning"
+        assert issues[0]["file"] == "scripts/rogue.sh"
+
+    def test_only_section_3_widens_allowset(self, tmp_path):
+        # `unrelated.sh` is backticked in §4, NOT §3 — must still flag.
+        self._setup(tmp_path, manifest_names=["a.sh"],
+                    disk_names=["a.sh", "unrelated.sh"])
+        issues = check_new_script_lacks_mcp_analog(tmp_path)
+        assert [i["file"] for i in issues] == ["scripts/unrelated.sh"], issues
+
+    def test_non_script_entries_ignored(self, tmp_path):
+        tp = self._setup(tmp_path, manifest_names=["a.sh"], disk_names=["a.sh"])
+        (tp / "scripts" / "pre-commit").write_text("#!/bin/sh\n")  # extensionless
+        (tp / "scripts" / "README.md").write_text("# readme\n")
+        (tp / "scripts" / "x.log").write_text("log\n")
+        assert check_new_script_lacks_mcp_analog(tp) == []
+
+    def test_missing_doc_no_issues(self, tmp_path):
+        # Worktree off an older base (rule not yet codified) → graceful.
+        self._setup(tmp_path, manifest_names=[], disk_names=["a.sh"],
+                    doc=False)
+        assert check_new_script_lacks_mcp_analog(tmp_path) == []
+
+    def test_real_tree_baseline_zero(self):
+        """The live repo tree must be clean (Phase 1 seeded the manifest
+        with all 25 current scripts)."""
+        assert check_new_script_lacks_mcp_analog() == []

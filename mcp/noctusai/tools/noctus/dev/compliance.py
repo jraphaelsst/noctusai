@@ -4017,6 +4017,94 @@ def check_pipefail_grep_q(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_new_script_lacks_mcp_analog` — enforces the MCP-first-scripts rule
+# (`KB § PATTERNS/mcp-first-scripts.md`): every top-level `scripts/*.sh` /
+# `scripts/*.py` MUST have a row in the classification manifest (§3 of that
+# doc). A file on disk with no manifest row = an undecided new script that
+# skipped the absorb-or-carve-out decision — the exact slip the rule
+# prevents. The keeper asserts *presence of a bucket decision*, not
+# disposition fidelity (disposition stays human-curated).
+# ---------------------------------------------------------------------------
+
+_MCP_FIRST_SCRIPTS_DOC = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/mcp-first-scripts.md"
+# First backticked cell of a markdown table row: `| \`name.sh\` | ... |`.
+_MANIFEST_ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
+
+
+def check_new_script_lacks_mcp_analog(repo_root: Path | None = None) -> list[dict]:
+    """Flag a top-level `scripts/*.sh|*.py` with no classification-manifest
+    row in `KB § PATTERNS/mcp-first-scripts.md` §3.
+
+    Rule: a new automation script IS an agent-exposable capability → it
+    defaults to a `noctus.dev.*` MCP tool, OR it is one of three named
+    structural carve-outs. Either way the decision is recorded as a
+    manifest row. A disk file with NO row means the absorb-vs-carve-out
+    decision was skipped — surface it so it gets a bucket.
+
+    Scope: top-level `scripts/*.sh` and `scripts/*.py` only (the doc's
+    own keeper-scope note). Extensionless hook entries (`pre-commit`),
+    `codemods/` lib, `init-local-db/*.sql` data, `*.log`, `README.md`
+    are out of scope by construction. Absorb-backlog rows (bucket A/B/C)
+    are removed as scripts are deleted — the invariant is row-per-disk-
+    file, so removal stays consistent.
+
+    Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    scripts_dir = root / "scripts"
+    doc_path = root / _MCP_FIRST_SCRIPTS_DOC
+    if not scripts_dir.exists() or not doc_path.exists():
+        # No doc ⇒ rule not yet codified in this tree (e.g. a worktree off
+        # an older base). Don't false-fire; the keeper-on-fork-base
+        # discipline expects graceful absence.
+        return issues
+
+    try:
+        doc = doc_path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as exc:
+        logger.debug("compliance: cannot read %s (%s)", doc_path, exc)
+        return issues
+
+    # Slice the §3 manifest section so unrelated backticked tables elsewhere
+    # in the doc can't widen the allow-set.
+    start = doc.find("## 3.")
+    if start == -1:
+        return issues
+    nxt = doc.find("\n## ", start + 1)
+    section = doc[start : nxt if nxt != -1 else len(doc)]
+    manifest = {m.group(1).strip() for m in _MANIFEST_ROW_RE.finditer(section)}
+
+    on_disk = sorted(
+        p.name
+        for p in list(scripts_dir.glob("*.sh")) + list(scripts_dir.glob("*.py"))
+        if p.is_file()
+    )
+    for name in on_disk:
+        if name in manifest:
+            continue
+        issues.append({
+            "product": "<scripts>",
+            "file": f"scripts/{name}",
+            "issue": (
+                f"`scripts/{name}` has no classification-manifest row in "
+                f"`{_MCP_FIRST_SCRIPTS_DOC}` §3. New automation defaults to "
+                f"a `noctus.dev.*` MCP tool (+ `cli.py` flag + colocated "
+                f"`Test*`), NOT a `scripts/` one-off. If it must stay shell "
+                f"it is one of three named carve-outs (git-hook entry / "
+                f"pre-venv bootstrap / thin docker-orchestration) — add the "
+                f"manifest row AND a `KB § PATTERNS/accept-with-rationale.md` "
+                f"entry. An undecided script is the slip this rule prevents."
+            ),
+            "severity": "warning",
+        })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_doc_tool_reference_drift` — flags `bash scripts/<name>.sh <mode>`
 # references in KB docs that point at a `<mode>` no longer recognized by
 # the script. Per the doc-code coherence rule (`feedback_doc_code_coherence_rule`):
@@ -5813,6 +5901,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_mcp_path_via_settings())
     all_issues.extend(check_mcp_write_tool_worktree_arg())
     all_issues.extend(check_pipefail_grep_q())
+    all_issues.extend(check_new_script_lacks_mcp_analog())
     all_issues.extend(check_doc_tool_reference_drift())
     # social-wiring-absorption W5.7a / W5.9a Stage-4 codification.
     all_issues.extend(check_seed_export_membership())
