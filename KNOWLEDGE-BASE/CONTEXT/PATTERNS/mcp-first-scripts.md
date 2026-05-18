@@ -35,23 +35,7 @@ Every top-level `scripts/*.sh` / `scripts/*.py` file MUST have a row here. **A f
 
 | script | bucket | disposition |
 |---|---|---|
-| `verify-kb-sync.sh` | A | → `cli.py --verify-kb-sync` / `tools/kb_sync.py`; delete + repoint |
-| `mole.sh` | B | port 26KB shell → real `mole.py`; delete + repoint |
-| `archive-clean.sh` | C | → extend `archive.py` |
-| `disk-usage-monitor.sh` | C | → `noctus.dev.disk_usage` |
-| `check-framework-deps.py` | C | → `noctus.dev.check_framework_deps` |
-| `gen-promotions-index.py` | C | → extend `promotion.py` |
-| `render-project-history.py` | C | → extend `history.py` |
-| `backfill-project-history.py` | C | → extend `history.py` |
-| `stamp-seed-version.sh` | C | → `noctus.dev.stamp_seed_version` (thin shim, pre-commit-invoked) |
-| `merge-debt-monitor.sh` | C | → `noctus.dev.merge_debt` |
-| `cleanup-stale-worktrees.sh` | C | → `noctus.dev.cleanup_worktrees` |
-| `update-kb-counts.py` | C | → extend `kb_sync.py` (thin shim, pre-commit-invoked) |
-| `sync-seed-template.sh` | C | → `noctus.dev.sync_seed_template` (thin shim, pre-commit-invoked) |
-| `propagate-composes.sh` | C | → `noctus.dev.propagate` |
-| `propagate-dockerfiles.sh` | C | → `noctus.dev.propagate` |
-| `smoke-fleet.sh` | C | → `noctus.dev.smoke_fleet` |
-| `pre-commit` | [carve:hook] | absorb orchestration → `noctus.dev.precommit`; thin dispatcher |
+| `pre-commit` | [carve:hook] | thin dispatcher → `cli.py --<flag>` per step (logic in `noctus.dev.*`) |
 | `install-hooks.sh` | [carve:bootstrap] | symlink installer; runs at clone time |
 | `setup.sh` | [carve:bootstrap] | creates venv the MCP runs in |
 | `first-time-setup.sh` | [carve:bootstrap] | pre-venv repo setup |
@@ -60,7 +44,9 @@ Every top-level `scripts/*.sh` / `scripts/*.py` file MUST have a row here. **A f
 | `build-init-local-db.sh` | [carve:bootstrap] | regenerates init-local-db SQL pre-venv |
 | `build-base-images.sh` | [carve:docker] | thin `docker build` of seed base images |
 
-> Manifest parsed by `check_new_script_lacks_mcp_analog` (`compliance.py`). The keeper does NOT require disposition fidelity — it asserts only *presence of a row* per disk file: it catches the "someone added `scripts/foo.sh` without a bucket decision" slip. Disposition is human-curated. Non-script `scripts/` entries (`codemods/` lib, `init-local-db/*.sql` data, `*.log`, `README.md`, `.DS_Store`) are out of scope by construction (only top-level `*.sh`/`*.py`).
+> Manifest parsed by `check_new_script_lacks_mcp_analog` (`compliance.py`). The keeper does NOT require disposition fidelity — it asserts only *presence of a row* per disk file: it catches the "someone added `scripts/foo.sh` without a bucket decision" slip. Disposition is human-curated. Non-script `scripts/` entries (`codemods/` lib, `init-local-db/*.sql` data, `*.log`, `README.md`, `.DS_Store`) are out of scope by construction (only top-level `*.sh`/`*.py`). Carve-out rows pair 1:1 with `KB § PATTERNS/accept-with-rationale.md`.
+
+**Absorbed + deleted 2026-05-18** (durable landing record — these are now `noctus.dev.*` MCP tools + `cli.py` flags, NOT dangling): `mole.sh`→`noctus.dev.mole` · `verify-kb-sync.sh`+`update-kb-counts.py`→`tools/kb_sync.py` (`noctus.dev.kb_sync`, `--verify-kb-sync`/`--update-kb-counts`) · `archive-clean.sh`→`noctus.dev.archive_clean` · `disk-usage-monitor.sh`→`noctus.dev.check_disk_usage` · `check-framework-deps.py`→`noctus.dev.check_framework_deps` · `cleanup-stale-worktrees.sh`→`noctus.dev.cleanup_stale_worktrees` · `merge-debt-monitor.sh`→`noctus.dev.check_merge_debt` · `render-project-history.py`+`backfill-project-history.py`→`history.py` (`noctus.dev.render_project_history`/`backfill_project_history`) · `gen-promotions-index.py`→`noctus.dev.gen_promotions_index` · `sync-seed-template.sh`→`noctus.dev.sync_seed_template` · `stamp-seed-version.sh`→`noctus.dev.stamp_seed_version` · `propagate-{composes,dockerfiles}.sh`→`noctus.dev.propagate` · `smoke-fleet.sh`→`noctus.dev.smoke_fleet`. Each has a `cli.py --<flag>` (`python mcp/noctusai/cli.py --help`).
 
 ---
 

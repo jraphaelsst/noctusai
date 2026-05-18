@@ -694,7 +694,7 @@ Every commit that changes behavior updates the relevant docs:
 - *When amending an existing rule* (extending, adding caught-instances, adjusting framing): all three layers in the same session. Partial updates lie about the rule's current state and the next agent reads a stale rule.
 
 **Verification:**
-- `bash scripts/verify-kb-sync.sh` — catches dangling KB ↔ CLAUDE.md pointers (pre-commit-hooked).
+- `python mcp/noctusai/cli.py --verify-kb-sync` — catches dangling KB ↔ CLAUDE.md pointers (pre-commit-hooked).
 - Memory parity check (manual, agent's discipline): every memory entry in `MEMORY.md` should cite a `Doc-backed (CLAUDE.md + KB § ...)` line in its description; every CLAUDE.md rule with strong behavioral implications should have a memory entry. The `verify-kb-sync.sh` script does NOT verify this — it's the agent's discipline.
 
 **Exempt:** tiny typo-only fixes (single layer, no rule change).
@@ -714,7 +714,7 @@ When any rule changes, **KB lands first, CLAUDE.md second**. Never the reverse, 
 - **Announce the order** when presenting a multi-file doc plan: `KB → CLAUDE.md`. Visibility helps the user verify.
 
 **Enforcement:**
-- `scripts/verify-kb-sync.sh` validates that every pointer in `CLAUDE.md` resolves and that `KNOWLEDGE-BASE/INDEX.md` lists every file in the KB. Run pre-commit.
+- `noctus.dev.kb_sync` validates that every pointer in `CLAUDE.md` resolves and that `KNOWLEDGE-BASE/INDEX.md` lists every file in the KB. Run pre-commit.
 - The KB-first ordering rule is **procedural** — the verifier catches dangling pointers but cannot catch "wrote CLAUDE.md first then backfilled the KB." That discipline is the agent's.
 
 ---

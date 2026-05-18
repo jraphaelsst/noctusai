@@ -51,7 +51,7 @@ Schema: `{{SCHEMA_NAME}}` — only `status_pagina` (feature flags) and `invitati
 
 ## Template Auto-Sync
 
-The seed is the source for `templates/product-seed/`. Post-commit hook runs `scripts/sync-seed-template.sh`:
+The seed is the source for `templates/product-seed/`. Post-commit hook runs `noctus.dev.sync_seed_template`:
 1. Copies seed → template
 2. Replaces values with `{{PLACEHOLDERS}}`
 3. Template always in sync

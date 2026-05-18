@@ -25,7 +25,7 @@ Products are born from the seed. The backend `main.py` imports `create_product_a
 
 ## Reference implementation
 
-`products/seed/` is the simplest possible product — just the spine with no domain code. The template at `templates/product-seed/` is auto-generated from it via `scripts/sync-seed-template.sh`, invoked by the pre-commit hook whenever a `products/seed/` file is staged.
+`products/seed/` is the simplest possible product — just the spine with no domain code. The template at `templates/product-seed/` is auto-generated from it via `noctus.dev.sync_seed_template`, invoked by the pre-commit hook whenever a `products/seed/` file is staged.
 
 ## Mandatory files from day one
 

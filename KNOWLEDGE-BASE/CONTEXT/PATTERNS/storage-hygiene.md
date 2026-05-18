@@ -1,6 +1,6 @@
 # Storage hygiene — the `mole` and the trio
 
-> **TL;DR.** Third member of the regulatory/curatorial/custodial trio. Keeper guards laws, hound sniffs out hygiene, **mole burrows for storage waste**. Three orthogonal scopes — `artifacts` (regenerable caches/builds), `environments` (venv/node_modules duplication), `worktrees` (stale `.claude/worktrees/agent-*/`). Active by default: pre-dispatch + pre-commit + post-merge. **MCP-exposed** as `noctus.dev.mole` (`mode=scan|sweep`, `scope`, `force`; `scripts/mole.sh` is the impl, `cleanup-stale-worktrees.sh` shares the worktree predicate). **Safe-gate:** `sweep` deletes only with `force=True`, and only merged-to-`main` (SHA-ancestry|patch-id) worktrees + regenerable artifacts — never uncommitted/unmerged/main/sibling/`.env`/migration content; caller must also confirm no agent is mid-flight in a target worktree (scan → eyeball → force-sweep). Project cleanup is the separate `noctus.dev.archive`.
+> **TL;DR.** Third member of the regulatory/curatorial/custodial trio. Keeper guards laws, hound sniffs out hygiene, **mole burrows for storage waste**. Three orthogonal scopes — `artifacts` (regenerable caches/builds), `environments` (venv/node_modules duplication), `worktrees` (stale `.claude/worktrees/agent-*/`). Active by default: pre-dispatch + pre-commit + post-merge. **MCP-exposed** as `noctus.dev.mole` (`mode=scan|sweep`, `scope`, `force`; `noctus.dev.mole` is the impl, `cleanup-stale-worktrees.sh` shares the worktree predicate). **Safe-gate:** `sweep` deletes only with `force=True`, and only merged-to-`main` (SHA-ancestry|patch-id) worktrees + regenerable artifacts — never uncommitted/unmerged/main/sibling/`.env`/migration content; caller must also confirm no agent is mid-flight in a target worktree (scan → eyeball → force-sweep). Project cleanup is the separate `noctus.dev.archive`.
 
 ---
 
@@ -37,7 +37,7 @@ Each agent has **observation-only scan** (default) + **destructive sweep** (gate
 
 **Definition**: files/directories that build tools regenerate on demand. Safe-to-wipe — losing them just triggers a rebuild on next run.
 
-**Patterns** (canonical list, lives in `scripts/mole.sh` as the artifact deny-list lookup-table):
+**Patterns** (canonical list, lives in `noctus.dev.mole` as the artifact deny-list lookup-table):
 - `__pycache__/` — Python bytecode (regenerated on next import)
 - `.pytest_cache/` — pytest fixture state (regenerated on next run)
 - `.ruff_cache/` — ruff linter cache
@@ -112,19 +112,19 @@ This matches the **keeper observation-only contract**: detect + report + recomme
 
 ## 3 · The mole's interface
 
-### 3.1 · Single entry point: `scripts/mole.sh`
+### 3.1 · Single entry point: `noctus.dev.mole`
 
 ```bash
-bash scripts/mole.sh scan             # all three scopes, read-only, JSON-ish report
-bash scripts/mole.sh scan --artifacts   # only artifacts scope
-bash scripts/mole.sh scan --environments
-bash scripts/mole.sh scan --worktrees
+python mcp/noctusai/cli.py --mole scan             # all three scopes, read-only, JSON-ish report
+python mcp/noctusai/cli.py --mole scan --artifacts   # only artifacts scope
+python mcp/noctusai/cli.py --mole scan --environments
+python mcp/noctusai/cli.py --mole scan --worktrees
 
-bash scripts/mole.sh sweep            # dry-run by default; --force to act
-bash scripts/mole.sh sweep --artifacts --force
-bash scripts/mole.sh sweep --worktrees --force
+python mcp/noctusai/cli.py --mole sweep            # dry-run by default; --force to act
+python mcp/noctusai/cli.py --mole sweep --artifacts --force
+python mcp/noctusai/cli.py --mole sweep --worktrees --force
 
-bash scripts/mole.sh report           # machine-readable summary (next_action, sizes, counts)
+python mcp/noctusai/cli.py --mole report           # machine-readable summary (next_action, sizes, counts)
 ```
 
 ### 3.2 · Default scopes per mode
@@ -168,17 +168,17 @@ The mole runs **automatically** at three points in the workflow:
 
 ### 4.1 · Pre-dispatch (orchestrator-side)
 
-Before any `Agent(isolation: "worktree")` call, the orchestrator runs `bash scripts/mole.sh scan` and reads the severity. If `next_action` returns `CRITICAL`, the orchestrator MUST sweep before dispatching (the new worktree would push us deeper into ENOSPC territory).
+Before any `Agent(isolation: "worktree")` call, the orchestrator runs `python mcp/noctusai/cli.py --mole scan` and reads the severity. If `next_action` returns `CRITICAL`, the orchestrator MUST sweep before dispatching (the new worktree would push us deeper into ENOSPC territory).
 
 **Wired in**: orchestrator's continuous-flow dispatch routine — `mole.sh scan` is the gating call before parallel-engineer fanout.
 
 ### 4.2 · Pre-commit hook (repo-side)
 
-`scripts/pre-commit` calls `bash scripts/mole.sh scan --artifacts` (cheap — only counts pycache/pytest_cache sizes). If artifact total exceeds **2 GB**, prints a `WARNING` to stderr (doesn't block the commit — just informs). The pre-commit's role is to surface bloat trending up, not block work.
+`scripts/pre-commit` calls `python mcp/noctusai/cli.py --mole scan --artifacts` (cheap — only counts pycache/pytest_cache sizes). If artifact total exceeds **2 GB**, prints a `WARNING` to stderr (doesn't block the commit — just informs). The pre-commit's role is to surface bloat trending up, not block work.
 
 ### 4.3 · Bootstrap pre-flight (engineer-side)
 
-`scripts/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `bash scripts/mole.sh sweep --worktrees --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
+`scripts/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `python mcp/noctusai/cli.py --mole sweep --worktrees --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
 
 ### 4.4 · Post-cherry-pick (orchestrator-side) — **MUST**, not MAY
 
@@ -229,7 +229,7 @@ Three-segment dotted namespace mirroring `noctus.hound.*`:
 | **Default action** | Observation-only (`--review`) | Read-only scan | Read-only scan |
 | **Destructive mode** | Never (LLM authors proposals) | Never (architect/engineer authors changes) | Yes (gated by `--force`) |
 | **Trio scopes** | LGPD / webhook-pin / auth-shape / etc. | absorption / fusion / optimization | artifacts / environments / worktrees |
-| **Lives at** | `mcp/noctusai/tools/dev/compliance.py` | `mcp/noctusai/tools/noctus/seed/*.py` | `scripts/mole.sh` (+ future `mcp/noctusai/tools/noctus/mole/*.py`) |
+| **Lives at** | `mcp/noctusai/tools/dev/compliance.py` | `mcp/noctusai/tools/noctus/seed/*.py` | `noctus.dev.mole` (+ future `mcp/noctusai/tools/noctus/mole/*.py`) |
 | **Active triggers** | `pre-commit` (sync rules) | None (architect runs manually) | **Pre-dispatch + pre-commit + bootstrap** (this is the "active" part) |
 
 The mole is the **only** member of the trio with built-in destructive authority. That asymmetry justifies the harder safety constraints in §3.4.
@@ -239,8 +239,8 @@ The mole is the **only** member of the trio with built-in destructive authority.
 ## 8 · Implementation phases
 
 **Phase 1 (shipped 2026-05-11)** — script-level mole:
-- `scripts/mole.sh` orchestrator
-- `scripts/cleanup-stale-worktrees.sh` continues to exist; mole delegates worktree-scope to it
+- `noctus.dev.mole` orchestrator
+- `noctus.dev.cleanup_stale_worktrees` continues to exist; mole delegates worktree-scope to it
 - KB pattern doc (this file)
 - CLAUDE.md §1 bullet
 - Memory entry `feedback_mole_storage_hygiene.md`
@@ -265,8 +265,8 @@ The mole is the **only** member of the trio with built-in destructive authority.
 
 - §19 of `KB § PATTERNS/branching-and-merging.md` — worktree lifecycle methodology (worktree-scope predecessor)
 - `feedback_worktree_auto_cleanup.md` + `feedback_disk_usage_monitor.md` — memory entries that motivated this
-- `scripts/cleanup-stale-worktrees.sh` — worktree-scope implementation (mole delegates)
-- `scripts/disk-usage-monitor.sh` — companion (prevention vs the mole's recovery)
+- `noctus.dev.cleanup_stale_worktrees` — worktree-scope implementation (mole delegates)
+- `noctus.dev.check_disk_usage` — companion (prevention vs the mole's recovery)
 - `KB § PATTERNS/seed-absorption.md § noctus.hound.scan` — hound metaphor parent
 
 **Three-way-synced 2026-05-11**: this pattern doc + memory entry `feedback_mole_storage_hygiene.md` + CLAUDE.md §1 universal-rules new bullet.

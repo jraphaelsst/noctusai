@@ -93,7 +93,7 @@ The keeper proposes; something else executes. If the rule fires and the only hon
 
 - `check_webhook_pin` → proposal: "Add `verify_signature(...)` before the database write at <file>:<line>"
 - `check_status_assertion_rule` → proposal: "Add `assert response.status_code == <expected>` before the body assertion at <file>:<line>"
-- `check_archive_staleness` → proposal: "Run `bash scripts/archive-clean.sh --force`"
+- `check_archive_staleness` → proposal: "Run `python mcp/noctusai/cli.py --archive-clean --force`"
 - `check_branch_orphan` → proposal: "Delete merged branches: `git branch -d <name1> <name2>`"
 
 The remediation makes the keeper's output actionable. Without it the detector is a complaint, not a tool.
@@ -242,13 +242,13 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 
 | Symptom you see | Tool / script | Invocation | Stage |
 |---|---|---|---|
-| Stale archive folders (older than today + yesterday) | `check_archive_staleness` + `archive-clean.sh` | `noctus.dev.review` (detect) → `bash scripts/archive-clean.sh --force` (execute) | Stage 4 detect → script execute |
-| Stale agent worktrees on disk | `mole.sh` worktree scope (now aligned scan↔sweep enumeration) | `bash scripts/mole.sh scan --worktrees` reports STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM categories; `bash scripts/mole.sh sweep --worktrees --force` removes STALE + ORPHAN + PHANTOM only | Stage 4-equivalent custodial |
-| Disk artifacts (caches, builds) bloating repo | `mole.sh` artifact scope | `bash scripts/mole.sh scan --artifacts` / `... sweep --artifacts --force` | Stage 4-equivalent custodial |
+| Stale archive folders (older than today + yesterday) | `check_archive_staleness` + `archive-clean.sh` | `noctus.dev.review` (detect) → `python mcp/noctusai/cli.py --archive-clean --force` (execute) | Stage 4 detect → script execute |
+| Stale agent worktrees on disk | `mole.sh` worktree scope (now aligned scan↔sweep enumeration) | `python mcp/noctusai/cli.py --mole scan --worktrees` reports STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM categories; `python mcp/noctusai/cli.py --mole sweep --worktrees --force` removes STALE + ORPHAN + PHANTOM only | Stage 4-equivalent custodial |
+| Disk artifacts (caches, builds) bloating repo | `mole.sh` artifact scope | `python mcp/noctusai/cli.py --mole scan --artifacts` / `... sweep --artifacts --force` | Stage 4-equivalent custodial |
 | Dispatcher inbox/outbox entries piling up | `check_dispatcher_staleness` | `noctus.dev.review` (detect); manual prune of `.claude/dispatcher.md` `## Completed` section; consider archiving to `.claude/dispatcher-archive/<date>.md` | Stage 4 detect → manual execute |
 | Merged branches still hanging around | `check_branch_orphan` | `noctus.dev.review` (detect); `git branch -d <name>` (local) / `git push origin --delete <name>` (remote) | Stage 4 detect → git execute |
 | Transient log/coordination files not gitignored | `check_gitignore_drift` | `noctus.dev.review` (detect); `.gitignore` patch + `git rm --cached <file>` if tracked | Stage 4 detect → gitignore patch |
-| Disk usage approaching capacity | `disk-usage-monitor.sh` | `bash scripts/disk-usage-monitor.sh` (exit code 0-3 by severity) | preventative monitor |
+| Disk usage approaching capacity | `disk-usage-monitor.sh` | `python mcp/noctusai/cli.py --check-disk-usage` (exit code 0-3 by severity) | preventative monitor |
 
 ### Code hygiene (Stage 4 — hound + seed scans)
 
@@ -291,8 +291,8 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 | Testing-ground / sandbox workspace | `noctus.dev.create_testing_ground` | `mcp__noctusai__noctus_dev_create_testing_ground` | sibling workspace |
 | Project close / archive | `noctus.dev.archive` | `mcp__noctusai__noctus_dev_archive(project-path)` | project lifecycle |
 | Inbox-drain for autonomous operator | `orchestrator-operator` subagent | `Agent(subagent_type="orchestrator-operator", ...)` after writing tasks to the `## Pending` section of `.claude/dispatcher.md` | Option D (in-pilot) |
-| Clean archive (D-2+ folders) | `archive-clean.sh` | `bash scripts/archive-clean.sh --force` after dry-run | housekeeping |
-| Disk audit + cleanup | `mole.sh` orchestrator | `bash scripts/mole.sh scan` (all scopes, read-only) → `... sweep <scope> --force` | custodial |
+| Clean archive (D-2+ folders) | `archive-clean.sh` | `python mcp/noctusai/cli.py --archive-clean --force` after dry-run | housekeeping |
+| Disk audit + cleanup | `mole.sh` orchestrator | `python mcp/noctusai/cli.py --mole scan` (all scopes, read-only) → `... sweep <scope> --force` | custodial |
 
 ### When a symptom doesn't appear in this table
 

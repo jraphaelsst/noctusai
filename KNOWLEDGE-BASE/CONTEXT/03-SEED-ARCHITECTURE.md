@@ -103,7 +103,7 @@ Examples:
 
 - `products/seed/`
 - `templates/product-seed/`
-- `scripts/sync-seed-template.sh`
+- `noctus.dev.sync_seed_template`
 
 This path is valid, but it is not the mechanism that keeps existing products aligned.
 

@@ -1509,16 +1509,16 @@ This was the recipe applied during Wave 1+2 to restore T3's ARG VITE blocks afte
 
 Every agent worktree under `.claude/worktrees/agent-*/` is removable as soon as its branch is reachable from `origin/main` (i.e. cherry-picked + pushed by the orchestrator). The worktree's job is done; the work is durable on main; the disk footprint is pure overhead.
 
-**`scripts/cleanup-stale-worktrees.sh`** is the canonical sweep:
+**`noctus.dev.cleanup_stale_worktrees`** is the canonical sweep:
 - Iterates `git worktree list --porcelain` + on-disk `agent-*/` orphans.
 - **STALE** = branch reachable from `origin/main` (`git merge-base --is-ancestor`) OR directory exists without a corresponding registered worktree.
 - **ACTIVE** (kept) = branch has commits not yet merged.
 - Removes via `git worktree remove --force` first (cleans `.git/worktrees/<name>/` too), falls back to `rm -rf` for orphans, then `git worktree prune`.
 
 ```bash
-bash scripts/cleanup-stale-worktrees.sh           # interactive
-bash scripts/cleanup-stale-worktrees.sh --dry-run # report only
-bash scripts/cleanup-stale-worktrees.sh --force   # no prompt (cron / hook)
+python mcp/noctusai/cli.py --cleanup-stale-worktrees           # interactive
+python mcp/noctusai/cli.py --cleanup-stale-worktrees --dry-run # report only
+python mcp/noctusai/cli.py --cleanup-stale-worktrees --force   # no prompt (cron / hook)
 ```
 
 ### 19.2 — When to invoke
@@ -1527,8 +1527,8 @@ bash scripts/cleanup-stale-worktrees.sh --force   # no prompt (cron / hook)
 |---|---|---|
 | **After each FF + push of an engineer's commit** | Orchestrator workflow extension — invoke `--force` mode targeting the just-merged branch's worktree. | Per merge. **Highest leverage** — disk never accumulates. |
 | **At worktree-bootstrap time** | `bootstrap-worktree.sh` invokes `cleanup-stale-worktrees.sh --force` before its own hydrate. Catches stale worktrees from prior sessions before they balloon. | Per dispatch. **Best for engineers** — the worktree they enter is on a fresh-disk state. |
-| **Nightly cron** | `0 3 * * * cd /Users/rapha/Documents/repository/NoctusAI/noctusai && bash scripts/cleanup-stale-worktrees.sh --force` | Daily. **Safety net** for sessions that crashed mid-flow. |
-| **Manual** | `bash scripts/cleanup-stale-worktrees.sh` (interactive). | Ad-hoc. **Disk-pressure recovery** — the rescue path the 2026-05-11 incident took. |
+| **Nightly cron** | `0 3 * * * cd /Users/rapha/Documents/repository/NoctusAI/noctusai && python mcp/noctusai/cli.py --cleanup-stale-worktrees --force` | Daily. **Safety net** for sessions that crashed mid-flow. |
+| **Manual** | `python mcp/noctusai/cli.py --cleanup-stale-worktrees` (interactive). | Ad-hoc. **Disk-pressure recovery** — the rescue path the 2026-05-11 incident took. |
 
 ### 19.3 — Safety constraints
 
@@ -1556,7 +1556,7 @@ The combination of **(a) auto-cleanup on merge** + **(b) pre-flight at bootstrap
 
 The cleanup mechanism handles RECOVERY. The monitor handles PREVENTION — warns at thresholds long before disk pressure becomes a 100% lockout.
 
-**`scripts/disk-usage-monitor.sh`** — severity-tagged disk health check.
+**`noctus.dev.check_disk_usage`** — severity-tagged disk health check.
 
 | % used | Severity | Exit code | Action |
 |---|---|---|---|
@@ -1566,9 +1566,9 @@ The cleanup mechanism handles RECOVERY. The monitor handles PREVENTION — warns
 | 90-100% | CRITICAL | 3 | Harness lockout imminent; immediate manual recovery (cleanup + `docker system prune` + `sudo purge`) |
 
 ```bash
-bash scripts/disk-usage-monitor.sh                # status report
-bash scripts/disk-usage-monitor.sh --quiet        # exit code only (cron-friendly)
-bash scripts/disk-usage-monitor.sh --auto-clean   # if ≥70%, automatically run cleanup-stale-worktrees.sh --force
+python mcp/noctusai/cli.py --check-disk-usage                # status report
+python mcp/noctusai/cli.py --check-disk-usage --quiet        # exit code only (cron-friendly)
+python mcp/noctusai/cli.py --check-disk-usage --auto-clean   # if ≥70%, automatically run cleanup-stale-worktrees.sh --force
 ```
 
 **Invocation triggers**:
@@ -1578,15 +1578,15 @@ bash scripts/disk-usage-monitor.sh --auto-clean   # if ≥70%, automatically run
 | **Orchestrator startup** | First Bash call in every orchestrator session invokes `--quiet` and reads exit code. ≥70% surfaces a CAUTION note to user (one-line, not blocking). | Surfaces pressure BEFORE engineer dispatches commit disk. |
 | **Pre-dispatch gate** | Before dispatching any new `Agent(isolation: "worktree")` engineer, check exit code. Refuse dispatch at ≥80% (WARNING) — surface to user with cleanup recipe. | Structural prevention of the disk-full lockout. |
 | **`bootstrap-worktree.sh`** | Already invokes `cleanup-stale-worktrees.sh --force` as pre-flight. The monitor adds: if post-cleanup still ≥80%, refuse hydrate. | Engineer-side guard. |
-| **Nightly cron** | `0 3 * * * bash scripts/disk-usage-monitor.sh --auto-clean` | Auto-recovers any session that left stale worktrees behind. |
-| **Manual ops check** | `bash scripts/disk-usage-monitor.sh` ad-hoc. | User-initiated health check. |
+| **Nightly cron** | `0 3 * * * python mcp/noctusai/cli.py --check-disk-usage --auto-clean` | Auto-recovers any session that left stale worktrees behind. |
+| **Manual ops check** | `python mcp/noctusai/cli.py --check-disk-usage` ad-hoc. | User-initiated health check. |
 
 **Orchestrator's responsibility (NEW)**: before dispatching, the orchestrator runs `disk-usage-monitor.sh --quiet` and surfaces severity. At CAUTION the dispatch proceeds with a note. At WARNING the dispatch is gated until cleanup. At CRITICAL the orchestrator stops dispatching entirely and surfaces full recovery recipe.
 
 ### 19.7 — References
 
-- `scripts/cleanup-stale-worktrees.sh` — the canonical sweep (added 2026-05-11).
-- `scripts/disk-usage-monitor.sh` — severity-tagged monitor + warning thresholds (added 2026-05-11).
+- `noctus.dev.cleanup_stale_worktrees` — the canonical sweep (added 2026-05-11).
+- `noctus.dev.check_disk_usage` — severity-tagged monitor + warning thresholds (added 2026-05-11).
 - §16.7 — worktree-base verification (Step 0 — bootstrap; this rule extends Step 0 with cleanup-before-hydrate).
 - §18.4 — Resource-bounded engineer parallelism (this rule reduces the disk dimension of "resource-bounded").
 - `archive/projects/2026-05-11/16-personal-finance-wiring/proposals/phase-7-disk-space-preflight.md` — Engineer FFF's disk-full slip + the bootstrap pre-flight recipe.

@@ -1,0 +1,392 @@
+"""`noctus.dev.cleanup_stale_worktrees` — remove merged engineer worktrees.
+
+Behaviour-preserving native port of ``scripts/cleanup-stale-worktrees.sh``.
+
+Why this exists
+    Each ``Agent(isolation: "worktree")`` call creates a worktree at
+    ``.claude/worktrees/agent-<id>/`` (hydrated with node_modules + Python
+    venvs). The orchestrator FFs to main; the worktree stays on disk
+    ~880 MiB each. 75 stale worktrees = 67 GiB unrecoverable until cleanup.
+
+What "stale" means (identical predicate to the shell script + mole.sh)
+    An agent worktree whose branch is either:
+      (a) reachable from ``origin/main`` by SHA ancestry (true merge), OR
+      (b) all commits already present on ``origin/main`` by PATCH-ID
+          (cherry-pick — the orchestrator FFs via cherry-pick: new SHA, same
+          patch; ``git cherry`` is the patch-id equivalent).
+    Unmerged work-in-progress worktrees are KEPT.
+
+Safety (identical contract — the THE-P10 / THE-P11 lessons)
+    * Never removes the main worktree.
+    * Never removes sibling workspaces (paths NOT under
+      ``.claude/worktrees/agent-*``).
+    * Refuses to remove worktrees with uncommitted files or stashes —
+      surfaces them as ``dirty`` manual-review findings. ``force=True`` does
+      NOT override this (it only suppresses the interactive prompt).
+    * Shared-stash subtraction: linked worktrees share ``refs/stash`` with
+      main; main's stashes are subtracted before counting a worktree's WIP
+      (THE-P11 false-positive fix).
+    * Locked worktrees with a live PID are never destroyed; a lock held by a
+      DEAD pid is auto-unlocked (THE-P11 fix). Git's safe ``worktree remove
+      --force`` is used; a refusal surfaces the path as ``locked_skipped`` —
+      NEVER ``rm -rf`` a git-registered locked path (THE-P10 lesson). Only
+      TRUE orphans (on-disk dir git doesn't know about) get a direct rmtree.
+    * Always ``git worktree prune`` after removal.
+
+Dry-run unless ``force=True`` (the shell ``--dry-run``/``--force`` split;
+``interactive`` mode is not portable to a tool call — default is dry-run).
+"""
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+from settings import REPO_ROOT
+from workspace import resolve_caller_root
+
+logger = logging.getLogger(__name__)
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+    )
+
+
+def _is_ancestor(root: Path, branch: str, base: str) -> bool:
+    """``git merge-base --is-ancestor branch base`` — SHA ancestry."""
+    return _git(root, "merge-base", "--is-ancestor", branch, base).returncode == 0
+
+
+def _all_commits_cherry_picked(root: Path, branch: str, base: str) -> bool:
+    """Patch-id equivalence: every commit on ``branch`` is on ``base``.
+
+    Mirrors the shell ``_all_commits_cherry_picked_to_main``: the branch
+    must have ≥1 commit and ZERO ``+`` lines in ``git cherry base branch``
+    (``+`` = genuinely unmerged; ``-`` = on base by patch-id).
+    """
+    cherry = _git(root, "cherry", base, branch)
+    if cherry.returncode != 0:
+        return False
+    plus_lines = sum(
+        1 for ln in cherry.stdout.splitlines() if ln.startswith("+")
+    )
+    log = _git(root, "log", "--oneline", f"{base}..{branch}")
+    total = len([ln for ln in log.stdout.splitlines() if ln.strip()])
+    return total > 0 and plus_lines == 0
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if ``pid`` is a live process (mirrors the shell ``kill -0``)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists but not ours — still alive
+    except OSError:
+        return False
+    return True
+
+
+def _registered_worktrees(root: Path) -> list[tuple[str, str | None, bool, str]]:
+    """Parse ``git worktree list --porcelain``.
+
+    Returns [(path, branch_or_None, locked_bool, lock_reason), ...]. Mirrors
+    the shell's block parser (worktree / branch / locked lines, blank-line
+    separated).
+    """
+    out = _git(root, "worktree", "list", "--porcelain").stdout
+    entries: list[tuple[str, str | None, bool, str]] = []
+    wt: str | None = None
+    branch: str | None = None
+    locked = False
+    lock_reason = ""
+
+    def flush() -> None:
+        nonlocal wt, branch, locked, lock_reason
+        if wt is not None:
+            entries.append((wt, branch, locked, lock_reason))
+        wt = None
+        branch = None
+        locked = False
+        lock_reason = ""
+
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            flush()
+            wt = line[len("worktree "):]
+        elif line.startswith("branch "):
+            branch = line[len("branch refs/heads/"):]
+        elif line.startswith("locked"):
+            locked = True
+            lock_reason = line[len("locked"):].strip()
+        elif line == "":
+            flush()
+    flush()
+    return entries
+
+
+def cleanup_stale_worktrees(
+    repo_root: Path | None = None,
+    *,
+    worktree_path: str | Path | None = None,
+    force: bool = False,
+) -> dict:
+    """Classify + (when ``force``) remove merged-to-main agent worktrees.
+
+    Behaviour-preserving native port of
+    ``scripts/cleanup-stale-worktrees.sh``. **Dry-run unless
+    ``force=True``** — default classifies and returns the buckets but
+    removes nothing. ``force=True`` performs ``git worktree remove --force``
+    on the stale set (NEVER overrides the dirty/locked safety gates).
+
+    Args:
+        repo_root: repo-root override (test seam). Wins over
+            ``worktree_path``.
+        worktree_path: caller-aware path resolution (same contract as the
+            sibling dev tools).
+        force: ``False`` (default) → dry-run classification only; ``True``
+            → remove the stale set (safety gates still apply).
+
+    Returns:
+        ```
+        {
+          "main": "<repo root>",
+          "active": [...],          # unmerged — kept (WIP)
+          "dirty": [{"path": ..., "reason": ...}, ...],  # merged + work
+          "locked": [...],          # merged + lock held — manual review
+          "stale": [...],           # safe to auto-remove (merged + clean)
+          "removed": int,           # 0 when dry_run
+          "failed": int,
+          "locked_skipped": [...],  # git refused (lock/active) — never rm'd
+          "dry_run": bool,          # True == not force
+          "status": "nothing"|"dry_run"|"removed",
+        }
+        ```
+    """
+    if repo_root is not None:
+        root = repo_root
+    elif worktree_path is not None:
+        root = resolve_caller_root(worktree_path)
+    else:
+        root = REPO_ROOT
+
+    worktree_dir = root / ".claude" / "worktrees"
+
+    if not worktree_dir.is_dir():
+        return {
+            "main": str(root),
+            "active": [],
+            "dirty": [],
+            "locked": [],
+            "stale": [],
+            "removed": 0,
+            "failed": 0,
+            "locked_skipped": [],
+            "dry_run": not force,
+            "status": "nothing",
+        }
+
+    # Refresh main's tip (best-effort, read-only).
+    _git(root, "fetch", "origin", "main", "--quiet")
+
+    # Resolve comparison base: prefer origin/main, fall back to main.
+    base = "origin/main"
+    if _git(root, "rev-parse", "--verify", "--quiet", base).returncode != 0:
+        base = "main"
+
+    # Snapshot main-repo stashes for shared-stash subtraction (THE-P11).
+    main_stashes = set(
+        ln for ln in _git(
+            root, "stash", "list", "--pretty=%H"
+        ).stdout.splitlines() if ln.strip()
+    )
+
+    active: list[str] = []
+    dirty: list[dict] = []
+    locked: list[str] = []
+    stale: list[str] = []
+
+    agent_prefix = str(worktree_dir / "agent-")
+
+    def classify(wt: str, branch: str | None, is_locked: bool, lock_reason: str) -> None:
+        # Main repo or sibling workspace: ignore.
+        if wt == str(root):
+            return
+        if not wt.startswith(agent_prefix):
+            return
+        if branch is None:
+            return
+
+        # Auto-unlock dead-pid locks (THE-P11). "(pid N)" with a dead pid.
+        nonlocal_locked = is_locked
+        if is_locked and "(pid " in lock_reason:
+            try:
+                pid = int(lock_reason.split("(pid ")[1].split(")")[0])
+            except (IndexError, ValueError):
+                pid = None
+            if pid is not None and not _pid_alive(pid):
+                if _git(root, "worktree", "unlock", wt).returncode == 0:
+                    nonlocal_locked = False
+
+        # Merge predicate: ancestry OR patch-id equivalence.
+        merged = _is_ancestor(root, branch, base) or _all_commits_cherry_picked(
+            root, branch, base
+        )
+        if not merged:
+            active.append(wt)
+            return
+
+        wt_path = Path(wt)
+        # Merged + on-disk dir gone → PHANTOM, safe to remove.
+        if not wt_path.is_dir():
+            stale.append(wt)
+            return
+
+        # On-disk + merged. Check uncommitted / stashed / locked.
+        status = _git(wt_path, "status", "--porcelain")
+        n_dirty = len([ln for ln in status.stdout.splitlines() if ln.strip()])
+
+        wt_stashes = set(
+            ln for ln in _git(
+                wt_path, "stash", "list", "--pretty=%H"
+            ).stdout.splitlines() if ln.strip()
+        )
+        unique_stashes = len(wt_stashes - main_stashes)
+
+        if n_dirty != 0:
+            dirty.append({
+                "path": wt,
+                "reason": f"{n_dirty} uncommitted file(s) — INVESTIGATE before removing",
+            })
+        elif unique_stashes != 0:
+            dirty.append({
+                "path": wt,
+                "reason": f"{unique_stashes} stash(es) — recover before removing",
+            })
+        elif nonlocal_locked:
+            locked.append(wt)
+        else:
+            stale.append(wt)
+
+    for wt, branch, is_locked, lock_reason in _registered_worktrees(root):
+        classify(wt, branch, is_locked, lock_reason)
+
+    # Orphan detection: on-disk agent-* dir NOT in `git worktree list`.
+    registered_paths = {
+        e[0] for e in _registered_worktrees(root)
+    }
+    for child in sorted(worktree_dir.iterdir()):
+        if not child.is_dir() or not child.name.startswith("agent-"):
+            continue
+        if str(child) not in registered_paths:
+            stale.append(str(child))
+
+    # Dedupe stale (preserve order).
+    seen: set[str] = set()
+    stale = [p for p in stale if not (p in seen or seen.add(p))]
+
+    if not stale:
+        return {
+            "main": str(root),
+            "active": active,
+            "dirty": dirty,
+            "locked": locked,
+            "stale": [],
+            "removed": 0,
+            "failed": 0,
+            "locked_skipped": [],
+            "dry_run": not force,
+            "status": "nothing",
+        }
+
+    if not force:
+        return {
+            "main": str(root),
+            "active": active,
+            "dirty": dirty,
+            "locked": locked,
+            "stale": stale,
+            "removed": 0,
+            "failed": 0,
+            "locked_skipped": [],
+            "dry_run": True,
+            "status": "dry_run",
+        }
+
+    removed = 0
+    failed = 0
+    locked_skipped: list[str] = []
+    for wt in stale:
+        if _git(root, "worktree", "remove", "--force", wt).returncode == 0:
+            removed += 1
+            continue
+        # git refused. Distinguish locked/active (NEVER rm -rf — THE-P10)
+        # from true orphan (git doesn't know about it — safe rmtree).
+        registered_now = {e[0] for e in _registered_worktrees(root)}
+        if wt in registered_now:
+            locked_skipped.append(wt)
+            failed += 1
+        else:
+            try:
+                if Path(wt).exists():
+                    shutil.rmtree(wt)
+                removed += 1
+            except OSError as exc:
+                logger.warning(
+                    "cleanup_stale_worktrees: failed to rmtree orphan %s (%s)",
+                    wt, exc,
+                )
+                failed += 1
+
+    _git(root, "worktree", "prune")
+
+    logger.info(
+        "cleanup_stale_worktrees: %d removed, %d failed, %d locked-skipped",
+        removed, failed, len(locked_skipped),
+    )
+    return {
+        "main": str(root),
+        "active": active,
+        "dirty": dirty,
+        "locked": locked,
+        "stale": stale,
+        "removed": removed,
+        "failed": failed,
+        "locked_skipped": locked_skipped,
+        "dry_run": False,
+        "status": "removed",
+    }
+
+
+def register(server) -> None:
+    """Register the stale-worktree cleanup MCP tool."""
+
+    @server.tool(
+        name="noctus.dev.cleanup_stale_worktrees",
+        description=(
+            "Remove engineer worktrees whose branch is merged to "
+            "origin/main (SHA-ancestry OR patch-id/cherry-pick). DRY-RUN by "
+            "default — force=True actually removes. NEVER removes main, "
+            "sibling workspaces, or worktrees with uncommitted/stashed work "
+            "(force does NOT override safety gates); git-refused locked "
+            "paths are surfaced, never rm-rf'd (THE-P10). Shared-stash "
+            "subtraction + dead-pid auto-unlock (THE-P11). Port of "
+            "scripts/cleanup-stale-worktrees.sh. Pass worktree_path when "
+            "called from inside a git worktree."
+        ),
+    )
+    def _cleanup_stale_worktrees(
+        worktree_path: str | None = None,
+        force: bool = False,
+    ) -> dict:
+        return cleanup_stale_worktrees(
+            worktree_path=worktree_path, force=force,
+        )

@@ -522,7 +522,7 @@ def check_seed_version_propagation(repo_root: Path | None = None) -> list[dict]:
     2. Import `noctusai_seed.__seed_version__` + `noctusai_lib.__lib_version__`
        from the currently-installed packages.
     3. If either reports a SHA different from git HEAD — flag. Actionable
-       remediation: `bash scripts/stamp-seed-version.sh` (or restart via
+       remediation: `python mcp/noctusai/cli.py --stamp-seed-version` (or restart via
        `./start.sh` which does it automatically).
     4. If either reports a `runtime:<sha>` tag (fallback path, no install
        stamp yet) — flag as warning so a never-stamped environment gets
@@ -594,7 +594,7 @@ def check_seed_version_propagation(repo_root: Path | None = None) -> list[dict]:
                     "issue": (
                         f"`{package_name}` has no `_version_static.py` stamp "
                         f"AND is not installed in this venv. Run "
-                        f"`bash scripts/stamp-seed-version.sh` to write the "
+                        f"`python mcp/noctusai/cli.py --stamp-seed-version` to write the "
                         f"stamp, or `pip install -e {stamp_hint}` to install "
                         f"the package."
                     ),
@@ -621,7 +621,7 @@ def check_seed_version_propagation(repo_root: Path | None = None) -> list[dict]:
                 "issue": (
                     f"`{package_name}.{attr_name}` reports 'unknown' — "
                     f"neither install-time stamp nor live git succeeded. "
-                    f"Run `bash scripts/stamp-seed-version.sh` from a git clone."
+                    f"Run `python mcp/noctusai/cli.py --stamp-seed-version` from a git clone."
                 ),
                 "severity": "critical",
             })
@@ -652,7 +652,7 @@ def check_seed_version_propagation(repo_root: Path | None = None) -> list[dict]:
                     "issue": (
                         f"`{package_name}.{attr_name}` falls back to live git "
                         f"(reports {reported!r}) — no install-time stamp exists. "
-                        f"Run `bash scripts/stamp-seed-version.sh` once to "
+                        f"Run `python mcp/noctusai/cli.py --stamp-seed-version` once to "
                         f"enable drift detection across future pulls."
                     ),
                     "severity": "warning",
@@ -667,7 +667,7 @@ def check_seed_version_propagation(repo_root: Path | None = None) -> list[dict]:
                     f"Seed drift: installed `{package_name}.{attr_name}` is "
                     f"{reported!r} but current `git rev-parse --short HEAD` "
                     f"is {current_sha!r}. The running Python sees stale seed "
-                    f"code. Remediate: `bash scripts/stamp-seed-version.sh` "
+                    f"code. Remediate: `python mcp/noctusai/cli.py --stamp-seed-version` "
                     f"(or restart via `./start.sh` which does it automatically)."
                 ),
                 "severity": "high",

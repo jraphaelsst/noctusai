@@ -26,11 +26,15 @@ from __future__ import annotations
 
 def register_all(server) -> None:
     """Register every tool on the given FastMCP server."""
-    from . import google, llm, noctus
+    from . import google, kb_sync, llm, noctus
 
     google.register_all(server)
     llm.register_all(server)
     noctus.register_all(server)
+    # kb_sync lives at tools/kb_sync.py (not in an umbrella package) — it is
+    # the absorbed scripts/verify-kb-sync.sh + scripts/update-kb-counts.py;
+    # register it explicitly so noctus.dev.kb_sync is MCP-exposed.
+    kb_sync.register(server)
 
 
 __all__ = ["register_all"]

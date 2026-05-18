@@ -16,6 +16,7 @@ import pytest
 
 from tools.noctus.dev.promotion import (
     PROMOTIONS_DIRNAME,
+    gen_promotions_index,
     list_promotions,
     parse_manifest,
     promote_from_seed_workspace,
@@ -307,3 +308,53 @@ class TestListPromotions:
         assert result["pending"][0]["slug"] == "a"
         assert len(result["promoted"]) == 1
         assert result["promoted"][0]["slug"] == "b"
+
+
+class TestGenPromotionsIndex:
+    """Native `gen_promotions_index` — replaces the retired
+    test_gen_promotions_index.py (old-script `main()` API; absorbed +
+    deleted 2026-05-18). Behaviour-preserving native coverage."""
+
+    def test_empty_workspace_writes_sectioned_index(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"; noc = tmp_path / "noc"; ws.mkdir(); noc.mkdir()
+        _bootstrap_seed_workspace(ws, noc)
+        res = gen_promotions_index(workspace_root=ws)
+        assert res["changed"] is True
+        body = (ws / "PROMOTIONS.md").read_text(encoding="utf-8")
+        assert "## Pending" in body and "## Promoted" in body
+        assert "<!-- promotions:start -->" in body
+        # the derived index must NOT advertise the deleted shell script
+        assert "scripts/gen-promotions-index.py" not in body
+
+    def test_pending_and_promoted_rows(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"; noc = tmp_path / "noc"; ws.mkdir(); noc.mkdir()
+        _bootstrap_seed_workspace(ws, noc)
+        (ws / "a.txt").write_text("a", encoding="utf-8")
+        (ws / "b.txt").write_text("b", encoding="utf-8")
+        _write_manifest(ws, "alpha", "a.txt", "noctusai_lib/x/", promoted="not-yet")
+        _write_manifest(ws, "beta", "b.txt", "noctusai_lib/y/", promoted="2026-05-10")
+        gen_promotions_index(workspace_root=ws)
+        body = (ws / "PROMOTIONS.md").read_text(encoding="utf-8")
+        pending, promoted = body.split("## Promoted", 1)
+        assert "`alpha`" in pending and "`alpha`" not in promoted
+        assert "`beta`" in promoted and "2026-05-10" in promoted
+
+    def test_idempotent_then_check_clean(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"; noc = tmp_path / "noc"; ws.mkdir(); noc.mkdir()
+        _bootstrap_seed_workspace(ws, noc)
+        _write_manifest(ws, "alpha", "a.txt", "noctusai_lib/x/")
+        gen_promotions_index(workspace_root=ws)
+        first = (ws / "PROMOTIONS.md").read_bytes()
+        r2 = gen_promotions_index(workspace_root=ws)
+        assert (ws / "PROMOTIONS.md").read_bytes() == first
+        assert r2["changed"] is False
+        assert gen_promotions_index(workspace_root=ws, check=True)["drift"] is False
+
+    def test_check_detects_drift_without_writing(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"; noc = tmp_path / "noc"; ws.mkdir(); noc.mkdir()
+        _bootstrap_seed_workspace(ws, noc)
+        _write_manifest(ws, "alpha", "a.txt", "noctusai_lib/x/")
+        (ws / "PROMOTIONS.md").write_text("stale\n", encoding="utf-8")
+        rc = gen_promotions_index(workspace_root=ws, check=True)
+        assert rc["drift"] is True
+        assert (ws / "PROMOTIONS.md").read_text(encoding="utf-8") == "stale\n"

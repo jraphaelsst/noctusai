@@ -73,7 +73,7 @@ When both children's batch-tasks are ✅:
 1. **Walk the patterns log.** Promote any candidate that hit N≥2 across the children to `formalize` in the cross-product absorption catalog. File a seed-absorption follow-up project for each (or apply inline if the helper is small enough).
 2. **Update both children's §11.** Each child gets a §11 entry with a back-pointer to the master's batch number. The master's §11 also gets an entry summarizing the batch's cross-cutting findings.
 3. **Update both children's `improvements.md`** via `noctus.dev.improvements`.
-4. **Run KB sync** (`bash scripts/verify-kb-sync.sh`) if any KB pages were touched by the batch.
+4. **Run KB sync** (`python mcp/noctusai/cli.py --verify-kb-sync`) if any KB pages were touched by the batch.
 5. **Create per-batch local commit** in the master scope (no push). The children's per-phase commits land alongside, scoped to each child's diff.
 6. **Pause for user signal** before opening the next batch — same phase-by-phase cadence as a single project, just at the batch level.
 

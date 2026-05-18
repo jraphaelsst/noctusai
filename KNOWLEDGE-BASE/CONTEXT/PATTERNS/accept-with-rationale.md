@@ -603,6 +603,15 @@ state change, not a removal.
 >
 > **Net:** seed prerequisites fully formalized + routing converged (zero-risk, complete); calendar/meta consumer-migration is a bounded consumer-side residual with a concrete destination; drive is a documented permanent non-fit. This entry stays `accept` (not yet fully `formalized`) because the product-local calendar/meta/drive + `credential_store.py` persist — but the *seed under-ship that blocked it is closed*.
 
+### 8 `scripts/` carve-outs retain shell (MCP runtime structurally unavailable)
+
+- **Subject:** `KB § PATTERNS/mcp-first-scripts.md` mandates new automation default to a `noctus.dev.*` MCP tool. 16 absorbable scripts were ported + deleted 2026-05-18 (`scripts-mcp-absorption`). 8 remain shell.
+- **Decision `[A]`:** these 8 stay shell, NOT absorbed: `pre-commit` (`[carve:hook]` — thin dispatcher; logic IS in `noctus.dev.*`, the shell entry is the only carve-out part) · `install-hooks.sh` · `setup.sh` · `first-time-setup.sh` · `bootstrap-worktree.sh` · `bootstrap-seed-workspace.sh` · `build-init-local-db.sh` (`[carve:bootstrap]` ×6 — run *before* the venv the MCP lives in exists; they *create* it) · `build-base-images.sh` (`[carve:docker]` — whole body is `docker build` of the seed base images; a Python wrapper would only shell out).
+- **Reason:** formalize/refactor are structurally impossible, not merely costly. Git invokes `.git/hooks/*` as a shell process with no Python runtime guarantee; bootstrap scripts are the chicken-and-egg that builds the interpreter the toolkit imports from; the docker-orchestration body has zero extractable logic (absorbing yields negative value — a shell-out wrapper). `pre-commit`'s *logic* WAS formalized (every step → `cli.py --<flag>`); only the unavoidable shell entry is accepted.
+- **Scope:** the 8 files above, each carrying its `[carve:*]` row in `KB § PATTERNS/mcp-first-scripts.md` §3 (the manifest is the keeper-parsed single source of truth; this entry is its 1:1 rationale pairing).
+- **Revisit trigger:** (a) a hook runner that can invoke MCP directly (flips `[carve:hook]`→formalize); (b) `build-base-images.sh` grows real logic beyond `docker build` plumbing (flips `[carve:docker]`→absorb); (c) the bootstrap sequence gains a pre-existing Python runtime it can rely on (flips `[carve:bootstrap]`). Any *new* `scripts/*.{sh,py}` without a manifest row trips `check_new_script_lacks_mcp_analog` (warning) — the keeper enforces the rule going forward.
+- **Recorded by:** `scripts-mcp-absorption` Phase 5 (2026-05-18, architect + 5 parallel engineers MOLE/ANALYSIS/LEDGER/KBSYNC/CODEGEN).
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.

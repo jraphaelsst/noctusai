@@ -53,7 +53,7 @@ PHASE-END VERIFICATION CHECKLIST — runs at every phase boundary (NEW 2026-04-2
   └─ 3. RE-RUN ABSORPTION SCANS — did this phase introduce a new N=2 pattern?
           --scan-helpers + the scan(s) relevant to what was edited.
           New N=2+ → triage NOW (Improvements block + decision: formalize / refactor / accept-with-rationale).
-  └─ 4. KB sync (if any KB doc was edited): bash scripts/verify-kb-sync.sh
+  └─ 4. KB sync (if any KB doc was edited): python mcp/noctusai/cli.py --verify-kb-sync
   └─ 5. §6 ↔ §11 self-check passes (the five-point rule above).
 
 CLOSE — at every phase end
@@ -78,7 +78,7 @@ PROJECT-END VERIFICATION CHECKLIST — runs once before folder archive (per § 1
   └─ 4. Keeper full validate — score 100/100, zero new critical/high:
           python mcp/noctusai/cli.py --validate
   └─ 5. KB sync — both verifiers clean:
-          bash scripts/verify-kb-sync.sh
+          python mcp/noctusai/cli.py --verify-kb-sync
           python mcp/noctusai/cli.py --check-three-way-sync
   └─ 6. FINAL ABSORPTION SCAN sweep — capture what was absorbed vs what's deferred. Document in §11 close
           entry. Any new N=2+ patterns surfaced by THIS project's edits get a triage decision (formalize /

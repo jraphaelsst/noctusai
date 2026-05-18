@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
-# pre-commit hook
+# pre-commit hook — [carve:hook] thin dispatcher
 #
-# Runs BEFORE every commit. Stages any auto-derived updates so they land
-# in the same commit as the human-authored changes — no post-commit amend.
+# Per `KB § PATTERNS/mcp-first-scripts.md`: git invokes this as a shell
+# process directly (it cannot call MCP), so the ENTRY stays shell — but
+# every step's LOGIC lives in the `noctus.dev.*` MCP toolkit, reached via
+# `mcp/noctusai/cli.py --<flag>`. This file is a thin dispatcher, not a
+# logic container. The former scripts/{sync-seed-template,update-kb-counts,
+# stamp-seed-version,render-project-history,verify-kb-sync,propagate-*}
+# were absorbed (scripts-mcp-absorption project).
 #
-# Steps:
-#   1. If any staged file is in products/seed/, sync the seed → template
-#      mirror (`sync-seed-template.sh`) and stage templates/product-seed/.
-#   2. Regenerate auto-derived KB count blocks (`update-kb-counts.py`) and
-#      stage any KB docs / CLAUDE.md that changed.
-#   3. Verify KB ↔ CLAUDE.md sync (`verify-kb-sync.sh`). ABORT the commit
-#      if any pointer is broken.
+# Steps (all pre-commit, no amend; auto-derived updates staged in-commit):
+#   1. seed → template mirror            (cli --sync-seed-template)
+#   2. KB auto-derived count blocks      (cli --update-kb-counts)
+#   3. seed version stamp                (cli --stamp-seed-version)
+#   3b. ledger → PROJECT-HISTORY.md      (cli --render-project-history)
+#   4. KB ↔ CLAUDE.md sync (blocking)    (cli --verify-kb-sync)
+#   4b. containerization propagation     (cli --propagate both --check)
+#   5. §6↔§11 phase-state (blocking)     (cli --check-phase-state)
+#   6. AST-outline-ability (blocking)    (cli --check-outlined)
 #
 # Bypass (not recommended): git commit --no-verify
 # ──────────────────────────────────────────────────────────────
@@ -20,12 +27,30 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
+# ─── venv-aware Python resolution (worktree-safe) ───────────────
+# A `git worktree add` worktree has no venv of its own → fall back to
+# the MAIN repo's venv via --git-common-dir. Final fallback: python3.
+if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
+    PY="$REPO_ROOT/venv/bin/python"
+else
+    MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    if [[ -n "$MAIN_REPO_GITDIR" ]]; then
+        MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
+        if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
+            PY="$MAIN_REPO_ROOT/venv/bin/python"
+        fi
+    fi
+    PY="${PY:-${PYTHON:-python3}}"
+fi
+CLI="$REPO_ROOT/mcp/noctusai/cli.py"
+have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
+
 # ─── 1. Seed → template mirror (only if seed/ files are staged) ──
-if [[ -x "$REPO_ROOT/scripts/sync-seed-template.sh" && -d "$REPO_ROOT/products/seed" ]]; then
+if [[ -d "$REPO_ROOT/products/seed" ]] && have_py; then
     STAGED_SEED=$(git diff --cached --name-only -- products/seed/ 2>/dev/null || true)
     if [[ -n "$STAGED_SEED" ]]; then
         echo "[pre-commit] Seed product changed — syncing template..."
-        bash "$REPO_ROOT/scripts/sync-seed-template.sh" 2>&1 | sed 's/^/[pre-commit] /'
+        "$PY" "$CLI" --sync-seed-template 2>&1 | sed 's/^/[pre-commit] /'
 
         TEMPLATE_DIFF=$(git status --porcelain -- templates/product-seed/ 2>/dev/null || true)
         if [[ -n "$TEMPLATE_DIFF" ]]; then
@@ -39,74 +64,48 @@ if [[ -x "$REPO_ROOT/scripts/sync-seed-template.sh" && -d "$REPO_ROOT/products/s
 fi
 
 # ─── 2. KB auto-derived counts ──────────────────────────────────
-if [[ -x "$REPO_ROOT/scripts/update-kb-counts.py" ]]; then
-    # Same venv-discovery shape as block 5 (worktree-aware).
-    if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
-        PY="$REPO_ROOT/venv/bin/python"
-    else
-        MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-        if [[ -n "$MAIN_REPO_GITDIR" ]]; then
-            MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
-            if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
-                PY="$MAIN_REPO_ROOT/venv/bin/python"
-            fi
-        fi
-        PY="${PY:-${PYTHON:-python3}}"
-    fi
-    if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
-        echo "[pre-commit] Updating KB auto-derived counts..."
-        "$PY" "$REPO_ROOT/scripts/update-kb-counts.py" 2>&1 | sed 's/^/[pre-commit] /'
+if have_py; then
+    echo "[pre-commit] Updating KB auto-derived counts..."
+    "$PY" "$CLI" --update-kb-counts 2>&1 | sed 's/^/[pre-commit] /'
 
-        CHANGED_DOCS=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
-        if [[ -n "$CHANGED_DOCS" ]]; then
-            echo "[pre-commit] Staging updated KB docs:"
-            echo "$CHANGED_DOCS" | sed 's/^/[pre-commit]   /'
-            echo "$CHANGED_DOCS" | xargs -r git add
-        fi
-    else
-        echo "[pre-commit] Skipping count refresh — python3 not found"
+    CHANGED_DOCS=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
+    if [[ -n "$CHANGED_DOCS" ]]; then
+        echo "[pre-commit] Staging updated KB docs:"
+        echo "$CHANGED_DOCS" | sed 's/^/[pre-commit]   /'
+        echo "$CHANGED_DOCS" | xargs -r git add
     fi
+else
+    echo "[pre-commit] Skipping count refresh — python not found"
 fi
 
 # ─── 3. Seed version stamp (matches _version_static.py to current HEAD) ──
 # Keeps the keeper drift-detector honest. Idempotent; gitignored output.
-if [[ -x "$REPO_ROOT/scripts/stamp-seed-version.sh" ]]; then
-    bash "$REPO_ROOT/scripts/stamp-seed-version.sh" 2>&1 | sed 's/^/[pre-commit] /' || true
+if have_py; then
+    "$PY" "$CLI" --stamp-seed-version 2>&1 | sed 's/^/[pre-commit] /' || true
 fi
 
 # ─── 3b. Project-history ledger → PROJECT-HISTORY.md render ─────
-# Per `projects/project-history-ledger/PROJECT.md § 6 Phase 3`.
-# Re-render the human view when the ledger is staged OR when the
-# ledger has been modified by an earlier step in this hook chain
-# (e.g. an archive-step that stamped a new record before commit).
-# Output auto-stages so the human view never drifts from the
-# structured source — matches the §2 KB-counts pattern.
-if [[ -x "$REPO_ROOT/scripts/render-project-history.py" ]]; then
+# Re-render the human view when the ledger is staged OR modified by an
+# earlier step in this hook chain. Output auto-stages so the human view
+# never drifts from the structured source.
+if have_py; then
     STAGED_LEDGER=$(git diff --cached --name-only -- project-history/ledger.ndjson 2>/dev/null || true)
     UNSTAGED_LEDGER=$(git status --porcelain -- project-history/ledger.ndjson 2>/dev/null || true)
     if [[ -n "$STAGED_LEDGER" || -n "$UNSTAGED_LEDGER" ]]; then
-        # Reuse the `$PY` discovered in §2 (worktree-aware). Falls back
-        # to python3 if §2 didn't run for some reason.
-        PY="${PY:-${PYTHON:-python3}}"
-        if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
-            echo "[pre-commit] Rendering project-history/PROJECT-HISTORY.md..."
-            "$PY" "$REPO_ROOT/scripts/render-project-history.py" 2>&1 \
-                | sed 's/^/[pre-commit] /'
-            CHANGED_HISTORY=$(git status --porcelain -- project-history/PROJECT-HISTORY.md 2>/dev/null || true)
-            if [[ -n "$CHANGED_HISTORY" ]]; then
-                echo "[pre-commit] Staging updated project-history/PROJECT-HISTORY.md"
-                git add project-history/PROJECT-HISTORY.md
-            fi
-        else
-            echo "[pre-commit] Skipping history render — python3 not found"
+        echo "[pre-commit] Rendering project-history/PROJECT-HISTORY.md..."
+        "$PY" "$CLI" --render-project-history 2>&1 | sed 's/^/[pre-commit] /'
+        CHANGED_HISTORY=$(git status --porcelain -- project-history/PROJECT-HISTORY.md 2>/dev/null || true)
+        if [[ -n "$CHANGED_HISTORY" ]]; then
+            echo "[pre-commit] Staging updated project-history/PROJECT-HISTORY.md"
+            git add project-history/PROJECT-HISTORY.md
         fi
     fi
 fi
 
 # ─── 4. KB ↔ CLAUDE.md sync verification (blocking) ─────────────
-if [[ -x "$REPO_ROOT/scripts/verify-kb-sync.sh" ]]; then
+if have_py; then
     echo "[pre-commit] Verifying KB sync..."
-    if ! bash "$REPO_ROOT/scripts/verify-kb-sync.sh"; then
+    if ! "$PY" "$CLI" --verify-kb-sync; then
         echo "[pre-commit] KB sync check FAILED. Commit aborted." >&2
         echo "[pre-commit] Fix the broken pointers in CLAUDE.md or update KNOWLEDGE-BASE/INDEX.md." >&2
         exit 1
@@ -114,91 +113,43 @@ if [[ -x "$REPO_ROOT/scripts/verify-kb-sync.sh" ]]; then
 fi
 
 # ─── 4b. Containerization propagation drift (blocking, when seed staged) ─
-# Project: containerization-single-container. The seed at products/seed/
-# is canonical; the 10 per-product backend Dockerfiles + composes +
-# overrides are GENERATED. If the canonical seed (or a propagate script)
-# is staged but the generated files weren't re-propagated, they drift
-# silently. Each propagate-*.sh --check exits non-zero on drift.
-if git diff --cached --name-only | grep -qE '^products/seed/(backend/Dockerfile|docker-compose\.(yml|override\.yml))$|^scripts/propagate-.*\.sh$|^seed/docker/Dockerfile\.'; then
-    for chk in propagate-dockerfiles propagate-composes; do
-        if [[ -x "$REPO_ROOT/scripts/$chk.sh" ]]; then
-            if ! bash "$REPO_ROOT/scripts/$chk.sh" --check >/dev/null 2>&1; then
-                echo "[pre-commit] $chk drift — per-product files stale vs products/seed/." >&2
-                echo "[pre-commit] Run: bash scripts/$chk.sh   then re-stage. Commit aborted." >&2
-                exit 1
-            fi
-        fi
-    done
+# The seed at products/seed/ is canonical; per-product Dockerfiles +
+# composes + overrides are GENERATED. If the canonical seed is staged
+# but the generated files weren't re-propagated, they drift silently.
+# `cli --propagate both --check` exits non-zero on drift.
+if git diff --cached --name-only | grep -qE '^products/seed/(backend/Dockerfile|docker-compose\.(yml|override\.yml))$|^seed/docker/Dockerfile\.'; then
+    if have_py && ! "$PY" "$CLI" --propagate both --check >/dev/null 2>&1; then
+        echo "[pre-commit] propagation drift — per-product files stale vs products/seed/." >&2
+        echo "[pre-commit] Run: python mcp/noctusai/cli.py --propagate both   then re-stage. Commit aborted." >&2
+        exit 1
+    fi
     echo "[pre-commit] containerization propagation: in sync."
 fi
 
 # ─── 5. Phase-state consistency (blocking, only when PROJECT.md staged) ──
-# Per `keeper-phase-state-consistency-detector` (shipped 2026-04-28) +
-# `KB § PATTERNS/project-execution.md § 2 Self-check before claiming a
-# phase is done`. Catches §6 ↔ §11 drift before it commits — closes the
-# slip pattern that documentation alone wasn't sufficient to prevent.
-#
-# Only runs when a file whose BASENAME is exactly `PROJECT.md` is staged
-# (perf — no overhead on commits that don't touch project docs, per
-# project §7.3 default). The basename match avoids false-firing on
-# legacy files like `AI-EXPANSION-PROJECT.md` whose name happens to
-# end in `PROJECT.md`.
+# Keeper `check_phase_state_consistency` + `KB § PATTERNS/project-
+# execution.md § 2`. Catches §6 ↔ §11 drift before it commits. Basename
+# match avoids false-firing on legacy `*-PROJECT.md` files.
 STAGED_PROJECT_MD=$(git diff --cached --name-only 2>/dev/null | grep -E '(^|/)PROJECT\.md$' || true)
-if [[ -n "$STAGED_PROJECT_MD" ]]; then
-    # Prefer the repo's venv Python (codebase uses Python 3.10+ syntax;
-    # system `python3` may be older on some hosts). When running inside a
-    # `git worktree add`-created worktree, `$REPO_ROOT` is the worktree's
-    # path (no venv), so fall back to the MAIN repo's venv resolved via
-    # `--git-common-dir` (which returns the shared `.git/` of the source
-    # checkout). Final fallback: `${PYTHON:-python3}`.
-    if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
-        PY="$REPO_ROOT/venv/bin/python"
-    else
-        MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-        if [[ -n "$MAIN_REPO_GITDIR" ]]; then
-            MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
-            if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
-                PY="$MAIN_REPO_ROOT/venv/bin/python"
-            fi
-        fi
-        PY="${PY:-${PYTHON:-python3}}"
-    fi
-    if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
-        echo "[pre-commit] Checking §6 ↔ §11 phase-state consistency..."
-        if ! "$PY" "$REPO_ROOT/mcp/noctusai/cli.py" --check-phase-state; then
-            echo "[pre-commit] Phase-state check FAILED. Commit aborted." >&2
-            echo "[pre-commit] Fix the §6 live state (tick checkboxes / flip header / add Improvements block) before committing." >&2
-            exit 1
-        fi
+if [[ -n "$STAGED_PROJECT_MD" ]] && have_py; then
+    echo "[pre-commit] Checking §6 ↔ §11 phase-state consistency..."
+    if ! "$PY" "$CLI" --check-phase-state; then
+        echo "[pre-commit] Phase-state check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Fix the §6 live state (tick checkboxes / flip header / add Improvements block) before committing." >&2
+        exit 1
     fi
 fi
 
 # ─── 6. Outline-ability (blocking, only when source files staged) ───────
 # Keeper `check_files_outlined` + `KB § PATTERNS/ast.md § Always-outline-
-# able platform`. Every staged .py/.ts/.tsx MUST be AST-outline-able so
-# the AST-first / narrow-read tooling is always functional + optimized.
-# Scoped to staged source files (perf — zero overhead on doc-only commits).
+# able platform`. Every staged .py/.ts/.tsx MUST be AST-outline-able.
 STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '\.(py|pyi|ts|tsx|js|jsx|mjs|cjs)$' || true)
-if [[ -n "$STAGED_SRC" ]]; then
-    if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
-        PY="$REPO_ROOT/venv/bin/python"
-    else
-        MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-        if [[ -n "$MAIN_REPO_GITDIR" ]]; then
-            MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
-            if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
-                PY="$MAIN_REPO_ROOT/venv/bin/python"
-            fi
-        fi
-        PY="${PY:-${PYTHON:-python3}}"
-    fi
-    if command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; then
-        echo "[pre-commit] Checking staged files are AST-outline-able..."
-        if ! "$PY" "$REPO_ROOT/mcp/noctusai/cli.py" --check-outlined; then
-            echo "[pre-commit] Outline-ability check FAILED. Commit aborted." >&2
-            echo "[pre-commit] A staged source file can't be AST-read (SyntaxError/parse). Fix it; run: python mcp/noctusai/cli.py --scan-outlined" >&2
-            exit 1
-        fi
+if [[ -n "$STAGED_SRC" ]] && have_py; then
+    echo "[pre-commit] Checking staged files are AST-outline-able..."
+    if ! "$PY" "$CLI" --check-outlined; then
+        echo "[pre-commit] Outline-ability check FAILED. Commit aborted." >&2
+        echo "[pre-commit] A staged source file can't be AST-read (SyntaxError/parse). Fix it; run: python mcp/noctusai/cli.py --scan-outlined" >&2
+        exit 1
     fi
 fi
 

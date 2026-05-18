@@ -338,8 +338,10 @@ fi
 echo "[venv] Instalando dependencias..."
 "$VENV/bin/pip" install -q -r "$ROOT_DIR/requirements.txt"
 
-if [ -x "$ROOT_DIR/scripts/stamp-seed-version.sh" ]; then
-  bash "$ROOT_DIR/scripts/stamp-seed-version.sh" || true
+# Seed-version stamp absorbed into the MCP toolkit (scripts-mcp-absorption):
+# scripts/stamp-seed-version.sh → noctus.dev.stamp_seed_version.
+if [ -x "$VENV/bin/python" ]; then
+  "$VENV/bin/python" "$ROOT_DIR/mcp/noctusai/cli.py" --stamp-seed-version || true
 fi
 
 URLS=()

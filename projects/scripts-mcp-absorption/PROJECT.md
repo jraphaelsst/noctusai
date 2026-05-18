@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-18
 - **Last updated:** 2026-05-18
-- **Status:** Phase 1 ✅ (doc rule + keeper codified) → Phase 2 ready (awaiting user "continue")
+- **Status:** Phases 1-5 ✅ (rule codified · 16 scripts absorbed · pre-commit thin-dispatcher · carve-outs documented) → Phase 6 (full folder reorg, user-approved with risk-mitigation) → Phase 7 close
 - **Owner / stakeholders:** joaoraphaelsst · Claude (architect)
 - **Related docs:** `KB § PATTERNS/seed-absorption.md`, `KB § 06-AGENTS.md` (MCP toolkit), `KB § 01-PHILOSOPHY.md § MCP-first`, `scripts/README.md`, `mcp/noctusai/tools/noctus/dev/`
 - **Project slug:** `scripts-mcp-absorption` (intent `consolidation`; cross-cutting platform-infra → lives at `projects/<slug>/`)
@@ -73,7 +73,7 @@ This is platform-tooling (the `mcp/noctusai` dev toolkit), not product code — 
 
 | # | Script | Bucket | Disposition | MCP target |
 |---|---|---|---|---|
-| 1 | `verify-kb-sync.sh` | A · genuine dup (real Py impl) | delete + repoint | `cli.py --verify-kb-sync` / `tools/kb_sync.py` ✅ exists |
+| 1 | `verify-kb-sync.sh` | B · heavy port (analog = subprocess shim) | real-port + delete + repoint | `tools/kb_sync.py` (replace shim w/ real impl) |
 | 2 | `mole.sh` (26KB) | B · heavy port (analog = subprocess shim) | port shell→Py, delete shell | `mole.py` becomes real impl |
 | 3 | `archive-clean.sh` | C · pure-logic | absorb + delete | extend `archive.py` → `noctus.dev.archive_clean` |
 | 4 | `disk-usage-monitor.sh` | C | absorb + delete | `noctus.dev.disk_usage` |
@@ -133,25 +133,35 @@ Phase-by-phase; pause for user "continue" between phases unless told to ram.
 - `pre-commit` (extensionless) is manifest-documented but out of keeper scan-scope by the `*.{sh,py}` glob — intentional (doc note states it), but a determined slip could add an extensionless `scripts/foo` automation that escapes. Acceptable: extensionless executables in `scripts/` are vanishingly rare and the carve-out taxonomy already covers the only real one. Logged, not fixed.
 - `mole.py`-is-only-a-subprocess-shim was caught at audit time, not classification time — the §5/§3 "B · heavy port" bucket exists because of it. Confirms the audit-before-bucket discipline; no action.
 
-### Phase 2 — Bucket A+B (dedup + heavy port)
-- [ ] A: delete `verify-kb-sync.sh`; repoint `pre-commit` + `scripts/README.md` + 22 doc refs → `cli.py --verify-kb-sync`
-- [ ] B: port `mole.sh` (26KB) → real `mole.py` impl (scan/sweep/scope/force/json parity); `mole.py` no longer subprocess-shims; colocated parity test vs old script output; delete `mole.sh`; repoint `scripts/mole.sh` refs (CLAUDE.md trigger rows, KB storage-hygiene)
+### Phase 2 — Bucket A+B (dedup + heavy port) ✅ (2026-05-18)
+- [x] B: `verify-kb-sync.sh` re-bucketed A→B (kb_sync.py was ALSO a subprocess shim) → real native `tools/kb_sync.py`; deleted; `cli.py --verify-kb-sync` unchanged → pre-commit + docs repointed
+- [x] B: `mole.sh` (26KB) → real native `mole.py` (scan/sweep/scope/force/json parity, SAFE-GATE preserved); deleted; `next_action` hints + ~25 doc refs repointed → `noctus.dev.mole`
 
-### Phase 3 — Bucket C absorptions (wave-parallel, file-disjoint)
-- [ ] W3a analysis-class: `archive-clean` · `disk-usage` · `check-framework-deps` · `cleanup-worktrees` · `merge-debt`
-- [ ] W3b history-class: `render-project-history` + `backfill-project-history` → `history.py`
-- [ ] W3c kb-class: `update-kb-counts`→`kb_sync.py` · `gen-promotions-index`→`promotion.py` · `sync-seed-template` · `stamp-seed-version` (thin-shim the pre-commit-invoked ones)
-- [ ] W3d codegen-class: `propagate-composes` · `propagate-dockerfiles` · `smoke-fleet`
-- [ ] each: MCP tool + `cli.py` flag + colocated `Test*` + repoint refs + delete/shim original
+**Improvements:** bucket A proved empty — every "already has an analog" candidate was a `subprocess` shim, so A+B collapsed to "genuine port". Full synthesis in the consolidated **Improvements (Phases 2-5)** block below (shared cross-phase context — bundled per the one-proposal-per-phase-context rule).
 
-### Phase 4 — pre-commit thin-shim (🔒 gated on Phase 3 W3c FF)
-- [ ] absorb `pre-commit` orchestration → `noctus.dev.precommit` (ordered steps: seed-sync → kb-counts → stamp → history → kb-sync-verify)
-- [ ] `scripts/pre-commit` → thin dispatcher calling `cli.py --precommit`; `install-hooks.sh` symlink unchanged
-- [ ] fresh-clone safety: shim degrades gracefully if venv absent (same as current python3 fallback)
+### Phase 3 — Bucket C absorptions (5 parallel engineers, file-disjoint) ✅ (2026-05-18)
+- [x] W3a ANALYSIS: `archive-clean`→`archive.py` · `disk-usage`·`check-framework-deps`·`cleanup-worktrees`·`merge-debt` (new modules)
+- [x] W3b LEDGER: `render-project-history`+`backfill-project-history`→`history.py` · `gen-promotions-index`→`promotion.py`
+- [x] W3c KBSYNC: `update-kb-counts`+`verify-kb-sync`→`kb_sync.py` (native) · `sync-seed-template`·`stamp-seed-version` (new)
+- [x] W3d CODEGEN: `propagate-composes`+`propagate-dockerfiles`→`propagate.py` · `smoke-fleet`→`smoke_fleet.py`
+- [x] each: native MCP tool + registered (`__init__.py`/`tools/__init__.py`) + `cli.py` flag + colocated tests + original deleted + refs repointed
 
-### Phase 5 — Carve-out documentation
-- [ ] `[A]` accept-with-rationale catalog entries for all 8 carve-outs (D-entry+E+F) — structural reason each stays shell
-- [ ] `scripts/README.md` rewrite: classify remaining scripts by bucket; state the default-MCP rule
+**Improvements:** the 5-engineer file-disjoint design held with zero file collision; the only failures were the two harness-structural issues (worktree-base, overlay-lands-in-session-tree) — both recoverable architect-inline without re-dispatch. Full synthesis in the consolidated **Improvements (Phases 2-5)** block below.
+
+### Phase 4 — pre-commit thin-dispatcher ✅ (2026-05-18)
+- [x] `scripts/pre-commit` rewired: every step → `python mcp/noctusai/cli.py --<flag>` ([carve:hook]; logic in `noctus.dev.*`); triplicated `$PY` venv-discovery hoisted (DRY fix-on-contact); fresh-clone `have_py` graceful-degrade preserved; `start.sh` stamp call repointed
+
+**Improvements:** Phase 4 was validated *live* — committing Phase 2-5 ran the rewritten thin-dispatcher pre-commit, and the native `cli.py --check-phase-state` flag correctly caught this very §6-Improvements gap (the safety net firing IS the methodology working). Full synthesis in the consolidated block below.
+
+### Phase 5 — Carve-out documentation ✅ (2026-05-18)
+- [x] consolidated `[A]` accept-with-rationale entry for all 8 carve-outs (1:1 with manifest §3 rows; structural reason each stays shell)
+- [x] `scripts/README.md` rewritten: the rule + 8 carve-outs by `[carve:*]` category + absorbed→landing map
+
+**Improvements (Phases 2-5):**
+- `isolation:"worktree"` forks from `origin/main` not the feature HEAD; subagent Writes land in the SHARED session/main-tree not the worktree. Both diagnosed + mitigated (ff-only base-correction preamble in briefs; main-tree true-disk salvage). Codified → `feedback_worktree_isolation_base_and_overlay` + memory.
+- Byte-parity-vs-script tests are inherently one-shot (proven green at port time, unrunnable post-deletion). Fix-on-contact: converted `TestRenderProjectHistoryParity`/test_propagate to native behavioural assertions; retired `test_render_history.py`/`test_gen_promotions_index.py`/`test_merge_debt_monitor.py`; added native `TestGenPromotionsIndex`. Lesson: a port's byte-parity test should assert against a *committed golden fixture*, not a freshly-loaded soon-to-be-deleted script — candidate KB addition to `mcp-first-scripts.md`.
+- `promotion.py` emitted-template + `mole.py` `next_action` embedded the old script path (parity-faithful but dangling once deleted) — repointed in the same change. Generalizes `feedback_dangling_deleted_product_path` to *generated-output* strings, not just docs.
+- N≥5 identical "script→native dev-tool port" shape across one dispatch (ANALYSIS alone = 5) → recurrence rule: candidate `scaffold_script_port` emitter / KB recipe. Logged for follow-up (not in this project's scope).
 
 ### Phase 6 — Folder reorganization (remaining scripts)
 - [ ] intent folders: `scripts/bootstrap/` · `scripts/hooks/` · `scripts/infra/` · `scripts/db/` (init-local-db) · `scripts/codemods/` (stays)
@@ -200,4 +210,6 @@ Single source of truth; live-tick tasks; phase-by-phase pause; commit plan with 
 | Date | Change | By |
 |---|---|---|
 | 2026-05-18 | Initial project drafted after AskUserQuestion interrogation (4 decisions §2); Phase 0 audit run + locked (§5 25-script classification) | Claude (architect) |
+| 2026-05-18 | Fix-on-contact (pre-dispatch): `kb_sync.py` is ALSO a `subprocess` shim around `verify-kb-sync.sh` (same trap as `mole.py` — grep showed `def verify_kb_sync` without reading the body). Re-bucketed `verify-kb-sync.sh` A→B; **bucket A is now empty** — every absorb is a genuine shell/py→real-Python port, no trivial delete-the-dup exists. Manifest §3 + §5 corrected | Claude (architect) |
 | 2026-05-18 | Phase 1 ✅ — `s3`+`s4` codified: KB `mcp-first-scripts.md` (manifest = durable SoT) + CLAUDE.md/platform.md/INDEX.md + memory + keeper `check_new_script_lacks_mcp_analog` (6 colocated tests, real-tree baseline 0) + engineer-default §8a. Gates: keeper 25/25 · meta-detector ✓ · symbology-drift 0 · verify-kb-sync ✓. Methodology-codification-pipeline `s1→s4` same session | Claude (architect) |
+| 2026-05-18 | Phases 2-5 ✅ — 16 scripts → native `noctus.dev.*` tools via 5 parallel engineers (MOLE/ANALYSIS/LEDGER/KBSYNC/CODEGEN, file-disjoint). Two harness-structural issues hit + mitigated architect-inline (NOT re-dispatched, per engineer-default §1a): (a) worktree base=`origin/main` → ff-only base-correction preamble; (b) subagent Writes land in shared session/main-tree → main-tree true-disk salvage. Integration: `__init__.py`×2 register + 17 cli flags + pre-commit thin-dispatcher (Phase 4) + 16 scripts `git rm` + manifest stripped to 8 carve-outs (keeper baseline 0) + accept-with-rationale entry + README rewrite + ~25 docs/start.sh/mole.next_action/promotion.template repointed (residual dangling=0). Fix-on-contact: byte-parity-vs-deleted-script tests converted to native / retired (3 files) + native gen_promotions_index coverage added. Gates: keeper 0 · doc-tool-ref 0 · symbology 0 · verify-kb-sync ✓ · full suite [pending re-run] | Claude (architect) + engineers |

@@ -541,3 +541,242 @@ class TestMcpRegistration:
         s = build_server()
         manager = s._tool_manager
         assert "noctus.dev.history_record" in manager._tools
+
+    def test_absorbed_render_and_backfill_tools_in_server_registry(self):
+        from server import build_server
+        s = build_server()
+        manager = s._tool_manager
+        assert "noctus.dev.render_project_history" in manager._tools
+        assert "noctus.dev.backfill_project_history" in manager._tools
+
+
+# ---------------------------------------------------------------------------
+# Absorbed render-project-history — byte-parity vs the former script
+# ---------------------------------------------------------------------------
+
+from tools.noctus.dev.history import (  # noqa: E402
+    BackfillError,
+    backfill_project_history,
+    render_project_history,
+)
+
+_REPO = Path(__file__).resolve().parents[3]
+
+
+def _ndjson(path: Path, records: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as fh:
+        for r in records:
+            fh.write(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def _rec(slug: str, closed: str, summary: str = "S.", total: int = 1000) -> dict:
+    return {
+        "slug": slug,
+        "scope": "cross-product",
+        "status_at_close": "shipped",
+        "dates": {"created": "2026-05-01", "closed": closed},
+        "phases": [],
+        "short_summary": summary,
+        "short_review": "Review body.",
+        "token_count": {
+            "project_doc_tokens": 100,
+            "improvements_tokens": 50,
+            "proposals_tokens": 25,
+            "code_delta_tokens": total - 175,
+            "total": total,
+            "tokenizer_used": "tiktoken-cl100k_base",
+        },
+        "outcome_signals": [],
+    }
+
+
+class TestRenderProjectHistoryParity:
+    def test_render_dedup_and_escaping(self, tmp_path: Path) -> None:
+        """Native render: per-slug dedup (latest close wins), pipe escaped
+        so the markdown table isn't broken, embedded newline collapsed to a
+        space, changed/drift flags set. (Former byte-parity-vs-`scripts/
+        render-project-history.py` test — script absorbed + deleted
+        2026-05-18; parity was proven green at port time, this is the
+        durable native-behaviour replacement.)"""
+        recs = [
+            _rec("zeta", "2026-05-05", "Has | pipe."),
+            _rec("alpha", "2026-05-10", "Line one.\nLine two."),
+            _rec("alpha", "2026-05-02", "Earlier alpha."),
+        ]
+        ledger = tmp_path / "b.ndjson"
+        out = tmp_path / "NEW.md"
+        _ndjson(ledger, recs)
+        res = render_project_history(
+            repo_root=tmp_path, ledger_path=ledger, output_path=out
+        )
+
+        assert res["changed"] is True
+        assert res["drift"] is True
+        assert res["rows"] == 2  # alpha deduped (latest close kept)
+        body = out.read_text(encoding="utf-8")
+        assert "Line one. Line two." in body  # raw newline → single space
+        assert "Line one.\nLine two." not in body
+        assert "Has \\| pipe." in body  # pipe escaped for the md table
+        # dedup kept the later alpha (2026-05-10), dropped the 2026-05-02 one
+        assert "2026-05-10" in body and "Earlier alpha." not in body
+
+    def test_idempotent_and_check_mode(self, tmp_path: Path) -> None:
+        ledger = tmp_path / "ledger.ndjson"
+        out = tmp_path / "PROJECT-HISTORY.md"
+        _ndjson(ledger, [_rec("a", "2026-05-10")])
+
+        r1 = render_project_history(
+            repo_root=tmp_path, ledger_path=ledger, output_path=out
+        )
+        first = out.read_bytes()
+        r2 = render_project_history(
+            repo_root=tmp_path, ledger_path=ledger, output_path=out
+        )
+        assert r1["changed"] is True and r2["changed"] is False
+        assert out.read_bytes() == first
+
+        rc = render_project_history(
+            repo_root=tmp_path, ledger_path=ledger, output_path=out, check=True
+        )
+        assert rc["drift"] is False and rc["changed"] is False
+
+    def test_check_mode_detects_drift_without_writing(
+        self, tmp_path: Path
+    ) -> None:
+        ledger = tmp_path / "ledger.ndjson"
+        out = tmp_path / "PROJECT-HISTORY.md"
+        _ndjson(ledger, [_rec("a", "2026-05-10")])
+        out.write_text("stale\n", encoding="utf-8")
+
+        rc = render_project_history(
+            repo_root=tmp_path, ledger_path=ledger, output_path=out, check=True
+        )
+        assert rc["drift"] is True
+        assert rc["changed"] is False
+        assert out.read_text(encoding="utf-8") == "stale\n"  # untouched
+
+    def test_invalid_ndjson_raises_with_line_number(
+        self, tmp_path: Path
+    ) -> None:
+        ledger = tmp_path / "ledger.ndjson"
+        good = _rec("good", "2026-05-10")
+        ledger.write_text(
+            json.dumps(good) + "\nnot-json\n" + json.dumps(good) + "\n",
+            encoding="utf-8",
+        )
+        out = tmp_path / "PROJECT-HISTORY.md"
+        with pytest.raises(ValueError) as exc:
+            render_project_history(
+                repo_root=tmp_path, ledger_path=ledger, output_path=out
+            )
+        assert "ledger.ndjson:2" in str(exc.value)
+
+    def test_empty_ledger_header_only(self, tmp_path: Path) -> None:
+        ledger = tmp_path / "ledger.ndjson"
+        ledger.touch()
+        out = tmp_path / "PROJECT-HISTORY.md"
+        render_project_history(
+            repo_root=tmp_path, ledger_path=ledger, output_path=out
+        )
+        body = out.read_text(encoding="utf-8")
+        assert body.startswith("# Project History\n")
+        assert "ledger is empty" in body.lower()
+        assert "| Date |" not in body
+
+
+class TestBackfillProjectHistoryParity:
+    def _archive(self, repo: Path, date: str, folder: str, body: str) -> None:
+        d = repo / "archive" / "projects" / date / folder
+        d.mkdir(parents=True)
+        (d / "PROJECT.md").write_text(body, encoding="utf-8")
+
+    def _seed_repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t"], cwd=str(repo), check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=str(repo), check=True
+        )
+        (repo / "project-history").mkdir(parents=True)
+        body = (
+            "# proj\n\n- **Created:** 2026-04-01\n\n"
+            "## 1. Context & Purpose\n\nThe real purpose line.\n\n"
+            "## 6. Phases\n\nPhase 0 — Scaffold ✅\n"
+        )
+        self._archive(repo, "2026-05-10", "01-alpha-thing", body)
+        self._archive(repo, "2026-05-11", "02-beta-thing", body)
+        return repo
+
+    def test_summary_and_ledger_shape_preserved(self, tmp_path: Path) -> None:
+        """backfill_project_history reproduces the former script's summary
+        dict + ledger-row shape.
+
+        The former ``scripts/backfill-project-history.py`` reused this
+        module's ``history_record`` and printed exactly this summary dict
+        (``backfill()`` return). Parity is asserted against that documented
+        contract (the old script itself can no longer run in a bare tmp
+        dir — it called ``history_record(worktree_path=...)`` which now
+        requires the seed-workspace marker; the absorbed function uses
+        ``repo_root=`` instead, a behaviour-preserving simplification of
+        the SAME ledger output).
+        """
+        repo = self._seed_repo(tmp_path / "side")
+        summary = backfill_project_history(repo_root=repo)
+
+        assert summary == {
+            "archives_seen": 2,
+            "stamped": 2,
+            "skipped_already_present": 0,
+            "ledger_lines_before": 0,
+            "ledger_lines_after": 2,
+            "ledger_path": "project-history/ledger.ndjson",
+            "dry_run": False,
+        }
+
+        rows = [
+            json.loads(ln)
+            for ln in (
+                repo / "project-history" / "ledger.ndjson"
+            ).read_text().strip().splitlines()
+        ]
+        assert {r["slug"] for r in rows} == {"alpha-thing", "beta-thing"}
+        for r in rows:
+            # NN- prefix stripped (slug_override), historical marker,
+            # cross-product default scope, created date from PROJECT.md,
+            # closed date = archive date-dir name, summary = §1 prose.
+            assert r["status_at_close"] == "historical"
+            assert r["scope"] == "cross-product"
+            assert r["dates"]["created"] == "2026-04-01"
+            assert r["dates"]["closed"] in {"2026-05-10", "2026-05-11"}
+            assert r["short_summary"] == "The real purpose line."
+
+    def test_idempotent_no_duplicate_rows(self, tmp_path: Path) -> None:
+        repo = self._seed_repo(tmp_path / "r")
+        s1 = backfill_project_history(repo_root=repo)
+        s2 = backfill_project_history(repo_root=repo)
+        assert s1["stamped"] == 2
+        assert s2["stamped"] == 0
+        assert s2["skipped_already_present"] == 2
+        assert s2["ledger_lines_after"] == s1["ledger_lines_after"]
+
+    def test_dry_run_does_not_write(self, tmp_path: Path) -> None:
+        repo = self._seed_repo(tmp_path / "r")
+        s = backfill_project_history(repo_root=repo, dry_run=True)
+        assert s["dry_run"] is True
+        assert s["would_stamp"] == 2
+        assert s["stamped"] == 0
+        assert not (repo / "project-history" / "ledger.ndjson").exists()
+
+    def test_missing_project_md_raises_backfill_error(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "r"
+        (repo / "project-history").mkdir(parents=True)
+        (repo / "archive" / "projects" / "2026-05-10" / "01-bad").mkdir(
+            parents=True
+        )
+        with pytest.raises(BackfillError):
+            backfill_project_history(repo_root=repo)

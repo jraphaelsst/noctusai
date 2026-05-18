@@ -12,10 +12,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.archive import (
     archive,
+    archive_clean,
     _derive_default_summary,
     _detect_mode,
     _next_nn,
     _today_str,
+    _yesterday_str,
 )
 
 
@@ -574,3 +576,98 @@ class TestDeriveDefaultSummary:
     def test_falls_back_when_empty(self):
         assert _derive_default_summary("# only-headings\n\n# more\n") == "(no summary available)"
         assert _derive_default_summary("") == "(no summary available)"
+
+
+# ---------------------------------------------------------------------------
+# archive_clean — keep today+yesterday, classify D-2+ as stale.
+# Behaviour-preserving port of scripts/archive-clean.sh.
+# ---------------------------------------------------------------------------
+
+
+def _make_archive_date_dir(repo: Path, date: str) -> Path:
+    """Create archive/projects/<date>/ with a tracked file + commit."""
+    d = repo / "archive" / "projects" / date
+    d.mkdir(parents=True)
+    (d / "01-proj" ).mkdir()
+    (d / "01-proj" / "PROJECT.md").write_text(f"# proj {date}\n")
+    subprocess.run(["git", "add", "-A"], cwd=str(repo), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", f"archive {date}"], cwd=str(repo), check=True)
+    return d
+
+
+class TestArchiveCleanClassification:
+    def test_no_archive_projects_dir_is_nothing(self, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
+        result = archive_clean(repo_root=tmp_path)
+        assert result["status"] == "nothing"
+        assert result["stale"] == []
+        assert result["dry_run"] is True
+
+    def test_today_and_yesterday_are_kept(self, tmp_repo):
+        today = _today_str()
+        yesterday = _yesterday_str()
+        _make_archive_date_dir(tmp_repo, today)
+        _make_archive_date_dir(tmp_repo, yesterday)
+        result = archive_clean(repo_root=tmp_repo)
+        assert set(result["kept"]) == {today, yesterday}
+        assert result["stale"] == []
+        assert result["status"] == "nothing"
+
+    def test_old_date_is_stale(self, tmp_repo):
+        today = _today_str()
+        _make_archive_date_dir(tmp_repo, today)
+        _make_archive_date_dir(tmp_repo, "2020-01-01")
+        result = archive_clean(repo_root=tmp_repo)
+        assert today in result["kept"]
+        assert result["stale"] == ["archive/projects/2020-01-01"]
+        assert result["status"] == "dry_run"
+
+    def test_non_date_entries_skipped(self, tmp_repo):
+        (tmp_repo / "archive" / "projects" / "README.md").write_text("not a date")
+        (tmp_repo / "archive" / "projects" / "weird-folder").mkdir()
+        subprocess.run(["git", "add", "-A"], cwd=str(tmp_repo), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "noise"], cwd=str(tmp_repo), check=True)
+        result = archive_clean(repo_root=tmp_repo)
+        assert "README.md" in result["skipped"]
+        assert "weird-folder" in result["skipped"]
+        assert result["stale"] == []
+
+
+class TestArchiveCleanDryRunVsForce:
+    def test_dry_run_default_removes_nothing(self, tmp_repo):
+        _make_archive_date_dir(tmp_repo, _today_str())
+        old = _make_archive_date_dir(tmp_repo, "2019-06-15")
+        result = archive_clean(repo_root=tmp_repo)  # force defaults False
+        assert result["dry_run"] is True
+        assert result["removed"] == 0
+        assert old.exists(), "dry-run must NOT remove the stale folder"
+
+    def test_force_removes_stale_via_git_rm(self, tmp_repo):
+        _make_archive_date_dir(tmp_repo, _today_str())
+        old = _make_archive_date_dir(tmp_repo, "2019-06-15")
+        old2 = _make_archive_date_dir(tmp_repo, "2018-03-03")
+        result = archive_clean(repo_root=tmp_repo, force=True)
+        assert result["status"] == "removed"
+        assert result["removed"] == 2
+        assert not old.exists()
+        assert not old2.exists()
+
+    def test_force_preserves_keep_window(self, tmp_repo):
+        today = _today_str()
+        keep = _make_archive_date_dir(tmp_repo, today)
+        _make_archive_date_dir(tmp_repo, "2017-01-01")
+        archive_clean(repo_root=tmp_repo, force=True)
+        assert keep.exists(), "today's folder must survive a forced clean"
+
+    def test_force_with_no_stale_is_nothing(self, tmp_repo):
+        _make_archive_date_dir(tmp_repo, _today_str())
+        result = archive_clean(repo_root=tmp_repo, force=True)
+        assert result["status"] == "nothing"
+        assert result["removed"] == 0
+
+
+class TestArchiveCleanMcpRegistration:
+    def test_archive_clean_tool_in_server_registry(self):
+        from server import build_server
+        s = build_server()
+        assert "noctus.dev.archive_clean" in s._tool_manager._tools

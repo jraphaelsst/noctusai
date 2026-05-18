@@ -24,7 +24,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 
 ## Inventory
 
-> Auto-updated by `scripts/update-kb-counts.py` on every commit (pre-commit hook). Do not edit between the markers.
+> Auto-updated by `noctus.dev.kb_sync` on every commit (pre-commit hook). Do not edit between the markers.
 
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |

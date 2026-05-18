@@ -49,9 +49,9 @@ See `PATTERNS/testing.md` for the three-layer test discipline.
 
 `scripts/setup.sh` installs a single `pre-commit` hook (symlinked to `scripts/pre-commit`). It runs three checks in order, staging any auto-generated updates into the same commit:
 
-1. **Seed → template sync** — if any `products/seed/` file is staged, runs `scripts/sync-seed-template.sh` and stages `templates/product-seed/`.
-2. **KB count refresh** — runs `scripts/update-kb-counts.py` to regenerate auto-derived count blocks in KB docs, stages any updated files.
-3. **KB sync verification** — runs `scripts/verify-kb-sync.sh`; **aborts the commit** if any `CLAUDE.md` pointer is broken or a KB doc is missing from `KNOWLEDGE-BASE/INDEX.md`.
+1. **Seed → template sync** — if any `products/seed/` file is staged, runs `noctus.dev.sync_seed_template` and stages `templates/product-seed/`.
+2. **KB count refresh** — runs `noctus.dev.kb_sync` to regenerate auto-derived count blocks in KB docs, stages any updated files.
+3. **KB sync verification** — runs `noctus.dev.kb_sync`; **aborts the commit** if any `CLAUDE.md` pointer is broken or a KB doc is missing from `KNOWLEDGE-BASE/INDEX.md`.
 
 No post-commit amend — everything lands in one commit. Skip (not recommended): `git commit --no-verify`.
 

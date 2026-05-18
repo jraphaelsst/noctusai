@@ -668,7 +668,7 @@ Import: `import { ... } from '@noctusai/lib/design-system'`
 | Script | Purpose | Run when |
 |--------|---------|----------|
 | `scripts/setup.sh` | Full repo setup (hooks + venv + deps) | Once after `git clone` |
-| `scripts/sync-seed-template.sh` | Sync seed → template with `{{PLACEHOLDERS}}` | Automatic via hook, or manual |
+| `noctus.dev.sync_seed_template` | Sync seed → template with `{{PLACEHOLDERS}}` | Automatic via hook, or manual |
 | `scripts/install-hooks.sh` | Git hooks only (subset of setup.sh) | If hooks need reinstalling |
 | `start.sh` | Start all backend + frontend servers | When developing |
 

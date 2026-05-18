@@ -19,16 +19,20 @@ def register_all(server) -> None:
     from . import batch_speed_gains
     from . import build
     from . import catalog
+    from . import check_framework_deps
+    from . import cleanup_worktrees
     from . import compliance
     from . import context
     from . import cost_evaluation
     from . import diff
+    from . import disk_usage
     from . import dispatch_preflight
     from . import findings
     from . import history
     from . import improvements
     from . import lgpd
     from . import master_prompts
+    from . import merge_debt
     from . import mole
     from . import outline
     from . import outline_python
@@ -36,6 +40,7 @@ def register_all(server) -> None:
     from . import phase_learnings
     from . import products
     from . import promotion
+    from . import propagate
     from . import proposals
     from . import recurrence
     from . import refs
@@ -49,8 +54,11 @@ def register_all(server) -> None:
     from . import scaffold_seed_adapter
     from . import scan_unified
     from . import session_review
+    from . import smoke_fleet
+    from . import stamp_seed_version
     from . import status
     from . import supabase_advisors
+    from . import sync_seed_template
     from . import testing
     from . import three_way_sync
 
@@ -61,16 +69,20 @@ def register_all(server) -> None:
     batch_speed_gains.register(server)
     build.register(server)
     catalog.register(server)
+    check_framework_deps.register(server)
+    cleanup_worktrees.register(server)
     compliance.register(server)
     context.register(server)
     cost_evaluation.register(server)
     diff.register(server)
+    disk_usage.register(server)
     dispatch_preflight.register(server)
     findings.register(server)
     history.register(server)
     improvements.register(server)
     lgpd.register(server)
     master_prompts.register(server)
+    merge_debt.register(server)
     mole.register(server)
     outline.register(server)
     outline_python.register(server)
@@ -78,6 +90,7 @@ def register_all(server) -> None:
     phase_learnings.register(server)
     products.register(server)
     promotion.register(server)
+    propagate.register(server)
     proposals.register(server)
     recurrence.register(server)
     refs.register(server)
@@ -91,8 +104,11 @@ def register_all(server) -> None:
     scaffold_seed_adapter.register(server)
     scan_unified.register(server)
     session_review.register(server)
+    smoke_fleet.register(server)
+    stamp_seed_version.register(server)
     status.register(server)
     supabase_advisors.register(server)
+    sync_seed_template.register(server)
     testing.register(server)
     three_way_sync.register(server)
 

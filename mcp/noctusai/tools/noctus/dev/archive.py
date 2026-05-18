@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -301,6 +302,174 @@ def archive(
         "next_NN": nn,
         "history": history_result,
     }
+_ARCHIVE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _yesterday_str() -> str:
+    """Return yesterday's date in local TZ as YYYY-MM-DD.
+
+    Mirrors ``scripts/archive-clean.sh``'s local-time computation: the user
+    invokes archive cleanup on *local-day* boundaries; UTC shifted the keep
+    window forward by a day in the original 2026-05-12 incident.
+    """
+    return (datetime.now(tz=_LOCAL_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def archive_clean(
+    repo_root: Path | None = None,
+    *,
+    worktree_path: str | Path | None = None,
+    force: bool = False,
+) -> dict:
+    """Keep only today's + yesterday's ``archive/projects/<DATE>/`` folders.
+
+    Behaviour-preserving native port of ``scripts/archive-clean.sh``.
+    USER-INVOKED, NEVER AUTOMATIC (trigger phrases: "clean the archive" /
+    "archive cleanup"). Anything D-2 or older is stale; today + yesterday
+    are the recent-work window.
+
+    Safety (identical to the shell script):
+        * **Dry-run unless ``force=True``** — default lists stale folders
+          but removes nothing.
+        * Only operates on ``archive/projects/YYYY-MM-DD/`` folders. Never
+          touches ``archive/features/`` or ad-hoc ``archive/<date>_<time>_*``.
+        * Non-date entries (``README.md``, ``.gitkeep``) are skipped.
+        * Removal uses ``git rm -rf`` so deletions are tracked (recoverable
+          via ``git reset --hard`` pre-commit); falls back to filesystem
+          ``rmtree`` only for non-git-tracked content (mirrors the script).
+
+    Args:
+        repo_root: repo-root override (test seam). Wins over
+            ``worktree_path``.
+        worktree_path: caller-aware path resolution — when set, operates on
+            the caller's worktree (same contract as ``archive``).
+        force: when ``False`` (default) the call is a DRY-RUN — stale
+            folders are classified and returned but NOT removed. ``True``
+            performs the ``git rm -rf``.
+
+    Returns:
+        ```
+        {
+          "archive_dir": "archive/projects",       # relative to repo root
+          "keep_window": ["<yesterday>", "<today>"],
+          "kept": ["<date-folder>", ...],
+          "skipped": ["<non-date-entry>", ...],
+          "stale": ["archive/projects/<date>", ...],   # rel paths, D-2+
+          "dry_run": bool,                         # True == not force
+          "removed": int,                          # 0 when dry_run
+          "status": "ok" | "dry_run" | "removed" | "nothing",
+        }
+        ```
+        ``status`` semantics mirror the script's exit behaviour:
+        ``"nothing"`` — no ``archive/projects`` dir OR zero stale folders;
+        ``"dry_run"`` — stale folders found, ``force=False``;
+        ``"removed"`` — stale folders removed (``force=True``).
+    """
+    if repo_root is not None:
+        root = repo_root
+    elif worktree_path is not None:
+        root = resolve_caller_root(worktree_path)
+    else:
+        root = REPO_ROOT
+
+    archive_projects = (root / "archive" / "projects")
+    rel_archive_dir = "archive/projects"
+
+    if not archive_projects.is_dir():
+        return {
+            "archive_dir": rel_archive_dir,
+            "keep_window": [_yesterday_str(), _today_str()],
+            "kept": [],
+            "skipped": [],
+            "stale": [],
+            "dry_run": not force,
+            "removed": 0,
+            "status": "nothing",
+        }
+
+    today = _today_str()
+    yesterday = _yesterday_str()
+
+    kept: list[str] = []
+    skipped: list[str] = []
+    stale_dirs: list[Path] = []
+    stale_rel: list[str] = []
+
+    for child in sorted(archive_projects.iterdir()):
+        if not child.is_dir():
+            # Mirrors the shell `[ -d "$dir" ] || continue` (README.md etc.).
+            skipped.append(child.name)
+            continue
+        name = child.name
+        if not _ARCHIVE_DATE_RE.match(name):
+            skipped.append(name)
+            continue
+        if name == today or name == yesterday:
+            kept.append(name)
+        else:
+            stale_dirs.append(child)
+            stale_rel.append(f"{rel_archive_dir}/{name}")
+
+    if not stale_dirs:
+        return {
+            "archive_dir": rel_archive_dir,
+            "keep_window": [yesterday, today],
+            "kept": kept,
+            "skipped": skipped,
+            "stale": [],
+            "dry_run": not force,
+            "removed": 0,
+            "status": "nothing",
+        }
+
+    if not force:
+        return {
+            "archive_dir": rel_archive_dir,
+            "keep_window": [yesterday, today],
+            "kept": kept,
+            "skipped": skipped,
+            "stale": stale_rel,
+            "dry_run": True,
+            "removed": 0,
+            "status": "dry_run",
+        }
+
+    removed = 0
+    for d in stale_dirs:
+        rel = str(d.relative_to(root))
+        proc = subprocess.run(
+            ["git", "rm", "-rf", "-q", rel],
+            cwd=str(root),
+            capture_output=True,
+        )
+        if proc.returncode == 0:
+            removed += 1
+        else:
+            # Fallback for non-git-tracked content (mirrors the script's
+            # `rm -rf "$dir"` fallback). shutil.rmtree is the Python analogue.
+            try:
+                shutil.rmtree(d)
+                removed += 1
+            except OSError as exc:
+                logger.warning(
+                    "archive_clean: failed to remove stale folder %s (%s)",
+                    rel, exc,
+                )
+
+    logger.info(
+        "archive_clean: removed %d stale folder(s) (keep window %s + %s)",
+        removed, yesterday, today,
+    )
+    return {
+        "archive_dir": rel_archive_dir,
+        "keep_window": [yesterday, today],
+        "kept": kept,
+        "skipped": skipped,
+        "stale": stale_rel,
+        "dry_run": False,
+        "removed": removed,
+        "status": "removed",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -352,3 +521,24 @@ def register(server) -> None:
             review_md=review_md,
             outcome_signals=outcome_signals,
         )
+    @server.tool(
+        name="noctus.dev.archive_clean",
+        description=(
+            "Keep only today's + yesterday's archive/projects/<DATE>/ folders; "
+            "classify everything D-2-or-older as stale. USER-INVOKED, NEVER "
+            "AUTOMATIC (trigger phrases: 'clean the archive' / 'archive cleanup'). "
+            "DRY-RUN by default — pass force=True to actually git rm -rf the stale "
+            "folders (tracked removal; recoverable pre-commit via git reset --hard; "
+            "filesystem-rmtree fallback only for non-git-tracked content). Only "
+            "touches archive/projects/YYYY-MM-DD/ — never archive/features/ or "
+            "ad-hoc archive/<date>_<time>_* dirs; non-date entries are skipped. "
+            "Pass worktree_path when called from inside a git worktree. Behaviour-"
+            "preserving port of scripts/archive-clean.sh. See KB § PATTERNS/"
+            "project-execution.md § 11.2."
+        ),
+    )
+    def _archive_clean(
+        worktree_path: str | None = None,
+        force: bool = False,
+    ) -> dict:
+        return archive_clean(worktree_path=worktree_path, force=force)

@@ -68,7 +68,7 @@ The tempo threshold (rough rule of thumb): if you'd otherwise be flipping betwee
 - Project archival (folder deletion at close).
 - `noctus.hound.scan` sweeps run as autonomous tail-work (architect may *request* them via the inbox; operator runs them).
 - `noctus.dev.archive` invocations.
-- `bash scripts/mole.sh sweep --force`.
+- `python mcp/noctusai/cli.py --mole sweep --force`.
 
 **Authority over memory:** architect writes; operator may read. This prevents clobbering. If the operator surfaces a finding worth memorializing, it routes through the outbox; the architect reads + writes the memory entry.
 
@@ -80,8 +80,8 @@ The tempo threshold (rough rule of thumb): if you'd otherwise be flipping betwee
 - Engineer dispatch *execution* when the architect's brief is in the inbox (the operator opens the Task tool-use, hands the brief verbatim, collects the report, writes outcome to outbox).
 - Worktree validation (post-engineer-finish: confirm branch exists, diff matches brief, no surprise files).
 - Project close mechanics — final commit, folder deletion, FF-to-main, push.
-- Tail-work sweeps — `noctus.hound.scan` between waves, `bash scripts/mole.sh scan` pre-dispatch, `bash scripts/disk-usage-monitor.sh`, stale worktree cleanup.
-- KB sync verification — `bash scripts/verify-kb-sync.sh` after the architect edits KB.
+- Tail-work sweeps — `noctus.hound.scan` between waves, `python mcp/noctusai/cli.py --mole scan` pre-dispatch, `python mcp/noctusai/cli.py --check-disk-usage`, stale worktree cleanup.
+- KB sync verification — `python mcp/noctusai/cli.py --verify-kb-sync` after the architect edits KB.
 - End-of-session verification — `pytest` / `vite build` per the §1 universal rule "Finish the session — verify, don't assume".
 
 **Never touches:**
@@ -248,7 +248,7 @@ Why architect-only writes: memory is the durable rule layer. Two writers race on
 ### 5.2 KB + CLAUDE.md
 
 - **Architect writes** KB pages, CLAUDE.md, `CLAUDE/<topic>.md`.
-- **Operator runs `bash scripts/verify-kb-sync.sh`** when architect signals (via outbox-direction request, or pre-commit hook fires anyway).
+- **Operator runs `python mcp/noctusai/cli.py --verify-kb-sync`** when architect signals (via outbox-direction request, or pre-commit hook fires anyway).
 - Operator-spotted KB drift → outbox entry → architect edits.
 
 ### 5.3 Three-way sync (KB / CLAUDE.md / memory)

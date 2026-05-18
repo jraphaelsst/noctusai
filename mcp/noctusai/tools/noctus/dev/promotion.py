@@ -495,11 +495,252 @@ def promote_from_seed_workspace(
     }
 
 
+# ---------------------------------------------------------------------------
+# Derived PROMOTIONS.md index generator.
+#
+# Absorbed from the former ``scripts/gen-promotions-index.py`` (behaviour-
+# preserving — byte-identical output). PROMOTIONS.md is a DERIVED artifact,
+# never hand-maintained: a hand-kept parallel index drifts (the
+# social-wiring-absorption W0.2 audit found a hand-written PROMOTIONS.md
+# listing only 7 of 14 manifests). This generator regenerates the index
+# from ``.promotions/*.md`` deterministically. It reuses ``parse_manifest``
+# (above) so the index and the ``promote_from_seed_workspace`` pipeline
+# never diverge on what a manifest means. Idempotent; only the marker
+# region is swapped (header/prose preserved); unparseable manifests are
+# surfaced under "Needs attention" rather than silently dropped.
+# ---------------------------------------------------------------------------
+
+_PROMO_START_MARKER = "<!-- promotions:start -->"
+_PROMO_END_MARKER = "<!-- promotions:end -->"
+# Manifest authors drop a copy of this file (one per promotable capability);
+# it is a template, never itself an index row.
+_PROMO_MANIFEST_TEMPLATE_NAME = "MANIFEST-TEMPLATE.md"
+_PROMO_SKIP_MANIFEST_NAMES = {_PROMO_MANIFEST_TEMPLATE_NAME}
+
+
+def _index_manifest_files(promotions_dir: Path) -> list[Path]:
+    if not promotions_dir.is_dir():
+        return []
+    return sorted(
+        p
+        for p in promotions_dir.glob("*.md")
+        if p.is_file() and p.name not in _PROMO_SKIP_MANIFEST_NAMES
+    )
+
+
+def _index_readiness(seed_first_analysis: str, body: str) -> str:
+    """Best-effort readiness signal pulled from the manifest text.
+
+    Looks for an explicit `readiness:`/`N=` marker; falls back to `—`.
+    Non-fatal: readiness is advisory metadata, not a contract.
+    """
+    hay = f"{seed_first_analysis}\n{body}"
+    m = re.search(r"readiness[:\s]+([^\n]+)", hay, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()[:40]
+    m = re.search(r"\bN=\s*([0-9]+\+?)", hay)
+    if m:
+        return f"N={m.group(1)}"
+    return "—"
+
+
+def _index_build(workspace_root: Path) -> str:
+    """Build the full PROMOTIONS.md body (header + table between markers)."""
+    promotions_dir = workspace_root / PROMOTIONS_DIRNAME
+    name = workspace_root.name
+
+    pending: list[tuple[str, str, str]] = []
+    promoted: list[tuple[str, str, str, str]] = []
+    unparseable: list[tuple[str, str]] = []
+
+    for mf in _index_manifest_files(promotions_dir):
+        try:
+            m = parse_manifest(mf)
+        except (ValueError, Exception) as exc:  # noqa: BLE001 — surface, don't drop
+            unparseable.append((mf.name, str(exc).splitlines()[0][:120]))
+            continue
+        readiness = _index_readiness(m.seed_first_analysis, m.body)
+        if m.promoted_on == "not-yet":
+            pending.append((m.slug, m.intended_noc_destination, readiness))
+        else:
+            promoted.append(
+                (m.slug, m.intended_noc_destination, readiness, m.promoted_on)
+            )
+
+    lines: list[str] = []
+    lines.append(_PROMO_START_MARKER)
+    lines.append("")
+    lines.append(
+        f"_DERIVED — do not hand-edit. Regenerate with "
+        f"`python mcp/noctusai/cli.py --gen-promotions-index --workspace .`. "
+        f"Source of truth: `{PROMOTIONS_DIRNAME}/*.md`._"
+    )
+    lines.append("")
+    lines.append("## Pending")
+    lines.append("")
+    if pending:
+        lines.append("| slug | destination | readiness |")
+        lines.append("|---|---|---|")
+        for slug, dest, rd in sorted(pending):
+            lines.append(f"| `{slug}` | `{dest}` | {rd} |")
+    else:
+        lines.append("_(none)_")
+    lines.append("")
+    lines.append("## Promoted")
+    lines.append("")
+    if promoted:
+        lines.append("| slug | destination | readiness | promoted_on |")
+        lines.append("|---|---|---|---|")
+        for slug, dest, rd, on in sorted(promoted):
+            lines.append(f"| `{slug}` | `{dest}` | {rd} | {on} |")
+    else:
+        lines.append("_(none)_")
+    lines.append("")
+    if unparseable:
+        lines.append("## Needs attention (unparseable manifests)")
+        lines.append("")
+        lines.append("| manifest | error |")
+        lines.append("|---|---|")
+        for fname, err in sorted(unparseable):
+            lines.append(f"| `{PROMOTIONS_DIRNAME}/{fname}` | {err} |")
+        lines.append("")
+    lines.append(_PROMO_END_MARKER)
+
+    header = (
+        f"# Promotion Manifest Index — {name}\n"
+        f"\n"
+        f"Additions in this seed workspace that are candidates for promotion "
+        f"into noc. **This file is auto-derived from `{PROMOTIONS_DIRNAME}/*.md`** "
+        f"— the manifest directory is the single source of truth. Do not "
+        f"hand-maintain this index; a hand-kept parallel index drifts.\n"
+        f"\n"
+        f"Promote an entry with "
+        f"`noctus.dev.promote_from_seed_workspace`; regenerate this index with "
+        f"`python mcp/noctusai/cli.py --gen-promotions-index --workspace .` (the workspace "
+        f"pre-commit hook runs `--check` and refuses drift).\n"
+        f"\n"
+        f"See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest.\n"
+        f"\n"
+    )
+    return header + "\n".join(lines) + "\n"
+
+
+def _index_render(workspace_root: Path) -> str:
+    """Return the desired full PROMOTIONS.md content.
+
+    If an existing PROMOTIONS.md has the markers, only the marker region is
+    swapped (header/prose outside markers is preserved). Otherwise the file
+    is (re)written wholesale from the canonical template.
+    """
+    fresh = _index_build(workspace_root)
+    index_path = workspace_root / PROMOTIONS_INDEX
+    if not index_path.is_file():
+        return fresh
+    existing = index_path.read_text(encoding="utf-8")
+    if _PROMO_START_MARKER not in existing or _PROMO_END_MARKER not in existing:
+        return fresh
+    new_block = fresh[
+        fresh.index(_PROMO_START_MARKER) : fresh.index(_PROMO_END_MARKER)
+        + len(_PROMO_END_MARKER)
+    ]
+    pattern = re.compile(
+        re.escape(_PROMO_START_MARKER) + r".*?" + re.escape(_PROMO_END_MARKER),
+        re.DOTALL,
+    )
+    swapped = pattern.sub(lambda _m: new_block, existing, count=1)
+    if not swapped.endswith("\n"):
+        swapped += "\n"
+    return swapped
+
+
+def gen_promotions_index(
+    repo_root: Path | None = None,
+    *,
+    workspace_root: Path | None = None,
+    check: bool = False,
+    worktree_path: str | Path | None = None,
+) -> dict:
+    """Regenerate a seed-workspace's ``PROMOTIONS.md`` from ``.promotions/*.md``.
+
+    Behaviour-preserving absorption of ``scripts/gen-promotions-index.py``
+    (byte-identical output). PROMOTIONS.md is a DERIVED artifact, never
+    hand-maintained. Idempotent (regenerating twice → byte-identical;
+    only the marker region is swapped, header/prose preserved); unparseable
+    manifests are surfaced under "Needs attention" not silently dropped.
+
+    Args:
+        repo_root: alias for ``workspace_root`` (the seed-workspace dir
+            containing ``.promotions/``); kept for signature parity with
+            the sibling absorbed tools. ``workspace_root`` wins if both
+            are given.
+        workspace_root: explicit seed-workspace root (test seam).
+        check: if True, do NOT write; report whether PROMOTIONS.md would
+            change (``drift`` key in the result).
+        worktree_path: **Caller-aware path resolution.** When set AND
+            neither ``workspace_root`` nor ``repo_root`` is given, the
+            workspace root resolves against the caller's worktree.
+
+    Returns:
+        ``{"workspace": str, "index_path": str, "changed": bool,
+        "drift": bool, "check": bool, "is_seed_workspace": bool}``.
+        ``is_seed_workspace`` is False (and nothing is written) when the
+        target has no ``.promotions/`` directory — a no-op, not an error
+        (mirrors the former script's stderr-note exit-0 behaviour).
+    """
+    if workspace_root is not None:
+        ws_root = workspace_root
+    elif repo_root is not None:
+        ws_root = repo_root
+    elif worktree_path is not None:
+        ws_root = resolve_caller_root(worktree_path)
+    else:
+        ws_root = get_workspace_root()
+    ws_root = Path(ws_root).resolve()
+
+    promotions_dir = ws_root / PROMOTIONS_DIRNAME
+    index_path = ws_root / PROMOTIONS_INDEX
+    if not promotions_dir.is_dir():
+        logger.info(
+            "gen_promotions_index: no %s/ at %s — not a seed workspace "
+            "(or no manifests yet). Nothing to do.",
+            PROMOTIONS_DIRNAME, ws_root,
+        )
+        return {
+            "workspace": str(ws_root),
+            "index_path": str(index_path),
+            "changed": False,
+            "drift": False,
+            "check": check,
+            "is_seed_workspace": False,
+        }
+
+    desired = _index_render(ws_root)
+    current = (
+        index_path.read_text(encoding="utf-8") if index_path.is_file() else ""
+    )
+    drift = desired != current
+
+    changed = False
+    if not check and drift:
+        index_path.write_text(desired, encoding="utf-8")
+        changed = True
+
+    return {
+        "workspace": str(ws_root),
+        "index_path": str(index_path),
+        "changed": changed,
+        "drift": drift,
+        "check": check,
+        "is_seed_workspace": True,
+    }
+
+
 __all__ = [
     "PromotionManifest",
     "parse_manifest",
     "promote_from_seed_workspace",
     "list_promotions",
+    "gen_promotions_index",
 ]
 
 
@@ -542,3 +783,26 @@ def register(server) -> None:
     )
     def _list_promotions(worktree_path: str | None = None) -> dict:
         return list_promotions(worktree_path=worktree_path)
+
+    @server.tool(
+        name="noctus.dev.gen_promotions_index",
+        description=(
+            "Regenerate a seed-workspace's derived PROMOTIONS.md from its "
+            "`.promotions/*.md` manifests (the single source of truth — a "
+            "hand-kept parallel index drifts). Idempotent; only the marker "
+            "region is swapped (header/prose preserved); unparseable manifests "
+            "are surfaced under 'Needs attention' not silently dropped. Pass "
+            "check=True to detect drift without writing (pre-commit / CI gate). "
+            "No `.promotions/` dir → no-op (is_seed_workspace=False), not an "
+            "error. Pass worktree_path when called from inside a git worktree. "
+            "See KB § PATTERNS/seed-workspace.md § Promotion manifest."
+        ),
+    )
+    def _gen_promotions_index(
+        check: bool = False,
+        worktree_path: str | None = None,
+    ) -> dict:
+        return gen_promotions_index(
+            check=check,
+            worktree_path=worktree_path,
+        )

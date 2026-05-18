@@ -74,7 +74,7 @@ the workspace with confidence (Gate 9).
   social-wiring workspace's own `PROMOTIONS.md` was stale at 7-of-14). Derive
   any index from the manifest dir; never hand-maintain a parallel count. Going
   forward, seed-workspace scaffolding auto-emits the absorption map
-  (`scripts/gen-promotions-index.py` + the seed-workspace pre-commit drift gate).
+  (`noctus.dev.gen_promotions_index` + the seed-workspace pre-commit drift gate).
 
 ### Gate 3 · Interrogate disposition BEFORE any deletion
 
@@ -238,7 +238,7 @@ is proportional to (epoch gap) × (product surface).
 ## Methodology codified by this flow (three-way-synced)
 
 - **Promotion-map automation** — every separately-developed seed-workspace
-  auto-emits + drift-gates an absorption map (`scripts/gen-promotions-index.py`,
+  auto-emits + drift-gates an absorption map (`noctus.dev.gen_promotions_index`,
   seed-workspace pre-commit Rule 3). The map DERIVES from the manifest dir;
   never hand-maintain a parallel count.
 - **Divergent-arch → house-container rule** — an incoming product whose

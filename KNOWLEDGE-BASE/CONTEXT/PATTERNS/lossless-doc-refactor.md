@@ -16,7 +16,7 @@ A doc-refactor is **lossless** ⟺ every one of these is diff-verified before/af
 | **Rule/section** | header count (`grep -c '^#'`) + every bold sub-rule before == after. Merges keep all sub-rules; trims keep all rules. |
 | **Line-structure** | no concatenated list items (`grep -n '\`- \*\*'` mid-line == 0). *2026-05-18 lesson: an Edit ate a newline, fused two bullets; the pointer-set check still passed → structure integrity is a SEPARATE gate, always run it.* |
 | **Index pointer** | every memory `[Title](file.md)` line preserved (MEMORY.md is an index — the file IS the source of truth; the hook may shrink, the line never disappears). |
-| **Hook-grade** | `bash scripts/verify-kb-sync.sh` ✓ ∧ `check_doc_symbology_drift` == 0. |
+| **Hook-grade** | `python mcp/noctusai/cli.py --verify-kb-sync` ✓ ∧ `check_doc_symbology_drift` == 0. |
 
 "Verification ✓" without the quoted command output is a [[feedback_no_silent_errors]] violation. Absence of loss is a *claim* — prove it with the diff.
 

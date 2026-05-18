@@ -93,6 +93,26 @@ def main():
     # legacy sequential build-all wrapper).
     parser.add_argument("--proposals", action="store_true", help="List proposals")
     parser.add_argument("--verify-kb-sync", action="store_true", help="Verify CLAUDE.md pointers + KB INDEX.md are in sync")
+    # ── Absorbed-script flags (scripts-mcp-absorption: every former
+    # scripts/*.sh|*.py is now a noctus.dev.* tool; these flags are the
+    # muscle-memory CLI surface + the pre-commit thin-dispatcher entry). ──
+    parser.add_argument("--mole", metavar="MODE", choices=["scan", "sweep"], help="Storage-hygiene mole (absorbed scripts/mole.sh). MODE=scan|sweep. Pair --force for a destructive sweep. MCP: noctus.dev.mole.")
+    parser.add_argument("--update-kb-counts", action="store_true", help="Regenerate KB derived count blocks (absorbed scripts/update-kb-counts.py). Pair --check for drift-only (exit 1 on drift). MCP: noctus.dev.kb_sync.")
+    parser.add_argument("--check", action="store_true", help="Drift-check mode for --update-kb-counts / --render-project-history / --gen-promotions-index / --propagate (report only, exit 1 on drift; no write).")
+    parser.add_argument("--force", action="store_true", help="Authorize the destructive path for --mole sweep / --archive-clean / --cleanup-stale-worktrees (default = dry-run/report).")
+    parser.add_argument("--sync-seed-template", action="store_true", help="Sync products/seed → templates/product-seed (absorbed scripts/sync-seed-template.sh). Pair --dry for preview. MCP: noctus.dev.sync_seed_template.")
+    parser.add_argument("--dry", action="store_true", help="Preview mode for --sync-seed-template / --propagate (no write).")
+    parser.add_argument("--stamp-seed-version", action="store_true", help="Stamp short SHA into seed _version_static.py (absorbed scripts/stamp-seed-version.sh). MCP: noctus.dev.stamp_seed_version.")
+    parser.add_argument("--render-project-history", action="store_true", help="Render project-history/ledger.ndjson → PROJECT-HISTORY.md (absorbed scripts/render-project-history.py). Pair --check for drift gate. MCP: noctus.dev.render_project_history.")
+    parser.add_argument("--backfill-project-history", action="store_true", help="Stamp historical ledger rows from archive/ (absorbed scripts/backfill-project-history.py). Pair --dry. MCP: noctus.dev.backfill_project_history.")
+    parser.add_argument("--gen-promotions-index", action="store_true", help="Regenerate a seed-workspace's derived PROMOTIONS.md (absorbed scripts/gen-promotions-index.py). Pair --check for the drift gate. MCP: noctus.dev.gen_promotions_index.")
+    parser.add_argument("--archive-clean", action="store_true", help="Keep today+yesterday archive folders, classify D-2+ stale (absorbed scripts/archive-clean.sh). USER-INVOKED; pair --force to delete. MCP: noctus.dev.archive_clean.")
+    parser.add_argument("--check-disk-usage", action="store_true", help="Disk-pressure monitor 70/80/90 bands (absorbed scripts/disk-usage-monitor.sh). MCP: noctus.dev.check_disk_usage.")
+    parser.add_argument("--check-framework-deps", action="store_true", help="Audit product frontend package.json framework-dep parity (absorbed scripts/check-framework-deps.py). MCP: noctus.dev.check_framework_deps.")
+    parser.add_argument("--cleanup-stale-worktrees", action="store_true", help="Remove worktrees merged to origin/main (absorbed scripts/cleanup-stale-worktrees.sh). Dry-run unless --force. MCP: noctus.dev.cleanup_stale_worktrees.")
+    parser.add_argument("--check-merge-debt", action="store_true", help="Unmerged-to-origin/main backlog monitor (absorbed scripts/merge-debt-monitor.sh, read-only). MCP: noctus.dev.check_merge_debt.")
+    parser.add_argument("--propagate", metavar="TARGET", choices=["composes", "dockerfiles", "both"], nargs="?", const="both", help="Containerization codegen from products/seed/ (absorbed scripts/propagate-{composes,dockerfiles}.sh). Pair --check (drift gate) or --dry. MCP: noctus.dev.propagate.")
+    parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--improvements", metavar="PROJECT", help="Regenerate improvements.md next to the project file (run after ticking a phase header to [x]). Captures improvement opportunities discovered during each completed phase — NOT a preview of upcoming phases.")
     parser.add_argument("--lgpd-flag", action="store_true", help="Record an LGPD concern in LGPD-WARNINGS.md. Requires --lgpd-concern, --lgpd-path, --lgpd-reason; --lgpd-mitigation optional. Does NOT block.")
@@ -678,6 +698,95 @@ def main():
                     print(f"    {fc.tokens:>8,} tok  {fc.lines:>6,} lines  {fc.path}")
             elif result.per_file:
                 print(f"\n  ({len(result.per_file)} files — pass --json for full breakdown)")
+
+    elif args.mole:
+        from tools.noctus.dev.mole import run_mole
+        r = run_mole(mode=args.mole, force=args.force)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.update_kb_counts:
+        from tools.kb_sync import update_kb_counts
+        r = update_kb_counts(check=args.check)
+        print(r.get("message", json.dumps(r, default=str)))
+        sys.exit(int(r.get("exit_code", 1 if r.get("drift") else 0)))
+
+    elif args.sync_seed_template:
+        from tools.noctus.dev.sync_seed_template import sync_seed_template
+        r = sync_seed_template(dry=args.dry)
+        print(r.get("message", json.dumps(r, default=str)))
+        sys.exit(0 if r.get("ok", False) else 1)
+
+    elif args.stamp_seed_version:
+        from tools.noctus.dev.stamp_seed_version import stamp_seed_version
+        r = stamp_seed_version()
+        print(r.get("message", json.dumps(r, default=str)))
+        sys.exit(0 if r.get("ok", False) else 1)
+
+    elif args.render_project_history:
+        from tools.noctus.dev.history import render_project_history
+        r = render_project_history(check=args.check)
+        print(json.dumps(r, default=str))
+        sys.exit(1 if (args.check and r.get("drift")) else 0)
+
+    elif args.backfill_project_history:
+        from tools.noctus.dev.history import backfill_project_history
+        r = backfill_project_history(dry_run=args.dry)
+        print(json.dumps(r, default=str))
+        sys.exit(0)
+
+    elif args.gen_promotions_index:
+        from tools.noctus.dev.promotion import gen_promotions_index
+        r = gen_promotions_index(check=args.check)
+        print(json.dumps(r, default=str))
+        sys.exit(1 if (args.check and r.get("drift")) else 0)
+
+    elif args.archive_clean:
+        from tools.noctus.dev.archive import archive_clean
+        r = archive_clean(force=args.force)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0)
+
+    elif args.check_disk_usage:
+        from tools.noctus.dev.disk_usage import check_disk_usage
+        r = check_disk_usage()
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.check_framework_deps:
+        from tools.noctus.dev.check_framework_deps import check_framework_deps
+        r = check_framework_deps()
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 1 if r.get("drift") else 0)))
+
+    elif args.cleanup_stale_worktrees:
+        from tools.noctus.dev.cleanup_worktrees import cleanup_stale_worktrees
+        r = cleanup_stale_worktrees(force=args.force)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0)
+
+    elif args.check_merge_debt:
+        from tools.noctus.dev.merge_debt import check_merge_debt
+        r = check_merge_debt()
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.propagate:
+        from tools.noctus.dev.propagate import propagate_composes, propagate_dockerfiles
+        codes = []
+        if args.propagate in ("composes", "both"):
+            rc = propagate_composes(dry=args.dry, check=args.check)
+            print(json.dumps(rc, default=str)); codes.append(int(rc.get("exit_code", 0)))
+        if args.propagate in ("dockerfiles", "both"):
+            rd = propagate_dockerfiles(dry=args.dry, check=args.check)
+            print(json.dumps(rd, default=str)); codes.append(int(rd.get("exit_code", 0)))
+        sys.exit(max(codes) if codes else 0)
+
+    elif args.smoke_fleet:
+        from tools.noctus.dev.smoke_fleet import smoke_fleet
+        r = smoke_fleet()
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
 
     else:
         # Default: validate + analyze
