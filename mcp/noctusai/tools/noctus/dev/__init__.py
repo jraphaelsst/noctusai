@@ -42,7 +42,11 @@ def register_all(server) -> None:
     from . import review
     from . import salvage_worktree
     from . import scaffold
+    from . import scaffold_keeper
+    from . import scaffold_mcp_tool
+    from . import scaffold_memory
     from . import scaffold_migration
+    from . import scaffold_seed_adapter
     from . import scan_unified
     from . import session_review
     from . import status
@@ -80,7 +84,11 @@ def register_all(server) -> None:
     review.register(server)
     salvage_worktree.register(server)
     scaffold.register(server)
+    scaffold_keeper.register(server)
+    scaffold_mcp_tool.register(server)
+    scaffold_memory.register(server)
     scaffold_migration.register(server)
+    scaffold_seed_adapter.register(server)
     scan_unified.register(server)
     session_review.register(server)
     status.register(server)
