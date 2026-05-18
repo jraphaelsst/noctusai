@@ -496,3 +496,281 @@ class TestRouter:
         data = resp.json()
         assert "pages_show_list" in data["kitchen_sink_fallback"]
         assert "pages_show_list" in data["configured"]
+
+
+# ─── TestMetaGraphErrorPermission ─────────────────────────────────────────
+
+
+class TestMetaGraphErrorPermission:
+    """The write/ads scope-gate honesty classifier."""
+
+    def test_permission_codes_set_requires_app_review(self):
+        for c in (10, 200):
+            e = MetaGraphError("perm", code=c)
+            assert e.is_permission is True
+            assert e.requires_app_review is True
+            # Distinct from the token-expired classifier.
+            assert e.is_auth_error is False
+
+    def test_non_permission_code_not_app_review(self):
+        e = MetaGraphError("expired", code=190)
+        assert e.is_permission is False
+        assert e.requires_app_review is False
+        assert e.is_auth_error is True
+
+
+# ─── TestFakeWriteSurface ─────────────────────────────────────────────────
+
+
+class TestFakeWriteSurface:
+    """Deterministic in-memory write simulation — the 'scope approved'
+    path that lets MCP/consumer tests exercise the real handler with
+    no network."""
+
+    def test_publish_facebook_post_records(self):
+        fake = FakeMetaAdapter()
+        p1 = fake.publish_facebook_post("P1", "hello")
+        p2 = fake.publish_facebook_post("P1", "world", link="https://x.io")
+        assert p1.id == "P1_1" and p2.id == "P1_2"
+        assert p1.page_id == "P1"
+        assert [p.message for p in fake.published_posts] == ["hello", "world"]
+        assert p1.permalink_url and p1.permalink_url.endswith("P1_1")
+
+    def test_publish_facebook_post_with_photo(self):
+        fake = FakeMetaAdapter()
+        p = fake.publish_facebook_post(
+            "P9", "caption", photo_url="https://img/x.jpg"
+        )
+        assert p.message == "caption"
+        assert fake.published_posts == [p]
+
+    def test_publish_instagram_media_two_step_recorded(self):
+        fake = FakeMetaAdapter()
+        m = fake.publish_instagram_media("IG1", "https://img/a.jpg", "cap")
+        assert m.id == "IG1_media_1"
+        assert m.container_id == "IG1_container_1"
+        assert m.caption == "cap"
+        assert fake.published_media == [m]
+
+    def test_list_ad_campaigns_seeded_and_prefix_norm(self):
+        from noctusai_lib.integrations.meta import AdCampaign
+
+        fake = FakeMetaAdapter().seed(
+            ad_campaigns_by_account={
+                "act_123": [AdCampaign(id="c1", name="Camp1")]
+            }
+        )
+        # Bare id is normalised to act_ before lookup.
+        camps = fake.list_ad_campaigns("123")
+        assert len(camps) == 1 and camps[0].name == "Camp1"
+        assert fake.list_ad_campaigns("act_123")[0].id == "c1"
+
+    def test_ad_insights_seeded_and_default(self):
+        from noctusai_lib.integrations.meta import AdInsights
+
+        fake = FakeMetaAdapter().seed(
+            ad_insights={
+                "c1": AdInsights(
+                    object_id="c1", level="campaign", metrics={"spend": 5.0}
+                )
+            }
+        )
+        got = fake.ad_insights("c1", "campaign")
+        assert got.metrics["spend"] == 5.0
+        # Unseeded → deterministic empty, never an error.
+        empty = fake.ad_insights("missing", "ad")
+        assert empty.object_id == "missing" and empty.metrics == {}
+
+
+# ─── TestRealWriteSurface ─────────────────────────────────────────────────
+
+
+class TestRealWriteSurface:
+    """The live adapter write/ads paths — external Graph boundary
+    mocked (httpx.get / httpx.post patched; no noctusai_lib code
+    monkey-patched)."""
+
+    def _pages_body(self):
+        return {
+            "data": [{"id": "P1", "name": "Page1", "access_token": "PT1"}],
+            "paging": {},
+        }
+
+    def test_publish_facebook_post_feed(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(self._pages_body())
+        ):
+            a.list_facebook_pages()  # warm the page-token cache
+        get_resps = [_FakeResponse({"permalink_url": "https://fb/P1_55"})]
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"id": "P1_55"})
+        ), patch.object(httpx, "get", side_effect=get_resps):
+            out = a.publish_facebook_post("P1", "hello world")
+        assert out.id == "P1_55"
+        assert out.page_id == "P1"
+        assert out.permalink_url == "https://fb/P1_55"
+
+    def test_publish_facebook_post_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(self._pages_body())
+        ):
+            a.list_facebook_pages()
+        perm_err = {
+            "error": {
+                "message": "(#200) Requires pages_manage_posts permission",
+                "code": 200,
+                "type": "OAuthException",
+            }
+        }
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(perm_err)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.publish_facebook_post("P1", "blocked")
+        assert exc.value.requires_app_review is True
+        assert exc.value.is_permission is True
+
+    def test_publish_instagram_media_two_step_flow(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        post_resps = [
+            _FakeResponse({"id": "CONT1"}),  # /media -> container
+            _FakeResponse({"id": "MED1"}),  # /media_publish -> media id
+        ]
+        get_resps = [_FakeResponse({"permalink": "https://ig/p/MED1"})]
+        with patch.object(
+            httpx, "post", side_effect=post_resps
+        ), patch.object(httpx, "get", side_effect=get_resps):
+            out = a.publish_instagram_media("IG1", "https://img/a.jpg", "cap")
+        assert out.id == "MED1"
+        assert out.container_id == "CONT1"
+        assert out.permalink == "https://ig/p/MED1"
+
+    def test_publish_instagram_media_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        perm_err = {
+            "error": {
+                "message": "(#10) instagram_content_publish not granted",
+                "code": 10,
+                "type": "OAuthException",
+            }
+        }
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(perm_err)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.publish_instagram_media("IG1", "https://img/a.jpg")
+        assert exc.value.requires_app_review is True
+
+    def test_list_ad_campaigns_reads_and_normalises_prefix(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        body = {
+            "data": [
+                {"id": "c1", "name": "Camp1", "status": "ACTIVE"},
+                {"id": "c2", "name": "Camp2", "status": "PAUSED"},
+            ],
+            "paging": {},
+        }
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(body)
+        ):
+            camps = a.list_ad_campaigns("123")
+        assert [c.id for c in camps] == ["c1", "c2"]
+        assert camps[0].status == "ACTIVE"
+
+    def test_ad_insights_flattens_numeric_fields(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        body = {
+            "data": [
+                {"impressions": "1000", "spend": "12.50", "campaign": "skip"}
+            ]
+        }
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(body)
+        ):
+            ins = a.ad_insights("c1", "campaign", date_preset="last_7d")
+        assert ins.metrics["impressions"] == 1000.0
+        assert ins.metrics["spend"] == 12.5
+        # Non-numeric field skipped, raw kept whole.
+        assert "campaign" not in ins.metrics
+        assert ins.raw[0]["campaign"] == "skip"
+
+    def test_ad_insights_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        perm_err = {
+            "error": {
+                "message": "(#200) ads_read permission required",
+                "code": 200,
+            }
+        }
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(perm_err)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.ad_insights("c1", "campaign")
+        assert exc.value.requires_app_review is True
+
+
+# ─── TestReadPathRegression ───────────────────────────────────────────────
+
+
+class TestReadPathRegression:
+    """Sentinel: the additive write/ads extension must NOT alter any
+    pre-existing read-only behaviour. Re-exercises the read surface
+    end-to-end through the (now extended) Fake + Real adapters."""
+
+    def test_fake_read_surface_unchanged(self):
+        fake = FakeMetaAdapter().seed(
+            pages=[FacebookPage(id="P1", name="Page1")],
+            posts_by_page={"P1": [post_from_body({"id": "x1"})]},
+            ig_accounts=[InstagramAccount(id="IG1", username="acct")],
+            post_insights={"x1": PostInsights(object_id="x1", metrics={"r": 1})},
+            me={"id": "1", "name": "T"},
+        )
+        assert fake.list_facebook_pages()[0].name == "Page1"
+        assert len(fake.list_facebook_posts("P1")) == 1
+        assert fake.list_instagram_accounts()[0].username == "acct"
+        assert fake.get_facebook_post_insights("x1").metrics["r"] == 1
+        assert fake.status().adapter == "fake"
+        # Write recorders start empty — no read-path side effects.
+        assert fake.published_posts == []
+        assert fake.published_media == []
+
+    def test_real_read_surface_unchanged(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        body = {
+            "data": [{"id": "P1", "name": "Page1", "access_token": "PT1"}],
+            "paging": {},
+        }
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(body)
+        ):
+            pages = a.list_facebook_pages()
+        assert pages[0].id == "P1"
+        assert a._page_token_cache["P1"] == "PT1"
+
+    def test_both_adapters_carry_extended_contract(self):
+        # MetaAdapter is a non-runtime_checkable Protocol; assert the
+        # read + write/ads surface structurally (every method present
+        # and callable) on both concrete adapters.
+        surface = (
+            "status",
+            "me",
+            "list_facebook_pages",
+            "get_page",
+            "list_facebook_posts",
+            "get_facebook_post_insights",
+            "list_instagram_accounts",
+            "list_instagram_media",
+            "get_instagram_media_insights",
+            "publish_facebook_post",
+            "publish_instagram_media",
+            "list_ad_campaigns",
+            "ad_insights",
+        )
+        for impl in (FakeMetaAdapter(), MetaOAuthAdapter(system_user_token="X")):
+            for name in surface:
+                assert callable(getattr(impl, name)), (
+                    f"{type(impl).__name__} missing {name}"
+                )
