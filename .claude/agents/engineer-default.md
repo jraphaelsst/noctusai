@@ -89,7 +89,7 @@ Per the brief (Write-authorization clause): you MAY create `findings.md` within 
 
 ## 10. Symbol-first when authoring dense docs
 
-When authoring OR refactoring dense docs (MASTER-PROMPTs, CLAUDE.md, KB patterns, PROJECT.md §6+§11, memory bodies): **use the doc-symbology glossary by default** — `KB § PATTERNS/doc-symbology.md`. Lossless-swap test gates every prose→symbol swap. The glossary is caveman-skill-aligned (validated ~61-75% token-cut; prose-discipline + lite/full/ultra ladder + abbreviation set). Conformance is enforced by `check_doc_symbology_drift` (platform baseline: zero-drift) — do not introduce an out-of-glossary symbology glyph; if a new symbol is genuinely needed, add it to the glossary, never invent it inline.
+When authoring OR refactoring dense docs OR AI-intended files (MASTER-PROMPTs, CLAUDE.md, KB patterns, memory bodies, **whole PROJECT.md + `proposals/*.md`** — AI scaffolding; §1 framing / §2 quoted-user stay prose; from-now-on, existing not retrofitted): **use the doc-symbology glossary by default** — `KB § PATTERNS/doc-symbology.md`. Lossless-swap test gates every prose→symbol swap. The glossary is caveman-skill-aligned (validated ~61-75% token-cut; prose-discipline + lite/full/ultra ladder + abbreviation set). Conformance is enforced by `check_doc_symbology_drift` (platform baseline: zero-drift) — do not introduce an out-of-glossary symbology glyph; if a new symbol is genuinely needed, add it to the glossary, never invent it inline.
 
 Core symbols: `∧ ∨ ¬ ⇒ ↔ ∈ ⊂ ≡ ≠ ≈` (logic) · `✅ ⏳ ❌ 🔒 📋 🗑 ⭐ ⚠️` (status) · `s1/s2/s3/s4` (codification stages) · `[F]/[R]/[A]` (triage) · `N≥3 N=2 Δ Σ ± D-N` (counts).
 
