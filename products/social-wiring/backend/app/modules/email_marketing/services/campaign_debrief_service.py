@@ -403,6 +403,7 @@ async def build_debrief(
     try:
         result: DigestResult = await svc.run(DigestWindow(org_id=org_id))
     except _CampaignNotFound:
+        logger.debug("build_debrief: campaign %s not found; returning None", campaign_id)
         return None
     return result.digest, result.summary
 

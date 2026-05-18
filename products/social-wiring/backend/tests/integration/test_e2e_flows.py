@@ -71,9 +71,9 @@ class TestTeamFlow:
         """Authenticated user can list org members."""
         client._mock_supabase.set_table_data("noctus_users", [
             {"id": "u1", "nome": "Alice", "email": "alice@test.com",
-             "org_role": "owner", "avatar_url": None, "created_at": "2026-01-01T00:00:00Z"},
+             "org_role": "owner", "avatar_url": None, "created_at": "2026-01-01T00:00:00Z", "org_id": "test-org-123"},
             {"id": "u2", "nome": "Bob", "email": "bob@test.com",
-             "org_role": "member", "avatar_url": None, "created_at": "2026-01-02T00:00:00Z"},
+             "org_role": "member", "avatar_url": None, "created_at": "2026-01-02T00:00:00Z", "org_id": "test-org-123"},
         ])
         resp = client.get("/api/team")
         assert resp.status_code == 200
