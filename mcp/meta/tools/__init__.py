@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from _kit.registry import build_registry
 
-from . import diagnostics, facebook, instagram, whatsapp
+from . import ads, diagnostics, facebook, instagram, whatsapp
 
-LEAF_MODULES = (diagnostics, facebook, instagram, whatsapp)
+LEAF_MODULES = (ads, diagnostics, facebook, instagram, whatsapp)
 
 all_handlers, all_descriptors, register_all = build_registry(LEAF_MODULES)
 

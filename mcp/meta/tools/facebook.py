@@ -49,6 +49,9 @@ from ..types import (
     PostInsightsInput,
     PostInsightsOut,
     PostInsightsOutput,
+    PublishedPostOut,
+    PublishPostInput,
+    PublishPostOutput,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,6 +77,7 @@ def _meta_error(e: MetaGraphError) -> dict:
     env["http_status"] = e.http_status
     env["is_auth_error"] = e.is_auth_error
     env["is_rate_limited"] = e.is_rate_limited
+    env["requires_app_review"] = getattr(e, "requires_app_review", False)
     return env
 
 
@@ -158,6 +162,40 @@ async def post_insights(args: dict) -> dict:
     ).model_dump()
 
 
+async def publish_post(args: dict) -> dict:
+    inp = PublishPostInput(**args)
+    if not inp.confirm:
+        return PublishPostOutput(
+            error=typed_error(
+                PermissionError(
+                    "meta.facebook.publish_post is a WRITE — re-call with "
+                    "confirm=true to publish."
+                )
+            )
+        ).model_dump()
+    adapter = _adapter()
+    logger.info(
+        "meta.facebook.publish_post AUDIT confirmed=true page_id=%s", inp.page_id
+    )
+    try:
+        pub = adapter.publish_facebook_post(
+            inp.page_id, inp.message, link=inp.link, photo_url=inp.photo_url
+        )
+    except MetaGraphError as e:
+        return PublishPostOutput(
+            auth_mode=adapter.auth_mode, error=_meta_error(e)
+        ).model_dump()
+    return PublishPostOutput(
+        published=PublishedPostOut(
+            id=pub.id,
+            page_id=pub.page_id,
+            message=pub.message,
+            permalink_url=pub.permalink_url,
+        ),
+        auth_mode=adapter.auth_mode,
+    ).model_dump()
+
+
 # ─── Registration ───────────────────────────────────────────────────────
 
 
@@ -165,6 +203,7 @@ HANDLERS = {
     "meta.facebook.list_pages": list_pages,
     "meta.facebook.list_page_posts": list_page_posts,
     "meta.facebook.post_insights": post_insights,
+    "meta.facebook.publish_post": publish_post,
 }
 
 
@@ -206,6 +245,18 @@ def tool_descriptors() -> list[Tool]:
                 "the raw period-detail payload."
             ),
             inputSchema=PostInsightsInput.model_json_schema(),
+        ),
+        Tool(
+            name="meta.facebook.publish_post",
+            description=(
+                "Publish a post to a Facebook Page. WRITE — you MUST pass "
+                "confirm=true or it is refused with a typed error and "
+                "nothing is posted. Real path needs App-Review-approved "
+                "publishing scope; absent → typed error with "
+                "requires_app_review=true (never a faked success). Fake "
+                "adapter simulates+records when unconfigured."
+            ),
+            inputSchema=PublishPostInput.model_json_schema(),
         ),
     ]
 

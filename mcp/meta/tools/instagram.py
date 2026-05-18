@@ -41,6 +41,9 @@ from ..types import (
     MediaInsightsInput,
     MediaInsightsOutput,
     PostInsightsOut,
+    PublishedMediaOut,
+    PublishMediaInput,
+    PublishMediaOutput,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,6 +68,7 @@ def _meta_error(e: MetaGraphError) -> dict:
     env["http_status"] = e.http_status
     env["is_auth_error"] = e.is_auth_error
     env["is_rate_limited"] = e.is_rate_limited
+    env["requires_app_review"] = getattr(e, "requires_app_review", False)
     return env
 
 
@@ -149,6 +153,42 @@ async def media_insights(args: dict) -> dict:
     ).model_dump()
 
 
+async def publish_media(args: dict) -> dict:
+    inp = PublishMediaInput(**args)
+    if not inp.confirm:
+        return PublishMediaOutput(
+            error=typed_error(
+                PermissionError(
+                    "meta.instagram.publish_media is a WRITE — re-call with "
+                    "confirm=true to publish."
+                )
+            )
+        ).model_dump()
+    adapter = _adapter()
+    logger.info(
+        "meta.instagram.publish_media AUDIT confirmed=true ig_user_id=%s",
+        inp.ig_user_id,
+    )
+    try:
+        pub = adapter.publish_instagram_media(
+            inp.ig_user_id, inp.image_url, caption=inp.caption
+        )
+    except MetaGraphError as e:
+        return PublishMediaOutput(
+            auth_mode=adapter.auth_mode, error=_meta_error(e)
+        ).model_dump()
+    return PublishMediaOutput(
+        published=PublishedMediaOut(
+            id=pub.id,
+            ig_user_id=pub.ig_user_id,
+            container_id=pub.container_id,
+            caption=pub.caption,
+            permalink=pub.permalink,
+        ),
+        auth_mode=adapter.auth_mode,
+    ).model_dump()
+
+
 # ─── Registration ───────────────────────────────────────────────────────
 
 
@@ -156,6 +196,7 @@ HANDLERS = {
     "meta.instagram.list_accounts": list_accounts,
     "meta.instagram.list_media": list_media,
     "meta.instagram.media_insights": media_insights,
+    "meta.instagram.publish_media": publish_media,
 }
 
 
@@ -195,6 +236,18 @@ def tool_descriptors() -> list[Tool]:
                 "{metric: int} map plus the raw period-detail payload."
             ),
             inputSchema=MediaInsightsInput.model_json_schema(),
+        ),
+        Tool(
+            name="meta.instagram.publish_media",
+            description=(
+                "Publish an image to an Instagram Business account "
+                "(container→publish). WRITE — you MUST pass confirm=true or "
+                "it is refused with a typed error and nothing is published. "
+                "Real path needs App-Review-approved content-publishing "
+                "scope; absent → typed error requires_app_review=true "
+                "(never faked). Fake simulates+records when unconfigured."
+            ),
+            inputSchema=PublishMediaInput.model_json_schema(),
         ),
     ]
 

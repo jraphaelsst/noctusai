@@ -299,7 +299,234 @@ class DiscoverScopesOutput(BaseModel):
     error: Optional[dict] = None
 
 
+# ─── Write / ads surface (additive) ──────────────────────────────────────
+
+_CONFIRM = Field(
+    default=False,
+    description=(
+        "WRITE GATE — must be explicitly true. False (default) returns a "
+        "typed error and performs NO mutation. Real path additionally "
+        "requires the App-Review-approved scope; absent → typed error "
+        "with requires_app_review=true (never a faked success)."
+    ),
+)
+
+
+class PublishPostInput(BaseModel):
+    page_id: str = Field(description="Target Facebook Page id.")
+    message: str = Field(description="Post body text.")
+    link: Optional[str] = Field(default=None, description="Optional link to attach.")
+    photo_url: Optional[str] = Field(
+        default=None, description="Optional public photo URL to attach."
+    )
+    confirm: bool = _CONFIRM
+
+
+class PublishedPostOut(BaseModel):
+    id: str
+    page_id: str
+    message: Optional[str] = None
+    permalink_url: Optional[str] = None
+
+
+class PublishPostOutput(BaseModel):
+    published: Optional[PublishedPostOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class PublishMediaInput(BaseModel):
+    ig_user_id: str = Field(description="Target Instagram user id.")
+    image_url: str = Field(description="Public image URL (Graph fetches it).")
+    caption: Optional[str] = Field(default=None, description="Optional caption.")
+    confirm: bool = _CONFIRM
+
+
+class PublishedMediaOut(BaseModel):
+    id: str
+    ig_user_id: str
+    container_id: Optional[str] = None
+    caption: Optional[str] = None
+    permalink: Optional[str] = None
+
+
+class PublishMediaOutput(BaseModel):
+    published: Optional[PublishedMediaOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class AdCampaignOut(BaseModel):
+    id: str
+    name: Optional[str] = None
+    objective: Optional[str] = None
+    status: Optional[str] = None
+    effective_status: Optional[str] = None
+
+
+class AdSetOut(BaseModel):
+    id: str
+    name: Optional[str] = None
+    status: Optional[str] = None
+    effective_status: Optional[str] = None
+    campaign_id: Optional[str] = None
+    daily_budget: Optional[int] = None
+    billing_event: Optional[str] = None
+    optimization_goal: Optional[str] = None
+
+
+class AdCreativeOut(BaseModel):
+    id: str
+    name: Optional[str] = None
+
+
+class AdOut(BaseModel):
+    id: str
+    name: Optional[str] = None
+    status: Optional[str] = None
+    effective_status: Optional[str] = None
+    adset_id: Optional[str] = None
+    creative_id: Optional[str] = None
+
+
+class AdInsightsOut(BaseModel):
+    object_id: str
+    level: str
+    metrics: dict = Field(default_factory=dict)
+
+
+class ListCampaignsInput(BaseModel):
+    ad_account_id: str = Field(description="Ad account id (act_<id> or bare id).")
+
+
+class ListCampaignsOutput(BaseModel):
+    campaigns: List[AdCampaignOut] = Field(default_factory=list)
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class AdInsightsInput(BaseModel):
+    object_id: str = Field(description="Campaign / ad-set / ad id to report on.")
+    level: str = Field(description="'campaign' | 'adset' | 'ad'.")
+    date_preset: Optional[str] = Field(
+        default=None, description="e.g. 'last_7d', 'lifetime'. None → API default."
+    )
+
+
+class AdInsightsOutput(BaseModel):
+    insights: Optional[AdInsightsOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class CreateCampaignInput(BaseModel):
+    ad_account_id: str = Field(description="Ad account id.")
+    name: str
+    objective: str = Field(description="Meta campaign objective enum.")
+    special_ad_categories: List[str] = Field(default_factory=list)
+    confirm: bool = _CONFIRM
+
+
+class CreateCampaignOutput(BaseModel):
+    campaign: Optional[AdCampaignOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class CreateAdSetInput(BaseModel):
+    ad_account_id: str
+    name: str
+    campaign_id: str
+    daily_budget: int = Field(description="Minor units (cents).")
+    billing_event: str
+    optimization_goal: str
+    confirm: bool = _CONFIRM
+
+
+class CreateAdSetOutput(BaseModel):
+    ad_set: Optional[AdSetOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class CreateAdCreativeInput(BaseModel):
+    ad_account_id: str
+    name: str
+    confirm: bool = _CONFIRM
+
+
+class CreateAdCreativeOutput(BaseModel):
+    creative: Optional[AdCreativeOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class CreateAdInput(BaseModel):
+    ad_account_id: str
+    name: str
+    adset_id: str
+    creative_id: str
+    confirm: bool = _CONFIRM
+
+
+class CreateAdOutput(BaseModel):
+    ad: Optional[AdOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class UpdateCampaignStatusInput(BaseModel):
+    campaign_id: str
+    status: str = Field(description="e.g. 'ACTIVE' | 'PAUSED' | 'ARCHIVED'.")
+    confirm: bool = _CONFIRM
+
+
+class UpdateCampaignStatusOutput(BaseModel):
+    campaign: Optional[AdCampaignOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
+class UpdateAdSetBudgetInput(BaseModel):
+    ad_set_id: str
+    daily_budget: int = Field(description="New daily budget, minor units.")
+    confirm: bool = _CONFIRM
+
+
+class UpdateAdSetBudgetOutput(BaseModel):
+    ad_set: Optional[AdSetOut] = None
+    auth_mode: str = "none"
+    error: Optional[dict] = None
+
+
 __all__ = [
+    "PublishPostInput",
+    "PublishedPostOut",
+    "PublishPostOutput",
+    "PublishMediaInput",
+    "PublishedMediaOut",
+    "PublishMediaOutput",
+    "AdCampaignOut",
+    "AdSetOut",
+    "AdCreativeOut",
+    "AdOut",
+    "AdInsightsOut",
+    "ListCampaignsInput",
+    "ListCampaignsOutput",
+    "AdInsightsInput",
+    "AdInsightsOutput",
+    "CreateCampaignInput",
+    "CreateCampaignOutput",
+    "CreateAdSetInput",
+    "CreateAdSetOutput",
+    "CreateAdCreativeInput",
+    "CreateAdCreativeOutput",
+    "CreateAdInput",
+    "CreateAdOutput",
+    "UpdateCampaignStatusInput",
+    "UpdateCampaignStatusOutput",
+    "UpdateAdSetBudgetInput",
+    "UpdateAdSetBudgetOutput",
     "SendTextInput",
     "SendTextOutput",
     "ParseInboundInput",

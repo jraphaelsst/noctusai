@@ -94,7 +94,100 @@ def test_registered_tool_name_set_is_pinned():
         "meta.instagram.media_insights",
         "meta.diagnostics.connection_status",
         "meta.diagnostics.discover_scopes",
+        "meta.facebook.publish_post",
+        "meta.instagram.publish_media",
+        "meta.ads.list_campaigns",
+        "meta.ads.insights",
+        "meta.ads.create_campaign",
+        "meta.ads.create_ad_set",
+        "meta.ads.create_ad_creative",
+        "meta.ads.create_ad",
+        "meta.ads.update_campaign_status",
+        "meta.ads.update_ad_set_budget",
     }
+
+
+def test_meta_write_tools_blocked_without_confirm():
+    """Every meta WRITE tool refuses (typed error) when confirm omitted."""
+    import asyncio
+
+    from meta.tools import all_handlers
+
+    h = all_handlers()
+    cases = {
+        "meta.facebook.publish_post": {"page_id": "P1", "message": "hi"},
+        "meta.instagram.publish_media": {"ig_user_id": "IG1", "image_url": "u"},
+        "meta.ads.create_campaign": {
+            "ad_account_id": "act_1",
+            "name": "c",
+            "objective": "OUTCOME_TRAFFIC",
+        },
+        "meta.ads.create_ad_set": {
+            "ad_account_id": "act_1",
+            "name": "s",
+            "campaign_id": "c1",
+            "daily_budget": 1000,
+            "billing_event": "IMPRESSIONS",
+            "optimization_goal": "REACH",
+        },
+        "meta.ads.create_ad_creative": {"ad_account_id": "act_1", "name": "cr"},
+        "meta.ads.create_ad": {
+            "ad_account_id": "act_1",
+            "name": "a",
+            "adset_id": "s1",
+            "creative_id": "cr1",
+        },
+        "meta.ads.update_campaign_status": {
+            "campaign_id": "c1",
+            "status": "PAUSED",
+        },
+        "meta.ads.update_ad_set_budget": {"ad_set_id": "s1", "daily_budget": 50},
+    }
+    for tool, args in cases.items():
+        out = asyncio.run(h[tool](args))
+        assert out["error"]["error_class"] == "PermissionError", tool
+
+
+def test_meta_write_tools_with_confirm_use_fake():
+    """With confirm=true and no token, the Fake simulates+records the
+    write (the 'scope-approved' path) — never an App-Review error."""
+    import asyncio
+
+    from meta.tools import all_handlers
+
+    h = all_handlers()
+    pub = asyncio.run(
+        h["meta.facebook.publish_post"](
+            {"page_id": "P1", "message": "hello", "confirm": True}
+        )
+    )
+    assert pub.get("error") is None
+    assert pub["published"]["id"]
+    assert pub["auth_mode"] == "none"
+
+    camp = asyncio.run(
+        h["meta.ads.create_campaign"](
+            {
+                "ad_account_id": "act_1",
+                "name": "C",
+                "objective": "OUTCOME_TRAFFIC",
+                "confirm": True,
+            }
+        )
+    )
+    assert camp.get("error") is None
+    assert camp["campaign"]["id"]
+
+
+def test_meta_ads_read_no_confirm_gate():
+    import asyncio
+
+    from meta.tools import all_handlers
+
+    h = all_handlers()
+    out = asyncio.run(h["meta.ads.list_campaigns"]({"ad_account_id": "act_1"}))
+    assert "error" not in out or out["error"] is None
+    assert isinstance(out["campaigns"], list)
 
 
 def test_all_handlers_aggregates_every_leaf():
