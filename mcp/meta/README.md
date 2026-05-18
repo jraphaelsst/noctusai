@@ -8,7 +8,7 @@ envelope. Nothing generic is re-implemented here.
 
 ## Tool surface
 
-### Shipped (Wave 2)
+### WhatsApp slice
 
 | Tool | Side-effect | Backed by (seed) |
 |---|---|---|
@@ -28,32 +28,39 @@ Deferred-config: with no `WAHA_BASE_URL` the seed factory returns
 still answer deterministically. With creds it returns the real
 httpx-backed `WahaClient`.
 
-### NOT shipped — verify-the-seed-ships-it gap (Wave 3 blocker)
+### Graph read-only surface (Facebook + Instagram + diagnostics)
 
-`meta.facebook.*`, `meta.instagram.*`, and `meta.diagnostics.*` from the
-Wave-2 brief are **not** built. They were specified to wrap
-`noctusai_lib.integrations.meta` (`get_meta_adapter`, `FacebookPage`,
-`InstagramAccount`, `MetaGraphError`, `discover_app_permissions`,
-`resolve_oauth_scopes`, `MetaConnectionStatus`). **That package does not
-exist in the tree** — `seed/lib/backend/noctusai_lib/integrations/`
-ships no `meta/`, and none of those symbols are defined anywhere in
-`seed/`. (The only "meta" code is the WhatsApp Cloud-API client at
-`integrations/whatsapp/meta_cloud_client.py`, which is unrelated to the
-Graph API.)
+Wraps `noctusai_lib.integrations.meta` — present in the tree post
+social-wiring absorption (canonical seed Protocol + Fake + Real(OAuth,
+dual-auth) + factory; sibling to `google_calendar/`, `vista/`).
 
-Building those tools would mean re-implementing the Graph-API adapter
-connector-side — a structural fork the brief explicitly forbids
-("NOT re-implementing anything — thin wrappers over the lib") and a
-`verify-the-seed-ships-it` violation. Per that rule (Gap + N=1 consumer
-→ ship against what the seed ships, surface the follow-up), the
-WhatsApp slice ships now and the Graph-API surface is surfaced as a
-Wave-3 blocker requiring a seed `noctusai_lib.integrations.meta` project
-first.
+| Tool | Side-effect | Backed by (seed) |
+|---|---|---|
+| `meta.facebook.list_pages` | none (pure) | `get_meta_adapter(...).list_facebook_pages()` |
+| `meta.facebook.list_page_posts` | none (pure) | `.list_facebook_posts(page_id, limit)` |
+| `meta.facebook.post_insights` | none (pure) | `.get_facebook_post_insights(post_id, page_id)` |
+| `meta.instagram.list_accounts` | none (pure) | `.list_instagram_accounts()` |
+| `meta.instagram.list_media` | none (pure) | `.list_instagram_media(ig_user_id, limit)` |
+| `meta.instagram.media_insights` | none (pure) | `.get_instagram_media_insights(media_id)` |
+| `meta.diagnostics.connection_status` | none (pure) | `.status()` → `MetaConnectionStatus` |
+| `meta.diagnostics.discover_scopes` | none (pure) | `resolve_oauth_scopes(...)` |
 
-`settings.py` already declares `META_SYSTEM_USER_TOKEN` / `META_APP_ID`
-/ `META_APP_SECRET` so the env contract is stable for when that surface
-lands — the leaf modules drop into `tools/__init__.py::LEAF_MODULES`
-unchanged at that point.
+**READ-ONLY v1.** The seed `MetaAdapter` Protocol exposes no write
+methods — posting (FB Page post, IG publish) and ads are out of scope
+(Meta App Review gates the write scopes); no such tools are exposed.
+Each tool surfaces `auth_mode` (`system_user` / `user_oauth` / `none`)
+so the silent-empty-data failure mode on Business-Portfolio-owned
+assets is visible. `MetaGraphError` carries `.http_status` (not
+`.status`); the leaf `_meta_error` enrichment exposes `http_status` /
+`is_auth_error` / `is_rate_limited` on the typed-error envelope so the
+host LLM can branch deterministically (re-consent vs back-off vs hard
+failure) even though `_kit.errors.typed_error` only probes `.status`.
+
+Deferred-config: with no `META_SYSTEM_USER_TOKEN` (and no OAuth
+resolver) `get_meta_adapter` returns `FakeMetaAdapter`, so the server
+boots with zero creds and every Graph tool answers deterministically
+(empty unless seeded, `auth_mode="none"`). `access_token` on a
+`FacebookPage` is **never** mapped onto the wire shape.
 
 ## Settings (`mcp/meta/.env` or env — env wins)
 
@@ -62,9 +69,9 @@ unchanged at that point.
 | `WAHA_BASE_URL` | `waha_base_url` | shipped — real-vs-Fake signal for the WhatsApp slice |
 | `WAHA_API_KEY` | `waha_api_key` | shipped |
 | `WAHA_EXTERNAL_BASE_URL` | `waha_external_base_url` | carried (tunnel/webhook URL emission) |
-| `META_SYSTEM_USER_TOKEN` | `meta_system_user_token` | dormant — Graph-API surface (Wave 3) |
-| `META_APP_ID` | `meta_app_id` | dormant — Graph-API surface (Wave 3) |
-| `META_APP_SECRET` | `meta_app_secret` | dormant — Graph-API surface (Wave 3) |
+| `META_SYSTEM_USER_TOKEN` | `meta_system_user_token` | shipped — Graph adapter auth (System User Token → live `MetaOAuthAdapter`; absent → `FakeMetaAdapter`) |
+| `META_APP_ID` | `meta_app_id` | shipped — `meta.diagnostics.discover_scopes` app-permissions discovery |
+| `META_APP_SECRET` | `meta_app_secret` | shipped — `meta.diagnostics.discover_scopes` app-permissions discovery |
 
 ## Run
 

@@ -11,7 +11,7 @@ seed package (`noctusai_lib.integrations.meta`) does not exist; see
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -75,11 +75,233 @@ class ParseInboundOutput(BaseModel):
     media_url: Optional[str] = None
     media_mimetype: Optional[str] = None
     error: Optional[dict] = None
+class FacebookPageOut(BaseModel):
+    """JSON-friendly mirror of the seed `FacebookPage` value object.
+
+    `access_token` is intentionally OMITTED — it is a per-Page Graph
+    token the seed value object carries transiently; an MCP tool must
+    never leak a credential to the host LLM.
+    """
+
+    id: str
+    name: str
+    category: Optional[str] = None
+    fan_count: Optional[int] = None
+    followers_count: Optional[int] = None
+    link: Optional[str] = None
+    tasks: List[str] = Field(default_factory=list)
+
+
+class FacebookPostOut(BaseModel):
+    """JSON-friendly mirror of the seed `FacebookPost` value object."""
+
+    id: str
+    message: Optional[str] = None
+    created_time: Optional[str] = None
+    permalink_url: Optional[str] = None
+    full_picture: Optional[str] = None
+    likes: int = 0
+    comments: int = 0
+    shares: int = 0
+    attachments: List[dict] = Field(default_factory=list)
+
+
+class InstagramAccountOut(BaseModel):
+    """JSON-friendly mirror of the seed `InstagramAccount` value object."""
+
+    id: str
+    username: str
+    name: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+    followers_count: Optional[int] = None
+    follows_count: Optional[int] = None
+    media_count: Optional[int] = None
+    biography: Optional[str] = None
+    website: Optional[str] = None
+    page_id: Optional[str] = None
+
+
+class InstagramMediaOut(BaseModel):
+    """JSON-friendly mirror of the seed `InstagramMedia` value object."""
+
+    id: str
+    caption: Optional[str] = None
+    media_type: Optional[str] = None
+    media_url: Optional[str] = None
+    permalink: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    timestamp: Optional[str] = None
+    like_count: int = 0
+    comments_count: int = 0
+
+
+class PostInsightsOut(BaseModel):
+    """JSON-friendly mirror of the seed `PostInsights` value object."""
+
+    object_id: str
+    metrics: dict = Field(default_factory=dict)
+    raw: List[dict] = Field(default_factory=list)
+
+
+# ─── meta.facebook.list_pages ────────────────────────────────────────────
+
+
+class ListPagesInput(BaseModel):
+    """List the Facebook Pages the authenticated identity manages.
+
+    PURE read — no side-effect, no confirm gate. Wraps the seed
+    `MetaAdapter.list_facebook_pages()`. With no Meta creds configured
+    the seed factory returns `FakeMetaAdapter`, so this answers
+    deterministically (empty unless seeded) — the deferred-config rule.
+    """
+
+
+class ListPagesOutput(BaseModel):
+    pages: List[FacebookPageOut] = Field(default_factory=list)
+    auth_mode: Optional[str] = None
+    error: Optional[dict] = None
+
+
+# ─── meta.facebook.list_page_posts ───────────────────────────────────────
+
+
+class ListPagePostsInput(BaseModel):
+    """List posts authored by a Facebook Page (read-only)."""
+
+    page_id: str = Field(..., description="The Facebook Page id.")
+    limit: int = Field(
+        25, ge=1, le=100, description="Max posts to return (paging cap)."
+    )
+
+
+class ListPagePostsOutput(BaseModel):
+    posts: List[FacebookPostOut] = Field(default_factory=list)
+    auth_mode: Optional[str] = None
+    error: Optional[dict] = None
+
+
+# ─── meta.facebook.post_insights ─────────────────────────────────────────
+
+
+class PostInsightsInput(BaseModel):
+    """Fetch flattened insight metrics for a single Facebook post."""
+
+    post_id: str = Field(..., description="The Facebook post id.")
+    page_id: Optional[str] = Field(
+        None, description="Owning Page id (optional; aids token selection)."
+    )
+
+
+class PostInsightsOutput(BaseModel):
+    insights: Optional[PostInsightsOut] = None
+    auth_mode: Optional[str] = None
+    error: Optional[dict] = None
+
+
+# ─── meta.instagram.list_accounts ────────────────────────────────────────
+
+
+class ListAccountsInput(BaseModel):
+    """List the Instagram Business/Creator accounts linked to Pages."""
+
+
+class ListAccountsOutput(BaseModel):
+    accounts: List[InstagramAccountOut] = Field(default_factory=list)
+    auth_mode: Optional[str] = None
+    error: Optional[dict] = None
+
+
+# ─── meta.instagram.list_media ───────────────────────────────────────────
+
+
+class ListMediaInput(BaseModel):
+    """List media items for an Instagram Business account (read-only)."""
+
+    ig_user_id: str = Field(..., description="The Instagram user/account id.")
+    limit: int = Field(
+        25, ge=1, le=100, description="Max media to return (paging cap)."
+    )
+
+
+class ListMediaOutput(BaseModel):
+    media: List[InstagramMediaOut] = Field(default_factory=list)
+    auth_mode: Optional[str] = None
+    error: Optional[dict] = None
+
+
+# ─── meta.instagram.media_insights ───────────────────────────────────────
+
+
+class MediaInsightsInput(BaseModel):
+    """Fetch flattened insight metrics for a single Instagram media item."""
+
+    media_id: str = Field(..., description="The Instagram media id.")
+
+
+class MediaInsightsOutput(BaseModel):
+    insights: Optional[PostInsightsOut] = None
+    auth_mode: Optional[str] = None
+    error: Optional[dict] = None
+
+
+# ─── meta.diagnostics.connection_status ──────────────────────────────────
+
+
+class ConnectionStatusInput(BaseModel):
+    """Introspect the active Meta adapter (read-only, no side-effect).
+
+    Surfaces `auth_mode` (`system_user` / `user_oauth` / `none`) so the
+    operator can immediately tell which auth backend is live — the
+    silent-empty-data failure mode on Business-Portfolio-owned assets is
+    invisible otherwise.
+    """
+
+
+class ConnectionStatusOutput(BaseModel):
+    configured: Optional[bool] = None
+    adapter: Optional[str] = None
+    auth_mode: Optional[str] = None
+    consent_required: Optional[bool] = None
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    pages_count: int = 0
+    instagram_accounts_count: int = 0
+    status_error: Optional[str] = None
+    error: Optional[dict] = None
+
+
+# ─── meta.diagnostics.discover_scopes ────────────────────────────────────
+
+
+class DiscoverScopesInput(BaseModel):
+    """Resolve the OAuth scope set the configured Meta app should request.
+
+    Wraps the seed `resolve_oauth_scopes` — explicit list verbatim, else
+    `discover_app_permissions` when app creds are present, else the
+    `META_KITCHEN_SINK_SCOPES` safety net. PURE (one best-effort Graph
+    read for discovery; falls back, never raises).
+    """
+
+    configured_scopes: Optional[str] = Field(
+        None,
+        description="Explicit comma-separated scope list, or 'auto'/empty "
+        "to trigger discovery against the configured app creds.",
+    )
+
+
+class DiscoverScopesOutput(BaseModel):
+    scopes: List[str] = Field(default_factory=list)
+    source: str = Field(
+        ...,
+        description="'explicit' (verbatim list), 'discovered' (Graph "
+        "app-permissions), or 'kitchen_sink' (safety-net default).",
+    )
+    error: Optional[dict] = None
 
 
 __all__ = [
     "SendTextInput",
     "SendTextOutput",
     "ParseInboundInput",
-    "ParseInboundOutput",
+    "ParseInboundOutput","FacebookPageOut", "FacebookPostOut", "InstagramAccountOut", "InstagramMediaOut", "PostInsightsOut", "ListPagesInput", "ListPagesOutput", "ListPagePostsInput", "ListPagePostsOutput", "PostInsightsInput", "PostInsightsOutput", "ListAccountsInput", "ListAccountsOutput", "ListMediaInput", "ListMediaOutput", "MediaInsightsInput", "MediaInsightsOutput", "ConnectionStatusInput", "ConnectionStatusOutput", "DiscoverScopesInput", "DiscoverScopesOutput"
 ]

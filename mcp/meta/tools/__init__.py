@@ -4,19 +4,19 @@ Aggregation trio built once by `_kit.registry.build_registry` (shared
 across every connector MCP). Tool naming follows the dotted convention
 `meta.<service>.<action>`.
 
-LEAF_MODULES is the WhatsApp slice only this wave. `facebook`,
-`instagram`, `diagnostics` leaves are intentionally absent — their
-backing seed package (`noctusai_lib.integrations.meta`) does not exist;
-see `mcp/meta/README.md`. They drop in here unchanged once the seed
-adapter ships.
+LEAF_MODULES aggregates four leaves: `whatsapp` (WAHA outbound +
+inbound parse), `facebook` / `instagram` (Graph read-only Page + IG
+surface), `diagnostics` (adapter introspection + OAuth scope
+resolution). The Graph leaves wrap `noctusai_lib.integrations.meta`
+(present in the tree post social-wiring absorption).
 """
 from __future__ import annotations
 
 from _kit.registry import build_registry
 
-from . import whatsapp
+from . import diagnostics, facebook, instagram, whatsapp
 
-LEAF_MODULES = (whatsapp,)
+LEAF_MODULES = (diagnostics, facebook, instagram, whatsapp)
 
 all_handlers, all_descriptors, register_all = build_registry(LEAF_MODULES)
 

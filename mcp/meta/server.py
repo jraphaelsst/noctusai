@@ -8,14 +8,23 @@ settings.py). The seed factory deferred-config rule means the server
 starts cleanly with no creds — `meta.whatsapp.*` tools then run against
 `FakeWahaClient` and still answer deterministically.
 
-Tool surface (Wave 2 — shipped slice only):
-- meta.whatsapp.send_text     — outbound, confirm-gated (status 412 if unconfirmed)
-- meta.whatsapp.parse_inbound — pure WAHA-payload parse
+Tool surface:
+- meta.whatsapp.send_text          — outbound, confirm-gated (412 if unconfirmed)
+- meta.whatsapp.parse_inbound      — pure WAHA-payload parse
+- meta.facebook.list_pages         — Pages the identity manages (read-only)
+- meta.facebook.list_page_posts    — posts authored by a Page (read-only)
+- meta.facebook.post_insights      — per-post insight metrics (read-only)
+- meta.instagram.list_accounts     — IG Business accounts (read-only)
+- meta.instagram.list_media        — media for an IG account (read-only)
+- meta.instagram.media_insights    — per-media insight metrics (read-only)
+- meta.diagnostics.connection_status — adapter introspection (auth_mode)
+- meta.diagnostics.discover_scopes — OAuth scope resolution
 
-NOT shipped (verify-the-seed-ships-it gap): meta.facebook.* /
-meta.instagram.* / meta.diagnostics.* — the backing
-`noctusai_lib.integrations.meta` Graph-API package does not exist in the
-tree. See `mcp/meta/README.md` + the Wave-3 blocker note.
+The Facebook/Instagram/diagnostics leaves wrap
+`noctusai_lib.integrations.meta` (present post social-wiring
+absorption). READ-ONLY v1 — the seed `MetaAdapter` Protocol has no
+write methods (Meta App Review gates the write scopes); no
+posting/ads tools are exposed.
 
 The stdio bootstrap (sys.path trick, stderr logging, Server +
 list_tools + call_tool + run loop) is shared across every connector MCP
