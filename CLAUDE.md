@@ -1,5 +1,14 @@
 # CLAUDE.md · v3.0 — router
 
+<!-- NEW-SESSION-CONTEXTUALIZATION -->
+## 🧭 New session — read this only if you lack platform context
+
+**Fresh / clean-context agent** AND the user says **"contextualize"** / **"please contextualize"** (or you have no idea what this platform is) → **STOP and read `/CONTEXTUALIZE.md` (repo root) FIRST**, then do the task. That file is the curated read-map (core files, order, the how-we-work mental model) — one read, then you're oriented.
+
+**Already-working / already-contextualized agent → this section is a NO-OP. Skip it. Do NOT re-open `CONTEXTUALIZE.md`** (you're past onboarding; re-reading wastes tokens). Grep anchor: `NEW-SESSION-CONTEXTUALIZATION`.
+
+---
+
 > **What this file is.** Auto-loaded every session. Two jobs: (a) the universal behavioral rules Claude obeys every turn, (b) routing pointers into `CLAUDE/<topic>.md` (topical rules, on-demand) and `KNOWLEDGE-BASE/` (depth, on-demand). Kept lean on purpose — the auto-loaded budget compounds across every reply.
 >
 > **What this file is NOT.** A tutorial, changelog, spec sheet, manual, or rule body container. Bodies and depth go elsewhere. If you find yourself writing >80 words on a single rule here, push the long-form into KB and shorten the rule to a pointer.
