@@ -174,11 +174,12 @@ It is **not** a monkeypatch — no function/class is replaced; it corrects
 a mis-pointed package *locator* (the "codebase is source of truth" rule
 applied to import resolution).
 
-> **Follow-up cleanup wave (not yet done):** `mcp/meta/**` and
-> `mcp/google/**` still carry their now-redundant local copies of this
-> logic. Replacing those per-connector hacks with the `_kit` helper is a
-> SEPARATE wave (kept out of this change to avoid colliding with any
-> concurrent connector work).
+> **Cleanup wave — DONE (branch `seed-pin-dedup`, 2026-05-18).** The
+> per-connector hand-rolled copies in `mcp/google/{server.py,conftest.py}`
+> and `mcp/meta/tests/test_smoke.py` are **removed**; all three sites now
+> compose `from _kit.seed_pin import pin_in_tree_seed`. No connector
+> retains a local copy of this logic. (Triage flipped `[A]→[F]` in
+> `KB § PATTERNS/accept-with-rationale.md`.)
 
 ## Namespace-collision recipe (when `mcp/<vendor>` shadows an installed package)
 

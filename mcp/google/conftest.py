@@ -17,42 +17,22 @@ import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-_SEED_BACKEND = _HERE.parents[1] / "seed" / "lib" / "backend"
 
-
-def _pin_in_tree_noctusai_lib() -> None:
-    """Resolve `noctusai_lib` from the seed IN THIS TREE.
-
-    A repo-wide editable install (`pip install -e`) registers a
-    `_EditableFinder` MetaPathFinder that hard-pins `noctusai_lib` to
-    whatever worktree it was last installed from — which may be a
-    *different* (now stale) `.claude/worktrees/agent-*` tree missing a
-    freshly-added seed symbol. `sys.meta_path` is consulted BEFORE
-    `sys.path`, so a plain `sys.path.insert` cannot override it. We
-    evict any editable finder whose pinned `noctusai_lib` path is
-    OUTSIDE this tree and drop stale cached modules, then prepend the
-    in-tree seed. Pure path/import wiring — same category as the
-    `google`-namespace-collision workaround below; touches no product
-    code."""
-    target = str(_SEED_BACKEND)
-    for finder in list(sys.meta_path):
-        mapping = getattr(finder, "_mapping", None) or getattr(
-            finder, "MAPPING", None
-        )
-        if not isinstance(mapping, dict):
-            continue
-        pinned = mapping.get("noctusai_lib")
-        pinned_str = pinned if isinstance(pinned, str) else (
-            pinned[0] if isinstance(pinned, (list, tuple)) and pinned else None
-        )
-        if pinned_str and target not in str(pinned_str):
-            sys.meta_path.remove(finder)
-    for name in list(sys.modules):
-        if name == "noctusai_lib" or name.startswith("noctusai_lib."):
-            del sys.modules[name]
-    sys.path.insert(0, target)
-
-
-_pin_in_tree_noctusai_lib()
+# Resolve `noctusai_lib` from the seed IN THIS TREE via the shared
+# `_kit.seed_pin` primitive. A repo-wide editable install
+# (`pip install -e`) registers a `_EditableFinder` MetaPathFinder that
+# hard-pins `noctusai_lib` to whatever worktree it was last installed
+# from — which may be a *different* (now stale) `agent-*` tree missing a
+# freshly-added seed symbol. `sys.meta_path` is consulted BEFORE
+# `sys.path`, so a plain `sys.path.insert` cannot override it.
+# `pin_in_tree_seed` evicts any editable finder pinning `noctusai_lib`
+# OUTSIDE this tree, drops stale cached modules, and prepends the
+# in-tree seed. Formerly hand-rolled here (N=2 with server.py + meta) —
+# now the deduped `_kit` helper. Pure path/import wiring — same category
+# as the `google`-namespace-collision workaround below; touches no
+# product code. The `_kit` import needs `mcp/` on sys.path first.
 sys.path.insert(0, str(_HERE.parent))  # mcp/   → _kit
+from _kit.seed_pin import pin_in_tree_seed
+
+pin_in_tree_seed(_HERE)
 sys.path.insert(0, str(_HERE))          # mcp/google/ → tools/settings/schemas
