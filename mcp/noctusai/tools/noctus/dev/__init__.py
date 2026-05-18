@@ -27,6 +27,7 @@ def register_all(server) -> None:
     from . import improvements
     from . import lgpd
     from . import master_prompts
+    from . import mole
     from . import outline
     from . import outline_python
     from . import outline_typescript
@@ -61,6 +62,7 @@ def register_all(server) -> None:
     improvements.register(server)
     lgpd.register(server)
     master_prompts.register(server)
+    mole.register(server)
     outline.register(server)
     outline_python.register(server)
     outline_typescript.register(server)
