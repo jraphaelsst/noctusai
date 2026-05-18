@@ -128,12 +128,14 @@ in a multi-worktree agent setup, may be a *different* (now-stale)
 `.claude/worktrees/agent-*` tree missing a freshly-added seed symbol.
 `sys.meta_path` is consulted BEFORE `sys.path`, so a plain
 `sys.path.insert` cannot override it. `server.py` and `conftest.py`
-therefore evict any editable finder whose pinned `noctusai_lib` path is
-OUTSIDE this tree, drop stale cached `noctusai_lib*` modules, and
-prepend this tree's `seed/lib/backend`. Pure import wiring — same
-category as the `google`-namespace flat-import trick; touches no
-product code. A connector must run/test against the seed in its own
-tree.
+therefore call the shared `_kit.seed_pin.pin_in_tree_seed` primitive,
+which evicts any editable finder whose pinned `noctusai_lib` path is
+OUTSIDE this tree, drops stale cached `noctusai_lib*` modules, and
+prepends this tree's `seed/lib/backend`. (This was hand-rolled inline
+until the N=2 dedup wave landed it in `_kit.seed_pin`; both files now
+compose the shared helper.) Pure import wiring — same category as the
+`google`-namespace flat-import trick; touches no product code. A
+connector must run/test against the seed in its own tree.
 
 ## Run
 
