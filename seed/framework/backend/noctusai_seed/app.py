@@ -243,6 +243,19 @@ def create_product_app(
     #    startup/shutdown hooks are composed with the framework's.
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Local-dev SQLite backend — materialize the pre-seeded file on
+        # every boot (idempotent) so a scaffolded product runs
+        # end-to-end day-one with NO Supabase project. Double-gated:
+        # only when DATABASE_BACKEND=sqlite (the config validator
+        # already fails loud if that is set in a prod-shaped env), so
+        # this is dead code in every prod/CI boot — parallel,
+        # never-modify. Zero per-product code (single seed seam).
+        if getattr(settings, "database_backend", "supabase") == "sqlite":
+            from noctusai_seed.apply_sqlite_migrations import (
+                apply_sqlite_migrations as _apply_sqlite,
+            )
+
+            _apply_sqlite(settings)
         if lifespan_startup:
             await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()
         try:

@@ -4872,6 +4872,548 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
 
 
 # ---------------------------------------------------------------------------
+# `check_doc_symbology_drift` — Stage-4 codification of the symbol-first
+# authoring methodology (`feedback_doc_symbology` / `feedback_symbol_first_
+# authoring`, KB § CONTEXT/PATTERNS/doc-symbology.md). N=3 drift signal
+# (user 2026-05-12 "make sure future docs follow the symbology pattern")
+# flips the memory "Held at Stage 3" gate.
+#
+# Warn-only. The rule is judgment-dependent ("swap only when lossless") and
+# bimodal-yield, so a *blocking* detector would flood noise on narrative
+# prose. This detector surfaces the two DETERMINISTIC drift classes the
+# glossary's own Anti-patterns section names:
+#
+#   (1) `→` vs `⇒` conflation — the glossary's explicit convention is
+#       `→` = routes/pointer, `⇒` = logical-implies. Using BOTH on a single
+#       dense-doc line is the "use → to mean both" anti-pattern. We flag a
+#       line that contains BOTH glyphs (the conflation is inherently
+#       intra-line — one means routes, one means implies; mixing on the
+#       same line is the documented smell). Lines with only one glyph are
+#       NOT flagged (single-meaning use is correct).
+#   (2) Out-of-glossary symbol use in a symbol-eligible doc — a glyph that
+#       looks like glossary symbology (drawn from the same Unicode blocks:
+#       arrows, logic/set operators, the status-icon emoji the glossary
+#       defines) but is NOT in the parsed glossary. "Inventing new symbols
+#       without adding them here" is the second named anti-pattern.
+#
+# Scope (`_SYMBOLOGY_DOC_SCOPE`): the dense-doc surfaces the glossary §2
+# "Where to use" enumerates — CLAUDE.md, CLAUDE/*.md, KB CONTEXT/PATTERNS/
+# *.md, products/*/MASTER-PROMPT.md. NOT README narrative / error strings /
+# code (the glossary §3 "Where NOT to use" set).
+#
+# Glossary-driven: the symbol set is PARSED from doc-symbology.md §1
+# tables (first column of every `| Symbol | … |` row). New glossary
+# additions auto-propagate — no detector edit. If the glossary can't be
+# parsed the detector emits a parse-surface warning, not drift noise (the
+# §8 dependency contract).
+#
+# Severity: `warning`.
+# ---------------------------------------------------------------------------
+
+
+# Dense-doc surfaces in scope — the glossary §2 "Where to use" set.
+# Patterns are repo-root-relative globs resolved with `Path.glob`.
+_SYMBOLOGY_DOC_GLOBS: tuple[str, ...] = (
+    "CLAUDE.md",
+    "CLAUDE/*.md",
+    "KNOWLEDGE-BASE/CONTEXT/PATTERNS/*.md",
+    "products/*/MASTER-PROMPT.md",
+)
+
+# The KB doc the glossary is parsed from (single source of truth).
+_SYMBOLOGY_GLOSSARY_DOC = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/doc-symbology.md"
+
+# A markdown table row in the glossary §1: `| <symbol> | <meaning> | … |`.
+# We take the FIRST cell. Header / separator rows are skipped (they hold
+# the literal word "Symbol" or only dashes/pipes/colons).
+_GLOSSARY_ROW_RE = re.compile(r"^\|\s*(?P<cell>[^|]+?)\s*\|")
+
+# A glyph "looks like symbology" if it is in the Unicode ranges the
+# glossary draws from: arrows (U+2190–U+21FF), mathematical operators
+# (U+2200–U+22FF — ∧ ∨ ¬ ∈ ⊂ ≡ ≠ ≈ ≥ ≤ Σ etc.), the Greek delta/sigma
+# the glossary uses (Δ U+0394, Σ U+03A3), and the specific status-icon
+# emoji the glossary §1 "Status" table defines. We do NOT treat ALL emoji
+# as symbology (prose docs legitimately use 🚀/🎉 etc.) — only the glyphs
+# whose Unicode class the glossary actually populates, so a non-glossary
+# member of THOSE classes is a true "invented symbol".
+_SYMBOLOGY_GLYPH_RE = re.compile(
+    "["
+    "←-⇿"   # arrows  (→ ↔ ⇒ …)
+    "∀-⋿"   # math operators (∧ ∨ ¬ ∈ ⊂ ≡ ≠ ≈ ≥ ≤ Σ …)
+    "ΔΣ"    # Δ (delta), Σ (sigma) — glossary "Counts" table
+    "]"
+)
+
+# The status-icon emoji the glossary §1 "Status" table defines. These are
+# the ONLY emoji the detector treats as symbology-class (so an
+# out-of-glossary status-ish emoji in a forbidden context is caught
+# without flagging unrelated decorative emoji). Kept as an explicit set —
+# parsed-glossary membership still governs which are *allowed*; this set
+# only scopes which emoji are *symbology-class at all*.
+_STATUS_EMOJI: frozenset[str] = frozenset(
+    "✅⏳❌🔒📋🗑⭐⚠️🟢🟡🔴"
+)
+
+# Typographic / arithmetic glyphs that fall in the symbology Unicode
+# blocks but are LEGITIMATE PROSE, not invented relational/logic symbols.
+# `−` (U+2212 MINUS SIGN) appears in arithmetic prose ("Net: −848 LOC");
+# `×` `÷` are arithmetic; `–` `—` are en/em dashes. Excluding these is
+# the live-tree calibration lesson — the count/membership-detector rule
+# (a detector needs a positive content anchor, not just a Unicode-class
+# net): the symbology contract governs *relational/logic/status* glyphs,
+# not arithmetic or dashes. None of these carry a fixed glossary meaning,
+# so a doc using them is doing arithmetic/typography, not inventing
+# symbology.
+_PROSE_PUNCTUATION: frozenset[str] = frozenset("−×÷–—‐‑‒―∼")
+
+# Contexts where symbology must NOT appear even if glossary-defined — the
+# glossary §3 "Where NOT to use" set, deterministic subset: a fenced code
+# block. (Error strings / quoted-user / first-paragraph are
+# judgment-dependent — held out of the warn-only predicate to keep FP
+# rate low; the out-of-glossary check below is the deterministic core.)
+#
+# NOTE — `→`/`⇒` STRICT-INTERCHANGE detection is intentionally NOT
+# implemented: it is the project's still-OPEN Phase-0 question Q4 ("strict
+# interchange detection or accept some prose `→`?") and is NOT
+# deterministic — the glossary's OWN §7 reference patterns legitimately
+# carry both glyphs on one line with distinct correct meanings (e.g.
+# `s1 emerges → s2 memory → … ⇒ formalize`). A "both glyphs on one line"
+# heuristic flags the glossary's own canonical examples (5 live FPs on
+# the calibration tree). The LOCKED core (§3/§5) — out-of-glossary
+# symbology in symbol-eligible docs, glossary-driven, warn-only — ships;
+# Q4 is returned to the architect as a TEXT open question.
+
+
+def _parse_symbology_glossary(glossary_text: str) -> set[str]:
+    """Parse the doc-symbology §1 tables → the set of defined symbol glyphs.
+
+    Reads the first cell of every markdown table row, strips backticks,
+    and splits on whitespace/slash so multi-symbol cells like
+    `` `🟢` `🟡` `🔴` `` or `` `s1`/`s2`/`s3`/`s4` `` each contribute
+    their atoms. Returns the set of glyph tokens that contain at least one
+    symbology-class character (so prose meanings like "AND" are excluded —
+    only the actual symbol is registered).
+
+    Raises `ValueError` if no rows parse (the §8 parse-surface contract —
+    the caller turns this into a parse warning, not silent drift).
+    """
+    symbols: set[str] = set()
+    for raw_line in glossary_text.splitlines():
+        line = raw_line.strip()
+        m = _GLOSSARY_ROW_RE.match(line)
+        if not m:
+            continue
+        cell = m.group("cell").strip()
+        # Skip header ("Symbol") + separator (---|:--:) rows.
+        if cell.lower() == "symbol" or set(cell) <= {"-", ":", " "}:
+            continue
+        # A cell may hold several backtick-wrapped atoms.
+        for atom in re.split(r"[\s/]+", cell.replace("`", " ")):
+            atom = atom.strip()
+            if not atom:
+                continue
+            if _SYMBOLOGY_GLYPH_RE.search(atom) or atom in _STATUS_EMOJI:
+                symbols.add(atom)
+            else:
+                # Single-glyph emoji cell (e.g. `✅`) — register the glyph.
+                for ch in atom:
+                    if ch in _STATUS_EMOJI:
+                        symbols.add(ch)
+    if not symbols:
+        raise ValueError(
+            "doc-symbology.md §1 tables parsed to zero symbols — the "
+            "glossary format contract is broken (see §8)."
+        )
+    return symbols
+
+
+def _iter_fenced_code_spans(lines: list[str]) -> set[int]:
+    """Return the set of 1-based line numbers inside ``` fenced blocks."""
+    inside: set[int] = set()
+    fence_open = False
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            fence_open = not fence_open
+            inside.add(idx)  # the fence line itself is code-class
+            continue
+        if fence_open:
+            inside.add(idx)
+    return inside
+
+
+def check_doc_symbology_drift(repo_root: Path | None = None) -> list[dict]:
+    """Dense docs must obey the doc-symbology glossary contract.
+
+    ONE deterministic drift class (the glossary §4 "inventing new symbols
+    without adding them here" anti-pattern), warn-only: a symbology-class
+    glyph (arrow / math-operator / glossary status-icon) NOT in the parsed
+    glossary, used in a symbol-eligible doc. Arithmetic / typographic
+    glyphs (`−` `×` `÷` `–` `—`) are excluded — they are prose, not
+    invented symbology (the live-tree calibration lesson: a Unicode-class
+    net needs a positive content anchor, not just block membership).
+
+    `→`/`⇒` strict-interchange detection is the project's still-OPEN
+    Phase-0 question Q4 and is NOT deterministic (the glossary's own §7
+    reference patterns legitimately carry both glyphs on one line) — it
+    is deliberately NOT implemented; the locked §3/§5 core ships and Q4
+    is returned to the architect as a TEXT open question.
+
+    Scope: the glossary §2 "Where to use" surfaces only
+    (`_SYMBOLOGY_DOC_GLOBS`). Fenced code spans are excluded (glossary §3
+    — code is not symbology-eligible). The symbol set is parsed live from
+    `doc-symbology.md` §1; an unparseable glossary emits a single
+    parse-surface warning (the §8 dependency contract), not drift noise.
+
+    Per `feedback_doc_symbology` / `feedback_symbol_first_authoring`,
+    KB § CONTEXT/PATTERNS/doc-symbology.md. Severity: `warning`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    glossary_path = root / _SYMBOLOGY_GLOSSARY_DOC
+    if not glossary_path.exists():
+        # No glossary → nothing to enforce against. Not an error: a tree
+        # without the KB simply has no symbology contract.
+        return issues
+    try:
+        glossary_text = glossary_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot read symbology glossary (%s)", exc)
+        return issues
+    try:
+        allowed = _parse_symbology_glossary(glossary_text)
+    except ValueError as exc:
+        # §8 contract: surface the PARSE failure, not phantom drift.
+        return [{
+            "product": "<docs>",
+            "file": _SYMBOLOGY_GLOSSARY_DOC,
+            "issue": (
+                f"doc-symbology glossary is unparseable: {exc} The "
+                f"`check_doc_symbology_drift` keeper cannot enforce the "
+                f"symbol-first rule until the §1 table format is restored. "
+                f"Per `feedback_doc_symbology`."
+            ),
+            "severity": "warning",
+        }]
+
+    seen: set[Path] = set()
+    for pattern in _SYMBOLOGY_DOC_GLOBS:
+        for doc_path in sorted(root.glob(pattern)):
+            if doc_path in seen or not doc_path.is_file():
+                continue
+            seen.add(doc_path)
+            # Never scan the glossary against itself — it legitimately
+            # lists every symbol (and counter-examples) in prose.
+            try:
+                if doc_path.resolve() == glossary_path.resolve():
+                    continue
+            except OSError:
+                pass
+            try:
+                content = doc_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", doc_path, exc)
+                continue
+            try:
+                rel = str(doc_path.relative_to(root))
+            except ValueError:
+                rel = str(doc_path)
+
+            lines = content.splitlines()
+            code_lines = _iter_fenced_code_spans(lines)
+
+            for line_no, line in enumerate(lines, start=1):
+                if line_no in code_lines:
+                    continue
+                # Skip inline-code spans on the line (backtick-wrapped):
+                # a glyph shown AS AN EXAMPLE in `→` is documentation of
+                # the symbol, not a use of it.
+                prose = re.sub(r"`[^`]*`", "", line)
+
+                # Out-of-glossary symbology-class glyph (the LOCKED core
+                # — glossary §4 "inventing new symbols" anti-pattern).
+                # `→`/`⇒` strict-interchange (Q4, unlocked) deliberately
+                # NOT done — see the module-level NOTE.
+                offenders: set[str] = set()
+                for ch in _SYMBOLOGY_GLYPH_RE.findall(prose):
+                    if ch in _PROSE_PUNCTUATION:
+                        continue
+                    if ch not in allowed:
+                        offenders.add(ch)
+                for ch in prose:
+                    if ch in _STATUS_EMOJI and ch not in allowed:
+                        offenders.add(ch)
+                if offenders:
+                    glyphs = " ".join(sorted(offenders))
+                    issues.append({
+                        "product": "<docs>",
+                        "file": rel,
+                        "issue": (
+                            f"`{rel}:{line_no}` uses symbology-class "
+                            f"glyph(s) `{glyphs}` that are NOT in the "
+                            f"doc-symbology glossary §1. \"Inventing new "
+                            f"symbols without adding them here\" is a named "
+                            f"anti-pattern (glossary §4) — drift kills the "
+                            f"lossless contract. Add the symbol to "
+                            f"`{_SYMBOLOGY_GLOSSARY_DOC}` §1 (if it earns a "
+                            f"fixed meaning) or replace it with a defined "
+                            f"glyph. Per `feedback_symbol_first_authoring`."
+                        ),
+                        "severity": "warning",
+                    })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_dockerfile_vite_supabase_args` — every product backend Dockerfile
+# whose frontend-build stage runs `vite build` / `npm run build` MUST declare
+# the boot-critical `ARG VITE_SUPABASE_URL` + `ARG VITE_SUPABASE_PUBLISHABLE_
+# KEY` (each with a matching `ENV …=${…}`) BEFORE the build runs, AND that
+# product's `products/<slug>/docker-compose.yml` `build.args` block MUST
+# carry both vars.
+#
+# Why error-severity (not warning): Vite inlines `import.meta.env.VITE_*`
+# at `vite build`. If these two are absent from the build stage, the seed
+# FE `createProductSupabase` / `assertSupabaseBuildEnv` hard-throws → a
+# BLANK SPA on every route. Boot-critical = `error`.
+#
+# Surfaced by Engineer SEED-IMPL this session: the propagate scripts ship
+# the ARG/ENV + compose-args pair structurally, so the live (already-
+# propagated) tree is GREEN. The keeper guards FUTURE hand-edits and any
+# out-of-propagation product — drift, not the current state.
+#
+# Predicate is prose-class (Dockerfile + compose are not Python AST):
+# structural line/section grep, scoped to the frontend-build stage.
+#
+# Severity: `error`.
+# ---------------------------------------------------------------------------
+
+
+_VITE_BUILD_RE = re.compile(r"\b(?:vite\s+build|npm\s+run\s+build)\b")
+_REQUIRED_VITE_ARGS: tuple[str, ...] = (
+    "VITE_SUPABASE_URL",
+    "VITE_SUPABASE_PUBLISHABLE_KEY",
+)
+
+
+def _strip_dockerfile_comments(dockerfile_text: str) -> str:
+    """Blank out full-line ``#`` comments so a Dockerfile's own prose
+    (e.g. a comment that contains the words "vite build" or
+    "VITE_* build-arg contract") cannot be mistaken for the real
+    build instruction / declarations.
+
+    Line count is preserved (comment lines become empty) so offsets and
+    `^…$` MULTILINE anchors stay aligned with the original. Trailing
+    inline comments are left intact — Dockerfile instructions do not take
+    `#` mid-line, so a `#` after content is a value, not a comment.
+    """
+    out: list[str] = []
+    for line in dockerfile_text.splitlines():
+        out.append("" if line.lstrip().startswith("#") else line)
+    return "\n".join(out)
+
+
+def _frontend_build_stage_block(dockerfile_text: str) -> str | None:
+    """Return the text of the Dockerfile stage that runs the SPA build.
+
+    A stage starts at a `FROM … [AS <name>]` line and runs until the next
+    `FROM` (or EOF). We return the FIRST stage whose body contains a
+    `vite build` / `npm run build` invocation — that's the frontend-build
+    stage the VITE_* args must precede. `None` if no stage builds the SPA
+    (e.g. a backend-only product) — nothing to enforce.
+
+    Comment lines are blanked first (`_strip_dockerfile_comments`) so the
+    Dockerfile's own prose -- e.g. a comment mentioning "vite build" --
+    cannot be mistaken for the real `RUN npm run build` instruction (the
+    live-tree calibration FP this guards against).
+    """
+    dockerfile_text = _strip_dockerfile_comments(dockerfile_text)
+    lines = dockerfile_text.splitlines()
+    stage_starts: list[int] = [
+        i for i, ln in enumerate(lines)
+        if re.match(r"^\s*FROM\s+", ln, re.IGNORECASE)
+    ]
+    if not stage_starts:
+        return None
+    bounds = list(zip(stage_starts, stage_starts[1:] + [len(lines)]))
+    for start, end in bounds:
+        block = "\n".join(lines[start:end])
+        if _VITE_BUILD_RE.search(block):
+            return block
+    return None
+
+
+def _compose_build_args(compose_text: str) -> set[str]:
+    """Return the arg KEYS declared under any service's `build.args:`.
+
+    Structural scan (no YAML dep — matches the prose-class predicate):
+    locate a `build:` mapping, then its `args:` child, then collect the
+    `KEY: …` lines indented beneath `args:` until indentation pops back.
+    Robust to the two compose arg shapes (`KEY: ${KEY:-}` and `- KEY=…`).
+    """
+    keys: set[str] = set()
+    lines = compose_text.splitlines()
+    in_args = False
+    args_indent = -1
+    for raw in lines:
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if in_args:
+            # Still inside the args block while indented deeper than `args:`.
+            if indent <= args_indent:
+                in_args = False
+            else:
+                m = re.match(r"-?\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", stripped)
+                if m:
+                    keys.add(m.group(1))
+                continue
+        if re.match(r"args\s*:\s*$", stripped):
+            in_args = True
+            args_indent = indent
+    return keys
+
+
+def check_dockerfile_vite_supabase_args(
+    repo_root: Path | None = None,
+) -> list[dict]:
+    """Boot-critical VITE_SUPABASE_* must be baked into every SPA build.
+
+    For each `products/*/backend/Dockerfile` whose frontend-build stage
+    runs `vite build` / `npm run build`:
+
+      - the stage MUST declare `ARG VITE_SUPABASE_URL` +
+        `ARG VITE_SUPABASE_PUBLISHABLE_KEY` (each with a matching
+        `ENV <name>=${<name>}`) BEFORE the build line; AND
+      - that product's `products/<slug>/docker-compose.yml` `build.args:`
+        MUST carry both keys.
+
+    Vite inlines `import.meta.env.VITE_*` at build time; absent ⇒ the seed
+    FE `assertSupabaseBuildEnv` hard-throws ⇒ a blank SPA on every route.
+    Boot-critical → severity `error`. The structural fix ships via
+    `scripts/propagate-{dockerfiles,composes}.sh`, so the current tree is
+    clean; this guards future hand-edits / out-of-propagation products.
+
+    Per the containerization single-container pattern
+    (KB § CONTEXT/PATTERNS/containerization.md). Severity: `error`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+    products_dir = root / "products"
+    if not products_dir.exists():
+        return issues
+
+    remediation = (
+        "add the ARG/ENV pair + compose args, or re-run "
+        "scripts/propagate-{dockerfiles,composes}.sh"
+    )
+
+    for prod_dir in sorted(products_dir.iterdir()):
+        if not prod_dir.is_dir() or prod_dir.name.startswith("."):
+            continue
+        slug = prod_dir.name
+        dockerfile = prod_dir / "backend" / "Dockerfile"
+        if not dockerfile.exists():
+            continue
+        try:
+            df_text = dockerfile.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", dockerfile, exc)
+            continue
+
+        stage = _frontend_build_stage_block(df_text)
+        if stage is None:
+            # No SPA build in this product's Dockerfile → not in scope.
+            continue
+
+        df_rel = f"products/{slug}/backend/Dockerfile"
+
+        # The build line must come AFTER the ARG/ENV declarations. We
+        # locate the FIRST build invocation and require each var's
+        # `ARG <v>` + `ENV <v>=${<v>}` to appear before it within the
+        # frontend-build stage block.
+        bm = _VITE_BUILD_RE.search(stage)
+        pre_build = stage[: bm.start()] if bm else stage
+
+        for var in _REQUIRED_VITE_ARGS:
+            has_arg = re.search(
+                rf"^\s*ARG\s+{re.escape(var)}\b", pre_build, re.MULTILINE
+            )
+            has_env = re.search(
+                rf"^\s*ENV\s+{re.escape(var)}\s*=\s*\$\{{{re.escape(var)}\}}",
+                pre_build,
+                re.MULTILINE,
+            )
+            if not has_arg or not has_env:
+                missing = []
+                if not has_arg:
+                    missing.append(f"`ARG {var}`")
+                if not has_env:
+                    missing.append(f"`ENV {var}=${{{var}}}`")
+                issues.append({
+                    "product": slug,
+                    "file": df_rel,
+                    "issue": (
+                        f"`{df_rel}` frontend-build stage runs the SPA "
+                        f"build but is missing {' and '.join(missing)} "
+                        f"BEFORE it. `{var}` is BOOT-CRITICAL — Vite "
+                        f"inlines `import.meta.env.VITE_*` at build time; "
+                        f"empty ⇒ the seed FE `assertSupabaseBuildEnv` "
+                        f"hard-throws ⇒ a blank SPA on every route. "
+                        f"Remediation: {remediation}."
+                    ),
+                    "severity": "error",
+                })
+
+        # Compose side: products/<slug>/docker-compose.yml build.args.
+        compose = prod_dir / "docker-compose.yml"
+        if not compose.exists():
+            issues.append({
+                "product": slug,
+                "file": f"products/{slug}/docker-compose.yml",
+                "issue": (
+                    f"`products/{slug}/backend/Dockerfile` builds the SPA "
+                    f"but `products/{slug}/docker-compose.yml` is missing — "
+                    f"the boot-critical VITE_SUPABASE_* build args have no "
+                    f"compose carrier. Remediation: {remediation}."
+                ),
+                "severity": "error",
+            })
+            continue
+        try:
+            comp_text = compose.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", compose, exc)
+            continue
+        comp_args = _compose_build_args(comp_text)
+        comp_rel = f"products/{slug}/docker-compose.yml"
+        for var in _REQUIRED_VITE_ARGS:
+            if var not in comp_args:
+                issues.append({
+                    "product": slug,
+                    "file": comp_rel,
+                    "issue": (
+                        f"`{comp_rel}` `build.args:` does not carry "
+                        f"`{var}`. The Dockerfile bakes it at build time "
+                        f"but compose never passes it ⇒ it builds empty "
+                        f"⇒ a blank SPA on every route (boot-critical). "
+                        f"Remediation: {remediation}."
+                    ),
+                    "severity": "error",
+                })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -5175,6 +5717,12 @@ def check_all_products() -> tuple[int, list]:
     # social-wiring-absorption W5.9-rest — numeric-axis twin of the
     # slug-set keeper (frozen fleet-size literals stale on consolidation).
     all_issues.extend(check_hardcoded_fleet_size_literal())
+    # symbol-first-stage-4-codification — Stage-3⇒4 codification of the
+    # doc-symbology / symbol-first authoring methodology (warn-only).
+    all_issues.extend(check_doc_symbology_drift())
+    # containerization single-container — boot-critical VITE_SUPABASE_*
+    # build-arg contract (error: empty ⇒ blank SPA on every route).
+    all_issues.extend(check_dockerfile_vite_supabase_args())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

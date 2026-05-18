@@ -145,6 +145,19 @@ class MetaOAuthAdapter:
             instagram_accounts_count=len(ig),
         )
 
+    def me(self) -> dict[str, Any]:
+        """The authenticated identity (`/me`): `id`, `name`, `email`.
+
+        `email` is only populated when the `email` scope was granted —
+        Graph silently omits it otherwise (not an error)."""
+
+        return _meta_api.graph_get(
+            "me",
+            access_token=self._user_token(),
+            params={"fields": "id,name,email"},
+            version=self._version,
+        )
+
     # ─── Facebook ─────────────────────────────────────────────────────
 
     def list_facebook_pages(self) -> list[FacebookPage]:
@@ -172,6 +185,27 @@ class MetaOAuthAdapter:
                 code=200,
             )
         return token
+
+    def get_page(self, page_id: str) -> FacebookPage | None:
+        """One Page by id, or `None` if this identity can't see it.
+
+        Tries the cached `/me/accounts` set first (cheap); falls back to
+        a direct `/{page_id}` lookup with the user token (succeeds only
+        if the user manages the page but it landed beyond the paging cap)."""
+
+        for page in self.list_facebook_pages():
+            if page.id == page_id:
+                return page
+        try:
+            body = _meta_api.graph_get(
+                page_id,
+                access_token=self._user_token(),
+                params={"fields": PAGE_FIELDS},
+                version=self._version,
+            )
+        except MetaGraphError:
+            return None
+        return page_from_body(body)
 
     def list_facebook_posts(
         self, page_id: str, limit: int = 25

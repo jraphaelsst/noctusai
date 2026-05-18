@@ -5,12 +5,12 @@
 -e seed/lib/backend
 
 # Core dependencies (shared by all backends)
-fastapi==0.115.0
+fastapi==0.115.5
 uvicorn[standard]==0.30.6
 pydantic==2.9.0
 pydantic-settings==2.5.2
 supabase==2.9.1
-PyJWT==2.9.0
+PyJWT==2.12.0
 python-dotenv==1.0.1
 httpx>=0.27.0
 email-validator>=2.0.0
@@ -31,8 +31,8 @@ yfinance>=0.2.36
 
 # Therapy-only
 livekit-api>=0.6.0
-google-api-python-client>=2.0.0
-google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.120.0
+google-auth-oauthlib>=1.2.0
 openai>=1.50.0
 
 # Observability (optional)

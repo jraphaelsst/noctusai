@@ -18,9 +18,11 @@ from noctusai_seed.app import create_product_app
 from noctusai_seed.config import ProductSettings
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
+from noctusai_seed.apply_sqlite_migrations import apply_sqlite_migrations
 from noctusai_seed.dev_auth import (
     dev_auth_enabled,
     make_dev_auth_get_current_user,
+    select_get_current_user,
 )
 from noctusai_seed.health import (
     HealthCheckHook,
@@ -35,9 +37,13 @@ __all__ = [
     "ProductSettings",
     "create_database_module",
     "create_dependencies",
-    # Dev-only pre-seeded auth (double-gated; hard-off in production)
+    # Dev-only pre-seeded auth + SQLite backend (double-gated; hard-off
+    # in production). `select_get_current_user` is the seam the
+    # canonical product `dependencies.py` calls to pick dev vs prod.
     "make_dev_auth_get_current_user",
     "dev_auth_enabled",
+    "select_get_current_user",
+    "apply_sqlite_migrations",
     # Ops endpoints (`/_health` + `/_ready` baked into create_product_app)
     "HealthCheckHook",
     "HealthEndpointConfig",

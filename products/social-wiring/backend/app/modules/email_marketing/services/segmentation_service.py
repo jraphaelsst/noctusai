@@ -49,10 +49,11 @@ def _record_audit(
     org_id: Optional[str] = None,
 ) -> None:
     """Best-effort: build AuditRecord, apply feature redactors, write via
-    the lazy audit hook. Never raises. See `app/services/ai_service.py`
-    for the canonical shape (mailing keeps two thin copies — one per
-    LLM-dispatching service module — rather than introducing a cross-
-    service helper module for two consumers)."""
+    the lazy audit hook. Never raises. See
+    `app/modules/email_marketing/services/ai_service.py` for the canonical
+    shape (email_marketing keeps one thin copy per LLM-dispatching service
+    module — ai_service / segmentation_service / campaign_debrief_service —
+    rather than a cross-service helper module for a 3-consumer surface)."""
     try:
         record = AuditRecord(
             tool_name=tool_name,

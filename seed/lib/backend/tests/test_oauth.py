@@ -66,16 +66,21 @@ def test_security_module_exposes_oauth_submodule():
 def test_oauth_module_all_includes_every_public_symbol():
     public = set(oauth_module.__all__)
     expected = {
-        "AuthorizationURL",
-        "CallbackHook",
-        "FakeOAuthProvider",
-        "GoogleProvider",
-        "OAuthCallbackResult",
-        "OAuthProvider",
-        "TokenSet",
-        "make_oauth_provider",
-        "oauth_router",
-    }
+            "AuthorizationURL",
+            "CallbackHook",
+            "FakeOAuthProvider",
+            "FakeScopeResolver",
+            "GoogleProvider",
+            "GoogleScopeResolver",
+            "MetaScopeResolver",
+            "OAuthCallbackResult",
+            "OAuthProvider",
+            "ScopeResolver",
+            "TokenSet",
+            "make_oauth_provider",
+            "make_scope_resolver",
+            "oauth_router",
+        }
     assert expected == public
 
 

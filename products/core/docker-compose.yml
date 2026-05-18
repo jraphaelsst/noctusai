@@ -40,6 +40,10 @@ services:
       # image; this compose is the LOCAL orchestration.
       target: runtime-watch
       args:
+        # Boot-critical Supabase vars — baked at build (Vite inlines
+        # them; empty ⇒ blank-page throw). Backend URL stays runtime.
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
     container_name: noctus-core
     image: ghcr.io/jraphaelsst/noctus-core:${NOCTUS_IMAGE_TAG:-dev}

@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-16
 - **Last updated:** 2026-05-16
-- **Status:** Filed (not started) — unblocks after `containerization-single-container` closes
+- **Status:** ✅ DONE — clean rewrite shipped (2069→495 lines, banner removed, KB sync green)
 - **Owner / stakeholders:** joaoraphaelsst
 - **Related docs:** `KB § PATTERNS/containerization.md` · `projects/containerization-single-container/PROJECT.md`
 - **Project slug:** `containerization-doc-rewrite` (`projects/`; intent: `refactor` — documentation)
@@ -52,11 +52,14 @@ Pure documentation; no code/seed surface. §3a confirmed N/A — correctly doc-b
 
 ## 6. Implementation phases
 
-### Phase 1 — Rewrite §1–§5 body + diagrams
-- [ ] §1 mental model, §2 file layout, §3 Dockerfile (base+thin), §4 networks (external), §5 ops (two projects + new start.sh modes), diagrams.
+### Phase 1 — Clean ground-up rewrite ✅
+- [x] Single pass (a clean rewrite beat surgical patching of 76 stale hits across 2069 lines of layered archaeology). New doc 495 lines: §1 mental model (single-container, two projects, external net) · §2 layout · §3 base+thin Dockerfile / runtime vs runtime-watch / serve_spa · §4 networks · §5 ops (current start.sh/stop.sh, no `dev`) · §5b tunnel (http2 pin preserved) · §6 build/footprint · §7 add-a-product · §8 troubleshooting (curated, current rows) · §8a local-postgres · §9 native-vs-docker · §10 VITE contract (same-origin) · §11 healthcheck override · §11a registry (one image/product) · §11b CI (with honest alignment note) · §12 anti-patterns · §13 references.
+- [x] Banner removed (body now internally consistent — success criterion).
+- [x] Dropped dead archaeology: closed §11 T-task backlog, removed dev-override (11d) / prod-overlay (11e) deep-dives, nginx/frontend-image/`<slug>-net` prose.
+- [x] CI workflow staleness surfaced honestly as a §11b note → `containerization-prod-deploy` candidate (not silently claimed done).
+- [x] `verify-kb-sync.sh` + `update-kb-counts.py --check` green; residual stale-term grep = only correct negations ("no nginx", "no `<slug>-net`").
 
-### Phase 2 — Rewrite §6–§11 + retire banner
-- [ ] §6 build, §7 footprint, §8 add-a-product, §9 troubleshooting, §10 native-vs-docker, §11 backlog/anti-patterns; remove the top banner once body is consistent; `verify-kb-sync.sh` green.
+**Improvements:** none — pure documentation; CI-workflow code alignment is explicitly out of scope and named.
 
 ---
 
@@ -72,4 +75,5 @@ Pure documentation; no code/seed surface. §3a confirmed N/A — correctly doc-b
 
 | Date | Change | By |
 |---|---|---|
-| 2026-05-16 | Filed as the named follow-up from `containerization-single-container` Phase 6 (rule-bearing sections + banner fixed there; didactic-prose rewrite deferred here) | Claude Opus 4.7 |
+| 2026-05-16 | Filed as the named follow-up from `containerization-single-container` Phase 6 | Claude Opus 4.7 |
+| 2026-05-16 | ✅ DONE — clean ground-up rewrite (2069→495 lines); banner removed; archaeology cut; KB sync green; CI-alignment surfaced as a named candidate. PROJECT COMPLETE. | Claude Opus 4.7 |

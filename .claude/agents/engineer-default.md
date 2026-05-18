@@ -21,6 +21,7 @@ If divergent: STOP. Return `WORKTREE-BASE-DIVERGE: <head> ≠ <origin>` and do n
 - Do NOT `git commit`. Architect commits after review.
 - Do NOT `git push`. Architect pushes.
 - If you stage and the architect later finds surprise files, that's a slip. Verify via `git diff --cached --name-only` before reporting "ready-for-commit."
+- **KB-autostage hook hazard — the structural reason engineers never commit, and how the architect commits scoped.** `scripts/pre-commit` (CLAUDE.md §4 sync rule) runs `git add` on *every* modified `KNOWLEDGE-BASE/**`, `CLAUDE.md`, `CLAUDE/*.md`, `INDEX.md`, and `PROJECT-HISTORY.md` on every commit. In a multi-agent dirty tree this means a pathspec / "scoped" `git commit <paths>` is **NOT actually scoped** — it silently absorbs other agents' unstaged KB/doc work under your message (commit-only-your-own-work violation). Consequences: (a) engineers therefore NEVER `git commit` — architect-only, no exceptions; (b) the architect, committing a scoped change while the tree is dirty, MUST either `git commit --no-verify <explicit paths>` with the bypass rationale written into the commit message, **or** commit from a clean tree — and MUST always verify `git show --stat HEAD` immediately after; surprise files ⇒ `git reset --soft HEAD^` recover (local/unpushed = zero loss) + re-commit scoped. The KB docs' own sync is verified when the proper consolidation commit lands them. Recurrence 2026-05-17 (cc9e69b: a 2-file conftest commit swept 7 unrelated KB docs incl. another agent's unreviewed edit; soft-reset-recovered → re-committed as 7137af0).
 
 ## 3. Return shape — short-form when clean
 
@@ -65,7 +66,7 @@ Per the brief (Write-authorization clause): you MAY create `findings.md` within 
 
 - Never `cd <main-repo>` from inside a worktree (sticky cwd risk; use `git -C <path>` instead)
 - Never `git push --force` / `git reset --hard` without architect direction
-- `--no-verify` only when the architect's brief authorizes it (e.g. doc reconciliation hitting a known phase-state hook scope issue)
+- `--no-verify` only when the architect's brief authorizes it (e.g. doc reconciliation hitting a known phase-state hook scope issue), or — architect-side — for a scoped commit in a dirty multi-agent tree per §2 (KB-autostage-hook bypass; rationale MUST be in the commit message)
 
 ## 10. Symbol-first when authoring dense docs
 

@@ -449,6 +449,21 @@ class TestFakeAdapter:
         assert ins.object_id == "nope"
         assert ins.metrics == {}
 
+    def test_me_returns_seeded_identity(self):
+        fake = FakeMetaAdapter().seed(me={"id": "9", "name": "Z", "email": "z@x"})
+        assert fake.me() == {"id": "9", "name": "Z", "email": "z@x"}
+
+    def test_me_unseeded_empty(self):
+        assert FakeMetaAdapter().me() == {}
+
+    def test_get_page_found_and_missing(self):
+        fake = FakeMetaAdapter().seed(
+            pages=[FacebookPage(id="P1", name="Page1")]
+        )
+        got = fake.get_page("P1")
+        assert got is not None and got.name == "Page1"
+        assert fake.get_page("NOPE") is None
+
 
 # ─── TestRouter ───────────────────────────────────────────────────────────
 

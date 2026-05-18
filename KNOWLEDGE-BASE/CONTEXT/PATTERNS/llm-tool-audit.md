@@ -276,3 +276,100 @@ Cross-reference: `KB § PATTERNS/llm-bot-security.md` for the defense
 layer (sanitization, validation, rate-limiting). The audit is
 observation; security is prevention. Both ship together for any
 LLM-tool-using product.
+
+---
+
+## 9. Per-product rollout recipe (the canonical wiring)
+
+The §3 sketch covers the seed contract. This is the **uniform recipe**
+every product applies — proven across the rollout in
+`products/social-wiring/backend/app/modules/email_marketing/services/`
+(`ai_service.py` · `segmentation_service.py` · `campaign_debrief_service.py`)
+and `products/therapy-platform/backend/app/services/audit_hook.py`. Per-product
+code is ~5 lines of wiring per dispatch site + one `_record_audit`
+helper per LLM-dispatching service module; the writer / record / redaction
+machinery is all seed-side.
+
+**Step 1 — lazy audit-hook (`services/audit_hook.py`).** One per product.
+`get_audit_writer()` lazily builds a SQLAlchemy engine from
+`settings.postgres_url`; when that field is absent (Supabase-client-only
+products), it returns a **noop writer that debug-logs the skip** — the
+best-effort contract one level out. Wraps the seed
+`make_audit_writer(session, ToolCallAudit)` per-call; never hand-roll SQL.
+Use `getattr(settings, "postgres_url", "") or ""` — seed `ProductSettings`
+uses `extra="ignore"`, so a bare attribute access raises.
+
+**Step 2 — feature registration with redactors (`services/ai_consent_features.py`).**
+Every `register_feature(...)` call MUST pass `redact_arguments=` +
+`redact_result=` callables. This is the LGPD-first gate: redaction is
+**required, not optional**. Conventions proven in the rollout:
+
+- Body-generating features (template draft, translation, narrative
+  debrief) → `redact_result` drops the body entirely (`{"_redacted": "body"}`):
+  the body is reproducible from prompt+seed and not worth audit storage.
+- Contact/PII-bearing args → aggregate to counts + hashed `org_id`
+  (segmentation); never let raw contact rows reach the table.
+- Free-text args → mask emails/phones + truncate (`_scrub_text`).
+
+**Step 3 — the thin `_record_audit` helper (one per LLM-dispatching
+service module).** Identical shape in every module: build `AuditRecord`,
+`get_feature(key)`, `apply_feature_redaction(record, redact_arguments=...,
+redact_result=...)`, `get_audit_writer()(record)`, all inside one
+`try/except logging.exception` so a redactor bug or audit-DB outage
+**cannot break user-facing dispatch**. Each LLM-dispatching service file
+keeps its **own thin copy** rather than a shared cross-service module —
+accepted at the 2-3-consumer scale (a cross-service helper module for 3
+call sites is over-abstraction; the recurrence rule does not fire for a
+~25-line idempotent helper duplicated within one product's module
+boundary).
+
+**Step 4 — instrument each dispatch site.** Wrap the LLM call with
+`started = time.perf_counter()` + `arguments = {...}`; call `_record_audit`
+on both the success and the failure/fallback path. Two status-derivation
+shapes occur:
+
+- *Raises on unavailable* (`chat_completion` direct, e.g. `ai_service`):
+  `try/except (LLMNotConfigured, RuntimeError)` → `status="failure"` in
+  the except, `status="success"` after parse.
+- *Returns a fallback on unavailable* (`digest_narrative` wrapper, e.g.
+  `campaign_debrief_service`): `digest_narrative` never raises, so derive
+  `status="failure" if text == fallback else "success"` and set `error`
+  accordingly. The audit row still lands on the degraded path — a silent
+  fallback with no audit row is itself a silent-error.
+
+**Step 5 — tests (no monkeypatching of our own code).** Mirror
+`tests/services/test_audit_hook.py` (therapy) /
+`tests/modules/email_marketing/test_services.py` (social-wiring):
+
+- Round-trip `_record_audit` through the real seed `make_audit_writer`
+  bound to the product ORM over in-memory SQLite (`ATTACH DATABASE
+  ':memory:' AS <schema>`; derive `<schema>` from the model's `SCHEMA`
+  constant, never hardcode — absorbed products rename their schema).
+  Assert the row lands AND redaction applied (only the kept keys in
+  `arguments`, body dropped in `result`).
+- A redaction unit test asserting the feature's `redact_*` callables
+  scrub a representative payload.
+- The noop-degradation test: `get_audit_writer()` with no `postgres_url`
+  returns a callable that does not raise.
+- Substitute the **`audit_hook.get_audit_writer` seam** (a real
+  capturing/SQLite-backed writer) and patch only the **external LLM
+  boundary** (`chat_completion` / `digest_narrative`) — never patch the
+  product's own `_record_audit` / redaction logic.
+
+**Absorbed-product note.** When a standalone product is absorbed into a
+module of a host product (the `mailing` → `social-wiring/email_marketing`
+2026-05-16 absorption), the feature keys keep their original namespace
+(`mailing.subject_gen`, `mailing.campaign_debrief`, …) for consent-catalog
+stability, but the ORM `SCHEMA` becomes the host product's schema
+(`social_wiring`, not `mailing`). Tests MUST derive the schema from the
+model constant. The originating gap that drove this recipe (M-4: the
+`campaign_debrief` LLM site lacked audit wiring) lived in the absorbed
+surface — verify the absorbed module's *every* LLM dispatch site (incl.
+`digest_narrative` / embedding loops), not just the obvious
+`chat_completion` calls.
+
+Cross-reference: the same thin `_record_audit` shape is the per-module
+unit; the recurrence rule's destination for the seed-side machinery is
+already satisfied (`noctusai_lib.domain.ai.tool_audit`). What stays
+per-product is data wiring around the seed container — the sanctioned
+litmus checkbox.

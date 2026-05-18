@@ -24,14 +24,14 @@ class TestFindOrphans:
         assert "orphans" in result
         assert isinstance(result["orphans"], list)
 
-    def test_counts_match(self):
-        result = find_orphaned_files("mailing")
+    def test_counts_match(self, domain_product):
+        result = find_orphaned_files(domain_product)
         assert result["count"] == len(result["orphans"])
 
 
 class TestAPIConsistency:
-    def test_returns_issues(self):
-        result = check_api_consistency("mailing")
+    def test_returns_issues(self, domain_product):
+        result = check_api_consistency(domain_product)
         assert "issues" in result
         assert isinstance(result["issues"], list)
 

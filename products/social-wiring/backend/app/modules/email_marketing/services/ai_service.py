@@ -18,7 +18,8 @@ the response cache keys rotate (per `ai-expansion` §7 Q4).
 of the 5 chat sites + the 1 embedding loop in `segmentation_service` wraps
 its LLM call with `_record_audit(...)` so a row lands in
 `mailing.tool_call_audits` (best-effort; never breaks user-facing dispatch).
-Redaction applied per `app/services/ai_consent_features.py` — see
+Redaction applied per
+`app/modules/email_marketing/services/ai_consent_features.py` — see
 `KB § PATTERNS/llm-tool-audit.md` for the canonical pattern.
 """
 from __future__ import annotations

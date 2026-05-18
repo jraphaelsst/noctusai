@@ -22,14 +22,29 @@ created the campaign is the default recipient.
 
 LGPD: send_logs status counts are operational; recipient emails NEVER
 enter the prompt; per-link click counts (anonymous totals) do.
+
+**LLM tool-call audit (llm-tool-audit-rollout — closes the originating
+M-4 gap).** The single `digest_narrative` LLM call in `_generate_narrative`
+writes one row to `mailing.tool_call_audits` (best-effort; never breaks
+the user-facing debrief). Redaction applied per the `mailing.campaign_debrief`
+feature in `app/.../services/ai_consent_features.py` — only `campaign_id`
+survives in `arguments`, the narrative body is dropped from `result`. See
+`KB § PATTERNS/llm-tool-audit.md` for the canonical pattern.
 """
 from __future__ import annotations
 
 import logging
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
 
+from noctusai_lib.domain.ai import get_feature
+from noctusai_lib.domain.ai.tool_audit import (
+    AuditRecord,
+    apply_feature_redaction,
+    now_utc,
+)
 from noctusai_lib.domain.digest import (
     BaseDigestService,
     DigestResult,
@@ -41,7 +56,54 @@ from noctusai_lib.domain.digest import (
 )
 from noctusai_lib.integrations.email.digest import Digest
 
+from app.modules.email_marketing.services.audit_hook import get_audit_writer
+
 logger = logging.getLogger(__name__)
+
+
+def _record_audit(
+    feature_key: str,
+    tool_name: str,
+    *,
+    arguments: Any,
+    result: Any,
+    status: str,
+    duration_ms: int,
+    error: Optional[str] = None,
+    org_id: Optional[str] = None,
+) -> None:
+    """Best-effort: build AuditRecord, apply the feature's LGPD redactors,
+    write via the lazy audit hook. Never raises — a redactor bug or
+    audit-DB outage cannot break the user-facing debrief. Same canonical
+    shape as `ai_service._record_audit` / `segmentation_service._record_audit`
+    (mailing keeps one thin copy per LLM-dispatching service module rather
+    than a cross-service helper for a 3-consumer surface)."""
+    try:
+        record = AuditRecord(
+            tool_name=tool_name,
+            status=status,  # "success" | "failure"
+            duration_ms=duration_ms,
+            started_at=now_utc(),
+            arguments=arguments,
+            result=result,
+            error=error,
+            conversation_id=org_id,  # no per-conversation surface; org_id stands in.
+        )
+        feature = get_feature(feature_key)
+        if feature is not None:
+            record = apply_feature_redaction(
+                record,
+                redact_arguments=feature.redact_arguments,
+                redact_result=feature.redact_result,
+            )
+        writer = get_audit_writer()
+        writer(record)
+    except Exception:
+        logger.exception(
+            "mailing.campaign_debrief: audit write failed for feature=%s tool=%s",
+            feature_key,
+            tool_name,
+        )
 
 _TEMPLATE_DIR = email_template_dir(__file__)
 
@@ -60,6 +122,7 @@ async def _generate_narrative(
     metrics: dict[str, Any],
     top_links: list[tuple[str, int]],
     org_id: Optional[str],
+    campaign_id: Optional[str] = None,
 ) -> str:
     link_lines = "\n".join(
         f"- {url}: {n} cliques" for url, n in top_links[:5]
@@ -90,7 +153,15 @@ async def _generate_narrative(
         f"({metrics['click_rate']}%). Sem narrativa detalhada — LLM "
         f"indisponível para esta janela."
     )
-    return await digest_narrative(
+    # Audit (llm-tool-audit-rollout — closes the originating M-4 gap for the
+    # absorbed email_marketing surface). `digest_narrative` never raises — it
+    # returns `fallback` when the LLM is unavailable — so we infer status from
+    # whether the fallback was returned. Args carry only `campaign_id` after
+    # the `mailing.campaign_debrief` redactor; the narrative body is dropped
+    # by `_drop_body` (see `ai_consent_features.py`).
+    started = time.perf_counter()
+    arguments = {"campaign_id": campaign_id, "org_id": org_id}
+    text = await digest_narrative(
         system=system,
         user_prompt=user_prompt,
         model=MODEL,
@@ -98,6 +169,17 @@ async def _generate_narrative(
         org_id=org_id,
         fallback=fallback,
     )
+    _record_audit(
+        "mailing.campaign_debrief",
+        "campaign_debrief",
+        arguments=arguments,
+        result=text,
+        status="failure" if text == fallback else "success",
+        duration_ms=int((time.perf_counter() - started) * 1000),
+        error="LLM unavailable (fallback narrative)" if text == fallback else None,
+        org_id=org_id,
+    )
+    return text
 
 
 async def _fetch_window(
@@ -279,6 +361,7 @@ class CampaignDebriefService(BaseDigestService):
             metrics=agg["metrics"],
             top_links=agg["top_links"],
             org_id=self.org_id,
+            campaign_id=agg.get("campaign_id"),
         )
 
     def _render_bodies(self, agg, narrative):

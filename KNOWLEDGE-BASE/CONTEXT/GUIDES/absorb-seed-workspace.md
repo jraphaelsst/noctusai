@@ -190,6 +190,7 @@ consumers are green. Teardown discipline:
   --stat` BEFORE concluding a later group "didn't happen", and grep the
   *content form* not the slug count.
 - **Teardown grep scope — provenance + generated artifacts (N≥24, social-wiring 2026-05-16):** the reference-scrub must NOT be limited to functional/import/registration/compose/port refs. It MUST `grep -rnE 'products/<doomed-slug>/'` over **ALL surviving `products/ seed/ mcp/ scripts/ KNOWLEDGE-BASE/`** — provenance comments/docstrings/prose path-pointers ("Mirror of `products/<deleted>/…`") are a `durable-docs-self-contained` violation invisible to the 8-cmd content-form check. Redate them (`the retired <product>, consolidated into <new> <date>`), NOT delete. AND **regenerate every generated artifact whose generator scans the product tree** (`build-init-local-db.sh`, `cli.py --catalog`, outline-corpus baseline) — a generated file can't be hand-redated; re-derive from already-scrubbed source. Sanctioned exclusions: `reference/`, `.integration-holding/`, `archive/`, `ledger.ndjson`, `accept-with-rationale.md`, `.backup/` (gitignored), already-dated-retired lines. Codification candidate: `check_dangling_deleted_product_path` (s4 — `products/<slug>/` literal where slug ∉ live registry ∧ line not dated-retired ∧ not under sanctioned-exclusion).
+- **Derived-test + compliance surfaces are part of the scrub (N=14 mcp failures, social-wiring 2026-05-17):** the `grep 'products/<slug>/'` path-scan does NOT catch a test that hardcodes the doomed slug as a *bare string probe* (`get_product_summary("mailing")`, `assert "mailing" in slugs`, `find_orphaned_files("mailing")`). The `mcp/noctusai` product-introspection suite (`test_products` / `test_analyzers` / `test_diff` / `test_compliance`) is a **derived surface that encodes the OLD fleet shape** and silently rots on teardown — discovered only because a later session ran the full mcp suite and *baseline-verified* the failures pre-existing (codebase-is-source-of-truth) instead of assuming them regressions. Teardown MUST additionally: (a) `grep -rn '"<doomed-slug>"' mcp/noctusai/tests/` and repoint every probe to a **registry-derived fixture** (`tests/conftest.py::domain_product`, resolved from `list_products()`), never a new slug literal; (b) capture a **compliance + dep-pin baseline delta** — run `check_all_products()` and `audit_python_deps()` BEFORE teardown and again after, so the absorbed product's pre-existing violations are an explicit, owned delta rather than an ambient "score dropped" mystery later. Whatever you don't fix in-flight is *filed*, never surface-only (`fix-on-contact`).
 
 ### Gate 9 · Container refactor → user-gated workspace retirement
 
@@ -200,6 +201,39 @@ retires the originating workspace manually — we never delete it.** Our
 deliverable is the explicit "safe to delete" sign-off, not the deletion.
 
 ---
+
+## An absorption is a methodology-epoch merge, not just a code move
+
+**The framing (social-wiring 2026-05-17 retrospective).** A separately-developed
+product grew under the methodology *as it was when development started*. The noc
+fleet kept advancing — new keeper detectors, registry-derived test probes, the
+RLS `service_role_bypass` contract, strict dep-pin reconciliation, the
+single-container house model, `StrictHttpModel`, chatbot-operational-readiness.
+**Absorbing the product imports it from an earlier methodology epoch and exposes
+the entire delta at once.** The 14 mcp failures + the 637-issue compliance
+baseline social-wiring surfaced were not *created* by the absorption — they are
+the **measurable size of how far the platform's methodology advanced while this
+product grew elsewhere**. Expect this signal on every absorption; its magnitude
+is proportional to (epoch gap) × (product surface).
+
+**What this changes in the procedure:**
+
+- **Budget for the epoch delta.** The absorb estimate must include a
+  derived-surface + compliance-baseline reconciliation pass, not just functional
+  port + consumer-adapt. The delta is *normal*, not a surprise — size it up front
+  by running `check_all_products()` / `audit_python_deps()` / the mcp suite
+  against the *pre-absorption* tree so the gap is a known number, not a
+  post-merge mystery.
+- **Triage the delta explicitly** (`triage-at-decision-time`): bounded +
+  in-this-product → fix in-flight (`fix-on-contact`); platform-wide pre-existing
+  (the 332 test-patch-target / ~280 silent-except class) → one *filed* remediation
+  project, never surface-only; gate-contract questions (an aspirational
+  `score==100` that the codification pipeline keeps re-reddening by design) →
+  surface to the user with a recommendation + named destination.
+- **The newly-scaffolded path is debt-free by construction** — only *absorptions*
+  carry an epoch delta (a scaffolded product inherits today's methodology
+  whole). This is why the divergent-arch and house-container rules fire on
+  absorption only; the epoch-merge framing is their generalization.
 
 ## Methodology codified by this flow (three-way-synced)
 

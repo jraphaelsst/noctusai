@@ -76,8 +76,17 @@ class FakeMetaAdapter:
             instagram_accounts_count=len(self._ig_accounts),
         )
 
+    def me(self) -> dict:
+        return dict(self._me)
+
     def list_facebook_pages(self) -> list[FacebookPage]:
         return list(self._pages)
+
+    def get_page(self, page_id: str) -> FacebookPage | None:
+        for page in self._pages:
+            if page.id == page_id:
+                return page
+        return None
 
     def list_facebook_posts(
         self, page_id: str, limit: int = 25

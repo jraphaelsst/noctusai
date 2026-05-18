@@ -38,11 +38,13 @@ class TestTestCoverage:
         critical = [i for i in result["issues"] if i["severity"] == "critical"]
         assert len(critical) == 0, f"Products without tests: {critical}"
 
-    def test_matrix_has_all_products(self):
+    def test_matrix_has_all_products(self, domain_product):
         result = analyze_test_coverage()
         products = [m["product"] for m in result["matrix"]]
         assert "seed" in products
-        assert "mailing" in products
+        # Registry-derived domain product, not a frozen `"mailing"` literal
+        # (deleted in social-wiring-absorption Wave-4; see tests/conftest.py).
+        assert domain_product in products
 
     def test_all_have_e2e(self):
         result = analyze_test_coverage()
@@ -63,11 +65,20 @@ class TestCodeMetrics:
         a real product."""
         metrics = get_code_metrics()
         seed = next(m for m in metrics if m["product"] == "seed")
+        # `routers <= 2` is the meaningful structural anchor (catches drift
+        # toward "seed as a real product" — domain routers); the line bound is
+        # a coarse bloat guard only. Bound raised 500→600 on 2026-05-17: the
+        # seed-standalone-dev-ergonomics work added the dev-auth wiring seam to
+        # products/seed/backend/app/dependencies.py (a legitimately-shipped
+        # feature, ledger slug `seed-standalone-dev-ergonomics`), pushing the
+        # demo backend to 509. Anchor + headroom, not just a moved threshold
+        # (feedback_hardcoded_fleet_size_literal_keeper: count guards need a
+        # positive content anchor, not a bare number).
         assert seed["routers"] <= 2, (
             f"seed routers should stay ≤2 (demos only); got {seed['routers']}"
         )
-        assert seed["backend_lines"] < 500, (
-            f"seed backend should stay under 500 lines; got {seed['backend_lines']}"
+        assert seed["backend_lines"] < 600, (
+            f"seed backend should stay under 600 lines; got {seed['backend_lines']}"
         )
 
 

@@ -90,21 +90,24 @@ class _RecordingServer:
 # ---------------------------------------------------------------------------
 
 
-def test_register_all_registers_all_six_tools():
+def test_register_all_registers_all_seven_tools():
     server = _RecordingServer()
     register_all(server)
     names = [name for name, _, _ in server.registered]
 
+    # `noctus.team.dashboard` (the scan_fusions-built rollup) joined the set;
+    # the count assertion was frozen at 6 and went stale when it landed.
     expected = {
         "noctus.team.agent_metrics",
         "noctus.team.configure",
+        "noctus.team.dashboard",
         "noctus.team.metrics",
         "noctus.team.route",
         "noctus.team.run",
         "noctus.team.status",
     }
     assert set(names) == expected
-    assert len(names) == 6, f"expected 6 unique tools, got {len(names)}: {names}"
+    assert len(names) == 7, f"expected 7 unique tools, got {len(names)}: {names}"
 
 
 def test_register_all_descriptions_are_non_empty():

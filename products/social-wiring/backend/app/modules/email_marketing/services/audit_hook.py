@@ -2,10 +2,11 @@
 mailing product's `ToolCallAudit` ORM class.
 
 Per `KB § PATTERNS/llm-tool-audit.md`: each LLM dispatch site (M1/M2/M5/
-M6/M7 chat sites in `ai_service.py` + the M3 chat + embedding sites in
-`segmentation_service.py`) builds an `AuditRecord` and calls
+M6/M7 chat sites in `ai_service.py`; the M3 chat + embedding sites in
+`segmentation_service.py`; the M4 `digest_narrative` site in
+`campaign_debrief_service.py`) builds an `AuditRecord` and calls
 `audit_writer(record)` after the call. The writer persists one row to
-`mailing.tool_call_audits` via SQLAlchemy.
+the product's `tool_call_audits` table via SQLAlchemy.
 
 Best-effort: the seed `make_audit_writer` rolls back + logs on DB error;
 LLM dispatch is never broken by an audit-side failure. See

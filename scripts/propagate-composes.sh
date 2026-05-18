@@ -20,12 +20,22 @@ PRODUCTS = [
     ("daily-life", "8005"), ("adconnect", "8007"), ("dev-team", "8009"),
     ("social-wiring", "8011"),
 ]
-SEED_VITE = "      args:\n        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
+# VITE_SUPABASE_* are boot-critical + baked at build for EVERY product;
+# they prefix every product's build.args block (mirrors the Dockerfile
+# propagate constant). Backend URL stays runtime — never in build.args.
+SEED_VITE_SUPABASE = (
+    "      args:\n"
+    "        # Boot-critical Supabase vars — baked at build (Vite inlines\n"
+    "        # them; empty ⇒ blank-page throw). Backend URL stays runtime.\n"
+    "        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}\n"
+    "        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}\n"
+)
+SEED_VITE = SEED_VITE_SUPABASE + "        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
 VITE = {
-    "core": "      args:\n        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n",
+    "core": SEED_VITE_SUPABASE + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n",
     "erp-imobiliario": (
-        "      args:\n"
-        "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n"
+        SEED_VITE_SUPABASE
+        + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n"
         "        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
     ),
 }

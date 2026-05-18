@@ -49,6 +49,15 @@ from noctusai_lib.testing._schema_cache import (
 from noctusai_lib.testing.consent import bind_consent_module_to_mock
 from noctusai_lib.testing.assertions import assert_error_contains
 from noctusai_lib.testing.conftest_helpers import purge_shadowing_editable_finders
+from noctusai_lib.testing.seed_singleton_guard import (
+    SingletonSpec,
+    DEFAULT_SPECS,
+    snapshot_seed_singletons,
+    restore_seed_singletons,
+    guarded_seed_singletons,
+    make_seed_singleton_guard,
+    seed_singleton_guard,
+)
 from noctusai_lib.testing.framework_test_suites import (
     HealthCheckSuite,
     TeamRouterListMembersSuite,
@@ -90,4 +99,11 @@ __all__ = [
     "NotificationFlowSuite",
     "AuthBoundarySuite",
     "reset_rate_limiter",
+    "SingletonSpec",
+    "DEFAULT_SPECS",
+    "snapshot_seed_singletons",
+    "restore_seed_singletons",
+    "guarded_seed_singletons",
+    "make_seed_singleton_guard",
+    "seed_singleton_guard",
 ]

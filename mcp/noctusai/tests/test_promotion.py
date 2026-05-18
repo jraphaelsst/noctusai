@@ -192,6 +192,108 @@ class TestRefusalCases:
             promote_from_seed_workspace("x", workspace_root=ws, noctusai_home=noc)
 
 
+class TestParseManifestBlockList:
+    """Regression: parse_manifest accepts the YAML block-list form of
+    `origin:` / `intended_noc_destination:` (not only the inline form).
+
+    Bug: `partition(":")` treated a key whose value is newline-prefixed
+    `- item` children as an empty inline scalar → empty destination,
+    empty origin. Observed on ~5 of 14 real manifests 2026-05-16.
+    """
+
+    _BLOCK_LIST_MANIFEST = """---
+slug: google-integrations
+origin:
+  - products/youtube-crawler/backend/app/services/calendar/
+  - products/youtube-crawler/backend/app/routers/calendar_router.py
+intended_noc_destination:
+  - noctusai_lib/integrations/google/calendar/
+  - noctusai_lib/api/calendar_router.py
+layer_rationale: |
+  Block-scalar still works alongside the new block-list branch.
+seed_first_analysis: |
+  Q1 yes. Q2 no.
+dependencies_on_other_additions:
+  - whatsapp-chatbot-service
+  - platform-chat-agent
+promoted_on: not-yet
+---
+
+prose body
+"""
+
+    def test_block_list_origin_and_destination_parsed(self, tmp_path: Path) -> None:
+        p = tmp_path / "google-integrations.md"
+        p.write_text(self._BLOCK_LIST_MANIFEST, encoding="utf-8")
+        m = parse_manifest(p)
+        assert m.slug == "google-integrations"
+        assert m.origin == [
+            "products/youtube-crawler/backend/app/services/calendar/",
+            "products/youtube-crawler/backend/app/routers/calendar_router.py",
+        ]
+        # Multi-element block-list destination joined, NON-EMPTY (the bug
+        # produced "").
+        assert m.intended_noc_destination != ""
+        assert m.intended_noc_destination == (
+            "noctusai_lib/integrations/google/calendar/; "
+            "noctusai_lib/api/calendar_router.py"
+        )
+        # Block-list also applies to other multi-value keys.
+        assert m.dependencies == ["whatsapp-chatbot-service", "platform-chat-agent"]
+        # Block-scalar (`|`) keys still parse alongside the new branch.
+        assert "Q1 yes" in m.seed_first_analysis
+        assert m.promoted_on == "not-yet"
+
+    def test_single_element_block_list_destination_collapses_to_bare_path(
+        self, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "single.md"
+        p.write_text(
+            "---\n"
+            "slug: single\n"
+            "origin:\n"
+            "  - products/foo/svc.py\n"
+            "intended_noc_destination:\n"
+            "  - noctusai_lib/integrations/foo.py\n"
+            "layer_rationale: |\n"
+            "  x\n"
+            "seed_first_analysis: |\n"
+            "  y\n"
+            "dependencies_on_other_additions: []\n"
+            "promoted_on: not-yet\n"
+            "---\n\nbody\n",
+            encoding="utf-8",
+        )
+        m = parse_manifest(p)
+        assert m.origin == ["products/foo/svc.py"]
+        # Single-element list collapses → promote pipeline keeps working.
+        assert m.intended_noc_destination == "noctusai_lib/integrations/foo.py"
+
+    def test_inline_forms_still_parse_identically(self, tmp_path: Path) -> None:
+        """Backward-compat: existing inline-scalar / inline-list manifests
+        yield identical results after the block-list extension."""
+        p = tmp_path / "inline.md"
+        p.write_text(
+            "---\n"
+            "slug: inline\n"
+            "origin: products/foo\n"
+            "intended_noc_destination: products/foo\n"
+            "layer_rationale: |\n"
+            "  inline scalar form unchanged.\n"
+            "seed_first_analysis: |\n"
+            "  Q1 yes.\n"
+            "dependencies_on_other_additions: [a, b]\n"
+            "promoted_on: not-yet\n"
+            "---\n\nbody\n",
+            encoding="utf-8",
+        )
+        m = parse_manifest(p)
+        assert m.origin == ["products/foo"]
+        assert m.intended_noc_destination == "products/foo"
+        assert m.dependencies == ["a", "b"]
+        assert m.promoted_on == "not-yet"
+
+
 class TestListPromotions:
     def test_lists_pending_and_promoted(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"; noc = tmp_path / "noc"; ws.mkdir(); noc.mkdir()

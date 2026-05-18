@@ -81,6 +81,7 @@ def get_meta_adapter(
     *,
     system_user_token: str | None = None,
     resolver: MetaCredentialResolver | None = None,
+    credential_store=None,
     org_id: str | None = None,
     graph_version: str | None = None,
 ) -> MetaAdapter:
@@ -98,12 +99,24 @@ def get_meta_adapter(
     still constructed (so `status()` can report a useful error) but
     falls back to `FakeMetaAdapter` only when there is NEITHER a
     System User Token NOR a resolver.
+
+    `credential_store` + `org_id` — the convenience path: pass a
+    `noctusai_lib.security.token_store.CredentialStore` directly and
+    the factory builds a `CredentialStoreMetaResolver` internally (no
+    per-product resolver bridge). Ignored when `resolver` is given.
     """
 
     from noctusai_lib.integrations.meta._meta_api import DEFAULT_GRAPH_VERSION
     from noctusai_lib.integrations.meta.oauth_adapter import MetaOAuthAdapter
 
     version = graph_version or DEFAULT_GRAPH_VERSION
+
+    if resolver is None and credential_store is not None:
+        from noctusai_lib.integrations.credential_resolvers import (
+            CredentialStoreMetaResolver,
+        )
+
+        resolver = CredentialStoreMetaResolver(credential_store)
 
     if system_user_token:
         return MetaOAuthAdapter(

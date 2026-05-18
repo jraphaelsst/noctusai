@@ -63,6 +63,45 @@ class ProductSettings(BaseAppSettings):
     local_dev_user_id: str = ""
     local_dev_org_id: str = ""
 
+    # ── Database backend (local-dev SQLite, parallel to Postgres) ─────
+    # `supabase` (default) keeps the Postgres/Supabase path 100%
+    # unchanged (parallel, never-modify — same discipline as
+    # `dev_auth.py`). `sqlite` activates the pre-seeded local-dev
+    # backend (`noctusai_seed.apply_sqlite_migrations`) so a scaffolded
+    # product runs end-to-end with NO Supabase project provisioned.
+    # `sqlite` is double-gated exactly like `seed_dev_auth`: it can
+    # NEVER be active in a production-shaped env (the validator below
+    # fails loud if `debug` is off). Set `DATABASE_BACKEND=sqlite` only
+    # on the local/template .env, never on prod compose/CI.
+    database_backend: str = "supabase"
+    sqlite_db_path: str = "noctus-dev.sqlite3"
+
+    @field_validator("database_backend")
+    @classmethod
+    def validate_database_backend(cls, v, info):
+        """Constrain values + fail loud if `sqlite` in a prod env.
+
+        Mirrors the ``seed_dev_auth`` guard: a non-debug deploy that
+        still carries ``DATABASE_BACKEND=sqlite`` is a misconfiguration
+        that would silently swap the prod datastore for an ephemeral
+        local file. ``sqlite`` is dev-only by construction.
+        """
+        allowed = {"supabase", "sqlite"}
+        if v not in allowed:
+            raise ValueError(
+                f"DATABASE_BACKEND must be one of {sorted(allowed)}, got {v!r}."
+            )
+        debug = info.data.get("debug", True) if info.data else True
+        if v == "sqlite" and not debug:
+            raise ValueError(
+                "SECURITY ERROR: DATABASE_BACKEND=sqlite but debug is off. "
+                "The local-dev SQLite backend must NEVER be enabled in "
+                "production (it would silently replace the real datastore "
+                "with an ephemeral local file). Unset DATABASE_BACKEND (or "
+                "set DEBUG=true only in local dev)."
+            )
+        return v
+
     @field_validator("seed_dev_auth")
     @classmethod
     def validate_seed_dev_auth(cls, v, info):

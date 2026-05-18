@@ -90,6 +90,10 @@ from noctusai_lib.domain.chatbot.worker import (
     ConversationProcessor,
     ConversationWorker,
 )
+from noctusai_lib.domain.chatbot.prompt_fragments import (
+    URL_IMMUTABILITY_FRAGMENT,
+    with_url_immutability,
+)
 
 __all__ = [
     "AuditWriter",
@@ -115,6 +119,7 @@ __all__ = [
     "ToolHandler",
     "ToolOrchestrator",
     "ToolResult",
+    "URL_IMMUTABILITY_FRAGMENT",
     "append_memory",
     "compute_content_stats",
     "format_conversation_for_transcript",
@@ -128,4 +133,5 @@ __all__ = [
     "sample_key",
     "shape_fingerprint",
     "summarize_conversation",
+    "with_url_immutability",
 ]

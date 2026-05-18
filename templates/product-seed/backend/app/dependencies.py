@@ -17,7 +17,11 @@ import uuid as _uuid
 from typing import Any
 from uuid import UUID
 
-from noctusai_seed import create_database_module, create_dependencies
+from noctusai_seed import (
+    create_database_module,
+    create_dependencies,
+    select_get_current_user,
+)
 from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
@@ -36,7 +40,14 @@ _deps = create_dependencies(_db)
 # imports. Capturing the bound method at module load would freeze the
 # pre-patch reference. The lambda re-resolves on every request so both
 # production and test paths see the right client.
-get_current_user = make_get_current_user(lambda: _db.get_client())
+# Prod path (Supabase JWT validation). `select_get_current_user`
+# transparently swaps in the already-shipped dev-auth dependency when
+# `DATABASE_BACKEND=sqlite` AND the dev-auth double-gate is on — zero
+# per-product code, parallel-never-modify (the prod path is returned
+# untouched in every non-sqlite env). Inherited by every product
+# through scaffold_product / propagation.
+_prod_get_current_user = make_get_current_user(lambda: _db.get_client())
+get_current_user = select_get_current_user(settings, _prod_get_current_user)
 get_current_user_org = make_get_current_user_org(
     get_current_user,
     lambda u: (u.user_metadata or {}).get("org_id"),

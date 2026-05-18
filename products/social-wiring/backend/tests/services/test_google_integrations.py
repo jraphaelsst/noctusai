@@ -29,7 +29,15 @@ from app.services.routing import (
     StaticRoutingAdapter,
     TravelEstimate,
 )
-from app.services.routing.mappers import build_routes_request, parse_routes_response
+
+# Routing converged onto the seed (`projects/seed-adapter-convergence/`):
+# the oracle now exercises the seed seam directly, not a product-local
+# copy (the convergence makes the internal mappers obsolete by
+# construction — replaced with seam-level coverage per project §3).
+from noctusai_lib.integrations.google_maps.mappers import (
+    build_routes_request,
+    parse_routes_response,
+)
 
 
 # ─── Calendar mappers ─────────────────────────────────────────────────

@@ -224,6 +224,45 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 
 ---
 
+## Codebase is source of truth; docs/summaries/memory are derived
+
+**The principle.** The running code IS the system. Docs (KB, `CLAUDE.md`, `MASTER-PROMPT.md`), conversation summaries, memory entries, another agent's report, and `PROJECT.md` §11 are all *derived explanations* of the code's structure — they can drift, lag, or have been written against a now-changed tree. **When a derived artifact and the codebase disagree, the codebase wins** — and the derived artifact gets fixed in the same change (doc-code coherence). Therefore: before acting on any claim from a derived source, verify it against the actual code/tree state — the file itself, `git status`/`git diff`, a test run, the ledger.
+
+**Why this is foundational.** A derived source is a *claim about* the code, not the code. Acting on a stale claim is the silent-error shape (`§ No silent errors` — "absence of findings is a claim; quote the command that confirms it"). The cost of one verifying command (`git status`, a `Read`, a `pytest` tail) is negligible against the cost of building on a claim that was true three commits ago. This is the general law under three specific rules already in this file: *verify-the-seed-ships-it* (the seed `__init__.py`/adapter is truth, not the Protocol's existence), *estimate off evidence* (the file is truth, not the inferred architecture), *no silent errors* (the command output is truth, not the assumption). All three are this rule applied to a domain.
+
+**Concrete instance (2026-05-17 — this rule was made explicit from it):** resuming from a context-compaction summary, the summary asserted a set of closes, deletions, and a committed conftest fix. Rather than acting on the summary, the agent ran `git status` / ledger-integrity-via-python / the actual `pytest` suites first — the summary was substantially right, but *the verification, not the summary, is what licensed the next action*. Trusting the summary directly would have been acting on a derived artifact as if it were truth.
+
+**How to apply:**
+
+- Resuming a session / picking up another agent's work / acting on a memory or KB claim about current state → **first command verifies the claim against the tree**, not "trust and proceed." State it: "grounding in actual tree state rather than the summary."
+- A recalled memory or KB doc names a file/function/flag → confirm it still exists before recommending it (memory reflects what was true when written).
+- Doc says X, code does Y → the code is the truth; fix the doc in the same change (`§ Doc-code coherence`); never "fix" the code to match a stale doc without confirming intent.
+- Writing the explanation (KB/CLAUDE/MASTER-PROMPT) → it documents what the code *does*, derived by reading the code, not what it *should* do from memory. Author docs from the code, not from recollection.
+- "I'm fairly sure the summary said it's done" — that's a feeling about a derived artifact. Run the command.
+
+**Interaction with other rules:** strict generalization of `§ Estimate off evidence`, `§ No silent errors`, and the verify-the-seed-ships-it rule (`03-SEED-ARCHITECTURE.md`). Companion to `§ Docs stay in sync` / doc-code coherence — that rule keeps the derived layer *current*; this rule governs what to trust *when it isn't*. The answer is always: the code.
+
+---
+
+## Fix-on-contact for pre-existing debt — fix THEN surface, never surface-only
+
+**The principle.** When you encounter a pre-existing failure / bug / drift / stale artifact while doing other work — it fails on the baseline too, it predates your change, "not mine" — the correct response is **NOT** "surface it and move on," and **NOT** "file a follow-up project." It is: **fix it in-flight, then surface BOTH the problem AND the solution applied.** Having verified something is pre-existing (`§ Codebase is source of truth` — baseline-checked, not assumed) does not license leaving it; it licenses fixing it with confidence that you understand its origin. Surface-only is the slip this rule exists to kill.
+
+**Why this is foundational.** Surfacing a pre-existing problem *without fixing it* feels responsible but is the silent-error shape one level up: it converts work-you-could-have-done-now into debt-someone-else-must-track-later, and the tracking itself usually rots. "It was already broken" is a true statement and a wrong stopping point. The platform improves by every agent who touches a file leaving it better than they found it — the bump *is* the contact event the recurrence/hygiene rules are designed to convert into a fix. A report is not a fix.
+
+**The shape (always all three):** (1) verify it's pre-existing against the baseline (the `§ Codebase is source of truth` discipline); (2) **fix it** as part of the current work; (3) surface *problem + root cause + solution applied* in the end-of-work summary — not "found X, left it."
+
+**Exceptions (narrow, and never silent):**
+- The fix is genuinely **out of safe scope** — hard-to-reverse, security-sensitive, or needs a decision you cannot make. Then surface *with a recommendation and an explicit named destination*, and say plainly "not fixed because <reason>" (this is the `§ No silent errors` named-destination clause, not a free pass).
+- Fixing it would **balloon into a separate project** (cross-cutting, multi-product, design-level). Then it IS a project — filed via `PATTERNS/project-execution.md §1`, not silently dropped, not a vague "follow-up." A filed project is a fix-in-motion; a mention in prose is not.
+- Default, whenever neither exception holds: **fix on contact.**
+
+**Concrete instance (2026-05-17 — this rule was made explicit from it):** finishing the session's consolidation, 14 pre-existing `mcp/noctusai` test failures surfaced. Baseline-verified as 100% pre-existing (fail identically on `origin/main`). The wrong move — and the one this rule forbids — was "they're pre-existing, not regressions from this work, so note them and commit." The right move: fix them (stale deleted-`mailing` test references → scrub per `PATTERNS/seed-absorption.md` teardown discipline; drifted threshold → recalibrate to the legitimately-shipped new floor; dep mismatches → reconcile), then surface problem-and-solution.
+
+**Interaction with other rules:** the active-completion teeth of `§ No silent errors` (a named destination is the *floor*, an applied fix is the *target*) and of `§ DRY — recurrence` / the hygiene trio (the bump is the contact event). Pairs with `§ Codebase is source of truth` — verify-it's-pre-existing is step 1, fix-it-anyway is step 2; the first without the second is just a better-documented stop. Aligns with the user's standing "no follow-ups; implement in one go" default for in-scope debt.
+
+---
+
 ## Safety nets capture failures; failures become learnings; methodology evolves
 
 **The principle.** Methodology is incomplete by design. Every methodology has gaps — cases it doesn't cover yet, edge conditions it didn't anticipate, environments it hasn't been stress-tested in. **Safety nets** are the mechanical layer underneath the methodology that keeps the system working when the methodology hits a gap. **Failures**, when caught by a safety net, are the methodology's evolution surface. Capture the learning, update the methodology, the gap closes. Future occurrences hit the updated methodology, not the gap.

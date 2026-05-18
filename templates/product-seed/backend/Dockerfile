@@ -28,6 +28,16 @@ ENV VITE_SAME_ORIGIN=1
 # VITE_* build-arg contract — public browser config only; bridged from
 # .env via compose `args:`. VITE_BACKEND_API_URL + VITE_PRODUCT_SCHEMA are
 # factory-injected (no arg). {{VITE_ARGS}}
+# VITE_SUPABASE_* are BOOT-CRITICAL and BAKED at build: the seed FE
+# `createProductSupabase`/`assertSupabaseBuildEnv` hard-throw (blank
+# page) when empty in the bundle. Vite inlines `import.meta.env.VITE_*`
+# at `vite build`, so they MUST be present as ARG/ENV before the build.
+# Distinct from VITE_BACKEND_API_URL, which stays runtime-detected
+# (one image serves direct/tunnel/proxy) — do NOT bake the backend URL.
+ARG VITE_SUPABASE_URL=
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ARG VITE_SUPABASE_PUBLISHABLE_KEY=
+ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
 ARG VITE_CORE_URL=
 ENV VITE_CORE_URL=${VITE_CORE_URL}
 COPY products/seed/frontend/package*.json ./products/seed/frontend/

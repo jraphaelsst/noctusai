@@ -52,16 +52,28 @@ from noctusai_lib.security.oauth.types import (
     OAuthCallbackResult,
     TokenSet,
 )
+from noctusai_lib.security.oauth.scopes import (
+    FakeScopeResolver,
+    GoogleScopeResolver,
+    MetaScopeResolver,
+    ScopeResolver,
+    make_scope_resolver,
+)
 
 
 __all__ = [
     "AuthorizationURL",
     "CallbackHook",
     "FakeOAuthProvider",
+    "FakeScopeResolver",
     "GoogleProvider",
+    "GoogleScopeResolver",
+    "MetaScopeResolver",
     "OAuthCallbackResult",
     "OAuthProvider",
+    "ScopeResolver",
     "TokenSet",
     "make_oauth_provider",
+    "make_scope_resolver",
     "oauth_router",
 ]

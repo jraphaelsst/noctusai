@@ -52,9 +52,24 @@ def get_calendar_adapter(
     resolver: CalendarCredentialResolver | None = None,
     *,
     tenant_id: str | None = None,
+    credential_store=None,
+    oauth_client_id: str | None = None,
+    oauth_client_secret: str | None = None,
 ) -> CalendarAdapter:
     """Return a calendar adapter wired for the supplied resolver, or
     `FakeCalendarAdapter` when no resolver is given.
+
+    Two ways to supply credentials (mutually exclusive — `resolver`
+    wins if both are given):
+
+    - `resolver` — a `CalendarCredentialResolver` (full control).
+    - `credential_store` (+ `oauth_client_id`/`oauth_client_secret`) —
+      the convenience path: pass a
+      `noctusai_lib.security.token_store.CredentialStore` directly and
+      the factory builds a `CredentialStoreCalendarResolver` internally
+      (no per-product resolver bridge). The OAuth-client identity is
+      the product's app credentials (not per-tenant) so it's passed
+      here, not stored in the bundle.
 
     Adapter-kind selection uses the credentials returned by
     `resolver.get_credentials(tenant_id)`:
@@ -63,6 +78,23 @@ def get_calendar_adapter(
     - `None`                              → `FakeCalendarAdapter` (resolver
       had nothing for this tenant; safe dev/test fallback)
     """
+    if resolver is None and credential_store is not None:
+        if not (oauth_client_id and oauth_client_secret):
+            raise ValueError(
+                "get_calendar_adapter(credential_store=...) also requires "
+                "oauth_client_id and oauth_client_secret (the product's "
+                "OAuth-client app identity)"
+            )
+        from noctusai_lib.integrations.credential_resolvers import (
+            CredentialStoreCalendarResolver,
+        )
+
+        resolver = CredentialStoreCalendarResolver(
+            credential_store,
+            client_id=oauth_client_id,
+            client_secret=oauth_client_secret,
+        )
+
     if resolver is None:
         return FakeCalendarAdapter()
 

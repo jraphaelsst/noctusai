@@ -103,6 +103,49 @@ finder is given a chance to satisfy `from noctusai_lib...`. After the purge,
 normal `from noctusai_lib.testing import ...` lines resolve correctly to the
 local worktree.
 
+### Seed-singleton isolation guard — `seed_singleton_guard` (since 2026-05-17)
+
+`purge_shadowing_editable_finders` fixes the *structural* shadow root. A
+distinct, narrower leak class survives it: the seed keeps a handful of
+**process-global singletons** a product test can mutate — directly, or via an
+interleaved session-wide re-purge that swaps a module object out from under
+cached `app.*` imports. With no per-test restoration the mutation leaks
+forward and an unrelated later test fails — green in isolation, red in a full
+directory run, often only under `pytest-randomly`. The social-wiring
+absorption hit this **three times** (N≥3 → MUST formalize): consent
+`_CATALOG`, consent module bound deps (`bind_consent_module_to_mock`), the
+seed APScheduler jobstore, and the consent/scheduler `sys.modules` identities.
+
+`noctusai_lib.testing.seed_singleton_guard` (in
+`noctusai_lib/testing/seed_singleton_guard.py`) is that pattern lifted to the
+seed: an **autouse snapshot/restore fixture** built declaratively over a list
+of `SingletonSpec` value objects. `DEFAULT_SPECS` encodes exactly the
+diagnosed surface; the snapshot is **lazy** (a no-op until the product app is
+imported and the singletons populated — inert in seed-lib's own / mcp suites).
+It restores **before** yield (a test after an interleaved re-purge starts
+clean) and **after** yield (a mutating test cannot leak forward).
+
+**Adoption recipe — one line in a product conftest (autouse via re-export):**
+```python
+from noctusai_lib.testing import seed_singleton_guard  # noqa: F401
+```
+
+**Adding a product-specific process-global to the guarded set:**
+```python
+from noctusai_lib.testing import SingletonSpec, make_seed_singleton_guard
+
+seed_singleton_guard = make_seed_singleton_guard(extra_specs=[
+    SingletonSpec("app.some_module", attr="_CACHE", kind="dict"),
+])
+```
+The seed surface is always covered; `extra_specs` is purely additive and the
+product spec stays in the product's own conftest — **no per-product code lands
+in the seed**. `SingletonSpec.kind` ∈ `{dict, attr, module_identity,
+scheduler_jobs}` (`attr=None` ⇒ guards module-object identity). Non-fixture
+callers use the `guarded_seed_singletons(...)` context manager. The ad-hoc
+guard formerly in `products/social-wiring/backend/tests/modules/conftest.py`
+is the lifted source; products inherit isolation instead of re-finding it.
+
 ### Schema validation (default-on since 2026-04-24)
 
 `MockSupabaseClient` now validates column references against the migration-file schema by default. Every `.eq("col", ...)` / `.in_("col", ...)` / `.select("c1,c2")` / `.insert({col: val})` consults the parsed schema from `products/*/backend/migrations/*.sql` and raises `MockSchemaError` when a column doesn't exist on the bound table.

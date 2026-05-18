@@ -391,6 +391,20 @@ error). `.env` stays in `.dockerignore` (secrets); build-args bridge
 the public subset. **Public-by-design:** `VITE_*` ships to the browser
 bundle — only public config (URLs, anon keys, flags).
 
+**Boot-critical baked set:** `VITE_SUPABASE_URL` +
+`VITE_SUPABASE_PUBLISHABLE_KEY` are **baked at `vite build`** (Vite
+inlines `import.meta.env.VITE_*`) — the seed FE
+`createProductSupabase`/`assertSupabaseBuildEnv`
+(`seed/lib/frontend/src/supabase.ts`) hard-throw (blank page) when
+either is empty in the bundle. They are the canonical-template VITE
+block's first entries and the propagate-script `SEED_VITE_SUPABASE`
+constant (`scripts/propagate-{dockerfiles,composes}.sh`) prefixes them
+onto **every** product's ARG/`args:` block ⇒ DEFAULT-ON fleet-wide,
+zero per-product code. ¬ runtime-detected: distinct from
+`VITE_BACKEND_API_URL` (next paragraph) which is *never* baked — baking
+the backend URL would break tunnel/proxy. Baked ⊂ build-time;
+backend-URL ∈ runtime-detected — never interchange.
+
 **Carve-out:** `VITE_BACKEND_API_URL` + `VITE_PRODUCT_SCHEMA` are
 **factory-injected** by `seed/framework/frontend/vite.config.factory.ts`
 (no arg). Single-container is same-origin, so the factory injects

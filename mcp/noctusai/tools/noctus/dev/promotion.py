@@ -24,8 +24,12 @@ copies the addition (file or directory) into noc, and rewrites
 entries (skips with a warning).
 
 Single-file and directory `origin` values both supported; lists of
-multiple `origin` paths supported by writing a YAML-ish list (the parser
-strips brackets and splits on commas — minimal-deps).
+multiple `origin` paths supported in BOTH the inline form
+(``origin: [a, b]``) AND the YAML block-list form (``origin:`` then
+newline-indented ``- a`` / ``- b`` children). The same applies to
+`intended_noc_destination` (a multi-element block-list is joined with
+``; `` for the single-string dataclass field; a one-element list
+collapses to the bare path). Minimal-deps hand parser — no PyYAML.
 
 See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest.
 """
@@ -104,6 +108,31 @@ def _parse_block_scalar(lines: list[str], start_idx: int, base_indent: int) -> t
         collected.append(line[base_indent + 2:] if line_indent > base_indent else line)
         i += 1
     return "\n".join(collected).rstrip(), i
+def _parse_block_list(lines, start_idx, base_indent):
+    """Parse a YAML block-list (``- item`` children) starting at lines[start_idx].
+
+    Triggered when a key has an empty inline value and the following
+    line(s) are more-indented ``- `` entries. Returns (items, end_idx).
+    Stops at the first non-empty line whose indent is <= base_indent
+    OR whose stripped content does not start with ``- `` (mirrors the
+    indentation discipline of ``_parse_block_scalar``).
+    """
+    items = []
+    i = start_idx
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip():
+            i += 1
+            continue
+        line_indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        if line_indent <= base_indent or not stripped.startswith("- "):
+            break
+        item = stripped[2:].strip().strip("\"'")
+        if item:
+            items.append(item)
+        i += 1
+    return items, i
 
 
 def parse_manifest(path: Path) -> PromotionManifest:
@@ -136,6 +165,19 @@ def parse_manifest(path: Path) -> PromotionManifest:
             content, i = _parse_block_scalar(lines, i + 1, base_indent)
             fields[key] = content
             continue
+        if not value.strip():
+            base_indent = len(line) - len(line.lstrip())
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if (
+                j < len(lines)
+                and (len(lines[j]) - len(lines[j].lstrip())) > base_indent
+                and lines[j].strip().startswith("- ")
+            ):
+                items, i = _parse_block_list(lines, i + 1, base_indent)
+                fields[key] = items
+                continue
         # Inline scalar or list.
         value = value.strip()
         if value.startswith("[") and value.endswith("]"):
@@ -161,10 +203,23 @@ def parse_manifest(path: Path) -> PromotionManifest:
     else:
         deps = _parse_list_field(str(deps_raw))
 
+    # `intended_noc_destination` may now arrive as a block-list (one
+    # destination per origin). The dataclass field is a single `str`
+    # (the promote pipeline copies multi-origin additions as children
+    # under one dest dir); a list is joined with `; ` so the value is
+    # faithful + non-empty for the 3 consumers (index, list_promotions,
+    # promote). A single-element list collapses to the bare path so the
+    # promote pipeline keeps working unchanged for the common case.
+    dest_raw = fields["intended_noc_destination"]
+    if isinstance(dest_raw, list):
+        dest_str = dest_raw[0] if len(dest_raw) == 1 else "; ".join(dest_raw)
+    else:
+        dest_str = str(dest_raw)
+
     return PromotionManifest(
         slug=str(fields["slug"]),
         origin=origin,
-        intended_noc_destination=str(fields["intended_noc_destination"]),
+        intended_noc_destination=dest_str,
         layer_rationale=str(fields.get("layer_rationale", "")),
         seed_first_analysis=str(fields.get("seed_first_analysis", "")),
         dependencies=deps,

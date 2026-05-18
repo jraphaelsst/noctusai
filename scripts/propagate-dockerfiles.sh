@@ -29,11 +29,22 @@ PRODUCTS = [
     ("social-wiring", "8011"),
 ]
 
-SEED_VITE = "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
+# VITE_SUPABASE_* are boot-critical + baked at build for EVERY product
+# (the seed FE hard-throws on empty). They prefix every product's VITE
+# block — distinct from VITE_BACKEND_API_URL, which stays runtime-
+# detected (never baked). Only the product-varying URL args differ.
+SEED_VITE_SUPABASE = (
+    "ARG VITE_SUPABASE_URL=\nENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}\n"
+    "ARG VITE_SUPABASE_PUBLISHABLE_KEY=\n"
+    "ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}\n"
+)
+SEED_VITE = SEED_VITE_SUPABASE + "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
 VITE = {
-    "core": "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n",
+    "core": SEED_VITE_SUPABASE
+        + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n",
     "erp-imobiliario": (
-        "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n"
+        SEED_VITE_SUPABASE
+        + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n"
         "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
     ),
 }

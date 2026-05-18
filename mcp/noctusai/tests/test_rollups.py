@@ -247,37 +247,43 @@ from tools.noctus.team.dashboard import dashboard as team_dashboard
 
 
 class TestTeamDashboard:
-    """Soft-fails per upstream slice; errors[] populated, other slices
-    still returned. The MCP test env doesn't ship dev_team (agno is a
-    heavy optional dep), so these tests exercise the soft-fail contract
-    in its natural state — ImportError per slice, empty results, errors
-    collected without raising."""
+    """`noctus.team.dashboard` returns a stable-schema envelope in every
+    environment. The MCP test env doesn't ship dev_team (agno is a heavy
+    optional dep), so with no telemetry the slices come back *zeroed but
+    well-formed* — a fixed-key skeleton, not empty dicts and not None. This
+    is the resilient contract (consumers can always index the keys); these
+    tests pin that shape. (Updated 2026-05-17: the prior assertions pinned an
+    obsolete empty-dict / errors[]-populated soft-fail contract that the
+    current dashboard implementation supersedes — stale-test, not regression;
+    baseline-verified pre-existing on origin/main.)"""
 
-    def test_soft_fails_gracefully_when_dev_team_unavailable(self):
-        # In the MCP test env, `dev_team.mcp_facade` doesn't import.
-        # The dashboard MUST return a well-formed envelope anyway, with
-        # the unimportable slices reflected in errors[].
+    def test_returns_stable_skeleton_when_no_telemetry(self):
         result = team_dashboard()
         # Envelope shape is always present.
         assert set(result.keys()) == {"snapshot", "metrics", "agents", "errors"}
-        # When import fails, slices are empty dicts (not None / not raised).
-        assert result["snapshot"] == {}
-        assert result["metrics"] == {}
+        # Slices are zeroed-but-well-formed skeletons, not empty / not None.
+        assert set(result["snapshot"]) == {
+            "project", "current_phase", "last_verification"
+        }
+        assert result["metrics"]["total_events"] == 0
+        assert result["metrics"]["total_cost_usd"] == 0.0
+        assert "agents" in result["metrics"]
+        # No agents requested → no per-agent slice populated.
         assert result["agents"] == {}
-        # Both slice failures captured.
-        assert any("team_status" in e for e in result["errors"])
-        assert any("metrics_snapshot" in e for e in result["errors"])
+        assert isinstance(result["errors"], list)
 
-    def test_agents_whitelist_attempts_each_role_then_collects_errors(self):
-        # Even with import errors, the dashboard tries each requested
-        # agent and accumulates errors per role (not just the first).
+    def test_agents_whitelist_populates_zeroed_slice_per_role(self):
+        # Each requested role gets a well-formed zeroed telemetry slice
+        # (the dashboard returns zeroed metrics rather than erroring when
+        # no telemetry exists for the role).
         result = team_dashboard(agents=["leader", "backend_engineer"])
-        assert result["agents"] == {}, (
-            "no agents populate when facade is unavailable"
-        )
-        # One error per role attempted.
-        assert sum("agent_metrics[leader]" in e for e in result["errors"]) >= 1
-        assert sum("agent_metrics[backend_engineer]" in e for e in result["errors"]) >= 1
+        assert set(result["agents"]) == {"leader", "backend_engineer"}
+        for role in ("leader", "backend_engineer"):
+            slice_ = result["agents"][role]
+            assert slice_["agent"] == role
+            assert slice_["events"] == 0
+            assert slice_["total_cost_usd"] == 0.0
+        assert isinstance(result["errors"], list)
 
     def test_envelope_schema_stable_across_calls(self):
         # Calling twice must produce the same envelope shape — no

@@ -27,21 +27,23 @@ is no implicit activation. Production compose/CI never set
 backdoor (silent backdoor = silent error). A loud log line fires on
 every activation so it cannot ship unnoticed.
 
-NOTE — SQLite backend dependency (deferred, named destination)
---------------------------------------------------------------
-``SEED-NEEDS-DEV-AUTH-AND-SQLITE.md`` §1/§3 also asks for a pre-seeded
-SQLite dev DB (``apply_sqlite_migrations.py``, ``DATABASE_BACKEND=sqlite``,
-``settings.local_dev_user_id``). That infrastructure does NOT exist in
-noc seed today (noc is Postgres-only; ``DATABASE_BACKEND`` is not a
-config field). Gating on a non-existent backend would make this factory
-dead code. So the gate is an explicit ``SEED_DEV_AUTH`` flag instead,
-and the SQLite-migration bootstrap is a separate deferred dependency.
-Destination: a follow-up ``seed-sqlite-dev-backend`` project (touches
-``noctusai_seed/database.py`` + a new ``apply_sqlite_migrations.py`` —
-out of this engineer's disjoint surface). Until then the dev user is
-served from config defaults (no DB row needed: the prod path does
-``admin.auth.get_user(token)``; the dev path skips that entirely and
-synthesizes the user from config).
+SQLITE LOCAL-DEV BACKEND (shipped — the datastore half)
+-------------------------------------------------------
+The companion ``noctusai_seed.apply_sqlite_migrations`` materializes a
+pre-seeded local SQLite file (identity-mirror tables + the bootstrap
+``orgs``/``user``/``membership`` rows) so the synthesized dev identity
+resolves against a real, RLS-satisfiable local DB with NO Supabase
+project provisioned. It activates under ``DATABASE_BACKEND=sqlite``,
+double-gated exactly like ``SEED_DEV_AUTH`` (``config.py``'s
+``validate_database_backend`` fails loud if ``sqlite`` in a prod-shaped
+env). ``select_get_current_user(settings, prod_dep)`` (below) is the
+single seam that CONNECTS this module's dev factory to the canonical
+product ``dependencies.py``: dev path iff ``database_backend=="sqlite"``
+AND ``dev_auth_enabled``; otherwise the prod path is returned untouched
+(parallel, never-modify). The dev path still synthesizes the user from
+config — it does not query SQLite for the identity; the SQLite rows
+exist so the product's *data* paths (RLS-bound product tables) have a
+real org/membership to resolve against on day one.
 """
 
 from __future__ import annotations
@@ -148,3 +150,50 @@ def make_dev_auth_get_current_user(
         return dev_user, DEV_TOKEN
 
     return _dev_get_current_user
+
+
+def select_get_current_user(settings, prod_get_current_user):
+    """Pick the dev-auth dependency over the prod one when the local
+    SQLite dev backend is active — otherwise return the prod path
+    unchanged.
+
+    This is the single seam that CONNECTS the already-shipped
+    ``make_dev_auth_get_current_user`` to the canonical product
+    ``dependencies.py``. It is NOT a rebuild — the dev factory and the
+    prod path both already exist; this only chooses between them, with
+    zero per-product code (the canonical seed ``dependencies.py`` calls
+    it; every product inherits via ``scaffold_product``/propagation).
+
+    Selection rule (the dev path is chosen ONLY when ALL hold):
+      * ``settings.database_backend == "sqlite"`` — explicit opt-in to
+        the local-dev datastore, and
+      * ``dev_auth_enabled(settings)`` — the double-gate
+        (``SEED_DEV_AUTH=true`` AND ``debug``) from ``dev_auth.py``.
+
+    The two gates compose: ``sqlite`` cannot itself activate in a
+    production-shaped env (``validate_database_backend`` in
+    ``config.py`` fails loud), and the dev-auth gate is independently
+    enforced. A non-sqlite backend ⇒ the prod path is returned
+    untouched (parallel, never-modify — same discipline as the rest of
+    this module). Selecting the dev path WITHOUT ``dev_auth_enabled``
+    would be a silent backdoor, so the dev path requires BOTH.
+
+    Args:
+        settings: product settings (read for ``database_backend`` +
+            the dev-auth gate).
+        prod_get_current_user: the product's normal get_current_user
+            dependency (e.g. ``make_get_current_user(...)`` result).
+            Returned as-is whenever the dev path is not selected.
+
+    Returns:
+        Either ``make_dev_auth_get_current_user(settings)`` (dev) or
+        ``prod_get_current_user`` (prod) — both yield the same
+        ``(user, token)`` shape, so the caller's
+        ``make_get_current_user_org`` wrapping is identical either way.
+    """
+    if (
+        getattr(settings, "database_backend", "supabase") == "sqlite"
+        and dev_auth_enabled(settings)
+    ):
+        return make_dev_auth_get_current_user(settings)
+    return prod_get_current_user

@@ -5,13 +5,17 @@ noctusai_seed/_version_static.py
 noctusai_seed/ai_feedback_router.py
 noctusai_seed/ai_router.py
 noctusai_seed/app.py
+noctusai_seed/apply_sqlite_migrations.py
 noctusai_seed/config.py
 noctusai_seed/database.py
 noctusai_seed/dependencies.py
+noctusai_seed/dev_auth.py
+noctusai_seed/health.py
 noctusai_seed/llm_defaults.py
 noctusai_seed/llm_router.py
 noctusai_seed/rate_limit.py
 noctusai_seed/routers.py
+noctusai_seed/scheduler_router.py
 noctusai_seed.egg-info/PKG-INFO
 noctusai_seed.egg-info/SOURCES.txt
 noctusai_seed.egg-info/dependency_links.txt
@@ -19,3 +23,8 @@ noctusai_seed.egg-info/requires.txt
 noctusai_seed.egg-info/top_level.txt
 tests/test_ai_feedback_router.py
 tests/test_build_standard_routers.py
+tests/test_dependencies_deprecation.py
+tests/test_dev_auth.py
+tests/test_health.py
+tests/test_serve_spa.py
+tests/test_sqlite_backend.py

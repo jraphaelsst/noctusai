@@ -25,8 +25,8 @@ livekit-api>=0.6.0
 stripe>=7.0.0
 
 # Google Calendar integration
-google-api-python-client>=2.0.0
-google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.120.0
+google-auth-oauthlib>=1.2.0
 
 # AI (OpenAI — transcription + summaries)
 openai>=1.50.0
