@@ -300,6 +300,27 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 
 ---
 
+## Always-hardening — every surfaced pattern is a methodology-improvement opportunity (proactive ∧ global)
+
+The safety-nets rule above is **reactive**: a net fires → capture → evolve. This is its **proactive, global generalization** — the standing mindset that **the methodology is never finished and is always improving**, and the agent is **always watching for hardening opportunities**, not only when a safety net trips.
+
+**The principle.** Any surfaced pattern is a codification opportunity — and "pattern" is read at its widest: a failure mode, a recurrence, a friction point, a new collision shape, *and a success worth reproducing* (a "swiss-watch" sequence that worked is as much a learning as a slip that didn't). The default response to any of them is **learn → absorb into the methodology** (route through the codification pipeline s1→s4: emerge → memory → KB+CLAUDE → keeper where deterministic). Leaving a surfaced pattern uncodified is the silent-error shape one level up — same family as deferring an applicable fix.
+
+**Why this is a global mindset, not a branching rule.** It was extrapolated *from* the 2026-05-18 collision-class branching work (`KB § PATTERNS/branching-and-merging.md § 21`) but the lesson is not about branching — it is the meta-lesson that the act of *noticing a reusable shape and folding it back in* is itself the highest-leverage move, in **every** domain (code, tooling, docs, process, dispatch, merge). The branching taxonomy is just the worked example; the posture applies everywhere.
+
+**Standing duties (every turn, not on-demand).**
+- Treat each session as a methodology-mining pass: surfaced shapes get named + routed, not silently consumed.
+- **Open taxonomies, not closed ones.** Any classification we ship (collision classes C1/C2/C3, triage `[F]/[R]/[A]`, error families) is *self-extending by contract*: a new instance that doesn't fit → add the class + three-way sync, never force-fit or ignore. A taxonomy that can't grow is already stale.
+- Successes are codified too — when something worked unusually well, capture *why* so it is reproducible, not luck.
+- The unifier: this principle is the umbrella; safety-nets (reactive capture), the codification pipeline (the mechanism), proactive MCP/AST bystander-flagging (two narrow surfaces), and the recurrence rule (the N-threshold) are all **special cases of it**.
+
+**Anti-patterns.** "Noted, moving on" without a destination. Shipping a closed taxonomy. Codifying only failures (success-blindness). Treating methodology as fixed between explicit "refine the methodology" requests — the watching is continuous, not prompted.
+
+**Three-way-synced 2026-05-18**: this section + CLAUDE.md §1 universal bullet (`Always-hardening posture`) + memory `feedback_always_hardening_posture.md` + MEMORY.md index line. User directive, verbatim:
+> *"whenever new collision pattern surfaces, we're gonna learn from it and absorb it into our methodology. the intent on this is always-improving methodology, that we're gonna extrapolate that from this methodology to a global mindset. doc this and make sure we are always watching for hardening opportunities"*
+
+---
+
 ## Branching-first orchestration — parallelize by default; serial only when chunks collide
 
 **The principle.** The dev methodology is **branching-first**. The orchestrator's default mental model on any incoming work: "can this be chunked into parallel branches?" If yes — dispatch subagents on separate branches in a single tool-use turn (true parallelism via `Task`). If no (chunks genuinely collide on files/lines OR have hard dependencies) — serial work, OR the master-tree-parallel-batches pattern for N≥2 same-shape children.

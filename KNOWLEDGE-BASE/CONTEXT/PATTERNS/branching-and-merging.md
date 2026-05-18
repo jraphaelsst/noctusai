@@ -1701,4 +1701,8 @@ Don't default everything to accept-with-rationale — it is for divergences, ¬ 
 
 Don't finalize a multi-branch convergence **or** a phased-push while ANY chunk is still in flight; the **last-running chunk gates converge+push** (wave-based-dispatch §18 applied to the *merge* wave, ¬ just the dispatch wave). Convergence order = least-conflict-first (C1 → C2 → C3-resolved).
 
-**Three-way-synced 2026-05-18**: this section (§21) + memory entry `feedback_collision_class_branching.md` + CLAUDE.md §1 wave-based-dispatch bullet (amended clause + pointer — §21 extends the existing bullet, no new bullet).
+### 21.9 — The collision taxonomy is OPEN — new patterns get absorbed
+
+C1/C2/C3 is **¬ a closed set**. A new collision shape that doesn't cleanly fit ⇒ **learn from it → name it → absorb it** (new class ∨ subsection here + three-way sync), never force-fit into an existing class ∨ silently route around it. A collision pattern handled-but-uncodified is a lost hardening opportunity (silent-error shape). This is the **collision-domain instance** of the global always-hardening posture — the methodology is never finished; every surfaced pattern (incl. a *success* sequence worth reproducing) is a codification opportunity, watched-for continuously. → `KB § 01-PHILOSOPHY.md § Always-hardening — every surfaced pattern is a methodology-improvement opportunity`.
+
+**Three-way-synced 2026-05-18**: this section (§21, incl. §21.9) + memory entry `feedback_collision_class_branching.md` + CLAUDE.md §1 wave-based-dispatch bullet (amended clause + pointer — §21 extends the existing bullet, no new bullet). The global meta-rule it instances: `KB § 01-PHILOSOPHY.md § Always-hardening` + CLAUDE.md §1 `Always-hardening posture` bullet + memory `feedback_always_hardening_posture.md`.
