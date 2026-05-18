@@ -4,6 +4,24 @@
 
 ---
 
+## Built MCP Servers
+
+### github — GitHub connector MCP
+
+**Type**: Connector (composes `mcp/_kit`; wraps the authenticated `gh` CLI)
+
+The **GitHub side of the team methodology** — PR lifecycle + CI-check
+visibility + repo introspection — as `github.<service>.<action>` tools.
+Raw `git commit`/`git push` are deliberately NOT exposed (they stay in
+the commit-only-your-own-work git workflow). Registration is **user-gated**
+(MCP keep-list rule). Full reference: [github.md](github.md).
+
+Tools: `github.pr.{list,view,diff,checks,create,ready}` ·
+`github.repo.view` · `github.diagnostics.connection_status`. Writes are
+confirm-gated (412); `gh` absent/logged-out is a typed never-faked signal.
+
+---
+
 ## Planned MCP Servers
 
 ### supabase-properties
