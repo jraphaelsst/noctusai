@@ -659,7 +659,7 @@ matters going forward is durable content — write it where it survives,
 not as a pointer to a folder that won't.
 
 **Allowed exceptions:** ephemeral working docs (a live `PROJECT.md`,
-`findings.md`, `dispatcher-inbox.md`) may cross-reference each other and
+`findings.md`, `.claude/dispatcher.md`) may cross-reference each other and
 sibling projects freely — they share the same short lifetime. The
 `project-history/ledger.ndjson` is the *one* sanctioned durable index of
 closed work (append-only, never trimmed); cite it, not the archived

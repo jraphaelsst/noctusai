@@ -4,7 +4,7 @@
 > - **Session A — Architect** (conversation, ideation, KB/CLAUDE.md edits, user-facing decisions, memory writes).
 > - **Session B — Operator** (autonomous orchestration: dispatch engineer subagents, validate worktrees, commit, cherry-pick, push, archive, run hound/mole).
 >
-> Both sessions run in the same noc repository (or sibling workspace). They coordinate through a lightweight file-based mailbox at the repo root — `dispatcher-inbox.md` (architect → operator) and optionally `dispatcher-outbox.md` (operator → architect). Both mailbox files are **gitignored** — transient coordination state, not history.
+> Both sessions run in the same noc repository (or sibling workspace). They coordinate through a lightweight file-based mailbox — the single gitignored `.claude/dispatcher.md`: `## Pending`/`## Completed` (architect → operator) + `## Outbox` (operator → architect). Transient coordination state, not history.
 >
 > **What this is NOT.** A replacement for the branching-first orchestration pattern (`KB § PATTERNS/branching-and-merging.md § 16-18`). It is an *organizational layer above it* — the architect still plans, the engineers still build in isolated worktrees, but the **handoff to git mechanics** moves from the architect's session to the operator's session. The architect's session stops touching git directly; it appends task entries to the inbox.
 >
@@ -24,7 +24,7 @@ In practice, two things happen that strain one session:
 The two-session split:
 
 - **Session A — Architect.** Stays with the user. Plans, dispatches, evaluates engineer findings *as content* (not as git artifacts), edits KB/CLAUDE.md when methodology evolves same-session, writes memory entries, surfaces decisions. **Never touches git directly.**
-- **Session B — Operator.** Runs autonomously (or on `/loop`). Watches `dispatcher-inbox.md`. Picks up tasks top-down, executes them, writes outcomes to `dispatcher-outbox.md`, clears the inbox entry. Owns ALL git operations.
+- **Session B — Operator.** Runs autonomously (or on `/loop`). Watches `.claude/dispatcher.md` `## Pending`. Picks up tasks top-down, executes them, writes outcomes to the `## Outbox` section, moves the entry to `## Completed`. Owns ALL git operations.
 
 The architect gains uninterrupted conversation time. The operator gains focused autonomous execution without context pollution from user chat.
 
@@ -75,7 +75,7 @@ The tempo threshold (rough rule of thumb): if you'd otherwise be flipping betwee
 ### 2.2 Operator Session (B)
 
 **Owns:**
-- Watching `dispatcher-inbox.md` (manual re-read at each turn, or `/loop` interval).
+- Watching `.claude/dispatcher.md` `## Pending` (manual re-read at each turn, or `/loop` interval).
 - ALL git operations: `add`, `commit`, `push`, `cherry-pick`, `merge --ff-only`, `branch -m`, `worktree add/remove`, tag operations. **Post-cherry-pick MUST cleanup the source worktree** (`git worktree unlock` if needed, `git worktree remove --force`, `git branch -D`) — see `KB § PATTERNS/storage-hygiene.md § 4.4`. Cherry-pick that leaves the source worktree on disk is incomplete work (the 2026-05-12 THE-P11 incident traced 9 GB of accumulation to this gap).
 - Engineer dispatch *execution* when the architect's brief is in the inbox (the operator opens the Task tool-use, hands the brief verbatim, collects the report, writes outcome to outbox).
 - Worktree validation (post-engineer-finish: confirm branch exists, diff matches brief, no surprise files).
@@ -108,17 +108,19 @@ Shape 1 is the default. Shape 2 is the carve-out; logged in outbox as "self-disp
 
 ## 3. Coordination — inbox and outbox files
 
-### 3.1 File locations
+### 3.1 File location — ONE unified file
 
-- **Inbox:** `dispatcher-inbox.md` at repo root.
-- **Outbox:** `dispatcher-outbox.md` at repo root (optional but recommended).
+- **`.claude/dispatcher.md`** — single gitignored file (consolidated 2026-05-18 from the former root `dispatcher-inbox.md` + `dispatcher-outbox.md`). Three flat H2 sections:
+  - **Inbox** = `## Pending` + `## Completed (last 24h)` (architect → operator).
+  - **Outbox** = `## Outbox (operator → architect — append-only audit)` (operator → architect).
+- **Gitignored** (see §5) — transient coordination state, not history. Durable record = PROJECT.md / findings.md / §11 Change Log / ledger.
+- Created on first launch from `templates/dispatcher.md` (the committed canonical shape — the live file is gitignored so a fresh clone has no copy; the setup recipe in §6 copies it).
+- The `check_dispatcher_staleness` keeper parses the `## Pending` section of `.claude/dispatcher.md` (path is `_DISPATCHER_FILE_RELPATH` in `mcp/noctusai/tools/noctus/dev/compliance.py`).
 
-Both **gitignored** (see §5). They are transient coordination state, not history. Project artifacts (PROJECT.md, findings.md, §11 Change Log) remain the durable record.
-
-### 3.2 Inbox format
+### 3.2 Inbox format (the `## Pending` / `## Completed` sections of `.claude/dispatcher.md`)
 
 ```markdown
-# Dispatcher Inbox
+# Dispatcher — two-session architect↔operator coordination
 
 Architect (Session A) appends tasks at the bottom of "Pending"; Operator (Session B)
 consumes top-down and moves entries to "Completed (last 24h)" on completion.
@@ -159,10 +161,10 @@ consumes top-down and moves entries to "Completed (last 24h)" on completion.
 - Operator appends ` ✅` (or ` ❌` + reason) to the heading when moving to Completed.
 - Operator may consume any pending entry; default order is top-down by timestamp.
 
-### 3.3 Outbox format
+### 3.3 Outbox format (the `## Outbox` section of `.claude/dispatcher.md`, appended after `## Completed`)
 
 ```markdown
-# Dispatcher Outbox
+## Outbox (operator → architect — append-only audit)
 
 Operator (Session B) appends outcomes here; Architect (Session A) reads at next turn.
 
@@ -307,7 +309,7 @@ claude
 ```
 
 Then in the session:
-- Tell Claude: *"You are the **Architect** (Session A). Read `KB § PATTERNS/two-session-architect-operator.md`. Never run git directly; route all git intents through `dispatcher-inbox.md`. Stay with me for conversation, planning, and KB/memory edits."*
+- Tell Claude: *"You are the **Architect** (Session A). Read `KB § PATTERNS/two-session-architect-operator.md`. Never run git directly; route all git intents through `.claude/dispatcher.md` `## Pending`. Stay with me for conversation, planning, and KB/memory edits."*
 
 ### 8.2 Launch operator session
 
@@ -318,22 +320,22 @@ claude
 ```
 
 Then in the session:
-- Tell Claude: *"You are the **Operator** (Session B). Read `KB § PATTERNS/two-session-architect-operator.md`. Watch `dispatcher-inbox.md`; consume entries top-down; write outcomes to `dispatcher-outbox.md`. You own ALL git operations. Run hound/mole/verify sweeps when idle."*
+- Tell Claude: *"You are the **Operator** (Session B). Read `KB § PATTERNS/two-session-architect-operator.md`. Watch `.claude/dispatcher.md` `## Pending`; consume entries top-down; write outcomes to its `## Outbox` section; move done entries to `## Completed`. You own ALL git operations. Run hound/mole/verify sweeps when idle."*
 
-### 8.3 Bootstrap the inbox/outbox
+### 8.3 Bootstrap the dispatcher file
 
-If they don't exist yet (operator can do this):
+The live file is **gitignored**, so a fresh clone has no copy — create it once from the committed canonical template:
 ```bash
 # Operator (one-time):
-test -f dispatcher-inbox.md || cp templates/dispatcher-inbox-template.md dispatcher-inbox.md
-test -f dispatcher-outbox.md || printf '# Dispatcher Outbox\n\n## Recent\n' > dispatcher-outbox.md
+mkdir -p .claude
+test -f .claude/dispatcher.md || cp templates/dispatcher.md .claude/dispatcher.md
 ```
 
-(The repo-root `dispatcher-inbox.md` shipped with this pattern serves as both the working file AND the canonical shape — gitignored, so the first launch already has the structure.)
+(`templates/dispatcher.md` is the committed canonical shape — the single source of structure since the live `.claude/dispatcher.md` is gitignored. Edit the template when the pattern evolves.)
 
 ### 8.4 First handoff smoke test
 
-- Architect: append a no-op entry to inbox:
+- Architect: append a no-op entry to `.claude/dispatcher.md` `## Pending`:
   ```markdown
   ### 2026-05-11T15:00 — SMOKE-TEST
   - Type: other
@@ -350,7 +352,7 @@ test -f dispatcher-outbox.md || printf '# Dispatcher Outbox\n\n## Recent\n' > di
 The operator can be launched in `/loop` mode (see Skill `/loop`) to poll the inbox autonomously without architect prompting.
 
 **Setup:**
-- Operator session: `/loop 2m read dispatcher-inbox.md and execute any pending entries; write outcomes to dispatcher-outbox.md; idle if nothing pending`.
+- Operator session: `/loop 2m read .claude/dispatcher.md `## Pending` and execute any pending entries; write outcomes to its `## Outbox` section; idle if nothing pending`.
 
 **Behavior:**
 - Every 2 minutes the operator re-reads the inbox.

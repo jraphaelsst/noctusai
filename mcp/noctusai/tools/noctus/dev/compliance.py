@@ -3009,7 +3009,12 @@ def check_slowapi_with_pep563(product_path: Path) -> list[dict]:
 
 _ARCHIVE_DIR_NAME = "archive"
 _ARCHIVE_DATE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_DISPATCHER_INBOX_FILENAME = "dispatcher-inbox.md"
+# Unified two-session coordination file (consolidated 2026-05-18 from the
+# root dispatcher-inbox.md + dispatcher-outbox.md). `## Pending` /
+# `## Completed` = Inbox (architect→operator); trailing `## Outbox` =
+# operator→architect audit. The Pending/heading regexes are unchanged —
+# only the path moved off repo-root into gitignored `.claude/`.
+_DISPATCHER_FILE_RELPATH = ".claude/dispatcher.md"
 _DISPATCHER_HEADING_RE = re.compile(
     r"^###\s+(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})\s+[—-]\s+(.+?)\s*$",
     re.MULTILINE,
@@ -3020,12 +3025,12 @@ _DISPATCHER_PENDING_RE = re.compile(
 )
 
 # Paths that should be in .gitignore — transient coordination artifacts,
-# log files, and `dispatcher-outbox.md` (operator-written outcomes, see
-# KB § PATTERNS/two-session-architect-operator.md). Extend when new
-# transient surfaces land; the detector flags missing entries, not
-# extra entries.
+# log files, and `.claude/dispatcher.md` (the unified two-session
+# coordination file, see KB § PATTERNS/two-session-architect-operator.md).
+# Extend when new transient surfaces land; the detector flags missing
+# entries, not extra entries.
 _EXPECTED_GITIGNORE_PATHS: tuple[str, ...] = (
-    "dispatcher-outbox.md",
+    ".claude/dispatcher.md",
     "scripts/mole-last-sweep.log",
     "scripts/archive-clean-last-sweep.log",
 )
@@ -3113,7 +3118,7 @@ def check_archive_staleness(repo_root: Path | None = None) -> list[dict]:
 
 
 def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
-    """Detect entries in `dispatcher-inbox.md` `## Pending` section that
+    """Detect entries in `.claude/dispatcher.md` `## Pending` section that
     were appended >24h ago and never moved to `## Completed`.
 
     Why: per `KB § PATTERNS/two-session-architect-operator.md`, the
@@ -3132,7 +3137,7 @@ def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
 
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
-    inbox = root / _DISPATCHER_INBOX_FILENAME
+    inbox = root / _DISPATCHER_FILE_RELPATH
     if not inbox.exists() or not inbox.is_file():
         return issues
 
@@ -3168,7 +3173,7 @@ def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
         severity = "high" if age.days > 7 else "warning"
         issues.append({
             "product": "<platform>",
-            "file": _DISPATCHER_INBOX_FILENAME,
+            "file": _DISPATCHER_FILE_RELPATH,
             "issue": (
                 f"Dispatcher pending entry `{date_str}T{hour_str}:{min_str} "
                 f"— {label}` is {age_hours:.0f}h old. The architect/operator "
@@ -3312,7 +3317,7 @@ def check_gitignore_drift(repo_root: Path | None = None) -> list[dict]:
     """Detect expected transient-coordination paths missing from `.gitignore`.
 
     Why: the platform has a small set of transient artifacts that MUST
-    stay untracked (`dispatcher-outbox.md`, `scripts/mole-last-sweep.log`,
+    stay untracked (`.claude/dispatcher.md`, `scripts/mole-last-sweep.log`,
     `scripts/archive-clean-last-sweep.log`). Without explicit gitignore
     entries an absent-minded `git add .` commits them, polluting history
     with operator-only state.

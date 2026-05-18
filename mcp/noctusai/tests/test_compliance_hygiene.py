@@ -87,20 +87,21 @@ class TestArchiveStaleness:
 
 
 class TestDispatcherStaleness:
-    """`dispatcher-inbox.md` `## Pending` entries older than 24h → flagged."""
+    """`.claude/dispatcher.md` `## Pending` entries older than 24h → flagged."""
 
     def _mk_inbox(self, tmp_path: Path, pending_block: str) -> Path:
         # Note: avoid textwrap.dedent here — the embedded pending_block
         # often has un-indented lines, breaking dedent's common-prefix
         # heuristic. Use a literal newline-separated body.
         content = (
-            "# Dispatcher Inbox\n"
+            "# Dispatcher — two-session coordination\n"
             "\n"
             "## Pending\n"
             f"{pending_block}\n"
             "## Completed (last 24h)\n"
         )
-        (tmp_path / "dispatcher-inbox.md").write_text(content)
+        (tmp_path / ".claude").mkdir(exist_ok=True)
+        (tmp_path / ".claude" / "dispatcher.md").write_text(content)
         return tmp_path
 
     def test_fresh_entry_does_not_flag(self, tmp_path):
@@ -133,7 +134,7 @@ class TestDispatcherStaleness:
         old = dt.datetime.now() - dt.timedelta(days=3)
         ts = old.strftime("%Y-%m-%dT%H:%M")
         content = (
-            "# Dispatcher Inbox\n"
+            "# Dispatcher — two-session coordination\n"
             "\n"
             "## Pending\n"
             "\n"
@@ -141,12 +142,13 @@ class TestDispatcherStaleness:
             "\n"
             f"### {ts} — DONE-OLD ✅\n"
         )
-        (tmp_path / "dispatcher-inbox.md").write_text(content)
+        (tmp_path / ".claude").mkdir(exist_ok=True)
+        (tmp_path / ".claude" / "dispatcher.md").write_text(content)
         issues = check_dispatcher_staleness(tmp_path)
         assert issues == [], f"completed entries must not flag, got: {issues}"
 
     def test_no_inbox_file_no_issues(self, tmp_path):
-        # If `dispatcher-inbox.md` doesn't exist, the detector is silent
+        # If `.claude/dispatcher.md` doesn't exist, the detector is silent
         # (not every checkout uses the two-session pattern).
         issues = check_dispatcher_staleness(tmp_path)
         assert issues == []
@@ -259,7 +261,7 @@ class TestGitignoreDrift:
     def test_all_expected_present_no_issues(self, tmp_path):
         (tmp_path / ".gitignore").write_text(
             "node_modules/\n"
-            "dispatcher-outbox.md\n"
+            ".claude/dispatcher.md\n"
             "scripts/mole-last-sweep.log\n"
             "scripts/archive-clean-last-sweep.log\n"
         )
@@ -273,7 +275,7 @@ class TestGitignoreDrift:
         flagged = {i["issue"] for i in issues}
         assert len(issues) == 3, f"expected 3 missing entries, got {len(issues)}: {issues}"
         assert all(i["severity"] == "warning" for i in issues)
-        assert any("dispatcher-outbox.md" in msg for msg in flagged)
+        assert any(".claude/dispatcher.md" in msg for msg in flagged)
         assert any("scripts/mole-last-sweep.log" in msg for msg in flagged)
         assert any("scripts/archive-clean-last-sweep.log" in msg for msg in flagged)
 
@@ -281,7 +283,7 @@ class TestGitignoreDrift:
         # `.gitignore` users sometimes anchor with `/path/...`; the detector
         # accepts both the bare form and the leading-slash form.
         (tmp_path / ".gitignore").write_text(
-            "/dispatcher-outbox.md\n"
+            "/.claude/dispatcher.md\n"
             "/scripts/mole-last-sweep.log\n"
             "/scripts/archive-clean-last-sweep.log\n"
         )
@@ -298,7 +300,7 @@ class TestGitignoreDrift:
         (tmp_path / ".gitignore").write_text(
             "# Comment\n"
             "\n"
-            "dispatcher-outbox.md\n"
+            ".claude/dispatcher.md\n"
             "  # whitespace-prefixed comment is also ignored after .strip()\n"
             "scripts/mole-last-sweep.log\n"
             "scripts/archive-clean-last-sweep.log\n"

@@ -245,7 +245,7 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 | Stale archive folders (older than today + yesterday) | `check_archive_staleness` + `archive-clean.sh` | `noctus.dev.review` (detect) → `bash scripts/archive-clean.sh --force` (execute) | Stage 4 detect → script execute |
 | Stale agent worktrees on disk | `mole.sh` worktree scope (now aligned scan↔sweep enumeration) | `bash scripts/mole.sh scan --worktrees` reports STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM categories; `bash scripts/mole.sh sweep --worktrees --force` removes STALE + ORPHAN + PHANTOM only | Stage 4-equivalent custodial |
 | Disk artifacts (caches, builds) bloating repo | `mole.sh` artifact scope | `bash scripts/mole.sh scan --artifacts` / `... sweep --artifacts --force` | Stage 4-equivalent custodial |
-| Dispatcher inbox/outbox entries piling up | `check_dispatcher_staleness` | `noctus.dev.review` (detect); manual prune of `dispatcher-inbox.md` `## Completed` section; consider archiving to `dispatcher-archive/<date>.md` | Stage 4 detect → manual execute |
+| Dispatcher inbox/outbox entries piling up | `check_dispatcher_staleness` | `noctus.dev.review` (detect); manual prune of `.claude/dispatcher.md` `## Completed` section; consider archiving to `.claude/dispatcher-archive/<date>.md` | Stage 4 detect → manual execute |
 | Merged branches still hanging around | `check_branch_orphan` | `noctus.dev.review` (detect); `git branch -d <name>` (local) / `git push origin --delete <name>` (remote) | Stage 4 detect → git execute |
 | Transient log/coordination files not gitignored | `check_gitignore_drift` | `noctus.dev.review` (detect); `.gitignore` patch + `git rm --cached <file>` if tracked | Stage 4 detect → gitignore patch |
 | Disk usage approaching capacity | `disk-usage-monitor.sh` | `bash scripts/disk-usage-monitor.sh` (exit code 0-3 by severity) | preventative monitor |
@@ -290,7 +290,7 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 | New product scaffold | `noctus.dev.scaffold_product` | `mcp__noctusai__noctus_dev_scaffold_product` | seed-first contract |
 | Testing-ground / sandbox workspace | `noctus.dev.create_testing_ground` | `mcp__noctusai__noctus_dev_create_testing_ground` | sibling workspace |
 | Project close / archive | `noctus.dev.archive` | `mcp__noctusai__noctus_dev_archive(project-path)` | project lifecycle |
-| Inbox-drain for autonomous operator | `orchestrator-operator` subagent | `Agent(subagent_type="orchestrator-operator", ...)` after writing tasks to `dispatcher-inbox.md` | Option D (in-pilot) |
+| Inbox-drain for autonomous operator | `orchestrator-operator` subagent | `Agent(subagent_type="orchestrator-operator", ...)` after writing tasks to the `## Pending` section of `.claude/dispatcher.md` | Option D (in-pilot) |
 | Clean archive (D-2+ folders) | `archive-clean.sh` | `bash scripts/archive-clean.sh --force` after dry-run | housekeeping |
 | Disk audit + cleanup | `mole.sh` orchestrator | `bash scripts/mole.sh scan` (all scopes, read-only) → `... sweep <scope> --force` | custodial |
 

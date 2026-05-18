@@ -160,7 +160,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 | Adding a `try/except` (production code) | `KB § PATTERNS/logging.md` (level guide, no-`# silent-ok` rule) |
 | Editing `.py` / `.ts` / `.tsx` source (rename, codemod, find-callers, multi-file change) | `KB § PATTERNS/ast.md` (AST-first — never sed/regex on source) |
 | Exposing a new capability to agents | `CLAUDE/platform.md` + `KB § 01-PHILOSOPHY.md § MCP-first` |
-| Dispatch-heavy project (3+ engineers / wave-based parallel batches / cherry-pick + push backlog); user wants to "keep working while we talk" | `KB § PATTERNS/autonomous-operator-via-subagent.md` (Option D — `ScheduleWakeup` tick → spawn `orchestrator-operator` subagent → drains `dispatcher-inbox.md` in isolated context → architect main context stays clean) |
+| Dispatch-heavy project (3+ engineers / wave-based parallel batches / cherry-pick + push backlog); user wants to "keep working while we talk" | `KB § PATTERNS/autonomous-operator-via-subagent.md` (Option D — `ScheduleWakeup` tick → spawn `orchestrator-operator` subagent → drains the `## Pending` queue in `.claude/dispatcher.md` in isolated context → architect main context stays clean) |
 | Adding / amending a keeper detector | `KB § PATTERNS/testing.md § Regression-test-the-detector` |
 | Adding a helper to `noctusai_lib` | `KB § PATTERNS/seed-lib-layout.md` |
 | End-of-phase polish / "what cleanup is most urgent?" / cross-product absorption / cross-tool fusion / intra-file dead code | `noctus.hound.scan` (single entry point) → drill into per-scope detail per `KB § PATTERNS/seed-absorption.md` |
@@ -171,7 +171,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 | Wiring a product to **WhatsApp** — WAHA `get_whatsapp_client` vs Meta-Cloud-API `get_meta_cloud_client`, webhook-router seam, lid-auth/dedup | `KB § INTEGRATIONS/whatsapp.md` (connector API; chatbot composition recipe is `KB § PATTERNS/whatsapp-chatbot-seed.md`) |
 | Wiring a product to **Google Calendar / Maps / YouTube / Drive** — which `__all__` ships, factory + resolver/credential-store injection, YouTube quota math, Drive dual Protocols | `KB § INTEGRATIONS/google.md` (consume-side; Cloud Console setup is `KB § GUIDES/google-oauth-setup.md`) |
 | Touching Vista CRM (showcase adapter, future MCP server, endpoint surface, field-set calibration) | `KB § INTEGRATIONS/vista.md` |
-| User says "two sessions" / "second Claude" / "architect/operator split" / "run a second window" / wants the inbox+outbox coordination pattern | `KB § PATTERNS/two-session-architect-operator.md` (Session A = Architect, no git; Session B = Operator, owns ALL git + dispatch exec + tail sweeps; coordinate via gitignored `dispatcher-inbox.md` + `dispatcher-outbox.md` at repo root; setup recipe + `/loop` variant + 5-question pilot rubric) |
+| User says "two sessions" / "second Claude" / "architect/operator split" / "run a second window" / wants the inbox+outbox coordination pattern | `KB § PATTERNS/two-session-architect-operator.md` (Session A = Architect, no git; Session B = Operator, owns ALL git + dispatch exec + tail sweeps; coordinate via gitignored `.claude/dispatcher.md` (unified Inbox `## Pending`/`## Completed` + Outbox `## Outbox`); setup recipe + `/loop` variant + 5-question pilot rubric) |
 | Anything not listed | `KB § INDEX.md` |
 
 ---

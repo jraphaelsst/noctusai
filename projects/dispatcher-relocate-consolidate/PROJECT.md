@@ -34,10 +34,10 @@ N/A — not product code; pure platform/methodology + MCP-detector change. No se
 
 ## §6 · Phases
 
-- [ ] **P1** — detector + tests (compliance.py + test_compliance_hygiene.py); `pytest mcp/noctusai/tests/test_compliance_hygiene.py` green.
-- [ ] **P2** — relocate live files into `.claude/dispatcher.md` (two sections, preserve content) + `.gitignore`.
-- [ ] **P3** — doc-coherence sweep (the 8 doc surfaces above) in the SAME commit; `grep -rn "dispatcher-inbox\|dispatcher-outbox"` → zero stray (excl. archive/worktrees); `verify-kb-sync.sh` ✓; symbology-drift 0.
-- [ ] **P4** — close: memory + doc-symbology §2 path finalized; project archived.
+- [x] **P1** ✅ — detector + tests (compliance.py + test_compliance_hygiene.py); 19/19 green.
+- [x] **P2** ✅ — unified gitignored `.claude/dispatcher.md` (Pending/Completed/Outbox, 14KB history preserved) + `.gitignore` + `templates/dispatcher.md` bootstrap.
+- [x] **P3** ✅ — doc-coherence sweep (9 surfaces — 2 beyond §10 inventory, fix-on-contact); residual grep zero-actionable; verify-kb-sync ✓; symbology-drift 0.
+- [x] **P4** ✅ — doc-symbology §2 path finalized (filed-follow-up parenthetical resolved); memory; project archived.
 
 ## §7 · Acceptance
 
@@ -63,3 +63,7 @@ products/erp-imobiliario/MASTER-PROMPT.md:127  check_dispatcher_staleness
 ## §11 · Change log
 
 - 2026-05-18 — filed (deferred from session wrap-up; out-of-safe-scope to rush — touches a codified keeper + tests; full inventory captured for a single-pass next session).
+- 2026-05-18 — **executed (single pass).** P1: `_DISPATCHER_INBOX_FILENAME`→`_DISPATCHER_FILE_RELPATH=".claude/dispatcher.md"` + `_EXPECTED_GITIGNORE_PATHS` updated + docstrings; `test_compliance_hygiene.py` fixtures → `.claude/dispatcher.md` (mkdir). P2: built unified gitignored `.claude/dispatcher.md` (Pending/Completed/Outbox; 14KB outbox history preserved); `git rm` tracked inbox, `rm` outbox; `.gitignore` `dispatcher-outbox.md`→`.claude/dispatcher.md`. P3: doc-coherence sweep — orchestrator-operator.md, CLAUDE.md §3, INDEX.md, 01-PHILOSOPHY.md, methodology-codification-pipeline.md, two-session-architect-operator.md, autonomous-operator-via-subagent.md, erp MASTER-PROMPT.md. **Inventory gap found+fixed** (fix-on-contact): §10 inventory missed `01-PHILOSOPHY.md` + `methodology-codification-pipeline.md` — the full re-grep caught them; both swept.
+- 2026-05-18 — **decision reversal (triaged [R], recorded):** archive `59-keeper-housekeeping-upgrade` had decided "keep `dispatcher-inbox.md` tracked so fresh clones bootstrap without an extra step." Consolidation reverses it → unified file **gitignored**; bootstrap now via the committed **`templates/dispatcher.md`** (resolves the long-dangling `templates/dispatcher-inbox-template.md` reference — user-surfaced). Net: same zero-setup property, cleaner (one file, root narrowed, no operator-churn in history).
+- 2026-05-18 — surfaced (named destination, not fixed here — out of scope): the `## <task-id>` (orchestrator-operator/autonomous-operator) vs `### YYYY-MM-DDTHH:MM — NAME` (detector/two-session) entry-format divergence is **pre-existing** → future `dispatcher-format-unify` follow-up. Noted inline in both docs.
+- 2026-05-18 — **verified green:** full MCP suite **1268 passed** (0 fail), `test_compliance_hygiene` 19/19, `check_dispatcher_staleness` reads new path, `check_gitignore_drift` 0, symbology-drift 0, `verify-kb-sync` ✓. Acceptance §7 met (residual grep = only frozen `archive/` + intentional provenance prose). Project closed + archived.

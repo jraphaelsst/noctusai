@@ -124,7 +124,7 @@ Run `noctus.dev.outline_python mcp/noctusai/tools/noctus/dev/compliance.py` for 
 - `check_admin_endpoint_service_role_bypass` — admin-client `.table("T")` callsites where T lacks a `service_role_bypass` RLS policy.
 - `check_slowapi_with_pep563` — `from __future__ import annotations` + `@limiter.limit` is broken; ERP rate-limit-policy adoption was exercised against this.
 - `check_archive_staleness` — date-stamped archive folders older than retention.
-- `check_dispatcher_staleness` — stale `## Pending` entries in `dispatcher-inbox.md`.
+- `check_dispatcher_staleness` — stale `## Pending` entries in `.claude/dispatcher.md`.
 - `check_branch_orphan` — local branches >30 days old AND fully merged.
 - `check_gitignore_drift` — expected transient-coordination paths missing from `.gitignore`.
 - `check_no_silent_ok_comment` — the retired `# silent-ok` escape hatch.
