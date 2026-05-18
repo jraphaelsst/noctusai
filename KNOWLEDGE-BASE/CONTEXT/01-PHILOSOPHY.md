@@ -314,10 +314,17 @@ The safety-nets rule above is **reactive**: a net fires → capture → evolve. 
 - Successes are codified too — when something worked unusually well, capture *why* so it is reproducible, not luck.
 - The unifier: this principle is the umbrella; safety-nets (reactive capture), the codification pipeline (the mechanism), proactive MCP/AST bystander-flagging (two narrow surfaces), and the recurrence rule (the N-threshold) are all **special cases of it**.
 
-**Anti-patterns.** "Noted, moving on" without a destination. Shipping a closed taxonomy. Codifying only failures (success-blindness). Treating methodology as fixed between explicit "refine the methodology" requests — the watching is continuous, not prompted.
+**The training contract — LOUD surfacing (refinement 2026-05-18).** This is a **training methodology**: every execution is a training pass the methodology *learns from*. Three obligations, in order, whenever an improvement possibility is spotted mid-execution:
+1. **Announce it LOUDLY, in-the-moment** — a recognizable, scannable marker in the response (`**Methodology improvement spotted**` / `[hardening]`), the instant it is noticed, so the user is **always aware *when it happens*** — never a silent fold-in, never buried in a summary, never discovered only at retro.
+2. **Implement it before the final ship** of the work in flight (not deferred to "a follow-up" when it is applicable now — applicable-deferral is the silent-error shape; only genuinely out-of-scope/needs-a-decision improvements get a named-destination defer, also announced).
+3. **Three-way-sync the codification** in the same session (KB + CLAUDE/topical + memory).
+The loudness is the point: the user opted into seeing the methodology train itself in real time. Silent self-improvement, however correct, **breaks the contract** — visibility is a first-class deliverable, equal to the improvement itself.
 
-**Three-way-synced 2026-05-18**: this section + CLAUDE.md §1 universal bullet (`Always-hardening posture`) + memory `feedback_always_hardening_posture.md` + MEMORY.md index line. User directive, verbatim:
+**Anti-patterns.** "Noted, moving on" without a destination. Shipping a closed taxonomy. Codifying only failures (success-blindness). Treating methodology as fixed between explicit "refine the methodology" requests — the watching is continuous, not prompted. **Silent improvement** — folding a spotted hardening in without the loud in-the-moment announce (correct-but-invisible still breaks the training contract).
+
+**Three-way-synced 2026-05-18**: this section (incl. the LOUD-surfacing training contract, refinement same day) + CLAUDE.md §1 universal bullet (`Always-hardening posture`, incl. training-contract clause) + memory `feedback_always_hardening_posture.md` + MEMORY.md index line. User directives, verbatim:
 > *"whenever new collision pattern surfaces, we're gonna learn from it and absorb it into our methodology. the intent on this is always-improving methodology, that we're gonna extrapolate that from this methodology to a global mindset. doc this and make sure we are always watching for hardening opportunities"*
+> *"Doc this training mindset. The always improve i just said, refine it to a training methodology, always learn from execution and implement found improvements possibilities. loudly please, so im aware always when it happens"*
 
 ---
 
