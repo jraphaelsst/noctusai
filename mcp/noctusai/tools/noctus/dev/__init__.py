@@ -23,6 +23,8 @@ def register_all(server) -> None:
     from . import context
     from . import cost_evaluation
     from . import diff
+    from . import dispatch_preflight
+    from . import findings
     from . import history
     from . import improvements
     from . import lgpd
@@ -38,6 +40,7 @@ def register_all(server) -> None:
     from . import recurrence
     from . import refs
     from . import review
+    from . import salvage_worktree
     from . import scaffold
     from . import scaffold_migration
     from . import scan_unified
@@ -58,6 +61,8 @@ def register_all(server) -> None:
     context.register(server)
     cost_evaluation.register(server)
     diff.register(server)
+    dispatch_preflight.register(server)
+    findings.register(server)
     history.register(server)
     improvements.register(server)
     lgpd.register(server)
@@ -73,6 +78,7 @@ def register_all(server) -> None:
     recurrence.register(server)
     refs.register(server)
     review.register(server)
+    salvage_worktree.register(server)
     scaffold.register(server)
     scaffold_migration.register(server)
     scan_unified.register(server)
