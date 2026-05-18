@@ -1,0 +1,43 @@
+{
+  "_README": [
+    "Committed compliance regression baseline — the set of pre-existing high/critical",
+    "compliance issue FINGERPRINTS as of the date below. The 2 platform-health gate",
+    "tests in test_compliance.py assert REGRESSION semantics (Option A, locked by the",
+    "user 2026-05-18, PROJECT.md projects/platform-compliance-baseline §7(A)):",
+    "  GATE = no NEW high/critical fingerprint vs this baseline.",
+    "The absolute platform score is tracked INFORMATIONALLY (printed, never asserted) —",
+    "every new keeper detector retroactively surfaces old debt and would otherwise red CI.",
+    "",
+    "Fingerprint = '<product>|<file>|<severity>|<symbol>' where <symbol> is the",
+    "backticked 'patches our own symbol `X`' token when present, else the issue text's",
+    "first 80 chars with digits replaced by '#' (line-number-churn robust).",
+    "",
+    "EXCLUDED CLASSES (non-deterministic environment artifacts, per §3a P4 — excluded",
+    "from BOTH this baseline and the live comparison so the gate cannot flap):",
+    "  - 'Seed drift:'  seed-version stamp lag (pre-commit HEAD vs post-commit SHA)",
+    "  - 'Archive entry' archive-staleness (date-relative)",
+    "  - 'Dispatcher'    dispatcher-staleness (date-relative)",
+    "",
+    "HOW TO REFRESH (deterministic, regenerable — run from repo root):",
+    "  mcp/noctusai/.venv/bin/python mcp/noctusai/tests/refresh_compliance_baseline.py",
+    "Refresh ONLY when a high/critical issue is intentionally RESOLVED (baseline shrinks)",
+    "or a NEW pre-existing class is triaged-and-accepted (never to silence a regression).",
+    "A refresh that GROWS the baseline must cite the triage decision in the commit msg."
+  ],
+  "generated": "2026-05-18",
+  "generator": "mcp/noctusai/tests/refresh_compliance_baseline.py (calls the real check_all_products())",
+  "fingerprints": [
+    "therapy-platform|products/therapy-platform/backend/tests/edge_cases/test_session_audio_segments_schema.py|high|app.services.session_service.livekit_service.close_room",
+    "therapy-platform|products/therapy-platform/backend/tests/edge_cases/test_session_audio_segments_schema.py|high|app.services.session_service.livekit_service.create_room",
+    "therapy-platform|products/therapy-platform/backend/tests/edge_cases/test_session_audio_segments_schema.py|high|app.services.session_service.livekit_service.generate_token",
+    "therapy-platform|products/therapy-platform/backend/tests/edge_cases/test_session_audio_segments_schema.py|high|app.services.session_service.livekit_service.start_recording",
+    "therapy-platform|products/therapy-platform/backend/tests/edge_cases/test_session_audio_segments_schema.py|high|app.services.session_service.livekit_service.stop_recording",
+    "therapy-platform|products/therapy-platform/backend/tests/services/test_audit_hook.py|high|app.config.settings.postgres_url",
+    "therapy-platform|products/therapy-platform/backend/tests/services/test_audit_hook.py|high|app.services.audit_hook._engine",
+    "therapy-platform|products/therapy-platform/backend/tests/services/test_audit_hook.py|high|app.services.audit_hook._session_factory",
+    "therapy-platform|products/therapy-platform/backend/tests/services/test_audit_hook.py|high|app.services.audit_hook.get_audit_writer",
+    "therapy-platform|products/therapy-platform/backend/tests/services/test_scheduler.py|high|app.scheduler.run_retention_sweep",
+    "therapy-platform|products/therapy-platform/backend/tests/services/test_scheduler.py|high|app.scheduler.settings.therapy_audio_retention_sweep_interval_hours",
+    "therapy-platform|products/therapy-platform/backend/tests/services/test_scheduler.py|high|app.scheduler.settings.therapy_scheduler_enabled"
+  ]
+}
