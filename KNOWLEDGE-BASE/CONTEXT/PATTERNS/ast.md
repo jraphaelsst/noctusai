@@ -242,6 +242,18 @@ When you need to do a rename / find-callers / codemod across the repo, prefer:
 
 ---
 
+## Always-outline-able platform
+
+AST-first only works if every source file *can* be AST-read. A file with a `SyntaxError` (or structure the outliner chokes on) is invisible to `outline_python`/`outline_typescript`/`tree-sitter` — narrow-read degrades to whole-file reads and codemods silently skip it. So the platform maintains an **always-outline-able invariant**:
+
+- **Auto-outline during dev (methodology).** Outline `.py`/`.ts`/`.tsx` via `noctus.dev.outline` *as you work* (it's the structure half of narrow-read-first) — don't batch-outline later. Outlines are produced **on demand** (the tools persist nothing — by design; no cache/index to rot, no merge surface).
+- **Pre-commit keeper `check_files_outlined` (enforcement).** `scripts/pre-commit` §6 runs `cli.py --check-outlined` on every **staged** `.py/.ts/.tsx`; a file the outline tool can't read (dispatch `error`, Python `parse_error`, or an exception) **blocks the commit**. Predicate = "produces an outline without `parse_error`/`error`/raise" — i.e. provably AST-readable. No stored artifact: the *parse-ability* is checked, not a cached outline (the cheap model — zero maintenance tax; the heavier committed-index alternative was explicitly rejected).
+- **Platform audit `noctus.dev.scan_outlined` (find-the-pattern).** Scans `products/seed/mcp/scripts/noctusai_lib` for any un-outline-able file; the read-only companion to the staged gate. CLI: `python mcp/noctusai/cli.py --scan-outlined`. **Baseline 2026-05-18: zero un-outline-able files platform-wide** — the keeper holds the line from green.
+
+Detector lives in `mcp/noctusai/tools/noctus/dev/compliance.py` (`check_files_outlined`, colocated test `tests/test_check_outlined.py` per the meta-detector); MCP surface in `outline.py` (`noctus.dev.scan_outlined`). Stage-4 codification of the always-outline-able rule.
+
+---
+
 ## When this rule was added
 
 This principle was absorbed into NoctusAI from the methodology lab on 2026-05-03 as part of the absorption-mapping batch (six projects total: whatsapp-seed-absorption, mcp-server-expansion, llm-tool-call-audit, scheduling-engine-seed, imobi-scheduling-bot-creation, agno-dev-team-future-direction — all closed + archived/superseded; imobi-scheduling was later consolidated into `social-wiring` 2026-05-16). The user's framing: *"Any code change goes through an AST tool (libcst / ts-morph / tree-sitter); regex/sed only for prose, search, log inspection."* The principle threads through every code-writing path; the keeper's existing AST tools (`outline_python`, `outline_typescript`) are the first-class examples.

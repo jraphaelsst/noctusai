@@ -102,3 +102,25 @@ def register(server) -> None:
     )
     def _outline(path: str) -> dict:
         return outline(path)
+
+    @server.tool(
+        name="noctus.dev.scan_outlined",
+        description=(
+            "Audit the WHOLE platform (products/seed/mcp/scripts/"
+            "noctusai_lib) for files the AST/outline tooling CANNOT read "
+            "(SyntaxError / parse failure). Read-only. Returns the list "
+            "of un-outline-able files so the pattern can be found + "
+            "fixed — platform-wide companion to the pre-commit "
+            "`--check-outlined` staged gate. Keeps AST-first / "
+            "narrow-read tooling always functional."
+        ),
+    )
+    def _scan_outlined() -> dict:
+        from .compliance import check_files_outlined
+
+        issues = check_files_outlined()
+        return {
+            "outlineable": not issues,
+            "un_outlineable_count": len(issues),
+            "files": issues,
+        }

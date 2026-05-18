@@ -77,6 +77,8 @@ def main():
     parser.add_argument("--scan-pydantic", action="store_true", help="Find Pydantic BaseModel field-set shapes that recur across products. Catches the absorption signal the class-name scan misses — same field set under different class names. Each finding suggests `noctusai_lib.schemas.<canonical>`.")
     parser.add_argument("--scan-test-fixtures", action="store_true", help="Find pytest fixtures + test helpers recurring across products' test trees (conftest.py, tests/services, tests/routers, tests/integration). Stricter blacklist than `--scan-helpers` — excludes test_* methods + ALL_CAPS sample-data names. Catches `_db_with_grants`, `pytest_configure`, mock-builder shapes.")
     parser.add_argument("--scan-migrations", action="store_true", help="Scan SQL migration files for RLS policy / FK index / trigger / search_path patterns recurring across products. 5 known shapes probed; reports which products write each shape and how many times. RLS/trigger templates are absorption candidates for `noctusai_lib.sql.<helper>`.")
+    parser.add_argument("--check-outlined", action="store_true", help="Keeper: every STAGED .py/.ts/.tsx must be AST-outline-able (no SyntaxError / parse failure). Exits 1 on any un-outline-able staged file. Used by the pre-commit hook so the platform stays AST-readable + narrow-read/AST-first tooling always functional.")
+    parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
     parser.add_argument("--min-count", type=int, default=None, help="Override min_count threshold for any --scan-* (default varies per scan).")
     parser.add_argument("--review", action="store_true", help="Observation-only review. Default: return issues + prompt for the in-session agent. --headless fires OpenAI gpt-4o-mini. --evaluate writes both paths side-by-side to proposals/evaluations/. NEVER modifies code.")
     parser.add_argument("--headless", action="store_true", help="With --review: author proposals via OpenAI (no in-session agent required).")
@@ -170,6 +172,42 @@ def main():
             f"\n  {BOLD}Fix the §6 live state before committing.{RESET}\n"
             f"  Per `KB § PATTERNS/project-execution.md § 2 Self-check before claiming a phase is done`."
         )
+        sys.exit(1)
+
+    elif args.check_outlined:
+        import subprocess as _sp
+        from tools.noctus.dev.compliance import check_files_outlined
+        staged = [
+            ln for ln in _sp.run(
+                ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+                capture_output=True, text=True,
+            ).stdout.splitlines()
+            if ln.strip()
+        ]
+        src = [REPO_ROOT / f for f in staged
+               if f.rsplit(".", 1)[-1] in {"py", "pyi", "ts", "tsx", "js", "jsx", "mjs", "cjs"}]
+        issues = check_files_outlined(paths=src) if src else []
+        if not issues:
+            print(f"  {GREEN}✓ All staged source files are AST-outline-able.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} staged file(s) NOT AST-outline-able:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        print(
+            f"\n  {BOLD}Fix the parse error before committing.{RESET}\n"
+            f"  Per `KB § PATTERNS/ast.md § Always-outline-able platform`."
+        )
+        sys.exit(1)
+
+    elif args.scan_outlined:
+        from tools.noctus.dev.compliance import check_files_outlined
+        issues = check_files_outlined()
+        if not issues:
+            print(f"  {GREEN}✓ Whole platform is AST-outline-able (zero un-outline-able files).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} un-outline-able file(s) platform-wide:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
 
     elif args.refs:
