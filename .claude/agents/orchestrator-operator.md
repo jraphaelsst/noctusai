@@ -1,7 +1,7 @@
 ---
 name: orchestrator-operator
 description: Autonomous git+dispatch operator. Drains `.claude/dispatcher.md` `## Pending` tasks (dispatch engineers / validate worktrees / cherry-pick + push branches / archive projects). Spawn from architect session via ScheduleWakeup tick OR explicit "drain inbox" prompt. Lives in isolated context — never drains user-conversation state.
-tools: Bash, Read, Write, Edit, Agent, mcp__noctusai__noctus_dev_archive
+tools: Bash, Read, Write, Edit, Agent, mcp__noctusai__*
 ---
 
 # orchestrator-operator — standing instructions

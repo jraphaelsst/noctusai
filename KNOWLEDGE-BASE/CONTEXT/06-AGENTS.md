@@ -204,6 +204,17 @@ python mcp/noctusai/cli.py --review-session <jsonl>          # walk one transcri
 python mcp/noctusai/cli.py --review-session-latest           # newest *.jsonl in macOS default dir
 ```
 
+## Subagent MCP access (dispatched agents CAN use this toolkit — no extra infra)
+
+`.mcp.json` registers `noctusai` as a **stdio, local, project-scoped** server (`command: mcp/noctusai/.venv/bin/python server.py`, `cwd: <repo>`). Claude Code spawns it as a child of the **session**.
+
+- **Subagents (`Agent`-tool dispatches) run inside that same session runtime** — they are sub-tasks of the same process, not separate machines. They reach the **same already-running stdio server**. **No online service, no container, no tunnel** is needed for local subagents.
+- **The gate is the agent's tool-allowlist, not transport.** An agent whose definition allows the MCP tools can call them; a restricted one cannot. Fix for "agent can't see MCP" = widen the allowlist / dispatch a tool-broad agent — **not** infrastructure.
+- **Repo-defined agents** (`.claude/agents/`): `engineer-default` has no `tools:` line → inherits **all tools** (full `mcp__noctusai__*`); `orchestrator-operator` is pinned `tools: … mcp__noctusai__*` (full suite — 2026-05-18, was `noctus_dev_archive`-only). Built-in types: `general-purpose`/`claude` = `*` (full); `Explore`/`Plan` are **read-only by harness design** — intentionally NOT granted mutating MCP (their contract is read code, not run dev tools); honor the carve-out, don't route mutating work through them.
+- **Container + tunnel is only for an out-of-runtime consumer** (remote CI, another machine, a deployed cloud agent that is NOT a subagent of this session). Then flip noctosai to HTTP/SSE (`server.py` notes this is a one-line `server.run()` change, no tool-code changes), containerize, expose via ingress/tunnel. Unnecessary for the dispatched-subagent workflow.
+
+→ `KB § PATTERNS/branching-first-orchestration` (dispatch) · `KB § 01-PHILOSOPHY.md § Context budget discipline` (MCP keep-list) · `.claude/agents/engineer-default.md`
+
 ## Architecture
 
 ```

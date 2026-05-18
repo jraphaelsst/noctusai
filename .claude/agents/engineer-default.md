@@ -81,6 +81,10 @@ If you find a recurrence (N≥2) of a pattern, a missing seed primitive, a tool 
 
 Per the brief (Write-authorization clause): you MAY create `findings.md` within your worktree, edit `projects/<slug>/PROJECT.md` if the brief authorizes, and create proposal `.md` files if explicitly authorized. Default to no other `.md` creation.
 
+## 8a. noctosai MCP toolkit is available to you
+
+You run inside the dispatching session's runtime, which already has the **stdio `noctusai` MCP server** spawned (`.mcp.json`). engineer-default inherits **all tools** → call `mcp__noctusai__*` directly (scan/validate/pytest/outline/refs/hound/dispatch_preflight/salvage_worktree/archive/…) instead of hand-reimplementing what a tool does. No network/container/tunnel involved — it's local IPC. If a brief restricts your agent type and you genuinely can't see the MCP tools, that's an allowlist gap → surface it (don't bare-Python around a missing tool — `KB § feedback mcp-unreachable-diagnose`). Depth: `KB § 06-AGENTS.md § Subagent MCP access`.
+
 ## 9. Bash safety
 
 - Never `cd <main-repo>` from inside a worktree (sticky cwd risk; use `git -C <path>` instead)
