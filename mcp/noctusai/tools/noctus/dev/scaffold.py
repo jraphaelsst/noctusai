@@ -1540,7 +1540,7 @@ def reserve_port_range(
 
 # ─── Testing-ground (sibling-to-noc seed workspace) ────────────────────────
 #
-# Wraps `scripts/bootstrap-seed-workspace.sh` so the agent can spin up an
+# Wraps `scripts/bootstrap/bootstrap-seed-workspace.sh` so the agent can spin up an
 # isolated sandbox workspace via MCP rather than asking the user to run a
 # shell command. Routing rule (see memory `feedback_testing_ground_vs_in_noc.md`):
 # user asks for "testing ground / sandbox / isolated workspace" → this tool;
@@ -1556,7 +1556,7 @@ def create_testing_ground(
 ) -> dict:
     """Create a sibling-to-noc seed workspace for isolated experimentation.
 
-    Wraps ``scripts/bootstrap-seed-workspace.sh`` from noc. The resulting
+    Wraps ``scripts/bootstrap/bootstrap-seed-workspace.sh`` from noc. The resulting
     workspace is a sibling folder consuming noc strictly read-only via
     symlinks (CLAUDE.md, KB, .claude/, mcp/, seed/, noctusai_lib/, templates/)
     with isolated ``projects/``, ``sandbox/``, ``products/``, and its own git
@@ -1741,7 +1741,7 @@ def register(server) -> None:
         name="noctus.dev.create_testing_ground",
         description=(
             "Create a sibling-to-noc seed workspace for isolated "
-            "experimentation. Wraps scripts/bootstrap-seed-workspace.sh. "
+            "experimentation. Wraps scripts/bootstrap/bootstrap-seed-workspace.sh. "
             "Use when the user asks for a 'testing ground', 'sandbox', or "
             "'isolated workspace' — produces a sibling folder that consumes "
             "noc strictly read-only via symlinks, with isolated projects/, "

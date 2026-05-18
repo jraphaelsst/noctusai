@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-18
 - **Last updated:** 2026-05-18
-- **Status:** Phases 1-5 ✅ (rule codified · 16 scripts absorbed · pre-commit thin-dispatcher · carve-outs documented) → Phase 6 (full folder reorg, user-approved with risk-mitigation) → Phase 7 close
+- **Status:** ✅ DONE — all 7 phases complete (rule codified · 16 scripts → native MCP · pre-commit thin-dispatcher · carve-outs documented · full folder reorg with risk-mitigation · verified)
 - **Owner / stakeholders:** joaoraphaelsst · Claude (architect)
 - **Related docs:** `KB § PATTERNS/seed-absorption.md`, `KB § 06-AGENTS.md` (MCP toolkit), `KB § 01-PHILOSOPHY.md § MCP-first`, `scripts/README.md`, `mcp/noctusai/tools/noctus/dev/`
 - **Project slug:** `scripts-mcp-absorption` (intent `consolidation`; cross-cutting platform-infra → lives at `projects/<slug>/`)
@@ -163,14 +163,20 @@ Phase-by-phase; pause for user "continue" between phases unless told to ram.
 - `promotion.py` emitted-template + `mole.py` `next_action` embedded the old script path (parity-faithful but dangling once deleted) — repointed in the same change. Generalizes `feedback_dangling_deleted_product_path` to *generated-output* strings, not just docs.
 - N≥5 identical "script→native dev-tool port" shape across one dispatch (ANALYSIS alone = 5) → recurrence rule: candidate `scaffold_script_port` emitter / KB recipe. Logged for follow-up (not in this project's scope).
 
-### Phase 6 — Folder reorganization (remaining scripts)
-- [ ] intent folders: `scripts/bootstrap/` · `scripts/hooks/` · `scripts/infra/` · `scripts/db/` (init-local-db) · `scripts/codemods/` (stays)
-- [ ] `git mv` + repoint EVERY survivor ref (hooks symlink path, setup.sh internal calls, CLAUDE.md, KB, MASTER-PROMPTs) — grep-all discipline
-- [ ] verify nothing dangling: `grep -rn 'scripts/<old-path>'` → 0
+### Phase 6 — Folder reorganization ✅ (2026-05-18, full reorg user-approved + risk-mitigated)
+- [x] `git mv` 8 carve-outs → `scripts/hooks/` (pre-commit, install-hooks.sh) · `scripts/bootstrap/` (setup, first-time-setup, bootstrap-worktree, bootstrap-seed-workspace, build-init-local-db) · `scripts/infra/` (build-base-images); `codemods/`/`init-local-db/` stay
+- [x] **risk-mitigation:** 2-line forwarding shims `scripts/setup.sh`+`scripts/install-hooks.sh` preserve the `bash scripts/setup.sh` fresh-clone contract (zero external breakage); `/..`→`/../..` REPO_ROOT depth-fix in 6 depth-sensitive scripts; `install-hooks.sh` symlink target → `hooks/pre-commit`, **re-run** → live `.git/hooks/pre-commit` repointed + resolves
+- [x] keeper made recursive (`rglob`, basename-match, exclude codemods/__pycache__/init-local-db) + colocated subdir-recursion regression test + manifest §3 note three-way-synced
+- [x] whole-tree ref repoint (docs/CI/compose/MASTER-PROMPTs/scaffolders/`.claude`); dangling old-path grep → 0
 
-### Phase 7 — Verify + close
-- [ ] full `noctus.dev.pytest` (MCP suite) green · pre-commit dry-run green · fresh-clone sim (bootstrap carve-outs still work)
-- [ ] three-way-sync check · ledger close · archive
+**Improvements:** the forwarding-shim-for-contract-entrypoints pattern is the reusable risk-killer for any future `scripts/` move (preserve the `bash scripts/X` muscle-memory/CI/onboarding contract while the body relocates). The keeper's basename-match (not path-match) makes the manifest path-stable across folder moves — a deliberate design choice worth noting in `mcp-first-scripts.md` (done). Recurrence candidate: a generic "intent-folder a flat dir + shim its contract entrypoints" recipe.
+
+### Phase 7 — Verify + close ✅ (2026-05-18)
+- [x] full MCP suite green (1345+ before reorg; re-verified post-Phase-6) · keeper baseline 0 · doc-tool-ref 0 · symbology 0 · native verify-kb-sync ✓ · hygiene-test 26/26 (incl. recursion case)
+- [x] fresh-clone sim: `bash scripts/setup.sh` shim resolves; live `.git/hooks/pre-commit` → `scripts/hooks/pre-commit` resolves+executable; pre-commit thin-dispatcher validated live (caught a real §6 gap during the Phase 2-5 commit)
+- [x] three-way-sync (KB/CLAUDE/memory) · commit + push (agent waiting) · ledger + archive
+
+**Improvements:** the pre-commit thin-dispatcher's `--check-phase-state` self-caught a §6-Improvements gap mid-close (Phases 2/3/4, then this Phase 7 stub-duplicate) — the methodology's own gate enforcing the methodology's own doc, dog-fooded live. Lesson: appending a new `### Phase N ✅` ahead of an existing template stub leaves a duplicate header — future closes should edit the stub in place, not prepend. No code impact; PROJECT.md is archive-bound.
 
 ---
 
@@ -212,4 +218,5 @@ Single source of truth; live-tick tasks; phase-by-phase pause; commit plan with 
 | 2026-05-18 | Initial project drafted after AskUserQuestion interrogation (4 decisions §2); Phase 0 audit run + locked (§5 25-script classification) | Claude (architect) |
 | 2026-05-18 | Fix-on-contact (pre-dispatch): `kb_sync.py` is ALSO a `subprocess` shim around `verify-kb-sync.sh` (same trap as `mole.py` — grep showed `def verify_kb_sync` without reading the body). Re-bucketed `verify-kb-sync.sh` A→B; **bucket A is now empty** — every absorb is a genuine shell/py→real-Python port, no trivial delete-the-dup exists. Manifest §3 + §5 corrected | Claude (architect) |
 | 2026-05-18 | Phase 1 ✅ — `s3`+`s4` codified: KB `mcp-first-scripts.md` (manifest = durable SoT) + CLAUDE.md/platform.md/INDEX.md + memory + keeper `check_new_script_lacks_mcp_analog` (6 colocated tests, real-tree baseline 0) + engineer-default §8a. Gates: keeper 25/25 · meta-detector ✓ · symbology-drift 0 · verify-kb-sync ✓. Methodology-codification-pipeline `s1→s4` same session | Claude (architect) |
+| 2026-05-18 | Phases 6-7 ✅ — full folder reorg (user-approved + risk-mitigated): 8 carve-outs `git mv`→`scripts/{hooks,bootstrap,infra}/`; 2 forwarding shims preserve the `bash scripts/setup.sh` fresh-clone contract (zero external breakage); `/..`→`/../..` depth-fix ×6; live `.git/hooks/pre-commit` repointed+resolves; keeper made recursive+basename-matched (+ regression test + manifest note three-way-synced); whole-tree ref repoint (37+17 files) → dangling=0 (ledger/settings correctly left as immutable/local). Parallel agent's untracked trees (gmail-seed-lift, archived mcp-connector-expansion) verified untouched on-disk+git. PROJECT DONE | Claude (architect) |
 | 2026-05-18 | Phases 2-5 ✅ — 16 scripts → native `noctus.dev.*` tools via 5 parallel engineers (MOLE/ANALYSIS/LEDGER/KBSYNC/CODEGEN, file-disjoint). Two harness-structural issues hit + mitigated architect-inline (NOT re-dispatched, per engineer-default §1a): (a) worktree base=`origin/main` → ff-only base-correction preamble; (b) subagent Writes land in shared session/main-tree → main-tree true-disk salvage. Integration: `__init__.py`×2 register + 17 cli flags + pre-commit thin-dispatcher (Phase 4) + 16 scripts `git rm` + manifest stripped to 8 carve-outs (keeper baseline 0) + accept-with-rationale entry + README rewrite + ~25 docs/start.sh/mole.next_action/promotion.template repointed (residual dangling=0). Fix-on-contact: byte-parity-vs-deleted-script tests converted to native / retired (3 files) + native gen_promotions_index coverage added. Gates: keeper 0 · doc-tool-ref 0 · symbology 0 · verify-kb-sync ✓ · full suite [pending re-run] | Claude (architect) + engineers |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/bootstrap-worktree.sh — hydrate a fresh worktree's env
+# scripts/bootstrap/bootstrap-worktree.sh — hydrate a fresh worktree's env
 #
 # Why: fresh `git worktree add ...` worktrees inherit .git but NOT .gitignored
 # directories like node_modules/. Engineers in fresh worktrees consistently waste
@@ -10,8 +10,8 @@
 # `worktree-bootstrap-script`.
 #
 # Usage:
-#   bash scripts/bootstrap-worktree.sh           # full hydrate
-#   bash scripts/bootstrap-worktree.sh --check   # report only, no installs
+#   bash scripts/bootstrap/bootstrap-worktree.sh           # full hydrate
+#   bash scripts/bootstrap/bootstrap-worktree.sh --check   # report only, no installs
 #
 # Idempotent: re-running on a hydrated worktree is fast (skip-if-current
 # node_modules guard via mtime comparison; if node_modules/.package-lock.json is
@@ -41,8 +41,8 @@ for arg in "$@"; do
 bootstrap-worktree.sh — hydrate a fresh worktree's env
 
 Usage:
-  bash scripts/bootstrap-worktree.sh           # full hydrate
-  bash scripts/bootstrap-worktree.sh --check   # report only (no installs)
+  bash scripts/bootstrap/bootstrap-worktree.sh           # full hydrate
+  bash scripts/bootstrap/bootstrap-worktree.sh --check   # report only (no installs)
 
 Steps:
   [1/4] Seed frontends            — npm ci in seed/lib/frontend + seed/framework/frontend
@@ -158,7 +158,7 @@ echo ""
 # Worktrees do NOT carry their own Python venv (gitignored + duplication-prone:
 # 15 worktrees × ~300 MB = ~4.5 GiB of redundant site-packages). Instead, the
 # MAIN repo's venv is shared. This block discovers it (same shape as
-# scripts/pre-commit) and probes for the deps engineers need to run
+# scripts/hooks/pre-commit) and probes for the deps engineers need to run
 # `python mcp/noctusai/cli.py --review` (and the pre-commit hook's
 # `--check-phase-state`).
 #
@@ -181,7 +181,7 @@ else
   fi
 fi
 
-# Discover the main repo's venv (worktree-aware, mirrors scripts/pre-commit:135-145).
+# Discover the main repo's venv (worktree-aware, mirrors scripts/hooks/pre-commit:135-145).
 SHARED_VENV_PY=""
 if [[ -x "$WORKTREE_ROOT/venv/bin/python" ]]; then
   # In-tree venv (this worktree is itself the main checkout).

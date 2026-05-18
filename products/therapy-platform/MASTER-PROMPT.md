@@ -285,7 +285,7 @@ async def login(...): ...
 
 ### 6. Bootstrap auto-hydrate
 
-`scripts/bootstrap-worktree.sh` ∧ `scripts/bootstrap-seed-workspace.sh` auto-hydrate the sibling workspace surface: stale-worktree cleanup runs **before** hydration; ensures the 8 noc surfaces (CLAUDE.md, CLAUDE/, KNOWLEDGE-BASE/, .claude/, mcp/, seed/, noctusai_lib/, templates/) symlink in cleanly without manual steps.
+`scripts/bootstrap/bootstrap-worktree.sh` ∧ `scripts/bootstrap/bootstrap-seed-workspace.sh` auto-hydrate the sibling workspace surface: stale-worktree cleanup runs **before** hydration; ensures the 8 noc surfaces (CLAUDE.md, CLAUDE/, KNOWLEDGE-BASE/, .claude/, mcp/, seed/, noctusai_lib/, templates/) symlink in cleanly without manual steps.
 
 **Therapy implication:** isolated test workspace to debug a therapy issue ⇒ bootstrap script handles the noc surface inheritance — *¬ trim*. Per-product focus belongs here in MASTER-PROMPT.md, ¬ in pruning the inherited surface.
 

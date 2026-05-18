@@ -51,7 +51,7 @@ After `noctus.dev.create_testing_ground` + `noctus.dev.scaffold_product` (since 
 If any are missing, the workspace was bootstrapped before the docker convention landed. Re-run the bootstrap (idempotent — preserves local content):
 
 ```bash
-bash $NOCTUSAI_HOME/scripts/bootstrap-seed-workspace.sh \
+bash $NOCTUSAI_HOME/scripts/bootstrap/bootstrap-seed-workspace.sh \
      --target $(pwd)
 ```
 

@@ -73,7 +73,7 @@ fi'''
         "note": (
             f"Paste detector before `def register` in compliance.py; add "
             f"argparse line + dispatch block to cli.py; add the pre-commit "
-            f"block to scripts/pre-commit; three-way-sync the rule "
+            f"block to scripts/hooks/pre-commit; three-way-sync the rule "
             f"(KB+CLAUDE+memory) per the codification pipeline."
         ),
     }

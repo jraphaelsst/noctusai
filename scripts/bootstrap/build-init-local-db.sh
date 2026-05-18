@@ -12,13 +12,13 @@
 # (no live filesystem dependency at container start).
 #
 # Usage:
-#   bash scripts/build-init-local-db.sh
+#   bash scripts/bootstrap/build-init-local-db.sh
 #
 # Idempotent. Fails fast (`set -e`) if any 001 migration is missing.
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 INIT_DIR="$ROOT_DIR/scripts/init-local-db"
 SCHEMAS_OUT="$INIT_DIR/01-schemas.sql"
 MIGRATIONS_OUT="$INIT_DIR/02-migrations.sql"
@@ -84,7 +84,7 @@ echo ""
 -- ============================================================================
 -- 01-schemas.sql — CREATE SCHEMA IF NOT EXISTS for every product.
 --
--- GENERATED FILE. Regenerate via: bash scripts/build-init-local-db.sh
+-- GENERATED FILE. Regenerate via: bash scripts/bootstrap/build-init-local-db.sh
 --
 -- Extracted from each product's 001_<slug>.sql migration. Running this
 -- BEFORE 02-migrations.sql ensures cross-schema references in product
@@ -117,7 +117,7 @@ echo "Wrote $SCHEMAS_OUT ($(wc -l < "$SCHEMAS_OUT" | tr -d ' ') lines)"
 -- ============================================================================
 -- 02-migrations.sql — concatenated product migrations.
 --
--- GENERATED FILE. Regenerate via: bash scripts/build-init-local-db.sh
+-- GENERATED FILE. Regenerate via: bash scripts/bootstrap/build-init-local-db.sh
 --
 -- Each product's first migration is wrapped in BEGIN/COMMIT so one product's
 -- failure (e.g., a Supabase-only feature this offline profile doesn't

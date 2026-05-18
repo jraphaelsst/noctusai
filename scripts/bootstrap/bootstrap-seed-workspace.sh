@@ -10,7 +10,7 @@
 # Project: projects/seed-workspace/PROJECT.md
 #
 # Usage:
-#   bash scripts/bootstrap-seed-workspace.sh --target <abs-path> [opts]
+#   bash scripts/bootstrap/bootstrap-seed-workspace.sh --target <abs-path> [opts]
 #
 # Idempotent: re-runs refresh symlinks + chmod + marker without touching
 # local content (projects/, sandbox/, products/, .promotions/, git history).
@@ -40,11 +40,11 @@ Optional:
   -h, --help          Show this help.
 
 Examples:
-  bash scripts/bootstrap-seed-workspace.sh \\
+  bash scripts/bootstrap/bootstrap-seed-workspace.sh \\
        --target ~/Documents/repository/NoctusAI/noctusai-template
 
   # Re-run on existing workspace to refresh symlinks (idempotent):
-  bash scripts/bootstrap-seed-workspace.sh \\
+  bash scripts/bootstrap/bootstrap-seed-workspace.sh \\
        --target ~/Documents/repository/NoctusAI/noctusai-template
 
 See projects/seed-workspace/PROJECT.md for the design.
@@ -72,7 +72,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "$NOC_HOME" ]]; then
   # script lives in noc/scripts/, so noc root is one level up
-  NOC_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+  NOC_HOME="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
 
 # Verify noc looks legitimate.

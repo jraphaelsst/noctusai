@@ -8,9 +8,9 @@
 # that work is cached a single time instead of repeated per product.
 # start.sh calls this before `docker compose build/up` (Phase 5).
 #
-# Usage: bash scripts/build-base-images.sh [tag]   (default tag: dev)
+# Usage: bash scripts/infra/build-base-images.sh [tag]   (default tag: dev)
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 TAG="${1:-dev}"
 GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo dev)"

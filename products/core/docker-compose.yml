@@ -23,7 +23,7 @@
 #   docker network create noctus-net   # one-time
 #
 # Build context = repo root (seed bases + product code reachable). The
-# image inherits the shared seed bases — run scripts/build-base-images.sh
+# image inherits the shared seed bases — run scripts/infra/build-base-images.sh
 # first (start.sh orders this in Phase 5).
 
 services:

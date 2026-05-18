@@ -251,7 +251,7 @@ Per-workspace MCP state (proposals registry, scan caches, status snapshots) live
 
 ```bash
 # From noc:
-bash scripts/bootstrap-seed-workspace.sh \
+bash scripts/bootstrap/bootstrap-seed-workspace.sh \
      --target ~/Documents/repository/NoctusAI/noctusai-template
 ```
 
@@ -357,7 +357,7 @@ Symlinks dangle harmlessly when removed; noc is unaffected.
 - **Pre-commit hook didn't fire** — Verify `git config core.hooksPath` returns `.githooks` in the workspace; verify `.githooks/pre-commit` is executable.
 - **MCP scans show noc's projects from template** — The MCP must have been imported from a path that didn't see template's marker. Check `cwd()` at MCP invocation; the marker is found by walking up from cwd, not by file-relative resolution.
 - **Symlink to noc dangles after noc moved** — Re-run bootstrap with `--target <workspace-path>` (which auto-detects new noc location from script position) or `--noc-home <new-path>`.
-- **"`{{WORKSPACE_NAME}}` literal appears in README"** — Bootstrap's `sed` substitution failed. Re-run bootstrap; it preserves your local README only if it already exists, so `rm README.md && bash scripts/bootstrap-seed-workspace.sh ...` to refresh.
+- **"`{{WORKSPACE_NAME}}` literal appears in README"** — Bootstrap's `sed` substitution failed. Re-run bootstrap; it preserves your local README only if it already exists, so `rm README.md && bash scripts/bootstrap/bootstrap-seed-workspace.sh ...` to refresh.
 - **`pyproject.toml` references sibling repo** — That's the parallel `mcp-server-expansion` project's concern, not seed-workspace's. Read its §12 No-leftovers constraint.
 
 ---
@@ -366,7 +366,7 @@ Symlinks dangle harmlessly when removed; noc is unaffected.
 
 - Project where this design landed: `projects/seed-workspace/PROJECT.md` (deleted at project close per apply-inline-then-delete; this KB doc is the durable record).
 - Design supersedes: deferred + abandoned `methodology-mirror-and-workspaces` (heavier 3-tier mirror + per-product fork-and-merge — see PROJECT.md §1 final paragraph for context, although that folder was deleted as part of seed-workspace scaffolding).
-- Bootstrap script: `noctusai/scripts/bootstrap-seed-workspace.sh`.
+- Bootstrap script: `noctusai/scripts/bootstrap/bootstrap-seed-workspace.sh`.
 - Pre-commit hook source: `noctusai/templates/seed-workspace-pre-commit.sh`.
 - README template: `noctusai/templates/seed-workspace-README.md`.
 - Workspace resolver: `noctusai/mcp/noctusai/workspace.py`.

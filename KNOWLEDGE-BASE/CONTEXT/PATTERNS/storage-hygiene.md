@@ -174,11 +174,11 @@ Before any `Agent(isolation: "worktree")` call, the orchestrator runs `python mc
 
 ### 4.2 · Pre-commit hook (repo-side)
 
-`scripts/pre-commit` calls `python mcp/noctusai/cli.py --mole scan --artifacts` (cheap — only counts pycache/pytest_cache sizes). If artifact total exceeds **2 GB**, prints a `WARNING` to stderr (doesn't block the commit — just informs). The pre-commit's role is to surface bloat trending up, not block work.
+`scripts/hooks/pre-commit` calls `python mcp/noctusai/cli.py --mole scan --artifacts` (cheap — only counts pycache/pytest_cache sizes). If artifact total exceeds **2 GB**, prints a `WARNING` to stderr (doesn't block the commit — just informs). The pre-commit's role is to surface bloat trending up, not block work.
 
 ### 4.3 · Bootstrap pre-flight (engineer-side)
 
-`scripts/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `python mcp/noctusai/cli.py --mole sweep --worktrees --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
+`scripts/bootstrap/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `python mcp/noctusai/cli.py --mole sweep --worktrees --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
 
 ### 4.4 · Post-cherry-pick (orchestrator-side) — **MUST**, not MAY
 
@@ -247,7 +247,7 @@ The mole is the **only** member of the trio with built-in destructive authority.
 - `bootstrap-worktree.sh` calls `mole.sh sweep --worktrees --force`
 
 **Phase 2 (deferred follow-up)** — active hooks:
-- `scripts/pre-commit` calls `mole.sh scan --artifacts` and warns on bloat
+- `scripts/hooks/pre-commit` calls `mole.sh scan --artifacts` and warns on bloat
 - Orchestrator dispatch routine calls `mole.sh scan` as pre-flight gate
 
 **Phase 3 (deferred follow-up)** — MCP exposure:

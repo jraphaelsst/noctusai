@@ -375,6 +375,29 @@ class TestNewScriptLacksMcpAnalog:
                     doc=False)
         assert check_new_script_lacks_mcp_analog(tmp_path) == []
 
+    def test_recurses_subfolders_basename_match(self, tmp_path):
+        # Phase-6 intent-folders: a script moved into scripts/bootstrap/
+        # is still enforced (rglob); manifest is basename-keyed so the row
+        # is path-stable across the move. An unrowed subdir script flags.
+        tp = self._setup(tmp_path, manifest_names=["setup.sh"],
+                          disk_names=[])
+        (tp / "scripts" / "bootstrap").mkdir()
+        (tp / "scripts" / "bootstrap" / "setup.sh").write_text("#!/bin/sh\n")
+        (tp / "scripts" / "infra").mkdir()
+        (tp / "scripts" / "infra" / "rogue.sh").write_text("#!/bin/sh\n")
+        # codemods/ stays out of scope even recursively.
+        (tp / "scripts" / "codemods").mkdir()
+        (tp / "scripts" / "codemods" / "x.py").write_text("y=1\n")
+        issues = check_new_script_lacks_mcp_analog(tp)
+        names = sorted(i["file"] for i in issues)
+        assert names == ["scripts/rogue.sh"], names  # basename, not codemods
+
+    def test_real_tree_baseline_zero(self):
+        """The live repo tree must be clean — the recursive keeper +
+        basename-keyed manifest stay green after the Phase-6 folder move
+        (scripts/{hooks,bootstrap,infra}/)."""
+        assert check_new_script_lacks_mcp_analog() == []
+
     def test_real_tree_baseline_zero(self):
         """The live repo tree must be clean (Phase 1 seeded the manifest
         with all 25 current scripts)."""

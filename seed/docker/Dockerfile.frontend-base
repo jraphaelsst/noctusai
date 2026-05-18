@@ -9,7 +9,7 @@
 #
 # Build context: repo root (the Vite alias factory resolves @noctusai/seed
 # + @noctusai/lib into seed/framework/frontend/src + seed/lib/frontend/src).
-# Built by scripts/build-base-images.sh before product images.
+# Built by scripts/infra/build-base-images.sh before product images.
 
 FROM node:20-alpine AS base
 WORKDIR /app

@@ -116,7 +116,7 @@ else
   # heavy common layers are cached a single time, not per product.
   build_bases() {
     echo "[base] garantindo imagens base do seed (noctus-seed-*-base)..."
-    bash "$ROOT_DIR/scripts/build-base-images.sh" "${NOCTUS_IMAGE_TAG:-dev}"
+    bash "$ROOT_DIR/scripts/infra/build-base-images.sh" "${NOCTUS_IMAGE_TAG:-dev}"
   }
 
   print_fleet_urls() {
@@ -208,7 +208,7 @@ else
 
   if [[ "$MODE" == "build" ]]; then
     echo "[docker] rebuild forcado (--no-cache --pull)..."
-    bash "$ROOT_DIR/scripts/build-base-images.sh" "${NOCTUS_IMAGE_TAG:-dev}"
+    bash "$ROOT_DIR/scripts/infra/build-base-images.sh" "${NOCTUS_IMAGE_TAG:-dev}"
     docker "${PRODUCT_ARGS[@]}" build --no-cache --pull
   else
     echo "[docker] buildando imagens de produto (cache hit se ja construidas)..."

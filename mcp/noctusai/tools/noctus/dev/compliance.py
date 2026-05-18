@@ -4078,11 +4078,17 @@ def check_new_script_lacks_mcp_analog(repo_root: Path | None = None) -> list[dic
     section = doc[start : nxt if nxt != -1 else len(doc)]
     manifest = {m.group(1).strip() for m in _MANIFEST_ROW_RE.finditer(section)}
 
-    on_disk = sorted(
+    # Recurse one+ levels (scripts/ is intent-foldered: hooks/ bootstrap/
+    # infra/ — scripts-mcp-absorption Phase 6). Match by BASENAME so the
+    # manifest rows are path-stable across folder moves. Exclude the
+    # non-script subtrees the rule's scope-note already carves out.
+    _EXCLUDE = {"codemods", "__pycache__", "init-local-db"}
+    on_disk = sorted({
         p.name
-        for p in list(scripts_dir.glob("*.sh")) + list(scripts_dir.glob("*.py"))
+        for p in list(scripts_dir.rglob("*.sh")) + list(scripts_dir.rglob("*.py"))
         if p.is_file()
-    )
+        and not (_EXCLUDE & set(p.relative_to(scripts_dir).parts))
+    })
     for name in on_disk:
         if name in manifest:
             continue

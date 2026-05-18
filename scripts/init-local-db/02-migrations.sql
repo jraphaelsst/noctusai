@@ -1,7 +1,7 @@
 -- ============================================================================
 -- 02-migrations.sql — concatenated product migrations.
 --
--- GENERATED FILE. Regenerate via: bash scripts/build-init-local-db.sh
+-- GENERATED FILE. Regenerate via: bash scripts/bootstrap/build-init-local-db.sh
 --
 -- Each product's first migration is wrapped in BEGIN/COMMIT so one product's
 -- failure (e.g., a Supabase-only feature this offline profile doesn't

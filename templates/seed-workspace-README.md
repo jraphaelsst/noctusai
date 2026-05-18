@@ -4,7 +4,7 @@ A sibling-of-noc workspace that **consumes noc strictly read-only** via symlinks
 You operate by noc's full methodology (CLAUDE.md, KB, hooks, MCP toolkit, seed,
 noctusai_lib) without ever modifying noc.
 
-> Bootstrap origin: `noctusai/scripts/bootstrap-seed-workspace.sh`
+> Bootstrap origin: `noctusai/scripts/bootstrap/bootstrap-seed-workspace.sh`
 > Design source: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md` (in noc; symlinked here as `KNOWLEDGE-BASE/`)
 > Created: {{CREATED_AT}} · NoctusAI home: `{{NOCTUSAI_HOME}}`
 
@@ -159,7 +159,7 @@ Symlinks dangle harmlessly when removed; noc is unaffected.
 If noc moves on disk, or you want to refresh symlinks:
 
 ```bash
-bash {{NOCTUSAI_HOME}}/scripts/bootstrap-seed-workspace.sh \
+bash {{NOCTUSAI_HOME}}/scripts/bootstrap/bootstrap-seed-workspace.sh \
   --target $(pwd) --noc-home <new-noc-path>
 ```
 

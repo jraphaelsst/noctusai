@@ -11,7 +11,7 @@
 # `FROM noctus-seed-backend-base` IS the named seam (inherit-and-extend,
 # never fork — same rule as the seed factory).
 #
-# Build context: repo root. Build via scripts/build-base-images.sh
+# Build context: repo root. Build via scripts/infra/build-base-images.sh
 # (start.sh orders it before product images; the layer is cached once
 # instead of rebuilt per product).
 #

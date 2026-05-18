@@ -481,7 +481,7 @@ Surfaced at end of Phase 0 for user decision before Phase 1 dispatch.
 
 4. **Q4 — Worktree-bootstrap expansion (cross-product methodology Q).**
    PF lesson §(b)#1 already named this; daily-life confirms recurrence.
-   Should `bash scripts/bootstrap-worktree.sh` be expanded to install
+   Should `bash scripts/bootstrap/bootstrap-worktree.sh` be expanded to install
    `mcp/noctusai/requirements.txt` so keeper runs from any worktree?
    - **My recommendation:** YES — file a separate one-engineer
      `bootstrap-worktree-mcp-deps` feature (lightweight, ≤2 files).

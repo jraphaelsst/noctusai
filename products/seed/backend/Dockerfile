@@ -8,7 +8,7 @@
 # file only adds THIS product's specificities. `FROM noctus-seed-*-base`
 # IS the named seam (inherit-and-extend, never fork).
 #
-# Prereq: the base images exist (scripts/build-base-images.sh; start.sh
+# Prereq: the base images exist (scripts/infra/build-base-images.sh; start.sh
 # orders this before product images). Build context: repo root.
 #
 # Per-product variance lives ONLY here (kept tiny, product-owned):

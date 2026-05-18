@@ -31,18 +31,18 @@ A script outside these three → MCP tool. A carve-out claim without a manifest 
 
 ## 3. Classification manifest (durable single source of truth)
 
-Every top-level `scripts/*.sh` / `scripts/*.py` file MUST have a row here. **A file on disk with no row = an undecided new script = the keeper violation** (`check_new_script_lacks_mcp_analog`, `warning`). `bucket` ∈ `A` genuine-dup · `B` heavy-port · `C` pure-logic · `[carve:hook]` · `[carve:bootstrap]` · `[carve:docker]`. Absorb rows (A/B/C) are the live backlog — the row is **removed when the script is deleted/absorbed**; carve-out rows are permanent and pair 1:1 with an entry in `KB § PATTERNS/accept-with-rationale.md`.
+Every `scripts/**/*.sh` / `scripts/**/*.py` file MUST have a row here, **matched by BASENAME** (Phase-6 intent-folders: `scripts/{hooks,bootstrap,infra}/` — the keeper `rglob`s and basename-matches so rows are path-stable across folder moves; `codemods/`, `__pycache__/`, `init-local-db/` excluded by construction). **A file on disk with no row = an undecided new script = the keeper violation** (`check_new_script_lacks_mcp_analog`, `warning`). `bucket` ∈ `A` genuine-dup · `B` heavy-port · `C` pure-logic · `[carve:hook]` · `[carve:bootstrap]` · `[carve:docker]`. Absorb rows (A/B/C) are the live backlog — the row is **removed when the script is deleted/absorbed**; carve-out rows are permanent and pair 1:1 with an entry in `KB § PATTERNS/accept-with-rationale.md`. Layout post-Phase-6: `hooks/{pre-commit,install-hooks.sh}` · `bootstrap/{setup,first-time-setup,bootstrap-worktree,bootstrap-seed-workspace,build-init-local-db}.sh` · `infra/build-base-images.sh`. The `scripts/setup.sh` + `scripts/install-hooks.sh` top-level entries are 2-line forwarding shims (the fresh-clone `bash scripts/setup.sh` contract) — same basename as the real bootstrap/hooks files, so one manifest row covers both.
 
-| script | bucket | disposition |
+| script (basename) | bucket | disposition |
 |---|---|---|
-| `pre-commit` | [carve:hook] | thin dispatcher → `cli.py --<flag>` per step (logic in `noctus.dev.*`) |
-| `install-hooks.sh` | [carve:bootstrap] | symlink installer; runs at clone time |
-| `setup.sh` | [carve:bootstrap] | creates venv the MCP runs in |
-| `first-time-setup.sh` | [carve:bootstrap] | pre-venv repo setup |
-| `bootstrap-worktree.sh` | [carve:bootstrap] | pre-venv worktree hydrate |
-| `bootstrap-seed-workspace.sh` | [carve:bootstrap] | pre-venv sibling-workspace hydrate |
-| `build-init-local-db.sh` | [carve:bootstrap] | regenerates init-local-db SQL pre-venv |
-| `build-base-images.sh` | [carve:docker] | thin `docker build` of seed base images |
+| `pre-commit` | [carve:hook] | `hooks/pre-commit`; thin dispatcher → `cli.py --<flag>` per step (logic in `noctus.dev.*`) |
+| `install-hooks.sh` | [carve:bootstrap] | `hooks/install-hooks.sh` (+ root shim); symlink installer, clone time |
+| `setup.sh` | [carve:bootstrap] | `bootstrap/setup.sh` (+ root shim); creates the venv the MCP runs in |
+| `first-time-setup.sh` | [carve:bootstrap] | `bootstrap/first-time-setup.sh`; pre-venv repo setup |
+| `bootstrap-worktree.sh` | [carve:bootstrap] | `bootstrap/bootstrap-worktree.sh`; pre-venv worktree hydrate |
+| `bootstrap-seed-workspace.sh` | [carve:bootstrap] | `bootstrap/bootstrap-seed-workspace.sh`; pre-venv workspace hydrate |
+| `build-init-local-db.sh` | [carve:bootstrap] | `bootstrap/build-init-local-db.sh`; regenerates init-local-db SQL pre-venv |
+| `build-base-images.sh` | [carve:docker] | `infra/build-base-images.sh`; thin `docker build` of seed base images |
 
 > Manifest parsed by `check_new_script_lacks_mcp_analog` (`compliance.py`). The keeper does NOT require disposition fidelity — it asserts only *presence of a row* per disk file: it catches the "someone added `scripts/foo.sh` without a bucket decision" slip. Disposition is human-curated. Non-script `scripts/` entries (`codemods/` lib, `init-local-db/*.sql` data, `*.log`, `README.md`, `.DS_Store`) are out of scope by construction (only top-level `*.sh`/`*.py`). Carve-out rows pair 1:1 with `KB § PATTERNS/accept-with-rationale.md`.
 

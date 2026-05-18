@@ -113,7 +113,7 @@ editable-installed + `/app/seed` (the egg-link source). Runtime-shaped
 (`seed/framework/frontend`, `seed/lib/frontend`) and their deps
 installed.
 
-Built once by `scripts/build-base-images.sh` (start.sh runs it before
+Built once by `scripts/infra/build-base-images.sh` (start.sh runs it before
 any product build — the heavy layers cache once, not per product).
 
 ### 3.2 — Per-product thin Dockerfile (two targets)
@@ -474,7 +474,7 @@ volume is empty, from `scripts/init-local-db/` in alpha order:
 (roles + `auth.jwt()`/`auth.uid()` stubs + `extensions`/`storage`
 schemas + minimal `auth.users`) → `01-schemas.sql` → `02-migrations.sql`
 (last two regenerated from each product's `001_*.sql` by
-`scripts/build-init-local-db.sh`). Re-init: `./stop.sh volumes` then
+`scripts/bootstrap/build-init-local-db.sh`). Re-init: `./stop.sh volumes` then
 `./start.sh local-db`. Caveats: RLS policies evaluate FALSE under
 default Postgres settings (no `auth.jwt()` claims) — point a product at
 it via its `.env` `SUPABASE_URL`; Supabase-only features are
@@ -667,7 +667,7 @@ compose must be the canonical single-service shape, override-free.
 - Same-origin define — `seed/framework/frontend/vite.config.factory.ts` + `seed/lib/frontend/src/env.ts`
 - Canonical artifacts — `products/seed/backend/Dockerfile` · `products/seed/docker-compose.yml`
 - Base images — `seed/docker/Dockerfile.{backend,frontend}-base` · `seed/docker/local-watch.sh`
-- Propagation — `scripts/propagate-{dockerfiles,composes}.sh` · `scripts/build-base-images.sh`
+- Propagation — `scripts/propagate-{dockerfiles,composes}.sh` · `scripts/infra/build-base-images.sh`
 - CI — `.github/workflows/test.yml` job `docker-images-build` (one image/product, slim `runtime` target, Trivy-gated GHCR push)
 
 > History note: this architecture replaced a 2-container-per-product

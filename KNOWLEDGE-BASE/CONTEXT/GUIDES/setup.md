@@ -47,7 +47,7 @@ See `PATTERNS/testing.md` for the three-layer test discipline.
 
 ## Git hooks
 
-`scripts/setup.sh` installs a single `pre-commit` hook (symlinked to `scripts/pre-commit`). It runs three checks in order, staging any auto-generated updates into the same commit:
+`scripts/setup.sh` installs a single `pre-commit` hook (symlinked to `scripts/hooks/pre-commit`). It runs three checks in order, staging any auto-generated updates into the same commit:
 
 1. **Seed → template sync** — if any `products/seed/` file is staged, runs `noctus.dev.sync_seed_template` and stages `templates/product-seed/`.
 2. **KB count refresh** — runs `noctus.dev.kb_sync` to regenerate auto-derived count blocks in KB docs, stages any updated files.

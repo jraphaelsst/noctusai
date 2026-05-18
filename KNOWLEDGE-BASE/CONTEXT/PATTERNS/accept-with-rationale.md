@@ -317,10 +317,10 @@ Don't delete entries. The catalog is append-only-ish; retirement is a
 state change, not a removal.
 
 ### Seed-workspace chmod is symbolic, not enforcing
-- **Subject:** `scripts/bootstrap-seed-workspace.sh` applies `chmod -h a-w` to every symlinked surface in the seed workspace.
+- **Subject:** `scripts/bootstrap/bootstrap-seed-workspace.sh` applies `chmod -h a-w` to every symlinked surface in the seed workspace.
 - **Decision:** chmod runs at bootstrap time and is documented as a Layer 3 SYMBOLIC defense — not an actual write barrier.
 - **Reason:** The user's stated mechanism *"chmod the symlinked surfaces"* cannot work as imagined cross-platform: macOS symlinks ignore mode bits at the kernel level (no-op), Linux mostly-ignores them too, and chmoding the symlink TARGETS would lock noc itself out of editing its own files (same OS user owns both directories). The realistic enforcement boundary is at commit-time via the template-side pre-commit hook (Layer 1 — PRIMARY); chmod stays as a marker that the surface is read-only by intent.
-- **Scope:** `scripts/bootstrap-seed-workspace.sh` + `templates/seed-workspace-README.md` + `KB § PATTERNS/seed-workspace.md`.
+- **Scope:** `scripts/bootstrap/bootstrap-seed-workspace.sh` + `templates/seed-workspace-README.md` + `KB § PATTERNS/seed-workspace.md`.
 - **Revisit trigger:** macOS gains symlink mode-bit enforcement (unlikely), OR a new POSIX-portable per-symlink immutability mechanism appears (chflags+immutable that doesn't affect the target), OR a wrapper layer (FUSE / OverlayFS) becomes available on macOS that lets template see noc as read-only without affecting noc's own writes.
 - **Recorded by:** `projects/seed-workspace/` Phase 0 audit (2026-05-03).
 

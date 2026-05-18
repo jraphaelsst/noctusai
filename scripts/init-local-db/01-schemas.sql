@@ -1,7 +1,7 @@
 -- ============================================================================
 -- 01-schemas.sql — CREATE SCHEMA IF NOT EXISTS for every product.
 --
--- GENERATED FILE. Regenerate via: bash scripts/build-init-local-db.sh
+-- GENERATED FILE. Regenerate via: bash scripts/bootstrap/build-init-local-db.sh
 --
 -- Extracted from each product's 001_<slug>.sql migration. Running this
 -- BEFORE 02-migrations.sql ensures cross-schema references in product

@@ -33,7 +33,7 @@ manifest + an `accept-with-rationale` entry:
 
 - **`setup.sh`** — one-command repo setup (hooks + venv + deps).
 - **`first-time-setup.sh`** — pre-venv repo bootstrap.
-- **`install-hooks.sh`** — symlink `scripts/pre-commit` → `.git/hooks/`.
+- **`install-hooks.sh`** — symlink `scripts/hooks/pre-commit` → `.git/hooks/`.
 - **`bootstrap-worktree.sh`** — hydrate a `git worktree` (pre-venv).
 - **`bootstrap-seed-workspace.sh`** — hydrate a sibling seed-workspace.
 - **`build-init-local-db.sh`** — regenerate `init-local-db/` SQL.
