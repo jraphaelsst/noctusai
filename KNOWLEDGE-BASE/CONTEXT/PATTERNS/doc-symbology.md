@@ -3,6 +3,8 @@
 > Symbols pack more meaning per token. Used carefully, they preserve richness while cutting token cost on auto-loaded surfaces (CLAUDE.md, MASTER-PROMPTs, KB patterns).
 >
 > **Contract:** every symbol below has a single fixed meaning. Swap prose → symbol ONLY when the swap is lossless. **Lossless** = a reader who knows this glossary recovers the same semantic the prose conveyed.
+>
+> **Provenance — caveman skill alignment (retrieved 2026-05-18).** The token-density layer is informed by the open-source **caveman** Claude Code skill (`github.com/JuliusBrussee/caveman`, `skills/caveman/SKILL.md` + `README.md`; coverage: `skillsllm.com/blog/caveman-token-compression-claude-code`, `dev.to/onsen/caveman-claude-...`, `decrypt.co/363440/...`, `pcworld.com/article/3115406/...`). **Validated for symbol/AI-communication**: tiktoken-verified ~61-75% output-token reduction across 4 standard task types (web-search 68%, code-edit 50%, Q&A 72%) with full technical accuracy preserved. caveman is a *voice-compression* scheme (drop articles/filler/hedging/pleasantries; fragments OK; code/errors/symbols exact), **not** a glyph glossary — its only symbolic primitives are the `ultra`-level causal arrow + a prose-word abbreviation set. We **adopt its prose-discipline rules** (§8) and its **abbreviation set** (§1, code-name-exempt), **align our intensity model** to its lite/full/ultra ladder (§3a), and **explicitly reject its `X → Y` causal-arrow mapping** — our `→` is locked to routes/pointer and `⇒` to implies (lossless-swap contract; re-mapping would break every existing caller). Divergence recorded in §1 + §4.
 
 ---
 
@@ -62,6 +64,23 @@
 
 Each divergence lands on ONE of `[F]`/`[R]`/`[A]` — silent moving forbidden.
 
+### Prose-word abbreviations (adopted from caveman `ultra`; code-name-exempt)
+Short forms safe in dense prose because they are unambiguous in this codebase's domain. **HARD EXEMPTION: never abbreviate a code symbol / function / API / file / config-key name** — these compress *English wrapper words only*, never identifiers.
+
+| Long | Short | | Long | Short |
+|---|---|---|---|---|
+| database | `DB` | | request | `req` |
+| authentication / authorization | `auth` | | response | `res` |
+| configuration | `config` | | function | `fn` |
+| implementation / implement | `impl` | | repository | `repo` |
+
+Provenance: caveman `ultra`-level abbreviation set. Extend this table (never inline-invent) — same glossary-stability contract as §4.
+
+### Divergence register (kept ≠ caveman)
+| Glyph | Our locked meaning | caveman use | Resolution |
+|---|---|---|---|
+| `→` | routes to / pointer | causal `X → Y` (cause→effect) | **KEEP ours** — `⇒` already carries implies/causality; re-mapping `→` breaks every existing routing caller (lossless-swap contract). When caveman docs say `→`, read it as our `⇒`. |
+
 ---
 
 ## 2. Where to use
@@ -94,6 +113,18 @@ Each divergence lands on ONE of `[F]`/`[R]`/`[A]` — silent moving forbidden.
 
 The methodology values clarity over compression. When a swap would force prose-rewrite to hit a target, **the prose stays**.
 
+### 3a.1 Intensity ladder (aligned to caveman lite/full/ultra)
+
+caveman's validated 3-rung ladder maps onto our surfaces. **Our `lossless-swap` contract gates every rung — we never trade accuracy for a reduction target.**
+
+| Rung | caveman def | Our use | Typical surface |
+|---|---|---|---|
+| **lite** | no filler/hedging; keep articles + full sentences (~30%) | default for narrative KB bodies, guides, first-time-reader docs | `KB § PATTERNS/*` prose, `GUIDES/*` |
+| **full** | drop articles; fragments OK; short synonyms (~65%) | default for rule-lists + dispatch briefs + status headers | CLAUDE.md §1, MASTER-PROMPT Rules, briefs |
+| **ultra** | abbreviate prose words; strip conjunctions; symbolic logic (~75-80%) | reserved for the densest reference tables / decision matrices already glossary-anchored | doc-symbology §7 reference patterns, decision matrices |
+
+We **do not adopt** caveman's `wenyan-*` (classical-Chinese) rungs — out of scope for an English+symbol codebase; explicit rejection (no silent omission).
+
 ## 4. Anti-patterns
 
 - **Stacking** symbols without breathing room: `A ⇒ B ∧ ¬C ∨ D` becomes unparseable. Default to ≤2 symbols per clause.
@@ -112,6 +143,19 @@ If yes: swap. If "almost yes": keep prose. The methodology values clarity over c
 ## 6. Versioning
 
 Glossary additions go in this doc. Memory entry `feedback_doc_symbology.md` tracks the rule. CLAUDE.md §2 has the pointer. Doc-code coherence rule applies — when a symbol's meaning changes, update every doc that uses it in the same commit.
+
+## 6a. Prose-discipline layer (adopted from caveman, lossless-gated)
+
+The glyph glossary (§1) compresses *logic/status*; this layer compresses the *English wrapper* around it. Adopted from the caveman skill's validated voice-compression ruleset — applied **only where the lossless-swap test passes**, never to the §3-NOT surfaces.
+
+- **Drop:** articles (a/an/the), filler (just, really, basically, actually, simply), pleasantries (sure, certainly, of course, happy to), hedging — when removal changes no meaning.
+- **Fragments OK.** `[thing] [action] [reason]. [next step].` is a valid sentence shape in rule-lists/briefs.
+- **Short synonym over long phrase:** "big" not "extensive", "fix" not "implement a solution for" — when the short form is unambiguous in-domain.
+- **Abbreviate prose words** per §1 abbreviation table (`ultra` rung) — code/identifier names stay exact.
+- **Auto-clarity exceptions (caveman-validated, mirrors our §3 NOT-list):** keep full prose for security warnings, irreversible-action confirmations, multi-step sequences where misread is costly, technical-ambiguity risk. These are the *voice-layer* twin of the §3 symbol-NOT list — same surfaces, same rationale.
+- **Code / errors / quoted-user / commits stay exact** — identical carve-out to §3; the prose layer never rewrites them.
+
+ROI: §3a's bimodal-yield table governs the *glyph* layer; the prose layer adds caveman's ~30/65/75% rungs (§3a.1) on top, lossless-gated.
 
 ---
 
