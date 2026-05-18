@@ -5,7 +5,7 @@
 
 ## What is NoctusAI?
 
-Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. **Multiple products** (authoritative count/roster: `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`, auto-derived from `public.products` — never hand-count here, it drifts), 1 seed framework, 1 MCP dev toolkit. (AdConnect is a WIP scaffold at `products/adconnect/`, currently gitignored and not part of the live platform.)
+Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. **Multiple products** + 1 seed framework + 1 MCP dev toolkit. **Authoritative roster / count / per-product status → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`** (auto-derived from the `start.sh` registry via `parse_products_registry()`). This file does **not** editorialize product status — a hand aside here drifts (it falsely claimed AdConnect was gitignored/not-live; corrected 2026-05-18, always-doc-the-trim — `products/adconnect/` IS tracked, see `.gitignore` + 02-LANDSCAPE).
 
 ## The Seed (most important concept)
 

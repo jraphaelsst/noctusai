@@ -230,16 +230,29 @@ def verify_kb_sync() -> KBSyncResult:
 # update_kb_counts — native port of scripts/update-kb-counts.py
 # ════════════════════════════════════════════════════════════════════
 
-_PRODUCTS = [
-    ("Core", "products/core"),
-    ("ERP", "products/erp-imobiliario"),
-    ("PF", "products/personal-finance"),
-    ("Therapy", "products/therapy-platform"),
-    ("Seed", "products/seed"),
-    ("Daily Life", "products/daily-life"),
-    ("AdConnect", "products/adconnect"),
-    ("Dev Team", "products/dev-team"),
-]
+def _products() -> list[tuple[str, str]]:
+    """Product roster — DERIVED from the canonical `start.sh` registry via
+    `parse_products_registry()` (the keeper-mandated source —
+    `feedback_hardcoded_product_slug_set_keeper`: never freeze a ≥3-slug
+    literal). The prior frozen `_PRODUCTS` literal silently omitted
+    `social-wiring` → the "auto-derived single source of truth" the docs
+    pointed at was itself stale (2026-05-18 clean-context self-test, 2nd
+    pass). Deriving makes the roster self-healing for every future
+    product. No silent fallback: an unreadable registry RAISES, never
+    renders a silently-truncated roster (no-silent-errors)."""
+    from noctusai_lib.config.cors_registry import parse_products_registry
+
+    entries = parse_products_registry()
+    if not entries:
+        raise RuntimeError(
+            "parse_products_registry() returned no products — start.sh "
+            "registry unreadable; refusing to render a silently-empty "
+            "product roster (no-silent-errors)."
+        )
+    return [
+        (e["slug"].replace("-", " ").title(), f"products/{e['slug']}")
+        for e in entries
+    ]
 
 
 def _count_files(
@@ -352,7 +365,7 @@ def _render_inventory(repo: Path) -> str:
         "test_files": 0,
         "test_fns": 0,
     }
-    for name, path in _PRODUCTS:
+    for name, path in _products():
         s = _product_stats(repo, path)
         rows.append(
             f"| {name} | {s['routers']} | {s['services']} | {s['pages']} | {s['hooks']} "
@@ -370,16 +383,11 @@ def _render_inventory(repo: Path) -> str:
 def _render_database(repo: Path) -> str:
     counts = _count_schema_tables(repo)
     total = sum(counts.values())
-    ordered = [
-        "public",
-        "erp",
-        "personal-finance",
-        "therapy",
-        "daily_life",
-        "seed",
-        "adconnect",
-        "dev_team",
-    ]
+    # DERIVED from the real per-schema table counts — never a frozen
+    # schema literal (the prior list silently dropped `social_wiring`,
+    # same drift class as _products()). `public` first, rest sorted;
+    # nothing present in counts is ever silently omitted.
+    ordered = ["public"] + sorted(s for s in counts if s != "public")
     schemas_line = " + ".join(f"`{s}`" for s in ordered if s in counts)
     return (
         f"- **Schemas ({len([s for s in ordered if s in counts])}):** {schemas_line}.\n"

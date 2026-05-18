@@ -8,7 +8,7 @@
 
 ## 1. What this platform is (30 seconds)
 
-NoctusAI is a **multi-product platform built on a shared seed**. ~10 products (ERP, therapy, social-wiring, PF, daily-life, core, …) all inherit one backend factory (`create_product_app()`) + one frontend factory (`createProductApp()`) + a shared library (`noctusai_lib`) + a shared seed framework. Products are thin; the seed is the spine. There is a heavy, **living methodology** governing how work is done — it is codified in docs and it improves itself every session.
+NoctusAI is a **multi-product platform built on a shared seed**. A fleet of products (ERP, therapy, social-wiring, PF, daily-life, core, …; **authoritative roster/count → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`**, auto-derived — never hand-count) all inherit one backend factory (`create_product_app()`) + one frontend factory (`createProductApp()`) + a shared library (`noctusai_lib`) + a shared seed framework. Products are thin; the seed is the spine. There is a heavy, **living methodology** governing how work is done — it is codified in docs and it improves itself every session.
 
 ## 2. Read in this order (the core set)
 

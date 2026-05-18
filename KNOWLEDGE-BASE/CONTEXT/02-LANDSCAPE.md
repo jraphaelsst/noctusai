@@ -30,20 +30,21 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
 | Core | 28 | 13 | 26 | 0 | 47 | 499 |
-| ERP | 59 | 53 | 67 | 66 | 116 | 1,708 |
-| PF | 15 | 18 | 30 | 16 | 48 | 482 |
-| Therapy | 40 | 46 | 65 | 33 | 83 | 1,138 |
+| Erp Imobiliario | 59 | 53 | 67 | 66 | 116 | 1,708 |
+| Personal Finance | 15 | 18 | 30 | 16 | 48 | 482 |
+| Therapy Platform | 40 | 46 | 65 | 33 | 83 | 1,138 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
 | Daily Life | 6 | 8 | 11 | 7 | 17 | 216 |
-| AdConnect | 9 | 10 | 16 | 5 | 25 | 235 |
+| Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| **Total** | **159** | **151** | **229** | **128** | **344** | **4,334** |
+| Social Wiring | 10 | 37 | 13 | 7 | 33 | 344 |
+| **Total** | **169** | **188** | **242** | **135** | **377** | **4,678** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas (8):** `public` + `erp` + `personal-finance` + `therapy` + `daily_life` + `seed` + `adconnect` + `dev_team`.
+- **Schemas (9):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
 - **Tables: 298** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
