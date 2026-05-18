@@ -628,6 +628,26 @@ When a seed / shared-lib / framework change ripples to consumers, do **NOT** ada
 
 ---
 
+## 2.13 In-flight resolution — clear-path deferrals/accept resolve in the SAME commit, not later (2026-05-18)
+
+**Rule.** A deferral *or* an accept-with-rationale whose **resolution path is clear / recommended / resolvable-now within scope** is **resolved in-flight** and lands in the **SAME commit as the deliverable** (commit-on-ship, `KB § PATTERNS/branching-and-merging.md §21.4`). It is **¬ parked for later**. Parking/deferring is the *exception*, reserved strictly for genuinely-unclear ∨ out-of-scope ∨ needs-a-user-decision ∨ hard-to-reverse work — and that exception is itself **announced loudly** (the LOUD training contract, `KB § 01-PHILOSOPHY.md § Always-hardening`).
+
+**The discriminator (one question).** *"Is the resolution path clear/recommended ∧ resolvable now within the current scope?"* — **yes ⇒ resolve in-flight, same commit** (never a follow-up, never an accept-park). **no ⇒** defer-with-named-destination ∨ accept-with-rationale, announced. A recommended solution that is clear is **¬ a triage outcome to file** — it is work to do now.
+
+**Why.** Filing a follow-up / parking an accept entry for something that had a clear fix resolvable in the same pass is the scope-shrink slip (defer≠resolve R5) **and** breaks commit-on-ship (the resolution must ship *with* the work, not trail it as debt). "Later" for a clear-path item = silent-error shape one level up.
+
+**Unifies.** defer≠resolve R5 (don't de-scope resolvable work) ∧ commit-on-ship §21.4 (resolution ships in the deliverable's commit) ∧ accept-with-rationale (a real landing only when resolution is genuinely not-now-appropriate — clear-path/recurrence flips `[A]→[F]` resolve). Plan the in-flight resolution at the moment the deferral/accept is *considered*, not at retro.
+
+**Anti-patterns.** "I'll file a follow-up for that" when the fix is clear + in-scope + cheap. Accept-with-rationale used as a parking lot for resolvable divergences. Splitting a deliverable's commit from its own clear-path remediation. Discovering at retro a clear fix that should have shipped in the pass.
+
+User directives, verbatim:
+> *"Defferals and accept-with-rationale (when possible) should not be left for later. they should be planned to resolve in-flight and be part of the same commit. remember the 'commit on ship' rule."*
+> *"paths with recommended solutions clear should be implemented without deffering or parking."*
+
+**Three-way-synced 2026-05-18**: this §2.13 + `CLAUDE/projects.md` pointer + memory `feedback_in_flight_resolution.md` + MEMORY.md line. Companion: `KB § PATTERNS/defer-is-not-resolve.md` (R5), `§21.4` commit-on-ship, `KB § PATTERNS/accept-with-rationale.md`.
+
+---
+
 ## 3. Phase-by-phase cadence
 
 Default cadence: **execute exactly one phase, then stop.** Wait for the user to say "continue" / "next phase" / "do phase N" before advancing.
