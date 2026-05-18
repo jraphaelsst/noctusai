@@ -85,6 +85,7 @@ def upload_dir(tmp_path):
 def yt_mock():
     yt = MagicMock()
     yt.upload_video.return_value = "yt_video_abc"
+    yt.get_processing_status.return_value = {"upload_status": "processed", "processing_status": "succeeded"}
     return yt
 
 
