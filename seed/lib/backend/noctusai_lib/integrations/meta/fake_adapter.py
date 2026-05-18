@@ -17,8 +17,15 @@ is the "scope already approved" path."""
 from __future__ import annotations
 
 from noctusai_lib.integrations.meta.types import (
+    Ad,
     AdCampaign,
+    AdCreative,
+    AdCreativeSpec,
     AdInsights,
+    AdSet,
+    AdSetSpec,
+    AdSpec,
+    CampaignSpec,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
@@ -27,7 +34,7 @@ from noctusai_lib.integrations.meta.types import (
     PostInsights,
     PublishedMedia,
     PublishedPost,
-)
+    )
 
 
 class FakeMetaAdapter:
@@ -51,6 +58,21 @@ class FakeMetaAdapter:
         self._ad_insights: dict[str, AdInsights] = {}
         self._post_seq = 0
         self._media_seq = 0
+        # Ads-management recorders — deterministic in-memory CRUD so
+        # MCP/consumer tests exercise the real handler graph with no
+        # network. The Fake NEVER raises the App-Review gate — that
+        # gate lives on the live adapter only; the Fake is the
+        # "scope already approved" path.
+        self.created_campaigns: list = []
+        self.created_ad_sets: list = []
+        self.created_ad_creatives: list = []
+        self.created_ads: list = []
+        self._campaigns_by_id: dict = {}
+        self._ad_sets_by_id: dict = {}
+        self._camp_seq = 0
+        self._adset_seq = 0
+        self._creative_seq = 0
+        self._ad_seq = 0
 
     def seed(
         self,
@@ -195,6 +217,83 @@ class FakeMetaAdapter:
         return self._ad_insights.get(
             object_id, AdInsights(object_id=object_id, level=level)
         )
+    def create_ad_campaign(self, ad_account_id, spec):
+        self._camp_seq += 1
+        camp = AdCampaign(
+            id=f"camp_{self._camp_seq}",
+            name=spec.name,
+            objective=spec.objective,
+            status=spec.status,
+        )
+        self.created_campaigns.append(camp)
+        self._campaigns_by_id[camp.id] = camp
+        return camp
+
+    def create_ad_set(self, ad_account_id, spec):
+        self._adset_seq += 1
+        ad_set = AdSet(
+            id=f"adset_{self._adset_seq}",
+            name=spec.name,
+            status=spec.status,
+            campaign_id=spec.campaign_id,
+            daily_budget=spec.daily_budget,
+            billing_event=spec.billing_event,
+            optimization_goal=spec.optimization_goal,
+            targeting=dict(spec.targeting),
+        )
+        self.created_ad_sets.append(ad_set)
+        self._ad_sets_by_id[ad_set.id] = ad_set
+        return ad_set
+
+    def create_ad_creative(self, ad_account_id, spec):
+        self._creative_seq += 1
+        creative = AdCreative(
+            id=f"creative_{self._creative_seq}",
+            name=spec.name,
+            object_story_spec=dict(spec.object_story_spec),
+        )
+        self.created_ad_creatives.append(creative)
+        return creative
+
+    def create_ad(self, ad_account_id, spec):
+        self._ad_seq += 1
+        ad = Ad(
+            id=f"ad_{self._ad_seq}",
+            name=spec.name,
+            status=spec.status,
+            adset_id=spec.adset_id,
+            creative_id=spec.creative_id,
+        )
+        self.created_ads.append(ad)
+        return ad
+
+    def update_campaign_status(self, campaign_id, status):
+        prev = self._campaigns_by_id.get(campaign_id)
+        updated = AdCampaign(
+            id=campaign_id,
+            name=prev.name if prev else None,
+            objective=prev.objective if prev else None,
+            status=status,
+            effective_status=status,
+        )
+        self._campaigns_by_id[campaign_id] = updated
+        return updated
+
+    def update_ad_set_budget(self, ad_set_id, daily_budget):
+        prev = self._ad_sets_by_id.get(ad_set_id)
+        updated = AdSet(
+            id=ad_set_id,
+            name=prev.name if prev else None,
+            status=prev.status if prev else None,
+            effective_status=prev.effective_status if prev else None,
+            campaign_id=prev.campaign_id if prev else None,
+            daily_budget=daily_budget,
+            billing_event=prev.billing_event if prev else None,
+            optimization_goal=prev.optimization_goal if prev else None,
+            targeting=dict(prev.targeting) if prev else {},
+        )
+        self._ad_sets_by_id[ad_set_id] = updated
+        return updated
 
 
 __all__ = ["FakeMetaAdapter"]

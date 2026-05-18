@@ -21,8 +21,13 @@ calls in one request share the round trip.
 
 Write/ads surface: `publish_facebook_post`,
 `publish_instagram_media` (the 2-step container → `media_publish`
-flow), `list_ad_campaigns`, `ad_insights`. These were added
-additively — the read methods above are unchanged. **Scope gating:**
+flow), `list_ad_campaigns`, `ad_insights`, plus the ads-*management*
+graph — `create_ad_campaign` / `create_ad_set` / `create_ad_creative`
+/ `create_ad` (campaign→adset→ad→creative) + `update_campaign_status`
+/ `update_ad_set_budget` (the update endpoints return
+`{"success": true}` only, so the post-update state is read back).
+These were added additively — the read methods above are unchanged.
+**Scope gating:**
 Meta gates the write scopes (`pages_manage_posts`,
 `instagram_content_publish`) and ads scopes (`ads_read`,
 `ads_management`) behind App Review. When the active token lacks the
@@ -58,8 +63,15 @@ from noctusai_lib.integrations.meta.mappers import (
     post_from_body,
 )
 from noctusai_lib.integrations.meta.types import (
+    Ad,
     AdCampaign,
+    AdCreative,
+    AdCreativeSpec,
     AdInsights,
+    AdSet,
+    AdSetSpec,
+    AdSpec,
+    CampaignSpec,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
@@ -74,6 +86,10 @@ from noctusai_lib.integrations.meta.types import (
 # Graph rejects unknown fields, so this is a conservative core set.
 _AD_INSIGHT_FIELDS = "impressions,reach,spend,clicks,cpc,cpm,ctr"
 _AD_CAMPAIGN_FIELDS = "id,name,objective,status,effective_status"
+_AD_SET_FIELDS = (
+    "id,name,status,effective_status,campaign_id,"
+    "daily_budget,billing_event,optimization_goal,targeting"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -514,6 +530,242 @@ class MetaOAuthAdapter:
             level=level,
             metrics=metrics,
             raw=list(rows),
+        )
+    # ─── Ads management surface (additive — read/insights/posting
+    #     unchanged; mutations use the App-Review-gated
+    #     ``ads_management`` scope, distinct from ``ads_read``) ───────
+
+    def create_ad_campaign(
+        self, ad_account_id: str, spec: CampaignSpec
+    ) -> AdCampaign:
+        """Create an ad campaign under an ad account (campaign→adset→ad
+        →creative graph, step 1).
+
+        `POST act_{id}/campaigns` with name / objective / status /
+        special_ad_categories (Graph wants the categories JSON-encoded;
+        an empty list is the mandatory explicit "none"). **Production
+        gate:** the `ads_management` scope is App-Review-gated (distinct
+        from the `ads_read` scope the read/insights surface uses).
+        Absent it Graph returns a permission error and `graph_post`
+        raises `MetaGraphError` with `requires_app_review` true — never
+        a faked success."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        body = _meta_api.graph_post(
+            f"{acct}/campaigns",
+            access_token=self._user_token(),
+            data={
+                "name": spec.name,
+                "objective": spec.objective,
+                "status": spec.status,
+                "special_ad_categories": json.dumps(
+                    list(spec.special_ad_categories)
+                ),
+            },
+            version=self._version,
+        )
+        campaign_id = str(body.get("id") or "")
+        if not campaign_id:
+            raise MetaGraphError(
+                f"Campaign create under {acct} returned no id", code=200
+            )
+        return AdCampaign(
+            id=campaign_id,
+            name=spec.name,
+            objective=spec.objective,
+            status=spec.status,
+        )
+
+    def create_ad_set(
+        self, ad_account_id: str, spec: AdSetSpec
+    ) -> AdSet:
+        """Create an ad set under an ad account (graph step 2 — binds
+        to a parent `campaign_id`).
+
+        `POST act_{id}/adsets`. `daily_budget` is the account's minor
+        currency unit (cents); `targeting` is passed through as JSON.
+        Same `ads_management` App-Review gate as `create_ad_campaign`."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        body = _meta_api.graph_post(
+            f"{acct}/adsets",
+            access_token=self._user_token(),
+            data={
+                "name": spec.name,
+                "campaign_id": spec.campaign_id,
+                "daily_budget": spec.daily_budget,
+                "billing_event": spec.billing_event,
+                "optimization_goal": spec.optimization_goal,
+                "targeting": json.dumps(dict(spec.targeting)),
+                "status": spec.status,
+            },
+            version=self._version,
+        )
+        ad_set_id = str(body.get("id") or "")
+        if not ad_set_id:
+            raise MetaGraphError(
+                f"Ad set create under {acct} returned no id", code=200
+            )
+        return AdSet(
+            id=ad_set_id,
+            name=spec.name,
+            status=spec.status,
+            campaign_id=spec.campaign_id,
+            daily_budget=spec.daily_budget,
+            billing_event=spec.billing_event,
+            optimization_goal=spec.optimization_goal,
+            targeting=dict(spec.targeting),
+        )
+
+    def create_ad_creative(
+        self, ad_account_id: str, spec: AdCreativeSpec
+    ) -> AdCreative:
+        """Create an ad creative under an ad account (graph step 3).
+
+        `POST act_{id}/adcreatives`. `object_story_spec` is passed
+        through as JSON. Same `ads_management` App-Review gate."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        body = _meta_api.graph_post(
+            f"{acct}/adcreatives",
+            access_token=self._user_token(),
+            data={
+                "name": spec.name,
+                "object_story_spec": json.dumps(
+                    dict(spec.object_story_spec)
+                ),
+            },
+            version=self._version,
+        )
+        creative_id = str(body.get("id") or "")
+        if not creative_id:
+            raise MetaGraphError(
+                f"Ad creative create under {acct} returned no id",
+                code=200,
+            )
+        return AdCreative(
+            id=creative_id,
+            name=spec.name,
+            object_story_spec=dict(spec.object_story_spec),
+        )
+
+    def create_ad(self, ad_account_id: str, spec: AdSpec) -> Ad:
+        """Create an ad under an ad account (graph leaf — binds an
+        `adset_id` to a `creative_id`).
+
+        `POST act_{id}/ads`. Same `ads_management` App-Review gate."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        body = _meta_api.graph_post(
+            f"{acct}/ads",
+            access_token=self._user_token(),
+            data={
+                "name": spec.name,
+                "adset_id": spec.adset_id,
+                "creative": json.dumps({"creative_id": spec.creative_id}),
+                "status": spec.status,
+            },
+            version=self._version,
+        )
+        ad_id = str(body.get("id") or "")
+        if not ad_id:
+            raise MetaGraphError(
+                f"Ad create under {acct} returned no id", code=200
+            )
+        return Ad(
+            id=ad_id,
+            name=spec.name,
+            status=spec.status,
+            adset_id=spec.adset_id,
+            creative_id=spec.creative_id,
+        )
+
+    def update_campaign_status(
+        self, campaign_id: str, status: str
+    ) -> AdCampaign:
+        """Pause / activate a campaign (`POST /{campaign-id}` with the
+        `status` field). Same `ads_management` App-Review gate.
+
+        The Graph status-update endpoint returns `{"success": true}`,
+        not the campaign object, so the post-update state is read back
+        with a follow-up `graph_get` (the read-back is part of the
+        contract — a status flip without confirmation would be a
+        silent half-success)."""
+
+        _meta_api.graph_post(
+            f"{campaign_id}",
+            access_token=self._user_token(),
+            data={"status": status},
+            version=self._version,
+        )
+        body = _meta_api.graph_get(
+            f"{campaign_id}",
+            access_token=self._user_token(),
+            params={"fields": _AD_CAMPAIGN_FIELDS},
+            version=self._version,
+        )
+        return AdCampaign(
+            id=str(body.get("id") or campaign_id),
+            name=body.get("name"),
+            objective=body.get("objective"),
+            status=body.get("status"),
+            effective_status=body.get("effective_status"),
+        )
+
+    def update_ad_set_budget(
+        self, ad_set_id: str, daily_budget: int
+    ) -> AdSet:
+        """Update an ad set's daily budget (`POST /{adset-id}` with
+        `daily_budget`, the account's minor currency unit). Same
+        `ads_management` App-Review gate. The post-update state is read
+        back (the update endpoint returns `{"success": true}` only)."""
+
+        _meta_api.graph_post(
+            f"{ad_set_id}",
+            access_token=self._user_token(),
+            data={"daily_budget": daily_budget},
+            version=self._version,
+        )
+        body = _meta_api.graph_get(
+            f"{ad_set_id}",
+            access_token=self._user_token(),
+            params={"fields": _AD_SET_FIELDS},
+            version=self._version,
+        )
+        return AdSet(
+            id=str(body.get("id") or ad_set_id),
+            name=body.get("name"),
+            status=body.get("status"),
+            effective_status=body.get("effective_status"),
+            campaign_id=body.get("campaign_id"),
+            daily_budget=body.get("daily_budget"),
+            billing_event=body.get("billing_event"),
+            optimization_goal=body.get("optimization_goal"),
+            targeting=body.get("targeting") or {},
         )
 
 
