@@ -23,6 +23,7 @@ from .bootstrap import (
 )
 from .errors import typed_error
 from .registry import build_registry
+from .seed_pin import pin_in_tree_seed
 from .settings import ConnectorSettings, make_get_settings
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "build_registry",
     "typed_error",
     "prepare_sys_path",
+    "pin_in_tree_seed",
     "configure_stderr_logging",
     "run_stdio_server",
 ]

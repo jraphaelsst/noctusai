@@ -28,6 +28,15 @@ TWO-key payload `{"error_class", "message"}` (NO `status`). The THREE-key
 reaches this catch-all. To honour the ZERO-behavior-change contract, this
 loop preserves the exact 2-key server-level shape; `typed_error` stays the
 shared helper for the tool-handler internals where the 3-key shape lives.
+
+NOTE on the in-tree seed pin. `prepare_sys_path` ALSO pins `noctusai_lib`
+to the connector's own worktree seed (`_kit.seed_pin.pin_in_tree_seed`)
+BEFORE returning — so every connector server/test that calls it inherits
+the editable-install-stale-pin fix by construction instead of
+hand-rolling a copy (N=2 → DRY recurrence; see `_kit/seed_pin.py`). The
+ordering contract: `prepare_sys_path(server_file)` must run BEFORE the
+connector imports `noctusai_lib` (it already must run before importing
+the connector package, which transitively imports `noctusai_lib`).
 """
 from __future__ import annotations
 
@@ -36,12 +45,45 @@ import logging
 import sys
 from pathlib import Path
 
+from .seed_pin import pin_in_tree_seed
+
 
 def prepare_sys_path(server_file: str | Path) -> None:
     """Insert the `mcp/` dir (parents[1] of the connector's server.py)
-    at the front of sys.path. Idempotent-ish: mirrors vista's original
-    `sys.path.insert(0, str(Path(__file__).resolve().parents[1]))`."""
-    sys.path.insert(0, str(Path(server_file).resolve().parents[1]))
+    at the front of sys.path, then pin `noctusai_lib` to this worktree's
+    in-tree seed.
+
+    Two responsibilities, in order:
+
+    1. `sys.path.insert(0, .../mcp)` — mirrors vista's original
+       `sys.path.insert(0, str(Path(__file__).resolve().parents[1]))`
+       so the connector package imports as a clean top-level name
+       (the PyPI-`mcp`-shadow trick).
+    2. `pin_in_tree_seed(server_file)` — evict any editable-install
+       `_EditableFinder` pinning `noctusai_lib` to a *different, stale*
+       worktree, purge stale cached modules, prepend the in-tree
+       `seed/lib/backend`. Done LAST so the in-tree seed is `sys.path[0]`
+       and BEFORE the caller imports `noctusai_lib`. Without this, a
+       connector that resolves `noctusai_lib` against a stale agent
+       worktree silently fails on freshly-added seed symbols.
+
+    Idempotent: the `mcp/` insert mirrors vista's repeatable insert and
+    the seed pin dedupes its own `sys.path` entry + no-ops on absent
+    finders."""
+    resolved = Path(server_file).resolve()
+    sys.path.insert(0, str(resolved.parents[1]))
+    try:
+        pin_in_tree_seed(resolved)
+    except RuntimeError as exc:
+        # No in-tree seed found walking up from the connector — there is
+        # then nothing to pin (no editable-install stale-pin hazard in
+        # this layout). Non-fatal but LOUD: the `sys.path` insert above
+        # still stands and `noctusai_lib` resolves however the
+        # environment provides it. NOT a silent except — the reason is
+        # surfaced at WARNING with the path that was searched.
+        logging.getLogger("connector-kit.bootstrap").warning(
+            "prepare_sys_path: in-tree seed pin skipped — %s", exc
+        )
 
 
 def configure_stderr_logging(logger_name: str) -> logging.Logger:
@@ -123,4 +165,9 @@ async def run_stdio_server(
         )
 
 
-__all__ = ["prepare_sys_path", "configure_stderr_logging", "run_stdio_server"]
+__all__ = [
+    "prepare_sys_path",
+    "pin_in_tree_seed",
+    "configure_stderr_logging",
+    "run_stdio_server",
+]
