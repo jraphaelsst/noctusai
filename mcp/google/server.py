@@ -32,6 +32,31 @@ from pathlib import Path
 #    connector imports its modules flat (mcp/noctusai uses the same
 #    self-dir-on-path strategy) rather than as a `google.` package.
 _HERE = Path(__file__).resolve()
+
+# 3. `seed/lib/backend` — resolve `noctusai_lib` from the seed IN THIS
+#    TREE. A repo-wide editable install registers a `_EditableFinder`
+#    MetaPathFinder that hard-pins `noctusai_lib` to whatever worktree it
+#    was last installed from (possibly a *different*, now-stale
+#    `agent-*` tree). `sys.meta_path` is consulted BEFORE `sys.path`, so
+#    a plain insert can't override it — evict any editable finder whose
+#    pinned path is OUTSIDE this tree + drop stale cached modules, then
+#    prepend the in-tree seed. Pure import wiring (same category as the
+#    `google`-namespace flat-import trick); touches no product code.
+_SEED_BACKEND = str(_HERE.parents[2] / "seed" / "lib" / "backend")
+for _finder in list(sys.meta_path):
+    _m = getattr(_finder, "_mapping", None) or getattr(_finder, "MAPPING", None)
+    if not isinstance(_m, dict):
+        continue
+    _p = _m.get("noctusai_lib")
+    _ps = _p if isinstance(_p, str) else (
+        _p[0] if isinstance(_p, (list, tuple)) and _p else None
+    )
+    if _ps and _SEED_BACKEND not in str(_ps):
+        sys.meta_path.remove(_finder)
+for _name in list(sys.modules):
+    if _name == "noctusai_lib" or _name.startswith("noctusai_lib."):
+        del sys.modules[_name]
+sys.path.insert(0, _SEED_BACKEND)
 sys.path.insert(0, str(_HERE.parents[1]))   # mcp/   → _kit
 sys.path.insert(0, str(_HERE.parent))       # mcp/google/ → tools/settings/types
 

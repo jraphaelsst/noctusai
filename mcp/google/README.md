@@ -25,7 +25,7 @@ mcp/google/
     calendar.py    # google.calendar.{create_event,list_events}
     maps.py        # google.maps.travel_estimate
     youtube.py     # google.youtube.{get_channel,list_channel_videos,get_video,upload_video}
-    drive.py       # google.drive.{parse_url,get_metadata,download}
+    drive.py       # google.drive.{parse_url,get_metadata,download,search,read_file}
   tests/test_smoke.py
   .env.example
 ```
@@ -64,7 +64,7 @@ Deferred-config: the server starts with NONE set. Read tools then
 resolve against the seed-lib Fakes (`adapter: "fake"` / `"static"`);
 OAuth-only writes return a typed error.
 
-## Tools (10)
+## Tools (12)
 
 | Tool | Kind | Notes |
 |---|---|---|
@@ -74,10 +74,12 @@ OAuth-only writes return a typed error.
 | `google.youtube.get_channel` | read | quota: 1 unit |
 | `google.youtube.list_channel_videos` | read | quota: ~2 units / 50 videos — **~50× cheaper than `search.list`**; prefer for channel browsing |
 | `google.youtube.get_video` | read | quota: 1 unit |
-| `google.youtube.upload_video` | WRITE | `confirm=true` gate + audit; OAuth-only; **lib gap, see below** |
+| `google.youtube.upload_video` | WRITE | `confirm=true` gate + OAuth-trio check + audit; **REAL** against `YoutubeClient.upload_video` (resumable `videos.insert`, **1600 quota**); no OAuth ⇒ typed `PermissionError`, never a faked success |
 | `google.drive.parse_url` | pure | URL/id → file id (≥20-char id contract) |
 | `google.drive.get_metadata` | read | null ⇒ missing OR inaccessible (Drive 404s both) |
 | `google.drive.download` | read | streams bytes to a local path |
+| `google.drive.search` | read | `DriveReader` name+full-text search; hits carry `capabilities` + IMMUTABLE `web_view_link` |
+| `google.drive.read_file` | read | `DriveReader` export/stream + `stats` from `compute_content_stats` — the LLM-recount-trap defense; binary types deferred to the media seam |
 
 Every tool renders failures through `_kit.errors.typed_error`
 (`{error_class, message, status}`).
@@ -90,40 +92,52 @@ typed `PermissionError` and Google state is left untouched
 (`KB § PATTERNS/llm-bot-security.md`). Both also emit a structured
 `google.audit` log line on the attempt + outcome.
 
-## Seed-lib gaps surfaced at build (Wave-3 follow-ups)
+## Seed-lib coverage (verified 2026-05-18, post-absorption base)
 
-Verified 2026-05-17 against `noctusai_lib.integrations.*` (`__init__`
-exports + every adapter module):
+All 12 tools are REAL against shipped `noctusai_lib.integrations.*`
+Fake+Real+factory surfaces — no stubs, no `NotImplementedError`:
 
-1. **YouTube has no uploader.** The seed `YoutubeClient`
-   Protocol / `FakeYoutubeClient` / `make_youtube_client` ship
-   `get_channel` / `list_channel_videos` / `get_video` / `search`
-   only — no upload method. `google.youtube.upload_video` is registered
-   with the full WRITE contract (confirm gate + OAuth check + audit)
-   but, once those pass, returns a typed `NotImplementedError` pointing
-   at the gap. It NEVER fakes an upload success (no-silent-error). A
-   real resumable-upload adapter (1600-quota `MediaFileUpload`) belongs
-   in the seed lib, not in `mcp/` (no-connector-logic rule).
+1. **YouTube upload is real.** The seed `YoutubeClient.upload_video`
+   (Protocol + `FakeYoutubeClient` recording `.uploaded` +
+   `RealYoutubeClient` resumable `videos.insert` + `make_youtube_client`
+   factory) ships on this base. `google.youtube.upload_video` keeps the
+   WRITE contract — `confirm=true` gate → OAuth-trio check → build the
+   `google.oauth2.credentials.Credentials`-backed client → upload →
+   shape — and emits `google.audit` lines on attempt + outcome. No
+   OAuth ⇒ typed `PermissionError` (an API key cannot authorize
+   uploads); NEVER a faked success.
 
-2. **Drive ships only the downloader, no reader.** The brief specified
-   `google.drive.search` + `google.drive.read_file` via
-   `make_drive_reader` (+ `compute_content_stats` for the LLM-recount
-   trap) and `FakeDriveReader`. None of `make_drive_reader` /
-   `FakeDriveReader` / `DriveReader` / `compute_content_stats` /
-   `read_file` / `search` exist anywhere in
-   `noctusai_lib.integrations.google_drive` — the `DriveDownloader`
-   Protocol docstring itself states list/read are "explicitly out of
-   scope until the second consumer arrives". Those two tools are
-   therefore NOT registered (registering them would force a
-   connector-side reader fork — wrong layer). `parse_url` /
-   `get_metadata` / `download` ARE real and complete against the
-   shipped Fake+Real downloader surface.
+2. **Drive reader is real.** The sibling `DriveReader` surface
+   (`make_drive_reader` / `FakeDriveReader` / `DriveReader` /
+   `DriveSearchResult` / `DriveFileContent` / `compute_content_stats`,
+   added 2026-05-16 by the social-wiring absorption Wave 1.E3) backs
+   `google.drive.search` + `google.drive.read_file`. `read_file`
+   attaches `compute_content_stats(...)` as `stats` (the
+   LLM-recount-trap defense; binary types are NOT decoded — deferred to
+   the media seam). The download surface (`parse_url` / `get_metadata`
+   / `download`) is the other sibling Protocol, untouched.
 
 `gmail` is explicitly out of scope (no seed lib) and was not built.
+
+### In-tree `noctusai_lib` resolution (structural note)
+
+A repo-wide editable install (`pip install -e seed/lib/backend`)
+registers a `_EditableFinder` on `sys.meta_path` that hard-pins
+`noctusai_lib` to whatever worktree it was last installed from — which,
+in a multi-worktree agent setup, may be a *different* (now-stale)
+`.claude/worktrees/agent-*` tree missing a freshly-added seed symbol.
+`sys.meta_path` is consulted BEFORE `sys.path`, so a plain
+`sys.path.insert` cannot override it. `server.py` and `conftest.py`
+therefore evict any editable finder whose pinned `noctusai_lib` path is
+OUTSIDE this tree, drop stale cached `noctusai_lib*` modules, and
+prepend this tree's `seed/lib/backend`. Pure import wiring — same
+category as the `google`-namespace flat-import trick; touches no
+product code. A connector must run/test against the seed in its own
+tree.
 
 ## Run
 
 ```
 python mcp/google/server.py                 # stdio server
-python -m pytest mcp/google/tests/ -q       # 22 tests, deterministic, no network
+python -m pytest mcp/google/tests/ -q       # 27 tests, deterministic, no network
 ```

@@ -76,6 +76,8 @@ def test_exact_tool_name_set():
         "google.drive.parse_url",
         "google.drive.get_metadata",
         "google.drive.download",
+        "google.drive.search",
+        "google.drive.read_file",
     }
 
 
@@ -235,25 +237,81 @@ def test_youtube_upload_blocked_without_confirm():
 
 
 def test_youtube_upload_confirm_but_no_oauth_returns_oauth_error():
+    """confirm passed but NO OAuth trio ⇒ typed PermissionError; an API
+    key cannot authorize uploads. NEVER a faked success."""
     h = all_handlers()
-    out = _run(h["google.youtube.upload_video"]({"confirm": True}))
+    out = _run(
+        h["google.youtube.upload_video"](
+            {"confirm": True, "file_path": "/tmp/v.mp4", "title": "T"}
+        )
+    )
     assert out["uploaded"] is False
+    assert out["video"] is None
+    assert out["adapter"] == "real"
     assert out["error"]["error_class"] == "PermissionError"
     assert "OAuth" in out["error"]["message"]
 
 
-def test_youtube_upload_lib_gap_is_not_silently_faked(monkeypatch):
-    """With confirm+OAuth configured, the LIB GAP surfaces as a typed
-    NotImplementedError — NEVER a fake success (no-silent-error)."""
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "cid")
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "sec")
-    monkeypatch.setenv("GOOGLE_OAUTH_REFRESH_TOKEN", "rt")
-    gsettings.get_settings.cache_clear()
-    h = all_handlers()
-    out = _run(h["google.youtube.upload_video"]({"confirm": True}))
+def test_youtube_upload_real_path_against_fake_records_uploaded():
+    """The REAL handler path — confirm gate + client + audit + shaping —
+    exercised against an injected FakeYoutubeClient (records `.uploaded`)
+    via the connector's dependency-injection test seam (NOT a
+    monkeypatch of our own guard)."""
+    from noctusai_lib.integrations.youtube import FakeYoutubeClient
+    from tools import youtube as yt_tool
+
+    fake = FakeYoutubeClient()
+    yt_tool.configure_upload_client(fake)
+    try:
+        h = all_handlers()
+        out = _run(
+            h["google.youtube.upload_video"](
+                {
+                    "confirm": True,
+                    "file_path": "/tmp/clip.mp4",
+                    "title": "x" * 130,  # adapter clips to 100
+                    "description": "demo",
+                    "tags": ["a", "b"],
+                    "privacy_status": "unlisted",
+                }
+            )
+        )
+    finally:
+        yt_tool.configure_upload_client(None)
+
+    assert out["uploaded"] is True
+    assert out["adapter"] == "real"
+    assert "error" not in out
+    assert out["video"]["video_id"] == "fake-upload-1"
+    assert out["video"]["privacy_status"] == "unlisted"
+    assert len(out["video"]["title"]) == 100  # TITLE_MAX_LEN clip
+    assert out["video"]["quota_units_consumed"] == 1600
+    # Recorded on the fake — the real handler path actually called it.
+    assert len(fake.uploaded) == 1
+    assert fake.uploaded[0].video_id == "fake-upload-1"
+
+
+def test_youtube_upload_blocked_without_confirm_skips_client():
+    """confirm gate fires BEFORE any client is built/injected — an
+    injected client must NOT be called when confirm is omitted."""
+    from noctusai_lib.integrations.youtube import FakeYoutubeClient
+    from tools import youtube as yt_tool
+
+    fake = FakeYoutubeClient()
+    yt_tool.configure_upload_client(fake)
+    try:
+        h = all_handlers()
+        out = _run(
+            h["google.youtube.upload_video"](
+                {"file_path": "/tmp/v.mp4", "title": "T"}
+            )
+        )
+    finally:
+        yt_tool.configure_upload_client(None)
     assert out["uploaded"] is False
-    assert out["error"]["error_class"] == "NotImplementedError"
-    assert "no upload method" in out["error"]["message"]
+    assert out["adapter"] == "unconfirmed"
+    assert out["error"]["error_class"] == "PermissionError"
+    assert fake.uploaded == []  # gate short-circuited before the client
 
 
 # ─── Drive ───────────────────────────────────────────────────────────────
@@ -313,6 +371,88 @@ def test_drive_download_fake_missing_returns_typed_error(tmp_path):
     assert out["adapter"] == "fake"
     assert out["file"] is None
     assert out["error"]["error_class"] == "FileNotFoundError"
+
+
+# ─── Drive reader (search / read_file) ───────────────────────────────────
+
+
+def test_drive_search_fake_empty_no_creds():
+    """No creds ⇒ FakeDriveReader; no seeded files ⇒ empty hits, no
+    error envelope, adapter='fake'."""
+    h = all_handlers()
+    out = _run(h["google.drive.search"]({"query": "anything"}))
+    assert out["adapter"] == "fake"
+    assert out["hits"] == []
+    assert out["next_page_token"] is None
+    assert "error" not in out
+
+
+def test_drive_read_file_fake_missing_is_none_not_error():
+    """Missing/inaccessible ⇒ clean null result (Drive 404s both), NOT
+    an error envelope — mirrors get_metadata."""
+    h = all_handlers()
+    out = _run(h["google.drive.read_file"]({"file_id": "absent"}))
+    assert out["adapter"] == "fake"
+    assert out["content"] is None
+    assert out["stats"] == {}
+    assert "error" not in out
+
+
+def test_drive_read_file_csv_stats_defends_the_recount_trap():
+    """read_file returns Python-computed `stats` for CSV content — the
+    LLM-recount-trap defense. Exercised against an injected
+    FakeDriveReader via the connector's DI test seam."""
+    from noctusai_lib.integrations.google_drive import FakeDriveReader
+    from tools import drive as drive_tool
+
+    fake = FakeDriveReader()
+    csv = "Data,Ref\n1,ONE5597\n2,ONE5598\n3,ONE5599\n"
+    fake.add_file(
+        "sheet1", "Cronograma", csv.encode(),
+        mime_type="text/csv", rendered_as="text/csv",
+    )
+    drive_tool.configure_reader(fake)
+    try:
+        h = all_handlers()
+        sres = _run(h["google.drive.search"]({"query": "cronograma"}))
+        out = _run(h["google.drive.read_file"]({"file_id": "sheet1"}))
+    finally:
+        drive_tool.configure_reader(None)
+
+    assert sres["hits"][0]["id"] == "sheet1"
+    assert sres["hits"][0]["capabilities"] == {"canDownload": True}
+    assert out["content"]["rendered_as"] == "text/csv"
+    # stats is ground truth — 3 data rows under the header.
+    assert out["stats"]["csv_data_rows"] == 3
+    assert out["stats"]["csv_column_count"] == 2
+    assert out["stats"]["csv_header"] == "Data,Ref"
+    assert out["stats"]["total_lines"] == 4
+    assert "error" not in out
+
+
+def test_drive_read_file_binary_not_decoded():
+    """Binary content is NOT decoded — placeholder data + byte_length
+    note; extraction deferred to the media seam."""
+    from noctusai_lib.integrations.google_drive import FakeDriveReader
+    from tools import drive as drive_tool
+
+    fake = FakeDriveReader()
+    fake.add_file(
+        "pdf1", "report.pdf", b"%PDF-1.7\x00\x01binary",
+        mime_type="application/pdf", rendered_as="binary",
+    )
+    drive_tool.configure_reader(fake)
+    try:
+        h = all_handlers()
+        out = _run(h["google.drive.read_file"]({"file_id": "pdf1"}))
+    finally:
+        drive_tool.configure_reader(None)
+
+    assert out["content"]["rendered_as"] == "binary"
+    assert "not inlined" in out["content"]["data"]
+    assert out["stats"]["byte_length"] == len(b"%PDF-1.7\x00\x01binary")
+    assert "media seam" in out["stats"]["note"]
+    assert "error" not in out
 
 
 if __name__ == "__main__":

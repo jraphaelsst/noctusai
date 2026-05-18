@@ -6,22 +6,27 @@ Tools registered:
 - google.youtube.get_video           — READ, 1 quota unit.
 - google.youtube.upload_video        — WRITE, OAuth-only, 1600 quota units.
 
-Read tools compose `make_youtube_client(...)` from
+All tools compose `make_youtube_client(...)` from
 `noctusai_lib.integrations.youtube` — Fake by default (no api_key /
 OAuth), Real when credentials are configured.
 
 QUOTA NOTE (surfaced from the lib Protocol docstrings): YouTube's daily
 default is 10,000 units. `list_channel_videos` is ~50× cheaper than a
 `search.list`-style listing — prefer it for channel-scoped browsing.
+`upload_video` (`videos.insert`, resumable) costs 1600 units — the
+single most expensive call in the API (≈6 uploads exhaust a fresh
+daily quota).
 
-upload_video LIB GAP: the seed `YoutubeClient` Protocol / Fake / factory
-ship NO upload method (get_channel / list_channel_videos / get_video /
-search only — verified against
-`noctusai_lib.integrations.youtube.{protocol,fake,factory}.py` 2026-05-17).
-The tool is registered with the WRITE contract (confirm gate + audit
-log) but returns a typed error pointing at the lib gap rather than
-silently faking an upload success — building a real uploader belongs in
-a seed-lib follow-up, not in mcp/ (no-connector-logic-in-mcp rule).
+upload_video is REAL against the seed `YoutubeClient.upload_video`
+contract (verified 2026-05-17 against
+`noctusai_lib.integrations.youtube.{protocol,fake,factory,types}.py` on
+the post-absorption base — Protocol + `FakeYoutubeClient` (records
+`.uploaded`) + `RealYoutubeClient` + factory all ship the method).
+The tool keeps the WRITE contract: a required `confirm=true` gate, an
+OAuth-trio check (an API key cannot authorize uploads — the Real
+adapter raises `ValueError` without OAuth creds), and a `google.audit`
+log line. No creds ⇒ a typed error explaining the OAuth requirement
+(NEVER a faked success — no-silent-error).
 """
 from __future__ import annotations
 
@@ -30,7 +35,11 @@ import logging
 from mcp.server import Server
 from mcp.types import Tool
 
-from noctusai_lib.integrations.youtube import Video, make_youtube_client
+from noctusai_lib.integrations.youtube import (
+    Video,
+    VideoUpload,
+    make_youtube_client,
+)
 
 from _kit.errors import typed_error
 
@@ -43,6 +52,9 @@ from schemas import (
     GetVideoOutput,
     ListChannelVideosInput,
     ListChannelVideosOutput,
+    UploadedVideoModel,
+    UploadVideoInput,
+    UploadVideoOutput,
     VideoModel,
 )
 
@@ -59,6 +71,49 @@ def _client_and_kind():
             "real",
         )
     return make_youtube_client(use_fake=True), "fake"
+
+
+# Connector-side test seam (dependency injection, NOT monkeypatching):
+# `upload_video` builds its OAuth-delegated client through this slot so
+# a test can inject a `FakeYoutubeClient` (recording `.uploaded`) and
+# exercise the REAL handler path — gate + OAuth-check + audit + shaping —
+# without a network round-trip. Production leaves it None ⇒ the real
+# `google.oauth2.credentials.Credentials`-backed client is built. Mirrors
+# the FastAPI-dep-factory module-slot pattern used across the codebase
+# (default None, populated by an explicit configure call at request time).
+_upload_client_override = None
+
+
+def configure_upload_client(client) -> None:
+    """Inject the `YoutubeClient` `upload_video` uses (tests only).
+
+    Pass `None` to restore the production path (real OAuth client).
+    """
+    global _upload_client_override
+    _upload_client_override = client
+
+
+def _oauth_youtube_client(s):
+    """Build the OAuth-delegated Real `YoutubeClient` from the connector's
+    env/.env refresh-token trio.
+
+    Connector-side credential plumbing is the right layer: `_kit` owns
+    only generic boilerplate; vendor credential resolution stays
+    connector-side (the same boundary the calendar tool's
+    `_EnvOAuthResolver` draws). The lib's `RealYoutubeClient` accepts any
+    `google.oauth2.credentials.Credentials`-shaped object and refreshes
+    the access token on demand from the refresh_token."""
+    from google.oauth2.credentials import Credentials
+
+    creds = Credentials(
+        token=None,
+        refresh_token=s.oauth_refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=s.oauth_client_id,
+        client_secret=s.oauth_client_secret,
+        scopes=["https://www.googleapis.com/auth/youtube.upload"],
+    )
+    return make_youtube_client(oauth_credentials=creds)
 
 
 def _video_model(v: Video) -> VideoModel:
@@ -137,14 +192,14 @@ async def get_video(args: dict) -> dict:
 async def upload_video(args: dict) -> dict:
     """WRITE, OAuth-only, 1600 quota units. Confirm-gated + audited.
 
-    The seed YouTube client ships no upload method (verified lib gap —
-    see module docstring). We honor the WRITE contract (gate + audit)
-    but return a typed error rather than silently faking success."""
-    confirm = bool(args.get("confirm", False))
-    s = get_settings()
-
-    if not confirm:
-        return {"uploaded": False, "adapter": "unconfirmed"} | {
+    Real against the seed `YoutubeClient.upload_video` contract. Gate
+    order: confirm → OAuth-trio check → build client → upload → shape.
+    No OAuth creds ⇒ a typed `PermissionError` (an API key cannot
+    authorize uploads) — NEVER a faked success (no-silent-error)."""
+    if not bool(args.get("confirm", False)):
+        return UploadVideoOutput(
+            uploaded=False, video=None, adapter="unconfirmed"
+        ).model_dump() | {
             "error": typed_error(
                 PermissionError(
                     "google.youtube.upload_video is a WRITE — re-call with "
@@ -153,35 +208,68 @@ async def upload_video(args: dict) -> dict:
             )
         }
 
-    if not s.oauth_configured:
-        return {"uploaded": False, "adapter": "real"} | {
-            "error": typed_error(
-                PermissionError(
-                    "google.youtube.upload_video requires the OAuth "
-                    "user-delegated trio (GOOGLE_OAUTH_CLIENT_ID / "
-                    "GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN); "
-                    "an API key cannot authorize uploads."
+    inp = UploadVideoInput(**args)
+    s = get_settings()
+
+    client = _upload_client_override
+    if client is None:
+        if not s.oauth_configured:
+            return UploadVideoOutput(
+                uploaded=False, video=None, adapter="real"
+            ).model_dump() | {
+                "error": typed_error(
+                    PermissionError(
+                        "google.youtube.upload_video requires the OAuth "
+                        "user-delegated trio (GOOGLE_OAUTH_CLIENT_ID / "
+                        "GOOGLE_OAUTH_CLIENT_SECRET / "
+                        "GOOGLE_OAUTH_REFRESH_TOKEN); an API key cannot "
+                        "authorize uploads."
+                    )
                 )
-            )
-        }
+            }
+        client = _oauth_youtube_client(s)
 
     _audit.info(
         "AUDIT google.youtube.upload_video adapter=real confirm=true "
-        "(LIB GAP — no seed uploader; returning typed error)"
+        "file_path=%s privacy=%s (1600-quota videos.insert attempt)",
+        inp.file_path,
+        inp.privacy_status,
     )
-    return {"uploaded": False, "adapter": "real"} | {
-        "error": typed_error(
-            NotImplementedError(
-                "Seed YouTube client ships no upload method "
-                "(noctusai_lib.integrations.youtube exposes get_channel / "
-                "list_channel_videos / get_video / search only). A real "
-                "uploader (resumable MediaFileUpload, 1600-quota) must be "
-                "added to the seed lib before this tool can execute — "
-                "filed as a Wave-3 seed-lib follow-up. mcp/ holds no "
-                "connector logic by rule."
-            )
+    try:
+        result: VideoUpload = await client.upload_video(
+            file_path=inp.file_path,
+            title=inp.title,
+            description=inp.description,
+            tags=inp.tags or None,
+            privacy_status=inp.privacy_status,  # type: ignore[arg-type]
+            category_id=inp.category_id,
         )
-    }
+    except Exception as e:  # noqa: BLE001
+        _audit.warning(
+            "AUDIT google.youtube.upload_video FAILED file_path=%s error=%s",
+            inp.file_path,
+            type(e).__name__,
+        )
+        return UploadVideoOutput(
+            uploaded=False, video=None, adapter="real"
+        ).model_dump() | {"error": typed_error(e)}
+
+    _audit.info(
+        "AUDIT google.youtube.upload_video OK video_id=%s quota=%d",
+        result.video_id,
+        result.quota_units_consumed,
+    )
+    return UploadVideoOutput(
+        uploaded=True,
+        video=UploadedVideoModel(
+            video_id=result.video_id,
+            title=result.title,
+            url=result.url,
+            privacy_status=result.privacy_status,
+            quota_units_consumed=result.quota_units_consumed,
+        ),
+        adapter="real",
+    ).model_dump()
 
 
 # ─── Registration ───────────────────────────────────────────────────────
@@ -232,23 +320,17 @@ def tool_descriptors() -> list[Tool]:
         Tool(
             name="google.youtube.upload_video",
             description=(
-                "Upload a video. WRITE side-effect, OAuth-only, QUOTA: "
-                "1600 units. You MUST pass confirm=true or the call is "
-                "refused. Requires the OAuth trio (an API key cannot "
-                "authorize uploads). NOTE: the seed YouTube client ships "
-                "no uploader yet — this returns a typed NotImplementedError "
-                "(Wave-3 seed-lib follow-up); it never fakes success."
+                "Upload a local video file to YouTube (resumable "
+                "videos.insert). WRITE side-effect, OAuth-only, QUOTA: "
+                "1600 units — the single most expensive call in the API "
+                "(≈6 uploads exhaust a fresh 10,000/day quota). You MUST "
+                "pass confirm=true or the call is refused. Requires the "
+                "OAuth trio (an API key cannot authorize uploads). "
+                "Defaults privacy_status to 'private' — upload public/"
+                "unlisted ONLY if the user explicitly asked. The attempt "
+                "and outcome are written to the google.audit log."
             ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "WRITE GATE — must be true.",
-                    },
-                },
-                "required": ["confirm"],
-            },
+            inputSchema=UploadVideoInput.model_json_schema(),
         ),
     ]
 
