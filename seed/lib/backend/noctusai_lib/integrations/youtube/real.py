@@ -30,6 +30,7 @@ from noctusai_lib.integrations.youtube.types import (
     Channel,
     ListResult,
     PrivacyStatus,
+    ProcessingStatus,
     Video,
     VideoUpload,
 )
@@ -410,6 +411,82 @@ class RealYoutubeClient:
             url=f"https://www.youtube.com/watch?v={video_id}",
             privacy_status=privacy_status,
             quota_units_consumed=UPLOAD_QUOTA_UNITS,
+        )
+
+    async def set_thumbnail(
+        self,
+        *,
+        video_id: str,
+        thumbnail_path: str,
+        mime_type: str = "image/jpeg",
+    ) -> None:
+        """**50 quota units** (`thumbnails.set`).
+
+        Requires OAuth credentials — `thumbnails.set` is a write call;
+        an API-key-only client cannot upload thumbnails. Raises
+        `ValueError` at call time when no OAuth credentials were
+        supplied (fail loud, per the no-silent-errors rule).
+
+        The local file is streamed via a `MediaFileUpload` matching the
+        `upload_video` shape so memory pressure stays bounded for the
+        2MB ceiling YouTube enforces server-side."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.set_thumbnail requires oauth_credentials "
+                "(thumbnails.set is a write; an API key cannot upload)"
+            )
+
+        media = MediaFileUpload(thumbnail_path, mimetype=mime_type, resumable=False)
+        try:
+            self._service().thumbnails().set(
+                videoId=video_id, media_body=media
+            ).execute()
+        except HttpError as exc:
+            logger.warning(
+                "youtube.set_thumbnail_http_error video_id=%s status=%s",
+                video_id,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+    async def get_processing_status(self, video_id: str) -> ProcessingStatus:
+        """**1 quota unit** (`videos.list?part=status,processingDetails&id=<vid>`).
+
+        Returns a :class:`ProcessingStatus` echoing the queried
+        ``video_id``. Unknown / API-omitted field values are surfaced
+        as the explicit ``"unknown"`` literal. Raises ``ValueError``
+        when ``videos.list`` returns no items (deleted / never finished
+        uploading) so the caller branches on a real exception, not a
+        sentinel."""
+        try:
+            response = (
+                self._service()
+                .videos()
+                .list(part="status,processingDetails", id=video_id)
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.get_processing_status_http_error video_id=%s status=%s",
+                video_id,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        items = response.get("items") or []
+        if not items:
+            raise ValueError(
+                f"videos.list returned no items for video_id={video_id!r} — "
+                "may have been deleted or never finished uploading."
+            )
+        item = items[0]
+        status_block = item.get("status", {}) or {}
+        proc_block = item.get("processingDetails", {}) or {}
+        return ProcessingStatus(
+            video_id=video_id,
+            upload_status=status_block.get("uploadStatus") or "unknown",
+            processing_status=proc_block.get("processingStatus") or "unknown",
+            privacy_status=status_block.get("privacyStatus") or "unknown",
         )
 
 

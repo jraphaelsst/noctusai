@@ -40,6 +40,7 @@ from noctusai_lib.integrations.youtube.types import (
     ListResult,
     Playlist,
     PrivacyStatus,
+    ProcessingStatus,
     Video,
     VideoUpload,
 )
@@ -68,6 +69,16 @@ class FakeYoutubeClient:
         """Every `upload_video` call appends here, in order — tests
         assert against it without going near googleapiclient."""
         self._upload_seq: int = 0
+        self.thumbnails_set: list[dict[str, str]] = []
+        """Every `set_thumbnail` call appends a ``{video_id, thumbnail_path,
+        mime_type}`` dict here, in order — tests assert against it
+        without going near googleapiclient."""
+        self.processing_states: dict[str, ProcessingStatus] = {}
+        """Seed per-video processing state. When ``video_id`` is absent,
+        :meth:`get_processing_status` returns the default
+        "uploaded + processing + private" state (matches the YouTube
+        behavior immediately after `videos.insert`). Tests pre-populate
+        this dict to assert terminal states."""
 
     # ---- Quota helper ----------------------------------------------------
 
@@ -182,7 +193,65 @@ class FakeYoutubeClient:
             quota_units_consumed=UPLOAD_QUOTA_UNITS,
         )
         self.uploaded.append(result)
+        # Seed a default "uploaded + processing" state so a follow-up
+        # get_processing_status sees the newly-uploaded video by id
+        # without the caller having to pre-populate processing_states.
+        self.processing_states.setdefault(
+            video_id,
+            ProcessingStatus(
+                video_id=video_id,
+                upload_status="uploaded",
+                processing_status="processing",
+                privacy_status=privacy_status,
+            ),
+        )
         return result
+
+    async def set_thumbnail(
+        self,
+        *,
+        video_id: str,
+        thumbnail_path: str,
+        mime_type: str = "image/jpeg",
+    ) -> None:
+        """50 quota units (mirrors `thumbnails.set`).
+
+        The fake never touches the filesystem — `thumbnail_path` is
+        recorded verbatim on `self.thumbnails_set` for post-hoc
+        assertions, alongside `video_id` + `mime_type`."""
+        self._charge(50)
+        self.thumbnails_set.append(
+            {
+                "video_id": video_id,
+                "thumbnail_path": thumbnail_path,
+                "mime_type": mime_type,
+            }
+        )
+
+    async def get_processing_status(self, video_id: str) -> ProcessingStatus:
+        """1 quota unit (mirrors `videos.list?part=status,processingDetails`).
+
+        Returns a pre-populated state from `self.processing_states`
+        when one was seeded for ``video_id``; otherwise returns a
+        sensible "freshly uploaded" default
+        (``upload_status="uploaded"``, ``processing_status="processing"``,
+        ``privacy_status="private"``). Raises ``ValueError`` when the
+        video id is the explicit sentinel ``"<missing>"`` — used by
+        tests asserting the missing-video branch."""
+        self._charge(1)
+        if video_id == "<missing>":
+            raise ValueError(
+                f"videos.list returned no items for video_id={video_id!r}"
+            )
+        state = self.processing_states.get(video_id)
+        if state is not None:
+            return state
+        return ProcessingStatus(
+            video_id=video_id,
+            upload_status="uploaded",
+            processing_status="processing",
+            privacy_status="private",
+        )
 
 
 __all__ = ["FakeYoutubeClient"]

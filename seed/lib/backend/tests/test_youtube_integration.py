@@ -25,6 +25,7 @@ from noctusai_lib.integrations.youtube import (
     FakeYoutubeClient,
     ListResult,
     Playlist,
+    ProcessingStatus,
     RealYoutubeClient,
     Video,
     YoutubeClient,
@@ -717,3 +718,333 @@ def test_fake_and_real_satisfy_upload_surface() -> None:
     real: YoutubeClient = RealYoutubeClient(api_key="x")
     assert hasattr(fake, "upload_video")
     assert hasattr(real, "upload_video")
+
+
+# ============================================================================
+# set_thumbnail — Fake
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fake_set_thumbnail_records_call_and_quota() -> None:
+    fake = FakeYoutubeClient()
+    await fake.set_thumbnail(
+        video_id="vid1",
+        thumbnail_path="/tmp/cover.jpg",
+        mime_type="image/jpeg",
+    )
+    assert fake.quota_units_consumed == 50
+    assert fake.thumbnails_set == [
+        {
+            "video_id": "vid1",
+            "thumbnail_path": "/tmp/cover.jpg",
+            "mime_type": "image/jpeg",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fake_set_thumbnail_accumulates_per_call() -> None:
+    """Three thumbnails → three records + 150 cumulative units."""
+    fake = FakeYoutubeClient()
+    for i in range(3):
+        await fake.set_thumbnail(
+            video_id=f"vid{i}", thumbnail_path=f"/tmp/t{i}.png", mime_type="image/png"
+        )
+    assert len(fake.thumbnails_set) == 3
+    assert fake.quota_units_consumed == 150
+    assert fake.thumbnails_set[2]["mime_type"] == "image/png"
+
+
+# ============================================================================
+# set_thumbnail — Real (mocked transport)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_real_set_thumbnail_requires_oauth() -> None:
+    client = RealYoutubeClient(api_key="key-only")
+    with pytest.raises(ValueError, match="requires oauth_credentials"):
+        await client.set_thumbnail(video_id="v", thumbnail_path="/tmp/x.jpg")
+
+
+@pytest.mark.asyncio
+async def test_real_set_thumbnail_calls_thumbnails_set_with_media() -> None:
+    creds = MagicMock()
+    service = MagicMock()
+    service.thumbnails.return_value.set.return_value.execute.return_value = {"kind": "ok"}
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch(
+        "noctusai_lib.integrations.youtube.real.MediaFileUpload"
+    ) as media_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        await client.set_thumbnail(
+            video_id="vidX",
+            thumbnail_path="/tmp/cover.jpg",
+            mime_type="image/jpeg",
+        )
+
+    media_mock.assert_called_once_with(
+        "/tmp/cover.jpg", mimetype="image/jpeg", resumable=False
+    )
+    set_kwargs = service.thumbnails.return_value.set.call_args.kwargs
+    assert set_kwargs["videoId"] == "vidX"
+    # media_body is the return value of MediaFileUpload
+    assert set_kwargs["media_body"] is media_mock.return_value
+
+
+@pytest.mark.asyncio
+async def test_real_set_thumbnail_logs_and_raises_on_http_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from googleapiclient.errors import HttpError
+
+    fake_resp = MagicMock()
+    fake_resp.status = 403
+    err = HttpError(resp=fake_resp, content=b"forbidden")
+
+    service = MagicMock()
+    service.thumbnails.return_value.set.return_value.execute.side_effect = err
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch(
+        "noctusai_lib.integrations.youtube.real.MediaFileUpload"
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        with caplog.at_level("WARNING"):
+            with pytest.raises(HttpError):
+                await client.set_thumbnail(video_id="vidX", thumbnail_path="/tmp/x.jpg")
+
+    assert any(
+        "youtube.set_thumbnail_http_error" in record.message for record in caplog.records
+    )
+
+
+# ============================================================================
+# get_processing_status — Fake
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fake_get_processing_status_default_for_unknown_video() -> None:
+    """Default state when video not in `processing_states`: uploaded + processing."""
+    fake = FakeYoutubeClient()
+    state = await fake.get_processing_status("brand-new-vid")
+    assert state.video_id == "brand-new-vid"
+    assert state.upload_status == "uploaded"
+    assert state.processing_status == "processing"
+    assert state.privacy_status == "private"
+    assert state.quota_units_consumed == 1
+    assert fake.quota_units_consumed == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_get_processing_status_returns_seeded_terminal_state() -> None:
+    fake = FakeYoutubeClient()
+    fake.processing_states["vidX"] = ProcessingStatus(
+        video_id="vidX",
+        upload_status="processed",
+        processing_status="succeeded",
+        privacy_status="public",
+    )
+    state = await fake.get_processing_status("vidX")
+    assert state.upload_status == "processed"
+    assert state.processing_status == "succeeded"
+    assert state.privacy_status == "public"
+
+
+@pytest.mark.asyncio
+async def test_fake_get_processing_status_failed_state() -> None:
+    fake = FakeYoutubeClient()
+    fake.processing_states["vidF"] = ProcessingStatus(
+        video_id="vidF",
+        upload_status="failed",
+        processing_status="failed",
+        privacy_status="private",
+    )
+    state = await fake.get_processing_status("vidF")
+    assert state.upload_status == "failed"
+    assert state.processing_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_fake_get_processing_status_raises_for_missing_sentinel() -> None:
+    fake = FakeYoutubeClient()
+    with pytest.raises(ValueError, match="no items"):
+        await fake.get_processing_status("<missing>")
+
+
+@pytest.mark.asyncio
+async def test_fake_upload_video_seeds_processing_state() -> None:
+    """`upload_video` seeds a default state for the new id so the
+    upload-then-poll-status flow round-trips through the same fake."""
+    fake = FakeYoutubeClient()
+    result = await fake.upload_video(
+        file_path="/tmp/v.mp4", title="t", privacy_status="unlisted"
+    )
+    state = await fake.get_processing_status(result.video_id)
+    assert state.video_id == result.video_id
+    assert state.upload_status == "uploaded"
+    assert state.processing_status == "processing"
+    assert state.privacy_status == "unlisted"  # Echoes the upload's privacy_status.
+
+
+# ============================================================================
+# get_processing_status — Real (mocked transport)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_real_get_processing_status_returns_terminal_state() -> None:
+    service = _mock_service_with_responses(
+        videos_response={
+            "items": [
+                {
+                    "id": "vidX",
+                    "status": {
+                        "uploadStatus": "processed",
+                        "privacyStatus": "public",
+                    },
+                    "processingDetails": {"processingStatus": "succeeded"},
+                }
+            ]
+        }
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(api_key="fake-key")
+        state = await client.get_processing_status("vidX")
+
+    assert state.video_id == "vidX"
+    assert state.upload_status == "processed"
+    assert state.processing_status == "succeeded"
+    assert state.privacy_status == "public"
+    assert state.quota_units_consumed == 1
+    list_kwargs = service.videos.return_value.list.call_args.kwargs
+    assert list_kwargs["id"] == "vidX"
+    assert "status" in list_kwargs["part"]
+    assert "processingDetails" in list_kwargs["part"]
+
+
+@pytest.mark.asyncio
+async def test_real_get_processing_status_processing_state() -> None:
+    service = _mock_service_with_responses(
+        videos_response={
+            "items": [
+                {
+                    "id": "vidY",
+                    "status": {
+                        "uploadStatus": "uploaded",
+                        "privacyStatus": "private",
+                    },
+                    "processingDetails": {"processingStatus": "processing"},
+                }
+            ]
+        }
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(api_key="fake-key")
+        state = await client.get_processing_status("vidY")
+
+    assert state.upload_status == "uploaded"
+    assert state.processing_status == "processing"
+
+
+@pytest.mark.asyncio
+async def test_real_get_processing_status_failed_state() -> None:
+    service = _mock_service_with_responses(
+        videos_response={
+            "items": [
+                {
+                    "id": "vidZ",
+                    "status": {
+                        "uploadStatus": "failed",
+                        "privacyStatus": "private",
+                    },
+                    "processingDetails": {"processingStatus": "failed"},
+                }
+            ]
+        }
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(api_key="fake-key")
+        state = await client.get_processing_status("vidZ")
+
+    assert state.upload_status == "failed"
+    assert state.processing_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_real_get_processing_status_raises_when_missing() -> None:
+    service = _mock_service_with_responses(videos_response={"items": []})
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(api_key="fake-key")
+        with pytest.raises(ValueError, match="no items"):
+            await client.get_processing_status("missing")
+
+
+@pytest.mark.asyncio
+async def test_real_get_processing_status_unknown_defaults() -> None:
+    """API omitted the status fields → seed surfaces "unknown" literals."""
+    service = _mock_service_with_responses(
+        videos_response={"items": [{"id": "vidQ", "status": {}, "processingDetails": {}}]}
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(api_key="fake-key")
+        state = await client.get_processing_status("vidQ")
+    assert state.upload_status == "unknown"
+    assert state.processing_status == "unknown"
+    assert state.privacy_status == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_real_get_processing_status_logs_and_raises_on_http_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from googleapiclient.errors import HttpError
+
+    fake_resp = MagicMock()
+    fake_resp.status = 403
+    err = HttpError(resp=fake_resp, content=b"forbidden")
+
+    service = MagicMock()
+    service.videos.return_value.list.return_value.execute.side_effect = err
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(api_key="fake-key")
+        with caplog.at_level("WARNING"):
+            with pytest.raises(HttpError):
+                await client.get_processing_status("vidX")
+
+    assert any(
+        "youtube.get_processing_status_http_error" in record.message
+        for record in caplog.records
+    )
+
+
+# ============================================================================
+# Protocol satisfaction — new surface
+# ============================================================================
+
+
+def test_fake_and_real_satisfy_thumbnail_and_processing_surface() -> None:
+    fake: YoutubeClient = FakeYoutubeClient()
+    real: YoutubeClient = RealYoutubeClient(api_key="x")
+    assert hasattr(fake, "set_thumbnail")
+    assert hasattr(real, "set_thumbnail")
+    assert hasattr(fake, "get_processing_status")
+    assert hasattr(real, "get_processing_status")

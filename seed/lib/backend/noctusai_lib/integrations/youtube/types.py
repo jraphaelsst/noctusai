@@ -31,6 +31,35 @@ nothing goes public unless the caller explicitly opts in (matches the
 validated workspace rule: "se o usuário não pedir explicitamente
 'público' ou 'não listado', suba como private")."""
 
+UploadStatus = Literal[
+    "uploaded",
+    "processed",
+    "failed",
+    "rejected",
+    "deleted",
+    "unknown",
+]
+"""YouTube ``status.uploadStatus`` — the lifecycle state of the upload
+itself. ``"unknown"`` is the seed's safe-default when the API omits the
+field (never raises; consumers branch on the explicit literal).
+
+Terminal "ready-to-share" state is ``"processed"`` AND
+:data:`ProcStatus` ``"succeeded"``. ``"failed"`` / ``"rejected"`` /
+``"deleted"`` are unrecoverable; the operator surface should mark the
+job failed."""
+
+ProcStatus = Literal[
+    "processing",
+    "succeeded",
+    "failed",
+    "terminated",
+    "unknown",
+]
+"""YouTube ``processingDetails.processingStatus`` — distinct from
+:data:`UploadStatus` because YT can have *uploaded* bytes that are
+still transcoding. ``"unknown"`` is the seed's safe-default. Pair with
+:data:`UploadStatus` to decide "is the video shareable?"."""
+
 TITLE_MAX_LEN = 100
 """YouTube hard limit on `snippet.title`. Longer titles are rejected
 by `videos.insert`; callers should truncate before calling."""
@@ -101,6 +130,35 @@ class VideoUpload:
     quota_units_consumed: int = UPLOAD_QUOTA_UNITS
 
 
+@dataclass(frozen=True)
+class ProcessingStatus:
+    """YouTube post-upload processing state, mirroring
+    ``videos.list?part=status,processingDetails`` for one video.
+
+    Distinct from :class:`VideoUpload` because the `videos.insert` call
+    returns once YT has *received* the bytes — transcoding then runs
+    asynchronously on YT-side and a separate poll is required before
+    the video is shareable. Used by upload pipelines that surface
+    "your video is ready" only when the operator can actually share
+    the URL.
+
+    Terminal "ready" state: ``upload_status == "processed"`` AND
+    ``processing_status == "succeeded"``. ``"unknown"`` literals carry
+    the API-omitted-the-field case explicitly so consumers branch on
+    the value rather than truthy-check (no silent-errors)."""
+
+    video_id: str
+    upload_status: UploadStatus
+    processing_status: ProcStatus
+    privacy_status: PrivacyStatus | Literal["unknown"]
+    """``"unknown"`` is the API-omitted-the-field case (post-revoke /
+    deleted videos). Keeping it explicit here mirrors
+    :data:`UploadStatus` / :data:`ProcStatus`."""
+    quota_units_consumed: int = 1
+    """1 unit (`videos.list?id=<video_id>` is 1 unit regardless of
+    ``part`` selection)."""
+
+
 T = TypeVar("T")
 
 
@@ -127,6 +185,9 @@ __all__ = [
     "ListResult",
     "Playlist",
     "PrivacyStatus",
+    "ProcStatus",
+    "ProcessingStatus",
+    "UploadStatus",
     "Video",
     "VideoUpload",
 ]

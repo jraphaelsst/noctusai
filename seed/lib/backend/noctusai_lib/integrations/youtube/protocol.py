@@ -19,6 +19,7 @@ from noctusai_lib.integrations.youtube.types import (
     Channel,
     ListResult,
     PrivacyStatus,
+    ProcessingStatus,
     Video,
     VideoUpload,
 )
@@ -45,6 +46,8 @@ class YoutubeClient(Protocol):
     | `get_video` | 1 | `videos.list` with one ID is 1 unit. |
     | `search` | **100** | `search.list` is 100 units per page (1% of daily quota per call). PREFER `list_channel_videos` for channel-scoped listings. |
     | `upload_video` | **1600** | `videos.insert` (resumable) — the single most expensive call in the API; ≈6 uploads exhaust a fresh 10,000/day quota. Requires OAuth (an API key cannot write). |
+    | `set_thumbnail` | **50** | `thumbnails.set` (resumable). Custom-thumbnail permission required (most channels have it; brand-new channels need verification). Requires OAuth (write). |
+    | `get_processing_status` | 1 | `videos.list?part=status,processingDetails&id=<vid>` — same cost as `get_video`; the `part` selection doesn't change the cost. |
 
     The `ListResult.quota_units_consumed` field carries the per-call
     cost so consumers can budget against the daily quota."""
@@ -136,6 +139,66 @@ class YoutubeClient(Protocol):
 
         Returns a `VideoUpload` with the new `video_id`, canonical
         watch `url`, and `quota_units_consumed=1600`."""
+        ...
+
+    async def set_thumbnail(
+        self,
+        *,
+        video_id: str,
+        thumbnail_path: str,
+        mime_type: str = "image/jpeg",
+    ) -> None:
+        """Upload a custom thumbnail for ``video_id`` via
+        ``thumbnails.set``.
+
+        **Quota cost: 50 units.** Custom-thumbnail permission is
+        required on the channel (most channels carry it; brand-new
+        channels require Google verification first). Image format must
+        be JPEG/PNG/BMP; YouTube enforces a 2MB ceiling server-side.
+
+        **Requires OAuth** — ``thumbnails.set`` is a write; an
+        API-key-only client cannot upload thumbnails. The Real adapter
+        raises ``ValueError`` at call time if no OAuth credentials were
+        supplied (fail loud, per the no-silent-errors rule).
+
+        Args:
+            video_id: YouTube video id whose thumbnail is being set.
+            thumbnail_path: Absolute path to the local thumbnail image
+                file. The Real adapter streams it via
+                ``MediaFileUpload`` (matches the upload_video shape).
+            mime_type: Image MIME type. Default ``"image/jpeg"``;
+                ``"image/png"`` / ``"image/bmp"`` also accepted by
+                YouTube. The adapter passes it through to the
+                ``MediaFileUpload`` mimetype kwarg so YT routes the
+                upload correctly.
+
+        Returns ``None``; success is the absence of an exception.
+        ``HttpError`` is logged at WARN+ and re-raised."""
+        ...
+
+    async def get_processing_status(self, video_id: str) -> ProcessingStatus:
+        """Probe YouTube's processing-pipeline state for ``video_id``.
+
+        **Quota cost: 1 unit** (``videos.list?part=status,processingDetails``).
+
+        Used by upload pipelines that need to wait until a freshly
+        inserted video is actually playable before surfacing the URL
+        to the operator. ``videos.insert`` returns once YT has received
+        the bytes, but transcoding then runs asynchronously — the
+        video is not shareable until ``upload_status == "processed"``
+        AND ``processing_status == "succeeded"``.
+
+        Returns:
+            A :class:`ProcessingStatus` with ``video_id`` echoed back +
+            the three pipeline-state fields. Unknown / API-omitted
+            values are surfaced as the explicit ``"unknown"`` literal
+            so consumers branch on the value rather than truthy-check
+            (no silent-errors).
+
+        Raises:
+            ValueError: when ``videos.list`` returns no items
+                (deleted / never finished uploading); the seed surfaces
+                this explicitly rather than returning a sentinel."""
         ...
 
 

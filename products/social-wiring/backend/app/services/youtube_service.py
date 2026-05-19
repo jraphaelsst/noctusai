@@ -27,8 +27,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload
 
+from noctusai_lib.integrations.youtube import YoutubeClient, make_youtube_client
 from noctusai_lib.security.oauth import GoogleProvider
 from app.services.credential_vault import (
     CredentialStore,
@@ -479,17 +479,49 @@ class YouTubeService:
         Best-effort callers: catch ``YouTubeServiceError`` since
         thumbnail failure shouldn't fail the parent video upload. The
         video stays up with whatever default thumbnail YT picked.
+
+        Delegates to the seed
+        ``noctusai_lib.integrations.youtube.YoutubeClient.set_thumbnail``
+        (Phase 4 of social-wiring-google-seed-consume; the formalized
+        seed seam takes ``thumbnail_path: str`` per its Protocol, so
+        the product writes the in-memory bytes to a NamedTemporaryFile
+        and hands the path to the seed — the seed Real adapter then
+        streams it via ``MediaFileUpload``).
         """
-        from googleapiclient.http import MediaInMemoryUpload
+        import tempfile
 
         creds = self._fresh_credentials(org_id)
-        service = self._build_service(creds)
-        media = MediaInMemoryUpload(image_bytes, mimetype=mime_type, resumable=False)
+        client = self._youtube_client(creds)
+
+        suffix = _mime_to_suffix(mime_type)
+        # delete=False so we control cleanup explicitly — the seed Real
+        # adapter reads the file via MediaFileUpload (non-resumable) and
+        # the read happens inside `_run_sync` below.
+        with tempfile.NamedTemporaryFile(
+            suffix=suffix, delete=False
+        ) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
 
         try:
-            service.thumbnails().set(videoId=video_id, media_body=media).execute()
+            _run_sync(
+                client.set_thumbnail(
+                    video_id=video_id,
+                    thumbnail_path=tmp_path,
+                    mime_type=mime_type,
+                )
+            )
         except HttpError as exc:
             raise YouTubeServiceError(_format_http_error(exc)) from exc
+        finally:
+            import os
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                logger.warning(
+                    "set_thumbnail: failed to unlink temp file %s — leaving for OS sweep",
+                    tmp_path,
+                )
 
     def get_processing_status(
         self,
@@ -512,32 +544,31 @@ class YouTubeService:
         playable before delivering the completion message (otherwise
         operators click the URL too early and see "this video is being
         processed"). Quota cost: 1 unit per call.
+
+        Delegates to the seed
+        ``noctusai_lib.integrations.youtube.YoutubeClient.get_processing_status``
+        (Phase 4 of social-wiring-google-seed-consume). The seed returns
+        a :class:`ProcessingStatus` dataclass; this wrapper translates
+        it to the dict shape the upload pipeline already consumes
+        (back-compat with ``_wait_for_yt_processing``).
         """
         creds = self._fresh_credentials(org_id)
-        service = self._build_service(creds)
+        client = self._youtube_client(creds)
 
         try:
-            response = (
-                service.videos()
-                .list(part="status,processingDetails", id=video_id)
-                .execute()
-            )
+            status = _run_sync(client.get_processing_status(video_id))
         except HttpError as exc:
             raise YouTubeServiceError(_format_http_error(exc)) from exc
+        except ValueError as exc:
+            # Seed surfaces the "no items returned" branch as ValueError
+            # (video deleted / never finished uploading). Translate to
+            # the product-level error shape so callers branch the same way.
+            raise YouTubeServiceError(str(exc)) from exc
 
-        items = response.get("items") or []
-        if not items:
-            raise YouTubeServiceError(
-                f"videos.list returned no items for video_id={video_id!r} — "
-                "may have been deleted or never finished uploading."
-            )
-        item = items[0]
-        status_block = item.get("status", {}) or {}
-        proc_block = item.get("processingDetails", {}) or {}
         return {
-            "upload_status": str(status_block.get("uploadStatus") or "unknown"),
-            "processing_status": str(proc_block.get("processingStatus") or "unknown"),
-            "privacy_status": str(status_block.get("privacyStatus") or "unknown"),
+            "upload_status": str(status.upload_status),
+            "processing_status": str(status.processing_status),
+            "privacy_status": str(status.privacy_status),
         }
 
     def upload_video(
@@ -554,7 +585,25 @@ class YouTubeService:
         """Resumable upload via ``videos.insert``. Returns the YouTube
         video ID on success.
 
-        Quota cost: 100 units (the heaviest call in the API).
+        Quota cost: 1600 units (the heaviest call in the API; corrected
+        from prior docstring's "100").
+
+        Delegates to the seed
+        ``noctusai_lib.integrations.youtube.YoutubeClient.upload_video``
+        (Phase 4 of social-wiring-google-seed-consume). The seed drives
+        the resumable transfer (``MediaFileUpload(resumable=True)`` +
+        ``next_chunk()`` loop) — see
+        ``noctusai_lib.integrations.youtube.real.RealYoutubeClient.upload_video``.
+
+        **Known deviation from pre-refactor behavior** — the per-chunk
+        retry loop (``_resumable_upload_with_chunk_retry``, S4-2) is
+        NOT yet in the seed: a transient mid-stream failure now raises
+        instead of resuming from the last successful chunk. Phase-4
+        scope was the 2 named gaps + the call-replacement; lifting the
+        chunked-retry primitive into the seed is a follow-up
+        (see findings.md → seed-upload-chunk-retry). The outer
+        ``_retry_with_backoff`` policy in the upload pipeline still
+        catches quota-exceeded + non-transient errors uniformly.
         """
         if privacy_status not in ("public", "unlisted", "private"):
             raise YouTubeServiceError(
@@ -562,118 +611,34 @@ class YouTubeService:
             )
 
         creds = self._fresh_credentials(org_id)
-        service = self._build_service(creds)
+        client = self._youtube_client(creds)
 
-        body = {
-            "snippet": {
-                "title": title,
-                "description": description,
-                "tags": tags,
-                "categoryId": category_id,
-            },
-            "status": {
-                "privacyStatus": privacy_status,
-                "selfDeclaredMadeForKids": False,
-            },
-        }
-        # Resumable upload with per-chunk retry. F3: a transient failure
-        # mid-stream no longer restarts the upload from byte 0 — the
-        # same ``request`` object is kept across retries so
-        # ``request.resumable_uri`` stays valid + ``next_chunk()`` picks
-        # up from the last successful chunk. The attempt counter resets
-        # on every successful chunk, so a flaky network produces many
-        # short retries rather than one long retry sequence.
-        media = MediaFileUpload(file_path, chunksize=-1, resumable=True)
-        request = service.videos().insert(
-            part="snippet,status", body=body, media_body=media
-        )
-
-        response = self._resumable_upload_with_chunk_retry(request)
-        return response["id"]
-
-    def _resumable_upload_with_chunk_retry(self, request: Any) -> dict:
-        """Drive a googleapiclient resumable upload to completion with
-        per-chunk retry on transient failures.
-
-        Keep the ``request`` object across retries — its
-        ``resumable_uri`` field encodes the upload session ID + offset
-        on YT's side, so ``next_chunk()`` resumes seamlessly after a
-        transient failure.
-
-        Per-chunk retry budget (`_MAX_RETRY_ATTEMPTS`) RESETS on every
-        successful chunk so long uploads with multiple flaky moments
-        don't exhaust the budget on the first hiccup.
-        """
-        import time
-
-        response: dict | None = None
-        attempts_this_chunk = 0
-        while response is None:
-            try:
-                _, response = request.next_chunk()
-                attempts_this_chunk = 0  # reset on chunk success
-            except HttpError as exc:
-                if _is_quota_exceeded(exc):
-                    logger.error(
-                        "upload_video: YouTube quota exceeded — no retry. "
-                        "Status=%s body=%s",
-                        exc.resp.status,
-                        (exc.content or b"")[:200],
-                    )
-                    raise YouTubeQuotaExceededError(
-                        "⚠️ YouTube quota esgotada hoje. "
-                        "Retry automático em 6h, ou tente novamente amanhã."
-                    ) from exc
-                if not _is_transient_http_error(exc):
-                    logger.warning(
-                        "upload_video: non-transient HttpError status=%s "
-                        "— failing fast.",
-                        exc.resp.status,
-                    )
-                    raise YouTubeServiceError(_format_http_error(exc)) from exc
-                attempts_this_chunk += 1
-                if attempts_this_chunk >= _MAX_RETRY_ATTEMPTS:
-                    logger.error(
-                        "upload_video: chunk retries (%d) exhausted; raising.",
-                        _MAX_RETRY_ATTEMPTS,
-                    )
-                    raise YouTubeServiceError(_format_http_error(exc)) from exc
-                delay = min(
-                    _RETRY_BASE_DELAY_S * (4 ** (attempts_this_chunk - 1)),
-                    _RETRY_MAX_DELAY_S,
+        try:
+            upload = _run_sync(
+                client.upload_video(
+                    file_path=file_path,
+                    title=title,
+                    description=description,
+                    tags=tags or None,
+                    privacy_status=privacy_status,  # type: ignore[arg-type]
+                    category_id=category_id,
                 )
-                logger.warning(
-                    "upload_video: transient HttpError on chunk (attempt %d/%d) "
-                    "— resuming in %.1fs: %s",
-                    attempts_this_chunk,
-                    _MAX_RETRY_ATTEMPTS,
-                    delay,
-                    exc,
+            )
+        except HttpError as exc:
+            if _is_quota_exceeded(exc):
+                logger.error(
+                    "upload_video: YouTube quota exceeded — no retry. "
+                    "Status=%s body=%s",
+                    exc.resp.status,
+                    (exc.content or b"")[:200],
                 )
-                time.sleep(delay)
-            except Exception as exc:
-                if not _is_transient_network_error(exc):
-                    raise
-                attempts_this_chunk += 1
-                if attempts_this_chunk >= _MAX_RETRY_ATTEMPTS:
-                    raise YouTubeServiceError(
-                        f"YouTube upload failed after {_MAX_RETRY_ATTEMPTS} "
-                        f"network retries: {exc}"
-                    ) from exc
-                delay = min(
-                    _RETRY_BASE_DELAY_S * (4 ** (attempts_this_chunk - 1)),
-                    _RETRY_MAX_DELAY_S,
-                )
-                logger.warning(
-                    "upload_video: transient network error on chunk "
-                    "(attempt %d/%d) — resuming in %.1fs: %s",
-                    attempts_this_chunk,
-                    _MAX_RETRY_ATTEMPTS,
-                    delay,
-                    exc,
-                )
-                time.sleep(delay)
-        return response
+                raise YouTubeQuotaExceededError(
+                    "⚠️ YouTube quota esgotada hoje. "
+                    "Retry automático em 6h, ou tente novamente amanhã."
+                ) from exc
+            raise YouTubeServiceError(_format_http_error(exc)) from exc
+
+        return upload.video_id
 
     # ─── Internals ────────────────────────────────────────────────────
     def _fresh_credentials(self, org_id: UUID) -> Credentials:
@@ -704,14 +669,52 @@ class YouTubeService:
     def _build_service(self, creds: Credentials):
         """Construct a googleapiclient YouTube service instance.
 
-        Test seam: tests monkeypatch this method to return a
-        MagicMock-shaped service so quota-bearing calls never escape the
-        process.
+        Still used by ``get_channel_info`` / ``list_all_videos`` /
+        ``get_video_stats`` — those methods return product-specific
+        view-models (``ChannelInfo`` / ``VideoSummary``) carrying
+        fields the seed ``Video`` projection doesn't expose
+        (``thumbnail_url``, ``like_count``, ``comment_count``,
+        ``tags``, ``category_id``, raw ``duration`` string). Moving
+        them to the seed would either (a) degrade the product UI by
+        dropping those fields OR (b) require expanding the seed
+        Protocol substantially beyond the two named Phase-4 gaps.
+        Tracked as a follow-up (see findings).
         """
         return build("youtube", "v3", credentials=creds, cache_discovery=False)
 
+    def _youtube_client(self, creds: Credentials) -> YoutubeClient:
+        """Build a seed-backed YouTube client for write methods.
+
+        The product feeds ``credentials=creds`` into the seed factory;
+        the seed ``RealYoutubeClient`` then drives
+        ``googleapiclient.discovery.build`` itself. This is the seed
+        seam — ``set_thumbnail`` / ``get_processing_status`` /
+        ``upload_video`` route through it so the YouTube API surface
+        lives at the seed level (Phase 4 of social-wiring-google-seed-consume).
+        """
+        return make_youtube_client(oauth_credentials=creds)
+
 
 # ─── Module-level helpers (testable in isolation) ──────────────────────
+def _mime_to_suffix(mime_type: str) -> str:
+    """Map a thumbnail MIME type to a tempfile suffix.
+
+    The seed ``set_thumbnail`` takes a file path and passes the MIME
+    explicitly to ``MediaFileUpload(mimetype=...)`` — the suffix here
+    is just for human-debuggability of the tempfile name + matches the
+    MIME so a defensive consumer reading the path can pick the right
+    decoder. Defaults to ``.jpg`` for the JPEG case + falls back to
+    ``.bin`` for anything else.
+    """
+    suffix_map = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/bmp": ".bmp",
+    }
+    return suffix_map.get(mime_type.lower(), ".bin")
+
+
 def _credentials_to_bundle(creds: Credentials) -> dict[str, Any]:
     """Translate google.oauth2.credentials.Credentials → JSON-safe dict."""
     expires_at = creds.expiry
