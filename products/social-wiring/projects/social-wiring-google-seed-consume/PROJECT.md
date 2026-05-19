@@ -205,10 +205,6 @@ Phase-by-phase cadence (default). Status icons per template legend.
 - Spec deviation [A-accepted]: brief said use `MockRequestBuilder.inserted_payloads` for Real-path payload assertions; engineer used the token_store module's **existing** self-contained Supabase substrate double (`_FakeSupabase._tables`) — same injected-external-substrate principle (NOT our-code monkeypatch), consistent with the module's established convention. Switching harnesses = out-of-scope test migration. *Accepted-with-rationale* (convention-consistency > brief-literalism; no methodology violation).
 - N≥2 confirmed: "absorbed-product table predates seed contract → seed needs a shape seam" (this + Phase 3 `oauth_router` prefix seam). Codification candidate (payload-vs-DDL keeper) already routed Phase 0; no new action.
 
-### Phase 2 — Credential vault → seed `token_store` (shared root; consumes Phase 1)
-- [ ] Replace `services/credential_store.py` with `make_credential_store(client=<supabase>, fernet_key=settings.encryption_key.encode(), table="credentials", metadata_column=None, metadata_columns={"channel_id":"channel_id","channel_title":"channel_title","scopes":"scopes"})`. Map: `.upsert(...)`→`.put(str(org_id),provider,tokens,metadata={"channel_id":…,"channel_title":…,"scopes":…})` · `.get(org_id=,provider=)`→`.get(str(org_id),provider)` · `.delete(...)`→`.delete(str(org_id),provider)`.
-- [ ] Migrate the **40** `.channel_id/.channel_title/.scopes` field-reads + `channel_id=/channel_title=/scopes=` kwargs → `StoredCredential.metadata["channel_id"]` etc. (libcst; behavior-preserving — the Phase-1 column-map keeps them in the same physical columns).
-
 ### Phase 2 — Credential vault → seed `token_store` (shared root; consumes Phase 1) ✅ (469b5c54, 2026-05-19)
 - [x] Replaced `services/credential_store.py` fork → thin `services/credential_vault.py` consume seam (105 LoC, zero crypto/DB, re-exports seed types) calling `make_credential_store(..., table="credentials", metadata_column=None, metadata_columns={channel_id,channel_title,scopes})`.
 - [x] Migrated the **40** `.channel_id/.channel_title/.scopes` reads + kwargs → `.metadata.get("channel_id")` / `.metadata.get("scopes",[])` (libcst codemod; behavior-preserving — defaults match the old dataclass-attr semantics; same physical columns via Phase-1 map).
@@ -221,10 +217,6 @@ Phase-by-phase cadence (default). Status icons per template legend.
 - Deviation [A]: seed store omits absent columns from `.metadata`; old fork guaranteed `.scopes=[]`/`.channel_*=None`. Codemod emits `.get(...,[])`/`.get(...)` defaults → behavior-identical, not weakened. Covered by `TestPayloadColumnContract`.
 - Old fork's explicit `.schema(_SCHEMA)` was redundant (client already schema-bound via `create_database_module(...ClientOptions(schema=...))`); seed store's bare `.table()` is safe. Documented so future readers don't re-add belt-and-suspenders.
 - N≥2 confirmed (this + Phase 3 oauth seam): "absorbed table predates seed contract → shape seam." Payload-vs-DDL keeper candidate already routed Phase 0; no new action.
-
-### Phase 3 — Seed `oauth_router` prefix seam `[F]`, then OAuth lifecycle consume
-- [ ] **`[F]` SEED FIRST:** add a `prefix=` (default `"/api/oauth"`) + per-provider `callback_path` override to `noctusai_lib.security.oauth.oauth_router` so legacy registered redirect URIs are preservable. Protocol+Fake+Real+factory untouched; pilot-gate (erp·therapy·social-wiring+core green).
-- [ ] Replace `calendar/oauth_adapter.py` + `drive_api/oauth_adapter.py` + youtube OAuth flow with `GoogleProvider` + `oauth_router(..., on_callback=<persist via Phase-2 store>)` mounted to **preserve** `/api/youtube/oauth/callback` + `/api/calendar/oauth/callback` exactly (Phase-0 contract — DO NOT relocate). Tests green.
 
 ### Phase 3 — Seed `oauth_router` prefix seam `[F]`, then OAuth lifecycle consume
 - [ ] **`[F]` SEED FIRST:** add a `prefix=` (default `"/api/oauth"`) + per-provider `callback_path` override to `noctusai_lib.security.oauth.oauth_router` so legacy registered redirect URIs are preservable. Protocol+Fake+Real+factory untouched; pilot-gate (erp·therapy·social-wiring+core green).
