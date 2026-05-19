@@ -39,8 +39,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 7 | 17 | 220 |
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 10 | 37 | 14 | 8 | 37 | 371 |
-| **Total** | **170** | **188** | **243** | **137** | **392** | **4,799** |
+| Social Wiring | 7 | 19 | 14 | 8 | 38 | 372 |
+| **Total** | **167** | **170** | **243** | **137** | **393** | **4,800** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
