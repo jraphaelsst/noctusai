@@ -715,3 +715,133 @@ def test_encrypted_tokens_helper_round_trips_a_real_oauth_token():
     refresh = "1//09rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
     assert decrypt(encrypt(access, key), key) == access
     assert decrypt(encrypt(refresh, key), key) == refresh
+
+
+# ──────────────── oauth_router prefix / callback_paths seam ────────────────
+# Phase 3a: back-compat-defaulted seam so an absorbed product with
+# pre-registered Google-Cloud-Console redirect URIs can preserve them.
+
+
+def test_oauth_router_default_prefix_is_unchanged():
+    """No prefix arg → endpoints stay under the historical /api/oauth."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    client = _build_app_with_router(fake)
+    response = client.get(
+        "/api/oauth/vendor-a/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+
+
+def test_oauth_router_custom_prefix_mounts_all_endpoints_there():
+    """A custom prefix moves every endpoint; the old /api/oauth path 404s."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    app = FastAPI()
+    app.include_router(oauth_router(fake, prefix="/custom/auth"))
+    client = TestClient(app)
+
+    ok = client.get(
+        "/custom/auth/vendor-a/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["ok"] is True
+
+    authz = client.get(
+        "/custom/auth/vendor-a/authorize",
+        params={"state": "s", "redirect_uri": "r"},
+    )
+    assert authz.status_code == 200, authz.text
+
+    # Old prefix is gone.
+    gone = client.get(
+        "/api/oauth/vendor-a/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert gone.status_code == 404
+
+
+def test_oauth_router_callback_paths_preserves_legacy_absolute_path():
+    """A provider in callback_paths gets its callback at the exact
+    absolute legacy path, independent of `prefix` — the absorbed-product
+    pre-registered-redirect-URI seam."""
+    captured: list = []
+
+    async def hook(result: OAuthCallbackResult) -> None:
+        captured.append(result)
+
+    yt = FakeOAuthProvider(name="youtube")
+    cal = FakeOAuthProvider(name="calendar")
+    app = FastAPI()
+    app.include_router(
+        oauth_router(
+            yt,
+            cal,
+            on_callback=hook,
+            prefix="/api/oauth",
+            callback_paths={
+                "youtube": "/api/youtube/oauth/callback",
+                "calendar": "/api/calendar/oauth/callback",
+            },
+        )
+    )
+    client = TestClient(app)
+
+    yt_resp = client.get(
+        "/api/youtube/oauth/callback",
+        params={"code": "ytcode", "state": "org:1", "redirect_uri": "r"},
+    )
+    assert yt_resp.status_code == 200, yt_resp.text
+    assert yt_resp.json()["ok"] is True
+    assert yt_resp.json()["provider"] == "youtube"
+
+    cal_resp = client.get(
+        "/api/calendar/oauth/callback",
+        params={"code": "calcode", "state": "org:2", "redirect_uri": "r"},
+    )
+    assert cal_resp.status_code == 200, cal_resp.text
+    assert cal_resp.json()["provider"] == "calendar"
+
+    # Hook fired for both, tokens carried.
+    assert {r.provider for r in captured} == {"youtube", "calendar"}
+    assert all(r.tokens is not None for r in captured)
+
+    # The default <prefix>/{provider}/callback is NOT mounted for an
+    # overridden provider — the legacy path is the only callback surface.
+    default = client.get(
+        "/api/oauth/youtube/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert default.status_code == 404
+
+    # Non-callback endpoints still live under `prefix` for the
+    # overridden provider (only the callback path moves).
+    authz = client.get(
+        "/api/oauth/youtube/authorize",
+        params={"state": "s", "redirect_uri": "r"},
+    )
+    assert authz.status_code == 200, authz.text
+
+
+def test_oauth_router_callback_paths_unknown_provider_raises():
+    """callback_paths referencing an unregistered provider fails loud at
+    construction — not silently ignored."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    with pytest.raises(ValueError, match="unknown provider"):
+        oauth_router(fake, callback_paths={"not-registered": "/x/cb"})
+
+
+def test_oauth_router_callback_paths_default_none_is_full_back_compat():
+    """callback_paths=None (default) → every provider keeps the default
+    <prefix>/{provider}/callback; identical to the pre-seam behavior."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    app = FastAPI()
+    app.include_router(oauth_router(fake, callback_paths=None))
+    client = TestClient(app)
+    resp = client.get(
+        "/api/oauth/vendor-a/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True

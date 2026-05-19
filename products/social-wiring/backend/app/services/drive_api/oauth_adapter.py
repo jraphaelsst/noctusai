@@ -16,7 +16,12 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.services.calendar.oauth_adapter import CALENDAR_PROVIDER, _strip_tz
+from app.services.calendar.oauth_adapter import (
+    CALENDAR_PROVIDER,
+    _run_oauth_sync,
+    _strip_tz,
+)
+from noctusai_lib.security.oauth import GoogleProvider
 from app.services.credential_vault import CredentialStore
 from app.services.drive_api import _drive_api
 from app.services.drive_api.google_adapter import DRIVE_SCOPES, _read_content_via
@@ -47,9 +52,7 @@ class GoogleDriveOAuthAdapter:
         self._client_secret = client_secret
         self._store = credential_store
         self._org_id = org_id
-
     def _get_service(self) -> "Resource":
-        from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
@@ -77,15 +80,47 @@ class GoogleDriveOAuthAdapter:
         )
 
         if not credentials.valid:
-            credentials.refresh(Request())
+            # OAuth refresh lifecycle delegated to the seed GoogleProvider
+            # (replaces the hand-rolled google.oauth2.credentials.refresh).
+            refresh_token = tokens.get("refresh_token")
+            if not refresh_token:
+                raise RuntimeError(
+                    "Stored Google credential has no refresh_token; "
+                    "re-consent at /api/calendar/oauth/start."
+                )
+            provider = GoogleProvider(
+                client_id=self._client_id,
+                client_secret=self._client_secret,
+            )
+            token_set = _run_oauth_sync(provider.refresh(refresh_token))
             new_tokens = dict(tokens)
-            new_tokens["access_token"] = credentials.token
-            if credentials.expiry is not None:
-                new_tokens["expiry"] = credentials.expiry.replace(
-                    tzinfo=timezone.utc
+            new_tokens["access_token"] = token_set.access_token
+            expires_at = token_set.expires_at
+            if expires_at is not None:
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                new_tokens["expiry"] = expires_at.astimezone(
+                    timezone.utc
                 ).isoformat()
             self._store.put(
-                str(self._org_id), CALENDAR_PROVIDER, new_tokens, metadata={"channel_id": stored.metadata.get("channel_id"), "channel_title": stored.metadata.get("channel_title"), "scopes": stored.metadata.get("scopes", [])})
+                str(self._org_id),
+                CALENDAR_PROVIDER,
+                new_tokens,
+                metadata={
+                    "channel_id": stored.metadata.get("channel_id"),
+                    "channel_title": stored.metadata.get("channel_title"),
+                    "scopes": stored.metadata.get("scopes", []),
+                },
+            )
+            credentials = Credentials(
+                token=token_set.access_token,
+                refresh_token=refresh_token,
+                token_uri=GOOGLE_TOKEN_URI,
+                client_id=self._client_id,
+                client_secret=self._client_secret,
+                scopes=scopes,
+                expiry=_strip_tz(new_tokens.get("expiry")),
+            )
 
         return build("drive", "v3", credentials=credentials, cache_discovery=False)
 

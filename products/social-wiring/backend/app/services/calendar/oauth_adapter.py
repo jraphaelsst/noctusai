@@ -43,6 +43,7 @@ from app.services.calendar import _google_api
 from app.services.calendar.google_adapter import CALENDAR_SCOPES
 from app.services.calendar.mappers import event_to_google_body, google_body_to_created_event
 from app.services.calendar.types import CreatedEvent, EventInput
+from noctusai_lib.security.oauth import GoogleProvider
 from app.services.credential_vault import CredentialStore
 
 if TYPE_CHECKING:
@@ -75,9 +76,7 @@ class GoogleCalendarOAuthAdapter:
         self._client_secret = client_secret
         self._store = credential_store
         self._org_id = org_id
-
     def _get_service(self) -> "Resource":
-        from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
@@ -100,16 +99,51 @@ class GoogleCalendarOAuthAdapter:
         )
 
         if not credentials.valid:
-            credentials.refresh(Request())
-            # Persist the rotated access token + new expiry back.
+            # OAuth refresh lifecycle delegated to the seed GoogleProvider
+            # (replaces the hand-rolled google.oauth2.credentials.refresh).
+            # The googleapiclient Credentials object is rebuilt with the
+            # fresh access token so the Phase-5-bound API client is
+            # unchanged.
+            refresh_token = tokens.get("refresh_token")
+            if not refresh_token:
+                raise RuntimeError(
+                    "Stored Google Calendar credential has no refresh_token; "
+                    "re-consent at /api/calendar/oauth/start."
+                )
+            provider = GoogleProvider(
+                client_id=self._client_id,
+                client_secret=self._client_secret,
+            )
+            token_set = _run_oauth_sync(provider.refresh(refresh_token))
             new_tokens = dict(tokens)
-            new_tokens["access_token"] = credentials.token
-            if credentials.expiry is not None:
-                new_tokens["expiry"] = credentials.expiry.replace(
-                    tzinfo=timezone.utc
+            new_tokens["access_token"] = token_set.access_token
+            expires_at = token_set.expires_at
+            if expires_at is not None:
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                new_tokens["expiry"] = expires_at.astimezone(
+                    timezone.utc
                 ).isoformat()
             self._store.put(
-                str(self._org_id), CALENDAR_PROVIDER, new_tokens, metadata={"channel_id": stored.metadata.get("channel_id"), "channel_title": stored.metadata.get("channel_title"), "scopes": stored.metadata.get("scopes", []) or list(CALENDAR_SCOPES)})
+                str(self._org_id),
+                CALENDAR_PROVIDER,
+                new_tokens,
+                metadata={
+                    "channel_id": stored.metadata.get("channel_id"),
+                    "channel_title": stored.metadata.get("channel_title"),
+                    "scopes": stored.metadata.get("scopes", [])
+                    or list(CALENDAR_SCOPES),
+                },
+            )
+            credentials = Credentials(
+                token=token_set.access_token,
+                refresh_token=refresh_token,
+                token_uri=GOOGLE_TOKEN_URI,
+                client_id=self._client_id,
+                client_secret=self._client_secret,
+                scopes=CALENDAR_SCOPES,
+                expiry=_strip_tz(new_tokens.get("expiry")),
+            )
 
         return build("calendar", "v3", credentials=credentials, cache_discovery=False)
 
@@ -152,3 +186,15 @@ def _strip_tz(value):
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _run_oauth_sync(awaitable):
+    """Drive a seed-provider coroutine from a sync caller.
+
+    The calendar adapter methods are sync (called from sync FastAPI
+    handlers in a threadpool with no running loop), so ``asyncio.run``
+    is the simplest correct bridge to the async seed ``GoogleProvider``.
+    """
+    import asyncio
+
+    return asyncio.run(awaitable)

@@ -25,11 +25,11 @@ from uuid import UUID
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
+from noctusai_lib.security.oauth import GoogleProvider
 from app.services.credential_vault import (
     CredentialStore,
     EncryptionNotConfigured,
@@ -235,81 +235,90 @@ class YouTubeService:
         self._client_secret = client_secret
         self._redirect_uri = redirect_uri
         self._store = credential_store
-
-    # ─── OAuth flow (no network I/O until exchange_code) ───────────────
     def get_auth_url(self, *, state: str) -> tuple[str, str]:
         """Build the consent-screen URL the user gets redirected to.
 
-        ``state`` is opaque to YouTube; we use it to round-trip the
-        ``org_id`` so the callback can persist tokens to the right org
-        without trusting the redirect URI alone.
+    ``state`` is opaque to YouTube; we use it to round-trip the
+    ``org_id`` so the callback can persist tokens to the right org
+    without trusting the redirect URI alone.
 
-        Google's auth library auto-generates a PKCE ``code_verifier`` +
-        ``code_challenge`` pair on every call. The verifier MUST be
-        replayed at ``exchange_code`` time or Google rejects the
-        exchange with ``invalid_grant: Missing code verifier``. We
-        return the verifier here so the caller can persist it
-        out-of-band (Redis, signed cookie, etc.) and feed it back to
-        :meth:`exchange_code`.
+    Lifecycle delegated to ``noctusai_lib.security.oauth.GoogleProvider``
+    (the seed-consume seam — see ``app/services/google_oauth.py``). The
+    second tuple element used to be a PKCE ``code_verifier``; the seed
+    provider is a confidential-client flow (client_secret authenticated)
+    that does not use PKCE, so it is now an empty string. The callers
+    persist/replay it harmlessly; the return shape is preserved so the
+    settings router needs no change.
 
-        Quota cost: 0.
-        """
-        flow = self._build_flow()
-        url, _ = flow.authorization_url(
-            access_type="offline",            # forces refresh_token issuance
-            include_granted_scopes="true",
-            prompt="consent",                 # always re-prompt → reliable refresh_token
-            state=state,
+    Quota cost: 0.
+    """
+        provider = self._oauth_provider()
+        auth_url = _run_sync(
+            provider.authorization_url(
+                state=state,
+                scopes=list(YOUTUBE_SCOPES),
+                redirect_uri=self._redirect_uri,
+            )
         )
-        return url, flow.code_verifier
-
+        return auth_url.url, ""
     def exchange_code(self, *, code: str, code_verifier: str | None = None) -> dict[str, Any]:
-        """Exchange the OAuth callback's ``code`` for token bundle.
+        """Exchange the OAuth callback's ``code`` for a token bundle.
 
-        ``code_verifier`` MUST match the verifier whose challenge was
-        embedded in the auth URL. Pass the value returned from
-        :meth:`get_auth_url`. Omitting it triggers Google's
-        ``invalid_grant: Missing code verifier``.
+    Lifecycle delegated to the seed ``GoogleProvider``. ``code_verifier``
+    is accepted for signature back-compat with the settings router but is
+    unused — the confidential-client exchange the seed performs does not
+    use PKCE.
 
-        Returns the raw token dict suitable for passing through to
-        :meth:`CredentialStore.upsert`. The bundle includes:
-          - ``access_token`` (string, ~1h validity)
-          - ``refresh_token`` (string, long-lived)
-          - ``expires_at`` (ISO timestamp UTC, computed locally)
-          - ``token_uri`` (for refresh)
-          - ``client_id`` / ``client_secret`` (for refresh)
-          - ``scopes`` (granted)
+    Returns the raw token dict in the SAME shape the former
+    google_auth_oauthlib path produced (``_credentials_to_bundle``), so
+    the Phase-5-bound API layer + the credential store consume it
+    unchanged:
+      - ``access_token`` / ``refresh_token``
+      - ``expires_at`` (ISO timestamp UTC)
+      - ``token_uri`` (for the Phase-5 googleapiclient refresh path)
+      - ``scopes`` (granted, list)
 
-        Quota cost: 0.
-        """
-        flow = self._build_flow()
-        if code_verifier:
-            flow.code_verifier = code_verifier
-        flow.fetch_token(code=code)
-        creds: Credentials = flow.credentials
-        return _credentials_to_bundle(creds)
+    Quota cost: 0.
+    """
+        provider = self._oauth_provider()
+        token_set = _run_sync(
+            provider.exchange_code(
+                code=code, state="", redirect_uri=self._redirect_uri
+            )
+        )
+        return _tokenset_to_bundle(token_set)
+    def _oauth_provider(self) -> GoogleProvider:
+        """Construct the seed Google OAuth provider for this service.
 
+    Separated so tests can inject a Fake via the seed factory. The
+    provider owns the authorize/exchange/refresh/revoke lifecycle; the
+    googleapiclient API-layer machinery (``_fresh_credentials`` /
+    ``_build_service``) is unchanged (Phase-5 scope).
+    """
+        return GoogleProvider(
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+        )
     def revoke_and_disconnect(self, *, org_id: UUID) -> bool:
         """Best-effort revoke + delete from DB.
 
-        Token revocation is fire-and-forget — if the revoke call fails
-        (network blip, token already expired), we still delete the local
-        record so the user-facing "disconnect" button is honest.
-        """
+    Token revocation is fire-and-forget — if the revoke call fails
+    (network blip, token already expired), we still delete the local
+    record so the user-facing "disconnect" button is honest. Revocation
+    lifecycle delegated to the seed ``GoogleProvider`` (idempotent;
+    already-revoked is treated as success seed-side).
+    """
         existing = self._store.get(str(org_id), "youtube")
         if existing is None:
             return False
 
         try:
-            creds = _bundle_to_credentials(
-                existing.tokens, self._client_id, self._client_secret
+            token = (
+                existing.tokens.get("refresh_token")
+                or existing.tokens.get("access_token")
             )
-            # Google's revoke endpoint, called via the standard transport.
-            Request().session.post(
-                "https://oauth2.googleapis.com/revoke",
-                params={"token": creds.refresh_token or creds.token},
-                headers={"content-type": "application/x-www-form-urlencoded"},
-            )
+            if token:
+                _run_sync(self._oauth_provider().revoke(token))
         except Exception:
             logger.warning(
                 "youtube revoke call failed for org_id=%s — deleting local record anyway",
@@ -677,23 +686,6 @@ class YouTubeService:
                 str(org_id), "youtube", new_bundle, metadata={"channel_id": stored.metadata.get("channel_id"), "channel_title": stored.metadata.get("channel_title"), "scopes": stored.metadata.get("scopes", [])})
         return creds
 
-    def _build_flow(self) -> Flow:
-        """Construct the OAuth flow object. Separated so tests can patch
-        the class-level reference."""
-        return Flow.from_client_config(
-            client_config={
-                "web": {
-                    "client_id": self._client_id,
-                    "client_secret": self._client_secret,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [self._redirect_uri],
-                }
-            },
-            scopes=YOUTUBE_SCOPES,
-            redirect_uri=self._redirect_uri,
-        )
-
     def _build_service(self, creds: Credentials):
         """Construct a googleapiclient YouTube service instance.
 
@@ -792,3 +784,34 @@ def _format_http_error(exc: HttpError) -> str:
         return payload.get("error", {}).get("message") or str(exc)
     except Exception:
         return str(exc)
+
+
+def _run_sync(awaitable):
+    """Drive a seed-provider coroutine to completion from a sync caller.
+
+    The settings/calendar OAuth routes are sync FastAPI handlers (run in
+    a threadpool with no running event loop), so ``asyncio.run`` is safe
+    and the simplest bridge to the async seed ``GoogleProvider``.
+    """
+    import asyncio
+
+    return asyncio.run(awaitable)
+
+
+def _tokenset_to_bundle(token_set) -> dict[str, Any]:
+    """Map a seed ``oauth.TokenSet`` to the legacy YouTube bundle dict.
+
+    Identical shape to :func:`_credentials_to_bundle` so the Phase-5
+    googleapiclient API layer + the credential store + the bundle-shape
+    tests consume it without change.
+    """
+    expires_at = token_set.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return {
+        "access_token": token_set.access_token,
+        "refresh_token": token_set.refresh_token,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "scopes": list(token_set.scope or YOUTUBE_SCOPES),
+    }
