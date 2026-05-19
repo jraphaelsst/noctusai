@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.services.calendar.oauth_adapter import CALENDAR_PROVIDER, _strip_tz
-from app.services.credential_store import CredentialStore
+from app.services.credential_vault import CredentialStore
 from app.services.drive_api import _drive_api
 from app.services.drive_api.google_adapter import DRIVE_SCOPES, _read_content_via
 from app.services.drive_api.mappers import build_search_query, file_body_to_drive_file
@@ -53,7 +53,7 @@ class GoogleDriveOAuthAdapter:
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        stored = self._store.get(org_id=self._org_id, provider=CALENDAR_PROVIDER)
+        stored = self._store.get(str(self._org_id), CALENDAR_PROVIDER)
         if stored is None:
             raise RuntimeError(
                 "No Google OAuth credential stored for this org. "
@@ -65,7 +65,7 @@ class GoogleDriveOAuthAdapter:
         # Combine Drive + Calendar scopes so the same credential row
         # works for both. The token issued by Google carries the union
         # of all consented scopes regardless of what we ask for here.
-        scopes = (stored.scopes or []) + DRIVE_SCOPES
+        scopes = (stored.metadata.get("scopes", []) or []) + DRIVE_SCOPES
         credentials = Credentials(
             token=tokens.get("access_token"),
             refresh_token=tokens.get("refresh_token"),
@@ -84,14 +84,8 @@ class GoogleDriveOAuthAdapter:
                 new_tokens["expiry"] = credentials.expiry.replace(
                     tzinfo=timezone.utc
                 ).isoformat()
-            self._store.upsert(
-                org_id=self._org_id,
-                provider=CALENDAR_PROVIDER,
-                tokens=new_tokens,
-                channel_id=stored.channel_id,
-                channel_title=stored.channel_title,
-                scopes=stored.scopes,
-            )
+            self._store.put(
+                str(self._org_id), CALENDAR_PROVIDER, new_tokens, metadata={"channel_id": stored.metadata.get("channel_id"), "channel_title": stored.metadata.get("channel_title"), "scopes": stored.metadata.get("scopes", [])})
 
         return build("drive", "v3", credentials=credentials, cache_discovery=False)
 

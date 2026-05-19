@@ -30,7 +30,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
-from app.services.credential_store import (
+from app.services.credential_vault import (
     CredentialStore,
     EncryptionNotConfigured,
     StoredCredential,
@@ -296,7 +296,7 @@ class YouTubeService:
         (network blip, token already expired), we still delete the local
         record so the user-facing "disconnect" button is honest.
         """
-        existing = self._store.get(org_id=org_id, provider="youtube")
+        existing = self._store.get(str(org_id), "youtube")
         if existing is None:
             return False
 
@@ -317,7 +317,7 @@ class YouTubeService:
                 exc_info=True,
             )
 
-        return self._store.delete(org_id=org_id, provider="youtube")
+        return self._store.delete(str(org_id), "youtube")
 
     # ─── Authenticated API calls (require a connected channel) ─────────
     def get_channel_info(self, *, org_id: UUID) -> ChannelInfo:
@@ -660,7 +660,7 @@ class YouTubeService:
         request would re-issue an unnecessary refresh call (extra latency,
         no quota cost but ugly).
         """
-        stored = self._store.get(org_id=org_id, provider="youtube")
+        stored = self._store.get(str(org_id), "youtube")
         if stored is None:
             raise YouTubeNotConnected(
                 f"No YouTube credentials persisted for org_id={org_id}. "
@@ -673,14 +673,8 @@ class YouTubeService:
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
             new_bundle = _credentials_to_bundle(creds)
-            self._store.upsert(
-                org_id=org_id,
-                provider="youtube",
-                tokens=new_bundle,
-                channel_id=stored.channel_id,
-                channel_title=stored.channel_title,
-                scopes=stored.scopes,
-            )
+            self._store.put(
+                str(org_id), "youtube", new_bundle, metadata={"channel_id": stored.metadata.get("channel_id"), "channel_title": stored.metadata.get("channel_title"), "scopes": stored.metadata.get("scopes", [])})
         return creds
 
     def _build_flow(self) -> Flow:

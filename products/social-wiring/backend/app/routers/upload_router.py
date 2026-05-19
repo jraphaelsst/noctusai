@@ -50,10 +50,8 @@ from app.schemas.upload import (
     UploadJobOut,
     UploadMetadata,
 )
-from app.services.credential_store import (
-    CredentialStore,
-    EncryptionNotConfigured,
-)
+from app.services.credential_vault import (
+    CredentialStore, EncryptionNotConfigured, build_credential_store)
 from app.services.notification_service import NotificationService
 from app.services.upload_service import (
     UploadService,
@@ -82,7 +80,7 @@ def _build_upload_service(token: str) -> UploadService:
     admin_supabase = get_admin_client()
 
     try:
-        store = CredentialStore(admin_supabase, settings.encryption_key)
+        store = build_credential_store(admin_supabase)
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

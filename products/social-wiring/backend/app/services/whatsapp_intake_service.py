@@ -1177,10 +1177,8 @@ class WhatsAppIntakeService:
             EventInput,
             get_calendar_adapter,
         )
-        from app.services.credential_store import (
-            CredentialStore,
-            EncryptionNotConfigured,
-        )
+        from app.services.credential_vault import (
+            CredentialStore, EncryptionNotConfigured, build_credential_store)
 
         if not summary or not start_at_iso or not end_at_iso:
             return {
@@ -1196,7 +1194,7 @@ class WhatsAppIntakeService:
 
         store: CredentialStore | None
         try:
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
         except EncryptionNotConfigured:
             store = None
         adapter = get_calendar_adapter(org_id=self._org_id, credential_store=store)
@@ -1252,10 +1250,8 @@ class WhatsAppIntakeService:
         """
         from datetime import datetime, timedelta, timezone
         from app.services.calendar import get_calendar_adapter
-        from app.services.credential_store import (
-            CredentialStore,
-            EncryptionNotConfigured,
-        )
+        from app.services.credential_vault import (
+            CredentialStore, EncryptionNotConfigured, build_credential_store)
 
         now = datetime.now(timezone.utc)
         try:
@@ -1273,7 +1269,7 @@ class WhatsAppIntakeService:
 
         store: CredentialStore | None
         try:
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
         except EncryptionNotConfigured:
             store = None
         adapter = get_calendar_adapter(org_id=self._org_id, credential_store=store)
@@ -1404,17 +1400,15 @@ class WhatsAppIntakeService:
     ) -> dict[str, Any]:
         """Search the user's Drive by name/fullText. Returns the top N
         matches with metadata the chatbot can show inline."""
-        from app.services.credential_store import (
-            CredentialStore,
-            EncryptionNotConfigured,
-        )
+        from app.services.credential_vault import (
+            CredentialStore, EncryptionNotConfigured, build_credential_store)
         from app.services.drive_api import GoogleDriveOAuthAdapter, get_drive_adapter
 
         if not query:
             return {"ok": False, "error": "missing_query"}
         store: CredentialStore | None
         try:
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
         except EncryptionNotConfigured:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
@@ -1460,15 +1454,13 @@ class WhatsAppIntakeService:
 
     async def list_recent_drive_files(self, *, page_size: int = 10) -> dict[str, Any]:
         """List the most recently modified files."""
-        from app.services.credential_store import (
-            CredentialStore,
-            EncryptionNotConfigured,
-        )
+        from app.services.credential_vault import (
+            CredentialStore, EncryptionNotConfigured, build_credential_store)
         from app.services.drive_api import GoogleDriveOAuthAdapter, get_drive_adapter
 
         store: CredentialStore | None
         try:
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
         except EncryptionNotConfigured:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
@@ -1529,17 +1521,15 @@ class WhatsAppIntakeService:
         import csv as _csv
         import io
         from collections import Counter
-        from app.services.credential_store import (
-            CredentialStore,
-            EncryptionNotConfigured,
-        )
+        from app.services.credential_vault import (
+            CredentialStore, EncryptionNotConfigured, build_credential_store)
         from app.services.drive_api import get_drive_adapter
 
         if not file_id:
             return {"ok": False, "error": "missing_file_id"}
         store: CredentialStore | None
         try:
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
         except EncryptionNotConfigured:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
@@ -1624,17 +1614,15 @@ class WhatsAppIntakeService:
         text (CSV for Sheets, plain for Docs, extracted for PDFs) plus
         a `rendered_as` field so the chatbot knows what shape to
         reason about."""
-        from app.services.credential_store import (
-            CredentialStore,
-            EncryptionNotConfigured,
-        )
+        from app.services.credential_vault import (
+            CredentialStore, EncryptionNotConfigured, build_credential_store)
         from app.services.drive_api import get_drive_adapter
 
         if not file_id:
             return {"ok": False, "error": "missing_file_id"}
         store: CredentialStore | None
         try:
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
         except EncryptionNotConfigured:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
@@ -1668,17 +1656,15 @@ class WhatsAppIntakeService:
 
     async def get_drive_file(self, *, file_id: str) -> dict[str, Any]:
         """Fetch metadata for one file by id."""
-        from app.services.credential_store import (
-            CredentialStore,
-            EncryptionNotConfigured,
-        )
+        from app.services.credential_vault import (
+            CredentialStore, EncryptionNotConfigured, build_credential_store)
         from app.services.drive_api import get_drive_adapter
 
         if not file_id:
             return {"ok": False, "error": "missing_file_id"}
         store: CredentialStore | None
         try:
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
         except EncryptionNotConfigured:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
@@ -1716,15 +1702,13 @@ class WhatsAppIntakeService:
     # the chatbot can tell the user "connect Meta at /api/meta/oauth/start"
     # instead of fabricating empty lists.
     async def _meta_adapter(self):
-        from app.services.credential_store import (
-            CredentialStore,
-            EncryptionNotConfigured,
-        )
+        from app.services.credential_vault import (
+            CredentialStore, EncryptionNotConfigured, build_credential_store)
         from app.services.meta import FakeMetaAdapter, get_meta_adapter
 
         store: CredentialStore | None
         try:
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
         except EncryptionNotConfigured:
             store = None
         adapter = get_meta_adapter(org_id=self._org_id, credential_store=store)
@@ -2198,7 +2182,7 @@ class WhatsAppIntakeService:
         + the pending state directly.
         """
         from app.schemas.upload import UploadMetadata
-        from app.services.credential_store import CredentialStore
+        from app.services.credential_vault import CredentialStore, build_credential_store
         from app.services.notification_service import NotificationService
         from app.services.upload_service import (
             UploadService,
@@ -2270,7 +2254,7 @@ class WhatsAppIntakeService:
                 thumbnail_url=thumbnail_url,
             )
 
-            store = CredentialStore(self._admin, settings.encryption_key)
+            store = build_credential_store(self._admin)
 
             notification = NotificationService(
                 admin_supabase=self._admin,

@@ -59,11 +59,8 @@ from app.services.crm_service import CRMNotConfigured, CRMService, CRMServiceErr
 from app.services.email_service import EmailNotConfigured, EmailService, EmailServiceError
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.waha_response_registry import record_waha_sample
-from app.services.credential_store import (
-    CredentialStore,
-    CredentialStoreError,
-    EncryptionNotConfigured,
-)
+from app.services.credential_vault import (
+    CredentialStore, CredentialStoreError, EncryptionNotConfigured, build_credential_store)
 from app.services.youtube_service import (
     YouTubeNotConnected,
     YouTubeService,
@@ -87,7 +84,7 @@ def _build_credential_store(supabase) -> CredentialStore:
     not a server bug. The Settings → API Keys tab makes the gap visible.
     """
     try:
-        return CredentialStore(supabase, settings.encryption_key)
+        return build_credential_store(supabase)
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -124,15 +121,15 @@ def get_youtube_status(
     org_id = coerce_org_uuid(raw_org)
     supabase = get_user_client(token)
     store = _build_credential_store(supabase)
-    record = store.get(org_id=org_id, provider="youtube")
+    record = store.get(str(org_id), "youtube")
     if record is None:
         return YouTubeStatus(connected=False)
 
     return YouTubeStatus(
         connected=True,
-        channel_id=record.channel_id,
-        channel_title=record.channel_title,
-        scopes=record.scopes,
+        channel_id=record.metadata.get("channel_id"),
+        channel_title=record.metadata.get("channel_title"),
+        scopes=record.metadata.get("scopes", []),
         connected_at=record.created_at,
     )
 
@@ -289,23 +286,13 @@ def youtube_oauth_callback(
     # Persist before fetching channel info so a flaky channels.list call
     # doesn't lose the freshly-issued refresh_token. channel_id +
     # channel_title get filled on the first successful sync.
-    store.upsert(
-        org_id=org_id,
-        provider="youtube",
-        tokens=bundle,
-        scopes=bundle.get("scopes", []),
-    )
+    store.put(
+        str(org_id), "youtube", bundle, metadata={"scopes": bundle.get("scopes", [])})
 
     try:
         info = yt.get_channel_info(org_id=org_id)
-        store.upsert(
-            org_id=org_id,
-            provider="youtube",
-            tokens=bundle,
-            channel_id=info.channel_id,
-            channel_title=info.title,
-            scopes=bundle.get("scopes", []),
-        )
+        store.put(
+            str(org_id), "youtube", bundle, metadata={"channel_id": info.channel_id, "channel_title": info.title, "scopes": bundle.get("scopes", [])})
     except YouTubeServiceError:
         logger.warning(
             "channel_info fetch failed during oauth callback for org_id=%s — "

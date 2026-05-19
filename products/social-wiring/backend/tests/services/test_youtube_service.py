@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.credential_store import CredentialStore
+from noctusai_lib.security.token_store import make_credential_store
 from app.services.youtube_service import (
     YOUTUBE_SCOPES,
     YouTubeService,
@@ -14,7 +14,6 @@ from app.services.youtube_service import (
     _parse_published_at,
     _video_item_to_summary,
 )
-from cryptography.fernet import Fernet
 
 
 class TestCredentialsBundleRoundTrip:
@@ -149,7 +148,7 @@ class TestParsePublishedAt:
 
 class TestYouTubeServiceConstruction:
     def test_missing_credentials_raises(self):
-        store = CredentialStore(MagicMock(), Fernet.generate_key().decode())
+        store = make_credential_store()
         with pytest.raises(YouTubeServiceError):
             YouTubeService(
                 client_id="",

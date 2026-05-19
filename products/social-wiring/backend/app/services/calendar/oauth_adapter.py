@@ -43,7 +43,7 @@ from app.services.calendar import _google_api
 from app.services.calendar.google_adapter import CALENDAR_SCOPES
 from app.services.calendar.mappers import event_to_google_body, google_body_to_created_event
 from app.services.calendar.types import CreatedEvent, EventInput
-from app.services.credential_store import CredentialStore
+from app.services.credential_vault import CredentialStore
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -81,7 +81,7 @@ class GoogleCalendarOAuthAdapter:
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        stored = self._store.get(org_id=self._org_id, provider=CALENDAR_PROVIDER)
+        stored = self._store.get(str(self._org_id), CALENDAR_PROVIDER)
         if stored is None:
             raise RuntimeError(
                 "No Google Calendar OAuth credential stored for this org. "
@@ -108,14 +108,8 @@ class GoogleCalendarOAuthAdapter:
                 new_tokens["expiry"] = credentials.expiry.replace(
                     tzinfo=timezone.utc
                 ).isoformat()
-            self._store.upsert(
-                org_id=self._org_id,
-                provider=CALENDAR_PROVIDER,
-                tokens=new_tokens,
-                channel_id=stored.channel_id,
-                channel_title=stored.channel_title,
-                scopes=stored.scopes or list(CALENDAR_SCOPES),
-            )
+            self._store.put(
+                str(self._org_id), CALENDAR_PROVIDER, new_tokens, metadata={"channel_id": stored.metadata.get("channel_id"), "channel_title": stored.metadata.get("channel_title"), "scopes": stored.metadata.get("scopes", []) or list(CALENDAR_SCOPES)})
 
         return build("calendar", "v3", credentials=credentials, cache_discovery=False)
 

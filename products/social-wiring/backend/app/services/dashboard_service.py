@@ -16,7 +16,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from app.services.credential_store import CredentialStore
+from app.services.credential_vault import CredentialStore
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +70,10 @@ class DashboardService:
         channel_id: str | None = None
         channel_title: str | None = None
         try:
-            cred = self._store.get(org_id=org_id, provider="youtube")
+            cred = self._store.get(str(org_id), "youtube")
             if cred is not None:
-                channel_id = cred.channel_id
-                channel_title = cred.channel_title
+                channel_id = cred.metadata.get("channel_id")
+                channel_title = cred.metadata.get("channel_title")
         except Exception:                                     # pragma: no cover
             # Decrypt failures are surfaced loudly elsewhere; the
             # dashboard treats them as "not connected" so the rest

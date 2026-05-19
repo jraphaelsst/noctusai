@@ -34,10 +34,8 @@ from app.schemas.dashboard import (
     RecentUploadItem,
     TopVideoItem,
 )
-from app.services.credential_store import (
-    CredentialStore,
-    EncryptionNotConfigured,
-)
+from app.services.credential_vault import (
+    CredentialStore, EncryptionNotConfigured, build_credential_store)
 from app.services.dashboard_service import DashboardService
 
 logger = logging.getLogger(__name__)
@@ -52,7 +50,7 @@ def _build_dashboard_service(token: str) -> DashboardService:
     admin_supabase = get_admin_client()
 
     try:
-        store = CredentialStore(admin_supabase, settings.encryption_key)
+        store = build_credential_store(admin_supabase)
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

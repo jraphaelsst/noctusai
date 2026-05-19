@@ -34,7 +34,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from app.services.credential_store import CredentialStore
+from app.services.credential_vault import CredentialStore
 from app.services.meta import _meta_api
 from app.services.meta._meta_api import MetaGraphError
 from app.services.meta.mappers import (
@@ -129,7 +129,7 @@ class MetaOAuthAdapter:
                 "is empty AND no CredentialStore is configured.",
                 http_status=401,
             )
-        stored = self._store.get(org_id=self._org_id, provider=META_PROVIDER)
+        stored = self._store.get(str(self._org_id), META_PROVIDER)
         if stored is None:
             raise MetaGraphError(
                 "No Meta credential available. Either set "

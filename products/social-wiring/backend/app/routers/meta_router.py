@@ -35,10 +35,8 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.dependencies import get_admin_client
-from app.services.credential_store import (
-    CredentialStore,
-    EncryptionNotConfigured,
-)
+from app.services.credential_vault import (
+    CredentialStore, EncryptionNotConfigured, build_credential_store)
 from app.services.meta import (
     META_PROVIDER,
     FakeMetaAdapter,
@@ -92,7 +90,7 @@ class MetaScopesResponse(BaseModel):
 # ─── Helpers ───────────────────────────────────────────────────────────
 def _build_store() -> CredentialStore:
     try:
-        return CredentialStore(get_admin_client(), settings.encryption_key)
+        return build_credential_store(get_admin_client())
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -324,7 +322,7 @@ def meta_scopes(org_id: str | None = Query(default=None)) -> MetaScopesResponse:
         store = _build_store()
         from app.services.meta import META_PROVIDER
 
-        stored = store.get(org_id=resolved_org, provider=META_PROVIDER)
+        stored = store.get(str(resolved_org), META_PROVIDER)
         if stored and stored.tokens.get("access_token"):
             try:
                 body = graph_get(
@@ -468,14 +466,8 @@ def meta_oauth_callback(
         "user_id": user_id,
         "user_name": user_name,
     }
-    store.upsert(
-        org_id=org_id,
-        provider=META_PROVIDER,
-        tokens=stored_tokens,
-        channel_id=user_id,
-        channel_title=user_name,
-        scopes=requested_scopes,
-    )
+    store.put(
+        str(org_id), META_PROVIDER, stored_tokens, metadata={"channel_id": user_id, "channel_title": user_name, "scopes": requested_scopes})
 
     if settings.frontend_base_url:
         target = (

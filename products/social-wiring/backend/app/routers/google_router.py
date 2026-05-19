@@ -27,10 +27,8 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.dependencies import get_admin_client
-from app.services.credential_store import (
-    CredentialStore,
-    EncryptionNotConfigured,
-)
+from app.services.credential_vault import (
+    CredentialStore, EncryptionNotConfigured, build_credential_store)
 from app.services.google_scopes import (
     GOOGLE_KITCHEN_SINK_SCOPES,
     diagnose_consent_screen_gaps,
@@ -58,7 +56,7 @@ def _build_store() -> CredentialStore | None:
     """Try to build a CredentialStore. Returns None if encryption isn't
     configured (no fatal error — the scopes endpoint is informational)."""
     try:
-        return CredentialStore(get_admin_client(), settings.encryption_key)
+        return build_credential_store(get_admin_client())
     except EncryptionNotConfigured:
         return None
 
@@ -111,7 +109,7 @@ def google_scopes(org_id: str | None = Query(default=None)) -> GoogleScopesRespo
         stored = None
         if resolved_org is not None:
             try:
-                stored = store.get(org_id=resolved_org, provider=CALENDAR_PROVIDER)
+                stored = store.get(str(resolved_org), CALENDAR_PROVIDER)
             except Exception as exc:
                 logger.warning("Google credential lookup failed: %s", exc)
 

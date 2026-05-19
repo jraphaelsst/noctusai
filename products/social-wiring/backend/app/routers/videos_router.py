@@ -30,10 +30,8 @@ from app.dependencies import (
     get_user_client,
 )
 from app.schemas.video import VideoListResponse, VideoOut, VideoSyncResult
-from app.services.credential_store import (
-    CredentialStore,
-    EncryptionNotConfigured,
-)
+from app.services.credential_vault import (
+    CredentialStore, EncryptionNotConfigured, build_credential_store)
 from app.services.video_cache_service import VideoCacheError, VideoCacheService
 from app.services.youtube_service import (
     YouTubeNotConnected,
@@ -61,7 +59,7 @@ def _build_video_cache_service(token: str) -> VideoCacheService:
     admin_supabase = get_admin_client()
 
     try:
-        store = CredentialStore(admin_supabase, settings.encryption_key)
+        store = build_credential_store(admin_supabase)
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -25,7 +25,7 @@ from app.services.drive_api.oauth_adapter import GoogleDriveOAuthAdapter
 from app.services.drive_api.types import DriveAdapter, DriveFile, DriveSearchResult
 
 if TYPE_CHECKING:
-    from app.services.credential_store import CredentialStore
+    from app.services.credential_vault import CredentialStore
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def get_drive_adapter(
 
 def _has_oauth_credential(store: "CredentialStore", org_id: UUID) -> bool:
     try:
-        return store.get(org_id=org_id, provider=CALENDAR_PROVIDER) is not None
+        return store.get(str(org_id), CALENDAR_PROVIDER) is not None
     except Exception:
         logger.exception("OAuth credential lookup failed; skipping OAuth path")
         return False
