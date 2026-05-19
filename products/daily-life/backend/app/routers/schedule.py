@@ -18,6 +18,20 @@ from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
+def _as_date(value):
+    """Parse an ISO date/datetime query string to a date.
+
+    Returns None on absence/parse-failure (callers default the
+    recurrence window). No silent except — a malformed filter is
+    logged at DEBUG so it is observable, never swallowed.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except (ValueError, TypeError) as exc:
+        logger.debug("schedule: unparseable date filter %r (%s)", value, exc)
+        return None
 router = APIRouter(prefix="/api/schedule", tags=["Schedule"])
 
 
@@ -84,8 +98,8 @@ async def listar_eventos(
 
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
-
-    return paginated_response(result.data or [], result.count or 0, page, page_size)
+    _eventos = expandir_recorrencias(result.data or [], _as_date(data_inicio), _as_date(data_fim))
+    return paginated_response(_eventos, result.count or 0, page, page_size)
 
 
 @router.post("")

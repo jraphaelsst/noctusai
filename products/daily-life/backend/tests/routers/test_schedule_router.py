@@ -31,6 +31,23 @@ SAMPLE_ALLDAY_EVENT = {
     "cor": None,
     "status": "agendado",
 }
+RECURRING_EVENT = {
+    "id": "event-recur",
+    "user_id": "test-user-123",
+    "org_id": "test-org-123",
+    "titulo": "Stand-up diario",
+    "descricao": None,
+    "categoria": "trabalho",
+    "data_inicio": "2026-04-14T09:00:00",
+    "data_fim": "2026-04-14T09:15:00",
+    "dia_inteiro": False,
+    "local": None,
+    "lembrete_minutos": 5,
+    "cor": None,
+    "status": "agendado",
+    "recorrencia": "diario",
+    "recorrencia_fim": None,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +64,25 @@ class TestListEvents:
         assert body["pagination"]["total"] == 2
         assert body["pagination"]["page"] == 1
         assert body["pagination"]["page_size"] == 50
+    def test_list_events_expands_recurring(self, client):
+        """REGRESSION: GET /api/schedule MUST expand recurring events.
+
+    Pre-fix `expandir_recorrencias` was imported but never called in
+    listar_eventos, so a daily recurring event returned 1 row instead
+    of its in-window occurrences (dead feature; no endpoint test
+    exercised expansion — that gap is why it shipped). A daily event
+    over 2026-04-14..04-20 expands to 7 (mirrors
+    test_schedule_service.test_expands_daily).
+    """
+        client.mock_supabase.set_table_data("eventos", [RECURRING_EVENT])
+        resp = client.get("/api/schedule", params={
+            "data_inicio": "2026-04-14T00:00:00",
+            "data_fim": "2026-04-20T23:59:59",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["data"]) == 7, body["data"]
+        assert sum(1 for e in body["data"] if e.get("is_recorrencia")) == 6
 
     def test_list_events_no_auth(self, client):
         resp = client.raw().get("/api/schedule")
