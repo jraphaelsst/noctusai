@@ -26,6 +26,32 @@ echo "[local-watch] initial SPA build (${SLUG})..."
 echo "[local-watch] starting vite build --watch (background)..."
 ( cd "$FE" && npm run build -- --watch ) &
 
+# Enforce the contract above (not just attempt it). The background
+# `--watch` does its own initial pass that briefly empties dist/ (vite
+# emptyOutDir); `exec uvicorn` would otherwise race straight into the
+# seed factory's startup-only serve_spa check during that window →
+# "dist missing" → SPA fail-soft for the whole container lifetime
+# (serve_spa decides once, never remounts). Block until dist/index.html
+# is stably present so uvicorn's startup check always sees a mounted SPA.
+echo "[local-watch] waiting for dist/index.html to stabilize before uvicorn..."
+_stable=0
+_waited=0
+_timeout="${LOCAL_WATCH_DIST_TIMEOUT:-180}"
+while [ "$_stable" -lt 3 ]; do
+  if [ -f "$FE/dist/index.html" ]; then
+    _stable=$((_stable + 1))            # present this tick
+  else
+    _stable=0                           # mid-rewrite/empty → reset
+  fi
+  if [ "$_waited" -ge "$_timeout" ]; then
+    echo "[local-watch] ⚠ dist/index.html not stable after ${_timeout}s — starting uvicorn anyway (SPA may be API-only this boot; check the build log)" >&2
+    break
+  fi
+  _waited=$((_waited + 1))
+  sleep 1
+done
+[ "$_stable" -ge 3 ] && echo "[local-watch] dist ready (stable ${_stable}s) — starting uvicorn."
+
 echo "[local-watch] starting uvicorn --reload on :${PORT}..."
 exec uvicorn app.main:app \
     --host 0.0.0.0 --port "${PORT}" \

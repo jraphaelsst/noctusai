@@ -74,8 +74,15 @@ COPY products/daily-life/backend/ ./products/daily-life/backend/
 COPY --from=frontend-build /app/products/daily-life/frontend/dist ./products/daily-life/frontend/dist
 ENV SERVE_SPA_DIR=/app/products/daily-life/frontend/dist
 
-# Non-root user — LAST (so the pip install above could write the venv).
-RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app /opt/venv
+# Non-root user — created LAST (pip install above ran as root, before this).
+# chown ONLY /app — NOT /opt/venv. /opt/venv (~276MB) comes from the SHARED
+# backend base layer and is read-only at runtime (no runtime pip; editable
+# seed installs resolve via .pth → bind-mounted /app/seed). `chown -R
+# /opt/venv` would rewrite every file into a NEW unshared ~311MB per-product
+# layer (measured 2026-05-19) — defeating base sharing for zero benefit
+# (venv is world-readable from `python -m venv`; noctus only needs read+exec).
+# Anti-pattern: never `chown -R` a large inherited base path. ~2.5GB fleet.
+RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app
 USER noctus
 
 EXPOSE 8005

@@ -91,28 +91,43 @@ runtime-watch   : FROM runtime (= noctus-seed-backend-base, DEBIAN / glibc)
 
 ## 6. Implementation phases
 
-### Phase 0 — Measurement baseline (gated on daemon free)
-- [ ] `docker system df -v` true disk (Images / Build Cache / reclaimable) — *blocked: in-flight staggered_up validation build saturates the daemon*
-- [ ] Per-product `node_modules` size in a built `runtime-watch` image (`docker run --rm <img> du -sh .../node_modules`)
-- [ ] Record baseline numbers here (the before half of the evidence-based win claim)
+> **Evidence-driven pivot (2026-05-19).** Phase 0 `docker history` measurement
+> redirected priorities — see §5. The biggest, safest, cheapest disk win was
+> NOT the planned alpine closure lift; it is the `chown -R /opt/venv`
+> anti-pattern (~2.5–2.8 GB, ~1-token canonical fix). The alpine
+> frontend-base closure is real but build-*speed*, low disk (discarded
+> stage). Phases re-ordered by measured disk-value × inverse-risk.
 
-### Phase 1 — Alpine frontend-base closure lift (pilot: seed → core → social-wiring)
-- [ ] Derive the canonical shared closure (deps shared by ≥ threshold; threshold decided from `/tmp/fe_overlap.txt` — start ≥6, sanity-check ≥9 set)
-- [ ] Edit `seed/docker/Dockerfile.frontend-base`: add root-manifest + closure `npm install` layer
-- [ ] Edit canonical `products/seed/backend/Dockerfile` `frontend-build` stage if the up-tree resolution needs an anchor
-- [ ] `noctus.dev.propagate --check` then propagate; pre-commit `--check` green
-- [ ] `build-base-images.sh` rebuild frontend base; pilot-build seed + core + social-wiring `frontend-build`; assert dist parity + image-size delta
-- [ ] `bash -n start.sh`; `docker compose config -q` both projects
+### Phase 0 — Measurement baseline ✅
+- [x] `docker system df -v`: ≈62 GB total → ≈37 GB after a ~25 GB regenerable reclaim (build cache 35→13 GB, dangling images, 2 retired-product volumes)
+- [x] `docker history noctus-seed:dev`: **`RUN useradd … chown -R … /app /opt/venv` = 311 MB UNSHARED per product** (rewrites the 276 MB shared-base venv); glibc `runtime-watch` `npm install` ≈ 215 MB + post-npm `chown -R /app` ≈ 227 MB; alpine `frontend-build` node_modules **absent** (discarded stage → alpine lift = build-speed, not disk)
 
-### Phase 2 — glibc runtime-watch closure share
-- [ ] Decide design (a) vs (b) from Phase 0 evidence
-- [ ] Implement on canonical seed + propagate; honor §3.2b (lockfile drop ×2, anon-volume seed source)
-- [ ] Pilot rebuild + live-edit smoke (edit a pilot product's .tsx, confirm watch rebuild) + size delta
+**Improvements:** none identified — Phase 0 is pure measurement; the actionable findings (the chown anti-pattern pivot, the alpine-vs-glibc split, the deeper serve_spa-resilience) are captured in §5, the Phase 1 `**Improvements:**` block, and §11. No phase proposal needed.
 
-### Phase 3 — Fleet extend + measure + three-way sync
-- [ ] Non-pilot products extend (gated on pilots-green) — rebuild fleet via fixed `./start.sh` (staggered)
-- [ ] `docker system df -v` after; record before/after; confirm the staggered_up boot still healthy 9/9
-- [ ] KB §3.2b/§6 update + CLAUDE.md pointer + memory + MEMORY.md (three-way sync); update §11
+### Phase 1 — Kill the `chown -R /opt/venv` layer-bloat anti-pattern ✅ (pilot: seed → core → social-wiring; validated 2026-05-19)
+- [x] Canonical `products/seed/backend/Dockerfile` runtime stage: `chown -R … /app` only (drop `/opt/venv`; venv read-only at runtime, stays shared base layer) + rationale comment
+- [x] `noctus.dev.propagate` → 9 products; `--check` in-sync (zero drift)
+- [x] Controlled pilot rebuild (seed/core/social-wiring) — **measured ≈370–430 MB/product off; fleet ≈3.3 GB; unique footprint −35–40%** (beat ~2.8 GB estimate)
+- [x] Functional smoke: healthy 55s, `/api/health` 200, **non-root `noctus` imports the root-owned world-readable venv OK** (confirms the chown was pure waste), no perm errors
+- [x] **Fix-on-contact (separate pre-existing bug found during validation):** `seed/docker/local-watch.sh` declared but didn't *enforce* "dist before uvicorn" — the bg `vite --watch` initial pass transiently empties `dist/`, `exec uvicorn` raced into `serve_spa`'s startup-only check → SPA 404 the whole boot (healthcheck only probes `/api/health` so it still "healthy"). Fixed: block on `dist/index.html` stable (3 consecutive ticks) before `exec uvicorn`, bounded `LOCAL_WATCH_DIST_TIMEOUT` (proceed+⚠, never silent). Shared file (no propagate); revalidating via seed rebuild
+- [x] Confirmed SPA serves post-fix: log shows `dist ready (stable 3s) → starting uvicorn → SPA served (single-container mode)`; `/` returns `<title>Seed Product</title>`, healthy 65s
+
+**Improvements:**
+- *Deeper root (surfaced, NOT ballooned):* `serve_spa` in `seed/framework/backend/noctusai_seed/app.py` is **startup-only + fail-soft-permanent** — a transient missing `dist/` at boot disables the SPA for the container's life. The local-watch poll closes the race for `runtime-watch`, but request-time SPA-fallback resolution in the seed factory would make it resilient for *all* products + any future race. Recommended follow-up project `serve-spa-request-time-resilience` (seed-framework change → needs its own cross-product validation; correctly out-of-scope here per fix-on-contact's "balloons into a project → file it").
+
+### Phase 2 — runtime-watch chown-after-npm + glibc FE closure share
+- [ ] runtime-watch: the post-`npm install` `chown -R /app` (line ~123) rewrites the fresh ~215 MB glibc node_modules → restructure (install as `noctus` / `COPY --chown` / scoped chown) so node_modules isn't duplicated into a chown layer
+- [ ] glibc common FE closure shared (design (a) separate `noctus-seed-frontend-glibc-base` vs (b) fatter backend base — decide on Phase 1 evidence); honor §3.2b (lockfile drop ×2, anon-volume seed source)
+- [ ] Pilot rebuild + live-edit smoke (edit a pilot .tsx → watch rebuild) + size delta
+
+### Phase 3 — alpine frontend-base closure (build-SPEED — cascade mitigation, low disk)
+- [ ] Lift ≥9-shared closure into `seed/docker/Dockerfile.frontend-base`; reframed as cold-rebuild-cascade speedup, not disk
+- [ ] Pilot build-time before/after
+
+### Phase 4 — Fleet extend + measure + three-way sync
+- [ ] Non-pilots extend (gated pilots-green) — fleet rebuild via fixed `./start.sh` (also validates `staggered_up` end-to-end, >4 products = real waves)
+- [ ] `docker system df -v` after; record before/after; staggered boot still 9/9 healthy
+- [ ] Three-way sync: KB containerization anti-patterns §12 + §3.2b/§6 + CLAUDE.md pointer + memory (the `chown -R inherited-base-path` anti-pattern is a generalizable methodology lesson) + §11
 
 ---
 
@@ -145,3 +160,5 @@ runtime-watch   : FROM runtime (= noctus-seed-backend-base, DEBIAN / glibc)
 | Date | Change | By |
 |---|---|---|
 | 2026-05-19 | Filed after user "File + execute now"; evidence (FE overlap 51@≥6, 20@all-9; two-env duplication) gathered pre-filing; Phase 0 gated on in-flight daemon | Claude |
+| 2026-05-19 | Aborted+consolidated (user-chosen): ~25 GB regenerable reclaimed, daemon freed, Phase 0 measured. **Evidence pivot**: `chown -R /opt/venv` = 311 MB/product anti-pattern is the top win, not the alpine lift. Phases re-ordered. Phase 1 canonical fix applied + propagated (in-sync); pilot rebuild in flight | Claude |
+| 2026-05-19 | **Phase 1 ✅** — measured ≈3.3 GB fleet (≈370–430 MB/product, unique −35–40%); functionally validated (healthy, API 200, non-root venv import OK, SPA serves). Fix-on-contact: `local-watch.sh` SPA startup race fixed (enforce dist-stable before uvicorn); deeper `serve_spa` startup-only-resilience surfaced as follow-up. Three-way synced (KB §12 anti-pattern + memory). Committed local | Claude |

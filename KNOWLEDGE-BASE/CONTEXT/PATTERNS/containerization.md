@@ -741,6 +741,20 @@ there is a real deploy target (don't gold-plate speculative infra).
   NATs and can't re-register.
 - **Don't make `noctus-net` non-external.** The two-project split
   requires it created once, outside any single project.
+- **Don't `chown -R` a large path inherited from a shared base.**
+  `RUN … chown -R noctus:noctus /app /opt/venv` rewrites every file of
+  the ~276 MB base venv into a **new unshared ~311 MB per-product layer**
+  — defeating base-layer sharing for zero benefit (the venv is read-only
+  at runtime; a non-root user only needs read+exec, and `python -m venv`
+  output is already world-readable). Measured 2026-05-19: removing
+  `/opt/venv` from the chown cut ≈370–430 MB **per product** (≈3.3 GB
+  fleet, unique footprint −35–40%). Rule: chown only product-owned paths
+  (`/app`); never recursively re-own an inherited base path. If a
+  non-root user must own copied files, use `COPY --chown=` (writes the
+  ownership into the original layer) — never a follow-up `RUN chown -R`.
+  Sibling: the `runtime-watch` post-`npm install` `chown -R /app`
+  rewrites the fresh glibc `node_modules` the same way (Phase 2 of the
+  `frontend-deps-base-consolidation` project).
 
 ---
 
