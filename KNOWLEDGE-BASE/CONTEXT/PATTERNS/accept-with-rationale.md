@@ -612,6 +612,17 @@ state change, not a removal.
 - **Revisit trigger:** (a) a hook runner that can invoke MCP directly (flips `[carve:hook]`→formalize); (b) `build-base-images.sh` grows real logic beyond `docker build` plumbing (flips `[carve:docker]`→absorb); (c) the bootstrap sequence gains a pre-existing Python runtime it can rely on (flips `[carve:bootstrap]`). Any *new* `scripts/*.{sh,py}` without a manifest row trips `check_new_script_lacks_mcp_analog` (warning) — the keeper enforces the rule going forward.
 - **Recorded by:** `scripts-mcp-absorption` Phase 5 (2026-05-18, architect + 5 parallel engineers MOLE/ANALYSIS/LEDGER/KBSYNC/CODEGEN).
 
+## Entries from `schedule-recurrence-window-gap` Phase 0 (filed 2026-05-18)
+
+### Recurrence-expansion stays product-local across daily-life/erp/PF — domain-divergent, no `N≥3` unifiable contract
+
+- **Subject:** §3a seed-first audit of the daily-life recurring-events gap asked whether windowed recurrence-expansion is `N≥3`-duplicated → a seed primitive (`noctusai_lib.domain.scheduling`).
+- **Decision `[A]`:** keep recurrence-expansion product-local. daily-life `schedule_service.expandir_recorrencias` (calendar events → in-memory occurrences clipped to a read-window) vs erp `recorrencia_service` (generates+persists financial rent rows) vs PF `recorrentes_service` (financial-transaction recurrence). Same word, **three different domains**: in-memory-read-clip vs persist-financial-rows; period vocabularies even differ (daily-life `diario/semanal/mensal/anual` vs PF `semanal/quinzenal/mensal/bimestral/…`).
+- **Reason:** no `N≥3` *unifiable* contract — a shared "recurrence engine" abstraction would be a wrong abstraction (forced unification of divergent domains). Recurrence rule (`N≥3 ⇒ MUST formalize`) does not fire; `[R]` N/A (each is correct for its domain). `[A]` is the correct landing, not a deferral. (User-preference is to avoid `[A]` when `[F]/[R]` is genuinely possible — here it is not without harm.)
+- **Scope:** the three services above. The narrow shared sliver (period→`relativedelta`) is too small + vocabulary-divergent to extract.
+- **Revisit trigger:** a 3rd+ product needs *calendar-style window-expansion* (same contract as daily-life's, not financial-posting) → re-triage toward `[F]` a `noctusai_lib.domain.scheduling.recurrence` window-expand primitive. (Out-of-scope note: a broad cross-product scan during this audit re-surfaced general platform helper-duplication — `audit_hook` `_get_engine_and_factory`/`_noop_writer` ×5 — pre-existing, belongs to the standing absorption queue, not this entry.)
+- **Recorded by:** `schedule-recurrence-window-gap` Phase 0 (2026-05-18, architect; user-delegated decision).
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.

@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-18
 - **Last updated:** 2026-05-18
-- **Status:** Filed (deferred-with-destination from the recurring-events fix; needs-a-decision before P1 — NOT executing)
+- **Status:** Phase 0 ✅ — Q1/Q2 decided (§2), §3a audit `[A]` (no seed-lift); **P1/P2 unblocked, awaiting user "continue"** (phase-by-phase cadence)
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
 - **Related docs:** `products/daily-life/backend/app/routers/schedule.py` · `…/app/services/schedule_service.py` · fix commit `48309a00` (recurring-events expansion) · `KB § PATTERNS/project-execution.md §2.13` (in-flight-resolution / surfaced-needs-a-decision)
 - **Project slug:** `schedule-recurrence-window-gap` (subject `schedule-recurrence-window`, intent `gap`; single-product → `products/daily-life/projects/`)
@@ -27,7 +27,10 @@ The win: recurring events return their true in-window occurrences with a defined
 - **The expansion bug itself is already fixed ∧ shipped** — `48309a00` on `main`; this project is ONLY the two residual semantics. *(Rules out re-doing the wiring; scope is the filter + pagination model.)*
 - **Surfaced, not silently changed** — the Explore-suggested `data_inicio→data_fim` line-79 swap was NOT applied: `gte/lte` both on `data_inicio` is a coherent "starts-in-window" filter; changing it is a product-semantic decision. *(Drives §7 Q1 — needs the intended behavior before any code.)*
 - **`data_fim` is nullable** — all-day / open-ended events store `data_fim = NULL` (see `schedule.py` create path). *(Any overlap-filter must handle NULL or it silently drops all-day events.)*
-- **User directive, verbatim** (2026-05-18): *"do it, then file the follow-up"* — filing this is the explicit destination for the §2.13-deferred needs-a-decision items.
+- **User directive, verbatim** (2026-05-18): *"do it, then file the follow-up"*, then *"decide Q1 and Q2, then run its Phase 0"* — user delegated the Q1/Q2 decisions to the architect (decide + record rationale, don't re-ask).
+- **Q1 DECIDED (window-filter semantic)** — **recurrence-aware lower-bound drop**: for rows with `recorrencia ∉ {nenhuma, NULL}` do NOT apply the `gte("data_inicio", data_inicio)` lower bound (so pre-window recurring parents are fetched, then window-clipped by `expandir_recorrencias`); non-recurring rows keep `gte`+`lte` unchanged. *(Minimal · zero-regression to non-recurring listing · NULL-`data_fim`-safe (filter stays on `data_inicio`) · the expansion service already clips occurrences to `[inicio,fim]` so an earlier-starting recurring parent cannot flood. Rejected full-overlap-on-`data_fim` — NULL-handling complexity + would alter non-recurring semantics = the very regression risk that drove the original defer.)*
+- **Q2 DECIDED (pagination contract)** — `count` = **parent-row count**; expanded occurrences are derived, NOT separately paginated; documented at the call site + asserted by a test. *(Low-risk, matches current shape, no pagination redesign. Rejected expand-then-paginate for this project — correct long-term but a larger occurrence-cursor redesign = scope-creep; recorded as a named future follow-up `schedule-occurrence-pagination` if true occurrence-paging is later wanted.)*
+- **§3a/Q3 audit RESOLVED — `[A]` accept-with-rationale** — recurrence-expansion is domain-divergent across daily-life (calendar window-expand) / erp `recorrencia_service` (financial rent-row generation, persists) / PF `recorrentes_service` (financial-transaction recurrence); even the period vocabularies differ (daily-life `diario/semanal/mensal/anual` vs PF `semanal/quinzenal/mensal/bimestral/…`). No `N≥3` *unifiable* contract → a forced seed-lift would be a wrong abstraction. Recurrence rule does NOT fire `[F]`. Cataloged in `KB § PATTERNS/accept-with-rationale.md`. *(Note: the broad cross-product scan also surfaced general platform-wide helper duplication — `audit_hook` `_get_engine_and_factory`/`_noop_writer` ×5 etc. — that is **pre-existing, out of THIS project's scope**; destination = the standing absorption queue, NOT actioned here, not silent.)*
 
 ---
 
@@ -81,10 +84,15 @@ Six-question checklist (`KB § GUIDES/seed-first-design.md`):
 
 ## 6. Implementation phases
 
-### Phase 0 — Audit + decisions (interrogate user)
-- [ ] Confirm Q1 (window-filter semantic) ∧ Q2 (pagination model) WITH the user — record answers in §2.
-- [ ] Run absorption-scan sextet across daily-life/erp/PF/therapy recurrence-expansion; record `N` + the `[F]/[R]/[A]` triage in §11 (if `N≥3` unifiable ⇒ add a seed phase).
-- [ ] Re-confirm `data_fim` NULL distribution (all-day events) so the filter design is NULL-safe.
+### Phase 0 — Audit + decisions ✅ (user-delegated Q1/Q2; audit `[A]`)
+- [x] Q1 (window-filter semantic) ∧ Q2 (pagination model) decided + recorded in §2 (user delegated the decision to the architect — recorded with rejected-alternatives rationale).
+- [x] Absorption audit across daily-life/erp/PF/therapy recurrence-expansion — domain-divergent, no `N≥3` unifiable contract → triage `[A]` (no seed phase added); §11 + accept-with-rationale catalog.
+- [x] `data_fim` NULL-distribution confirmed: all-day / open-ended events store `data_fim = NULL` (`schedule.py:47,61`); the Q1 filter stays on `data_inicio` only ⇒ NULL-safe by construction.
+
+**Improvements:**
+- The original defect (imported-but-uncalled `expandir_recorrencias`) is a class — a keeper could flag "module-level import used nowhere in the file" for router/service modules. Deferred → standing absorption/keeper queue (out of this project's bounded scope; named, not silent).
+- `expandir_recorrencias` default window (today−30 … today+90) silently caps an unbounded query; acceptable but the cap should be explicit/asserted when P1 changes the fetch — captured for P1.
+*Phase proposal:* none filed — Phase 0 is decisions+audit; the two improvement bullets are deferred-with-destination (above), no bundle warranted.
 
 ### Phase 1 — Window-filter fix (recurring parents not excluded)
 - [ ] Implement the Q1-decided filter (libcst). *Recommendation pending decision:* for rows with `recorrencia ∉ {nenhuma, NULL}` do **not** apply the `gte("data_inicio", data_inicio)` lower bound (or fetch by `recorrencia_fim`-overlap), so pre-window recurring parents are fetched ∧ expanded; non-recurring rows keep current behavior.
@@ -102,9 +110,9 @@ Six-question checklist (`KB § GUIDES/seed-first-design.md`):
 
 ## 7. Open questions
 
-1. **Intended window-filter semantic for recurring parents** — overlap (`[start … recorrencia_fim]` ∩ window) vs current starts-within vs recurrence-aware-lower-bound-drop? *Recommendation:* recurrence-aware — skip the `data_inicio` lower bound for `recorrencia ≠ nenhuma` rows (simplest, NULL-`data_fim`-safe, no regression to non-recurring). Needs answer before **P1** / decided by **user**.
-2. **Pagination contract over expanded occurrences** — document `count` = parent-count, or redesign expand-then-paginate? *Recommendation:* document parent-count short-term (low-risk, matches current shape); flag expand-then-paginate as a separate larger follow-up if the user wants true occurrence-pagination. Needs answer before **P2** / decided by **user**.
-3. **Seed-lift?** — discovered during **P0** absorption-scan: is windowed recurrence-expansion `N≥3`-duplicated with a unifiable contract → `[F]` to `noctusai_lib.domain.scheduling`? Decided by the scan evidence.
+1. ✅ **RESOLVED (Phase 0, §2)** — window-filter semantic = recurrence-aware lower-bound drop. P1 unblocked.
+2. ✅ **RESOLVED (Phase 0, §2)** — pagination contract = `count` = parent-row count, occurrences derived/not separately paginated. P2 unblocked. Larger occurrence-pagination = named future follow-up `schedule-occurrence-pagination` (not this project).
+3. ✅ **RESOLVED (Phase 0 audit, §2)** — `[A]` accept-with-rationale; recurrence-expansion domain-divergent, no `N≥3` unifiable contract, no seed-lift. Cataloged in `KB § PATTERNS/accept-with-rationale.md`.
 
 ---
 
@@ -138,3 +146,4 @@ Six-question checklist (`KB § GUIDES/seed-first-design.md`):
 | Date | Change | By |
 |---|---|---|
 | 2026-05-18 | Filed as the §2.13 deferred-with-destination for two needs-a-decision items surfaced while fixing the recurring-events expansion bug (`48309a00`). NOT executing — Phase 0 interrogation gates P1/P2. User-directed ("do it, then file the follow-up"). | Claude Opus 4.7 (1M context) |
+| 2026-05-18 | **Phase 0 ✅** (user-directed "decide Q1 and Q2, then run its Phase 0"). Q1 = recurrence-aware lower-bound drop; Q2 = `count`=parent-count (occurrence-paging → named future follow-up); both rationale+rejected-alternatives in §2. §3a absorption audit: recurrence-expansion domain-divergent across daily-life/erp/PF (divergent period vocabularies, in-memory-clip vs persist-rows) → triage **`[A]`**, no `N≥3` unifiable contract, no seed phase; cataloged in `KB § PATTERNS/accept-with-rationale.md`. `data_fim` NULL-safe confirmed. P1/P2 unblocked; paused per phase-by-phase cadence. Out-of-scope platform helper-duplication noted (standing absorption queue, not actioned here). | Claude Opus 4.7 (1M context) |
