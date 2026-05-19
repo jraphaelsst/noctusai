@@ -69,6 +69,18 @@ scheduling appointments. RLS scoped to the product.
 
 ## Seed seams consumed (do NOT re-implement product-locally)
 
+> **⚠️ DOC⊥CODE DRIFT (2026-05-19, codebase-is-source-of-truth).** The
+> **Google stack** rows below are **aspirational, not yet true**: the code
+> hand-rolls youtube / Calendar / Drive / OAuth-lifecycle / the Fernet vault
+> product-locally (~2,357 LoC against `googleapiclient` + raw OAuth) instead of
+> consuming `noctusai_lib.integrations.{youtube,google_calendar,google_drive}` +
+> `noctusai_lib.security.{oauth,token_store}`. Tracked + scoped:
+> `products/social-wiring/projects/social-wiring-google-seed-consume/`. These
+> rows become TRUE (and this marker is removed) when that project closes. The
+> non-Google rows (chatbot, whatsapp, meta, media, frontend hooks) are
+> unverified by this pass — do not assume. *(What·why·source-now per
+> always-doc-the-trim: future agents must not act on the false "consumed" claim.)*
+
 - Chatbot orchestrator + message_store + response_registry — `noctusai_lib.domain.chatbot`
 - WhatsApp WAHA connector + @lid auth + SETNX dedup — `noctusai_lib.integrations.whatsapp`
 - Google Calendar/Maps/Drive + scope-discovery — `noctusai_lib.integrations.google_*`
