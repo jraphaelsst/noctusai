@@ -106,12 +106,12 @@ class TestListEvents:
         body = resp.json()
         occ = [e for e in body["data"] if e.get("is_recorrencia")]
         assert len(occ) >= 1, body["data"]  # in-window occurrences present
-    def test_pagination_total_is_parent_count_for_recurring(self, client):
-        """P2 (Q2): `pagination.total` is the PARENT-row count; expanded
-    occurrences are derived, not separately paginated — so len(data)
-    exceeds total for a recurring event. Pins the contract so a future
-    change to expand-then-paginate is a conscious, test-breaking
-    decision, not silent.
+    def test_pagination_total_is_occurrence_count_for_recurring(self, client):
+        """Q2 SUPERSEDED by follow-up `schedule-occurrence-pagination`
+    (resolved 2026-05-19): `pagination.total` is now the TRUE expanded
+    occurrence count, and pages are occurrence-pages — not parent-row
+    count. A daily event over a 7-day window = 7 occurrences; at the
+    default page_size they all fit one page (total == len == 7).
     """
         client.mock_supabase.set_table_data("eventos", [RECURRING_EVENT])
         resp = client.get("/api/schedule", params={
@@ -120,9 +120,27 @@ class TestListEvents:
         })
         assert resp.status_code == 200
         body = resp.json()
-        assert body["pagination"]["total"] == 1          # parent count
-        assert len(body["data"]) == 7                     # derived occurrences
-        assert len(body["data"]) > body["pagination"]["total"]
+        assert body["pagination"]["total"] == 7    # occurrence count, not parent
+        assert len(body["data"]) == 7              # all fit one default page
+    def test_occurrence_pagination_slices_recurring(self, client):
+        """Occurrence-pagination: 7 daily occurrences, page_size=3 →
+    page1=3, page2=3, page3=1; total==7 on every page; no overlap.
+    Pins true expand-then-paginate (would fail under the old
+    parent-paginate-then-expand model).
+    """
+        client.mock_supabase.set_table_data("eventos", [RECURRING_EVENT])
+        q = {"data_inicio": "2026-04-14T00:00:00",
+             "data_fim": "2026-04-20T23:59:59", "page_size": 3}
+        seen = []
+        for pg, expected in ((1, 3), (2, 3), (3, 1)):
+            r = client.get("/api/schedule", params={**q, "page": pg})
+            assert r.status_code == 200
+            b = r.json()
+            assert b["pagination"]["total"] == 7
+            assert b["pagination"]["page"] == pg
+            assert len(b["data"]) == expected, (pg, b["data"])
+            seen += [e["data_inicio"] for e in b["data"]]
+        assert len(seen) == len(set(seen)) == 7   # no overlap, full coverage
 
     def test_list_events_no_auth(self, client):
         resp = client.raw().get("/api/schedule")

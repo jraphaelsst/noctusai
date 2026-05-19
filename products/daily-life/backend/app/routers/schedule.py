@@ -85,7 +85,7 @@ async def listar_eventos(
     user, token, _org_id = auth
     db = get_user_client(token)
 
-    query = db.table("eventos").select("*", count="exact").eq("user_id", str(user.id))
+    query = db.table("eventos").select("*").eq("user_id", str(user.id))
     if data_fim:
         # Upper bound applies to all rows: a parent whose start is after
         # the window-end has no occurrences inside it (recurrence runs
@@ -106,12 +106,14 @@ async def listar_eventos(
         query = query.eq("categoria", categoria)
 
     query = query.order("data_inicio", desc=False)
-
-    offset = (page - 1) * page_size
-    result = query.range(offset, offset + page_size - 1).execute()
-    _eventos = expandir_recorrencias(result.data or [], _as_date(data_inicio), _as_date(data_fim))
-    _total = result.count or 0  # parent-row count — see Q2 contract above
-    return paginated_response(_eventos, _total, page, page_size)
+    result = query.execute()
+    _occurrences = expandir_recorrencias(
+        result.data or [], _as_date(data_inicio), _as_date(data_fim)
+    )
+    _total = len(_occurrences)
+    _offset = (page - 1) * page_size
+    _page = _occurrences[_offset:_offset + page_size]
+    return paginated_response(_page, _total, page, page_size)
 
 
 @router.post("")
