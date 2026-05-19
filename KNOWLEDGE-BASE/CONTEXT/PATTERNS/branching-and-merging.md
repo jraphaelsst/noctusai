@@ -197,6 +197,48 @@ If you find yourself cherry-picking another agent's commit onto your branch — 
 - **Letting branches sit indefinitely.** Branches that don't get pushed-to-main accumulate divergence; integration cost grows. Aim to ship within one session, or surface that the branch is parked.
 - **Naming branches after their commit content** (`fix-bug-in-router-line-127`). Branch names should describe scope, not implementation. Implementation lives in commit messages.
 - **Using `git checkout origin/main -- <file>` to discard parallel-agent working-tree changes.** That's destructive. If working tree has parallel-agent WIP, `git stash` is also touchy (stashes their work). The cleanest path: stay on local main, work there, cherry-pick to a branch FROM origin/main when ready to push.
+- **Multiple concurrent agents sharing ONE checkout** (§9a). The precondition that makes all the above failures possible — codified below.
+
+---
+
+## 9a. Concurrent agents never share one checkout — worktree-isolate
+
+**The failure mode (provenance: 2026-05-19, "2 days of chaos").** Two+
+agents operated the **same primary checkout** concurrently. One ran
+`git switch` (`reflog: checkout: moving from feat/X to feat/Y`) — yanking
+the branch out from under a peer mid-work. The peer's subsequent
+builds + commits then landed on the wrong branch / a stale base; fixes
+*appeared* lost (they were not — they sat on the switched-away branch),
+the fleet repeatedly rebuilt OLD code, and ~2 days were burned
+re-diagnosing. §3.x (branch FROM origin/main) + the worktree-isolation
+primitive (`§16`, engineer dispatch) both *assume* per-agent isolation;
+neither **required** it for ad-hoc concurrent interactive sessions. That
+gap IS this rule.
+
+**The rule.** Concurrent agents MUST be `git worktree`-isolated — **one
+working dir + one branch per concurrently-active agent**. The shared
+primary checkout's branch is owned by exactly **one** driver (the
+architect/operator). A peer agent NEVER `git switch` / `checkout` /
+`reset` the shared primary tree while another agent may be active in it
+(branch state of a shared tree is not yours to move). A new concurrent
+session ⇒ `git worktree add ../noctus-<purpose> <branch>` and work
+THERE; the primary tree stays the one driver's.
+
+**Detection ∧ recovery (never panic-redo).** `git reflog` is source of
+truth — `checkout: moving from A to B` names the culprit + time.
+Commits are **never lost**: they live on the branch they were authored
+on — `git log --oneline --all --source | grep <subject>` locates them;
+`git branch --contains <sha>` confirms. Recover by `git switch` back (∨
+cherry-pick the stranded good commit), NEVER by re-doing the work
+(re-doing forks history further). Strict generalization of
+`feedback_worktree_base_verification` (worktree base correctness) +
+`feedback_parallel_agent_collision_protocol` (post-collision conduct) —
+this is the **missing precondition**: don't share the checkout at all.
+
+**Litmus.** "Is a second agent active in this repo?" YES ⇒ it must be in
+its own worktree, OR branch-state moves are serialized through one
+named driver. Sharing one checkout + independent branch-switching = the
+anti-pattern, every time.
 
 ---
 
