@@ -13,6 +13,9 @@ from typing import Optional
 from dateutil.relativedelta import relativedelta
 
 logger = logging.getLogger(__name__)
+# Recurrence vocabulary — single source of truth (router filter consumes
+# this so the "is recurring" predicate cannot drift from expansion).
+RECURRING_VALUES = ("diario", "semanal", "mensal", "anual")
 
 
 def expandir_recorrencias(

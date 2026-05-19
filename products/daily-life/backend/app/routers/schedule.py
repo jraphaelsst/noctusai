@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import Field
 
 from app.dependencies import get_user_client, get_current_user_org
-from app.services.schedule_service import expandir_recorrencias
+from app.services.schedule_service import expandir_recorrencias, RECURRING_VALUES
 from noctusai_lib.primitives.responses import success_response, paginated_response, ok_response
 from noctusai_lib.api.auth import first_or_none
 from noctusai_lib.api.crud_safety import delete_or_404
@@ -86,11 +86,22 @@ async def listar_eventos(
     db = get_user_client(token)
 
     query = db.table("eventos").select("*", count="exact").eq("user_id", str(user.id))
-
-    if data_inicio:
-        query = query.gte("data_inicio", data_inicio)
     if data_fim:
+        # Upper bound applies to all rows: a parent whose start is after
+        # the window-end has no occurrences inside it (recurrence runs
+        # forward from data_inicio).
         query = query.lte("data_inicio", data_fim)
+    if data_inicio:
+        # Q1 (schedule-recurrence-window-gap §2 — recurrence-aware lower
+        # bound): a recurring parent that STARTED before the window can
+        # still have occurrences inside it, so it must NOT be excluded by
+        # the start lower-bound (expandir_recorrencias clips occurrences to
+        # [inicio,fim]). Non-recurring rows keep the start-in-window
+        # semantic unchanged (zero regression). recorrencia NULL/"nenhuma"
+        # = non-recurring; the IN-list is the service vocabulary constant.
+        query = query.or_(
+            f"data_inicio.gte.{data_inicio},recorrencia.in.({','.join(RECURRING_VALUES)})"
+        )
     if categoria:
         query = query.eq("categoria", categoria)
 
@@ -99,7 +110,8 @@ async def listar_eventos(
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
     _eventos = expandir_recorrencias(result.data or [], _as_date(data_inicio), _as_date(data_fim))
-    return paginated_response(_eventos, result.count or 0, page, page_size)
+    _total = result.count or 0  # parent-row count — see Q2 contract above
+    return paginated_response(_eventos, _total, page, page_size)
 
 
 @router.post("")

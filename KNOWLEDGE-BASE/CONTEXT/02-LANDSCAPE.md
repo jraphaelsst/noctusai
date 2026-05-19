@@ -36,11 +36,11 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Personal Finance | 15 | 18 | 30 | 16 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 33 | 83 | 1,138 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
-| Daily Life | 6 | 8 | 11 | 7 | 17 | 217 |
+| Daily Life | 6 | 8 | 11 | 7 | 17 | 219 |
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 10 | 37 | 13 | 7 | 33 | 344 |
-| **Total** | **169** | **188** | **242** | **135** | **377** | **4,679** |
+| **Total** | **169** | **188** | **242** | **135** | **377** | **4,681** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

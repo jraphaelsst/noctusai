@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-18
 - **Last updated:** 2026-05-18
-- **Status:** Phase 0 ✅ — Q1/Q2 decided (§2), §3a audit `[A]` (no seed-lift); **P1/P2 unblocked, awaiting user "continue"** (phase-by-phase cadence)
+- **Status:** ✅ **DONE** — P0–P3 complete; filter fix + pagination contract shipped + tested (39 passed); ready for project-close archive + push
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com)
 - **Related docs:** `products/daily-life/backend/app/routers/schedule.py` · `…/app/services/schedule_service.py` · fix commit `48309a00` (recurring-events expansion) · `KB § PATTERNS/project-execution.md §2.13` (in-flight-resolution / surfaced-needs-a-decision)
 - **Project slug:** `schedule-recurrence-window-gap` (subject `schedule-recurrence-window`, intent `gap`; single-product → `products/daily-life/projects/`)
@@ -94,17 +94,25 @@ Six-question checklist (`KB § GUIDES/seed-first-design.md`):
 - `expandir_recorrencias` default window (today−30 … today+90) silently caps an unbounded query; acceptable but the cap should be explicit/asserted when P1 changes the fetch — captured for P1.
 *Phase proposal:* none filed — Phase 0 is decisions+audit; the two improvement bullets are deferred-with-destination (above), no bundle warranted.
 
-### Phase 1 — Window-filter fix (recurring parents not excluded)
-- [ ] Implement the Q1-decided filter (libcst). *Recommendation pending decision:* for rows with `recorrencia ∉ {nenhuma, NULL}` do **not** apply the `gte("data_inicio", data_inicio)` lower bound (or fetch by `recorrencia_fim`-overlap), so pre-window recurring parents are fetched ∧ expanded; non-recurring rows keep current behavior.
-- [ ] Endpoint regression test: a weekly event starting *before* the window returns its in-window occurrences (would fail pre-fix).
+### Phase 1 — Window-filter fix (recurring parents not excluded) ✅
+- [x] Q1 filter implemented (libcst): upper bound `lte("data_inicio", data_fim)` now unconditional (parent starting after window-end has no in-window occurrences either way); lower bound is `or_(data_inicio.gte.{di},recorrencia.in.({RECURRING_VALUES}))` so recurring parents that started before the window are fetched + clipped by `expandir_recorrencias`; non-recurring rows keep start-in-window. `RECURRING_VALUES` added to `schedule_service.py` as the single-source recurrence vocabulary (DRY — router consumes it, can't drift from expansion).
+- [x] Endpoint regression test `test_recurring_parent_before_window_yields_occurrences` (pre-window recurring parent → in-window occurrences present).
 
-### Phase 2 — Expand-vs-paginate count contract
-- [ ] Implement the Q2-decided model. *Recommendation pending decision:* short-term — document `count` = parent-count (occurrences derived, not paginated) + assert it in a test; long-term option — expand-then-paginate (bigger change, note as follow-up if not chosen).
-- [ ] Test pinning the chosen pagination contract.
+**Improvements:**
+- MockSupabase does not enforce the PostgREST `or_` predicate (returns seeded rows) — the router test pins wiring+expansion; the filter SEMANTIC is realdb-gated. Captured here + §11; a `realdb`-marked integration test is the proper future coverage (out of this bounded scope — named, not silent).
+*Phase proposal:* none — single mechanical phase, the one improvement is deferred-with-destination above.
 
-### Phase 3 — Verify + route
-- [ ] Full daily-life schedule suite green (`tests/routers/test_schedule_router.py` + `tests/services/test_schedule_service.py`).
-- [ ] §3a audit outcome routed (seed `[F]` follow-up filed if `N≥3`, else `[A]` recorded).
+### Phase 2 — Expand-vs-paginate count contract ✅
+- [x] Q2 model implemented: `_total = result.count or 0` (parent-row count) returned; expanded occurrences derived, not separately paginated; contract documented at the call site (Q2 comment) — no behavior change, the prior code already returned parent-count; this phase makes the contract explicit + tested.
+- [x] Test `test_pagination_total_is_parent_count_for_recurring` pins it (`total == 1` parent, `len(data) == 7` occurrences, `len(data) > total`).
+
+**Improvements:** none identified — Q2 is a contract-pinning phase; expand-then-paginate is the named follow-up `schedule-occurrence-pagination` (recorded §2/§7), not debt.
+
+### Phase 3 — Verify + route ✅
+- [x] Full daily-life schedule suite green: `test_schedule_router.py` + `test_schedule_service.py` → **39 passed** (37 + P1/P2's 2; zero regression). Run: `PYTHONPATH=seed/framework/backend:seed/lib/backend:<backend> <venv> -m pytest`.
+- [x] §3a audit routed: `[A]` (no `N≥3` unifiable contract) cataloged in `KB § PATTERNS/accept-with-rationale.md` (Phase 0); no seed phase. Out-of-scope platform helper-duplication → standing absorption queue (named, not actioned).
+
+**Improvements:** none identified — verification-only phase.
 
 ---
 
@@ -146,4 +154,5 @@ Six-question checklist (`KB § GUIDES/seed-first-design.md`):
 | Date | Change | By |
 |---|---|---|
 | 2026-05-18 | Filed as the §2.13 deferred-with-destination for two needs-a-decision items surfaced while fixing the recurring-events expansion bug (`48309a00`). NOT executing — Phase 0 interrogation gates P1/P2. User-directed ("do it, then file the follow-up"). | Claude Opus 4.7 (1M context) |
+| 2026-05-19 | **P1–P3 ✅ + project DONE** (user-directed "finish everything before pushing"). P1: recurrence-aware filter — unconditional `lte` upper bound + `or_(data_inicio.gte | recorrencia.in.(RECURRING_VALUES))` lower bound (libcst); `RECURRING_VALUES` vocabulary constant added to `schedule_service.py` (DRY single-source). P2: `_total`=parent-count contract made explicit + comment. Tests: `test_recurring_parent_before_window_yields_occurrences` + `test_pagination_total_is_parent_count_for_recurring`. P3: daily-life schedule suite **39 passed** (37+2, 0 regression). Coverage boundary noted: MockSupabase doesn't enforce PostgREST `or_` → filter semantic is realdb-gated (future `realdb` test, named-not-silent). Archived + project-close push. | Claude Opus 4.7 (1M context) |
 | 2026-05-18 | **Phase 0 ✅** (user-directed "decide Q1 and Q2, then run its Phase 0"). Q1 = recurrence-aware lower-bound drop; Q2 = `count`=parent-count (occurrence-paging → named future follow-up); both rationale+rejected-alternatives in §2. §3a absorption audit: recurrence-expansion domain-divergent across daily-life/erp/PF (divergent period vocabularies, in-memory-clip vs persist-rows) → triage **`[A]`**, no `N≥3` unifiable contract, no seed phase; cataloged in `KB § PATTERNS/accept-with-rationale.md`. `data_fim` NULL-safe confirmed. P1/P2 unblocked; paused per phase-by-phase cadence. Out-of-scope platform helper-duplication noted (standing absorption queue, not actioned here). | Claude Opus 4.7 (1M context) |

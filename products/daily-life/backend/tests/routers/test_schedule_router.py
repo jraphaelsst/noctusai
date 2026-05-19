@@ -83,6 +83,46 @@ class TestListEvents:
         body = resp.json()
         assert len(body["data"]) == 7, body["data"]
         assert sum(1 for e in body["data"] if e.get("is_recorrencia")) == 6
+    def test_recurring_parent_before_window_yields_occurrences(self, client):
+        """P1 (Q1): a recurring parent that STARTED before the requested
+    window must still yield its in-window occurrences. Pre-P1 the
+    start lower-bound `gte(data_inicio)` excluded such parents. The
+    router now uses or_(gte | recorrencia.in.(...)) so the parent is
+    fetched + expandir_recorrencias clips to [inicio,fim].
+
+    Coverage boundary (honest): MockSupabase does not enforce the
+    PostgREST or_ predicate (returns seeded rows); this pins the
+    wiring + expansion path. The filter SEMANTIC itself is realdb-
+    gated (documented in PROJECT.md §11).
+    """
+        parent = dict(RECURRING_EVENT)
+        parent["data_inicio"] = "2026-03-01T09:00:00"  # BEFORE the window
+        client.mock_supabase.set_table_data("eventos", [parent])
+        resp = client.get("/api/schedule", params={
+            "data_inicio": "2026-04-14T00:00:00",
+            "data_fim": "2026-04-20T23:59:59",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        occ = [e for e in body["data"] if e.get("is_recorrencia")]
+        assert len(occ) >= 1, body["data"]  # in-window occurrences present
+    def test_pagination_total_is_parent_count_for_recurring(self, client):
+        """P2 (Q2): `pagination.total` is the PARENT-row count; expanded
+    occurrences are derived, not separately paginated — so len(data)
+    exceeds total for a recurring event. Pins the contract so a future
+    change to expand-then-paginate is a conscious, test-breaking
+    decision, not silent.
+    """
+        client.mock_supabase.set_table_data("eventos", [RECURRING_EVENT])
+        resp = client.get("/api/schedule", params={
+            "data_inicio": "2026-04-14T00:00:00",
+            "data_fim": "2026-04-20T23:59:59",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pagination"]["total"] == 1          # parent count
+        assert len(body["data"]) == 7                     # derived occurrences
+        assert len(body["data"]) > body["pagination"]["total"]
 
     def test_list_events_no_auth(self, client):
         resp = client.raw().get("/api/schedule")
