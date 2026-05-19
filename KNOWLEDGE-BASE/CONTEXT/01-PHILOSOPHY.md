@@ -813,6 +813,8 @@ Active MCP servers in this repo are restricted to a keep-list:
 
 - **`noctusai`** — local project MCP (dev toolkit + business primitives + vendor adapters). Configured in `.mcp.json` + `.claude/settings.local.json`.
 - **`supabase`** (claude.ai connector) — DB ops via `mcp__claude_ai_Supabase__*`.
+- **`n8n`** — local connector MCP (`mcp/n8n` composes `mcp/_kit`; wraps the self-hosted n8n public REST API). Self-hosted n8n workflow-ops: list/inspect/activate/update workflows + execution history + failed-execution error payloads. Added to the keep-list by explicit user approval 2026-05-19 (the `claude.ai`-managed n8n connector can't reach a self-hosted instance). Configured in `.mcp.json`; secret in `mcp/n8n/.env`. Full ref `KB § MCP-SERVERS/n8n.md`.
+- **`waha`** — local connector MCP (`mcp/waha` composes `mcp/_kit`; wraps the self-hosted WAHA WhatsApp HTTP API). Session lifecycle + messaging + server health + tri-state connection diagnostic; drives the WhatsApp side of n8n flows. Added to the keep-list by explicit user approval 2026-05-19. Configured in `.mcp.json`; secret (`X-Api-Key`) in `mcp/waha/.env`. Full ref `KB § MCP-SERVERS/waha.md`.
 
 **Anything else is off-list.** Notably, `claude-in-chrome` and the wide catalog of `mcp__claude_ai_*` connectors (Notion, Stripe, Gmail, etc.) are NOT on the keep-list — they exist as catalog entries but should not be invoked in this repo without explicit user OK.
 

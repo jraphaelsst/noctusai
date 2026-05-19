@@ -22,6 +22,50 @@ confirm-gated (412); `gh` absent/logged-out is a typed never-faked signal.
 
 ---
 
+### n8n — self-hosted n8n connector MCP
+
+**Type**: Connector (composes `mcp/_kit`; wraps the n8n public REST API)
+
+The **self-hosted n8n workflow-ops surface** — workflow list/inspect,
+execution history, and the full error payload of a failed execution
+(the debugging core) — as `n8n.<service>.<action>` tools. Exists
+because the `claude.ai`-managed n8n connector can't reach a
+self-hosted instance. Secret (API key) lives in the connector's own
+`mcp/n8n/.env` (gitignored), not the product/root `.env`. Registration
+is **user-gated** (MCP keep-list rule). Full reference: [n8n.md](n8n.md).
+
+Tools: `n8n.workflow.{list,get,activate,deactivate,update,create,
+delete,set_tags}` · `n8n.execution.{list,get,delete}` · `n8n.tag.list`
+· `n8n.diagnostics.connection_status`. Writes confirm-gated (412);
+no-config/unreachable/rejected-key is a typed never-faked signal.
+`n8n.workflow.{update,delete}` are hard-to-reverse (get first as a
+rollback snapshot). Endpoint surface probed live (variables/projects
+403-license-gated + credentials/source-control 404 deliberately not
+surfaced). On the keep-list + registered (user-approved 2026-05-19).
+
+---
+
+### waha — WAHA (WhatsApp HTTP API) connector MCP
+
+**Type**: Connector (composes `mcp/_kit`; wraps the WAHA HTTP API)
+
+The **self-hosted WAHA ops surface** — WhatsApp session lifecycle,
+messaging, server health, tri-state connection diagnostic — as
+`waha.<service>.<action>` tools. Drives the WhatsApp side of n8n flows;
+its diagnostic disambiguates the WAHA dashboard's conflated "host down
+/ wrong key" error. Secret (`X-Api-Key`) in the connector's own
+`mcp/waha/.env` (gitignored). On the keep-list + registered
+(user-approved 2026-05-19). Full reference: [waha.md](waha.md).
+
+Tools: `waha.session.{list,get,me,start,stop,restart,logout}` ·
+`waha.message.{send_text,list}` · `waha.chat.list` ·
+`waha.server.{version,status,ping}` ·
+`waha.diagnostics.connection_status`. Writes confirm-gated (412);
+`send_text` is the strongest gate (outward-facing, irreversible);
+`logout` hard-to-reverse. `server.ping` is unauthenticated.
+
+---
+
 ## Planned MCP Servers
 
 ### supabase-properties
@@ -35,16 +79,9 @@ Exposes the Supabase ativos (properties) database as MCP tools for AI agents. En
 - `get_property` — Fetch single ativo by ID with full details
 - `list_matches` — Retrieve match results for an ativo
 
-### waha-whatsapp
-
-**Type**: Direct Proxy
-
-Wraps the WAHA WhatsApp HTTP API as MCP tools. Enables agents to send messages and retrieve conversation history.
-
-**Planned tools:**
-- `send_message` — Send text message to a phone number
-- `send_property_card` — Send formatted property listing
-- `get_conversation` — Retrieve message history for a contact
+> _`waha-whatsapp` graduated from Planned → Built 2026-05-19 — see the
+> **waha** entry under Built MCP Servers above. Future ideas not yet
+> built: `send_property_card` (formatted listing send)._
 
 ---
 
