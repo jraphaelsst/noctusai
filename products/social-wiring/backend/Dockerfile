@@ -116,14 +116,33 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 # Frontend deps installed HERE (glibc) — esbuild/vite ship platform
 # binaries; the alpine frontend-base node_modules are not ABI-portable.
+# Seed framework/lib FE deps too: local-watch's `vite build` loads the
+# tailwind/vite factory at /app/seed/framework/frontend/*.factory.ts
+# which `require("tailwindcss-animate")` etc. — Node resolves from THAT
+# path, not the product's. runtime-watch is FROM the backend base
+# (glibc, no seed FE node_modules) and the compose bind-mounts ../../seed
+# (node_modules-less in any clean checkout/CI/worktree) → without this
+# the factory require fails → vite build fails → local-watch restart-loop
+# → never healthy. The alpine frontend-base installs these for the
+# build stage; runtime-watch (glibc) must install them itself. The
+# compose pairs this with anon volumes on these nested node_modules so
+# the ../../seed bind-mount doesn't re-mask them (§3.2b).
 COPY products/social-wiring/frontend/package*.json ./products/social-wiring/frontend/
+COPY seed/framework/frontend/package*.json /app/seed/framework/frontend/
+COPY seed/lib/frontend/package*.json /app/seed/lib/frontend/
 # Same lockfile-pins-wrong-platform-optional bug as frontend-build, here on
 # glibc/arm64 — drop the host lock so npm fetches the linux native binary
 # (otherwise local-watch's `vite build` crash-loops the container).
 RUN --mount=type=cache,target=/root/.npm \
     cd products/social-wiring/frontend \
     && rm -f package-lock.json \
-    && npm install --no-audit --no-fund
+    && npm install --no-audit --no-fund \
+    && cd /app/seed/framework/frontend \
+    && rm -f package-lock.json \
+    && npm install --no-audit --no-fund --include=peer \
+    && cd /app/seed/lib/frontend \
+    && rm -f package-lock.json \
+    && npm install --no-audit --no-fund --include=peer
 COPY seed/docker/local-watch.sh /usr/local/bin/local-watch
 RUN chmod +x /usr/local/bin/local-watch \
     && chown -R noctus:noctus /app

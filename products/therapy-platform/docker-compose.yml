@@ -63,6 +63,15 @@ services:
       # platform-correct node_modules while source stays live-editable.
       - /app/products/therapy-platform/frontend/node_modules
       - ../../seed:/app/seed
+      # Same shadow problem as above, for the SEED framework/lib FE
+      # node_modules: the ../../seed bind-mount (node_modules-less in any
+      # clean checkout/CI/worktree) would mask the glibc deps the
+      # Dockerfile installs for the tailwind/vite factory require. These
+      # anon volumes MUST come AFTER ../../seed (nested-after-parent);
+      # Docker seeds them from the image layer so the factory require
+      # resolves while seed source stays live-editable. (§3.2b)
+      - /app/seed/framework/frontend/node_modules
+      - /app/seed/lib/frontend/node_modules
     ports:
       - "8003:8003"
     networks:
