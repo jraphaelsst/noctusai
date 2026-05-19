@@ -1,10 +1,16 @@
 """Google Drive v3 adapter that acts AS the consenting Google user.
 
-Same pattern as ``calendar/oauth_adapter.py``: load the encrypted
-credential bundle from :class:`CredentialStore`
-(provider=``google_calendar`` — same row, the Calendar consent
-includes Drive scope when GOOGLE_OAUTH_SCOPES is configured that
-way), refresh if expired, build an authenticated Drive Resource.
+Same pattern the absorbed ``calendar/oauth_adapter.py`` used (Phase 5
+of ``social-wiring-google-seed-consume`` retired that module for the
+seed adapter; this Drive module stays product-local because the seed
+``DriveReader`` Protocol has a strictly narrower projection — see
+``app/services/drive_api/__init__.py`` module docstring + the
+``seed-google-drive-projection-enrichment`` follow-up). It loads the
+encrypted credential bundle from :class:`CredentialStore`
+(``provider="google_calendar"`` — same row, the Calendar consent
+includes Drive scope when ``GOOGLE_OAUTH_SCOPES`` is configured that
+way), refreshes via the seed ``GoogleProvider`` (Phase 3b), and builds
+an authenticated Drive Resource.
 
 This adapter can see the user's ENTIRE Drive (subject to whatever
 scopes they consented to), unlike the service-account adapter
@@ -16,17 +22,41 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.services.calendar.oauth_adapter import (
-    CALENDAR_PROVIDER,
-    _run_oauth_sync,
-    _strip_tz,
-)
+from app.services.calendar import CALENDAR_PROVIDER
 from noctusai_lib.security.oauth import GoogleProvider
 from app.services.credential_vault import CredentialStore
 from app.services.drive_api import _drive_api
 from app.services.drive_api.google_adapter import DRIVE_SCOPES, _read_content_via
 from app.services.drive_api.mappers import build_search_query, file_body_to_drive_file
 from app.services.drive_api.types import DriveFile, DriveFileContent, DriveSearchResult
+
+
+def _strip_tz(value):
+    """``google.oauth2.credentials.Credentials`` requires a naive datetime
+    for ``expiry``. Accept either a datetime or an ISO string from the
+    stored credential bundle; convert to UTC and drop tzinfo. Lifted
+    from the retired ``calendar/oauth_adapter.py`` when Phase 5
+    migrated calendar to the seed adapter."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _run_oauth_sync(awaitable):
+    """Drive a seed-provider coroutine from a sync caller. The drive
+    adapter methods are sync (called from sync FastAPI handlers in a
+    threadpool with no running loop), so ``asyncio.run`` is the simplest
+    correct bridge to the async seed ``GoogleProvider``."""
+    import asyncio
+
+    return asyncio.run(awaitable)
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource

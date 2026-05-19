@@ -1,6 +1,9 @@
 """Meta Graph API adapter that acts AS the consenting Facebook user.
 
-Same pattern as ``calendar/oauth_adapter.py`` + ``drive_api/oauth_adapter.py``:
+Same pattern as ``drive_api/oauth_adapter.py`` (the absorbed
+``calendar/oauth_adapter.py`` was retired in Phase 5 of
+``social-wiring-google-seed-consume`` — the calendar surface now
+consumes the seed adapter directly):
 load the encrypted credential bundle from :class:`CredentialStore`
 (provider=``meta``), use the stored **user access token** for the few
 endpoints that need it (``/me`` + ``/me/accounts``), then per-Page calls

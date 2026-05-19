@@ -104,7 +104,7 @@ def google_scopes(org_id: str | None = Query(default=None)) -> GoogleScopesRespo
 
         # Import lazily so this module doesn't pull calendar deps at
         # import time (keeps the router lightweight).
-        from app.services.calendar.oauth_adapter import CALENDAR_PROVIDER
+        from app.services.calendar import CALENDAR_PROVIDER
 
         stored = None
         if resolved_org is not None:
