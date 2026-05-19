@@ -243,12 +243,18 @@ class YouTubeService:
     without trusting the redirect URI alone.
 
     Lifecycle delegated to ``noctusai_lib.security.oauth.GoogleProvider``
-    (the seed-consume seam — see ``app/services/google_oauth.py``). The
-    second tuple element used to be a PKCE ``code_verifier``; the seed
-    provider is a confidential-client flow (client_secret authenticated)
-    that does not use PKCE, so it is now an empty string. The callers
-    persist/replay it harmlessly; the return shape is preserved so the
-    settings router needs no change.
+    (the seed-consume seam) in PKCE mode (`use_pkce=True`). The seed
+    provider generates a fresh RFC 7636 verifier per call, embeds the
+    SHA256 challenge in the consent URL as
+    ``code_challenge`` + ``code_challenge_method=S256``, and returns the
+    verifier on ``AuthorizationURL.code_verifier`` for the caller to
+    persist (settings_router stores it in Redis keyed by ``state``).
+    Methodology: ``KB § PATTERNS/absorbed-product-seed-shape-seam.md`` —
+    the N=3 worked instance restoring social-wiring's pre-absorption
+    PKCE through the seed seam without forking.
+
+    Returns ``(auth_url, code_verifier)``; the verifier MUST be
+    persisted and replayed at ``exchange_code(code=..., code_verifier=...)``.
 
     Quota cost: 0.
     """
@@ -260,14 +266,16 @@ class YouTubeService:
                 redirect_uri=self._redirect_uri,
             )
         )
-        return auth_url.url, ""
+        return auth_url.url, auth_url.code_verifier or ""
     def exchange_code(self, *, code: str, code_verifier: str | None = None) -> dict[str, Any]:
         """Exchange the OAuth callback's ``code`` for a token bundle.
 
-    Lifecycle delegated to the seed ``GoogleProvider``. ``code_verifier``
-    is accepted for signature back-compat with the settings router but is
-    unused — the confidential-client exchange the seed performs does not
-    use PKCE.
+    Lifecycle delegated to the seed ``GoogleProvider`` in PKCE mode.
+    ``code_verifier`` is the value persisted from ``get_auth_url``
+    (settings_router replays it from Redis keyed by ``state``). The
+    seed provider includes it in the token POST per RFC 7636 §4.5.
+    Missing verifier → seed raises ``ValueError`` (loud, before any
+    network hop); mismatched verifier → Google returns 400 invalid_grant.
 
     Returns the raw token dict in the SAME shape the former
     google_auth_oauthlib path produced (``_credentials_to_bundle``), so
@@ -283,21 +291,28 @@ class YouTubeService:
         provider = self._oauth_provider()
         token_set = _run_sync(
             provider.exchange_code(
-                code=code, state="", redirect_uri=self._redirect_uri
+                code=code,
+                state="",
+                redirect_uri=self._redirect_uri,
+                code_verifier=code_verifier,
             )
         )
         return _tokenset_to_bundle(token_set)
     def _oauth_provider(self) -> GoogleProvider:
         """Construct the seed Google OAuth provider for this service.
 
-    Separated so tests can inject a Fake via the seed factory. The
-    provider owns the authorize/exchange/refresh/revoke lifecycle; the
-    googleapiclient API-layer machinery (``_fresh_credentials`` /
-    ``_build_service``) is unchanged (Phase-5 scope).
+    Separated so tests can inject a Fake via the seed factory.
+    ``use_pkce=True`` opts into the seed's PKCE seam (Phase 3c) —
+    restoring social-wiring's pre-absorption PKCE without forking.
+    The provider owns the authorize/exchange/refresh/revoke
+    lifecycle; the googleapiclient API-layer machinery
+    (``_fresh_credentials`` / ``_build_service``) is unchanged
+    (Phase-5 scope).
     """
         return GoogleProvider(
             client_id=self._client_id,
             client_secret=self._client_secret,
+            use_pkce=True,
         )
     def revoke_and_disconnect(self, *, org_id: UUID) -> bool:
         """Best-effort revoke + delete from DB.

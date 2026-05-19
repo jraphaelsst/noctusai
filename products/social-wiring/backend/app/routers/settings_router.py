@@ -167,11 +167,14 @@ def get_youtube_auth_url(
     redirect_uri parsing alone (which a malicious caller could spoof if
     we relied on the session cookie alone for tenant binding).
 
-    Google's library auto-generates a PKCE ``code_verifier`` per call,
-    embeds the SHA256 challenge in the URL, and requires the verifier
-    back at ``exchange_code`` time. We persist the verifier in Redis
-    keyed by ``state`` (10-min TTL) so the callback handler can replay
-    it without storing OAuth secrets in a cookie or in the database.
+    The seed ``GoogleProvider(use_pkce=True)`` generates a fresh RFC 7636
+    PKCE ``code_verifier`` per call, embeds the SHA256 challenge in the
+    URL, and requires the verifier back at ``exchange_code`` time. We
+    persist the verifier in Redis keyed by ``state`` (10-min TTL) so the
+    callback handler can replay it without storing OAuth secrets in a
+    cookie or in the database. Methodology:
+    ``KB § PATTERNS/absorbed-product-seed-shape-seam.md`` (the seed-
+    shape-seam pattern; PKCE is the N=3 instance).
     """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
