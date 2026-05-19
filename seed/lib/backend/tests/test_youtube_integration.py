@@ -22,12 +22,14 @@ import pytest
 
 from noctusai_lib.integrations.youtube import (
     Channel,
+    ChannelInfo,
     FakeYoutubeClient,
     ListResult,
     Playlist,
     ProcessingStatus,
     RealYoutubeClient,
     Video,
+    VideoFull,
     YoutubeClient,
     make_youtube_client,
 )
@@ -1048,3 +1050,437 @@ def test_fake_and_real_satisfy_thumbnail_and_processing_surface() -> None:
     assert hasattr(real, "set_thumbnail")
     assert hasattr(fake, "get_processing_status")
     assert hasattr(real, "get_processing_status")
+
+
+# ============================================================================
+# get_channel_info_mine + list_owned_videos — Fake (projection-enrichment)
+# ============================================================================
+
+
+def _channel_info(channel_id: str = "UC-owner") -> ChannelInfo:
+    return ChannelInfo(
+        channel_id=channel_id,
+        title="My Channel",
+        subscriber_count=12345,
+        video_count=67,
+        view_count=987654,
+    )
+
+
+def _video_full(video_id: str, **overrides: Any) -> VideoFull:
+    return VideoFull(
+        id=video_id,
+        title=overrides.get("title", f"Owned video {video_id}"),
+        description=overrides.get("description", "owned desc"),
+        channel_id=overrides.get("channel_id", "UC-owner"),
+        published_at=overrides.get(
+            "published_at", datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc)
+        ),
+        duration_seconds=overrides.get("duration_seconds", 225),
+        duration_iso=overrides.get("duration_iso", "PT3M45S"),
+        thumbnail_url=overrides.get(
+            "thumbnail_url", "https://i.ytimg.com/vi/x/maxres.jpg"
+        ),
+        privacy_status=overrides.get("privacy_status", "private"),
+        view_count=overrides.get("view_count", 1500),
+        like_count=overrides.get("like_count", 42),
+        comment_count=overrides.get("comment_count", 7),
+        tags=overrides.get("tags", ("tag1", "tag2")),
+        category_id=overrides.get("category_id", "22"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_fake_get_channel_info_mine_returns_seeded() -> None:
+    fake = FakeYoutubeClient(owned_channel_info=_channel_info())
+    info = await fake.get_channel_info_mine()
+    assert info.channel_id == "UC-owner"
+    assert info.subscriber_count == 12345
+    assert info.video_count == 67
+    assert info.view_count == 987654
+    assert fake.quota_units_consumed == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_get_channel_info_mine_raises_when_unseeded() -> None:
+    """Mirror Real adapter: no OAuth-associated YT channel → ValueError."""
+    fake = FakeYoutubeClient()
+    with pytest.raises(ValueError, match="no items"):
+        await fake.get_channel_info_mine()
+    # Quota was still charged (mirrors "you-pay-on-call" semantics).
+    assert fake.quota_units_consumed == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_list_owned_videos_single_page() -> None:
+    fake = FakeYoutubeClient(
+        owned_videos=[_video_full("vid1"), _video_full("vid2")]
+    )
+    result = await fake.list_owned_videos(page_size=5)
+    assert [v.id for v in result.items] == ["vid1", "vid2"]
+    assert result.next_page_token is None
+    assert result.quota_units_consumed == 101
+    assert fake.quota_units_consumed == 101
+
+
+@pytest.mark.asyncio
+async def test_fake_list_owned_videos_pages_correctly() -> None:
+    """Walk all pages with page_size=2 over 5 videos → 3 pages, 101+101+101."""
+    fake = FakeYoutubeClient(
+        owned_videos=[_video_full(f"vid{i}") for i in range(5)]
+    )
+    seen_ids: list[str] = []
+    page_token: str | None = None
+    pages = 0
+    while True:
+        result = await fake.list_owned_videos(page_token=page_token, page_size=2)
+        seen_ids.extend(v.id for v in result.items)
+        pages += 1
+        if result.next_page_token is None:
+            break
+        page_token = result.next_page_token
+
+    assert pages == 3  # ceil(5/2)
+    assert seen_ids == [f"vid{i}" for i in range(5)]
+    # 3 pages × 101 units each.
+    assert fake.quota_units_consumed == 303
+
+
+@pytest.mark.asyncio
+async def test_fake_list_owned_videos_empty_charges_only_search() -> None:
+    """When the search page returns no ids, the videos.list step is
+    skipped → only 100 units charged (matches the Real adapter)."""
+    fake = FakeYoutubeClient(owned_videos=[])
+    result = await fake.list_owned_videos()
+    assert result.items == []
+    assert result.next_page_token is None
+    assert result.quota_units_consumed == 100
+    assert fake.quota_units_consumed == 100
+
+
+@pytest.mark.asyncio
+async def test_fake_list_owned_videos_preserves_full_projection() -> None:
+    """VideoFull round-trips through Fake — every wide-projection field
+    survives the page slice."""
+    seed = _video_full(
+        "vidX",
+        thumbnail_url="https://example/thumb.jpg",
+        tags=("a", "b", "c"),
+        category_id="10",
+        privacy_status="unlisted",
+        like_count=99,
+        comment_count=11,
+    )
+    fake = FakeYoutubeClient(owned_videos=[seed])
+    result = await fake.list_owned_videos()
+    assert result.items == [seed]
+    got = result.items[0]
+    assert got.thumbnail_url == "https://example/thumb.jpg"
+    assert got.tags == ("a", "b", "c")
+    assert got.category_id == "10"
+    assert got.privacy_status == "unlisted"
+    assert got.like_count == 99
+    assert got.comment_count == 11
+
+
+# ============================================================================
+# get_channel_info_mine + list_owned_videos — Real (mocked transport)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_real_get_channel_info_mine_requires_oauth() -> None:
+    client = RealYoutubeClient(api_key="key-only")
+    with pytest.raises(ValueError, match="requires oauth_credentials"):
+        await client.get_channel_info_mine()
+
+
+@pytest.mark.asyncio
+async def test_real_get_channel_info_mine_calls_channels_list_with_mine_flag() -> None:
+    service = _mock_service_with_responses(
+        channels_response={
+            "items": [
+                {
+                    "id": "UC-owner",
+                    "snippet": {"title": "My Channel"},
+                    "statistics": {
+                        "subscriberCount": "12345",
+                        "videoCount": "67",
+                        "viewCount": "987654",
+                    },
+                }
+            ]
+        },
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ) as build_mock:
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        info = await client.get_channel_info_mine()
+
+    assert info.channel_id == "UC-owner"
+    assert info.title == "My Channel"
+    assert info.subscriber_count == 12345
+    assert info.video_count == 67
+    assert info.view_count == 987654
+    # OAuth path → build() called with credentials.
+    assert build_mock.call_args.kwargs.get("credentials") is not None
+    list_kwargs = service.channels.return_value.list.call_args.kwargs
+    assert list_kwargs["mine"] is True
+    assert "snippet" in list_kwargs["part"]
+    assert "statistics" in list_kwargs["part"]
+
+
+@pytest.mark.asyncio
+async def test_real_get_channel_info_mine_raises_when_no_items() -> None:
+    service = _mock_service_with_responses(channels_response={"items": []})
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        with pytest.raises(ValueError, match="no items"):
+            await client.get_channel_info_mine()
+
+
+@pytest.mark.asyncio
+async def test_real_get_channel_info_mine_logs_and_raises_on_http_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from googleapiclient.errors import HttpError
+
+    fake_resp = MagicMock()
+    fake_resp.status = 403
+    err = HttpError(resp=fake_resp, content=b"forbidden")
+
+    service = MagicMock()
+    service.channels.return_value.list.return_value.execute.side_effect = err
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        with caplog.at_level("WARNING"):
+            with pytest.raises(HttpError):
+                await client.get_channel_info_mine()
+
+    assert any(
+        "youtube.get_channel_info_mine_http_error" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_videos_requires_oauth() -> None:
+    client = RealYoutubeClient(api_key="key-only")
+    with pytest.raises(ValueError, match="requires oauth_credentials"):
+        await client.list_owned_videos()
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_videos_uses_for_mine_search_then_videos_list() -> None:
+    service = _mock_service_with_responses(
+        search_response={
+            "items": [
+                {"id": {"videoId": "vid1", "kind": "youtube#video"}},
+                {"id": {"videoId": "vid2", "kind": "youtube#video"}},
+            ],
+            "nextPageToken": "next-tok",
+        },
+        videos_response={
+            "items": [
+                {
+                    "id": "vid1",
+                    "snippet": {
+                        "title": "First",
+                        "description": "...",
+                        "channelId": "UC-owner",
+                        "publishedAt": "2026-05-04T12:00:00Z",
+                        "thumbnails": {
+                            "default": {"url": "low.jpg"},
+                            "high": {"url": "high.jpg"},
+                            "maxres": {"url": "max.jpg"},
+                        },
+                        "tags": ["t1", "t2"],
+                        "categoryId": "22",
+                    },
+                    "contentDetails": {"duration": "PT5M30S"},
+                    "statistics": {
+                        "viewCount": "1000",
+                        "likeCount": "50",
+                        "commentCount": "10",
+                    },
+                    "status": {"privacyStatus": "unlisted"},
+                },
+                {
+                    "id": "vid2",
+                    "snippet": {
+                        "title": "Second",
+                        "channelId": "UC-owner",
+                        "publishedAt": "2026-05-03T12:00:00Z",
+                    },
+                    "contentDetails": {"duration": "PT3M"},
+                    "statistics": {"viewCount": "500"},
+                    "status": {"privacyStatus": "private"},
+                },
+            ]
+        },
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        result = await client.list_owned_videos(page_size=25)
+
+    # search.list was called with the forMine + type=video shape.
+    search_kwargs = service.search.return_value.list.call_args.kwargs
+    assert search_kwargs["forMine"] is True
+    assert search_kwargs["type"] == "video"
+    assert search_kwargs["maxResults"] == 25
+    assert search_kwargs["part"] == "id"
+
+    # videos.list got comma-joined ids + the rich part selection.
+    videos_kwargs = service.videos.return_value.list.call_args.kwargs
+    assert videos_kwargs["id"] == "vid1,vid2"
+    for piece in ("snippet", "statistics", "status", "contentDetails"):
+        assert piece in videos_kwargs["part"]
+
+    assert [v.id for v in result.items] == ["vid1", "vid2"]
+    assert result.next_page_token == "next-tok"
+    # Full projection round-trip on the rich item.
+    rich = result.items[0]
+    assert rich.thumbnail_url == "max.jpg"  # picked maxres over high/default
+    assert rich.tags == ("t1", "t2")
+    assert rich.category_id == "22"
+    assert rich.privacy_status == "unlisted"
+    assert rich.duration_iso == "PT5M30S"
+    assert rich.duration_seconds == 5 * 60 + 30
+    assert rich.like_count == 50
+    assert rich.comment_count == 10
+    # Sparse item gets the seed defaults (0 / empty / "private").
+    sparse = result.items[1]
+    assert sparse.thumbnail_url == ""
+    assert sparse.tags == ()
+    assert sparse.category_id == ""
+    assert sparse.like_count == 0
+    assert sparse.comment_count == 0
+    # 100 (search.list forMine) + 1 (videos.list) = 101.
+    assert result.quota_units_consumed == 101
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_videos_skips_videos_list_when_empty() -> None:
+    service = _mock_service_with_responses(
+        search_response={"items": [], "nextPageToken": None},
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        result = await client.list_owned_videos()
+
+    # videos.list MUST NOT have been called when the search page was empty.
+    assert not service.videos.called
+    assert result.items == []
+    assert result.next_page_token is None
+    assert result.quota_units_consumed == 100
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_videos_forwards_page_token() -> None:
+    service = _mock_service_with_responses(
+        search_response={"items": [], "nextPageToken": None},
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        await client.list_owned_videos(page_token="page-2", page_size=10)
+
+    search_kwargs = service.search.return_value.list.call_args.kwargs
+    assert search_kwargs["pageToken"] == "page-2"
+    assert search_kwargs["maxResults"] == 10
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_videos_logs_and_raises_on_http_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from googleapiclient.errors import HttpError
+
+    fake_resp = MagicMock()
+    fake_resp.status = 500
+    err = HttpError(resp=fake_resp, content=b"boom")
+
+    service = MagicMock()
+    service.search.return_value.list.return_value.execute.side_effect = err
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        with caplog.at_level("WARNING"):
+            with pytest.raises(HttpError):
+                await client.list_owned_videos()
+
+    assert any(
+        "youtube.list_owned_videos_search_http_error" in record.message
+        for record in caplog.records
+    )
+
+
+# ============================================================================
+# Factory — new seed-data keys
+# ============================================================================
+
+
+def test_factory_pre_populates_fake_with_owned_channel_and_videos() -> None:
+    channel_info = _channel_info()
+    videos = [_video_full("v1"), _video_full("v2")]
+    client = make_youtube_client(
+        use_fake=True,
+        fake_seed_data={
+            "owned_channel_info": channel_info,
+            "owned_videos": videos,
+        },
+    )
+    assert isinstance(client, FakeYoutubeClient)
+    assert client.owned_channel_info == channel_info
+    assert client.owned_videos == videos
+
+
+# ============================================================================
+# Protocol satisfaction — projection-enrichment surface
+# ============================================================================
+
+
+def test_fake_and_real_satisfy_owned_channel_surface() -> None:
+    fake: YoutubeClient = FakeYoutubeClient()
+    real: YoutubeClient = RealYoutubeClient(api_key="x")
+    assert hasattr(fake, "get_channel_info_mine")
+    assert hasattr(real, "get_channel_info_mine")
+    assert hasattr(fake, "list_owned_videos")
+    assert hasattr(real, "list_owned_videos")
+
+
+# ============================================================================
+# VideoFull / ChannelInfo value-object defaults
+# ============================================================================
+
+
+def test_video_full_default_tags_and_category() -> None:
+    v = VideoFull(
+        id="x",
+        title="t",
+        description="d",
+        channel_id="UC",
+        published_at=datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc),
+        duration_seconds=0,
+        duration_iso="",
+        thumbnail_url="",
+        privacy_status="unknown",
+        view_count=0,
+        like_count=0,
+        comment_count=0,
+    )
+    assert v.tags == ()
+    assert v.category_id == ""

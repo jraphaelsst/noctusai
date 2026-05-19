@@ -25,10 +25,13 @@ from uuid import UUID
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from noctusai_lib.integrations.youtube import YoutubeClient, make_youtube_client
+from noctusai_lib.integrations.youtube import (
+    VideoFull,
+    YoutubeClient,
+    make_youtube_client,
+)
 from noctusai_lib.security.oauth import GoogleProvider
 from app.services.credential_vault import (
     CredentialStore,
@@ -347,35 +350,36 @@ class YouTubeService:
     def get_channel_info(self, *, org_id: UUID) -> ChannelInfo:
         """Fetch the connected channel's metadata.
 
-        Quota cost: 1 unit.
+        Quota cost: 1 unit. Delegates to the seed
+        ``YoutubeClient.get_channel_info_mine`` (Phase 6a-youtube of
+        ``social-wiring-google-seed-consume`` →
+        ``seed-youtube-read-projection-enrichment``) — the seed Real
+        adapter drives ``channels.list?mine=True&part=snippet,statistics``.
+        Translates the seed ``ChannelInfo`` (engagement-counters
+        projection) to the product's identically-named view-model.
         """
         creds = self._fresh_credentials(org_id)
-        service = self._build_service(creds)
+        client = self._youtube_client(creds)
 
         try:
-            response = (
-                service.channels()
-                .list(part="snippet,statistics", mine=True)
-                .execute()
-            )
+            info = _run_sync(client.get_channel_info_mine())
         except HttpError as exc:
             raise YouTubeServiceError(_format_http_error(exc)) from exc
-
-        items = response.get("items") or []
-        if not items:
+        except ValueError as exc:
+            # Seed surfaces the "no OAuth-associated YT channel" branch
+            # as ValueError; translate to the product-level error.
             raise YouTubeServiceError(
                 "OAuth succeeded but no channel is associated with this Google "
                 "account. Make sure you authorised with an account that owns "
                 "a YouTube channel."
-            )
-        item = items[0]
-        stats = item.get("statistics", {})
+            ) from exc
+
         return ChannelInfo(
-            channel_id=item["id"],
-            title=item["snippet"]["title"],
-            subscriber_count=int(stats.get("subscriberCount", 0)),
-            video_count=int(stats.get("videoCount", 0)),
-            view_count=int(stats.get("viewCount", 0)),
+            channel_id=info.channel_id,
+            title=info.title,
+            subscriber_count=info.subscriber_count,
+            video_count=info.video_count,
+            view_count=info.view_count,
         )
 
     def list_all_videos(
@@ -387,46 +391,30 @@ class YouTubeService:
     ) -> tuple[list[VideoSummary], str | None]:
         """List videos owned by the connected channel + their stats.
 
-        Quota cost: 1 (search.list) + 1 (videos.list) per page = 2 units.
-        Returns (videos, next_page_token); next is None on the last page.
+        Quota cost: 101 units / page (100 search.list?forMine + 1
+        videos.list). Returns (videos, next_page_token); next is None
+        on the last page. Delegates to the seed
+        ``YoutubeClient.list_owned_videos`` (Phase 6a-youtube). The
+        seed emits ``VideoFull`` (rich projection — thumbnail_url,
+        duration_iso, privacy_status, tags, category_id,
+        like/comment_count); this wrapper translates to the product's
+        ``VideoSummary`` view-model.
         """
         creds = self._fresh_credentials(org_id)
-        service = self._build_service(creds)
+        client = self._youtube_client(creds)
 
         try:
-            search = (
-                service.search()
-                .list(
-                    part="id",
-                    forMine=True,
-                    type="video",
-                    maxResults=max_results,
-                    pageToken=page_token,
+            result = _run_sync(
+                client.list_owned_videos(
+                    page_token=page_token, page_size=max_results
                 )
-                .execute()
-            )
-            video_ids = [
-                item["id"]["videoId"]
-                for item in search.get("items", [])
-                if item.get("id", {}).get("videoId")
-            ]
-            if not video_ids:
-                return [], None
-
-            details = (
-                service.videos()
-                .list(
-                    part="snippet,statistics,status,contentDetails",
-                    id=",".join(video_ids),
-                )
-                .execute()
             )
         except HttpError as exc:
             raise YouTubeServiceError(_format_http_error(exc)) from exc
 
         return (
-            [_video_item_to_summary(item) for item in details.get("items", [])],
-            search.get("nextPageToken"),
+            [_video_full_to_summary(v) for v in result.items],
+            result.next_page_token,
         )
 
     def get_video_stats(
@@ -434,32 +422,42 @@ class YouTubeService:
     ) -> dict[str, dict[str, int]]:
         """Refresh metrics for an explicit set of video IDs.
 
-        Quota cost: 1 unit per 50 IDs (rounded up).
+        Quota cost: 1 unit per id (single-id ``videos.list``). Delegates
+        to the seed ``YoutubeClient.get_video_full`` per id; the rich
+        projection carries ``view_count`` + ``like_count`` +
+        ``comment_count`` so the dict-shape contract is preserved
+        exactly. Videos that don't resolve (deleted / unknown id) are
+        omitted — matches the prior batched-call behavior (YT just
+        doesn't return an item for missing ids).
+
+        **Quota note** — the prior implementation batched up to 50 ids
+        into a single ``videos.list`` (1 unit total). The seed
+        ``get_video_full`` is single-id (1 unit each). For large
+        refresh sets this is more expensive; a future seed lift could
+        add a batch ``get_videos_full(ids)`` — tracked as a
+        follow-up (this path is currently dead code in the consumer;
+        the rich-projection refresh is performed by
+        ``list_all_videos``).
         """
         if not video_ids:
             return {}
 
         creds = self._fresh_credentials(org_id)
-        service = self._build_service(creds)
+        client = self._youtube_client(creds)
         result: dict[str, dict[str, int]] = {}
 
-        for chunk_start in range(0, len(video_ids), 50):
-            chunk = video_ids[chunk_start : chunk_start + 50]
-            try:
-                response = (
-                    service.videos()
-                    .list(part="statistics", id=",".join(chunk))
-                    .execute()
-                )
-            except HttpError as exc:
-                raise YouTubeServiceError(_format_http_error(exc)) from exc
-            for item in response.get("items", []):
-                stats = item.get("statistics", {})
-                result[item["id"]] = {
-                    "view_count": int(stats.get("viewCount", 0)),
-                    "like_count": int(stats.get("likeCount", 0)),
-                    "comment_count": int(stats.get("commentCount", 0)),
+        try:
+            for vid in video_ids:
+                v = _run_sync(client.get_video_full(vid))
+                if v is None:
+                    continue
+                result[v.id] = {
+                    "view_count": v.view_count,
+                    "like_count": v.like_count,
+                    "comment_count": v.comment_count,
                 }
+        except HttpError as exc:
+            raise YouTubeServiceError(_format_http_error(exc)) from exc
         return result
 
     def set_thumbnail(
@@ -666,31 +664,22 @@ class YouTubeService:
                 str(org_id), "youtube", new_bundle, metadata={"channel_id": stored.metadata.get("channel_id"), "channel_title": stored.metadata.get("channel_title"), "scopes": stored.metadata.get("scopes", [])})
         return creds
 
-    def _build_service(self, creds: Credentials):
-        """Construct a googleapiclient YouTube service instance.
-
-        Still used by ``get_channel_info`` / ``list_all_videos`` /
-        ``get_video_stats`` — those methods return product-specific
-        view-models (``ChannelInfo`` / ``VideoSummary``) carrying
-        fields the seed ``Video`` projection doesn't expose
-        (``thumbnail_url``, ``like_count``, ``comment_count``,
-        ``tags``, ``category_id``, raw ``duration`` string). Moving
-        them to the seed would either (a) degrade the product UI by
-        dropping those fields OR (b) require expanding the seed
-        Protocol substantially beyond the two named Phase-4 gaps.
-        Tracked as a follow-up (see findings).
-        """
-        return build("youtube", "v3", credentials=creds, cache_discovery=False)
-
     def _youtube_client(self, creds: Credentials) -> YoutubeClient:
-        """Build a seed-backed YouTube client for write methods.
+        """Build a seed-backed YouTube client for every API method.
 
         The product feeds ``credentials=creds`` into the seed factory;
         the seed ``RealYoutubeClient`` then drives
-        ``googleapiclient.discovery.build`` itself. This is the seed
-        seam — ``set_thumbnail`` / ``get_processing_status`` /
-        ``upload_video`` route through it so the YouTube API surface
-        lives at the seed level (Phase 4 of social-wiring-google-seed-consume).
+        ``googleapiclient.discovery.build`` itself. This is the
+        canonical seam — every YT API method routes through it. Phase
+        4 lifted ``set_thumbnail`` / ``get_processing_status`` /
+        ``upload_video``; Phase 6a-youtube
+        (``seed-youtube-read-projection-enrichment``) lifted the
+        remaining 3 read methods (``get_channel_info`` /
+        ``list_all_videos`` / ``get_video_stats``) via the new
+        ``VideoFull`` / ``ChannelInfo`` projection-enrichment surface
+        (``get_channel_info_mine`` / ``list_owned_videos`` /
+        ``get_video_full``). The product's ``_build_service`` is gone;
+        the YouTube API surface lives entirely at the seed level.
         """
         return make_youtube_client(oauth_credentials=creds)
 
@@ -758,38 +747,31 @@ def _bundle_to_credentials(
     return creds
 
 
-def _video_item_to_summary(item: dict[str, Any]) -> VideoSummary:
-    snippet = item.get("snippet", {})
-    stats = item.get("statistics", {})
-    status = item.get("status", {})
-    content = item.get("contentDetails", {})
-    thumbnails = snippet.get("thumbnails", {})
-    # YouTube returns thumbnails at multiple resolutions; pick the
-    # largest available so the UI doesn't have to do the picking.
-    thumb_url = (
-        (thumbnails.get("maxres") or thumbnails.get("high") or
-         thumbnails.get("medium") or thumbnails.get("default") or {}).get("url", "")
-    )
+def _video_full_to_summary(v: VideoFull) -> VideoSummary:
+    """Translate the seed rich projection to the product view-model.
+
+    The two shapes were deliberately aligned at Phase 6a-youtube — the
+    seed ``VideoFull`` carries every field ``VideoSummary`` needs, so
+    this mapping is a near-1:1 translation. ``duration`` is the raw
+    ISO-8601 echo (``duration_iso`` on the seed side) — historical
+    field-name carried for back-compat with the UI / SQLite schema.
+    ``tags`` re-materialises as a list (the seed stores a frozen tuple
+    to satisfy the ``dataclass(frozen=True)`` contract; the UI / DB
+    layer expects a list)."""
     return VideoSummary(
-        video_id=item["id"],
-        title=snippet.get("title", ""),
-        description=snippet.get("description", ""),
-        thumbnail_url=thumb_url,
-        published_at=_parse_published_at(snippet.get("publishedAt")),
-        duration=content.get("duration", ""),
-        privacy_status=status.get("privacyStatus", "private"),
-        view_count=int(stats.get("viewCount", 0)),
-        like_count=int(stats.get("likeCount", 0)),
-        comment_count=int(stats.get("commentCount", 0)),
-        tags=snippet.get("tags") or [],
-        category_id=snippet.get("categoryId", ""),
+        video_id=v.id,
+        title=v.title,
+        description=v.description,
+        thumbnail_url=v.thumbnail_url,
+        published_at=v.published_at,
+        duration=v.duration_iso,
+        privacy_status=str(v.privacy_status),
+        view_count=v.view_count,
+        like_count=v.like_count,
+        comment_count=v.comment_count,
+        tags=list(v.tags),
+        category_id=v.category_id,
     )
-
-
-def _parse_published_at(value: str | None) -> datetime:
-    if not value:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _format_http_error(exc: HttpError) -> str:

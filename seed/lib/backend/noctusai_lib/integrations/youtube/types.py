@@ -105,6 +105,81 @@ class Video:
 
 
 @dataclass(frozen=True)
+class VideoFull:
+    """Richer YouTube video projection — wraps `videos.list?part=snippet,
+    statistics,status,contentDetails`.
+
+    Distinct from :class:`Video` because consumer UI surfaces frequently
+    need the wider field set (thumbnail URL, raw ISO-8601 duration, full
+    engagement metrics, privacy state, tags, category). Splitting from
+    `Video` rather than widening it keeps the cheap-quota
+    `list_channel_videos` value-object lean (the wide projection costs
+    nothing extra in YT-API units — `part=` selection is free — but
+    callers reading the type surface should see at a glance which
+    projection a method emits).
+
+    Seed convention (matches :class:`Video`):
+    - `duration_seconds` is the parsed ISO-8601 integer-second value.
+    - `duration_iso` is the raw ISO-8601 string echoed back (so callers
+      that round-trip to an external client get the same shape YT emits).
+    - `published_at` is timezone-aware UTC.
+    - Numeric fields default to 0 when the API omits them (no Optional
+      ints — keeps consumer arithmetic loud-failure-free).
+    - `tags` is `()` (empty tuple) when absent, never `None` — frozen
+      to match the dataclass frozen contract.
+    - `privacy_status` reuses :data:`PrivacyStatus` with `"unknown"` as
+      the API-omitted-the-field carve-out (mirrors
+      :class:`ProcessingStatus.privacy_status`)."""
+
+    id: str
+    title: str
+    description: str
+    channel_id: str
+    published_at: datetime
+    duration_seconds: int
+    """Parsed from ISO-8601 `contentDetails.duration` (e.g. `PT5M30S`)."""
+    duration_iso: str
+    """Raw ISO-8601 `contentDetails.duration` string echoed back
+    (e.g. `"PT5M30S"`). Empty string when the API omits it."""
+    thumbnail_url: str
+    """Highest-resolution thumbnail URL the API returned. Picked in
+    order: `maxres` → `high` → `medium` → `default`. Empty string when
+    no thumbnails are present."""
+    privacy_status: PrivacyStatus | Literal["unknown"]
+    """`"unknown"` is the API-omitted-the-field carve-out, mirroring
+    :class:`ProcessingStatus.privacy_status`."""
+    view_count: int
+    like_count: int
+    comment_count: int
+    tags: tuple[str, ...] = ()
+    """Frozen-tuple to satisfy the dataclass `frozen=True` constraint
+    (lists are unhashable in a frozen context). Empty when absent."""
+    category_id: str = ""
+
+
+@dataclass(frozen=True)
+class ChannelInfo:
+    """Authenticated-channel metadata — wraps `channels.list?mine=True&
+    part=snippet,statistics`.
+
+    Distinct from :class:`Channel` because the OAuth-authenticated
+    `mine=True` call returns the engagement counters (subscriber /
+    video / view) the operator surface displays, but does NOT include
+    `contentDetails.relatedPlaylists.uploads` (the API surfaces those
+    on different `part=` selections). Splitting types keeps each
+    projection self-describing.
+
+    Numeric fields default to 0 when the API omits them (no Optional —
+    keeps consumer arithmetic loud-failure-free)."""
+
+    channel_id: str
+    title: str
+    subscriber_count: int
+    video_count: int
+    view_count: int
+
+
+@dataclass(frozen=True)
 class Playlist:
     """YouTube playlist — minimal projection (id + title)."""
 
@@ -182,6 +257,7 @@ __all__ = [
     "TITLE_MAX_LEN",
     "UPLOAD_QUOTA_UNITS",
     "Channel",
+    "ChannelInfo",
     "ListResult",
     "Playlist",
     "PrivacyStatus",
@@ -189,5 +265,6 @@ __all__ = [
     "ProcessingStatus",
     "UploadStatus",
     "Video",
+    "VideoFull",
     "VideoUpload",
 ]

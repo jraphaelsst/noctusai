@@ -28,10 +28,12 @@ from noctusai_lib.integrations.youtube.types import (
     TITLE_MAX_LEN,
     UPLOAD_QUOTA_UNITS,
     Channel,
+    ChannelInfo,
     ListResult,
     PrivacyStatus,
     ProcessingStatus,
     Video,
+    VideoFull,
     VideoUpload,
 )
 
@@ -117,6 +119,62 @@ def _video_from_api(item: dict[str, Any]) -> Video:
         channel_id=snippet.get("channelId", ""),
         published_at=_parse_published_at(snippet.get("publishedAt", "")),
         duration_seconds=_parse_iso8601_duration(content_details.get("duration", "")),
+        view_count=int(statistics.get("viewCount", 0) or 0),
+    )
+
+
+def _pick_thumbnail_url(thumbnails: dict[str, Any]) -> str:
+    """Highest-resolution → fallback walk: `maxres` → `high` → `medium`
+    → `default`. Returns ``""`` when no thumbnail block is present
+    (matches the `VideoFull.thumbnail_url` contract)."""
+    for key in ("maxres", "high", "medium", "default"):
+        block = thumbnails.get(key) or {}
+        url = block.get("url")
+        if url:
+            return url
+    return ""
+
+
+def _video_full_from_api(item: dict[str, Any]) -> VideoFull:
+    """Map a `videos.list?part=snippet,statistics,status,contentDetails`
+    item to a :class:`VideoFull`. Mirrors `_video_from_api` for the
+    base fields + adds the wider projection. Missing-field defaults
+    match the seed convention (0 for ints, ``""`` for strings, ``()``
+    for tags, ``"unknown"`` for privacy_status — never None)."""
+    snippet = item.get("snippet", {}) or {}
+    content_details = item.get("contentDetails", {}) or {}
+    statistics = item.get("statistics", {}) or {}
+    status = item.get("status", {}) or {}
+    duration_iso = content_details.get("duration", "") or ""
+    raw_tags = snippet.get("tags") or []
+    return VideoFull(
+        id=item["id"],
+        title=snippet.get("title", ""),
+        description=snippet.get("description", ""),
+        channel_id=snippet.get("channelId", ""),
+        published_at=_parse_published_at(snippet.get("publishedAt", "")),
+        duration_seconds=_parse_iso8601_duration(duration_iso),
+        duration_iso=duration_iso,
+        thumbnail_url=_pick_thumbnail_url(snippet.get("thumbnails", {}) or {}),
+        privacy_status=status.get("privacyStatus") or "unknown",
+        view_count=int(statistics.get("viewCount", 0) or 0),
+        like_count=int(statistics.get("likeCount", 0) or 0),
+        comment_count=int(statistics.get("commentCount", 0) or 0),
+        tags=tuple(raw_tags),
+        category_id=snippet.get("categoryId", "") or "",
+    )
+
+
+def _channel_info_from_api(item: dict[str, Any]) -> ChannelInfo:
+    """Map a `channels.list?mine=True&part=snippet,statistics` item to
+    a :class:`ChannelInfo`. Numeric fields default to 0 when omitted."""
+    snippet = item.get("snippet", {}) or {}
+    statistics = item.get("statistics", {}) or {}
+    return ChannelInfo(
+        channel_id=item["id"],
+        title=snippet.get("title", ""),
+        subscriber_count=int(statistics.get("subscriberCount", 0) or 0),
+        video_count=int(statistics.get("videoCount", 0) or 0),
         view_count=int(statistics.get("viewCount", 0) or 0),
     )
 
@@ -345,6 +403,146 @@ class RealYoutubeClient:
             items=videos,
             next_page_token=response.get("nextPageToken"),
             quota_units_consumed=100,
+        )
+
+    async def get_video_full(self, video_id: str) -> VideoFull | None:
+        """**1 quota unit** (`videos.list?part=snippet,statistics,
+        status,contentDetails&id=<video_id>`). Same cost as
+        :meth:`get_video` (the `part=` selection does not change the
+        per-call cost)."""
+        try:
+            response = (
+                self._service()
+                .videos()
+                .list(
+                    part="snippet,statistics,status,contentDetails",
+                    id=video_id,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.get_video_full_http_error video_id=%s status=%s",
+                video_id,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        items = response.get("items", [])
+        if not items:
+            return None
+        return _video_full_from_api(items[0])
+
+    async def get_channel_info_mine(self) -> ChannelInfo:
+        """**1 quota unit** (`channels.list?mine=True&part=snippet,
+        statistics`). OAuth-only — the `mine=True` flag resolves the
+        channel from the credentials, so an API-key-only client cannot
+        call this. Raises `ValueError` at call time when no OAuth
+        credentials were supplied (fail loud, per the no-silent-errors
+        rule)."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.get_channel_info_mine requires "
+                "oauth_credentials (channels.list?mine=True needs an "
+                "authenticated context — an API key cannot resolve "
+                "'the current user')"
+            )
+        try:
+            response = (
+                self._service()
+                .channels()
+                .list(part="snippet,statistics", mine=True)
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.get_channel_info_mine_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        items = response.get("items") or []
+        if not items:
+            raise ValueError(
+                "channels.list?mine=True returned no items — the OAuth "
+                "account has no associated YouTube channel."
+            )
+        return _channel_info_from_api(items[0])
+
+    async def list_owned_videos(
+        self,
+        *,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> ListResult[VideoFull]:
+        """**101 quota units / page** — `search.list?forMine=True` (100)
+        + `videos.list?part=snippet,statistics,status,contentDetails`
+        (1). OAuth-only — `forMine=True` resolves the channel from the
+        credentials. Raises `ValueError` at call time when no OAuth
+        credentials were supplied."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.list_owned_videos requires "
+                "oauth_credentials (search.list?forMine=True needs an "
+                "authenticated context — an API key cannot resolve "
+                "'the current user')"
+            )
+
+        try:
+            search_response = (
+                self._service()
+                .search()
+                .list(
+                    part="id",
+                    forMine=True,
+                    type="video",
+                    maxResults=page_size,
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.list_owned_videos_search_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        video_ids = [
+            item["id"]["videoId"]
+            for item in search_response.get("items", [])
+            if item.get("id", {}).get("videoId")
+        ]
+        next_page_token = search_response.get("nextPageToken")
+        if not video_ids:
+            # Only spent 100 (search.list); videos.list skipped.
+            return ListResult(
+                items=[], next_page_token=next_page_token, quota_units_consumed=100
+            )
+
+        try:
+            videos_response = (
+                self._service()
+                .videos()
+                .list(
+                    part="snippet,statistics,status,contentDetails",
+                    id=",".join(video_ids),
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.list_owned_videos_videos_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        videos = [_video_full_from_api(item) for item in videos_response.get("items", [])]
+        return ListResult(
+            items=videos,
+            next_page_token=next_page_token,
+            # 100 (search.list?forMine) + 1 (videos.list) = 101.
+            quota_units_consumed=101,
         )
 
     async def upload_video(

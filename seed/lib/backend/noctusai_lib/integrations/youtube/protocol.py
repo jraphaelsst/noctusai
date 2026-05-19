@@ -17,10 +17,12 @@ from typing import Protocol
 
 from noctusai_lib.integrations.youtube.types import (
     Channel,
+    ChannelInfo,
     ListResult,
     PrivacyStatus,
     ProcessingStatus,
     Video,
+    VideoFull,
     VideoUpload,
 )
 
@@ -100,6 +102,88 @@ class YoutubeClient(Protocol):
         For channel-scoped listings (newest videos from one channel),
         use `list_channel_videos(channel_id)` instead — same data, ~50×
         cheaper."""
+        ...
+
+    async def get_channel_info_mine(self) -> ChannelInfo:
+        """Fetch the OAuth-authenticated channel's metadata + engagement
+        counters.
+
+        **Quota cost: 1 unit** (`channels.list?mine=True&part=snippet,
+        statistics`). The OAuth-authenticated variant of
+        :meth:`get_channel` — the `mine=True` flag tells YT to resolve
+        the channel from the credentials instead of from a `channel_id`,
+        so this method only makes sense on an OAuth-backed client.
+
+        Distinct from :meth:`get_channel` because (a) it doesn't take an
+        id (resolves via OAuth context), (b) the response includes
+        `statistics` (subscriber / video / view counts) rather than
+        `contentDetails` (uploads playlist id), and (c) the return type
+        is :class:`ChannelInfo` (engagement-counters projection) rather
+        than :class:`Channel` (uploads-playlist projection).
+
+        Raises:
+            ValueError: when `channels.list?mine=True` returns no items
+                (the OAuth account has no associated YT channel —
+                the operator surface should redirect the user back to
+                consent with a different Google account). Surfaced as
+                an explicit exception rather than a sentinel so the
+                caller branches on a real signal."""
+        ...
+
+    async def get_video_full(self, video_id: str) -> VideoFull | None:
+        """Fetch a single video with the rich projection.
+
+        **Quota cost: 1 unit** (`videos.list?part=snippet,statistics,
+        status,contentDetails&id=<video_id>`). Same cost as
+        :meth:`get_video` because YouTube charges per call regardless
+        of which `part=` pieces are requested.
+
+        Distinct from :meth:`get_video` only in the return type — use
+        this when the wider field set (`thumbnail_url`, `tags`,
+        `like_count`, `comment_count`, `privacy_status`, etc.) is
+        needed. When only id/title/view_count/duration matter, prefer
+        :meth:`get_video` — the lean projection makes consumer code
+        loud about which fields it depends on.
+
+        Returns `None` when the video doesn't exist or has been
+        removed (mirrors :meth:`get_video`)."""
+        ...
+
+    async def list_owned_videos(
+        self,
+        *,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> ListResult[VideoFull]:
+        """List the OAuth-authenticated channel's videos (including
+        private + unlisted) with the full projection.
+
+        **Quota cost: 101 units / page** — `search.list?forMine=True`
+        (100 units) followed by `videos.list?part=snippet,statistics,
+        status,contentDetails&id=...` (1 unit) for the page batch.
+
+        Distinct from :meth:`list_channel_videos` because that method
+        walks `playlistItems.list` on the channel's auto-`uploads`
+        playlist which exposes ONLY public videos (the cheap path costs
+        ~2 units / 50 videos but private + unlisted uploads are
+        invisible there). For the operator surface that owns the
+        channel + needs to see every upload, the expensive
+        `search.list?forMine=True` is the canonical YT API path —
+        documented here so consumers reading the surface understand
+        the per-call cost trade-off.
+
+        Args:
+            page_token: opaque YT pagination token; `None` for the
+                first page.
+            page_size: `maxResults` (1-50). YT caps at 50; the seed
+                forwards the value verbatim.
+
+        Returns:
+            `ListResult[VideoFull]` — `next_page_token` is `None` when
+            the underlying API stops returning `nextPageToken`.
+            `quota_units_consumed` reflects the per-call cost (101 for
+            the standard 2-API-call path; 100 when the search page
+            returns no ids and `videos.list` is skipped)."""
         ...
 
     async def upload_video(

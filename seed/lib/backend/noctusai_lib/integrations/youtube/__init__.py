@@ -41,6 +41,7 @@ from noctusai_lib.integrations.youtube.types import (
     TITLE_MAX_LEN,
     UPLOAD_QUOTA_UNITS,
     Channel,
+    ChannelInfo,
     ListResult,
     Playlist,
     PrivacyStatus,
@@ -48,6 +49,7 @@ from noctusai_lib.integrations.youtube.types import (
     ProcessingStatus,
     UploadStatus,
     Video,
+    VideoFull,
     VideoUpload,
 )
 
@@ -56,6 +58,7 @@ __all__ = [
     "TITLE_MAX_LEN",
     "UPLOAD_QUOTA_UNITS",
     "Channel",
+    "ChannelInfo",
     "FakeYoutubeClient",
     "ListResult",
     "Playlist",
@@ -65,6 +68,7 @@ __all__ = [
     "RealYoutubeClient",
     "UploadStatus",
     "Video",
+    "VideoFull",
     "VideoUpload",
     "YoutubeClient",
     "make_youtube_client",

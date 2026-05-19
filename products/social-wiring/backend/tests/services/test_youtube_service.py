@@ -1,9 +1,10 @@
 """Tests for youtube_service — focus on pure-logic helpers (no network)."""
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
+from noctusai_lib.integrations.youtube import VideoFull
 from noctusai_lib.security.token_store import make_credential_store
 from app.services.youtube_service import (
     YOUTUBE_SCOPES,
@@ -11,8 +12,7 @@ from app.services.youtube_service import (
     YouTubeServiceError,
     _bundle_to_credentials,
     _credentials_to_bundle,
-    _parse_published_at,
-    _video_item_to_summary,
+    _video_full_to_summary,
 )
 
 
@@ -63,30 +63,36 @@ class TestCredentialsBundleRoundTrip:
         assert creds.expiry is not None
 
 
-class TestVideoItemMapping:
-    def test_full_video_item_extracts_subset(self):
-        item = {
-            "id": "abc123",
-            "snippet": {
-                "title": "Test Video",
-                "description": "A description",
-                "publishedAt": "2026-05-01T10:00:00Z",
-                "thumbnails": {
-                    "high": {"url": "https://img.example/high.jpg"},
-                    "medium": {"url": "https://img.example/medium.jpg"},
-                },
-                "tags": ["tag1", "tag2"],
-                "categoryId": "22",
-            },
-            "statistics": {
-                "viewCount": "1500",
-                "likeCount": "42",
-                "commentCount": "7",
-            },
-            "status": {"privacyStatus": "public"},
-            "contentDetails": {"duration": "PT3M45S"},
-        }
-        summary = _video_item_to_summary(item)
+class TestVideoFullToSummary:
+    """Phase 6a-youtube — projection translation from seed ``VideoFull``
+    to product ``VideoSummary``. The raw-API dict mapping (the prior
+    ``_video_item_to_summary`` shape) now lives at the seed
+    (``_video_full_from_api`` in ``noctusai_lib.integrations.youtube.real``)
+    + is covered by ``seed/lib/backend/tests/test_youtube_integration.py``."""
+
+    def _video_full(self, **overrides) -> VideoFull:
+        defaults = dict(
+            id="abc123",
+            title="Test Video",
+            description="A description",
+            channel_id="UC-owner",
+            published_at=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
+            duration_seconds=225,
+            duration_iso="PT3M45S",
+            thumbnail_url="https://img.example/high.jpg",
+            privacy_status="public",
+            view_count=1500,
+            like_count=42,
+            comment_count=7,
+            tags=("tag1", "tag2"),
+            category_id="22",
+        )
+        defaults.update(overrides)
+        return VideoFull(**defaults)
+
+    def test_full_round_trip_extracts_every_field(self):
+        v = self._video_full()
+        summary = _video_full_to_summary(v)
         assert summary.video_id == "abc123"
         assert summary.title == "Test Video"
         assert summary.thumbnail_url == "https://img.example/high.jpg"
@@ -95,55 +101,26 @@ class TestVideoItemMapping:
         assert summary.comment_count == 7
         assert summary.privacy_status == "public"
         assert summary.duration == "PT3M45S"
+        # Tags re-materialise as a list (seed stores a frozen tuple).
         assert summary.tags == ["tag1", "tag2"]
+        assert isinstance(summary.tags, list)
+        assert summary.category_id == "22"
 
-    def test_missing_thumbnails_yields_empty_url(self):
-        item = {
-            "id": "x",
-            "snippet": {"title": "t", "publishedAt": "2026-01-01T00:00:00Z"},
-            "statistics": {},
-            "status": {},
-            "contentDetails": {},
-        }
-        summary = _video_item_to_summary(item)
-        assert summary.thumbnail_url == ""
+    def test_missing_thumbnail_yields_empty_url(self):
+        v = self._video_full(thumbnail_url="")
+        assert _video_full_to_summary(v).thumbnail_url == ""
 
-    def test_picks_max_resolution_thumbnail(self):
-        item = {
-            "id": "x",
-            "snippet": {
-                "title": "t",
-                "publishedAt": "2026-01-01T00:00:00Z",
-                "thumbnails": {
-                    "default": {"url": "low.jpg"},
-                    "medium": {"url": "mid.jpg"},
-                    "maxres": {"url": "best.jpg"},
-                },
-            },
-            "statistics": {},
-            "status": {},
-            "contentDetails": {},
-        }
-        summary = _video_item_to_summary(item)
-        assert summary.thumbnail_url == "best.jpg"
+    def test_empty_tags_round_trip_as_empty_list(self):
+        v = self._video_full(tags=())
+        summary = _video_full_to_summary(v)
+        assert summary.tags == []
+        assert isinstance(summary.tags, list)
 
-    def test_missing_published_at_yields_epoch(self):
-        item = {
-            "id": "x",
-            "snippet": {"title": "t"},
-            "statistics": {},
-            "status": {},
-            "contentDetails": {},
-        }
-        summary = _video_item_to_summary(item)
-        assert summary.published_at == datetime.fromtimestamp(0, tz=timezone.utc)
-
-
-class TestParsePublishedAt:
-    def test_iso_z_suffix_resolves_to_utc(self):
-        result = _parse_published_at("2026-05-06T12:00:00Z")
-        assert result.tzinfo is not None
-        assert result.tzinfo.utcoffset(result).total_seconds() == 0
+    def test_unknown_privacy_status_stringified(self):
+        v = self._video_full(privacy_status="unknown")
+        # The product VideoSummary keeps privacy as a plain string;
+        # the seed `"unknown"` literal stringifies cleanly.
+        assert _video_full_to_summary(v).privacy_status == "unknown"
 
 
 class TestYouTubeServiceConstruction:
