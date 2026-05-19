@@ -509,6 +509,47 @@ reclaims everything (base images preserved unless removed by hand).
 
 ---
 
+## 6a · Cold-boot CPU contention — the staggered wave boot
+
+**The failure mode (observed 2026-05-19, the rule's provenance).** Bringing
+the **whole fleet up from cold** (`./start.sh`, or `docker compose -f
+docker-compose.yml up -d` with no service list) starts all product
+containers simultaneously. Each one's `runtime-watch` entrypoint
+(`seed/docker/local-watch.sh`) runs an **initial `vite build` before
+uvicorn answers**. A solo product builds in ~20 s; **9 rollup builds in
+parallel** on an 8-core machine drove load to **~18 (≈2.3× cores)**, every
+build crawled, uvicorn never came up inside the healthcheck window, and
+**all 9 containers flipped `unhealthy` though nothing had failed** — they
+were CPU-starved, not broken. The image build is cached and fast (§6); this
+is the *runtime* first-build, which §6's "subsequent builds are seconds"
+explicitly does **not** cover.
+
+**Why it's a one-time tax (not a per-use cost).** Once a product's `dist/`
+is built, the bind-mounted `vite build --watch` keeps it warm across
+stop/start. So the **normal single-click workflow — toggling one product
+on/off in Docker Desktop — is unaffected**; only a from-cold all-at-once
+boot pays it. The single-click switch is *designed* for per-product
+toggling; whole-fleet cold boot is the edge case, but it must still be
+non-pathological because `./start.sh` (no args) is a documented entry.
+
+**The structural fix — `staggered_up()` in `start.sh`.** Both fleet and
+multi-slug-subset boots route through `staggered_up()`: products come up in
+**core-sized waves** (`batch = max(2, cores/2)`), and each wave is **gated
+on the prior wave going `healthy`** before the next starts. `healthy` ⇒
+uvicorn is answering ⇒ that product's `vite build` finished ⇒ its CPU is
+freed for the next wave. Aggregate load stays ≈ cores instead of 2.3× over;
+convergence is wave-serialized, not thrash-serialized. The gate has a
+per-wave timeout (`NOCTUS_BOOT_WAVE_TIMEOUT`, default 300 s) after which it
+**proceeds with a loud `⚠` line, never silently** — a slow build is not a
+failure, and blocking the fleet forever on one slow product would be its
+own anti-pattern. Wave size overridable via `NOCTUS_BOOT_BATCH`.
+
+**Boundary.** This is an *operator-layer* boot-ordering concern, not an
+image or compose concern — the Dockerfiles/composes are unchanged and stay
+canonical+propagated (§3). Subsets at or below one wave (`≤ batch` slugs)
+skip staggering entirely (`up -d` straight through) — the contention only
+exists above a wave's worth of simultaneous cold builds.
+
 ## 7 · Adding a new product
 
 `noctus.dev.scaffold_product` does it end-to-end:
@@ -544,6 +585,7 @@ maintain.
 | `meson … Unknown compiler` / `Dependency lookup for cairo … failed` (pip, in a *product* build) | A product dep has no wheel for the build arch → source build in the **slim runtime** stage, which has no compiler (the base *builder* stage has the toolchain, but product pip runs in *runtime*). Fix via the per-slug `PIP_RUN` seam in `propagate-dockerfiles.sh` — see §3.2a. N≥2 → lift to the base builder. |
 | `Cannot find module '@rollup/rollup-linux-*'` / `vite: not found` (esp. in `runtime-watch`) | host `package-lock.json` pinned darwin optionals **or** the `./frontend` bind-mount shadowed the image `node_modules` — both fixed canonically (lockfile drop ×2 + anon `node_modules` volume), see §3.2b. If seen, the product drifted from seed — re-run `propagate-{dockerfiles,composes}.sh` |
 | Docker Desktop unstable after an app update: `failed to solve: frontend grpc server closed unexpectedly`, `#N CANCELED`, `--force-recreate` not applied (config-hash unchanged), `up -d` hung at "Creating" with 0 containers | BuildKit/daemon wedge — *not* a compose/Dockerfile bug (`docker compose config` parses fine). Recovery: kill hung `docker`/`compose` procs → `pkill -x "Docker Desktop"; pkill -f com.docker.backend; open -a "Docker Desktop"` → wait for `docker info` ready → re-run `./start.sh`. **Safe**: fleet is ephemeral-by-design (§5.1) — containers regenerate, volumes + `noctus-net` persist, no data loss |
+| Whole fleet boots `unhealthy` simultaneously from cold, load ≫ cores, all stuck at `vite … transforming` | Not a failure — N parallel first-boot `vite build`s oversubscribe CPU (§6a). Fixed structurally: `./start.sh` routes through `staggered_up()` (core-sized waves, health-gated). If seen via raw `docker compose up -d` (bypasses start.sh), either use `./start.sh` or wait — builds complete, just slowly; it self-accelerates as each finishes |
 | Container restart-loops `ModuleNotFoundError` | product imports a pkg only in root `requirements.txt` — declare it in the product's `requirements.txt` (each image installs only its own) |
 | `exec: "uvicorn": not found` | product `requirements.txt` doesn't pin uvicorn — add `uvicorn[standard]==…` |
 | Tunnel worked then `NXDOMAIN`, container "Up" | QUIC dropout — all composes pin `--protocol http2`; if seen, `docker compose --profile tunnel-<slug> up -d --force-recreate <slug>-tunnel` for a fresh URL |

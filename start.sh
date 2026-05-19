@@ -180,6 +180,53 @@ else
     echo "============================================"
   }
 
+  # Cold-boot CPU-contention guard. Each product's `runtime-watch`
+  # entrypoint runs an initial `vite build` before uvicorn answers; N
+  # simultaneous rollup builds oversubscribe CPU (observed 2026-05-19:
+  # 9 cold builds → load ~2.3x cores → minutes-long convergence, all
+  # containers flip `unhealthy` inside the healthcheck window though
+  # nothing failed). Bring products up in core-sized waves, gating each
+  # wave on the prior wave going `healthy` (uvicorn answering ⇒ that
+  # product's `vite build` is done ⇒ its CPU is freed), so aggregate
+  # load stays ≈ cores instead of 2.3x over. One-time tax: once `dist/`
+  # exists the watch loop keeps it warm, so per-product single-click
+  # restarts (the normal workflow) are unaffected. Tunables:
+  # NOCTUS_BOOT_BATCH (wave size) · NOCTUS_BOOT_WAVE_TIMEOUT (per-wave
+  # gate ceiling, seconds; on timeout it proceeds — slow ≠ failed).
+  # KB § PATTERNS/containerization.md § 6a.
+  staggered_up() {
+    local svcs=("$@") cores batch i wave deadline ready s st
+    cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+    batch="${NOCTUS_BOOT_BATCH:-$(( cores / 2 > 1 ? cores / 2 : 2 ))}"
+    if [[ ${#svcs[@]} -le $batch ]]; then
+      docker "${PRODUCT_ARGS[@]}" up -d "${svcs[@]}"
+      return 0
+    fi
+    echo "[docker] cold-boot stagger: ${#svcs[@]} produtos em ondas de $batch (cores=$cores; override: NOCTUS_BOOT_BATCH)"
+    i=0
+    while [[ $i -lt ${#svcs[@]} ]]; do
+      wave=("${svcs[@]:i:batch}")
+      echo "[docker]   onda: ${wave[*]}"
+      docker "${PRODUCT_ARGS[@]}" up -d "${wave[@]}"
+      i=$(( i + batch ))
+      [[ $i -ge ${#svcs[@]} ]] && break          # last wave: nothing to gate for
+      deadline=$(( SECONDS + ${NOCTUS_BOOT_WAVE_TIMEOUT:-300} ))
+      while :; do
+        ready=0
+        for s in "${wave[@]}"; do
+          st="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "noctus-$s" 2>/dev/null || echo none)"
+          [[ "$st" == "healthy" ]] && ready=$(( ready + 1 ))
+        done
+        [[ $ready -ge ${#wave[@]} ]] && { echo "[docker]   onda saudavel ($ready/${#wave[@]})"; break; }
+        if [[ $SECONDS -ge $deadline ]]; then
+          echo "[docker]   ⚠ timeout da onda ($ready/${#wave[@]} saudaveis apos ${NOCTUS_BOOT_WAVE_TIMEOUT:-300}s) — prosseguindo; build lento, NAO falha (ver: docker logs noctus-<slug>)" >&2
+          break
+        fi
+        sleep 5
+      done
+    done
+  }
+
   # ----- mode handling -----
   # NOTE: there is NO `dev` mode. ONE container, ONE shape
   # (project: containerization-single-env). Every local product
@@ -204,7 +251,8 @@ else
     ensure_net
     build_bases
     docker "${PRODUCTS_COMPOSE[@]}" build "${SUBSET[@]}"
-    docker "${PRODUCTS_COMPOSE[@]}" up -d "${SUBSET[@]}"
+    PRODUCT_ARGS=("${PRODUCTS_COMPOSE[@]}")
+    staggered_up "${SUBSET[@]}"
     echo ""
     for s in "${SUBSET[@]}"; do
       IFS=':' read -r _ nm bp _ <<< "$(printf '%s\n' "${PRODUCTS[@]}" | grep "^$s:")"
@@ -265,7 +313,12 @@ else
   fi
 
   echo "[docker] subindo noctusai-products..."
-  docker "${PRODUCT_ARGS[@]}" up -d
+  ALL_SLUGS=()
+  for entry in "${PRODUCTS[@]}"; do ALL_SLUGS+=("${entry%%:*}"); done
+  staggered_up "${ALL_SLUGS[@]}"
+  # profile-gated tunnels aren't products → bring them up after the
+  # staggered product boot (no-op for already-up products).
+  [[ -n "$TUNNEL_PROFILE" ]] && docker "${PRODUCT_ARGS[@]}" up -d
 
   if [[ -n "$INFRA_PROFILE" ]]; then
     echo "[docker] subindo noctusai-infra (profile: $INFRA_PROFILE)..."
