@@ -24,7 +24,7 @@ class SocialWiringSettings(ProductSettings):
     # ─── YouTube OAuth ─────────────────────────────────────────────────
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
-    youtube_redirect_uri: str = "http://localhost:8010/api/youtube/oauth/callback"
+    youtube_redirect_uri: str = "http://localhost:8011/api/youtube/oauth/callback"
     frontend_base_url: str = ""
 
     # ─── OpenAI chatbot orchestration ─────────────────────────────────
@@ -161,7 +161,7 @@ class SocialWiringSettings(ProductSettings):
     # Where Google should redirect after consent. Synced by
     # `refresh_cf_tunnel.sh` to the tunnel URL + /api/calendar/oauth/callback
     # when running behind the proxy.
-    google_oauth_redirect_uri: str = "http://localhost:8010/api/calendar/oauth/callback"
+    google_oauth_redirect_uri: str = "http://localhost:8011/api/calendar/oauth/callback"
     # Scope resolution strategy (parallels META_OAUTH_SCOPES):
     #   "auto" (default) — use GOOGLE_KITCHEN_SINK_SCOPES (Calendar +
     #     Drive + identity, covers every adapter this product ships).
@@ -215,7 +215,7 @@ class SocialWiringSettings(ProductSettings):
     # sistema → [new user] → Gerar token → pick the app + scopes.
     # Long-lived (never expires while the System User has access).
     meta_system_user_token: str = ""
-    meta_oauth_redirect_uri: str = "http://localhost:8010/api/meta/oauth/callback"
+    meta_oauth_redirect_uri: str = "http://localhost:8011/api/meta/oauth/callback"
     # Graph API version pinned per release. v21.0 is the current stable
     # as of Jan 2026; v22.0 ships in May 2026. Pin explicitly so a
     # silent upstream rollout doesn't break us.
