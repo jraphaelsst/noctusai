@@ -58,13 +58,31 @@ def make_credential_store(
     client=None,
     fernet_key: Optional[bytes] = None,
     table: str = DEFAULT_TABLE,
+    metadata_column: Optional[str] = "metadata",
+    metadata_columns: Optional[dict] = None,
 ) -> CredentialStore:
     """Real when ``client`` AND ``fernet_key`` are set; else Fake.
 
     Mirrors `get_routing_adapter` / `get_*_adapter` — the default is the
     Fake so a product that hasn't wired a key/client still boots and
     tests deterministically.
+
+    ``metadata_column`` / ``metadata_columns`` configure the table-shape
+    seam for absorbed products whose credentials table predates the seed
+    contract (no ``metadata jsonb`` column, or denormalized metadata
+    columns). Defaults reproduce the historical behavior exactly — the
+    params are additive and zero-impact for existing consumers. Both the
+    Real and the Fake honor them identically (test parity).
     """
     if client is not None and fernet_key:
-        return SupabaseCredentialStore(client, fernet_key, table=table)
-    return FakeCredentialStore()
+        return SupabaseCredentialStore(
+            client,
+            fernet_key,
+            table=table,
+            metadata_column=metadata_column,
+            metadata_columns=metadata_columns,
+        )
+    return FakeCredentialStore(
+        metadata_column=metadata_column,
+        metadata_columns=metadata_columns,
+    )

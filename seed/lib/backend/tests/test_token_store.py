@@ -233,3 +233,200 @@ class TestMakeCredentialStore:
             client=_FakeSupabase(), fernet_key=generate_key()
         )
         assert isinstance(store, SupabaseCredentialStore)
+
+
+class TestMetadataColumnSeam:
+    """Real (`SupabaseCredentialStore`) + Fake parity for the seam.
+
+    Persisted-payload assertions read the in-test Supabase substrate's
+    stored row (``client._tables[...]``) — the injected external IO
+    stand-in, NOT a monkeypatch of our code (same pattern this module
+    already uses for `test_put_encrypts_at_rest`).
+    """
+
+    # (a) defaults reproduce historical behavior exactly --------------------
+    def test_default_back_compat_real_unchanged(self):
+        client = _FakeSupabase()
+        key = generate_key()
+        store = SupabaseCredentialStore(client, key)
+        store.put("org1", "google", {"t": 1}, metadata={"auth_mode": "system_user"})
+        row = client._tables["oauth_credentials"][0]
+        # JSON metadata column present and carries the unmapped blob.
+        assert row["metadata"] == {"auth_mode": "system_user"}
+        got = store.get("org1", "google")
+        assert got.tokens == {"t": 1}
+        assert got.metadata == {"auth_mode": "system_user"}
+
+    def test_default_back_compat_fake_unchanged(self):
+        store = FakeCredentialStore()
+        rec = store.put("o", "p", {"t": 1}, metadata={"auth_mode": "user_oauth"})
+        assert rec.metadata == {"auth_mode": "user_oauth"}
+        assert store.get("o", "p").metadata == {"auth_mode": "user_oauth"}
+
+    def test_default_factory_threads_defaults(self):
+        store = make_credential_store(
+            client=_FakeSupabase(), fernet_key=generate_key()
+        )
+        assert isinstance(store, SupabaseCredentialStore)
+        store.put("o", "p", {"x": 1}, metadata={"a": "b"})
+
+    # (b) metadata_column=None omits the column on write + read ------------
+    def test_metadata_column_none_omits_column_real(self):
+        client = _FakeSupabase()
+        key = generate_key()
+        store = SupabaseCredentialStore(client, key, metadata_column=None)
+        store.put("org1", "google", {"t": 1})
+        row = client._tables["oauth_credentials"][0]
+        assert "metadata" not in row  # column omitted from persisted payload
+        got = store.get("org1", "google")
+        assert got.tokens == {"t": 1}
+        assert got.metadata == {}  # not read back
+
+    def test_metadata_column_none_omits_column_fake(self):
+        store = FakeCredentialStore(metadata_column=None)
+        rec = store.put("o", "p", {"t": 1})
+        assert rec.metadata == {}
+        assert store.get("o", "p").metadata == {}
+
+    def test_metadata_column_none_ignores_stray_db_metadata_on_read(self):
+        # A physical row that happens to carry a `metadata` key must NOT
+        # be re-inflated when the store is configured column-less.
+        client = _FakeSupabase()
+        key = generate_key()
+        seed_store = SupabaseCredentialStore(client, key)  # default writer
+        seed_store.put("org1", "google", {"t": 1}, metadata={"leaked": "x"})
+        columnless = SupabaseCredentialStore(client, key, metadata_column=None)
+        assert columnless.get("org1", "google").metadata == {}
+
+    # (c) metadata_columns round-trips via discrete columns ----------------
+    _MAP = {
+        "channel_id": "channel_id",
+        "channel_title": "channel_title",
+        "scopes": "scopes",
+    }
+
+    def test_metadata_columns_roundtrip_real(self):
+        client = _FakeSupabase()
+        key = generate_key()
+        store = SupabaseCredentialStore(
+            client,
+            key,
+            metadata_column=None,
+            metadata_columns=self._MAP,
+        )
+        store.put(
+            "org1",
+            "youtube",
+            {"refresh_token": "r"},
+            metadata={
+                "channel_id": "UC123",
+                "channel_title": "My Channel",
+                "scopes": ["youtube.upload"],
+            },
+        )
+        row = client._tables["oauth_credentials"][0]
+        # mapped keys land in discrete columns, NOT a JSON blob
+        assert row["channel_id"] == "UC123"
+        assert row["channel_title"] == "My Channel"
+        assert row["scopes"] == ["youtube.upload"]
+        assert "metadata" not in row
+        got = store.get("org1", "youtube")
+        assert got.tokens == {"refresh_token": "r"}
+        assert got.metadata == {
+            "channel_id": "UC123",
+            "channel_title": "My Channel",
+            "scopes": ["youtube.upload"],
+        }
+
+    def test_metadata_columns_roundtrip_fake(self):
+        store = FakeCredentialStore(
+            metadata_column=None, metadata_columns=self._MAP
+        )
+        rec = store.put(
+            "org1",
+            "youtube",
+            {"refresh_token": "r"},
+            metadata={
+                "channel_id": "UC123",
+                "channel_title": "My Channel",
+                "scopes": ["youtube.upload"],
+            },
+        )
+        assert rec.metadata == {
+            "channel_id": "UC123",
+            "channel_title": "My Channel",
+            "scopes": ["youtube.upload"],
+        }
+        got = store.get("org1", "youtube")
+        assert got.metadata == {
+            "channel_id": "UC123",
+            "channel_title": "My Channel",
+            "scopes": ["youtube.upload"],
+        }
+
+    def test_metadata_columns_with_json_column_splits_mapped_vs_unmapped(self):
+        # mapped keys → discrete columns; unmapped → JSON blob (both set).
+        client = _FakeSupabase()
+        key = generate_key()
+        store = SupabaseCredentialStore(
+            client,
+            key,
+            metadata_column="metadata",
+            metadata_columns={"channel_id": "channel_id"},
+        )
+        store.put(
+            "org1",
+            "youtube",
+            {"t": 1},
+            metadata={"channel_id": "UC9", "auth_mode": "user_oauth"},
+        )
+        row = client._tables["oauth_credentials"][0]
+        assert row["channel_id"] == "UC9"
+        assert row["metadata"] == {"auth_mode": "user_oauth"}
+        got = store.get("org1", "youtube")
+        assert got.metadata == {"channel_id": "UC9", "auth_mode": "user_oauth"}
+
+    # (d) unmapped key + metadata_column=None → fail-loud ValueError -------
+    def test_unmapped_key_with_no_metadata_column_raises_real(self):
+        client = _FakeSupabase()
+        key = generate_key()
+        store = SupabaseCredentialStore(
+            client,
+            key,
+            metadata_column=None,
+            metadata_columns={"channel_id": "channel_id"},
+        )
+        with pytest.raises(ValueError, match="no destination"):
+            store.put(
+                "org1",
+                "youtube",
+                {"t": 1},
+                metadata={"channel_id": "UC1", "auth_mode": "leak"},
+            )
+        # the failing put must NOT have persisted a partial row
+        assert client._tables.get("oauth_credentials", []) == []
+
+    def test_unmapped_key_with_no_metadata_column_raises_fake(self):
+        store = FakeCredentialStore(
+            metadata_column=None, metadata_columns={"channel_id": "channel_id"}
+        )
+        with pytest.raises(ValueError, match="no destination"):
+            store.put("o", "p", {"t": 1}, metadata={"stray": "x"})
+        assert store.get("o", "p") is None
+
+    def test_factory_threads_seam_params(self):
+        store = make_credential_store(
+            client=_FakeSupabase(),
+            fernet_key=generate_key(),
+            metadata_column=None,
+            metadata_columns={"channel_id": "channel_id"},
+        )
+        assert isinstance(store, SupabaseCredentialStore)
+        assert store._metadata_column is None
+        assert store._metadata_columns == {"channel_id": "channel_id"}
+        fake = make_credential_store(
+            metadata_column=None, metadata_columns={"scopes": "scopes"}
+        )
+        assert isinstance(fake, FakeCredentialStore)
+        assert fake._metadata_column is None
+        assert fake._metadata_columns == {"scopes": "scopes"}

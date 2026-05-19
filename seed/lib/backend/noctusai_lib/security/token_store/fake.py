@@ -20,10 +20,27 @@ from noctusai_lib.security.token_store.types import (
 
 
 class FakeCredentialStore(CredentialStore):
-    """Process-memory credential store keyed by ``(org_id, provider)``."""
+    """Process-memory credential store keyed by ``(org_id, provider)``.
 
-    def __init__(self) -> None:
+    Mirrors `SupabaseCredentialStore`'s ``metadata_column`` /
+    ``metadata_columns`` semantics so a test that round-trips metadata
+    through discrete columns behaves identically against Fake and Real.
+    Because the substrate is an in-memory ``StoredCredential`` (not a
+    physical row), the mapping is exercised by *simulating* the
+    flatten-on-write / inflate-on-read split: an unmapped key when
+    ``metadata_column is None`` raises ``ValueError`` exactly like the
+    Real adapter (fail-loud parity).
+    """
+
+    def __init__(
+        self,
+        *,
+        metadata_column: Optional[str] = "metadata",
+        metadata_columns: Optional[dict] = None,
+    ) -> None:
         self._rows: dict[tuple[str, str], StoredCredential] = {}
+        self._metadata_column = metadata_column
+        self._metadata_columns = dict(metadata_columns or {})
 
     def get(self, org_id: str, provider: str) -> Optional[StoredCredential]:
         return self._rows.get((org_id, provider))
@@ -37,6 +54,19 @@ class FakeCredentialStore(CredentialStore):
         metadata: Optional[dict] = None,
     ) -> StoredCredential:
         now = datetime.now(timezone.utc)
+        meta = dict(metadata or {})
+        # Parity with the Real adapter: an unmapped metadata key with no
+        # JSON metadata column has no destination — fail loud, do not
+        # silently drop it.
+        if self._metadata_column is None:
+            unmapped = [k for k in meta if k not in self._metadata_columns]
+            if unmapped:
+                raise ValueError(
+                    "token_store: metadata keys "
+                    f"{sorted(unmapped)} have no destination — metadata_column "
+                    "is None and they are not in metadata_columns; either map "
+                    "them or configure a metadata_column"
+                )
         existing = self._rows.get((org_id, provider))
         created_at = existing.created_at if existing else now
         record = StoredCredential(
@@ -45,7 +75,7 @@ class FakeCredentialStore(CredentialStore):
             tokens=dict(tokens),
             created_at=created_at,
             updated_at=now,
-            metadata=dict(metadata or {}),
+            metadata=meta,
         )
         self._rows[(org_id, provider)] = record
         return record
