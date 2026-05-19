@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-19
 - **Last updated:** 2026-05-19
-- **Status:** Design locked → Phase 0 ready (awaiting "go", phase-by-phase cadence)
+- **Status:** Phase 0 ✅ → Wave 1 dispatching. Throughput mode ("resolve it all"). Executes in isolated worktree `../noctusai-wt-sw-google` on `feat/sw-google-seed-consume` (main tree is parallel-agent-contended — do NOT execute there).
 - **Owner / stakeholders:** joaoraphaelsst · architect (Claude)
 - **Related docs:** `products/social-wiring/MASTER-PROMPT.md` (§"Seed seams consumed" — currently doc⊥code, see §1) · `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § PATTERNS/seed-fake-real-adapter.md` · sibling closed project `projects/social-wiring-absorption-debt/` (different debt class — compliance counts, NOT seed-consume)
 - **Project slug:** `social-wiring-google-seed-consume` — intent ≈ `wiring` (the canonical `<product>-seed-wiring` remediation per `KB § 01-PHILOSOPHY.md § Compliance`); named `-google-seed-consume` for zero-context clarity (the product name already contains "wiring"). Location: `products/social-wiring/projects/` (single-product scope).
@@ -167,23 +167,25 @@ mounts generic `/api/oauth/{provider}/{authorize,callback,refresh,revoke}`.
 Phase-by-phase cadence (default). Status icons per template legend.
 `[F]` formalize · `[R]` refactor · `[A]` accept.
 
-### Phase 0 — Audit & encryption-format verification
-- [ ] Decrypt a sample `social_wiring.credentials.encrypted_tokens` row with the product Fernet key; confirm shape == `Fernet(json.dumps(dict))` so seed `token_store.decrypt` reads existing rows (very likely — DDL comment matches seed docstring verbatim). If shape differs → add a one-time re-encrypt sub-task to Phase 1 (small, NOT a project blocker).
-- [ ] Enumerate every `credential_store` / `youtube_service` / `calendar` / `drive_api` consumer call site (the ~12 routers/services) — exact import + construction shape.
-- [ ] Read exact `__all__` + Real-adapter surface of seed `youtube` / `google_calendar` / `google_drive` / `oauth` / `token_store`; map method-by-method to the hand-rolled equivalents; confirm `set_thumbnail`/`get_processing_status` are the only genuine gaps.
-- [ ] Map every current OAuth external URL / redirect-URI / route path (behavior-preservation contract for Phase 2).
-- [ ] `org_id UUID` (social-wiring) vs seed store `org_id text` `.eq()` — confirm PostgREST coercion is clean.
-- [ ] Decide: extra credential columns → `metadata` vs keep; youtube `modules/` fold in-scope vs fast-follow; `services/meta/*` hand-rolled? (fast-follow if yes).
-- [ ] Output: green-light + revised §6 if any finding invalidates it (revise-loud, don't silently absorb).
+### Phase 0 — Audit & encryption-format verification ✅ (2026-05-19, architect-owned)
+- [x] **Credential compat — PROVEN at code level (stronger than one live row).** social-wiring `credential_store.encrypt_tokens` = `Fernet(json.dumps(tokens,separators=(',',':')).encode).decode`; `decrypt_tokens` = `json.loads(Fernet.decrypt(...))`. Seed `encrypted_tokens.encrypt` = plain `Fernet(key).encrypt(plaintext).decode('ascii')` — **NO version prefix / envelope**; seed `token_store` = `json.loads(decrypt(row["encrypted_tokens"],key))`. **Identical envelope; `json.loads` is whitespace-agnostic so compact-separator rows parse fine.** ⇒ existing rows decrypt cleanly under the seed store. **Zero re-encrypt, zero data migration. §7.1 RESOLVED.**
+- [x] **Consumers enumerated — ~12 confirmed.** 9 routers (`google,whatsapp,meta,settings,dashboard,upload,chat,videos,calendar`_router.py) + `services/dashboard_service.py` (takes `credential_store: CredentialStore` param) + `services/whatsapp_intake_service.py` (~5 `CredentialStore(self._admin, settings.encryption_key)` constructions feeding `get_calendar_adapter`/`get_drive_adapter`). Uniform shape: `CredentialStore(<supabase_client>, settings.encryption_key)` positional + `credential_store=` kwarg into services. **Note:** `meta_router.py:95` also constructs the vault → Phase 1 swaps the store construction there too (shared vault); the Meta *integration* stays out of scope.
+- [x] **Seed surface mapped.** `make_credential_store(*, client=, fernet_key: bytes, table=)` (kwargs-only); Protocol = `get(org_id,provider)` · `put(org_id,provider,tokens,*,metadata=None)` · `delete(org_id,provider)` · `list_providers(org_id)` (positional `str`). social-wiring has `get(*,org_id:UUID,provider)` · `upsert(...)` · `delete(*,org_id:UUID,provider)` + internal `encrypt_tokens`/`decrypt_tokens`. `set_thumbnail`/`get_processing_status` confirmed the only genuine youtube gaps.
+- [x] **OAuth route contract mapped — RESHAPES PHASE 2 (revise-loud, see below).**
+- [x] `org_id UUID`→seed `str` — Phase 1 brief passes `str(org_id)`; PostgREST coerces; clean.
+- [x] Decisions: extra cols (`channel_id/channel_title/scopes`) → `StoredCredential.metadata` (seed store `select("*")` ignores extras; no schema change). youtube `modules/` fold → **fast-follow** (`social-wiring-youtube-modularize`, Wave 4) — keep blast radius on substitution. `services/meta/*` → Phase-0 deferred to Wave-4 scan (Meta is not Google-stack; vault-construction touch only in Phase 1).
+
+> **⚠️ §6 REVISED 2026-05-19 (Phase 0 finding — revise-loud per CLAUDE/projects.md).** Seed `oauth_router` **hardcodes** `APIRouter(prefix="/api/oauth")` + `/{provider}/{authorize,callback,refresh,revoke}`. social-wiring's **live registered redirect URIs** are `/api/youtube/oauth/callback` and `/api/calendar/oauth/callback` (`settings_router.py:228` explicitly warns *"relocating breaks every existing consent"* — they are registered in Google Cloud Console). The seed router offers **no prefix/path override** → a naive swap is **production-breaking + hard-to-reverse** (orphans every existing OAuth consent). This is a **seed gap** → Phase 2 gains a `[F]` sub-task: formalize a `prefix=`/`redirect_path=` seam into `noctusai_lib.security.oauth.oauth_router` (the canonical "absorbed product carries pre-registered OAuth redirect URIs" need — seed-first, pilot-gated). Phase 2 is now seed-work-first, then consume.
 
 ### Phase 1 — Credential vault → seed `token_store` (shared root)
-- [ ] Replace `services/credential_store.py` with `make_credential_store(client, fernet_key, table="credentials")`; map `EncryptionNotConfigured` → seed error contract.
-- [ ] Migrate the ~12 consumers to the `CredentialStore` Protocol (`get`/`put`/`delete`/`list_providers`) — libcst.
-- [ ] `git rm` `credential_store.py`; tests green (`pytest`).
+- [ ] Replace `services/credential_store.py` with `make_credential_store(client=<supabase>, fernet_key=settings.encryption_key.encode(), table="credentials")`. Map: `.upsert(...)`→`.put(str(org_id),provider,tokens,metadata=…)` · `.get(org_id=,provider=)`→`.get(str(org_id),provider)` · `.delete(...)`→`.delete(str(org_id),provider)`. `EncryptionNotConfigured` → seed `CredentialDecryptError`/Fake-default contract.
+- [ ] **Verify no external caller of `encrypt_tokens`/`decrypt_tokens`** (seed store encapsulates crypto — internal-only expected; if any consumer calls them, rework that consumer too).
+- [ ] Migrate the ~12 consumers (9 routers + dashboard_service + whatsapp_intake_service ×5 + meta_router store-construction) to the Protocol — libcst.
+- [ ] `git rm` `credential_store.py`; `pytest` green.
 
-### Phase 2 — OAuth lifecycle → seed `oauth`
-- [ ] Replace `calendar/oauth_adapter.py` + `drive_api/oauth_adapter.py` + youtube OAuth flow with `GoogleProvider` + `oauth_router(on_callback=<persist via Phase-1 store>)`.
-- [ ] Mount generic `/api/oauth/{provider}/*`; retire bespoke oauth routes **preserving external URLs/redirects** (Phase-0 map). Tests green.
+### Phase 2 — Seed `oauth_router` prefix seam `[F]`, then OAuth lifecycle consume
+- [ ] **`[F]` SEED FIRST:** add a `prefix=` (default `"/api/oauth"`) + per-provider `callback_path` override to `noctusai_lib.security.oauth.oauth_router` so legacy registered redirect URIs are preservable. Protocol+Fake+Real+factory untouched; pilot-gate (erp·therapy·social-wiring+core green).
+- [ ] Replace `calendar/oauth_adapter.py` + `drive_api/oauth_adapter.py` + youtube OAuth flow with `GoogleProvider` + `oauth_router(..., on_callback=<persist via Phase-1 store>)` mounted to **preserve** `/api/youtube/oauth/callback` + `/api/calendar/oauth/callback` exactly (Phase-0 contract — DO NOT relocate). Tests green.
 
 ### Phase 3 — YouTube API → seed `integrations.youtube`
 - [ ] Refactor `youtube_service.py` API layer to `make_youtube_client`; keep cache/upload/dashboard orchestration calling the seed client.
@@ -202,10 +204,11 @@ Phase-by-phase cadence (default). Status icons per template legend.
 
 ## 7. Open questions
 
-1. **At-rest bundle shape decrypts under seed store?** — Phase 0 / to-discover. *Rec:* very likely (DDL comment == seed docstring verbatim, same Fernet primitive); Phase 0 decrypts one row to confirm. If not → one-time re-encrypt sub-task in Phase 1.
+1. ~~At-rest bundle shape decrypts under seed store?~~ — **✅ RESOLVED Phase 0** (code-proven: identical Fernet(JSON) envelope, no version prefix; `json.loads` whitespace-agnostic). Clean refactor, zero data migration.
 2. **`set_thumbnail` / `get_processing_status` — seed-formalize vs product wrapper?** — decided in Phase 3. *Rec:* **formalize into seed** (both are YouTube-generic, Protocol-shaped; upload-status is broadly useful; re-forking violates the rule that drove this project).
-3. **Fold youtube into `modules/` this project or fast-follow?** — Phase 0 decides. *Rec:* fast-follow `social-wiring-youtube-modularize` unless trivially cheap post-refactor (keep this project's blast radius on the seed-consume substitution).
-4. **Branch?** — *Rec:* dedicated `feat/social-wiring-google-seed-consume` off `origin/main` (refactor ships independently; the YouTube-feature branch forks after — matches refactor-first §2). Decide at "go".
+3. ~~Fold youtube into `modules/` this project or fast-follow?~~ — **✅ DECIDED Phase 0:** fast-follow `social-wiring-youtube-modularize` (Wave 4) — keep blast radius on the seed-consume substitution.
+4. ~~Branch?~~ — **✅ DECIDED:** `feat/sw-google-seed-consume` off `origin/main` (clean isolated worktree at `../noctusai-wt-sw-google`; the contended main-tree branch `feat/social-wiring-google-seed-consume` was abandoned due to parallel-agent contention). Carries the cherry-picked pre-commit fix `a27843e2`.
+5. **NEW — seed `oauth_router` prefix/path seam** (Phase 0 finding) — *Decided:* **`[F]` formalize** into the seed in Phase 2 (legacy registered redirect URIs cannot move; the seed router currently hardcodes `/api/oauth`). Pilot-gated. This is the canonical "absorbed product with pre-registered OAuth URIs" need — belongs in the seed, not a product shim.
 
 ---
 
@@ -243,3 +246,6 @@ Phase-by-phase cadence (default). Status icons per template legend.
 | Date | Change | By |
 |---|---|---|
 | 2026-05-19 | Filed after interrogation (scope=full-stack, sequence=refactor-first — AskUserQuestion §2). Evidence-grounded: ~2,357 LoC fork quantified; seed seams verified shipped; credential-table compat confirmed (clean refactor, no data migration). Sibling `social-wiring-absorption-debt` confirmed a different debt class. Doc⊥code drift marker added to MASTER-PROMPT same session. | Claude (architect) |
+| 2026-05-19 | **Parallel-agent contention** in shared main tree (foreign commits on the first branch, live `.git/index` mutation). STOPPED per multi-agent-shared rule, surfaced, user chose isolated-worktree+dispatch. Re-based to clean isolated worktree `../noctusai-wt-sw-google` on `feat/sw-google-seed-consume` off `origin/main@000620a2`; scaffold committed `78825fdf`; pushed dispatch base. | Claude (architect) |
+| 2026-05-19 | **Pre-commit hook** (user-flagged): cherry-picked parallel session's `a27843e2` (scoped KB-restage fix, hook-only, original authorship preserved) → `07f3c8e6`; verified shared active hook already = fixed (symlink → main tree); re-pushed base. | Claude (architect) |
+| 2026-05-19 | **Phase 0 ✅** (architect-owned audit). Credential compat code-proven (zero data migration, §7.1 resolved). ~12 consumers + seed surface mapped. **§6 revised-loud:** seed `oauth_router` hardcodes `/api/oauth` but legacy registered redirect URIs can't move → Phase 2 gains a `[F]` seed-prefix-seam sub-task. §7 Q1/Q3/Q4 resolved, Q5 added. | Claude (architect) |

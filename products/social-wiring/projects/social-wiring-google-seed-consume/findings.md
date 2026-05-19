@@ -9,10 +9,13 @@
 
 ## Mistakes (process)
 
-- (none yet)
+- **First branch created in the contended shared main tree.** `feat/social-wiring-google-seed-consume` was cut in the main working tree while a parallel `jraphaelsst` session was live-committing — a foreign commit (`a27843e2`) landed on it + `.git/index` mutated under us. Caught by the pre-work authorship sweep; recovered by re-basing to an isolated sibling worktree (`../noctusai-wt-sw-google`, branch `feat/sw-google-seed-consume`). Lesson → for any multi-phase refactor in a known-shared tree, create the isolated worktree FIRST, before branching in the shared tree.
 
 ## Lessons
 
+- **Pre-commit-hook contention is real and the methodology already had the fix in-flight.** A parallel session's `a27843e2` fixed the exact bug (blanket `git add` of all KB-modified docs sweeping concurrent agents' edits) that the safety net flagged for us. Cherry-picked it (preserving authorship) so the whole program runs the corrected hook. Safety-net-fires = methodology-working; the fix already existed because another agent hit the same gap — convergent hardening.
+- **Active hook is a symlink → main tree's `scripts/hooks/pre-commit`** (shared `$GIT_COMMON_DIR/hooks` across all worktrees). Worktree commits run whatever the *main tree* has checked out there — an inherent shared-tree coupling, not controllable from a worktree; do not try to clobber it (races other agents). Verify-don't-overwrite.
+- **Credential compat proven by code-inspection of BOTH crypto paths > one live-row decrypt.** Reading seed `encrypted_tokens.encrypt` (plain Fernet, no envelope) + `token_store` (`json.loads(decrypt(...))`) vs social-wiring's `Fernet(json.dumps(...))` proved compat for *all* rows, not a sample. Stronger evidence, no DB/key access needed.
 - **Verify-the-seed-ships-it refined a sub-agent assertion.** The Explore
   agent flagged youtube as a flat "seed-first violation, hand-rolled". Tree
   verification refined it: the seed ships the API layer *and* upload *and*
@@ -35,6 +38,14 @@
 
 ## Knowledge / methodology routed
 
+- **Seed gap → formalize (Phase 0):** `noctusai_lib.security.oauth.oauth_router`
+  hardcodes `prefix="/api/oauth"`. An absorbed product with OAuth redirect URIs
+  already registered in Google Cloud Console (here `/api/youtube/oauth/callback`,
+  `/api/calendar/oauth/callback`) **cannot move them** without orphaning every
+  existing consent. The seed seam needs a `prefix=`/`callback_path=` override.
+  This is the canonical "absorbed product carries pre-registered external OAuth
+  URIs" need — recurs on every OAuth-bearing absorption. Routed to Phase 2 as a
+  pilot-gated `[F]` seed change (not a product shim).
 - Candidate recurrence pattern: **absorbed product lifts seed code but skips
   consumer-refactor** → the seam exists, the fork persists, MASTER-PROMPT
   falsely claims "consumed". Sibling of R1 (`absorption-ships-consume-docs`).
