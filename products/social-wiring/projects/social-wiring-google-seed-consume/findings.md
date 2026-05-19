@@ -28,6 +28,21 @@
 
 ## Interesting
 
+- **Patch-return dispatch model worked across the worktree-isolation hazard.**
+  Engineer SW-P1 (harness worktree) returned the change as a `git diff` written
+  to `/tmp/*.patch` (deliverable artifact, not a `.md`); architect applied it in
+  the gate-green sibling worktree, fresh-eyes-reviewed, and **independently
+  re-ran** the test suite (not trusting the engineer's claim). Sidesteps
+  `feedback_worktree_isolation_base_and_overlay` (no cross-worktree salvage /
+  overlay-divergence). Reusable for the remaining phases under this contended-tree
+  situation. NOTE: the prose patch did not transmit in the first return — needed
+  a SendMessage continuation to dump it to a file. Lesson: brief engineers to
+  write the patch to a tmp file from the start, not inline in the return.
+- Plan/brief referenced `_row_to_stored` as pre-existing; it was not (shipped
+  `get()` inlined construction). Engineer extracted it (the assumed shape). A
+  spec can hallucinate a helper name that "should" exist — engineer rebuilt to
+  the intent, not the literal. Surfaced so the plan prose is now accurate.
+
 - The seed `oauth/google_provider.py` docstring **self-documents** that it was
   formalized to cure "the hand-rolled … oauth_adapter's refresh logic" — the
   seam was born from this exact drift class. The fork persisted because the
