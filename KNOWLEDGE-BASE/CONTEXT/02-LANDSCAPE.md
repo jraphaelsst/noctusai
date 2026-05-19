@@ -1,7 +1,8 @@
 # 02 — Platform Landscape
 
 > Quick orientation for any agent or developer entering this codebase.
-> **Counts last verified:** 2026-04-18 (via `find` on the actual file tree). **Products table last verified:** 2026-05-10.
+> **Counts last verified:** 2026-04-18 (via `find` on the actual file tree).
+> **Products table is hand-curated** (descriptions/status are human value) **but roster-vs-tree-parity is keeper-enforced** — `cli.py --verify-kb-sync` §4 ERRORS (commit-blocking) if any `products/<slug>/` on disk lacks a row here, so it cannot silently drift. The `## Inventory` + `## Database` blocks below ARE auto-derived (`kb-counts`, from the `start.sh` registry via `parse_products_registry()` + live schema counts).
 
 ## Products
 
@@ -15,6 +16,7 @@
 | **Daily Life** | `products/daily-life/` | Personal productivity hub: tasks, goals, habits, schedule, notes | 8005/8110 | `daily_life` |
 | **AdConnect** | `products/adconnect/` | B2B ad-inventory marketplace (custom JWT auth; MVP in flight on `adconnect-mvp-implementation`) | 8007/8130 | `adconnect` |
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
+| **Social Wiring** | `products/social-wiring/` | Social-ops hub: email-marketing + WhatsApp-scheduling. Consolidation target of `media-scheduling`/`youtube-crawler`/`mailing`/`imobi-scheduling` (Wave 4, 2026-05-16) | 8011/8160 | `social_wiring` |
 
 > **Retired 2026-05-16** (`social-wiring-absorption` Wave 4): `media-scheduling`, `youtube-crawler`, `mailing`, `imobi-scheduling` were consolidated into **`social-wiring`** (`products/social-wiring/`). Email-marketing → `social-wiring/app/modules/email_marketing/`; WhatsApp-scheduling → `social-wiring/app/modules/scheduling/`. Core un-registration: forward migration `products/core/backend/migrations/033_retire_consolidated_products.sql` (013/028 immutable). Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
 

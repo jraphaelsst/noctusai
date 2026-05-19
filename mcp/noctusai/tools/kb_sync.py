@@ -107,6 +107,36 @@ def _extract_layout_md_tokens(index_text: str) -> set[str]:
     return tokens
 
 
+def roster_tree_parity_gaps(root: Path) -> list[str]:
+    """Stage-4 keeper predicate (pure, testable). Returns the sorted
+    slugs of products that exist on disk (`products/<slug>/backend/app/
+    main.py`) but have NO row in the 02-LANDSCAPE.md hand-curated
+    `## Products` table. Empty list ⇒ roster covers the tree.
+
+    Codified 2026-05-18: the `social-wiring` omission recurred 3× across
+    clean-context onboarding self-tests (hand-table → relocated to a
+    frozen generator literal → still missing from the hand-curated
+    table). Recurrence rule ⇒ MUST formalize into this deterministic,
+    commit-blocking gate so it cannot silently drift a 4th time.
+    Colocated regression test: `tests/test_kb_sync.py`.
+    """
+    landscape = root / "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"
+    if not landscape.is_file():
+        return []
+    m = re.search(
+        r"^## Products\b(.*?)^## ",
+        landscape.read_text(encoding="utf-8"),
+        re.MULTILINE | re.DOTALL,
+    )
+    table = m.group(1) if m else ""
+    gaps = [
+        mp.parents[2].name
+        for mp in (root / "products").glob("*/backend/app/main.py")
+        if f"products/{mp.parents[2].name}/" not in table
+    ]
+    return sorted(gaps)
+
+
 def verify_kb_sync() -> KBSyncResult:
     """Native KB-sync verifier. Behaviour-preserving vs verify-kb-sync.sh.
 
@@ -197,12 +227,32 @@ def verify_kb_sync() -> KBSyncResult:
             )
             warnings += 1
 
-    # ─── 4. Summary ──────────────────────────────────────────────────
+    # ─── 4. Roster-vs-tree parity (Stage-4 keeper, 2026-05-18) ───────
+    # Every product on disk MUST have a row in the 02-LANDSCAPE.md
+    # hand-curated `## Products` table. The hand table carries curated
+    # columns (description/status) so it is NOT auto-generated — this
+    # deterministic gate is what guarantees it cannot silently drift
+    # (the social-wiring omission recurred 3× across clean-context
+    # self-tests → recurrence rule MUST formalize → this check).
+    # Missing product = ERROR (commit-blocking): "what products exist"
+    # is the load-bearing onboarding fact.
+    out.write("Checking 02-LANDSCAPE.md Products table covers every "
+              "product on disk...\n")
+    for slug in roster_tree_parity_gaps(root):
+        err.write(
+            f"  ✗ ROSTER DRIFT: products/{slug}/ is on disk "
+            f"(backend/app/main.py) but has NO row in 02-LANDSCAPE.md "
+            f"`## Products` — add it (the authoritative onboarding "
+            f"roster must cover every tracked product).\n"
+        )
+        errors += 1
+
+    # ─── 5. Summary ──────────────────────────────────────────────────
     out.write("\n")
     if errors == 0 and warnings == 0:
         out.write(
             "✓ KB sync OK — all CLAUDE.md pointers resolve, all KB "
-            "docs indexed, Layout tree current.\n"
+            "docs indexed, Layout tree current, roster covers the tree.\n"
         )
         exit_code = 0
     elif errors > 0:

@@ -207,7 +207,7 @@ CLAUDE.md, `CLAUDE/<topic>.md` files, and `KNOWLEDGE-BASE/INDEX.md` stay in sync
 **Pre-commit hook enforces it** (`scripts/hooks/pre-commit` → installed by `scripts/install-hooks.sh`). On every commit:
 1. Syncs `products/seed/` → `templates/product-seed/` if staged.
 2. Runs `noctus.dev.kb_sync` — regenerates auto-derived count blocks.
-3. Runs `noctus.dev.kb_sync` — **blocks the commit** if any literal `KNOWLEDGE-BASE/…md` pointer in CLAUDE.md or `CLAUDE/*.md` doesn't resolve, or any KB doc is missing from `INDEX.md`.
+3. Runs `noctus.dev.kb_sync` — **blocks the commit** if any literal `KNOWLEDGE-BASE/…md` pointer in CLAUDE.md or `CLAUDE/*.md` doesn't resolve, any KB doc is missing from `INDEX.md`, **or any `products/<slug>/` on disk lacks a row in the `02-LANDSCAPE.md` `## Products` table** (§4 roster-vs-tree-parity keeper, Stage-4 codified 2026-05-18 — the social-wiring drift recurred 3× across clean-context self-tests; deterministic gate so the authoritative onboarding roster cannot silently drift; pure predicate `roster_tree_parity_gaps` + colocated `tests/test_kb_sync.py`).
 
 Manual runs:
 - `python mcp/noctusai/cli.py --verify-kb-sync`

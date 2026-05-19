@@ -5,7 +5,7 @@
 
 ## What is NoctusAI?
 
-Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. **Multiple products** + 1 seed framework + 1 MCP dev toolkit. **Authoritative roster / count / per-product status → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`** (auto-derived from the `start.sh` registry via `parse_products_registry()`). This file does **not** editorialize product status — a hand aside here drifts (it falsely claimed AdConnect was gitignored/not-live; corrected 2026-05-18, always-doc-the-trim — `products/adconnect/` IS tracked, see `.gitignore` + 02-LANDSCAPE).
+Multi-tenant, multi-product SaaS platform. FastAPI + Supabase backend, React + TypeScript + Vite frontend. **Multiple products** + 1 seed framework + 1 MCP dev toolkit. **Authoritative roster / count / per-product status → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`** (its `## Products` table is hand-curated but **roster-vs-tree-parity is keeper-enforced**, can't silently drift; `## Inventory`/`## Database` auto-derive — see that file's header). This file does **not** editorialize product status — a hand aside here drifts (it falsely claimed AdConnect was gitignored/not-live; corrected 2026-05-18, always-doc-the-trim — `products/adconnect/` IS tracked, see `.gitignore` + 02-LANDSCAPE).
 
 ## The Seed (most important concept)
 
@@ -19,7 +19,7 @@ Products IMPORT from the seed. They never duplicate it. Read `seed/README.md` fo
 
 ## Products
 
-**Authoritative product roster (products / schemas / ports / status) → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`** (its `kb-counts:inventory` block is auto-derived from `public.products` — single source of truth).
+**Authoritative product roster (products / schemas / ports / status) → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`.** Its `## Products` table is **hand-curated** (descriptions/status are human value) but **roster-vs-tree-parity is keeper-enforced** (`cli.py --verify-kb-sync` §4 — commit-blocking ERROR if any `products/<slug>/` on disk lacks a row), so it cannot silently drift. Its `## Inventory` + `## Database` blocks are **auto-derived** (`kb-counts`, from the `start.sh` registry via `parse_products_registry()` + live schema counts). Single source of truth either way.
 
 > **Trimmed 2026-05-18 (always-doc-the-trim — provenance, not silent).** A hand-maintained roster table lived here and **drifted** (listed retired `mailing/8006`; missed `social-wiring`). Per DRY / docs-stay-in-sync, a parallel hand-table is a drift generator — removed, replaced by this pointer to the auto-derived source. Do **not** re-add a product table here; consume `02-LANDSCAPE.md`. Surfaced by the 2026-05-18 clean-context onboarding self-test.
 

@@ -226,10 +226,19 @@ def _mk_counts_tree(root: Path) -> Path:
         "<!-- kb-counts:end:agent_context_tools --> available.\n",
         encoding="utf-8",
     )
-    # Minimal server.py so _count_mcp_tools has something to count.
-    srv = root / "mcp" / "noctusai" / "server.py"
-    srv.parent.mkdir(parents=True, exist_ok=True)
-    srv.write_text("    _tool(a)\n    _tool(b)\n    _tool(c)\n", encoding="utf-8")
+    # _count_mcp_tools (fixed 2026-05-18) scans the hierarchical
+    # `mcp/noctusai/tools/**` package for the `@server.tool` registration
+    # idiom (1/tool) — NOT flat `_tool(` in server.py (that shape died in
+    # the scripts-mcp-absorption restructure; the old fixture asserted it
+    # and silently regressed since pre-commit runs no pytest).
+    tools_pkg = root / "mcp" / "noctusai" / "tools"
+    tools_pkg.mkdir(parents=True, exist_ok=True)
+    (tools_pkg / "leaf.py").write_text(
+        "@server.tool\ndef a(): ...\n"
+        "@server.tool\ndef b(): ...\n"
+        "@server.tool\ndef c(): ...\n",
+        encoding="utf-8",
+    )
     return landscape
 
 
@@ -280,3 +289,47 @@ def test_update_kb_counts_marker_block_format_byte_stable(tmp_path, monkeypatch)
     # Exact open-marker\n<body>\nclose-marker shape from _replace_region.
     assert "<!-- kb-counts:start:inventory -->\n| Product" in txt
     assert "|\n<!-- kb-counts:end:inventory -->" in txt
+
+
+# ─── Stage-4 keeper: roster-vs-tree parity (2026-05-18) ──────────────
+# Regression-test-the-detector for `roster_tree_parity_gaps` — the
+# commit-blocking gate that guarantees the 02-LANDSCAPE `## Products`
+# table can never silently omit a product on disk (social-wiring drift
+# recurred 3× across clean-context self-tests → MUST formalize).
+
+from tools.kb_sync import roster_tree_parity_gaps
+
+
+def _mk_roster_tree(root, slugs_on_disk, slugs_in_table):
+    for s in slugs_on_disk:
+        p = root / "products" / s / "backend" / "app"
+        p.mkdir(parents=True, exist_ok=True)
+        (p / "main.py").write_text("create_product_app()\n")
+    rows = "\n".join(
+        f"| {s} | `products/{s}/` | d | 8000/9000 | `{s}` |"
+        for s in slugs_in_table
+    )
+    land = root / "KNOWLEDGE-BASE" / "CONTEXT"
+    land.mkdir(parents=True, exist_ok=True)
+    (land / "02-LANDSCAPE.md").write_text(
+        f"# 02\n\n## Products\n\n| P | Path | D | Ports | S |\n"
+        f"|---|---|---|---|---|\n{rows}\n\n## Inventory\n\nx\n"
+    )
+
+
+def test_roster_parity_flags_product_missing_from_table(tmp_path):
+    _mk_roster_tree(tmp_path, ["foo", "bar"], ["foo"])  # bar on disk, not in table
+    assert roster_tree_parity_gaps(tmp_path) == ["bar"]
+
+
+def test_roster_parity_clean_when_table_covers_tree(tmp_path):
+    _mk_roster_tree(tmp_path, ["foo", "bar"], ["foo", "bar"])
+    assert roster_tree_parity_gaps(tmp_path) == []
+
+
+def test_roster_parity_no_landscape_is_empty(tmp_path):
+    (tmp_path / "products" / "foo" / "backend" / "app").mkdir(
+        parents=True, exist_ok=True
+    )
+    (tmp_path / "products" / "foo" / "backend" / "app" / "main.py").write_text("x")
+    assert roster_tree_parity_gaps(tmp_path) == []  # no doc → no false error
