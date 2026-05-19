@@ -321,6 +321,16 @@ else
   [[ -n "$TUNNEL_PROFILE" ]] && docker "${PRODUCT_ARGS[@]}" up -d
 
   if [[ -n "$INFRA_PROFILE" ]]; then
+    # WAHA is amd64-only under :latest; on Apple Silicon / arm64 hosts use
+    # its native :arm build so it runs WITHOUT qemu emulation (kills the
+    # Docker-Desktop "AMD64 — may have poor performance, or fail" warning).
+    # amd64 hosts keep the compose defaults (CI / x86 servers unaffected).
+    case "$(uname -m)" in
+      arm64|aarch64)
+        export WAHA_IMAGE="${WAHA_IMAGE:-devlikeapro/waha:arm}"
+        export WAHA_PLATFORM="${WAHA_PLATFORM:-linux/arm64}"
+        echo "[docker] host arm64 → WAHA native ($WAHA_IMAGE, $WAHA_PLATFORM)" ;;
+    esac
     echo "[docker] subindo noctusai-infra (profile: $INFRA_PROFILE)..."
     docker "${INFRA_COMPOSE[@]}" --profile "$INFRA_PROFILE" up -d
   fi

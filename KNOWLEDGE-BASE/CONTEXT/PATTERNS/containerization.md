@@ -591,6 +591,7 @@ maintain.
 | Tunnel worked then `NXDOMAIN`, container "Up" | QUIC dropout — all composes pin `--protocol http2`; if seen, `docker compose --profile tunnel-<slug> up -d --force-recreate <slug>-tunnel` for a fresh URL |
 | First build flaky (`failed to fetch oauth token`) | tethered/captive net — pre-pull bases when stable: `docker pull python:3.11-slim node:20-alpine redis:7-alpine postgres:16-alpine cloudflare/cloudflared:latest` |
 | Build context huge | `.dockerignore` gap — confirm it excludes `venv/ .venv/ node_modules/ .git/ .claude/ dist/` |
+| Docker-Desktop "AMD64 — image may have poor performance, or fail, if run via emulation" on `noctus-waha` (Apple Silicon) | WAHA's free image is amd64-only under `:latest`; it ships a native arm64 build as `:arm` (also `:noweb-arm`). `docker-compose.infra.yml` `waha` is arch-aware (`image: ${WAHA_IMAGE:-…:latest}` / `platform: ${WAHA_PLATFORM:-linux/amd64}`); `start.sh` exports the `:arm`/`linux/arm64` pair when `uname -m` is `arm64`/`aarch64` → native, warning gone. amd64 hosts keep defaults. General rule: a third-party amd64-only image must be wired arch-aware (env-driven image+platform, host-detected in `start.sh`), never hard-pinned `platform: linux/amd64` |
 
 ---
 

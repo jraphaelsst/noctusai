@@ -37,8 +37,14 @@ services:
     # WhatsApp HTTP API — for chatbot-using products. Consumed via the
     # noctusai_lib.integrations.whatsapp factory; FakeWahaClient fallback
     # when WAHA_BASE_URL is empty (non-chatbot products unaffected).
-    image: devlikeapro/waha:latest
-    platform: linux/amd64
+    # Arch-aware: WAHA's free image is amd64-only under :latest, but it
+    # publishes a native arm64 build as :arm. start.sh exports WAHA_IMAGE
+    # /WAHA_PLATFORM = the :arm/linux/arm64 pair on Apple Silicon hosts so
+    # it runs NATIVE (no qemu emulation — kills the Docker-Desktop "AMD64 /
+    # may have poor performance" warning). Defaults stay amd64 so CI /
+    # Linux x86 servers are unaffected. Override-able via env if needed.
+    image: ${WAHA_IMAGE:-devlikeapro/waha:latest}
+    platform: ${WAHA_PLATFORM:-linux/amd64}
     container_name: noctus-waha
     environment:
       WAHA_API_KEY: ${WAHA_API_KEY:-}
