@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-19
 - **Last updated:** 2026-05-19
-- **Status:** Phase 0 ✅ → Wave 1 dispatching. Throughput mode ("resolve it all"). Executes in isolated worktree `../noctusai-wt-sw-google` on `feat/sw-google-seed-consume` (main tree is parallel-agent-contended — do NOT execute there).
+- **Status:** Phase 0 ✅ → **Phase 1 dispatching** (seed `[F]` token_store table-shape seam — Wave-1 engineer surfaced a tree-verified seed gap; Phase 1 re-scoped to consume it + 40-site metadata-map migration). Throughput mode ("resolve it all"). Isolated worktree `../noctusai-wt-sw-google` on `feat/sw-google-seed-consume` (main tree parallel-agent-contended — do NOT execute there).
 - **Owner / stakeholders:** joaoraphaelsst · architect (Claude)
 - **Related docs:** `products/social-wiring/MASTER-PROMPT.md` (§"Seed seams consumed" — currently doc⊥code, see §1) · `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § PATTERNS/seed-fake-real-adapter.md` · sibling closed project `projects/social-wiring-absorption-debt/` (different debt class — compliance counts, NOT seed-consume)
 - **Project slug:** `social-wiring-google-seed-consume` — intent ≈ `wiring` (the canonical `<product>-seed-wiring` remediation per `KB § 01-PHILOSOPHY.md § Compliance`); named `-google-seed-consume` for zero-context clarity (the product name already contains "wiring"). Location: `products/social-wiring/projects/` (single-product scope).
@@ -70,7 +70,7 @@ clean seed surface (decided refactor-first — see §2).
 ## 3. Design principles
 
 1. **Shared root first.** The credential vault is the common dependency of
-   youtube ∧ calendar ∧ drive ∧ oauth — refactor it (Phase 1) before the
+   youtube ∧ calendar ∧ drive ∧ oauth — refactor it (Phase 2) before the
    integrations that consume it.
 2. **Behavior-preserving.** Every external contract (OAuth redirect URIs,
    route paths, response shapes, pt-BR copy) is preserved; this is a
@@ -121,7 +121,7 @@ per-product replication framing — there is exactly one product.
 
 **In scope:**
 - Replace `services/credential_store.py` → `noctusai_lib.security.token_store.make_credential_store(table="credentials")`; migrate ~12 consumers to the `CredentialStore` Protocol.
-- Replace hand-rolled OAuth (`calendar/oauth_adapter.py`, `drive_api/oauth_adapter.py`, youtube OAuth flow) → `noctusai_lib.security.oauth` (`GoogleProvider` + generic `oauth_router` + `CallbackHook` persisting via the Phase-1 store).
+- Replace hand-rolled OAuth (`calendar/oauth_adapter.py`, `drive_api/oauth_adapter.py`, youtube OAuth flow) → `noctusai_lib.security.oauth` (`GoogleProvider` + generic `oauth_router` + `CallbackHook` persisting via the Phase-2 store).
 - Replace `youtube_service.py` API layer → `make_youtube_client`; keep `video_cache_service`/`upload_service`/`dashboard_service` orchestration calling the seed client.
 - Replace `services/calendar/*` + `services/drive_api/*` API adapters → `noctusai_lib.integrations.{google_calendar,google_drive}`.
 - Formalize the 2 seed gaps (`set_thumbnail`, `get_processing_status`) into `noctusai_lib.integrations.youtube` (Protocol+Fake+Real).
@@ -130,7 +130,7 @@ per-product replication framing — there is exactly one product.
 **Out of scope (for now — with reason):**
 - The actual new YouTube **feature** — sequenced AFTER this (user decision §2); a separate effort on the clean surface.
 - `services/meta/*` — Meta adapter, not Google-stack; separate recurrence if it exists. Note in Phase 0; file a fast-follow if hand-rolled.
-- Folding youtube app-level code into a `modules/youtube/` package (the app-level-vs-`modules/` asymmetry) — **decided in Phase 0**: include in Phase 5 if cheap post-refactor, else named fast-follow `social-wiring-youtube-modularize`.
+- Folding youtube app-level code into a `modules/youtube/` package (the app-level-vs-`modules/` asymmetry) — **decided in Phase 0**: include in Phase 6 if cheap post-refactor, else named fast-follow `social-wiring-youtube-modularize`.
 - Compliance-count debt (RLS / monkeypatch tests) — already handled by closed `social-wiring-absorption-debt` (P5 follow-up `social-wiring-monkeypatch-test-refactor`).
 
 ---
@@ -157,7 +157,7 @@ drive_api/_drive_api + google_adapter   → noctusai_lib.integrations.google_dri
 
 OAuth route surface today is bespoke per integration; seed `oauth_router`
 mounts generic `/api/oauth/{provider}/{authorize,callback,refresh,revoke}`.
-**Phase 0 maps every current external URL/redirect** so Phase 2 preserves them
+**Phase 0 maps every current external URL/redirect** so Phase 3 preserves them
 (behavior-preserving principle §3.2).
 
 ---
@@ -173,29 +173,52 @@ Phase-by-phase cadence (default). Status icons per template legend.
 - [x] **Seed surface mapped.** `make_credential_store(*, client=, fernet_key: bytes, table=)` (kwargs-only); Protocol = `get(org_id,provider)` · `put(org_id,provider,tokens,*,metadata=None)` · `delete(org_id,provider)` · `list_providers(org_id)` (positional `str`). social-wiring has `get(*,org_id:UUID,provider)` · `upsert(...)` · `delete(*,org_id:UUID,provider)` + internal `encrypt_tokens`/`decrypt_tokens`. `set_thumbnail`/`get_processing_status` confirmed the only genuine youtube gaps.
 - [x] **OAuth route contract mapped — RESHAPES PHASE 2 (revise-loud, see below).**
 - [x] `org_id UUID`→seed `str` — Phase 1 brief passes `str(org_id)`; PostgREST coerces; clean.
-- [x] Decisions: extra cols (`channel_id/channel_title/scopes`) → `StoredCredential.metadata` (seed store `select("*")` ignores extras; no schema change). youtube `modules/` fold → **fast-follow** (`social-wiring-youtube-modularize`, Wave 4) — keep blast radius on substitution. `services/meta/*` → Phase-0 deferred to Wave-4 scan (Meta is not Google-stack; vault-construction touch only in Phase 1).
+- [x] Decisions: extra cols (`channel_id/channel_title/scopes`) → `StoredCredential.metadata` (seed store `select("*")` ignores extras; no schema change). youtube `modules/` fold → **fast-follow** (`social-wiring-youtube-modularize`, Wave 4) — keep blast radius on substitution. `services/meta/*` → Phase-0 deferred to Wave-4 scan (Meta is not Google-stack; vault-construction touch only in Phase 2).
+
+**Improvements:**
+- Phase-0 seed-consume audits checked only the seed store **read** path; the **write** path (`put()` payload keys vs consumer DDL) was missed → caught by Wave-1 stop-before-improvise. *Deferred → resolved structurally:* Phase 1 `[F]` seed seam + findings lesson (strengthens `feedback_verify_seed_ships_it` to bidirectional shape-compat).
+- `MockRequestBuilder` never validates columns ⇒ schema-shape divergence is a systemic false-green class (N≥2 with `feedback_structural_refactor_grep_blindspot`). *Deferred → codification pipeline:* candidate `check_*` diffing seed-adapter write-payload keys vs consumer migration DDL; routed to phase_learnings + surfaced to user. Interim mitigation baked into Phase 1 (payload⊆columns contract assertion).
+- The "extra cols fold into `metadata`" Phase-0 decision was under-specified (assumed the seed store had a writable `metadata` column on this table). *Applied:* §6/§7 corrected in-flight (Phase 1 + Q6); no silent carry-forward.
 
 > **⚠️ §6 REVISED 2026-05-19 (Phase 0 finding — revise-loud per CLAUDE/projects.md).** Seed `oauth_router` **hardcodes** `APIRouter(prefix="/api/oauth")` + `/{provider}/{authorize,callback,refresh,revoke}`. social-wiring's **live registered redirect URIs** are `/api/youtube/oauth/callback` and `/api/calendar/oauth/callback` (`settings_router.py:228` explicitly warns *"relocating breaks every existing consent"* — they are registered in Google Cloud Console). The seed router offers **no prefix/path override** → a naive swap is **production-breaking + hard-to-reverse** (orphans every existing OAuth consent). This is a **seed gap** → Phase 2 gains a `[F]` sub-task: formalize a `prefix=`/`redirect_path=` seam into `noctusai_lib.security.oauth.oauth_router` (the canonical "absorbed product carries pre-registered OAuth redirect URIs" need — seed-first, pilot-gated). Phase 2 is now seed-work-first, then consume.
 
-### Phase 1 — Credential vault → seed `token_store` (shared root)
-- [ ] Replace `services/credential_store.py` with `make_credential_store(client=<supabase>, fernet_key=settings.encryption_key.encode(), table="credentials")`. Map: `.upsert(...)`→`.put(str(org_id),provider,tokens,metadata=…)` · `.get(org_id=,provider=)`→`.get(str(org_id),provider)` · `.delete(...)`→`.delete(str(org_id),provider)`. `EncryptionNotConfigured` → seed `CredentialDecryptError`/Fake-default contract.
-- [ ] **Verify no external caller of `encrypt_tokens`/`decrypt_tokens`** (seed store encapsulates crypto — internal-only expected; if any consumer calls them, rework that consumer too).
-- [ ] Migrate the ~12 consumers (9 routers + dashboard_service + whatsapp_intake_service ×5 + meta_router store-construction) to the Protocol — libcst.
-- [ ] `git rm` `credential_store.py`; `pytest` green.
+> **⚠️ §6 REVISED 2026-05-19 #2 (Wave-1 engineer blocker, tree-verified — revise-loud).** Phase 0 audited the seed store **read** path (`select("*")` ignores extras — correct) but NOT the **write** path. `SupabaseCredentialStore.put()` (`supabase_store.py:125`) **unconditionally** writes `"metadata": {...}`; the seed's documented table contract requires `metadata jsonb`. `social_wiring.credentials` has **no `metadata` column** — instead it has denormalized `channel_id/channel_title/scopes`, and **40 consumer sites** read `StoredCredential.channel_id/.channel_title/.scopes` as first-class fields. Real PostgREST `put()` → PGRST204 (100% write failure); `MockRequestBuilder` doesn't model columns ⇒ **false-green** under pytest. Phase 0's "fold extras into `metadata`" is unrealizable without a seed seam. **Exact same class as the Phase 3 `oauth_router` seam** (absorbed product whose table predates the seed contract). Resolution = a predecessor seed `[F]` phase, NOT a product shim / NOT a silent schema migration. Phase 0's §7.1 "clean refactor" stands for **crypto + read**; the **write data-model** needs the seam below.
 
-### Phase 2 — Seed `oauth_router` prefix seam `[F]`, then OAuth lifecycle consume
+> **Phase renumber 2026-05-19 (tooling-compat — see §11 / findings):** the
+> predecessor seed seam was briefly "Phase 1"; `check_phase_state_consistency`
+> parses `### Phase 1` as integer `Phase 0` (regex `^### Phase\s+(\d+)\b`),
+> colliding with the shipped Phase 0. Fractional phase numbers are unsupported
+> by the gate ⇒ renumbered to integers: seed-seam = **Phase 1**, old 1–5 → 2–6.
+> Phase 0 (audit) unchanged.
+
+### Phase 1 — `[F]` Seed `token_store` table-shape seam (predecessor; pilot-gated)
+- [ ] Extend `noctusai_lib.security.token_store` (Protocol+Fake+Real+factory) with **back-compat-defaulted** table-shape config on `make_credential_store` / `SupabaseCredentialStore`:
+  - `metadata_column: str | None = "metadata"` — `None` ⇒ omit the JSON metadata column entirely from `put()` payload + `_row_to_stored` (table has none).
+  - `metadata_columns: dict[str,str] | None = None` — map `StoredCredential.metadata` keys ↔ discrete physical columns (e.g. `{"channel_id":"channel_id","channel_title":"channel_title","scopes":"scopes"}`): `put()` flattens those keys to columns, `get()`/`_row_to_stored` re-inflates them back into `.metadata`. Unmapped keys still go to `metadata_column` (if set).
+  - **Defaults preserve today's behavior exactly** (`metadata_column="metadata"`, `metadata_columns=None`) → zero existing-consumer impact; additive.
+- [ ] Update seed Fake to mirror the same mapping (test parity). Colocated seed tests for: omit-metadata-column, column-map round-trip, default back-compat.
+- [ ] Pilot-gate: `pytest` for any token_store consumer in pilots erp·therapy·social-wiring+core stays green (seam is additive-with-defaults → expected no-op for them; verify, don't assume).
+
+### Phase 2 — Credential vault → seed `token_store` (shared root; consumes Phase 1)
+- [ ] Replace `services/credential_store.py` with `make_credential_store(client=<supabase>, fernet_key=settings.encryption_key.encode(), table="credentials", metadata_column=None, metadata_columns={"channel_id":"channel_id","channel_title":"channel_title","scopes":"scopes"})`. Map: `.upsert(...)`→`.put(str(org_id),provider,tokens,metadata={"channel_id":…,"channel_title":…,"scopes":…})` · `.get(org_id=,provider=)`→`.get(str(org_id),provider)` · `.delete(...)`→`.delete(str(org_id),provider)`.
+- [ ] Migrate the **40** `.channel_id/.channel_title/.scopes` field-reads + `channel_id=/channel_title=/scopes=` kwargs → `StoredCredential.metadata["channel_id"]` etc. (libcst; behavior-preserving — the Phase-1 column-map keeps them in the same physical columns).
+- [ ] **Verify no external caller of `encrypt_tokens`/`decrypt_tokens`** (engineer recon CONFIRMED: internal-only + the module's own unit test — clean; just re-confirm post-edit).
+- [ ] Migrate the ~12 store-construction consumers (9 routers + dashboard_service + whatsapp_intake_service ×5 + meta_router) to the factory — libcst.
+- [ ] `git rm` `credential_store.py`; `pytest` green. **Anti-false-green:** add one real-PostgREST-shape contract assertion (payload keys ⊆ `credentials` columns) so the mock blind spot can't hide a column mismatch.
+
+### Phase 3 — Seed `oauth_router` prefix seam `[F]`, then OAuth lifecycle consume
 - [ ] **`[F]` SEED FIRST:** add a `prefix=` (default `"/api/oauth"`) + per-provider `callback_path` override to `noctusai_lib.security.oauth.oauth_router` so legacy registered redirect URIs are preservable. Protocol+Fake+Real+factory untouched; pilot-gate (erp·therapy·social-wiring+core green).
-- [ ] Replace `calendar/oauth_adapter.py` + `drive_api/oauth_adapter.py` + youtube OAuth flow with `GoogleProvider` + `oauth_router(..., on_callback=<persist via Phase-1 store>)` mounted to **preserve** `/api/youtube/oauth/callback` + `/api/calendar/oauth/callback` exactly (Phase-0 contract — DO NOT relocate). Tests green.
+- [ ] Replace `calendar/oauth_adapter.py` + `drive_api/oauth_adapter.py` + youtube OAuth flow with `GoogleProvider` + `oauth_router(..., on_callback=<persist via Phase-2 store>)` mounted to **preserve** `/api/youtube/oauth/callback` + `/api/calendar/oauth/callback` exactly (Phase-0 contract — DO NOT relocate). Tests green.
 
-### Phase 3 — YouTube API → seed `integrations.youtube`
+### Phase 4 — YouTube API → seed `integrations.youtube`
 - [ ] Refactor `youtube_service.py` API layer to `make_youtube_client`; keep cache/upload/dashboard orchestration calling the seed client.
 - [ ] `[F]` Formalize `set_thumbnail` + `get_processing_status` into seed `noctusai_lib.integrations.youtube` (Protocol+Fake+Real+factory). Pilot-cadence: seed change → erp·therapy·social-wiring+core green gate.
 - [ ] Tests green (youtube/video/upload/dashboard suites).
 
-### Phase 4 — Calendar + Drive API → seed integrations
+### Phase 5 — Calendar + Drive API → seed integrations
 - [ ] Replace `services/calendar/*` + `services/drive_api/*` adapters with `noctusai_lib.integrations.{google_calendar,google_drive}`; reuse seed Fakes for test parity. Tests green.
 
-### Phase 5 — Cleanup, doc reconcile, verify
+### Phase 6 — Cleanup, doc reconcile, verify
 - [ ] (If Phase-0 says in-scope) fold thin youtube surface into `modules/` — resolve app-level-vs-`modules/` asymmetry; else confirm the named fast-follow filed.
 - [ ] Reconcile `MASTER-PROMPT.md` / `README.md` (doc⊥code → doc=true; remove the drift marker).
 - [ ] Full verify: `pytest` (social-wiring + seed + pilots erp·therapy·core if seed changed) · frontend `tsc --noEmit` + `vite build` · keeper `--review` · `noctus.hound.scan` · KB sync · three-way-sync any methodology learnings.
@@ -208,7 +231,8 @@ Phase-by-phase cadence (default). Status icons per template legend.
 2. **`set_thumbnail` / `get_processing_status` — seed-formalize vs product wrapper?** — decided in Phase 3. *Rec:* **formalize into seed** (both are YouTube-generic, Protocol-shaped; upload-status is broadly useful; re-forking violates the rule that drove this project).
 3. ~~Fold youtube into `modules/` this project or fast-follow?~~ — **✅ DECIDED Phase 0:** fast-follow `social-wiring-youtube-modularize` (Wave 4) — keep blast radius on the seed-consume substitution.
 4. ~~Branch?~~ — **✅ DECIDED:** `feat/sw-google-seed-consume` off `origin/main` (clean isolated worktree at `../noctusai-wt-sw-google`; the contended main-tree branch `feat/social-wiring-google-seed-consume` was abandoned due to parallel-agent contention). Carries the cherry-picked pre-commit fix `a27843e2`.
-5. **NEW — seed `oauth_router` prefix/path seam** (Phase 0 finding) — *Decided:* **`[F]` formalize** into the seed in Phase 2 (legacy registered redirect URIs cannot move; the seed router currently hardcodes `/api/oauth`). Pilot-gated. This is the canonical "absorbed product with pre-registered OAuth URIs" need — belongs in the seed, not a product shim.
+5. **seed `oauth_router` prefix/path seam** (Phase 0 finding) — *Decided:* **`[F]` formalize** into the seed in Phase 3 (legacy registered redirect URIs cannot move; the seed router currently hardcodes `/api/oauth`). Pilot-gated. Canonical "absorbed product with pre-registered OAuth URIs" need — seed, not product shim.
+6. **NEW — seed `token_store` table-shape seam** (Wave-1 engineer blocker, tree-verified) — *Decided:* **`[F]` formalize** as predecessor **Phase 1** (`metadata_column=None` + `metadata_columns={…}` map, back-compat-defaulted, pilot-gated). The absorbed `credentials` table predates the seed `metadata jsonb` contract + carries denormalized `channel_id/title/scopes` (40 consumer reads). Same class as Q5. Re-fork / silent schema-migration rejected (project thesis + §5 "no schema change").
 
 ---
 
@@ -249,3 +273,5 @@ Phase-by-phase cadence (default). Status icons per template legend.
 | 2026-05-19 | **Parallel-agent contention** in shared main tree (foreign commits on the first branch, live `.git/index` mutation). STOPPED per multi-agent-shared rule, surfaced, user chose isolated-worktree+dispatch. Re-based to clean isolated worktree `../noctusai-wt-sw-google` on `feat/sw-google-seed-consume` off `origin/main@000620a2`; scaffold committed `78825fdf`; pushed dispatch base. | Claude (architect) |
 | 2026-05-19 | **Pre-commit hook** (user-flagged): cherry-picked parallel session's `a27843e2` (scoped KB-restage fix, hook-only, original authorship preserved) → `07f3c8e6`; verified shared active hook already = fixed (symlink → main tree); re-pushed base. | Claude (architect) |
 | 2026-05-19 | **Phase 0 ✅** (architect-owned audit). Credential compat code-proven (zero data migration, §7.1 resolved). ~12 consumers + seed surface mapped. **§6 revised-loud:** seed `oauth_router` hardcodes `/api/oauth` but legacy registered redirect URIs can't move → Phase 2 gains a `[F]` seed-prefix-seam sub-task. §7 Q1/Q3/Q4 resolved, Q5 added. | Claude (architect) |
+| 2026-05-19 | **Phase renumber + tooling finding.** `check_phase_state_consistency` parses `### Phase 0.5` as integer `Phase 0` (`^### Phase\s+(\d+)\b`) → collided with shipped Phase 0, blocked the commit (gate working). Renumbered: audit=Phase 0; seed-seam=Phase 1; vault=2; oauth=3; youtube=4; cal/drive=5; cleanup=6. Prior §11 rows keep their as-written wording (history); this row is the pointer. **Codification candidate:** convention forbids fractional phases OR the regex handles `\d+(\.\d+)?` — routed to findings/phase_learnings. | Claude (architect) |
+| 2026-05-19 | **Wave-1 engineer SW-W1 blocked correctly (stop-before-improvise).** Surfaced + I tree-verified: seed `put()` unconditionally writes a `metadata` column the absorbed `credentials` table lacks (40 denormalized-field consumers) → real PostgREST 100% write-fail, mock false-green. Phase 0 missed the write path. **§6 revised-loud #2:** inserted predecessor **Phase 1** `[F]` seed `token_store` table-shape seam (`metadata_column`/`metadata_columns`, back-compat-defaulted, pilot-gated); Phase 1 re-scoped to consume it + 40-site metadata-map migration + anti-false-green payload⊆columns assertion. §7 Q6 added. Engineer authored zero code (recon-only, correct). Codification candidate routed (payload-vs-DDL keeper). | Claude (architect) |
