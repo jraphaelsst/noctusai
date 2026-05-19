@@ -39,28 +39,49 @@ async def connection_status(args: dict) -> dict:
             ),
         ).model_dump()
 
-    # A cheap authenticated probe — list 1 workflow. A 401/403 here is
-    # the never-faked "configured but key rejected" signal.
-    try:
-        data = api.request_json(
-            "GET",
-            "/workflows",
-            params={"limit": 1},
-            base_url=s.base_url or "",
-            api_key=s.api_key or "",
-            timeout=s.timeout_seconds,
-        )
-    except api.N8nApiError as e:
-        return ConnectionStatusOutput(
-            configured=True,
-            api_root=s.api_root,
-            reachable=False,
-            error=typed_error(e),
-        ).model_dump()
-
-    count = None
-    if isinstance(data, dict) and isinstance(data.get("data"), list):
-        count = len(data["data"])
+    # Authenticated probe. The FIRST page doubles as the never-faked
+    # "configured but key rejected" signal (a 401/403 here). We then
+    # follow `nextCursor` to a bounded depth so `workflow_count` is the
+    # TRUE total — not `min(total, 1)`, the old `limit=1` bug that made
+    # a 10-workflow instance report `workflow_count=1`.
+    count = 0
+    cursor: str | None = None
+    pages = 0
+    MAX_PAGES = 50  # 50 * 250 = 12500 workflows — unbounded in practice
+    while True:
+        params: dict = {"limit": 250}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            data = api.request_json(
+                "GET",
+                "/workflows",
+                params=params,
+                base_url=s.base_url or "",
+                api_key=s.api_key or "",
+                timeout=s.timeout_seconds,
+            )
+        except api.N8nApiError as e:
+            return ConnectionStatusOutput(
+                configured=True,
+                api_root=s.api_root,
+                reachable=False,
+                error=typed_error(e),
+            ).model_dump()
+        if not (isinstance(data, dict) and isinstance(data.get("data"), list)):
+            # Reachable + authenticated, but an unexpected body shape —
+            # honest: don't fabricate a count we couldn't measure.
+            return ConnectionStatusOutput(
+                configured=True,
+                api_root=s.api_root,
+                reachable=True,
+                workflow_count=None,
+            ).model_dump()
+        count += len(data["data"])
+        cursor = data.get("nextCursor")
+        pages += 1
+        if not cursor or pages >= MAX_PAGES:
+            break
     return ConnectionStatusOutput(
         configured=True,
         api_root=s.api_root,

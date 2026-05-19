@@ -27,6 +27,9 @@ n8n workflows from an agent.
 | `n8n.workflow.create` | WRITE 🔒 confirm | `POST /workflows` (sanitized) |
 | `n8n.workflow.delete` | WRITE 🔒 confirm (hard-to-reverse) | `DELETE /workflows/{id}` |
 | `n8n.workflow.set_tags` | WRITE 🔒 confirm | `PUT /workflows/{id}/tags` |
+| `n8n.credential.create` | WRITE 🔒 confirm | `POST /credentials` (`{name,type,data}`; secret never echoed back) |
+| `n8n.credential.delete` | WRITE 🔒 confirm (hard-to-reverse) | `DELETE /credentials/{id}` |
+| `n8n.credential.schema` | READ | `GET /credentials/schema/{type}` (discover required `data` keys) |
 | `n8n.execution.delete` | WRITE 🔒 confirm | `DELETE /executions/{id}` |
 | `n8n.tag.list` | READ | `GET /tags` |
 | `n8n.execution.list` | READ | `GET /executions?workflowId=&status=` |
@@ -45,14 +48,36 @@ n8n workflows from an agent.
   → newest → `execution.get` → read `error_summary`
   `{node,name,message,stack}` (best-effort; raw `execution` = source of
   truth, `None` summary never fabricated).
+- **Credentials — so workflows stop hard-coding secrets inline.**
+  `credential.create` (`POST /credentials`) registers a secret once;
+  nodes then reference it by id. n8n stores credential `data`
+  **write-only by design** — the instance never echoes a stored secret
+  back (not even to its own UI), so create returns only id/name/type
+  and there is **NO list/get/read-credential public endpoint**. We
+  deliberately do NOT invent one (gated-capability honesty — a "list
+  credentials" tool would either lie or leak). `credential.schema`
+  (`GET /credentials/schema/{type}`) is the *only* credential-discovery
+  surface — it returns the *shape* of a type (e.g. `httpHeaderAuth` ⇒
+  `{name,value}`), never any stored value. `credential.delete` is
+  hard-to-reverse (the secret is unrecoverable; referencing nodes break
+  until re-pointed). Added 2026-05-19.
 - **Endpoint surface probed live 2026-05-19** (codebase-is-source-of-
   truth applied to an external API — endpoints verified, not assumed).
   Available: workflows · executions · tags · `workflows/{id}/tags` ·
-  users. Deliberately ¬ surfaced: `/variables` + `/projects` (403
-  license-gated on this instance — a tool would perpetually 401/403);
-  `/credentials/schema` + `/source-control` (404 on this version).
-  Triage = accept-with-rationale (revisit if the instance gains the
-  license/version); re-probe before adding any of these.
+  users · credentials (`POST`/`DELETE`). Deliberately ¬ surfaced:
+  `/variables` + `/projects` (403 license-gated on this instance — a
+  tool would perpetually 401/403); `/source-control` (404 on this
+  version) — triage = accept-with-rationale (re-probe before adding).
+  ⚠️ `GET /credentials/schema/{type}` returned **404** on the
+  2026-05-19 probe of this instance/version, yet the `credential.*`
+  tools were built 2026-05-19 per explicit direction (workflows must
+  stop hard-coding secrets). This is **safe by gated-capability
+  honesty**: if the endpoint 404s on the live instance, `schema`
+  returns a typed never-faked `status 404` envelope — it never
+  fabricates a schema; `create`/`delete` (`POST`/`DELETE /credentials`)
+  were probe-confirmed available. Prior accept-with-rationale (revisit
+  on version bump) thus stands for `schema` *availability*; the tool
+  ships now and degrades honestly until the version exposes it.
 
 ## Architecture
 
@@ -100,7 +125,9 @@ rule, CLAUDE.md §1). Reuses the `mcp/noctusai/.venv` interpreter (has
 `mcp/noctusai/.venv/bin/python -m pytest mcp/n8n/tests/ -q` — no
 network; pins tool-name set, dotted naming, confirm gate (¬
 side-effect), gated-honesty (424), best-effort error extraction from
-real-shaped run-data, registry coherence. 15 tests green at build.
+real-shaped run-data, registry coherence. `tests/test_credential.py`
+adds the credential gate/happy/schema/typed-error + no-list/get-by-
+design pins (10 tests). 31 tests at the 2026-05-19 credential add.
 
 ## First real use (build-session dogfood)
 

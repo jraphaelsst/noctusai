@@ -310,6 +310,102 @@ class ExecutionGetOutput(BaseModel):
     error: Optional[dict] = None
 
 
+# ─── n8n.credential.schema (READ-ONLY) ───────────────────────────────────
+
+
+class CredentialSchemaInput(BaseModel):
+    """Fetch a credential type's JSON schema. PURE read — no confirm.
+
+    Discovers the required `data` keys for a type (e.g.
+    `httpHeaderAuth` ⇒ {name, value}) so `n8n.credential.create` can be
+    called with the right shape. There is NO list/get-credentials
+    endpoint in the n8n public API (secrets are write-only by design) —
+    this is the only credential-discovery surface.
+    """
+
+    credential_type_name: str = Field(
+        ...,
+        min_length=1,
+        description="n8n credential type name, e.g. 'httpHeaderAuth', "
+        "'httpBasicAuth', 'oAuth2Api'.",
+    )
+
+
+class CredentialSchemaOutput(BaseModel):
+    credential_type_name: Optional[str] = None
+    # `json_schema` not `schema` — a bare `schema` field shadows
+    # pydantic.BaseModel.schema (deprecation/UserWarning); the wire key
+    # stays `schema` via the serialization alias so the LLM-facing
+    # shape is unchanged.
+    json_schema: Optional[dict] = Field(
+        None,
+        alias="schema",
+        serialization_alias="schema",
+        description="Raw n8n credential-type JSON schema (verbatim — the "
+        "host LLM needs the full required/properties shape).",
+    )
+    error: Optional[dict] = None
+
+    model_config = {"populate_by_name": True}
+
+
+# ─── n8n.credential.create (WRITE — confirm-gated) ───────────────────────
+
+
+class CredentialCreateInput(BaseModel):
+    """Create a credential. WRITE — confirm-gated.
+
+    `data` is the secret payload whose required keys depend on `type`
+    (use `n8n.credential.schema` to discover them). n8n stores it
+    write-only and never echoes the secret back — only id/name/type
+    are returned at create time.
+    """
+
+    name: str = Field(
+        ..., min_length=1, description="Human-readable credential name."
+    )
+    type: str = Field(
+        ...,
+        min_length=1,
+        description="n8n credential type name (see n8n.credential.schema).",
+    )
+    data: dict = Field(
+        ...,
+        description="Secret payload — shape depends on `type`. Write-only; "
+        "n8n never echoes it back.",
+    )
+    confirm: bool = _CONFIRM
+
+
+class CredentialCreateOutput(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    type: Optional[str] = None
+    created: bool = False
+    error: Optional[dict] = None
+
+
+# ─── n8n.credential.delete (WRITE — confirm-gated, hard-to-reverse) ──────
+
+
+class CredentialDeleteInput(BaseModel):
+    """Delete a credential by id. WRITE / HARD-TO-REVERSE — confirm-gated.
+
+    The secret is unrecoverable after delete (no API undo, no
+    read-back); any workflow node referencing this credential id will
+    fail until re-pointed.
+    """
+
+    id: str = Field(..., min_length=1, description="The credential id.")
+    confirm: bool = _CONFIRM
+
+
+class CredentialDeleteOutput(BaseModel):
+    id: Optional[str] = None
+    deleted: bool = False
+    error: Optional[dict] = None
+
+
 # ─── n8n.diagnostics.connection_status ───────────────────────────────────
 
 
@@ -358,6 +454,12 @@ __all__ = [
     "ExecutionListOutput",
     "ExecutionGetInput",
     "ExecutionGetOutput",
+    "CredentialSchemaInput",
+    "CredentialSchemaOutput",
+    "CredentialCreateInput",
+    "CredentialCreateOutput",
+    "CredentialDeleteInput",
+    "CredentialDeleteOutput",
     "ConnectionStatusInput",
     "ConnectionStatusOutput",
 ]

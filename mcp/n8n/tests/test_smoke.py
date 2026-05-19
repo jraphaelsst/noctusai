@@ -72,6 +72,9 @@ _EXPECTED_TOOLS = {
     "n8n.execution.get",
     "n8n.execution.delete",
     "n8n.tag.list",
+    "n8n.credential.create",
+    "n8n.credential.delete",
+    "n8n.credential.schema",
     "n8n.diagnostics.connection_status",
 }
 
@@ -411,6 +414,37 @@ def test_connection_status_configured_but_key_rejected():
     assert out["configured"] is True
     assert out["reachable"] is False
     assert out["error"]["status"] == 401
+
+
+def test_connection_status_workflow_count_is_true_total():
+    """Regression: workflow_count must be the TRUE total across pages.
+
+    The old `limit=1` probe made a multi-workflow instance report
+    `workflow_count=1`. The diagnostic now follows `nextCursor`.
+    """
+    from n8n.tools.diagnostics import connection_status
+    from n8n.settings import N8nConnectorSettings
+
+    pages = [
+        {"data": [{"id": str(i)} for i in range(250)], "nextCursor": "c1"},
+        {"data": [{"id": str(i)} for i in range(7)], "nextCursor": None},
+    ]
+    calls = {"n": 0}
+
+    def fake_request_json(method, path, **kw):
+        i = calls["n"]
+        calls["n"] += 1
+        return pages[i]
+
+    s = N8nConnectorSettings(base_url="https://n8n.x.com", api_key="ok")
+    with patch("n8n.tools.diagnostics.get_settings", return_value=s), patch(
+        "n8n.api.request_json", side_effect=fake_request_json
+    ):
+        out = asyncio.run(connection_status({}))
+    assert out["configured"] is True
+    assert out["reachable"] is True
+    assert out["workflow_count"] == 257  # 250 + 7, NOT 1
+    assert calls["n"] == 2  # followed the cursor
 
 
 if __name__ == "__main__":

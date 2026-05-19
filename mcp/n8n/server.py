@@ -12,6 +12,8 @@ Tool surface (dotted naming, all via the n8n REST API):
 - n8n.workflow.list / get                      — READ-ONLY
 - n8n.workflow.activate / deactivate           — WRITE, confirm-gated (412)
 - n8n.execution.list / get                     — READ-ONLY (failure diag)
+- n8n.credential.schema                        — READ-ONLY (type discovery)
+- n8n.credential.create / delete               — WRITE, confirm-gated (412)
 - n8n.diagnostics.connection_status            — READ-ONLY, never-faked
 
 The stdio bootstrap (sys.path trick, in-tree seed pin, stderr logging,

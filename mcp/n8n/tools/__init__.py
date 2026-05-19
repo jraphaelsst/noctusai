@@ -6,17 +6,18 @@ across every connector MCP). Tool naming follows the dotted convention
 
 LEAF_MODULES: `workflow` (list/get/activate/deactivate/update/create/
 delete/set_tags), `execution` (history + failure diagnosis + delete),
-`tag` (tag catalog), `diagnostics` (config/reachability signal). All
-leaves talk to the n8n REST API via the single `n8n.api.request_json`
-HTTP seam.
+`tag` (tag catalog), `credential` (create/delete/schema — so workflows
+stop hard-coding secrets inline; no list/get by n8n design),
+`diagnostics` (config/reachability signal). All leaves talk to the n8n
+REST API via the single `n8n.api.request_json` HTTP seam.
 """
 from __future__ import annotations
 
 from _kit.registry import build_registry
 
-from . import diagnostics, execution, tag, workflow
+from . import credential, diagnostics, execution, tag, workflow
 
-LEAF_MODULES = (diagnostics, execution, tag, workflow)
+LEAF_MODULES = (credential, diagnostics, execution, tag, workflow)
 
 all_handlers, all_descriptors, register_all = build_registry(LEAF_MODULES)
 
