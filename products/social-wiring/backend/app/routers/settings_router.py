@@ -55,7 +55,11 @@ from app.schemas.settings import (
 )
 from app.schemas.whatsapp import WAHASessionInfo, extract_waha_message_id
 from app.services.chatbot_service import append_memory as _append_chat_memory
-from app.services.crm_service import CRMNotConfigured, CRMService, CRMServiceError
+from noctusai_lib.integrations.vista import (
+    VistaError as CRMServiceError,
+    VistaNotConfigured as CRMNotConfigured,
+    VistaRESTAdapter as CRMService,
+)
 from app.services.email_service import EmailNotConfigured, EmailService, EmailServiceError
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.waha_response_registry import record_waha_sample

@@ -33,7 +33,10 @@ from app.dependencies import get_admin_client
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured, build_credential_store
-from app.services.crm_service import CRMNotConfigured, CRMService
+from noctusai_lib.integrations.vista import (
+    VistaNotConfigured as CRMNotConfigured,
+    VistaRESTAdapter as CRMService,
+)
 from app.services.media_service import ResolvedMedia, make_media_service
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.waha_response_registry import record_waha_sample

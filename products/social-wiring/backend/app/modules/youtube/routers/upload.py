@@ -188,10 +188,12 @@ async def _resolve_metadata_from_product_code(
       - 404: code valid + CRM up, but no property found.
       - 502: CRM returned an unexpected error.
     """
-    from app.services.crm_service import (
-        CRMNotConfigured,
-        CRMService,
-        CRMServiceError,
+    from noctusai_lib.integrations.vista import (
+        VistaRESTAdapter as CRMService,
+        VistaError as CRMServiceError,
+        VistaNotConfigured as CRMNotConfigured,
+    )
+    from noctusai_lib.domain.real_estate import (
         build_youtube_metadata,
         validate_product_code,
     )

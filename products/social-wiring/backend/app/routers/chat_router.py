@@ -29,7 +29,10 @@ from app.config import settings
 from app.dependencies import get_admin_client
 from app.services.chatbot_service import ChatbotService
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured, build_credential_store
-from app.services.crm_service import CRMNotConfigured, CRMService
+from noctusai_lib.integrations.vista import (
+    VistaNotConfigured as CRMNotConfigured,
+    VistaRESTAdapter as CRMService,
+)
 from app.services.media_service import make_media_service
 from app.modules.youtube.services.upload import stage_browser_upload
 from app.services.whatsapp_intake_service import WhatsAppIntakeService

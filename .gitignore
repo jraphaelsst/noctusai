@@ -78,3 +78,4 @@ mcp/noctusai/data/
 scripts/mole-last-sweep.log
 scripts/archive-clean-last-sweep.log
 
+.claude/secrets-ignored/
