@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-20
 - **Last updated:** 2026-05-20
-- **Status:** 📋 **FILED** — N=5 cross-product byte-identical pattern; formalize-pass.
+- **Status:** ✅ **P0/P1/P3 DONE** — fix applied to 4 conftests; P2 seed-lift deferred. Engineer B 2026-05-20.
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · architect
 - **Related docs:**
   - `products/erp-imobiliario/backend/tests/conftest.py` (the reference fix shipped by ERP-P7)
@@ -60,10 +60,32 @@ Per-product code count after seed-lift: 1 line per conftest (a single function c
 
 ## 6. Phases
 
-- **P0 ⏳** — Audit: verify the 4 named products have the same half-fix shape (the assumption is N=5 from ERP-P7's sampling, but confirm).
-- **P1 ⏳** — Apply byte-identical fix to 4 conftests (parallel-safe, single engineer).
-- **P2 ⏳ (optional)** — Seed-lift `inject_seed_paths()` to `noctusai_lib.testing.conftest_helpers`; refactor each conftest to call it.
-- **P3 ⏳** — Verify: `pytest` from worktree-isolated checkout of each product passes.
+- **P0 ✅** — Audit: confirmed all 4 named conftests ship the half-fix shape (only `_LIB`, no `_FRAMEWORK`). PF=personal-finance slug. Alias variants observed: daily-life uses bare `sys`/`Path`; pf/adconnect/core use `_sys`/`_Path` aliases. ERP-imobiliario reference at `products/erp-imobiliario/backend/tests/conftest.py:48-60` is the byte-identical target shape.
+
+  **Improvements:**
+  - **Applied inline**: PF slug discrepancy — brief said `pf`, on-disk is `personal-finance`. Caught early at file-not-found; resolved by reading `ls products/`.
+  - **Applied inline**: Alias-variant detection (`_sys`/`_Path` vs `sys`/`Path`) — fix script auto-detects per-file alias and preserves it byte-identically in the replacement.
+  - **Bystander finding (deferred to architect)**: Stale editable-finder pollution — the host `pytest` fails BEFORE any conftest runs because `/opt/homebrew/lib/python3.11/site-packages/__editable___noctusai_lib_0_1_0_finder.py` maps `noctusai_lib` → deleted sibling worktree `.claude/worktrees/agent-a94cc7de313f7aebc/seed/lib/backend/noctusai_lib`. The `noctusai-product-bootstrap` `pytest11` entry-point fails to import, killing pytest before conftest sys-path-injection can help. **Workaround for P3**: `pytest -p no:noctusai-product-bootstrap` confirms the fix works. **Destination**: file a `stale-editable-install-cleanup` follow-up — root fix is `pip install -e seed/lib/backend` from the architect's primary tree to rebind the finder, OR teach `scripts/cleanup-stale-worktrees.sh` to also re-pin the editable install when a worktree is removed.
+
+- **P1 ✅** — Applied byte-identical fix to 4 conftests via `/tmp/apply_fanout_fix.py` (alias-preserving). Patch at `/tmp/engineer-B-conftest-fanout.patch` (100 lines, 4-file diff).
+
+  **Improvements:**
+  - **Applied inline**: Idempotency guard — script skips files where `_FRAMEWORK` already appears, so re-running is safe.
+  - **Bystander finding**: The fix script (`/tmp/apply_fanout_fix.py`) is the seed-lift in disguise — it's the algorithm any future product's conftest would need. **Destination**: P2 (seed-lift) below.
+
+- **P2 ⏳ (optional, deferred)** — Seed-lift `inject_seed_paths()` to `noctusai_lib.testing.conftest_helpers`. Per brief instructions, NOT in P1 scope; filed as stretch bystander recommendation. See findings.md for the formalize-MUST argument (N=5 platform-wide).
+
+- **P3 ✅** — Verified with `pytest --collect-only -p no:noctusai-product-bootstrap` (bypass for the pre-existing env-level stale-finder issue surfaced in P0 Improvements):
+  - `personal-finance`: 625 tests collected
+  - `daily-life`: 232 tests collected
+  - `adconnect`: 266 tests collected
+  - `core`: 533 collected + 2 pre-existing collection errors in `tests/services/test_sso_cache_invalidation.py` (TypeError: Router.__init__ — unrelated to fanout, pre-existing)
+
+  Without the `-p no:noctusai-product-bootstrap` bypass, all 4 products (including ERP-imobiliario reference!) fail with the same `ModuleNotFoundError: No module named 'noctusai_lib'` — proving the failure is environmental, NOT solvable at conftest level.
+
+  **Improvements:**
+  - **Applied inline**: Verified ERP-P7 reference also fails identically without bypass — proves the env issue is pre-existing and the fanout fix shape itself is correct.
+  - **Bystander finding (deferred to architect)**: Core's 2 pre-existing collection errors (`test_sso_cache_invalidation.py`) — out-of-scope here; **destination**: separate `core-sso-test-collection-error` follow-up project or fix-on-contact in next core-touching session.
 
 ---
 
@@ -86,3 +108,4 @@ Per-product code count after seed-lift: 1 line per conftest (a single function c
 | Date | Entry | By |
 |---|---|---|
 | 2026-05-20 | Filed as N=5 cross-product DRY from ERP-P7 finding. Cure for the worktree-bootstrap pattern. | Architect |
+| 2026-05-20 | P0/P1/P3 executed. 4 conftests patched byte-identically with `_FRAMEWORK = _REPO / "seed" / "framework" / "backend"` injection. Verified import resolves with `pytest -p no:noctusai-product-bootstrap`. Surfaced pre-existing env-level stale-editable-finder issue (deleted sibling worktree) — separate from this project's scope. P2 deferred. | Engineer B |

@@ -9,9 +9,17 @@ unauth_client) and the _build_patches() helper remain here.
 import sys as _sys
 from pathlib import Path as _Path
 
-_LIB = _Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
-if str(_LIB) not in _sys.path:
-    _sys.path.insert(0, str(_LIB))
+_REPO = _Path(__file__).resolve().parents[4]
+_LIB = _REPO / "seed" / "lib" / "backend"
+_FRAMEWORK = _REPO / "seed" / "framework" / "backend"
+# Inject BOTH seed package roots: the purge helper drops sibling-worktree
+# editable finders (correct behaviour), but the conftest must ALSO ensure
+# THIS worktree's own seed source trees are importable via sys.path —
+# otherwise `import noctusai_seed` fails with no fallback after the purge.
+# Post-axis-swap fan-out (2026-05-20) mirroring ERP-P7's reference fix.
+for _p in (_LIB, _FRAMEWORK):
+    if str(_p) not in _sys.path:
+        _sys.path.insert(0, str(_p))
 import importlib.util as _ilu  # noqa: E402
 _spec = _ilu.spec_from_file_location(
     "_bootstrap_conftest_helpers",
