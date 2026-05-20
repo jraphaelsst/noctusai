@@ -4,6 +4,7 @@ Unit tests for EmailService — template rendering, email stats, history.
 import pytest
 from unittest.mock import MagicMock, patch
 
+from noctusai_lib.testing import patch_credentials_to_mock
 from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 
 
@@ -134,7 +135,7 @@ class TestEnviar:
         from app.services.email_service import EmailService
         svc = EmailService(db, "user-1")
 
-        with patch("noctusai_lib.config.credentials._get_public_client", return_value=db):
+        with patch_credentials_to_mock(db):
             result = await svc.enviar(
                 destinatario="test@x.com",
                 assunto="Teste",
@@ -152,7 +153,7 @@ class TestEnviar:
         from app.services.email_service import EmailService
         svc = EmailService(db, "user-1")
 
-        with patch("noctusai_lib.config.credentials._get_public_client", return_value=db):
+        with patch_credentials_to_mock(db):
             result = await svc.enviar(
                 destinatario="test@x.com",
                 assunto="Teste",

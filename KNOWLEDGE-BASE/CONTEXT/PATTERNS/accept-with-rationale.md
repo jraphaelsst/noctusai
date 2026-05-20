@@ -639,6 +639,17 @@ state change, not a removal.
 - **Revisit trigger:** a 3rd+ product needs *calendar-style window-expansion* (same contract as daily-life's, not financial-posting) → re-triage toward `[F]` a `noctusai_lib.domain.scheduling.recurrence` window-expand primitive. (Out-of-scope note: a broad cross-product scan during this audit re-surfaced general platform helper-duplication — `audit_hook` `_get_engine_and_factory`/`_noop_writer` ×5 — pre-existing, belongs to the standing absorption queue, not this entry.)
 - **Recorded by:** `schedule-recurrence-window-gap` Phase 0 (2026-05-18, architect; user-delegated decision).
 
+## Entries from `erp-imobiliario-test-baseline-recovery` (filed 2026-05-20)
+
+### `noctus.dev.scan_mock_predicate_skew` Stage-4 keeper — Stage-3 observation only, intra-product N=9 ¬ cross-product
+
+- **Subject:** Engineer G's baseline-recovery surfaced N=9 mock-skew clusters in ERP (test fixtures missing fields that production queries `.eq()`/`.gte()`/`.is_()` filter on, so chained predicates returned empty → 9 tests failed). G surfaced a candidate `noctus.dev.scan_mock_predicate_skew` detector that would libcst-walk routers/services to extract predicate-columns, then diff against `set_table_data("<table>", [...])` fixture row keys to flag skew before tests run.
+- **Decision `[A]`:** Stage-3 observation captured in `KB § PATTERNS/testing.md` (∧ this catalog entry); **Stage-4 keeper deferred** — N=9 inside ONE product is intra-product debt accumulation, not the cross-product recurrence that justifies a deterministic platform-wide detector. The recurrence rule (`KB § PATTERNS/project-execution.md § 2.7`) reads cross-consumer counts; one product's quirks are not yet cross-cutting evidence.
+- **Reason:** building a libcst predicate-extractor scoped to test fixtures is ~200-300 LoC + cross-file static analysis, justified only when the same pattern surfaces in a second product. G's fixes drained the existing 9 instances → the recurrence pressure is now gone in ERP. Premature Stage-4 = code that runs forever for one historical accumulation. `[F]` premature; `[R]` N/A (the fix-set already shipped); `[A]` is the correct landing per "Accept when formalize+refactor are wrong outcomes today."
+- **Scope:** `noctus.dev.scan_*` MCP toolkit (mcp/noctusai/tools/noctus/dev/). No code change today; observation lives in `KB § PATTERNS/testing.md`.
+- **Revisit trigger:** a second product's recovery / baseline-drain surfaces ≥3 mock-skew failures with the same root-cause shape (fixture rows missing predicate columns vs production `.eq()`/`.gte()`/`.is_()` filters). At that point cross-product recurrence is confirmed → flip `[A]→[F]` and build `noctus.dev.scan_mock_predicate_skew`. The libcst infrastructure to do this already exists (`noctus.dev.scan_outlined` + `scan_pydantic_model_shapes` patterns). Pre-emptive scan now during next platform-wide test pass: `pytest --collect-only` across all products; if mock-skew failures appear elsewhere, that's the trigger.
+- **Recorded by:** `erp-imobiliario-test-baseline-recovery` close-out (2026-05-20, architect + Engineer G).
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.

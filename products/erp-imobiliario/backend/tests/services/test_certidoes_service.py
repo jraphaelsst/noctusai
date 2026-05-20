@@ -895,10 +895,17 @@ class TestScheduleTjspForOrg:
             schedule_tjsp_for_org("org-001", mock_db)
             mock_sc.assert_called_once()
             # The seed helper receives (coro, logger=..., name=...).
-            _, kwargs = mock_sc.call_args
+            args, kwargs = mock_sc.call_args
             assert kwargs.get("name") == "tjsp_org-001", (
                 f"expected name='tjsp_org-001'; got kwargs={kwargs}"
             )
+            # Close the coroutine production handed to the mocked seed
+            # helper — the real `schedule_coro` would adopt it via
+            # `asyncio.create_task`, but the mock just stores the call
+            # args, leaving the coro un-awaited until GC fires the
+            # "coroutine was never awaited" RuntimeWarning at the next
+            # test boundary (`test_idempotent_when_task_in_flight`).
+            args[0].close()
 
         # Cleanup
         svc._tjsp_scheduled_tasks.pop("org-001", None)

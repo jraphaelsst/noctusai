@@ -104,6 +104,7 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported
     MockUserResponse,
     AuthClient,
     bind_consent_module_to_mock,
+    patch_credentials_to_mock,
 )
 
 # ---------------------------------------------------------------------------
@@ -153,7 +154,7 @@ def client():
     with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
-         patch("noctusai_lib.config.credentials._get_public_client", return_value=mock_sb), \
+         patch_credentials_to_mock(mock_sb), \
          patch("app.dependencies.log_action", mock_log):
 
         from app.main import app

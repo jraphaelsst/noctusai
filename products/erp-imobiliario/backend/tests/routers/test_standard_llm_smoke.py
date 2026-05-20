@@ -25,6 +25,7 @@ Status-code assertions follow the `status-code-assertion-rule`
 from unittest.mock import patch
 
 import pytest
+from noctusai_lib.testing import patch_credentials_to_mock
 
 
 @pytest.fixture
@@ -39,10 +40,7 @@ def llm_client(client):
     same mock the rest of the fixture uses keeps lookups consistent.
     """
     mock_sb = client._mock_supabase
-    with patch(
-        "noctusai_lib.config.credentials._get_public_client",
-        return_value=mock_sb,
-    ):
+    with patch_credentials_to_mock(mock_sb):
         yield client
 
 
