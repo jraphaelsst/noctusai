@@ -48,9 +48,30 @@ don't infer from the Protocol).
 ### Contract + adapters
 | Symbol | Role |
 |---|---|
-| `MetaAdapter` | Protocol — **read-only v1**, shaped for additive extension |
-| `FakeMetaAdapter` | Deterministic in-memory; dev/test default |
+| `MetaAdapter` | Protocol — read surface + publish/ads write surface (additive; pre-existing read callers unaffected) |
+| `FakeMetaAdapter` | Deterministic in-memory; dev/test default. Publish methods deterministic-record on `published_posts` / `published_media` |
 | `get_meta_adapter(...)` | **Factory** — auth-resolution priority (§3) |
+
+**Publish methods on `MetaAdapter`** (added 2026-05-16, carousel added
+2026-05-20):
+- `publish_facebook_post(page_id, message, link=None, photo_url=None)` →
+  `PublishedPost`. Single-step `POST /{page-id}/feed` (text) or
+  `POST /{page-id}/photos` (when `photo_url` given). Production needs
+  `pages_manage_posts` scope through Meta App Review.
+- `publish_instagram_media(ig_user_id, image_url, caption=None)` →
+  `PublishedMedia`. 2-step `media` container → `media_publish`. Production
+  needs `instagram_content_publish`.
+- `publish_instagram_carousel(ig_user_id, image_urls, caption=None)` →
+  `PublishedMedia`. N+1+1-step: N child `media` containers (each
+  `media_type=IMAGE`, `is_carousel_item=true`) → parent `media` container
+  (`media_type=CAROUSEL`, `children=<csv>`) → `media_publish`. 2-10
+  children enforced client-side (loud `ValueError` outside bounds). Same
+  scope as single-publish.
+
+When the active token lacks the gated scope, the live adapter raises
+`MetaGraphError` with `requires_app_review=True` — never a silent or
+faked success. The Fake does NOT raise the App-Review gate (it is the
+"scope already approved" path), so dev/test paths run end-to-end.
 
 > `MetaOAuthAdapter` (the live Graph adapter) is **not** in `__all__` —
 > it is constructed only by the factory (`get_meta_adapter`). Consumers
@@ -177,9 +198,10 @@ pattern, `CONTEXT/PATTERNS/backend.md`).
 
 | Item | Status | Destination |
 |---|---|---|
-| FB Page **post** / IG **publish** (write scopes) | out-of-scope v1 — Meta App Review gates the write scopes | Additive: the `MetaAdapter` Protocol is shaped for extension; file a `meta-write-surface` project when App Review clears |
-| Ads / Insights beyond per-post `PostInsights` | out-of-scope | Future `integrations/meta/ads/` module |
+| FB Page **post** / IG **publish** (write scopes) | **SHIPS** (`publish_facebook_post` / `publish_instagram_media` / `publish_instagram_carousel`) — live behind Meta App Review for production | First consumer: `products/social-wiring/backend/app/modules/media_creation/services/publish_service.py` (carousel + single + FB photo). Surfaces 422 + `meta_scope_pending_app_review` when the App Review gate trips at request time |
+| Ads / Insights beyond per-post `PostInsights` | **SHIPS** — read campaigns + ad-insights; full management surface (campaign create/update) ships separately via `meta.ads_management` | See `tests/integrations/meta/test_meta_ads_management.py` |
 | Webhook subscriptions (Page/IG change events) | out-of-scope | Separate future `integrations/meta/webhooks/` module |
+| Video / Reels publish | out-of-scope v1 — different Graph flow (resumable upload + processing-status poll) | Additive extension on the same Protocol; surface a `meta-video-publish` follow-up when a consumer needs it |
 | TikTok | n/a — different vendor | Separate future `integrations/tiktok/` module |
 | OAuth start/callback router | **not duplicated by design** | Consume `noctusai_lib.security.oauth` as-is |
 

@@ -385,6 +385,13 @@ class MetaAdapter(Protocol):
         caption: str | None = None,
     ) -> PublishedMedia: ...
 
+    def publish_instagram_carousel(
+        self,
+        ig_user_id: str,
+        image_urls: list[str],
+        caption: str | None = None,
+    ) -> PublishedMedia: ...
+
     def list_ad_campaigns(
         self, ad_account_id: str
     ) -> list[AdCampaign]: ...

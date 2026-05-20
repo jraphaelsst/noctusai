@@ -460,6 +460,113 @@ class MetaOAuthAdapter:
             permalink=permalink,
         )
 
+    def publish_instagram_carousel(
+        self,
+        ig_user_id: str,
+        image_urls: list[str],
+        caption: str | None = None,
+    ) -> PublishedMedia:
+        """Publish an Instagram carousel — the N+1+1-step Graph flow.
+
+        Step 1 (N times): `POST /{ig-user}/media` with
+        `media_type=IMAGE`, `is_carousel_item=true`, `image_url=<url>`
+        → child container id. Step 2: `POST /{ig-user}/media` with
+        `media_type=CAROUSEL`, `children=<csv-of-ids>`, `caption=...`
+        → parent container id. Step 3: `POST /{ig-user}/media_publish`
+        (creation_id=parent) → published media id.
+
+        **Production gate:** identical to ``publish_instagram_media`` —
+        `instagram_content_publish` is App-Review-gated; absent it the
+        first child-container call raises `MetaGraphError` with
+        `requires_app_review` true. Carousels accept 2–10 images per
+        IG's documented limit; we enforce the lower/upper bounds
+        client-side so the error is loud, not a Graph 400 buried in a
+        permission message."""
+
+        if not image_urls:
+            raise ValueError(
+                "publish_instagram_carousel requires at least one image_url"
+            )
+        if len(image_urls) > 10:
+            raise ValueError(
+                "Instagram carousels accept at most 10 children"
+            )
+        token = self._user_token()
+        child_ids: list[str] = []
+        for image_url in image_urls:
+            child = _meta_api.graph_post(
+                f"{ig_user_id}/media",
+                access_token=token,
+                data={
+                    "image_url": image_url,
+                    "media_type": "IMAGE",
+                    "is_carousel_item": "true",
+                },
+                version=self._version,
+            )
+            cid = str(child.get("id") or "")
+            if not cid:
+                raise MetaGraphError(
+                    f"IG carousel child-container for {ig_user_id} "
+                    f"returned no creation id",
+                    code=200,
+                )
+            child_ids.append(cid)
+        parent_data: dict[str, Any] = {
+            "media_type": "CAROUSEL",
+            "children": ",".join(child_ids),
+        }
+        if caption is not None:
+            parent_data["caption"] = caption
+        parent = _meta_api.graph_post(
+            f"{ig_user_id}/media",
+            access_token=token,
+            data=parent_data,
+            version=self._version,
+        )
+        container_id = str(parent.get("id") or "")
+        if not container_id:
+            raise MetaGraphError(
+                f"IG carousel parent-container for {ig_user_id} "
+                f"returned no creation id",
+                code=200,
+            )
+        published = _meta_api.graph_post(
+            f"{ig_user_id}/media_publish",
+            access_token=token,
+            data={"creation_id": container_id},
+            version=self._version,
+        )
+        media_id = str(published.get("id") or "")
+        if not media_id:
+            raise MetaGraphError(
+                f"IG carousel media_publish for container {container_id} "
+                "returned no media id",
+                code=200,
+            )
+        permalink: str | None = None
+        try:
+            detail = _meta_api.graph_get(
+                media_id,
+                access_token=token,
+                params={"fields": "permalink"},
+                version=self._version,
+            )
+            permalink = detail.get("permalink")
+        except MetaGraphError as exc:
+            logger.warning(
+                "IG carousel %s published; permalink read-back failed: %s",
+                media_id,
+                exc,
+            )
+        return PublishedMedia(
+            id=media_id,
+            ig_user_id=ig_user_id,
+            container_id=container_id,
+            caption=caption,
+            permalink=permalink,
+        )
+
     def list_ad_campaigns(self, ad_account_id: str) -> list[AdCampaign]:
         """List ad campaigns under an ad account (reads — `ads_read`).
 

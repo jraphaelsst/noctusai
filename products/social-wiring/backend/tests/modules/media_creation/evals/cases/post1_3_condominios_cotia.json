@@ -1,0 +1,115 @@
+{
+  "name": "post1_3_condominios_cotia",
+  "source": "/Users/rapha/Documents/repository/NoctusAI/media-creator/output/carousels/post1-3-condominios-cotia/",
+  "brand_kit": {
+    "name": "Granja Premium — Wilson",
+    "persona": "Voice: editorial, calm, premium real-estate. Forbidden: hype, exclamations, sales-y. Target: families 35-55, high-income, São Paulo metro, looking at gated communities in Granja Viana.",
+    "design_system": "Variant: premium. Palette: bg-primary #2A2620, accent gold #C5A55E. Photography rule: architecture + landscape + lifestyle, no people front-and-center. Warm dark — amber highlights, olive shadows.",
+    "default_lang": "pt-BR"
+  },
+  "post": {
+    "title": "3 condomínios que mais valorizam em Cotia",
+    "idea": "A Granja Viana tem condomínios que ainda valorizam acima da média porque a região cresce e ainda não atingiu o teto de preço dos bairros consolidados de SP.",
+    "format": "carousel",
+    "variant": "premium",
+    "slide_count": 5
+  },
+  "expected": {
+    "storyboard": {
+      "title": "3 condomínios que mais valorizam em Cotia",
+      "audience": "Famílias 35-55 alto-padrão de SP",
+      "key_message": "Comprar antes da expansão = comprar melhor",
+      "cta": "DM com a palavra VALORIZAÇÃO",
+      "arc_pattern": "alternating",
+      "rationale": "Cover-develop-develop-insight-cta arc; gold-word per slide for typography hook.",
+      "slides": [
+        {
+          "n": 1,
+          "role": "cover",
+          "headline": "3 condomínios que mais valorizam em Cotia",
+          "body": "E por que famílias de alto padrão estão migrando para eles",
+          "visual_brief": "Casa moderna de alto padrão ao entardecer com piscina iluminada. Negative space à esquerda. Tom warm dark."
+        },
+        {
+          "n": 2,
+          "role": "develop",
+          "headline": "São Paulo II — Granja Viana",
+          "body": "Condomínio tradicional. Alto padrão consolidado. Forte procura. Excelente liquidez.",
+          "visual_brief": "Rua arborizada de condomínio fechado ao entardecer. Casas contemporary box-architecture. Luzes interiores quentes."
+        },
+        {
+          "n": 3,
+          "role": "develop",
+          "headline": "O que faz um condomínio valorizar?",
+          "body": "Segurança. Boa localização. Perfil dos moradores. Infraestrutura ao redor.",
+          "visual_brief": "Vista aérea ao crepúsculo de bairro residencial cercado por mata atlântica preservada."
+        },
+        {
+          "n": 4,
+          "role": "insight",
+          "headline": "Quem compra antes da expansão compra melhor.",
+          "body": "Muitos bairros de SP já atingiram o teto. A Granja ainda está crescendo.",
+          "visual_brief": "Insight slide — sem fotografia central. Background warm-dark com vinheta leve. Quote-style typography dominante."
+        },
+        {
+          "n": 5,
+          "role": "cta",
+          "headline": "Quer saber quais imóveis ainda têm potencial no SP2?",
+          "body": "Me chama no direct com a palavra VALORIZAÇÃO.",
+          "visual_brief": "CTA slide com call-out gráfico — placa de logotipo discreta, paleta gold sobre warm-dark."
+        }
+      ]
+    },
+    "image_prompts": [
+      {
+        "n": 1,
+        "prompt_nano_banana": "A modern high-end Brazilian gated-community house at twilight, contemporary box architecture, warm amber interior lighting, pristine pool, negative space left half. Style: premium editorial, warm dark, olive-black + golden-amber. 4:5.",
+        "prompt_galilai": "Slide 1 of 5 — 4:5 Instagram carousel for luxury Granja Viana real estate. COVER. Modern gated-community house at blue hour, warm interior lights, pool reflection, negative space left half. Dark premium aesthetic, olive-black + warm gold.",
+        "prompt_midjourney": "luxury Brazilian gated-community house at twilight --ar 4:5 --style raw --v 6"
+      },
+      {
+        "n": 2,
+        "prompt_nano_banana": "Tree-lined street inside a Brazilian gated community at dusk. Modern box-architecture houses, warm interior lights, no people, safe-feeling. 4:5 portrait, warm dark editorial.",
+        "prompt_galilai": "Slide 2 of 5 — DEVELOP. Granja Viana tree-lined inner street, dusk, warm interior lights. No people. Editorial premium warm dark.",
+        "prompt_midjourney": "gated-community evening street, modern houses --ar 4:5 --v 6"
+      },
+      {
+        "n": 3,
+        "prompt_nano_banana": "Aerial twilight view of residential neighborhood ringed by preserved Atlantic forest, premium house rooftops mixing with greenery. Warm dark, golden hour fading. 4:5.",
+        "prompt_galilai": "Slide 3 of 5 — DEVELOP. Aerial dusk shot of Granja Viana bairro, Mata Atlântica preserved around, premium rooftops. Warm dark.",
+        "prompt_midjourney": "aerial twilight São Paulo gated neighborhood --ar 4:5 --v 6"
+      },
+      {
+        "n": 4,
+        "prompt_nano_banana": "Quote-style slide background, warm-dark texture, very subtle grain, gentle vignette. No photography subject — typography-led composition. 4:5.",
+        "prompt_galilai": "Slide 4 of 5 — INSIGHT. Background only, warm dark vignette, no central subject. Typography-dominant composition.",
+        "prompt_midjourney": "warm dark abstract texture for typography --ar 4:5 --v 6"
+      },
+      {
+        "n": 5,
+        "prompt_nano_banana": "CTA slide. Warm-dark plate background, gold accent rule. Premium real-estate badge mood, no faces. 4:5.",
+        "prompt_galilai": "Slide 5 of 5 — CTA. Warm-dark, premium plate composition, gold accent. No people.",
+        "prompt_midjourney": "warm dark CTA card with gold accent --ar 4:5 --v 6"
+      }
+    ],
+    "copy": {
+      "caption": "A Granja já não é o que era 5 anos atrás.\n\nE quem percebeu isso primeiro, comprou melhor.\n\nOs bairros premium de SP — Pinheiros, Vila Madalena, Alphaville — já bateram em teto de preço. Reajustam pouco, valorizam menos. A matemática do investimento ficou apertada.\n\nA Granja Viana ainda está em outra fase: a curva de valorização ainda sobe. Condomínio fechado, segurança, infraestrutura crescendo, perfil consolidado de moradores. É o combo que faz preço subir antes da bolha.\n\nSão Paulo II é um exemplo claro disso. Procura alta, oferta restrita, liquidez excelente. Quem entra agora ainda surfa a onda.\n\nSalva esse post pra revisitar quando for a hora de decidir.\n\nE se quiser saber quais imóveis específicos ainda têm espaço pra valorizar no SP2, me chama no direct com a palavra VALORIZAÇÃO que eu te mando a lista curada da semana.",
+      "hashtags": ["#GranjaViana", "#SaoPauloII", "#CotiaSP", "#CondominioFechado", "#ImoveisAltoPadrao", "#InvestimentoImobiliario", "#MercadoImobiliarioSP", "#AltoPadraoSP", "#CasasDeLuxo", "#ValorizacaoImobiliaria"],
+      "alt_text_per_slide": [
+        "Capa do carrossel: casa moderna de alto padrão ao entardecer com piscina iluminada. Título: 3 condomínios que mais valorizam em Cotia.",
+        "Rua interna arborizada de condomínio fechado ao entardecer com casas modernas iluminadas.",
+        "Vista aérea ao crepúsculo de bairro residencial cercado por mata atlântica preservada.",
+        "Slide de insight tipográfico: Quem compra antes da expansão compra melhor.",
+        "Slide de CTA: DM com a palavra VALORIZAÇÃO para receber lista curada."
+      ],
+      "first_comment": "📍 Granja Viana — Cotia/SP. Atendimento exclusivo via direct. VALORIZAÇÃO é a palavra-passe da lista curada da semana."
+    }
+  },
+  "asserts": {
+    "min_slides": 5,
+    "max_slides": 5,
+    "min_caption_chars": 600,
+    "min_hashtags": 8,
+    "expect_cta_keyword": "VALORIZAÇÃO"
+  }
+}

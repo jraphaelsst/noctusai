@@ -552,6 +552,30 @@ class TestFakeWriteSurface:
         assert m.caption == "cap"
         assert fake.published_media == [m]
 
+    def test_publish_instagram_carousel_records(self):
+        fake = FakeMetaAdapter()
+        urls = [
+            "https://img/a.jpg",
+            "https://img/b.jpg",
+            "https://img/c.jpg",
+        ]
+        m = fake.publish_instagram_carousel("IG1", urls, caption="three-slide")
+        assert m.id == "IG1_carousel_1"
+        assert m.container_id == "IG1_carousel_container_1"
+        assert m.caption == "three-slide"
+        assert fake.published_media == [m]
+
+    def test_publish_instagram_carousel_rejects_empty_and_overlong(self):
+        import pytest as _pt
+
+        fake = FakeMetaAdapter()
+        with _pt.raises(ValueError, match="at least one"):
+            fake.publish_instagram_carousel("IG1", [], caption="x")
+        with _pt.raises(ValueError, match="at most 10"):
+            fake.publish_instagram_carousel(
+                "IG1", [f"https://img/{i}.jpg" for i in range(11)]
+            )
+
     def test_list_ad_campaigns_seeded_and_prefix_norm(self):
         from noctusai_lib.integrations.meta import AdCampaign
 
@@ -662,6 +686,56 @@ class TestRealWriteSurface:
             with pytest.raises(MetaGraphError) as exc:
                 a.publish_instagram_media("IG1", "https://img/a.jpg")
         assert exc.value.requires_app_review is True
+
+    def test_publish_instagram_carousel_n_plus_two_step_flow(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        # 3 children → 3 child-container creates + 1 parent-container + 1 publish
+        post_resps = [
+            _FakeResponse({"id": "CHILD1"}),
+            _FakeResponse({"id": "CHILD2"}),
+            _FakeResponse({"id": "CHILD3"}),
+            _FakeResponse({"id": "PARENT"}),
+            _FakeResponse({"id": "MEDIA"}),
+        ]
+        get_resps = [_FakeResponse({"permalink": "https://ig/p/MEDIA"})]
+        with patch.object(
+            httpx, "post", side_effect=post_resps
+        ), patch.object(httpx, "get", side_effect=get_resps):
+            out = a.publish_instagram_carousel(
+                "IG1",
+                ["https://img/a.jpg", "https://img/b.jpg", "https://img/c.jpg"],
+                caption="three",
+            )
+        assert out.id == "MEDIA"
+        assert out.container_id == "PARENT"
+        assert out.permalink == "https://ig/p/MEDIA"
+
+    def test_publish_instagram_carousel_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        perm_err = {
+            "error": {
+                "message": "(#10) instagram_content_publish not granted",
+                "code": 10,
+                "type": "OAuthException",
+            }
+        }
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(perm_err)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.publish_instagram_carousel(
+                    "IG1", ["https://img/a.jpg", "https://img/b.jpg"]
+                )
+        assert exc.value.requires_app_review is True
+
+    def test_publish_instagram_carousel_validates_bounds(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with pytest.raises(ValueError, match="at least one"):
+            a.publish_instagram_carousel("IG1", [])
+        with pytest.raises(ValueError, match="at most 10"):
+            a.publish_instagram_carousel(
+                "IG1", [f"https://img/{i}.jpg" for i in range(11)]
+            )
 
     def test_list_ad_campaigns_reads_and_normalises_prefix(self):
         a = MetaOAuthAdapter(system_user_token="SYSTOK")

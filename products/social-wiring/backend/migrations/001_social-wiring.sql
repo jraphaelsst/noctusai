@@ -983,6 +983,21 @@ CREATE INDEX ix_sw_mc_post_slides_org ON social_wiring.mc_post_slides(org_id);
 CREATE OR REPLACE TRIGGER set_updated_at_mc_post_slides
     BEFORE UPDATE ON social_wiring.mc_post_slides
     FOR EACH ROW EXECUTE FUNCTION social_wiring.set_updated_at_media_creation();
+
+-- W2.4 publish-state columns on mc_posts. Populated by /publish endpoint
+-- after Meta Graph publish succeeds. Each post is published at most once
+-- (re-publish creates a new post). target / media_id / permalink stay
+-- nullable so unpublished drafts validate.
+ALTER TABLE social_wiring.mc_posts
+    ADD COLUMN IF NOT EXISTS published_target    TEXT
+        CHECK (published_target IS NULL
+               OR published_target IN ('instagram_carousel','instagram_single','facebook_photo')),
+    ADD COLUMN IF NOT EXISTS published_media_id  TEXT,
+    ADD COLUMN IF NOT EXISTS published_permalink TEXT,
+    ADD COLUMN IF NOT EXISTS published_at        TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS ix_sw_mc_posts_published_at
+    ON social_wiring.mc_posts(published_at)
+    WHERE published_at IS NOT NULL;
 -- ─── end W2.4 ───
 
 

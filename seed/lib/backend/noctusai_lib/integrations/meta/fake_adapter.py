@@ -196,6 +196,27 @@ class FakeMetaAdapter:
         self.published_media.append(media)
         return media
 
+    def publish_instagram_carousel(
+        self,
+        ig_user_id: str,
+        image_urls: list[str],
+        caption: str | None = None,
+    ) -> PublishedMedia:
+        if not image_urls:
+            raise ValueError("publish_instagram_carousel requires at least one image_url")
+        if len(image_urls) > 10:
+            raise ValueError("Instagram carousels accept at most 10 children")
+        self._media_seq += 1
+        media = PublishedMedia(
+            id=f"{ig_user_id}_carousel_{self._media_seq}",
+            ig_user_id=ig_user_id,
+            container_id=f"{ig_user_id}_carousel_container_{self._media_seq}",
+            caption=caption,
+            permalink=f"https://instagram.com/p/{ig_user_id}_carousel_{self._media_seq}",
+        )
+        self.published_media.append(media)
+        return media
+
     def list_ad_campaigns(self, ad_account_id: str) -> list[AdCampaign]:
         acct = (
             ad_account_id

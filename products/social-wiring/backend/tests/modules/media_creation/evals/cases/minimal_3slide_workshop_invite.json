@@ -1,0 +1,87 @@
+{
+  "name": "minimal_3slide_workshop_invite",
+  "source": "synthetic — exercises smaller carousel + workshop-invite shape",
+  "brand_kit": {
+    "name": "Atelier Cores — Renata",
+    "persona": "Voice: warm, artisan, inviting. Target: 28-45, urban creatives, weekend hobbyists in São Paulo. Avoid: salesy tone, generic stock-language.",
+    "design_system": "Variant: editorial-warm. Palette: cream #F4ECDC, accent terracotta #B45B3E. Photography: hands + materials in soft light, no faces.",
+    "default_lang": "pt-BR"
+  },
+  "post": {
+    "title": "Workshop de aquarela — sábado dia 8",
+    "idea": "Convite para o workshop intensivo de aquarela botânica, sábado das 9h às 13h no Atelier Cores. Vagas limitadas, kit incluso, foco em iniciantes-intermediários.",
+    "format": "carousel",
+    "variant": "editorial-warm",
+    "slide_count": 3
+  },
+  "expected": {
+    "storyboard": {
+      "title": "Workshop de aquarela — sábado dia 8",
+      "audience": "Adultos 28-45 SP, criativos urbanos",
+      "key_message": "Sábado de manhã pra aprender aquarela botânica do zero",
+      "cta": "Reserva pelo direct até quinta",
+      "arc_pattern": "hook-detail-cta",
+      "rationale": "3 slides minimum: cover hook, content detail, CTA.",
+      "slides": [
+        {
+          "n": 1,
+          "role": "cover",
+          "headline": "Workshop de aquarela botânica — sábado 8",
+          "body": "Vagas limitadas. Kit incluso.",
+          "visual_brief": "Mãos pintando flor em aquarela sobre papel cremoso. Luz natural. Tons terracota e creme."
+        },
+        {
+          "n": 2,
+          "role": "develop",
+          "headline": "O que você leva pra casa",
+          "body": "3 estudos botânicos finalizados. Técnica de camadas. Kit Cores (papel + 6 cores).",
+          "visual_brief": "Top-down de paletas com aquarela diluída, pincéis japoneses, papel cotton."
+        },
+        {
+          "n": 3,
+          "role": "cta",
+          "headline": "Reserva pelo direct",
+          "body": "Vagas até quinta. R$280 com kit. Sábado 9h-13h no Atelier Cores.",
+          "visual_brief": "Composição mínima: caderno aberto com pincel sobre madeira clara. Espaço para texto."
+        }
+      ]
+    },
+    "image_prompts": [
+      {
+        "n": 1,
+        "prompt_nano_banana": "Hands painting a botanical watercolor on cream cotton paper, top-down, warm natural light. Terracotta and cream palette. No face. 4:5.",
+        "prompt_galilai": "Slide 1 of 3 — COVER. Hands + brush + cream paper, soft natural light. Editorial warm, terracotta accent.",
+        "prompt_midjourney": "watercolor botanical hands paper natural light --ar 4:5 --v 6"
+      },
+      {
+        "n": 2,
+        "prompt_nano_banana": "Overhead flat-lay of diluted watercolor palettes, japanese brushes, cotton paper. Warm cream background, soft shadow.",
+        "prompt_galilai": "Slide 2 of 3 — DEVELOP. Flat-lay watercolor materials, warm light.",
+        "prompt_midjourney": "watercolor materials flat lay --ar 4:5 --v 6"
+      },
+      {
+        "n": 3,
+        "prompt_nano_banana": "Open sketchbook with single brush on light wood surface, warm light, minimal composition, room for typography.",
+        "prompt_galilai": "Slide 3 of 3 — CTA. Minimal sketchbook composition, room for typography.",
+        "prompt_midjourney": "open sketchbook on wood minimal --ar 4:5 --v 6"
+      }
+    ],
+    "copy": {
+      "caption": "Sábado dia 8, 9h às 13h, eu abro o atelier pra ensinar o que eu mais amo: aquarela botânica do zero. Quatro horas, três estudos finalizados, kit Cores (papel cotton + 6 cores) incluído. Vagas limitadas — 6 lugares. Reserva pelo direct até quinta. R$280 a vaga, R$240 se vier com amiga.",
+      "hashtags": ["#aquarela", "#botanicalart", "#workshopsp", "#sp", "#ateliêcores", "#aquarelabotanica"],
+      "alt_text_per_slide": [
+        "Mãos pintando aquarela botânica em papel creme.",
+        "Top-down de paletas, pincéis e papel cotton.",
+        "Caderno aberto com pincel sobre madeira clara — slide de chamada."
+      ],
+      "first_comment": "📍 Atelier Cores · Vila Madalena. Reserva pelo direct."
+    }
+  },
+  "asserts": {
+    "min_slides": 3,
+    "max_slides": 3,
+    "min_caption_chars": 200,
+    "min_hashtags": 4,
+    "expect_cta_keyword": "direct"
+  }
+}

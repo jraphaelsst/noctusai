@@ -24,10 +24,19 @@ from app.modules.media_creation.services.generation_service import (
     GenerationService,
 )
 from app.modules.media_creation.services.post_service import PostService
+from app.modules.media_creation.services.publish_service import (
+    PublishError,
+    PublishService,
+)
 
 
 class RenderRequest(BaseModel):
     renderer: str = "nano_banana"
+
+
+class PublishRequest(BaseModel):
+    target: str = "instagram_carousel"
+    destination_id: str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -42,6 +51,10 @@ def _post_svc(user) -> PostService:
 
 def _gen_svc(user) -> GenerationService:
     return GenerationService(get_admin_client(), get_org_id(user))
+
+
+def _publish_svc(user) -> PublishService:
+    return PublishService(get_admin_client(), get_org_id(user))
 
 
 def _require_post(user, post_id: str) -> dict:
@@ -103,5 +116,32 @@ async def render_post(
     try:
         data = _gen_svc(user).render_post(post, renderer=renderer)
     except GenerationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return success_response(data)
+
+
+@router.post("/{post_id}/publish")
+async def publish_post(
+    post_id: str,
+    body: PublishRequest,
+    auth=Depends(get_current_user_org),
+):
+    """Publish a rendered post to Meta (IG carousel / IG single / FB photo).
+
+    Resolves the seed ``MetaAdapter`` — if no ``META_SYSTEM_USER_TOKEN`` is
+    configured the Fake fires (deterministic, no network). The Fake never
+    raises ``requires_app_review`` so dev/test paths complete; production
+    only surfaces 422 + ``meta_scope_pending_app_review`` when the App
+    Review gate is still pending.
+    """
+    user, _, _ = auth
+    post = _require_post(user, post_id)
+    try:
+        data = _publish_svc(user).publish_post(
+            post,
+            target=body.target,
+            destination_id=body.destination_id,
+        )
+    except PublishError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return success_response(data)

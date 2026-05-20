@@ -28,9 +28,9 @@ class TestStatsHappyPath:
 
 
 class TestTopVideosLimit:
-    def test_limit_above_20_rejected(self, client, settings_override):
+    def test_limit_above_50_rejected(self, client, settings_override):
         settings_override(encryption_key=_ENC_KEY)
-        resp = client.get("/api/dashboard/top-videos?limit=50")
+        resp = client.get("/api/dashboard/top-videos?limit=51")
         assert resp.status_code == 422
 
     def test_limit_zero_rejected(self, client, settings_override):
