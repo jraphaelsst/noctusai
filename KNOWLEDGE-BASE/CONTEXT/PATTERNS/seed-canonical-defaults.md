@@ -71,12 +71,13 @@ The bug stayed hidden because `VITE_SAME_ORIGIN=1` (when set) short-circuits the
 
 **Live remediation in this session** (in-flight, one container): rebuilt social-wiring's FE bundle inside the container with `VITE_SAME_ORIGIN=1` explicitly — bundle now contains 3× `window.location.origin` and zero `VITE_BACKEND_API_URL:"..."` literals. Dashboard works.
 
-**Structural remediation pending** (filed as follow-up project `vite-factory-product-map-canonical-fix`):
-- Add missing ports to `PRODUCT_MAP` (social-wiring 8160, W2.x batch, dev-team, etc.) — derive from `parse_products_registry()` per [[feedback_hardcoded_product_slug_set_keeper]] rather than literal map.
-- Replace `|| 8000` fallback with `throw new Error("FE port not in PRODUCT_MAP — register the product or pass backendPort explicitly")`.
-- Audit why some `runtime-watch` containers seemed to lose `VITE_SAME_ORIGIN=1` during the initial `npm run build` (entrypoint env propagation gap; possibly `npm run` strips it through one layer).
+**Structural remediation shipped 2026-05-20 (in-flight, per §2.13a):**
+- ✅ `PRODUCT_MAP` literal **removed entirely** — the factory now parses the `start.sh PRODUCTS` block at vite build time (the single source of truth the Python seed-lib `noctusai_lib.config.cors_registry.parse_products_registry` already consumes). Both sides derive from the same authored source ⇒ registry drift is structurally impossible.
+- ✅ `|| 8000` fallback **replaced by `throw new Error(...)`** in `resolveBackendPort()` — adding a product without registering it in `start.sh PRODUCTS` is now a loud build failure (`vite.config.factory: frontend port N is not in the start.sh PRODUCTS registry...`).
+- ✅ Companion bystander fix: `seed/lib/frontend/src/env.ts` `BACKEND_API_URL` `|| 'http://localhost:8000'` → `?? ''` (same class). `CORE_URL` / `CORE_API_URL` annotated `canonical-default-ok` (core IS a named service every product navigates to — not consumer-#1 coincidence; see §4).
+- ✅ Stage-4 keeper `check_seed_canonical_default` shipped (Pattern A: URL form; Pattern B: registry-derived numeric port fallback). Block-comment + string-content aware (no false positives in throw-message text explaining the bug). Rationale escape hatch `canonical-default-ok` in 5-line preceding-window or same-line.
 
-→ This recurrence (third instance of seed-default-is-consumer-#1-coincidence) trips the §6 N=3 threshold below. Status flips: `[A]` accept → **`[F]` formalize**. The follow-up project files the keeper.
+The `VITE_SAME_ORIGIN=1` propagation gap during `npm run build` initial-run remains an open audit item — captured in `findings.md` of any future containerization session, not a separate project file.
 
 ---
 
@@ -128,25 +129,26 @@ The 9 product Dockerfile patches in the 2026-05-20 commit add `ENV VITE_SAME_ORI
 
 ---
 
-## 6 · Detection — codify when recurrence ≥3
+## 6 · Detection — codified Stage-4 keeper (shipped 2026-05-20)
 
-A keeper detector that scans seed source for literal defaults matching known per-product ports would catch this regression class. Shape:
+`check_seed_canonical_default` lives in `mcp/noctusai/tools/noctus/dev/compliance.py` and runs as part of `check_all_products`. Two regression patterns, both `severity="warning"`:
 
-```python
-# pseudocode for check_seed_canonical_default
-def check_seed_canonical_default(file):
-    for match in re.finditer(r'\|\|\s*"http://localhost:\d+"', source):
-        yield Issue(severity="high",
-                    message="Seed default is a per-product port literal "
-                            "(consumer-#1 coincidence). Use same-origin '' instead.")
-```
+**Pattern A — URL form:** `(\|\||\?\?)\s*"http(s)?://localhost:\d+"` on the comment-stripped line (string contents preserved so a URL *inside* a string still matches; a `/* ... */` doc comment mentioning the URL does not).
 
-**Current recurrence count: N=3** —
-1. `infra.tsx` `|| "http://localhost:8000"` default (§2, 2026-05-20 morning)
-2. [[KB § PATTERNS/pydantic-strict-http.md]] silent-drop sibling shape (loose hook + strict default)
-3. `vite.config.factory.ts` PRODUCT_MAP + `|| 8000` fallback (§2a, 2026-05-20 evening — same day, deeper layer)
+**Pattern B — numeric port fallback:** `\|\|\s*<port>\b` where `<port>` is in the live `start.sh PRODUCTS` registry. Backend ports are obtained via `parse_products_registry()` (derives from the same source the runtime parses — registry drift is impossible). Pattern B scans a **code-only** version of the line (comments AND string contents blanked out) so a `|| 8000` mentioned inside a throw-message string explaining the bug does not re-trigger.
 
-**Status: [F] formalize** (N=3 trigger fired). Stage-4 codification project filed: `seed-canonical-defaults-keeper` — keeper detector scans seed `*.ts` / `*.tsx` / `*.py` for `(\|\||??)\s*"http://localhost:\d+"` and `\|\|\s*\d{4,5}` (port literal in `or` fallback). Pre-commit warn; promote to block after a green pass across the seed tree.
+**Scope:** `seed/{lib,framework}/{backend,frontend}/**/*.{py,ts,tsx,js,jsx}`. Product code excluded (a product hardcoding its own port is local choice; the *seed* hardcoding any single product's port is the recurring bug). Vendored deps + `dist/` + `__pycache__` excluded by walk filter.
+
+**Rationale escape hatch:** a `canonical-default-ok` keyword on the same line or in the **5 preceding lines** waives the flag. Use for legitimate named-service references (e.g. `CORE_URL` — core IS a specific named service, not a consumer-#1 coincidence; see §4) and test harnesses bound to a known port. The window allows a normal multi-line comment block to carry the rationale.
+
+**Live tree baseline:** 0 issues after the 2026-05-20 structural fix landed (was 7 before — `infra.tsx`, `env.ts:120`, `vite.config.factory.ts:93`, plus 3 `CORE_URL`/`CORE_API_URL` sites now annotated, plus 1 already-fixed by the morning patch).
+
+**Recurrence count: N=3 → status `[F] formalize` (closed by this keeper):**
+1. `infra.tsx` `|| "http://localhost:8000"` default (§2, 2026-05-20 morning) — fixed.
+2. [[KB § PATTERNS/pydantic-strict-http.md]] silent-drop sibling shape (loose hook + strict default) — separately codified.
+3. `vite.config.factory.ts` PRODUCT_MAP + `|| 8000` fallback (§2a, 2026-05-20 evening — same day, deeper layer) — fixed structurally (PRODUCT_MAP removed; `throw` on unmapped).
+
+Future regressions: pre-commit warn; promote to `severity="high"` (gate-blocking) once any newly-flagged site has been triaged.
 
 ---
 

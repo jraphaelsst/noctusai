@@ -12,6 +12,7 @@
  *   import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
  *   export default createViteConfig({ port: 8120, backendPort: 8006 });
  */
+import fs from "fs";
 import path from "path";
 import react from "@vitejs/plugin-react-swc";
 import type { UserConfig } from "vite";
@@ -19,8 +20,21 @@ import type { UserConfig } from "vite";
 interface ViteConfigOptions {
   /** Frontend dev server port */
   port: number;
-  /** Backend API port — injected as VITE_BACKEND_API_URL (default: port - 114 heuristic, or specify explicitly) */
+  /**
+   * Backend API port — used only in two-port/native dev (when
+   * `VITE_SAME_ORIGIN=1` is NOT set). Default: derived from the
+   * `start.sh PRODUCTS` registry by matching the frontend `port`.
+   * If unset AND the port is not in the registry, the factory throws
+   * (loud build failure) — see `resolveBackendPort` below.
+   */
   backendPort?: number;
+  /**
+   * Database schema name — injected as `VITE_PRODUCT_SCHEMA` for the
+   * seed's `createProductSupabase` to consume. Default: `"public"`
+   * (Postgres' canonical default). Products with a non-public schema
+   * pass it explicitly.
+   */
+  schema?: string;
   /** Additional Vite plugins */
   plugins?: any[];
   /** Custom extend function for advanced configs (ERP PWA, etc.) */
@@ -64,48 +78,113 @@ const FRAMEWORK_DEPS = [
 ];
 
 /**
- * Product mapping — frontend port → backend port + schema.
- * The factory injects both VITE_BACKEND_API_URL and VITE_PRODUCT_SCHEMA
- * so products don't need any config files beyond vite.config.ts.
+ * Parse `start.sh PRODUCTS` registry → `frontend_port → backend_port` map.
+ *
+ * `start.sh` carries the SINGLE source of truth for product → port
+ * mapping (under `# BEGIN_PRODUCTS_REGISTRY` / `# END_PRODUCTS_REGISTRY`
+ * sentinels). Both the Python seed-lib (`noctusai_lib.config.cors_registry.
+ * parse_products_registry`) AND this TS factory parse the same block —
+ * registry drift is impossible. Each entry: `slug:Display Name:backend_port:frontend_port`.
+ *
+ * Per `KB § PATTERNS/seed-canonical-defaults.md` (N=3 2026-05-20):
+ * deriving from the registry replaces the prior hand-maintained
+ * `PRODUCT_MAP` literal, which silently misrouted any product whose port
+ * wasn't in it. Failures here are LOUD (throw) so adding a product
+ * without registering it can't ship.
  */
-// Comments embed the full product slug (NOT the abbreviation) so
-// `noctus.dev.validate_product`'s `vite_factory_product_map` post-scaffold
-// check (added 2026-05-04 in Phase 3.4) can pattern-match each slug. Don't
-// drop the slug from a comment without updating the validator's regex.
-const PRODUCT_MAP: Record<number, { backend: number; schema: string }> = {
-  5173: { backend: 8000, schema: "public" },           // core
-  8080: { backend: 8001, schema: "erp" },              // erp-imobiliario
-  8090: { backend: 8002, schema: "personal-finance" }, // personal-finance
-  8095: { backend: 8003, schema: "therapy" },          // therapy-platform
-  8100: { backend: 8004, schema: "seed" },             // seed
-  8110: { backend: 8005, schema: "daily_life" },       // daily-life
-  8130: { backend: 8007, schema: "adconnect" },        // adconnect
-};
+function parseProductsRegistry(repoRoot: string): Record<number, number> {
+  const startSh = path.join(repoRoot, "start.sh");
+  if (!fs.existsSync(startSh)) {
+    return {};
+  }
+  const text = fs.readFileSync(startSh, "utf-8");
+  const beginIdx = text.indexOf("# BEGIN_PRODUCTS_REGISTRY");
+  const endIdx = text.indexOf("# END_PRODUCTS_REGISTRY");
+  if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
+    return {};
+  }
+  const block = text.slice(beginIdx, endIdx);
+  // Match `"slug:Display:backend_port:frontend_port"` rows. Mirrors
+  // the regex shape used by the Python parser in cors_registry.py.
+  const entryRe = /"\s*[a-z0-9][a-z0-9-]*\s*:\s*[^:"]*?\s*:\s*(\d+)\s*:\s*(\d+)\s*"/g;
+  const out: Record<number, number> = {};
+  let match: RegExpExecArray | null;
+  while ((match = entryRe.exec(block)) !== null) {
+    const backendPort = parseInt(match[1], 10);
+    const frontendPort = parseInt(match[2], 10);
+    if (!Number.isNaN(backendPort) && !Number.isNaN(frontendPort)) {
+      out[frontendPort] = backendPort;
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve the backend port for a given frontend `port`.
+ *
+ * Order: explicit `backendPort` option → registry derivation → THROW.
+ * Throwing on unmapped is deliberate: the loud build failure forces
+ * the operator to register the product in `start.sh PRODUCTS` (the
+ * single source of truth) instead of silently misrouting (`|| 8000`
+ * was core's backend port — every unmapped product silently pointed
+ * at core, causing opaque CORS toasts the dashboard can't explain).
+ */
+function resolveBackendPort(
+  port: number,
+  explicit: number | undefined,
+  registry: Record<number, number>,
+): number {
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  const fromRegistry = registry[port];
+  if (fromRegistry !== undefined) {
+    return fromRegistry;
+  }
+  throw new Error(
+    `vite.config.factory: frontend port ${port} is not in the start.sh ` +
+    `PRODUCTS registry. Either register the product (single source of ` +
+    `truth: start.sh # BEGIN_PRODUCTS_REGISTRY block) or pass ` +
+    `\`backendPort\` explicitly to createViteConfig. ` +
+    `See KB § PATTERNS/seed-canonical-defaults.md — the prior \`|| 8000\` ` +
+    `fallback silently misrouted every unmapped product at core.`,
+  );
+}
 
 export function createViteConfig(options: ViteConfigOptions): UserConfig {
-  const { port, backendPort, plugins = [], extend } = options;
+  const { port, backendPort, schema, plugins = [], extend } = options;
 
   const productDir = process.cwd();
   const { repoRoot, seedLib, seedFramework, nodeModules } = resolveFromProductDir(productDir);
 
-  // Resolve from product map
-  const productInfo = PRODUCT_MAP[port];
-  const resolvedBackendPort = backendPort || productInfo?.backend || 8000;
-  const resolvedSchema = productInfo?.schema || "public";
+  // Schema injection: explicit factory option → `"public"` (Postgres'
+  // architectural canonical default; products with a non-public schema
+  // pass it explicitly). NOT keyed by port — port→schema coupling was
+  // a per-product literal that drifted as products were added.
+  const resolvedSchema = schema ?? "public";
 
   // Single-container mode (project: containerization-single-container).
-  // The Docker prod frontend-build stage exports VITE_SAME_ORIGIN=1 — the
-  // SPA is then served by uvicorn on the SAME origin as the API, so the
-  // API base must be the *runtime* origin (correct for localhost, for
-  // *.trycloudflare.com tunnels, and for any deploy host). We inject it as
-  // the RAW expression `window.location.origin` (NOT JSON.stringify) so
-  // every literal `import.meta.env.VITE_BACKEND_API_URL` in product + seed
-  // code is define-rewritten to it with zero per-file changes. Native /
-  // two-port dev keeps the absolute localhost URL.
+  // When `VITE_SAME_ORIGIN=1` is set (every product Dockerfile sets it
+  // in both `frontend-build` and `runtime-watch` stages), the SPA is
+  // served by uvicorn on the SAME origin as the API, so the API base
+  // must be the *runtime* origin (correct for localhost, for
+  // *.trycloudflare.com tunnels, and for any deploy host). We inject it
+  // as the RAW expression `window.location.origin` (NOT JSON.stringify)
+  // so every literal `import.meta.env.VITE_BACKEND_API_URL` in product +
+  // seed code is define-rewritten to it with zero per-file changes.
+  //
+  // Backend port resolution only runs in the two-port/native dev path
+  // (when `VITE_SAME_ORIGIN` is NOT set). Throwing on unmapped happens
+  // ONLY there — single-container builds never need the port lookup.
   const sameOrigin = process.env.VITE_SAME_ORIGIN === "1";
-  const backendApiUrlDefine = sameOrigin
-    ? "window.location.origin"
-    : JSON.stringify(`http://localhost:${resolvedBackendPort}`);
+  let backendApiUrlDefine: string;
+  if (sameOrigin) {
+    backendApiUrlDefine = "window.location.origin";
+  } else {
+    const registry = parseProductsRegistry(repoRoot);
+    const resolvedBackendPort = resolveBackendPort(port, backendPort, registry);
+    backendApiUrlDefine = JSON.stringify(`http://localhost:${resolvedBackendPort}`);
+  }
 
   const config: UserConfig = {
     server: {

@@ -5611,6 +5611,390 @@ def check_dockerfile_vite_supabase_args(
 
 
 # ---------------------------------------------------------------------------
+# `check_seed_canonical_default` — seed fallback values must be the
+# canonical-shared answer for the architectural model, never a per-product
+# port literal that happens to work for consumer #1.
+#
+# Class: `(\|\||\?\?)\s*"http://localhost:\d+"` (URL form) +
+# `\|\|\s*<known-backend-port>\b` (numeric port form). Both shapes silently
+# misroute every consumer that isn't the one the literal was written for.
+#
+# N=3 evidence (2026-05-20):
+#   1. `seed/framework/frontend/src/infra.tsx` `|| "http://localhost:8000"`
+#      (core's port literal — every non-core product FE pointed at core →
+#      CORS preflight kills the fetch → opaque `Servidor indisponivel`).
+#   2. `KB § PATTERNS/pydantic-strict-http.md` silent-drop sibling shape
+#      (loose hook + strict default — same coincidence-pattern class).
+#   3. `seed/framework/frontend/vite.config.factory.ts` `|| 8000` fallback
+#      for unmapped FE ports (same root: core's backend port literal).
+#
+# Per `KB § PATTERNS/seed-canonical-defaults.md` + memory
+# `feedback_seed_defaults_canonical_not_one_consumer.md` (status flipped
+# 2026-05-20 evening: `[A]` accept → `[F]` formalize).
+#
+# Severity: `warning` (Stage-4 codification posture — warn so legitimate-
+# but-historically-flagged patterns don't tank the per-product score; tighten
+# to `high` after a green baseline pass across the seed tree).
+# ---------------------------------------------------------------------------
+
+
+# Seed source roots — the rule scopes to seed code only (consumer-side
+# product code legitimately hardcodes its own port). Mirrors the bases used
+# by `_walk_python_files` but excludes products/* and mcp/* on purpose: the
+# seed is the layer where a default propagates across all consumers, so
+# that's the layer where consumer-#1-coincidence literals cause silent
+# misroute. A product hardcoding its OWN backend port is local choice; the
+# seed hardcoding ANY single product's port is the recurring bug.
+_SEED_SOURCE_BASES: tuple[str, ...] = (
+    "seed/lib/backend",
+    "seed/lib/frontend",
+    "seed/framework/backend",
+    "seed/framework/frontend",
+)
+
+# File extensions we scan. Keep tight — every extension here gets an
+# extension-aware comment-stripper. Anything else is excluded.
+_SEED_CANONICAL_DEFAULT_EXTS: tuple[str, ...] = (".py", ".ts", ".tsx", ".js", ".jsx")
+
+# Walk-exclusion list — vendored deps and build artifacts never get
+# scanned (they hold third-party literals we don't author).
+_SEED_CANONICAL_DEFAULT_EXCLUDED_PARTS: set[str] = {
+    "__pycache__", "node_modules", ".venv", "venv", "dist", "build",
+    ".git", ".pytest_cache", ".mypy_cache",
+}
+
+# Pattern A — `||` or `??` followed by an http(s)://localhost URL literal.
+# Catches the `infra.tsx` 2026-05-20 morning bit verbatim.
+_PORT_URL_FALLBACK_RE = re.compile(
+    r'(?:\|\||\?\?)\s*["\']https?://localhost:\d+["\']'
+)
+
+# Rationale escape hatch — a same-line / preceding-line comment carrying
+# `canonical-default-ok` is accepted (mirrors the slug-set / mock-schema
+# guardrails). For *test* harness fallbacks the seed legitimately wants
+# `localhost:<port>` in (the test invokes a real server bound to that
+# port and the literal IS the canonical truth at that scope).
+_SEED_CANONICAL_RATIONALE_RE = re.compile(
+    r"canonical-default-ok",
+    re.IGNORECASE,
+)
+
+
+def _registered_backend_ports(root: Path) -> set[int]:
+    """Set of backend ports from `start.sh PRODUCTS` registry.
+
+    Imports `parse_products_registry` from the seed lib so the detector
+    stays in sync with the live fleet (the "derive from the registry, never
+    freeze a literal" rule the detector itself enforces — applied here).
+    Returns an empty set if the seed-lib isn't importable from this
+    process (the detector then degrades to URL-form-only, never crashes).
+    """
+    try:
+        from noctusai_lib.config.cors_registry import parse_products_registry
+    except ImportError as exc:
+        logger.debug(
+            "compliance: parse_products_registry unavailable (%s); "
+            "check_seed_canonical_default falls back to URL-form-only scan",
+            exc,
+        )
+        return set()
+    try:
+        entries = parse_products_registry(root / "start.sh")
+    except (OSError, ValueError) as exc:
+        logger.debug("compliance: registry parse failed (%s)", exc)
+        return set()
+    return {entry["backend_port"] for entry in entries}
+
+
+def _strip_for_scan(text: str, ext: str) -> tuple[list[str], list[str]]:
+    """Return per-line versions of `text` suitable for the two regex scans.
+
+    Walks the file char-by-char tracking comment + string state so that
+    multi-line constructs (block comments, multi-line template literals,
+    Python triple-quoted strings) don't produce false matches.
+
+    Returns ``(lines_no_comments, lines_code_only)``:
+
+    - ``lines_no_comments``: comments (``//``, ``/* ... */``, ``#``,
+      Python docstrings) are blanked out; STRING CONTENTS PRESERVED.
+      Used for Pattern A (URL form — the URL literal lives inside a
+      string and we want to match it).
+    - ``lines_code_only``: comments AND string contents are blanked
+      out. Used for Pattern B (numeric port-literal — must not match a
+      `|| 8000` that appears inside a doc-comment or a string explaining
+      the bug; only flag actual code).
+
+    Line indices in the returned lists match `text.splitlines()`. Blank
+    replacement preserves newlines (and column offsets within a line)
+    so caller line numbering stays accurate.
+    """
+    no_comments: list[str] = []
+    code_only: list[str] = []
+    current_nc: list[str] = []
+    current_co: list[str] = []
+    i = 0
+    in_quote: str | None = None  # `"`, `'`, ``` ` ``` for JS, `"""` / `'''` for Py
+    in_block_comment = False
+    in_line_comment = False
+    in_py_triple: str | None = None  # `"""` or `'''`
+    is_py = ext == ".py"
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        # Newline → flush + reset same-line state.
+        if ch == "\n":
+            no_comments.append("".join(current_nc))
+            code_only.append("".join(current_co))
+            current_nc = []
+            current_co = []
+            in_line_comment = False
+            i += 1
+            continue
+        # Inside line comment → consume until newline.
+        if in_line_comment:
+            current_nc.append(" ")
+            current_co.append(" ")
+            i += 1
+            continue
+        # Inside block comment.
+        if in_block_comment:
+            if not is_py and ch == "*" and nxt == "/":
+                in_block_comment = False
+                current_nc.append("  ")
+                current_co.append("  ")
+                i += 2
+                continue
+            current_nc.append(" ")
+            current_co.append(" ")
+            i += 1
+            continue
+        # Inside Python triple-quoted string.
+        if in_py_triple is not None:
+            if text.startswith(in_py_triple, i):
+                # End of triple.
+                end = in_py_triple
+                in_py_triple = None
+                current_nc.append(end)
+                # code_only: still blank string content, but echo close quotes.
+                current_co.append(" " * len(end))
+                i += len(end)
+                continue
+            current_nc.append(ch)
+            current_co.append(" ")
+            i += 1
+            continue
+        # Inside regular string.
+        if in_quote is not None:
+            current_nc.append(ch)
+            # code_only: blank out string content, preserve quotes.
+            if ch == in_quote:
+                current_co.append(ch)
+                in_quote = None
+            else:
+                # Handle escape sequences (don't terminate on \" or \\).
+                if ch == "\\" and nxt:
+                    current_nc.append(nxt)
+                    current_co.append("  ")
+                    i += 2
+                    continue
+                current_co.append(" ")
+            i += 1
+            continue
+        # Outside everything — check for entry into comments / strings.
+        if not is_py:
+            if ch == "/" and nxt == "/":
+                in_line_comment = True
+                current_nc.append("  ")
+                current_co.append("  ")
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                in_block_comment = True
+                current_nc.append("  ")
+                current_co.append("  ")
+                i += 2
+                continue
+        else:
+            if ch == "#":
+                in_line_comment = True
+                current_nc.append(" ")
+                current_co.append(" ")
+                i += 1
+                continue
+            # Python triple-quoted string entry.
+            if text.startswith('"""', i):
+                in_py_triple = '"""'
+                current_nc.append('"""')
+                current_co.append("   ")
+                i += 3
+                continue
+            if text.startswith("'''", i):
+                in_py_triple = "'''"
+                current_nc.append("'''")
+                current_co.append("   ")
+                i += 3
+                continue
+        if ch in ('"', "'", "`"):
+            in_quote = ch
+            current_nc.append(ch)
+            current_co.append(ch)
+            i += 1
+            continue
+        # Plain code character.
+        current_nc.append(ch)
+        current_co.append(ch)
+        i += 1
+    # Flush the trailing line (no terminating newline).
+    no_comments.append("".join(current_nc))
+    code_only.append("".join(current_co))
+    return no_comments, code_only
+
+
+# Number of preceding lines the rationale-keyword window inspects (in
+# addition to the same line). A small block comment fits within 5 lines;
+# wider rationale blocks are unusual — keep the window tight so a stray
+# `canonical-default-ok` keyword elsewhere in the file can't silently
+# accept an unrelated literal.
+_SEED_CANONICAL_RATIONALE_WINDOW: int = 5
+
+
+def check_seed_canonical_default(repo_root: Path | None = None) -> list[dict]:
+    """Detect consumer-#1-coincidence default literals in seed source.
+
+    Two regression shapes, both flagged at `warning`:
+      - `(\\|\\||\\?\\?)\\s*"http://localhost:<port>"` — a URL string
+        literal as `||`/`??` fallback. The canonical answer for the
+        single-container house model is same-origin (`""`); for other
+        modules, the canonical answer is typed-error / `None` / `""` —
+        anything but a literal that pretends to know.
+      - `\\|\\|\\s*<backend-port>\\b` where `<backend-port>` is in the
+        live `start.sh PRODUCTS` registry — a numeric port literal as
+        fallback to a port-resolution chain. Same class: the literal is
+        consumer-#1's port, every other consumer silently misroutes.
+
+    Per `KB § PATTERNS/seed-canonical-defaults.md` + memory
+    `feedback_seed_defaults_canonical_not_one_consumer.md`. N=3 evidence
+    (2026-05-20) — see module docstring above this detector for the
+    enumerated cases.
+
+    Rationale escape hatch: a `canonical-default-ok` token in a comment
+    on the same line or the preceding line accepts the literal (mirrors
+    the slug-set / mock-schema guardrails). Use for test harnesses that
+    legitimately bind to a known port and where the literal IS the
+    canonical truth at test scope.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    backend_ports = _registered_backend_ports(root)
+    # Numeric pattern is built dynamically from the live registry so the
+    # detector follows the fleet (the same "derive from registry" rule it
+    # enforces).  Skip the numeric pattern entirely when the registry is
+    # unreadable rather than freeze an arbitrary port set.
+    if backend_ports:
+        # Sort high→low so longer-prefix ports match before any shorter
+        # ones (no real overlap with 4-5 digit ports, but the explicit
+        # ordering documents the intent).
+        ports_alt = "|".join(str(p) for p in sorted(backend_ports, reverse=True))
+        port_fallback_re: re.Pattern[str] | None = re.compile(
+            rf'\|\|\s*(?:{ports_alt})\b'
+        )
+    else:
+        port_fallback_re = None
+
+    for base_rel in _SEED_SOURCE_BASES:
+        base = root / base_rel
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix not in _SEED_CANONICAL_DEFAULT_EXTS:
+                continue
+            if any(p in _SEED_CANONICAL_DEFAULT_EXCLUDED_PARTS for p in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            try:
+                relative = str(path.relative_to(root))
+            except ValueError:
+                logger.debug("compliance: file outside repo root: %s", path)
+                continue
+            lines = content.splitlines()
+            lines_no_comments, lines_code_only = _strip_for_scan(
+                content, path.suffix,
+            )
+            for idx, raw_line in enumerate(lines, start=1):
+                nc_line = lines_no_comments[idx - 1] if idx - 1 < len(lines_no_comments) else ""
+                code_line = lines_code_only[idx - 1] if idx - 1 < len(lines_code_only) else ""
+                if not nc_line.strip():
+                    continue
+                # Rationale escape hatch — search the raw line + a small
+                # window of preceding raw lines for the opt-out keyword.
+                # Searching raw lines (not stripped) lets the keyword sit
+                # inside a comment, which is its natural carrier.
+                window_start = max(0, idx - 1 - _SEED_CANONICAL_RATIONALE_WINDOW)
+                window = lines[window_start:idx]  # incl. current line (idx-1)
+                if any(_SEED_CANONICAL_RATIONALE_RE.search(ln) for ln in window):
+                    continue
+                # Pattern A — URL form. Scans the comment-stripped line
+                # (string contents preserved) so the URL inside a string
+                # literal still matches but a `/* ... */` doc-comment
+                # mentioning the URL does not.
+                if _PORT_URL_FALLBACK_RE.search(nc_line):
+                    issues.append({
+                        "product": "<seed>",
+                        "file": relative,
+                        "issue": (
+                            f"`{relative}:{idx}` uses a `localhost:<port>` "
+                            f"URL literal as `||`/`??` fallback. The seed "
+                            f"default MUST be the canonical-shared answer "
+                            f"for the architectural model (same-origin "
+                            f"`\"\"` for the single-container house model; "
+                            f"typed-error / `None` / `\"\"` when no "
+                            f"canonical answer is known at seed-level), "
+                            f"never a literal that pretends to know one "
+                            f"consumer's port. Per "
+                            f"`KB § PATTERNS/seed-canonical-defaults.md`. "
+                            f"Escape hatch: add `canonical-default-ok` to "
+                            f"a same-line or preceding-line comment."
+                        ),
+                        "severity": "warning",
+                    })
+                # Pattern B — numeric port-literal fallback (registry-derived).
+                # Scans the code-only line (comments + string contents
+                # stripped) so a `|| 8000` mentioned inside a doc comment
+                # or a throw-message string explaining the bug does not
+                # re-trigger the detector.
+                if port_fallback_re is not None and port_fallback_re.search(code_line):
+                    issues.append({
+                        "product": "<seed>",
+                        "file": relative,
+                        "issue": (
+                            f"`{relative}:{idx}` uses a registered backend "
+                            f"port number as `||` fallback. The literal is "
+                            f"a per-product port from `start.sh PRODUCTS` "
+                            f"— silently misroutes any consumer whose port "
+                            f"isn't that one. Right shape: derive from "
+                            f"`parse_products_registry()` and `throw` on "
+                            f"unmapped (loud build failure), never `|| "
+                            f"<port-literal>` (silent misroute at runtime). "
+                            f"Per `KB § PATTERNS/seed-canonical-defaults.md`. "
+                            f"Escape hatch: add `canonical-default-ok` to "
+                            f"a same-line or preceding-line comment."
+                        ),
+                        "severity": "warning",
+                    })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -5925,6 +6309,10 @@ def check_all_products() -> tuple[int, list]:
     # arm64-wheel) dep needs a per-slug PIP_RUN toolchain seam, else the
     # fleet build aborts in the slim runtime (2026-05-18 fix-on-contact).
     all_issues.extend(check_product_source_build_dep_pip_seam())
+    # seed-canonical-defaults Stage-4 — N=3 (2026-05-20). Flags
+    # consumer-#1-coincidence port literals as `||`/`??` fallbacks in
+    # seed source (URL form + numeric-port-from-registry form).
+    all_issues.extend(check_seed_canonical_default())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
@@ -5953,15 +6341,18 @@ def _check_post_scaffold(
             Defaults to :data:`PRODUCTS_DIR`. Falls back to
             ``repo_root/products`` when only `repo_root` is supplied.
 
-    Checks (5):
+    Checks (4):
       1. Backend port wired in start.sh under the product's `--app-dir`.
       2. Frontend port wired in start.sh.
       3. Slug listed in `KB § CONTEXT/02-LANDSCAPE.md` Products table.
       4. INSERT INTO products row with the slug exists in any of the
          product's migration files (or core's bootstrap insert).
-      5. Frontend port appears in `seed/framework/frontend/vite.config.factory.ts`
-         PRODUCT_MAP (the factory looks up by frontend port — the slug never
-         goes into PRODUCT_MAP, but the port does, with the slug as comment).
+
+    (The former ``vite_factory_product_map`` check was retired 2026-05-20:
+    the factory now derives its port map directly from ``start.sh PRODUCTS``
+    at vite build time. Checks 1+2 already validate that registration, so
+    the factory check became a redundant assertion against a literal that
+    no longer exists. See KB § PATTERNS/seed-canonical-defaults.md N=3.)
     """
     results: list[dict] = []
 
@@ -6124,56 +6515,11 @@ def _check_post_scaffold(
             ),
         })
 
-    # 5 — vite.config.factory.ts PRODUCT_MAP entry (keyed by frontend port).
-    # We look for a comment line with the slug in PRODUCT_MAP — products land
-    # there with their slug as a `// SlugName` trailing comment.
-    factory_path = base_repo_root / "seed" / "framework" / "frontend" / "vite.config.factory.ts"
-    if not factory_path.exists():
-        results.append({
-            "check": "vite_factory_product_map",
-            "ok": False,
-            "error": f"seed factory missing at {factory_path}",
-        })
-    else:
-        fc = factory_path.read_text()
-        # Look for the slug (or a CamelCased / Title variant) within the
-        # PRODUCT_MAP block. Block delimited by `PRODUCT_MAP` declaration up
-        # to its closing `};`.
-        map_match = re.search(
-            r"PRODUCT_MAP[^=]*=\s*\{(?P<body>.*?)\};",
-            fc,
-            re.DOTALL,
-        )
-        if map_match is None:
-            results.append({
-                "check": "vite_factory_product_map",
-                "ok": False,
-                "error": "Could not locate PRODUCT_MAP literal in factory.",
-            })
-        else:
-            body = map_match.group("body")
-            # The slug may appear verbatim or with hyphens replaced; allow both.
-            slug_variants = {
-                slug,
-                slug.replace("-", " ").title(),
-                slug.replace("-", "_"),
-                slug.replace("-", ""),
-            }
-            if any(v.lower() in body.lower() for v in slug_variants):
-                results.append({
-                    "check": "vite_factory_product_map",
-                    "ok": True,
-                    "error": None,
-                })
-            else:
-                results.append({
-                    "check": "vite_factory_product_map",
-                    "ok": False,
-                    "error": (
-                        f"PRODUCT_MAP in vite.config.factory.ts has no entry "
-                        f"referencing '{slug}'. Add the frontend port row."
-                    ),
-                })
+    # 5 — (retired) vite.config.factory.ts PRODUCT_MAP entry. The factory
+    # now derives its frontend→backend port map from start.sh PRODUCTS at
+    # build time (single source of truth, parsed by both the Python seed
+    # lib and the TS factory). Checks 1+2 already validate that registration.
+    # Per KB § PATTERNS/seed-canonical-defaults.md (N=3 2026-05-20).
 
     return results
 

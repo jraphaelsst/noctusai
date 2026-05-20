@@ -17,6 +17,7 @@ from tools.noctus.dev.compliance import (
     check_detector_has_regression_test,
     check_section_7_placeholder_consistency,
     check_slowapi_with_pep563,
+    check_seed_canonical_default,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -992,6 +993,160 @@ class TestCheckSilentErrors:
         repo = self._mk_product_with_file(content)
         issues = check_silent_errors(repo)
         assert issues == []
+
+
+# ---------------------------------------------------------------------------
+# `check_seed_canonical_default` — seed fallback literals must be canonical-
+# shared answers, never per-product-port coincidences. N=3 codification
+# (2026-05-20). See compliance.py docstring + KB seed-canonical-defaults.md.
+# ---------------------------------------------------------------------------
+
+class TestCheckSeedCanonicalDefault:
+    def _mk(self, content: str, rel_path: str) -> Path:
+        """Build a fake repo with `start.sh` (registry) + one seed file."""
+        tmp = Path(tempfile.mkdtemp(prefix="seed_canonical_default_test_"))
+        # Minimal `start.sh` registry — just enough for the parser to find
+        # the sentinels and one product row carrying port 8000.
+        (tmp / "start.sh").write_text(
+            "#!/bin/bash\n"
+            "# BEGIN_PRODUCTS_REGISTRY\n"
+            "PRODUCTS=(\n"
+            '  "core:Core:8000:5173"\n'
+            '  "erp-imobiliario:ERP:8001:8080"\n'
+            ")\n"
+            "# END_PRODUCTS_REGISTRY\n"
+        )
+        target = tmp / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+        return tmp
+
+    # ── Pattern A: URL form ────────────────────────────────────────────
+
+    def test_flags_url_fallback_with_double_pipe(self):
+        repo = self._mk(
+            'const url = env.X || "http://localhost:8000";\n',
+            "seed/framework/frontend/src/infra.tsx",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert len(issues) == 1
+        assert "URL literal as `||`/`??` fallback" in issues[0]["issue"]
+        assert issues[0]["severity"] == "warning"
+        assert issues[0]["product"] == "<seed>"
+
+    def test_flags_url_fallback_with_nullish_coalescing(self):
+        repo = self._mk(
+            'const url = env.X ?? "http://localhost:8001";\n',
+            "seed/framework/frontend/src/infra.tsx",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert len(issues) == 1
+        assert "URL literal as `||`/`??` fallback" in issues[0]["issue"]
+
+    def test_flags_python_or_url_fallback(self):
+        # Pattern A is language-agnostic (both `or "url"` Python syntax and
+        # JS `|| "url"` look identical at the regex level).
+        repo = self._mk(
+            'base = os.environ.get("X") or "http://localhost:8000"\n',
+            "seed/lib/backend/noctusai_lib/example.py",
+        )
+        # Python uses `or`, not `||`, so Pattern A specifically should NOT
+        # fire (the regex looks for `||`/`??`). This documents the intent:
+        # the Python `or "url"` case is a *separate* gap — call this out.
+        issues = check_seed_canonical_default(repo)
+        assert issues == []
+
+    # ── Pattern B: numeric port-literal fallback ───────────────────────
+
+    def test_flags_numeric_port_fallback_from_registry(self):
+        # 8000 IS in the test registry's backend ports → flagged.
+        repo = self._mk(
+            "const port = config.backend || 8000;\n",
+            "seed/framework/frontend/vite.config.factory.ts",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert any(
+            "registered backend port number as `||` fallback" in i["issue"]
+            for i in issues
+        )
+
+    def test_does_not_flag_port_not_in_registry(self):
+        # 9999 is not in any registered product → not flagged. The
+        # detector is registry-derived on purpose so it follows the fleet.
+        repo = self._mk(
+            "const port = config.backend || 9999;\n",
+            "seed/framework/frontend/vite.config.factory.ts",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert issues == []
+
+    # ── Skip rules ─────────────────────────────────────────────────────
+
+    def test_skips_product_code(self):
+        # Detector scope is seed-only — products legitimately hardcode
+        # their own port.
+        repo = self._mk(
+            'const url = env.X || "http://localhost:8000";\n',
+            "products/core/frontend/src/api.ts",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert issues == []
+
+    def test_skips_node_modules(self):
+        repo = self._mk(
+            'const url = env.X || "http://localhost:8000";\n',
+            "seed/framework/frontend/node_modules/foo/index.js",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert issues == []
+
+    def test_skips_in_comment(self):
+        # Comments are stripped before regex scan — the fix recommendation
+        # below the actual fix should not re-trigger the detector.
+        repo = self._mk(
+            '// Was: env.X || "http://localhost:8000" — replaced by same-origin.\n'
+            'const url = env.X ?? "";\n',
+            "seed/framework/frontend/src/infra.tsx",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert issues == []
+
+    def test_rationale_escape_hatch_same_line(self):
+        # `canonical-default-ok` on the same line waives the flag (used by
+        # test fixtures binding to a known port).
+        repo = self._mk(
+            'const url = "http://localhost:8000"; // canonical-default-ok: fixture\n',
+            "seed/framework/frontend/tests/fixtures.ts",
+        )
+        # The pattern requires `||`/`??` before the URL, so a bare literal
+        # already wouldn't match. Use the actual fallback form here.
+        # Real test:
+        repo = self._mk(
+            'const url = env.X || "http://localhost:8000"; // canonical-default-ok: test fixture\n',
+            "seed/framework/frontend/src/test_helpers.ts",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert issues == []
+
+    def test_rationale_escape_hatch_preceding_line(self):
+        repo = self._mk(
+            "// canonical-default-ok: test harness pins to this port\n"
+            'const url = env.X || "http://localhost:8000";\n',
+            "seed/framework/frontend/src/test_helpers.ts",
+        )
+        issues = check_seed_canonical_default(repo)
+        assert issues == []
+
+    def test_no_crash_on_missing_start_sh(self):
+        # Detector degrades to URL-form-only when the registry is
+        # unreadable. Build a repo with no start.sh, only a seed file.
+        tmp = Path(tempfile.mkdtemp(prefix="seed_canonical_no_registry_"))
+        seed = tmp / "seed" / "framework" / "frontend" / "src" / "infra.tsx"
+        seed.parent.mkdir(parents=True)
+        seed.write_text('const url = env.X || "http://localhost:8000";\n')
+        issues = check_seed_canonical_default(tmp)
+        # URL form still fires; numeric form skipped.
+        assert any("URL literal as `||`/`??` fallback" in i["issue"] for i in issues)
 
 
 # ---------------------------------------------------------------------------

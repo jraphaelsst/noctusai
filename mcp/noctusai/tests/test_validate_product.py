@@ -1,12 +1,16 @@
 """Tests for `validate_one_product` post-scaffold registration checks.
 
-Phase 3.4 (sh-yt-scaffold-polish, 2026-05-04). The 5 binary checks mirror
+Phase 3.4 (sh-yt-scaffold-polish, 2026-05-04). The 4 binary checks mirror
 `scaffold_product`'s `next_steps`:
   - backend_port_in_start_sh
   - frontend_port_in_start_sh
   - kb_landscape_table
   - products_table_insert
-  - vite_factory_product_map
+
+(The former `vite_factory_product_map` check was retired 2026-05-20 — the
+factory now derives its frontend→backend port map from `start.sh PRODUCTS`
+at vite build time, so the two `start_sh` checks above already validate
+registration. See KB § PATTERNS/seed-canonical-defaults.md N=3.)
 
 Tests fixture a minimal repo layout under `tmp_path`, point
 `validate_one_product` at it via `repo_root=` / `products_dir=` seams,
@@ -83,18 +87,10 @@ VALUES (
 """
     )
 
-    # 5 — vite.config.factory.ts PRODUCT_MAP with the slug as comment.
-    factory_dir = tmp_path / "seed" / "framework" / "frontend"
-    factory_dir.mkdir(parents=True)
-    factory = factory_dir / "vite.config.factory.ts"
-    factory.write_text(
-        f"""// Test factory
-const PRODUCT_MAP: Record<number, {{ backend: number; schema: string }}> = {{
-  5173: {{ backend: 8000, schema: "public" }},     // Core
-  8600: {{ backend: 8500, schema: "test" }},       // {slug}
-}};
-"""
-    )
+    # (Former check 5: vite.config.factory.ts PRODUCT_MAP entry — retired
+    # 2026-05-20 N=3. The factory now derives its port map from start.sh
+    # PRODUCTS at vite build time, so no separate fixture is needed; checks
+    # 1+2 already validate registration in start.sh.)
 
     return {
         "tmp_path": tmp_path,
@@ -103,7 +99,6 @@ const PRODUCT_MAP: Record<number, {{ backend: number; schema: string }}> = {{
         "start_sh": start_sh,
         "landscape": landscape,
         "migration": migration,
-        "factory": factory,
     }
 
 
@@ -130,7 +125,6 @@ class TestPostScaffoldHappyPath:
             "frontend_port_in_start_sh",
             "kb_landscape_table",
             "products_table_insert",
-            "vite_factory_product_map",
         }
 
     def test_validate_one_product_aggregates_post_ok(self, tmp_path):
@@ -146,7 +140,7 @@ class TestPostScaffoldHappyPath:
         # New keys present.
         assert result["post_scaffold_ok"] is True
         assert isinstance(result["post_scaffold_checks"], list)
-        assert len(result["post_scaffold_checks"]) == 5
+        assert len(result["post_scaffold_checks"]) == 4
 
 
 class TestPostScaffoldFailures:
@@ -192,15 +186,10 @@ class TestPostScaffoldFailures:
         assert by_name["products_table_insert"]["ok"] is False
         assert self.SLUG in by_name["products_table_insert"]["error"]
 
-    def test_missing_vite_factory_entry(self, tmp_path):
-        artifacts = _seed_minimal_repo(tmp_path, self.SLUG)
-        # Strip the slug entry from PRODUCT_MAP.
-        fc = artifacts["factory"].read_text()
-        fc = "\n".join(line for line in fc.splitlines() if self.SLUG not in line)
-        artifacts["factory"].write_text(fc)
-        by_name = self._checks_by_name(tmp_path)
-        assert by_name["vite_factory_product_map"]["ok"] is False
-        assert self.SLUG in by_name["vite_factory_product_map"]["error"]
+    # (Former `test_missing_vite_factory_entry` retired 2026-05-20 with
+    # the `vite_factory_product_map` check it covered — the factory now
+    # derives port mapping from start.sh PRODUCTS, so the failure mode
+    # this test exercised is now covered by `test_missing_start_sh_*`.)
 
     def test_missing_start_sh_entirely(self, tmp_path):
         artifacts = _seed_minimal_repo(tmp_path, self.SLUG)

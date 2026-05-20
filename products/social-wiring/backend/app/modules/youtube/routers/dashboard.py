@@ -76,11 +76,13 @@ def get_stats(auth: tuple = Depends(get_current_user_org)) -> KpiStats:
 
 @router.get("/top-videos", response_model=list[TopVideoItem])
 def get_top_videos(
-    limit: int = Query(default=5, ge=1, le=20),
+    limit: int = Query(default=5, ge=1, le=50),
     auth: tuple = Depends(get_current_user_org),
 ) -> list[TopVideoItem]:
     """Top videos ordered by view count, descending. Default 5
-    matches the dashboard panel's row count."""
+    matches the dashboard panel's row count; cap raised to 50 so the
+    cumulative-views chart (Dashboard.tsx "Visualizacoes acumuladas
+    — top 50 do cache") can fetch its full window in one call."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     service = _build_dashboard_service(token)

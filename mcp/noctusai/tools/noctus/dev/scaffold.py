@@ -718,7 +718,11 @@ def scaffold_product(
     next_steps = [
         f"Add to CLAUDE.md product table",
         f"Run migration: mcp/noctusai tools → noctusai_apply_migration",
-        f"Add to PRODUCT_MAP in vite.config.factory.ts",
+        # Frontend → backend port mapping is derived from start.sh PRODUCTS
+        # at vite build time (single source of truth, parsed by both the
+        # Python seed-lib and the TS factory). The scaffolder already wrote
+        # the PRODUCTS row; no separate factory edit needed. See
+        # KB § PATTERNS/seed-canonical-defaults.md (N=3 2026-05-20).
     ]
     if seed_row_migration.get("path"):
         next_steps.insert(

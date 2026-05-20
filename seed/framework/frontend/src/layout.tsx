@@ -130,6 +130,8 @@ const DEFAULT_ROLE_LABELS: Record<string, string> = {
   test: "Teste",
 };
 
+// canonical-default-ok: core is a named service (BackToCore nav). Non-local
+// deploys MUST set VITE_CORE_URL explicitly.
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
 
 const BackToCore = (

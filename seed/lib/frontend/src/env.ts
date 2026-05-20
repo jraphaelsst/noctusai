@@ -112,14 +112,23 @@ export const env: ProductEnv = {
   get SUPABASE_URL() { return getViteVar('VITE_SUPABASE_URL') || ''; },
   get SUPABASE_PUBLISHABLE_KEY() { return getViteVar('VITE_SUPABASE_PUBLISHABLE_KEY') || ''; },
   // Read the LITERAL `import.meta.env.VITE_BACKEND_API_URL` so Vite's
-  // `define` (vite.config.factory) rewrites it: absolute
-  // http://localhost:<port> in dev/native, or `window.location.origin`
-  // in single-container same-origin mode. getViteVar()'s bracket access
-  // is NOT define-rewritten — this one getter reads the member
-  // expression directly. → project: containerization-single-container.
-  get BACKEND_API_URL() { return import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000'; },
-  get CORE_URL() { return getViteVar('VITE_CORE_URL') || 'http://localhost:5173'; },
-  get CORE_API_URL() { return getViteVar('VITE_CORE_API_URL') || 'http://localhost:8000'; },
+  // `define` (vite.config.factory) rewrites it: `window.location.origin`
+  // in single-container same-origin mode (the canonical default), absolute
+  // `http://localhost:<port>` in two-port/native dev when `VITE_SAME_ORIGIN=1`
+  // is not set. Empty-string fallback yields a relative URL → fetch hits
+  // the same host:port the page loaded from (correct for tunnel/deploy
+  // single-container). NEVER hardcode a per-product port literal here —
+  // it bites every consumer that isn't that port (the 2026-05-20 seed-
+  // canonical-defaults N=3 bit; `KB § PATTERNS/seed-canonical-defaults.md`).
+  get BACKEND_API_URL() { return import.meta.env.VITE_BACKEND_API_URL ?? ''; },
+  // CORE_URL / CORE_API_URL — core is a specific named service every
+  // product needs to navigate to (SSO, admin, cross-product nav). The
+  // localhost fallback IS the canonical answer for "core's URL in local
+  // dev"; a non-local deploy MUST set `VITE_CORE_URL` / `VITE_CORE_API_URL`
+  // explicitly. canonical-default-ok: core is a named service, not a
+  // consumer-#1 coincidence (see seed-canonical-defaults.md § 4).
+  get CORE_URL() { return getViteVar('VITE_CORE_URL') || 'http://localhost:5173'; }, // canonical-default-ok: core named service
+  get CORE_API_URL() { return getViteVar('VITE_CORE_API_URL') || 'http://localhost:8000'; }, // canonical-default-ok: core named service
   // Read the LITERAL member expression so Vite's build-time inline
   // applies (same reason as BACKEND_API_URL above). String 'true' →
   // boolean true; anything else (incl. unset) → false. Default-OFF so a

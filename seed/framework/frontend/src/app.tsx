@@ -254,10 +254,13 @@ export function createProductApp(config: ProductAppConfig) {
             <Route
               path="/sso"
               element={
+                // canonical-default-ok: core is a named service every
+                // product needs at a fixed URL (SSO callback). Non-local
+                // deploys MUST set VITE_CORE_URL / VITE_CORE_API_URL.
                 <SSOCallback
                   supabase={supabase}
-                  coreApiUrl={import.meta.env.VITE_CORE_API_URL || "http://localhost:8000"}
-                  coreUrl={import.meta.env.VITE_CORE_URL || "http://localhost:5173"}
+                  coreApiUrl={import.meta.env.VITE_CORE_API_URL || "http://localhost:8000"} /* canonical-default-ok: core named service */
+                  coreUrl={import.meta.env.VITE_CORE_URL || "http://localhost:5173"} /* canonical-default-ok: core named service */
                 />
               }
             />
