@@ -1,9 +1,9 @@
-# Google integrations — consume-side reference (Calendar · Maps · YouTube · Drive)
+# Google integrations — consume-side reference (Calendar · Maps · YouTube · Drive · Gmail)
 
-> **Purpose.** Authoritative consume-side reference for the four
+> **Purpose.** Authoritative consume-side reference for the five
 > Google seed integration packages:
 > `noctusai_lib.integrations.{google_calendar, google_maps, youtube,
-> google_drive}`. Each ships canonical Protocol + Fake + Real +
+> google_drive, gmail}`. Each ships canonical Protocol + Fake + Real +
 > factory. Folds **what ships** (verified against each `__all__`),
 > **consume recipe** (import -> factory -> resolver/credential injection
 > via NAMED seams, real consumers cited `path:line`), and **gaps**
@@ -172,13 +172,132 @@ in-tree `products/*` consumer yet.
 
 ---
 
-## 5. Gaps / out-of-scope (with destinations)
+## 5. gmail — Gmail API v1 (send + read, OAuth-only)
+
+Package: `seed/lib/backend/noctusai_lib/integrations/gmail/`.
+`__all__`: `GMAIL_MODIFY_SCOPE`, `GMAIL_READONLY_SCOPE`,
+`GMAIL_SEND_SCOPE`, `SUBJECT_MAX_LEN`, `FakeGmailClient`, `GmailClient`,
+`GmailCredentialResolver`, `GmailLabel`, `GmailListResult`,
+`GmailMessage`, `OAuthGmailCredentials`, `RealGmailClient`,
+`SendResult`, `make_gmail_client`.
+
+Lifted 2026-05-18 (commit `b881079b`, originating project
+`mcp-connector-expansion`) to close the last gap in the Google seed
+family. `noctusai_lib.integrations.email` is the **Resend**-backed
+digest/invitation module (NOT Gmail) — a product needing "send from
+the user's Gmail" or "read the user's inbox" now consumes from here
+instead of forking. The consume-side MCP wrapper at
+`mcp/google/tools/gmail.py` is the first in-tree adopter.
+
+**Protocol surface** (`GmailClient`):
+- `async send_message(*, to, subject, body_text, body_html=None,
+  cc=None, bcc=None) → SendResult` — **100 quota units**; requires
+  `gmail.send` scope. `subject` is RFC-5322-clipped to
+  `SUBJECT_MAX_LEN` (998 octets) by both adapters before MIME-build.
+- `async list_messages(*, query=None, label=None, page_token=None)
+  → GmailListResult[GmailMessage]` — **5u for the list page + 5u per
+  hydrated message** (list returns ids+thread-ids only; both adapters
+  hydrate to honour the "return full `GmailMessage`" contract).
+  Requires `gmail.readonly`.
+- `async get_message(message_id) → GmailMessage | None` — **5u**.
+  Returns `None` on 404. Requires `gmail.readonly`.
+
+**Quota model** is per-user-per-second (250u/user/sec burst budget +
+1 000 000 000u/day project ceiling), NOT a daily countdown like
+YouTube. Consumers size batch loops against the 250/user/sec ceiling;
+a naive "list then get each" loop costs `5 + 5·N` (~50 messages/sec
+of hydration before throttle).
+
+**Adapters**:
+- `FakeGmailClient` — deterministic in-memory; records every send on
+  `.sent`; `add_fake_message(...)` fixture seam; `PAGE_SIZE=2` for
+  testable paging. Sent messages round-trip via
+  `list_messages(label="SENT")`.
+- `RealGmailClient(oauth_credentials=...)` — wraps
+  `googleapiclient.discovery.build("gmail", "v1", ...)`. **OAuth-only**
+  — `users.messages.*` act on a private user mailbox so there is no
+  API-key path (unlike YouTube/Drive). Constructing without
+  `oauth_credentials` (or with `api_key` only) raises `ValueError`
+  at construction time (fail loud, per no-silent-errors). Send builds
+  a `multipart/alternative` MIME via the stdlib `EmailMessage` and
+  submits the base64url `raw` per the Gmail API contract. Logs HTTP
+  errors at WARN+ before re-raising. `get_message` returns `None`
+  on 404 (the only swallowed status — every other error re-raises).
+
+**Factory** (`make_gmail_client(use_fake=False, api_key=None,
+oauth_credentials=None, fake_seed_data=None)`):
+- `use_fake=True` → `FakeGmailClient` (optionally seeded by
+  `fake_seed_data={"messages": [...]}`).
+- `use_fake=False` ∧ `oauth_credentials` present → `RealGmailClient`.
+- `use_fake=False` ∧ NO `oauth_credentials` → `FakeGmailClient`
+  (the "tenant not yet connected" fallback; mirrors the Calendar
+  resolver pattern — a missing per-tenant OAuth token is the
+  *expected* not-connected state, NOT an error). To force a loud
+  failure instead, construct `RealGmailClient` directly.
+- `api_key` is accepted for factory-shape parity with the
+  youtube/drive adapters but is **inert for Gmail** (no API-key path
+  for a user mailbox).
+
+**Auth**. Gmail is **OAuth-only** — per-user refresh-token; Workspace
+Domain-Wide-Delegation exists but most tenants lack it, so DWD is
+out-of-scope for v1. Inject a `GmailCredentialResolver` (per-tenant
+OAuth lookup from Supabase or the seed `CredentialStore`); the
+resolver returns `OAuthGmailCredentials(refresh_token, client_id,
+client_secret, token=None, token_uri=..., scopes=[GMAIL_SEND_SCOPE])`
+or `None`. The OAuth dance itself is the generic
+`noctusai_lib.security.oauth` router — do NOT duplicate it here
+(same rule the Meta + Calendar packages follow). Scopes default to
+**send-only**; a read-touching consumer must pass `GMAIL_READONLY_SCOPE`
+explicitly (consent must have been granted for it — the seed cannot
+widen a scope the user never approved).
+
+**Consume recipe** (cited consumer `mcp/google/tools/gmail.py:48`):
+```python
+from noctusai_lib.integrations.gmail import (
+    GmailClient,
+    OAuthGmailCredentials,
+    make_gmail_client,
+)
+
+# Per-tenant resolver returns OAuthGmailCredentials | None
+creds = resolver.get_credentials(tenant_id=org_id)
+client = make_gmail_client(oauth_credentials=_to_google_creds(creds))
+# creds is None → factory falls back to FakeGmailClient automatically
+result = await client.send_message(
+    to="user@example.com",
+    subject="Hello",
+    body_text="plain body",
+    body_html="<b>rich body</b>",  # optional
+)
+```
+
+**Consumer status**: seed-ahead — no in-tree `products/*` consumer
+yet (N=0); `mcp/google/tools/gmail.py` is the first thin MCP-tool
+wrapper. The next product needing per-user email-send wires
+`GmailCredentialResolver` against the seed `CredentialStore` (same
+shape as the existing Calendar/Drive resolvers — pattern at
+`seed/lib/backend/noctusai_lib/integrations/credential_resolvers.py`,
+which already documents `CALENDAR_PROVIDER` / `DRIVE_PROVIDER` /
+`META_PROVIDER` constants — extend with `GMAIL_PROVIDER` when N=1
+hits, NOT pre-emptively).
+
+**Out-of-scope (v1)**: Gmail push/watch (Pub/Sub) subscriptions,
+full thread/label mutation (`gmail.modify` scope is exported but no
+methods consume it yet), Workspace DWD, drafts, attachments,
+batch-send. Any of these becomes a v2 follow-up filed only when a
+consumer surfaces (no seed-ahead beyond send + read; see Gap row
+"Gmail v2 surface" in §6).
+
+---
+
+## 6. Gaps / out-of-scope (with destinations)
 
 | Item | Status | Destination |
 |---|---|---|
-| youtube / google_drive in-tree `products/*` consumer | seed-ahead-of-consumer (user-authorized) | Wire on the next YouTube/Drive-touching product; recurrence-rule re-evaluates at N=2 |
+| youtube / google_drive / gmail in-tree `products/*` consumer | seed-ahead-of-consumer (user-authorized) | Wire on the next consuming product; recurrence-rule re-evaluates at N=2 |
 | google_calendar Domain-Wide-Delegation setup | supported via `ServiceAccountCalendarCredentials` | Cloud Console drill: `CONTEXT/GUIDES/google-oauth-setup.md` |
 | google_maps Static-fallback accuracy | deterministic by design (dev/test) | Set `api_key=` for live Routes API v2 |
 | OAuth start/callback router | not duplicated by design | Consume `noctusai_lib.security.oauth` + `google_scopes_router` as-is |
 | Drive outbound write (upload to Drive) | out-of-scope — both Protocols are read/download only | Additive Protocol when a consumer needs it |
-| **Gmail** (send/read) | **GAP** — `noctusai_lib.integrations.email` is **Resend**, not Gmail | `projects/gmail-seed-lift/PROJECT.md` (Status=Filed) |
+| Gmail v2 surface (push/watch, threads, drafts, attachments, batch-send, Workspace DWD) | out-of-scope — v1 ships send + list + get only | File `gmail-seed-v2-<feature>` follow-up project when a consumer surfaces; no seed-ahead per user policy |
+| Gmail `CredentialStore` resolver bridge (`CredentialStoreGmailResolver` + `GMAIL_PROVIDER` constant) | not yet shipped — extend when N=1 product needs it | Add to `noctusai_lib.integrations.credential_resolvers` mirroring `CredentialStoreCalendarResolver`; pattern is mechanical |

@@ -83,7 +83,7 @@ KNOWLEDGE-BASE/
 │   │   ├── oauth-patterns.md ← cross-provider OAuth reference — 5-layer model + 5 patterns + G1-G6 gotchas + Meta token-chain/auth-matrix + Google↔Meta scope-discovery diff + setup-guide template + what's already in seed vs the residual gaps
 │   │   ├── meta.md         ← Meta (Facebook Pages + Instagram Graph) consume-side reference — `noctusai_lib.integrations.meta` `__all__` + factory auth-resolution (system_user → user_oauth → Fake) + consume recipe + read-only-v1 gaps
 │   │   ├── whatsapp.md     ← WhatsApp connector consume-side reference — `noctusai_lib.integrations.whatsapp` `__all__` + WAHA vs Meta-Cloud-API backends + factory + webhook-router seam + lid-auth/dedup
-│   │   ├── google.md       ← Google integrations consume-side reference — Calendar/Maps/YouTube/Drive `__all__` + factories + resolver injection + quota-cost docs + seed-ahead consumer status
+│   │   ├── google.md       ← Google integrations consume-side reference — Calendar/Maps/YouTube/Drive/Gmail `__all__` + factories + resolver injection + quota-cost docs + Gmail OAuth-only send+read v1 + seed-ahead consumer status
 │   │   └── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
 │   ├── backend/            ← per-product backend details
 │   │   ├── 01-CORE.md
@@ -183,7 +183,7 @@ KNOWLEDGE-BASE/
 | OAuth integration patterns — cross-provider (5-layer model · scope auto-discovery · dual auth backends · single-consent bundling · post-consent introspection · CredentialStore Fernet · G1-G6 gotchas · Meta token-chain + auth-mode matrix · Google↔Meta scope-discovery diff · setup-guide template · in-seed-vs-gap audit) | `CONTEXT/INTEGRATIONS/oauth-patterns.md` |
 | Meta Graph adapter consume-side (`noctusai_lib.integrations.meta` exact `__all__` · `get_meta_adapter` auth-resolution priority system_user→user_oauth→Fake · consume recipe with cited social-wiring consumer · `make_meta_router` seam · read-only-v1 out-of-scope: posting/ads/webhooks) | `CONTEXT/INTEGRATIONS/meta.md` |
 | WhatsApp connector consume-side (`noctusai_lib.integrations.whatsapp` exact `__all__` · WAHA `get_whatsapp_client` vs Meta-Cloud-API `get_meta_cloud_client` backends · `create_whatsapp_webhook_router` seam · lid-auth + dedup + response-registry · cited ERP consumer) | `CONTEXT/INTEGRATIONS/whatsapp.md` |
-| Google integrations consume-side — Calendar/Maps/YouTube/Drive (each exact `__all__` · resolver/credential-store factory injection · YouTube quota-cost-documented Protocol · Drive dual download+read Protocols · seed-ahead consumer status · cited social-wiring consumers) | `CONTEXT/INTEGRATIONS/google.md` |
+| Google integrations consume-side — Calendar/Maps/YouTube/Drive/Gmail (each exact `__all__` · resolver/credential-store factory injection · YouTube quota-cost-documented Protocol · Drive dual download+read Protocols · Gmail OAuth-only send+read v1 with `OAuthGmailCredentials`/`GmailCredentialResolver`/`make_gmail_client` · seed-ahead consumer status · cited social-wiring + mcp/google/tools/gmail consumers) | `CONTEXT/INTEGRATIONS/google.md` |
 | Vista CRM REST API (auth, query convention, response envelope, error hierarchy, endpoint inventory, adapter contract, per-tenant calibration gap) | `CONTEXT/INTEGRATIONS/vista.md` |
 | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |
 | ERP backend | `CONTEXT/backend/02-ERP.md` |
