@@ -108,6 +108,69 @@ This matches the **keeper observation-only contract**: detect + report + recomme
 - **`git worktree remove -f -f` (double force) as automation** — bypasses the lock check that was put there for a reason. Use only after manual verification.
 - **Auto-removing locked-stale worktrees on the assumption that "lock == stale"** — a lock can be active. Always diagnose before destroying.
 
+### 2.4 · Docker images (obsolete product/stock images)
+
+**Definition**: docker images on the local daemon that are no longer needed — either superseded products no longer in the active set, or stock images unrelated to the current platform stack.
+
+**Patterns** (canonical list, lives in `noctus.dev.mole` as the docker-image deny-list lookup-table):
+- `ghcr.io/jraphaelsst/noctus-<slug>:dev` where `<slug>` is NOT the active product the user is working on AND no container is currently running on it
+- Stock images NOT referenced by any compose file in the repo: `nginx:alpine` (no current adopter), `alpine:latest` (rarely used), `cloudflare/cloudflared:latest` (only for tunnels, easy re-pull), `aquasec/trivy:*` (CI scanner, easy re-pull), unused n8n/redis/postgres untagged-latest copies when a pinned version exists
+- Old versions of base/runtime images when a newer same-purpose tag exists (e.g. `devlikeapro/waha:arm` when `devlikeapro/waha:latest` is what compose actually pulls)
+
+**Reversibility test**: would the image be re-pulled or re-built from a known recipe? Stock images → `docker pull` returns them. Product images → `docker compose up -d --build <slug>` re-bakes from the canonical Dockerfile. Both are recoverable; deletion is low-risk for non-active products.
+
+**Protected (NEVER delete — the "really important" set)**:
+- `noctus-seed-{backend,frontend}-base:dev` — every product Dockerfile FROMs them; deleting these breaks every product build until rebuilt
+- The image of any container currently `docker ps` running (in-use refcount)
+- Stock images referenced by the active compose files (`postgres:16-alpine`, `redis:7-alpine`, `devlikeapro/waha:latest` if compose pulls that tag, `python:3.11-slim`, `node:20-alpine` — the Dockerfile FROM bases)
+- `docker/dockerfile:1.7` — used by `# syntax=` directives in Dockerfiles
+
+**Detect command**:
+```bash
+docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}'
+docker ps --format '{{.Image}}'   # what's actively used; protect these
+```
+
+**Anti-patterns**:
+- `docker rmi -f noctus-seed-*-base:*` — breaks every product build downstream
+- `docker image prune -a -f` without first listing — too aggressive; removes anything not currently tagged-and-in-use, including stock images that compose just hasn't pulled yet in this session
+- Deleting an image while its container is stopped (not running) — losing the image means the container can't restart without a full rebuild
+
+### 2.5 · Docker volumes (orphans from past stacks)
+
+**Definition**: docker volumes on the local daemon that no running container has mounted, and that aren't named-state for a still-relevant compose stack.
+
+**Patterns**:
+- Anonymous (hex-named) volumes with no parent container — residue from `docker rm` of containers that had anonymous mounts (e.g. each `up --build` recreate of a product container leaves the previous anonymous FE-node_modules volume behind)
+- Named volumes from closed/absorbed projects (e.g. `whatsapp-google-scheduling_*` after the absorption into social-wiring; `chatbot-docker_*` after the chatbot-docker stack was deprecated; `bookstore_*` from an unrelated experiment)
+- Stock-image-named volumes (e.g. `postgres-data` of an old `postgres:latest` when current stack pins `postgres:16-alpine` with `noctusai-infra_postgres_data`)
+
+**Reversibility test**: does any active compose file reference this named volume? `grep -rn "<volume-name>" docker-compose*.yml products/*/docker-compose.yml`. If no match AND no running container mounts it → orphan, safe to remove.
+
+**Protected (NEVER delete — production state, the "really important" set)**:
+- `noctusai-infra_postgres_data` — Postgres DB state (RLS data, migrations applied)
+- `noctusai-infra_redis_data` — Redis state (cache, queues, dedup keys)
+- `noctusai-infra_waha_sessions` — WAHA WhatsApp session state (linked accounts; losing this forces re-pairing every WhatsApp connection)
+- Any anonymous volume mounted by a currently-running container (typically a product FE's `node_modules` arm64 isolation volume)
+- Any named volume referenced by a compose file in the active set
+
+**Detect command**:
+```bash
+docker volume ls --format '{{.Name}}'
+docker ps -q | xargs -I{} docker inspect {} --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{println}}{{end}}{{end}}'
+# Volumes in the first list MINUS volumes in the second list = candidates
+```
+
+**Sweep approach**:
+- `docker volume prune -f` removes ALL unused (anonymous + named-but-unmounted). Use when the named-unused set is already confirmed-orphan.
+- `docker volume rm <name>` is the surgical form when only specific named volumes should drop.
+
+**Anti-patterns**:
+- `docker volume prune -af` (the `-a` adds local volumes too — same as `-f` for local-driver volumes, but the flag is misleading and inconsistent across daemon versions)
+- Deleting `noctusai-infra_postgres_data` to "reset the DB" without an export — destroys all local DB state including in-flight migrations
+- Deleting `noctusai-infra_waha_sessions` — every WhatsApp number must re-pair via QR scan
+- Pruning while a container is stopped (not running) — the named volume isn't refcounted-protected; deletion is permanent
+
 ---
 
 ## 3 · The mole's interface
