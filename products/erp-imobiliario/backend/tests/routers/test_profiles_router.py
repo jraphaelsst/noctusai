@@ -115,3 +115,43 @@ class TestDeleteProfile:
         assert resp.status_code == 400
         body = resp.json()
         assert "si mesmo" in str(body)
+
+
+# ---------------------------------------------------------------------------
+# /me + /me/roles — added by Phase 4 (Pattern D resolution, 2026-05-20).
+# These replace the frontend supabase.from('profiles') + supabase.from('user_roles')
+# bypass hooks. See useUserProfile.ts + useUserRoles.ts + KB Pattern D.
+# ---------------------------------------------------------------------------
+
+class TestObterMeuProfile:
+    def test_returns_current_user_profile(self, client):
+        # Default fixture user id is "test-user-123"
+        client._mock_supabase.set_table_data("profiles", [
+            {"id": "test-user-123", "nome": "Me", "email": "me@test.com"},
+        ])
+        resp = client.get("/api/profiles/me")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["id"] == "test-user-123"
+
+    def test_404_when_profile_missing(self, client):
+        client._mock_supabase.set_table_data("profiles", [])
+        resp = client.get("/api/profiles/me")
+        assert resp.status_code == 404
+
+
+class TestListarMinhasRoles:
+    def test_returns_role_names_list(self, client):
+        client._mock_supabase.set_table_data("user_roles", [
+            {"user_id": "test-user-123", "role": "admin"},
+            {"user_id": "test-user-123", "role": "coordenador"},
+        ])
+        resp = client.get("/api/profiles/me/roles")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert sorted(body["data"]) == ["admin", "coordenador"]
+
+    def test_empty_list_when_no_roles(self, client):
+        client._mock_supabase.set_table_data("user_roles", [])
+        resp = client.get("/api/profiles/me/roles")
+        assert resp.status_code == 200
+        assert resp.json()["data"] == []

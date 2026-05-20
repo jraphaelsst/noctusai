@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase, useAuthStore } from '@noctusai/seed/infra';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 
 export function useUserProfile() {
   const { user } = useAuthStore();
@@ -8,15 +8,10 @@ export function useUserProfile() {
     queryKey: ['user-profile', user?.id],
     queryFn: async () => {
       if (!user) return null;
-
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
-      if (error) throw error;
-      return data;
+      // Backend route /api/profiles/me replaces the prior supabase.from('profiles') bypass
+      // (Pattern D resolution, Phase 4, 2026-05-20). RLS still gates the row.
+      const res = await api.get<{ data: any }>('/api/profiles/me');
+      return res.data;
     },
     enabled: !!user,
   });

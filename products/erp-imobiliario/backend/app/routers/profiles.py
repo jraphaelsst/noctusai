@@ -43,6 +43,29 @@ async def listar_profiles(auth = Depends(get_current_user)):
     return success_response(result.data or [], total=len(result.data or []))
 
 
+@router.get("/me")
+async def obter_meu_profile(auth = Depends(get_current_user)):
+    """Return the current user's profile row (replaces FE supabase.from('profiles') bypass)."""
+    user, token = auth
+    db = get_user_client(token)
+
+    result = db.table("profiles").select("*").eq("id", user.id).single().execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    return success_response(result.data)
+
+
+@router.get("/me/roles")
+async def listar_minhas_roles(auth = Depends(get_current_user)):
+    """Return current user's role names (replaces FE supabase.from('user_roles') bypass)."""
+    user, token = auth
+    db = get_user_client(token)
+
+    result = db.table("user_roles").select("role").eq("user_id", user.id).execute()
+    roles = [row.get("role") for row in (result.data or []) if row.get("role")]
+    return success_response(roles, total=len(roles))
+
+
 @router.post("")
 async def criar_profile(body: ProfileCreate, auth = Depends(get_current_user)):
     """Create a new user. Uses service role to create auth user."""

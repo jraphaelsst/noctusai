@@ -1,37 +1,30 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase, useAuthStore } from '@noctusai/seed/infra';
-import { useIsAdmin } from '@/hooks/useUserRole';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 import { Negociacao, StatusNegociacao } from '@/types/imoveis';
 
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
+//
+// Routes through backend `/api/negociacoes` (Pattern D resolution, Phase 4,
+// 2026-05-20). The pre-existing role-aware visibility filter (admin sees
+// everything; non-admin sees rows where they are proprietario or ofertante)
+// now lives on the backend — security: tampered client predicates can no
+// longer broaden visibility.
 
 export function useNegociacoes(filtroStatus: StatusNegociacao | 'todas') {
   const { user } = useAuthStore();
-  const { isAdmin } = useIsAdmin();
 
   return useQuery({
     queryKey: ['negociacoes', user?.id, filtroStatus],
     queryFn: async () => {
       if (!user) return [];
-
-      let query = supabase
-        .from('negociacoes')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!isAdmin) {
-        query = query.or(`cliente_proprietario_id.eq.${user.id},cliente_ofertante_id.eq.${user.id}`);
-      }
-
-      if (filtroStatus !== 'todas') {
-        query = query.eq('status_etapa', filtroStatus);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as Negociacao[];
+      const query =
+        filtroStatus && filtroStatus !== 'todas'
+          ? `?status_etapa=${encodeURIComponent(filtroStatus)}`
+          : '';
+      const res = await api.get<{ data: Negociacao[] }>(`/api/negociacoes${query}`);
+      return (res.data || []) as Negociacao[];
     },
     enabled: !!user,
   });

@@ -54,6 +54,7 @@ from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
+from noctusai_lib.api.crud_safety import delete_or_404
 from app.services.certidoes_service import (
     CERTIDOES_CONFIG,
     TJSP_COOLDOWN_SECONDS,
@@ -342,6 +343,8 @@ async def excluir_consulta(consulta_id: str, auth = Depends(get_current_user)):
     db = get_user_client(token)
     org_id = get_org_id(user)
 
+    # Verify existence up-front so the 404 path doesn't perform storage
+    # cleanup against a non-existent consulta.
     check = db.table("certidao_consultas").select("id").eq("id", consulta_id).execute()
     if not check.data:
         raise HTTPException(status_code=404, detail="Consulta não encontrada")
@@ -355,8 +358,10 @@ async def excluir_consulta(consulta_id: str, auth = Depends(get_current_user)):
         admin_db = get_admin_client()
         _delete_storage_files(resultados.data or [], org_id, admin_db)
 
-    # CASCADE will delete resultados
-    db.table("certidao_consultas").delete().eq("id", consulta_id).execute()
+    # CASCADE will delete resultados. Uses delete_or_404 for the consistent
+    # canonical delete shape — the existence-recheck is cheap and stays
+    # tolerant of a between-check-and-delete cascade race.
+    delete_or_404(db, "certidao_consultas", ("id", consulta_id), message="Consulta não encontrada")
 
     log_action(
         user.id, "excluir", "certidao_consulta", consulta_id,

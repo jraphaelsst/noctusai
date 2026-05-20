@@ -7,32 +7,45 @@ import { Badge } from '@noctusai/seed/components/ui/badge';
 import { toast } from 'sonner';
 import { Settings, Key, Eye, EyeOff, Save, Trash2, Pencil, X, Plug, Loader2 } from 'lucide-react';
 import { supabase, api } from '@noctusai/seed/infra';
+import { createApiClient } from '@noctusai/lib/api';
 
 const CORE_API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:8000';
 
+// Cross-product reach: ERP frontend → core backend (`/api/settings/org`).
+// Refactored 2026-05-20 (Phase 4) from raw `fetch()` to the seed
+// `createApiClient` factory — token bridges from the supabase session
+// (ERP's auth source) into the Authorization header expected by core.
+// N=1 cross-product reach: cataloged at
+// `KB § PATTERNS/accept-with-rationale.md § ERP Configuracoes reaches into core`
+// (refactor-to-factory is the close shape; cross-product helper deferred
+// until a second site appears).
+const coreClient = createApiClient({
+  getBaseUrl: () => CORE_API_URL,
+  getAuthToken: async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  },
+});
+
 async function coreApi(method: string, path: string, body?: unknown) {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
-  let res: Response;
   try {
-    res = await fetch(`${CORE_API_URL}${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch {
-    throw new Error(`Servidor Core indisponível (${path}). Verifique se o backend está rodando.`);
+    const m = method.toUpperCase();
+    if (m === 'GET') return await coreClient.get(path);
+    if (m === 'POST') return await coreClient.post(path, body);
+    if (m === 'PATCH') return await coreClient.patch(path, body);
+    if (m === 'PUT') return await coreClient.put(path, body);
+    if (m === 'DELETE') return await coreClient.delete(path);
+    throw new Error(`Método HTTP não suportado: ${method}`);
+  } catch (e: any) {
+    // Network failures bubble through createApiClient as a generic Error.
+    // Preserve the original "Servidor Core indisponível" UX for the
+    // settings page when the core backend isn't reachable.
+    const msg = String(e?.message ?? '');
+    if (msg.startsWith('Failed to fetch') || msg.includes('NetworkError') || msg.includes('ECONNREFUSED')) {
+      throw new Error(`Servidor Core indisponível (${path}). Verifique se o backend está rodando.`);
+    }
+    throw e;
   }
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    const message = data?.error?.message || data?.detail || `Erro HTTP ${res.status}`;
-    throw new Error(`[${res.status}] ${message}`);
-  }
-  return res.json();
 }
 
 interface OrgSetting {

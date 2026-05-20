@@ -12,11 +12,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/compone
 import { Button } from '@noctusai/seed/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@noctusai/seed/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@noctusai/seed/components/ui/tooltip';
-import { Info, Trophy, Target, Users, Award, TrendingUp } from 'lucide-react';
+import { Info, Trophy, Target, Users, Award, TrendingUp, RefreshCw } from 'lucide-react';
 import {
   useEquipes, usePeriodos, useCascadeResumo, useRankings, useMetasConfig,
   useMetasEquipe,
 } from '@/hooks/useMetasDomain';
+import { useAtualizarStatusMetas } from '@/hooks/useAtualizarStatusMetas';
+import { useIsAdmin } from '@/hooks/useUserRole';
 import { RankBadge, ScorePill, ProgressRing } from '@noctusai/lib/design-system';
 import {
   MetaVsRealizadoChart, TopAgentsBarChart, EquipeProgressRings,
@@ -48,6 +50,8 @@ export default function MetasDashboard() {
   const configQ = useMetasConfig();
   const cascade = useCascadeResumo(periodoId);
   const rankings = useRankings();
+  const { isAdmin } = useIsAdmin();
+  const atualizarStatus = useAtualizarStatusMetas();
 
   const openPeriodos = (periodosQ.data ?? []).filter(p => p.status !== 'fechado');
   if (openPeriodos[0] && !periodoId) setPeriodoId(openPeriodos[0].id);
@@ -69,6 +73,19 @@ export default function MetasDashboard() {
           </p>
         </div>
         <div className="flex gap-2">
+          {isAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => atualizarStatus.mutate()}
+              disabled={atualizarStatus.isPending}
+              title="Recalcula o status de todas as metas (admin)"
+            >
+              <RefreshCw
+                className={`w-4 h-4 mr-2 ${atualizarStatus.isPending ? 'animate-spin' : ''}`}
+              />
+              {atualizarStatus.isPending ? 'Recalculando...' : 'Recalcular status'}
+            </Button>
+          )}
           <Button variant="outline" onClick={() => navigate('/metas')}>
             Metas individuais
           </Button>

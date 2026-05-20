@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase, useAuthStore } from '@noctusai/seed/infra';
+import { api, useAuthStore } from '@noctusai/seed/infra';
 
 export function useUserRoles() {
   const { user } = useAuthStore();
@@ -8,14 +8,10 @@ export function useUserRoles() {
     queryKey: ['user-roles', user?.id],
     queryFn: async () => {
       if (!user) return [];
-
-      const { data, error } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', user.id);
-
-      if (error) throw error;
-      return data?.map(r => r.role) || [];
+      // Backend route /api/profiles/me/roles replaces the prior supabase.from('user_roles') bypass
+      // (Pattern D resolution, Phase 4, 2026-05-20). Backend returns role names array.
+      const res = await api.get<{ data: string[] }>('/api/profiles/me/roles');
+      return res.data || [];
     },
     enabled: !!user,
   });

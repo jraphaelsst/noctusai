@@ -17,6 +17,7 @@ from app.dependencies import get_current_user, get_user_client
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/condominios", tags=["Condominios"])
@@ -138,5 +139,5 @@ async def deletar_condominio(condominio_id: str, auth = Depends(get_current_user
     user, token = auth
     db = get_user_client(token)
 
-    db.table("condominios").delete().eq("id", condominio_id).execute()
+    delete_or_404(db, "condominios", ("id", condominio_id), message="Condomínio não encontrado")
     return ok_response("Condomínio excluído com sucesso")

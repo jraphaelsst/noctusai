@@ -27,6 +27,7 @@ from app.routers import (
     regras_pontuacao, metas_configuracao,
     metas_equipe, meta_fechamentos, meta_rankings, metas_digest, meta_eventos,
     vista_showcase,
+    negociacoes,
 )
 
 
@@ -102,6 +103,7 @@ app = create_product_app(
         metas_digest.router,
         meta_eventos.router,
         vista_showcase.router,
+        negociacoes.router,
     ],
     version="0.2.0",
     limiter=limiter,

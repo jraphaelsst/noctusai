@@ -31,6 +31,7 @@ from app.responses import paginated_response, success_response, ok_response, cal
 from app.services.seguros_service import SegurosService
 from app.config import settings
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/seguros", tags=["Seguros"])
@@ -225,12 +226,7 @@ async def excluir_seguro(seguro_id: str, auth = Depends(get_current_user)):
     user, token = auth
     db = get_user_client(token)
 
-    # Verify it exists
-    existing = db.table("seguros").select("id").eq("id", seguro_id).single().execute()
-    if not existing.data:
-        raise HTTPException(status_code=404, detail="Seguro não encontrado")
-
-    db.table("seguros").delete().eq("id", seguro_id).execute()
+    delete_or_404(db, "seguros", ("id", seguro_id), message="Seguro não encontrado")
 
     log_action(
         user.id, "excluir", "seguro", seguro_id,
