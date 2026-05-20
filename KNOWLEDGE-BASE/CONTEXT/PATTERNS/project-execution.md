@@ -650,6 +650,33 @@ User directives, verbatim:
 
 ---
 
+### 2.13a Refinement — no-defer-mid-flight (2026-05-20)
+
+**Rule.** The exception list of §2.13 narrows. The ONLY sanctioned reasons to file a follow-up project / stub are:
+1. **External structural blocker** — a vendor API the platform does not have write access to (e.g. Meta Graph read-only-v1, a multi-week security project), a hardware-locked dependency, an unresolved infra capability. The blocker must be **named and external**, not "we haven't decided" / "out-of-scope for this project".
+2. **Hard-to-reverse work needing explicit user gating** — destructive migrations, billing impact, public API contract breaks. The user's go/no-go IS the gate.
+
+**Everything else implements inline. "Pending interrogation", "needs a decision", "out-of-scope", "phase 4 follow-up" — IF the path is buildable, BUILD IT.** Make a reasonable provisional call per auto-mode; surface the call as a §11 entry the user can redirect. The reflex *"I'll file a separate project for this"* is itself the slip signature — when you catch yourself reaching for the PROJECT-TEMPLATE in the middle of close-out, stop and ask *"why not now?"* — the answer is almost always *"no real reason"*.
+
+**The discriminator (one question, sharper).** *"Is there an external blocker I cannot move past in this pass?"* — **no ⇒ implement now, same commit.** **yes ⇒ defer with the external blocker named** (a vendor API quota, a missing OAuth scope, a CI capability the platform doesn't have) — never "we haven't talked about it yet" / "the user hasn't decided" (in auto-mode the agent IS the decider, with the §11 escape hatch).
+
+**Why the refinement.** §2.13 still allowed "needs-a-user-decision" as a deferral category. In auto-mode that escape hatch is too wide — the agent can label *any* unclear-call as "pending interrogation" and ship a stub. Auto-mode contract: make the call, ship the work, **the user redirects via §11 if the call was wrong**. Stubs-pending-interrogation are pre-emptive over-conservatism — they assume the user will redirect (they usually won't) and they leave the work undone at close.
+
+**Worked example (2026-05-20 — the bit).** `media-creator-w2-4` close-out: about to file `image-gen-seed-adapter` as a "Filed — pending §7 interrogation" stub PROJECT.md. User intervened: *"dont file nothing for later, please implement all mid-flight. Also doc this to our methodology."* — stub deleted, `noctusai_lib.integrations.image_gen` Protocol+Fake+Real(Gemini)+factory implemented inline, wired to `/render` endpoint, 6 new tests, FE updated, three-way-synced same session. Total inline cost: ~30 min vs ~3 weeks of follow-up project overhead (interrogate → plan → dispatch → review → land → consumer-wire).
+
+**Anti-patterns (extends §2.13).**
+- "Filing the gap as a follow-up to satisfy traceability" — code is the trace; a follow-up file says "we know about this but did nothing", which is what §2.13a forbids.
+- "Pending §7 interrogation" stubs in PROJECT.md — auto-mode = the agent IS §7; the call ships as a §11 Change Log entry the user can flip.
+- "Phase 4 of this project is filed separately as `<x>-seed-adapter`" — phases collapse into the project unless externally blocked.
+- "We'll lift this to seed when N=2" — if the cleaner shape IS already cross-cutting and the lift is buildable now, lift now. The N=2 trigger is for ambiguous-cross-cutting cases, not for cases that announce themselves at design time.
+
+User directives, verbatim:
+> *"dont file nothing for later, please implement all mid-flight. Also doc this to our methodology. I know we have the filling rule, but lets change it to mid-flight implementations."*
+
+**Three-way-synced 2026-05-20**: this §2.13a + `CLAUDE.md §1` (§2.13 rule entry tightened) + memory `feedback_in_flight_resolution.md` amendment + MEMORY.md unchanged (existing line covers both). Companion: §2.13 (parent rule), R5 defer≠resolve.
+
+---
+
 ## 2.14 Baseline-recovery briefs embed env-fingerprint at surfacing time (2026-05-20)
 
 **Rule.** A *-recovery / baseline-drain / "N pre-existing failures" brief MUST embed the surfacing-engineer's env-fingerprint at the moment of the baseline observation. The fingerprint pins **interpreter path + ≥4 watchlist packages**: `python --version`, `pip show {starlette, fastapi, supabase, pydantic, noctusai-lib}` (Editable Location row included). A downstream engineer reads the fingerprint FIRST and aborts P0-classification if their env differs — recovery briefs are about counting + classifying real failures, and **the failure-count is meaningless across env-drift boundaries**.

@@ -1,14 +1,20 @@
-"""Generation endpoints — the 3-stage LLM pipeline (storyboard / prompts / copy).
+"""Generation endpoints — the 4-stage LLM + image-gen pipeline.
 
-A 4th endpoint (``/render``) returns a typed ``gate=image_generation_not_configured``
-signal per gated-capability-honesty until the ``image-gen-seed-adapter``
-project ships ``noctusai_lib.integrations.image_gen``.
+- ``/generate/storyboard`` · ``/generate/prompts`` · ``/generate/copy`` —
+  LLM stages.
+- ``/render`` — image-generation stage, backed by the
+  ``noctusai_lib.integrations.image_gen`` seed adapter. When the org has
+  no Gemini key configured, the adapter resolves to ``FakeImageGenAdapter``
+  and the response carries ``configured=False`` + ``fake-image-gen.noctusai.local``
+  URLs — the loud "not configured" signal per
+  ``feedback_gated_capability_honesty``.
 """
 from __future__ import annotations
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from noctusai_lib.primitives.responses import success_response
 
@@ -18,6 +24,10 @@ from app.modules.media_creation.services.generation_service import (
     GenerationService,
 )
 from app.modules.media_creation.services.post_service import PostService
+
+
+class RenderRequest(BaseModel):
+    renderer: str = "nano_banana"
 
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -75,24 +85,23 @@ async def generate_copy(post_id: str, auth=Depends(get_current_user_org)):
 
 
 @router.post("/{post_id}/render")
-async def render_post(post_id: str, auth=Depends(get_current_user_org)):
-    """Typed never-faked gate signal until the image-gen seed adapter ships.
+async def render_post(
+    post_id: str,
+    body: RenderRequest | None = None,
+    auth=Depends(get_current_user_org),
+):
+    """Render slide images via the seed image-gen adapter (Gemini "Nano Banana").
 
-    Per ``feedback_gated_capability_honesty``: the endpoint EXISTS (so the
-    FE can call it unconditionally and react to the typed gate response),
-    rather than hiding the capability. When ``noctusai_lib.integrations.
-    image_gen`` ships, this handler will flip to real rendering without an
-    FE contract change.
+    Iterates over the post's slides, picks the renderer-flavored prompt
+    (``nano_banana`` default), calls the seed adapter, persists ``image_url``
+    + ``image_renderer`` per slide. Returns ``configured`` so the FE can
+    show a "configure Gemini key" prompt when the Fake fired.
     """
     user, _, _ = auth
-    _require_post(user, post_id)  # 404 if post doesn't belong to org
-    return {
-        "ok": False,
-        "gate": "image_generation_not_configured",
-        "message": (
-            "A geração de imagens será habilitada em uma fase posterior. "
-            "Por enquanto, copie os prompts gerados e cole no GalilAI, "
-            "Nano Banana ou Midjourney."
-        ),
-        "renderers_supported_when_enabled": ["nano_banana", "galilai", "midjourney"],
-    }
+    post = _require_post(user, post_id)
+    renderer = (body.renderer if body else "nano_banana") or "nano_banana"
+    try:
+        data = _gen_svc(user).render_post(post, renderer=renderer)
+    except GenerationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return success_response(data)

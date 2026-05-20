@@ -21,6 +21,13 @@ import json
 import logging
 from typing import Any, Optional
 
+from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.image_gen import (
+    FakeImageGenAdapter,
+    ImageGenAdapter,
+    ImagePromptInput,
+    get_image_gen_adapter,
+)
 from noctusai_lib.integrations.llm import chat_completion
 
 from app.modules.media_creation.prompts import (
@@ -36,16 +43,47 @@ class GenerationError(Exception):
     """Raised when the LLM returns an unparsable or self-flagged-error reply."""
 
 
-class GenerationService:
-    """Composes the 3-stage LLM pipeline for one post.
+def _default_gemini_key_provider(org_id: str | None = None) -> str | None:
+    return resolve_credential("gemini_api_key", org_id)
 
-    All methods are async (the LLM client is async). Callers are expected to
-    await from FastAPI handlers.
+
+def _slide_aspect_ratio(slide: dict[str, Any], post: dict[str, Any]) -> str:
+    """Pick the renderer aspect ratio from post format.
+
+    Instagram carousel + single-image → 1:1 (square). Forward-compat
+    video → 9:16 (story). Anything else → 1:1 default.
+    """
+    fmt = (post.get("format") or "carousel").lower()
+    if fmt == "video":
+        return "9:16"
+    return "1:1"
+
+
+class GenerationService:
+    """Composes the 3-stage LLM pipeline for one post + the image-render stage.
+
+    All LLM methods are async (the LLM client is async). Callers are expected
+    to await from FastAPI handlers. The image-render path is synchronous (the
+    seed image-gen adapter is sync).
+
+    ``image_gen_adapter`` is constructor-injectable for tests. In production
+    it defaults to ``get_image_gen_adapter(_default_gemini_key_provider,
+    org_id=self.org_id)`` — which returns ``FakeImageGenAdapter`` when no
+    Gemini key is resolved for the org (the Fake's ``fake-image-gen.noctusai.local``
+    URL is the loud "not configured" signal per
+    ``feedback_gated_capability_honesty``).
     """
 
-    def __init__(self, db, org_id: str):
+    def __init__(
+        self,
+        db,
+        org_id: str,
+        *,
+        image_gen_adapter: ImageGenAdapter | None = None,
+    ):
         self.db = db
         self.org_id = org_id
+        self._image_gen_adapter = image_gen_adapter
 
     # ── Stage 1: storyboard ─────────────────────────────────────────────
 
@@ -155,6 +193,119 @@ class GenerationService:
             .execute()
         )
         return data
+
+    # ── Stage 4: render (image generation) ──────────────────────────────
+
+    def render_post(
+        self,
+        post: dict[str, Any],
+        *,
+        renderer: str = "nano_banana",
+    ) -> dict[str, Any]:
+        """Storyboard prompts → real images via the seed image-gen adapter.
+
+        Iterates over the post's slides, picks the renderer-flavored prompt
+        (``nano_banana`` by default; ``galilai`` / ``midjourney`` if the
+        operator picks a different renderer in the FE), calls the seed
+        adapter, persists ``image_url`` + ``image_renderer`` onto each
+        slide.
+
+        Returns ``{configured, renderer, slides: [{slide_n, image_url,
+        renderer, model}]}``. ``configured`` is ``False`` when the adapter
+        is the Fake (no Gemini key resolved for the org) — that flag lets
+        the FE surface "configure your Gemini key" UI without inspecting
+        URL hosts.
+
+        Per ``feedback_gated_capability_honesty``: the endpoint ALWAYS
+        executes; the Fake's deterministic ``fake-image-gen.noctusai.local``
+        URL is the loud "not configured" signal, not a 503.
+        """
+        adapter = self._resolve_image_gen_adapter()
+        configured = not isinstance(adapter, FakeImageGenAdapter)
+
+        slides = (
+            self.db.table("mc_post_slides")
+            .select("*")
+            .eq("post_id", post["id"])
+            .eq("org_id", self.org_id)
+            .order("slide_n")
+            .execute()
+        )
+        slide_rows = slides.data or []
+        if not slide_rows:
+            raise GenerationError(
+                "slides_missing — run generate_storyboard + generate_image_prompts first"
+            )
+
+        prompt_column = {
+            "nano_banana": "prompt_nano_banana",
+            "galilai": "prompt_galilai",
+            "midjourney": "prompt_midjourney",
+        }.get(renderer)
+        if prompt_column is None:
+            raise GenerationError(
+                f"unsupported_renderer: {renderer!r} "
+                "(supported: nano_banana, galilai, midjourney)"
+            )
+
+        results: list[dict[str, Any]] = []
+        for slide in slide_rows:
+            prompt_text = slide.get(prompt_column)
+            if not prompt_text:
+                # Skip slides without a prompt — caller must regenerate
+                # prompts first. Don't silently fabricate one.
+                results.append({
+                    "slide_n": slide["slide_n"],
+                    "image_url": None,
+                    "renderer": renderer,
+                    "model": None,
+                    "skipped_reason": "prompt_missing",
+                })
+                continue
+            image = adapter.generate(
+                ImagePromptInput(
+                    prompt=prompt_text,
+                    renderer=renderer,
+                    aspect_ratio=_slide_aspect_ratio(slide, post),
+                    request_id=f"{post['id']}:{slide['slide_n']}",
+                ),
+                org_id=self.org_id,
+            )
+            (
+                self.db.table("mc_post_slides")
+                .update(
+                    {
+                        "image_url": image.image_url,
+                        "image_renderer": image.renderer,
+                    }
+                )
+                .eq("post_id", post["id"])
+                .eq("org_id", self.org_id)
+                .eq("slide_n", slide["slide_n"])
+                .execute()
+            )
+            results.append({
+                "slide_n": slide["slide_n"],
+                "image_url": image.image_url,
+                "renderer": image.renderer,
+                "model": image.model,
+                "latency_ms": image.latency_ms,
+            })
+
+        return {
+            "configured": configured,
+            "renderer": renderer,
+            "backend": adapter.backend,
+            "slides": results,
+        }
+
+    def _resolve_image_gen_adapter(self) -> ImageGenAdapter:
+        if self._image_gen_adapter is not None:
+            return self._image_gen_adapter
+        return get_image_gen_adapter(
+            key_provider=_default_gemini_key_provider,
+            org_id=self.org_id,
+        )
 
     # ── Helpers ─────────────────────────────────────────────────────────
 

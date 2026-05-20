@@ -86,7 +86,8 @@ KNOWLEDGE-BASE/
 │   │   ├── meta.md         ← Meta (Facebook Pages + Instagram Graph) consume-side reference — `noctusai_lib.integrations.meta` `__all__` + factory auth-resolution (system_user → user_oauth → Fake) + consume recipe + read-only-v1 gaps
 │   │   ├── whatsapp.md     ← WhatsApp connector consume-side reference — `noctusai_lib.integrations.whatsapp` `__all__` + WAHA vs Meta-Cloud-API backends + factory + webhook-router seam + lid-auth/dedup
 │   │   ├── google.md       ← Google integrations consume-side reference — Calendar/Maps/YouTube/Drive/Gmail `__all__` + factories + resolver injection + quota-cost docs + Gmail OAuth-only send+read v1 + seed-ahead consumer status
-│   │   └── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
+│   │   ├── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
+│   │   └── image-gen.md    ← Image generation consume-side reference — `noctusai_lib.integrations.image_gen` `__all__` + `get_image_gen_adapter` factory + Fake/Gemini-Real adapters + renderer-agnostic Protocol + cited social-wiring consumer + backend-extension recipe
 │   ├── backend/            ← per-product backend details
 │   │   ├── 01-CORE.md
 │   │   ├── 02-ERP.md
@@ -189,6 +190,7 @@ KNOWLEDGE-BASE/
 | WhatsApp connector consume-side (`noctusai_lib.integrations.whatsapp` exact `__all__` · WAHA `get_whatsapp_client` vs Meta-Cloud-API `get_meta_cloud_client` backends · `create_whatsapp_webhook_router` seam · lid-auth + dedup + response-registry · cited ERP consumer) | `CONTEXT/INTEGRATIONS/whatsapp.md` |
 | Google integrations consume-side — Calendar/Maps/YouTube/Drive/Gmail (each exact `__all__` · resolver/credential-store factory injection · YouTube quota-cost-documented Protocol · Drive dual download+read Protocols · Gmail OAuth-only send+read v1 with `OAuthGmailCredentials`/`GmailCredentialResolver`/`make_gmail_client` · seed-ahead consumer status · cited social-wiring + mcp/google/tools/gmail consumers) | `CONTEXT/INTEGRATIONS/google.md` |
 | Vista CRM REST API (auth, query convention, response envelope, error hierarchy, endpoint inventory, adapter contract, per-tenant calibration gap) | `CONTEXT/INTEGRATIONS/vista.md` |
+| Image generation consume-side (`noctusai_lib.integrations.image_gen` exact `__all__` · `get_image_gen_adapter` factory · `FakeImageGenAdapter` deterministic-URL signal · `GeminiImageGenAdapter` lazy-SDK Real backend · renderer-agnostic Protocol · cited social-wiring/media_creation consumer; v1 Gemini-only — OpenAI/Stability/Replicate extension recipe documented) | `CONTEXT/INTEGRATIONS/image-gen.md` |
 | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |
 | ERP backend | `CONTEXT/backend/02-ERP.md` |
 | PF backend | `CONTEXT/backend/03-PF.md` |

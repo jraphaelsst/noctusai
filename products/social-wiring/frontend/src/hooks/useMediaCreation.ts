@@ -109,11 +109,20 @@ interface Envelope<T> {
   data: T;
 }
 
-interface RenderGateResponse {
-  ok: false;
-  gate: "image_generation_not_configured";
-  message: string;
-  renderers_supported_when_enabled: string[];
+export interface RenderSlideResult {
+  slide_n: number;
+  image_url: string | null;
+  renderer: string;
+  model: string | null;
+  latency_ms?: number;
+  skipped_reason?: string;
+}
+
+export interface RenderResult {
+  configured: boolean;
+  backend: string;
+  renderer: string;
+  slides: RenderSlideResult[];
 }
 
 // ─── Brand kits ──────────────────────────────────────────────────────
@@ -331,24 +340,36 @@ export function usePostGeneration(postId: string | null, onUpdate?: () => void) 
     [postId, onUpdate],
   );
 
-  const render = useCallback(async (): Promise<RenderGateResponse | null> => {
-    if (!postId) return null;
-    setPending("render");
-    try {
-      const r = await api.post<RenderGateResponse>(
-        `/api/media-creation/posts/${postId}/render`,
-      );
-      if (r?.gate === "image_generation_not_configured") {
-        toast.info(r.message);
+  const render = useCallback(
+    async (renderer: "nano_banana" | "galilai" | "midjourney" = "nano_banana"): Promise<RenderResult | null> => {
+      if (!postId) return null;
+      setPending("render");
+      try {
+        const r = await api.post<Envelope<RenderResult>>(
+          `/api/media-creation/posts/${postId}/render`,
+          { renderer },
+        );
+        const data = r.data;
+        if (!data.configured) {
+          toast.info(
+            "Imagens geradas com placeholder (Fake). " +
+            "Configure GEMINI_API_KEY para a sua organização para imagens reais.",
+          );
+        } else {
+          const ok = data.slides.filter((s) => s.image_url).length;
+          toast.success(`${ok}/${data.slides.length} imagens renderizadas`);
+        }
+        onUpdate?.();
+        return data;
+      } catch (err: any) {
+        toast.error(err?.message ?? "Falha na renderização");
+        return null;
+      } finally {
+        setPending(null);
       }
-      return r;
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha na renderização");
-      return null;
-    } finally {
-      setPending(null);
-    }
-  }, [postId]);
+    },
+    [postId, onUpdate],
+  );
 
   return { run, render, pending };
 }

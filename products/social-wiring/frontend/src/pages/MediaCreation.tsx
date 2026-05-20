@@ -290,15 +290,15 @@ function PostDetail({
               3. Gerar legenda
             </Button>
             <Button
-              onClick={() => void render()}
-              disabled={pending !== null}
+              onClick={() => void render("nano_banana")}
+              disabled={pending !== null || !post.storyboard}
               size="sm"
               variant="secondary"
             >
               {pending === "render" && (
                 <Loader2 className="mr-2 h-3 w-3 animate-spin" />
               )}
-              Renderizar (em breve)
+              4. Renderizar imagens
             </Button>
           </div>
         </section>
@@ -315,7 +315,19 @@ function PostDetail({
                       <Badge variant="outline" className="text-[10px]">
                         {s.role}
                       </Badge>
+                      {s.image_renderer && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          {s.image_renderer}
+                        </Badge>
+                      )}
                     </div>
+                    {s.image_url && (
+                      <img
+                        src={s.image_url}
+                        alt={s.visual_brief ?? `Slide ${s.slide_n}`}
+                        className="mt-1 max-h-72 w-full rounded object-cover"
+                      />
+                    )}
                     {s.headline && (
                       <div className="text-base font-medium">{s.headline}</div>
                     )}

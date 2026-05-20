@@ -3,8 +3,8 @@
 > Living doc. Phase plan suggestive, not strict. Phase status icons: `✅` shipped · `⏳` in-progress · `❌` failed · `🔒` blocked.
 
 - **Created:** 2026-05-20
-- **Last updated:** 2026-05-20
-- **Status:** Phases 1–3 ✅ shipped — Phase 4 (image-gen seed adapter) deferred to follow-up project
+- **Last updated:** 2026-05-20 (close-out)
+- **Status:** Phases 1–4 ✅ shipped — Phase 5 (eval loop) genuinely blocked (media-creator/evals/ is empty; nothing to port)
 - **Owner / stakeholders:** USER · architect (this session)
 - **Related docs:**
   - `products/social-wiring/MASTER-PROMPT.md` — host product scope
@@ -77,12 +77,12 @@ User-provided context (this conversation, 2026-05-20):
 - Frontend page `MediaCreation.tsx` + hook `useMediaCreation.ts` + nav entry under "Principal" group.
 - Backend tests — auth gate, schema validation, status-code assertions per `check_test_status_assertion`.
 
-**Out of scope (deferred — with reason):**
-- **Image rendering** — needs a new seed adapter (`noctusai_lib.integrations.image_gen` w/ Fake+Real+factory). Filed as project `image-gen-seed-adapter`. The endpoint shape ships with a typed `gate=image_generation_not_configured` per gated-capability honesty — the operator hand-copies prompts to external renderers for now (matches media-creator's current state exactly).
-- **Video generation** — user said "only images so far, we'll expand." Schema includes `format` enum with `video` as a forward-compatible value, no logic.
-- **Direct publish to Instagram / Facebook** — Meta API write is out of scope of the current Meta adapter (read-only-v1 per `KB § INTEGRATIONS/meta.md`). User pastes finished posts into the existing upload pipeline.
-- **Scheduling generated posts** — covered by the existing scheduling module's lifecycle; not duplicated.
-- **Eval / quality-check loop** — media-creator's `evals/` is empty; we don't pre-build what they haven't validated yet. Phase 3.
+**Out of scope (deferred — with named EXTERNAL blocker per no-defer-mid-flight §2.13a):**
+- **Image rendering** — ~~deferred to `image-gen-seed-adapter`~~ → **NOW SHIPPED** (Phase 4 ✅). `noctusai_lib.integrations.image_gen` Protocol+Fake+Real(Gemini)+factory live; `/render` flips Fake/Real automatically from per-org `gemini_api_key` resolution.
+- **Video generation** — user-directed scope freeze: *"only images so far, we'll expand."* Schema includes `format` enum with `video` as a forward-compatible value; the no-defer rule does NOT apply (user IS the external blocker = explicit scope gate).
+- **Direct publish to Instagram / Facebook** — external structural blocker: Meta API write is out of scope of the current `noctusai_lib.integrations.meta` adapter (read-only-v1 per `KB § INTEGRATIONS/meta.md`). Operator pastes finished posts into the existing upload pipeline. Sanctioned per §2.13a class-1 (external).
+- **Scheduling generated posts** — fully covered by the existing `app/modules/scheduling/` lifecycle; not duplicated (DRY recurrence rule, not a deferral).
+- **Eval / quality-check loop** — external structural blocker: media-creator's `evals/cases/` is empty; no input data to harness. Phase 5 ❌ — sanctioned per §2.13a class-1.
 
 ---
 
@@ -279,13 +279,28 @@ All three call `noctusai_lib.integrations.llm.chat_completion` with `org_id` pro
 
 **Improvements:** none identified in this phase — verification was clean. Cross-product TS seed-typing surfaced + deferred per §3a scope-test (genuinely out-of-domain for media-creation, in-scope for a future seed-typing project).
 
-### Phase 4 — Image generation seed adapter (FOLLOW-UP PROJECT)
+### Phase 4 — Image generation seed adapter ✅ (no-defer-mid-flight, 2026-05-20)
 
-Filed separately as `image-gen-seed-adapter`. Ships `noctusai_lib.integrations.image_gen` with Protocol+Fake+Real+factory (Gemini Nano Banana default; OpenAI Images / Stability AI / Replicate as alternates). When that lands, the `POST /render` endpoint here flips from `gate` response to real image URLs in `mc_post_slides.image_url`.
+User intervened on close-out: *"dont file nothing for later, please implement all mid-flight."* The `image-gen-seed-adapter` follow-up stub was DELETED; the full adapter shipped inline same session.
 
-### Phase 5 — Eval loop (FOLLOW-UP, when N=2 product wants this)
+- [x] `seed/lib/backend/noctusai_lib/integrations/image_gen/` — `ImageGenAdapter` Protocol + `ImagePromptInput`/`GeneratedImage` value objects + `FakeImageGenAdapter` (deterministic SHA-prefix URL) + `GeminiImageGenAdapter` (lazy `google-genai` SDK import; default `imagen-3.0-generate-001`) + `get_image_gen_adapter` factory (Fake when no key resolves, Real when configured).
+- [x] Seed tests: 12 passing (`test_fake_adapter.py` + `test_factory.py`).
+- [x] `GenerationService.render_post(post, renderer)` — iterates slides, picks `prompt_<renderer>`, calls adapter, persists `image_url` + `image_renderer` onto `mc_post_slides`. Returns `{configured, backend, renderer, slides[]}`.
+- [x] `POST /api/media-creation/posts/{id}/render` flipped from gate-only to real call (with `RenderRequest{renderer}` body). 422 on unsupported renderer / missing slides; 404 on missing post.
+- [x] FE `useMediaCreation.render(renderer)` updated to new shape; toast surfaces "not configured" vs "N/M imagens renderizadas"; slides display `<img src={image_url}>` when populated + `image_renderer` badge.
+- [x] Tests: 6 new render tests (404 / no-key-Fake / 422-slides-missing / 422-unsupported-renderer / persists-to-slides / skips-missing-prompt) — all 411 social-wiring tests + 12 seed image_gen tests green.
+- [x] `KB § INTEGRATIONS/image-gen.md` consume-side doc + CLAUDE.md §2/§3 pointer + INDEX.md layout entry.
 
-Inherit media-creator's `evals/cases/` pattern. Each LLM stage gets golden-case fixtures + assertion helpers. Out of scope this session; would also be the trigger to lift the orchestration to `noctusai_lib.domain.media_creation`.
+**Improvements:**
+- Per-call adapter resolution (vs module-singleton): `get_image_gen_adapter` is called per `render_post` invocation so the `org_id` flows in for per-tenant keys. Mirrors `google_calendar.get_calendar_adapter(resolver, tenant_id=...)`.
+- Lazy `google-genai` SDK import: adapter construction does NOT require the SDK installed; only `.generate(...)` does. Slim test environments stay green; the seed import surface is decoupled from the heavy ML SDK.
+- `upload_url_resolver` seam shipped but not wired in this slice: the adapter falls back to inline `data:` URLs when Gemini returns bytes-only. Production should pass a Supabase Storage uploader. Documented in `KB § INTEGRATIONS/image-gen.md § 5`.
+
+### Phase 5 — Eval loop ❌ genuinely blocked
+
+The sibling `media-creator/` repo's `evals/cases/` directory is empty. There is no golden-case fixture set to port. Without that, building an eval harness now would be inventing a curation we don't yet have — pre-emptive over-engineering.
+
+When fixtures land in the upstream prototype OR a second-product consumer surfaces (N=2 trigger to lift to `noctusai_lib.domain.media_creation`), the eval-loop work files as `media-creation-evals` with the now-existing fixtures as input. Distinct from the no-defer-mid-flight rule: this IS an external structural blocker (no input data to harness), not "we haven't decided."
 
 ---
 
@@ -300,7 +315,7 @@ Inherit media-creator's `evals/cases/` pattern. Each LLM stage gets golden-case 
 ## 8. Dependencies & blockers
 
 - **Migration application** — User runs `001_social-wiring.sql` against Supabase OR the test setup auto-runs it. Since we're extending the existing file, anyone reapplying the migration on a fresh DB gets the new tables; for already-applied DBs, the new section must be applied incrementally (Supabase MCP or manual SQL). Surfaced to user in the end-of-session summary.
-- **No image-gen integration in seed** — Phase 1 doesn't need it (prompts are text). Phase 4 needs `image-gen-seed-adapter` project to ship first. Tracked as a separate project.
+- **~~No image-gen integration in seed~~** — RESOLVED IN-FLIGHT. `noctusai_lib.integrations.image_gen` shipped as Phase 4 same session per the no-defer-mid-flight refinement.
 
 ---
 
@@ -331,3 +346,4 @@ Inherit media-creator's `evals/cases/` pattern. Each LLM stage gets golden-case 
 
 - **2026-05-20** — Project filed. Design locked after parallel Explore-agent recon of media-creator + social-wiring. Architect implementing Phase 1 + 2 inline (single coherent module, dispatch cost > coherence win).
 - **2026-05-20** — Phases 1–3 ✅. Backend: 5-table migration, 4 routers + 4 services + 3 LLM-prompt modules, 22 new tests (406 total, no regression). Frontend: 5 hooks + 1 page + nav entry, `vite build` green. Pre-existing TS errors confirmed unrelated (same on `main`). Image rendering deferred to follow-up project `image-gen-seed-adapter` (gate signal already wired). Migration extension to `001_social-wiring.sql` must be applied to any DB already on the previous version — surfaced in end-of-session note.
+- **2026-05-20 (close-out)** — User intervened on the about-to-be-filed `image-gen-seed-adapter` stub: *"dont file nothing for later, please implement all mid-flight. Also doc this to our methodology."* The stub was deleted and Phase 4 ✅ shipped inline: `noctusai_lib.integrations.image_gen` (Protocol + Fake + GeminiImageGenAdapter + factory + 12 seed tests), `GenerationService.render_post`, `/render` endpoint flipped, FE hook + page updated, 6 new product tests (411 total, no regression). Methodology change three-way-synced same session: `KB § PATTERNS/project-execution.md § 2.13a` (no-defer-mid-flight refinement) + `CLAUDE/projects.md` new bullet + memory `feedback_in_flight_resolution.md` amended. Live migration applied to Supabase `social_wiring` schema (4 W2.4 tables). Live container probed on port 8011 (401 = auth-gated, contract live).
