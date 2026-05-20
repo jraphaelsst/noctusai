@@ -7,8 +7,9 @@
 > diagnostic order, and the methodology for safe container changes.
 >
 > **Status.** Starting point — consolidates the 2026-05-19 session
-> bumps (≈8 distinct learnings) into one operational reference. Will
-> refine as more bumps surface. Bumps codified elsewhere (KB pattern
+> bumps into one operational reference (current count: §3.1-3.18; row
+> count grows as new bumps surface — don't hand-cite a number). Bumps
+> codified elsewhere (KB pattern
 > docs, memory) are pointed at here so this stays the **single entry
 > point** for "what does it take to operate the fleet."
 
@@ -239,6 +240,20 @@ Eight learnings codified this session. Each row: **symptom · root · fix
 - **Root:** Two+ agents shared the primary checkout; one ran `git switch` → yanked branch under a peer.
 - **Fix:** each concurrently-active agent in its **own `git worktree`**; the primary tree's branch is owned by one driver. Reflog = truth; commits never lost; recover by switch-back / cherry-pick.
 - **Pointer:** `branching-and-merging.md § 9a` · `feedback_concurrent_agents_never_share_checkout`.
+
+### 3.17 Transient `ECONNRESET` aborts a 50-min npm install
+- **Symptom:** Multi-product `docker compose build` dies at ~80 min with `npm error code ECONNRESET ... network request to https://registry.npmjs.org/<pkg>.tgz failed`; image never tagged; entire build wasted.
+- **Root:** A single dropped TLS connection on one tarball fetch (~5% of long installs); npm's default `--fetch-retries=2` exhausts on transient registry blips, especially with multiple parallel product builds competing for network.
+- **Fix:** add an `ARG NPM_RETRY="--fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000"` to the canonical `runtime-watch` Dockerfile and append it to every `npm install` call there. Cache mount (`--mount=type=cache,target=/root/.npm`) amortizes after the first successful pass, so this only stings the cold build.
+- **Validated:** Phase 2 seed pilot built in ~26 min after retry args added (was failing at ~85 min before).
+- **Pointer:** `containerization.md § 3.2b` (extended) · canonical `products/seed/backend/Dockerfile` `runtime-watch` block.
+
+### 3.18 Parallel-engineer dispatch slip — architect's sibling worktree IS shared (§9a.1)
+- **Symptom:** Engineer A's commit absorbs files from engineer B's parallel scope; scope check "printed leak" but commit ran anyway.
+- **Root:** Even when each parallel `Agent isolation:"worktree"` engineer gets its own harness worktree, their writes manifest in the **architect's sibling worktree + index** under the patch-return model. Combined with a non-blocking print-only scope check (`grep ... && echo leak || echo clean` exits 0 either way), the architect's `git commit` absorbs the leaked files.
+- **Fix:** **SERIALIZE engineer dispatches** even when scopes are file-disjoint — wait for engineer N's patch-return before dispatching N+1. **`git add` MUST be preceded by a BLOCKING scope check** (`if … ; then exit 1; fi`), never printing. **Engineer briefs say "WRITE PATCH FILE EARLY"** so the harness-watchdog kill doesn't lose the deliverable.
+- **Recovery from slip:** never force-push; amend the *next* commit to carry only the missing portion (fix-on-contact at commit boundary).
+- **Pointer:** `branching-and-merging.md § 9a.1` · `feedback_concurrent_agents_never_share_checkout` (refinement) · `feedback_scope_check_must_block_not_print` · `feedback_engineer_brief_patch_file_first`.
 
 ---
 

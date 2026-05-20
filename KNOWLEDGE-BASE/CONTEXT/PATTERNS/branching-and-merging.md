@@ -240,6 +240,53 @@ its own worktree, OR branch-state moves are serialized through one
 named driver. Sharing one checkout + independent branch-switching = the
 anti-pattern, every time.
 
+### 9a.1. Refinement — architect's sibling worktree IS a shared resource (2026-05-19, architect-caused)
+
+The cardinal rule's surface was peer agents `git switch`-ing the
+**primary** checkout. Same-session evidence extended it to a wider
+class: even when each parallel-dispatched engineer gets its own harness
+worktree under `.claude/worktrees/agent-*`, the **architect's sibling
+worktree** (e.g. `/Users/.../noctusai-wt-sw-google/`) functions as a
+shared resource under the harness's patch-return model — engineers'
+writes manifest in the architect's index/sibling-tree before the
+architect's own `git add`. Observed: 2 parallel `Agent
+isolation:"worktree"` dispatches (Phase 6a-yt + 6a-dr); the drive
+engineer's 14-file WIP was already staged in the architect's sibling
+worktree when the YT commit ran; a non-blocking print-only scope check
+(see [[feedback_scope_check_must_block_not_print]]) let the YT commit
+(`9fe25d4d`) absorb 6 `drive_api/*` files from the parallel drive scope.
+
+**Stricter rule, going forward:**
+
+1. **SERIALIZE dispatches**, even on file-disjoint scopes. The
+   branching-first "file-disjoint ⇒ safe parallel" guarantee (`§ 16`)
+   assumes per-engineer working tree isolation from the *architect's*
+   own working tree — which fails under the patch-return model. For any
+   wave whose engineers will write to the architect's sibling tree,
+   dispatch one at a time, await its patch return, then dispatch the
+   next. Token cost trades against authorship correctness.
+2. **`git add` MUST be IMMEDIATELY preceded by a *blocking* scope
+   check** (`if … ; then exit 1; fi`), never a printing one
+   (`&& echo leak`). See [[feedback_scope_check_must_block_not_print]].
+3. **Engineer briefs say "WRITE PATCH FILE EARLY"** — the deliverable
+   is the patch in `/tmp/<phase>.patch`, not the prose return. The
+   harness watchdog (~600 s stream silence) kills agents stalled in
+   return-text generation; the patch file in `/tmp` survives the kill →
+   architect salvages independently. See
+   [[feedback_engineer_brief_patch_file_first]].
+4. **Recovery from a slip is never force-push.** Amend the *next*
+   commit to carry ONLY the missing portion of the parallel agent's
+   work (fix-on-contact at commit boundary), then commit. Force-push
+   destroys; amend-forward preserves authorship.
+
+**Why this is the same rule, wider scope.** §9a forbids agents from
+**sharing the branch-state of one tree**. The refinement recognizes
+that under the patch-return model, the architect's sibling worktree
+*also* hosts engineer writes — making *it* a shared resource that
+parallel dispatches collide in. The cardinal rule applies; the
+operational gate is serialization (or, with a true patch-isolation
+mechanism in the future, parallelism reopens).
+
 ---
 
 ## 10. Merging methodology
