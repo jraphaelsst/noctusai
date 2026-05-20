@@ -32,7 +32,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
 | Core | 28 | 13 | 26 | 0 | 47 | 499 |
-| Erp Imobiliario | 59 | 53 | 67 | 66 | 116 | 1,708 |
+| Erp Imobiliario | 59 | 53 | 67 | 67 | 116 | 1,708 |
 | Personal Finance | 15 | 18 | 30 | 16 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 33 | 83 | 1,138 |
 | Seed | 2 | 1 | 8 | 1 | 5 | 10 |
@@ -40,7 +40,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 10 | 37 | 13 | 7 | 33 | 344 |
-| **Total** | **169** | **188** | **242** | **135** | **377** | **4,682** |
+| **Total** | **169** | **188** | **242** | **136** | **377** | **4,682** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
