@@ -32,14 +32,14 @@ from app.config import settings
 from app.dependencies import get_admin_client
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services.conversation_module import get_conversation_module
-from app.services.credential_store import CredentialStore, EncryptionNotConfigured
+from app.services.credential_vault import CredentialStore, EncryptionNotConfigured, build_credential_store
 from app.services.crm_service import CRMNotConfigured, CRMService
 from app.services.media_service import ResolvedMedia, make_media_service
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.waha_response_registry import record_waha_sample
 from app.services.whatsapp_chatbot_service import WhatsAppChatbotService
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
-from app.services.youtube_service import YouTubeService, YouTubeServiceError
+from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def _build_intake_service() -> WhatsAppIntakeService | None:
     # online so the assistant can tell the user what is missing.
     youtube: YouTubeService | None = None
     try:
-        store = CredentialStore(admin_supabase, settings.encryption_key)
+        store = build_credential_store(admin_supabase)
         youtube = YouTubeService(
             client_id=settings.youtube_client_id,
             client_secret=settings.youtube_client_secret,

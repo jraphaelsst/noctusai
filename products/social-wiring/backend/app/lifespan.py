@@ -84,7 +84,7 @@ async def on_startup() -> None:
     # eviction count in logs for visibility.
     try:
         import redis as _redis
-        from app.services.download_cache import DownloadCache
+        from app.modules.youtube.services.download_cache import DownloadCache
 
         cache_redis = _redis.from_url(settings.redis_url, decode_responses=True)
         cache = DownloadCache(

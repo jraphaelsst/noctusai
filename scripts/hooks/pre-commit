@@ -68,11 +68,27 @@ if have_py; then
     echo "[pre-commit] Updating KB auto-derived counts..."
     "$PY" "$CLI" --update-kb-counts 2>&1 | sed 's/^/[pre-commit] /'
 
+    # Restage count-refreshed docs — but ONLY docs ALREADY part of THIS
+    # commit. `git diff --name-only` lists every working-tree-modified KB
+    # doc regardless of author; blindly `git add`-ing them absorbs a
+    # CONCURRENT agent's uncommitted edits in a shared tree (observed 4×
+    # on 2026-05-19: a parallel n8n-connector session's KNOWLEDGE-BASE/
+    # MCP-SERVERS/n8n.md + CLAUDE.md kept getting swept into unrelated
+    # commits). That is a commit-only-your-own-work violation. A
+    # pre-commit hook must only ever stage what's in the commit, never
+    # sweep the tree. Scope: restage iff already staged here; loudly SKIP
+    # the rest (never silent — the committer stages it explicitly if
+    # intended). KB § PATTERNS/project-execution.md (hook-scope rule).
     CHANGED_DOCS=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
     if [[ -n "$CHANGED_DOCS" ]]; then
-        echo "[pre-commit] Staging updated KB docs:"
-        echo "$CHANGED_DOCS" | sed 's/^/[pre-commit]   /'
-        echo "$CHANGED_DOCS" | xargs -r git add
+        while IFS= read -r _doc; do
+            [[ -z "$_doc" ]] && continue
+            if git diff --cached --name-only -- "$_doc" 2>/dev/null | grep -qxF "$_doc"; then
+                git add -- "$_doc" && echo "[pre-commit]   restaged (count-refresh, already in commit): $_doc"
+            else
+                echo "[pre-commit]   SKIP $_doc — modified but NOT staged in this commit (not yours to absorb; stage it explicitly if intended)" >&2
+            fi
+        done <<< "$CHANGED_DOCS"
     fi
 else
     echo "[pre-commit] Skipping count refresh — python not found"

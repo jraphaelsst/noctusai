@@ -715,3 +715,392 @@ def test_encrypted_tokens_helper_round_trips_a_real_oauth_token():
     refresh = "1//09rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
     assert decrypt(encrypt(access, key), key) == access
     assert decrypt(encrypt(refresh, key), key) == refresh
+
+
+# ──────────────── oauth_router prefix / callback_paths seam ────────────────
+# Phase 3a: back-compat-defaulted seam so an absorbed product with
+# pre-registered Google-Cloud-Console redirect URIs can preserve them.
+
+
+def test_oauth_router_default_prefix_is_unchanged():
+    """No prefix arg → endpoints stay under the historical /api/oauth."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    client = _build_app_with_router(fake)
+    response = client.get(
+        "/api/oauth/vendor-a/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+
+
+def test_oauth_router_custom_prefix_mounts_all_endpoints_there():
+    """A custom prefix moves every endpoint; the old /api/oauth path 404s."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    app = FastAPI()
+    app.include_router(oauth_router(fake, prefix="/custom/auth"))
+    client = TestClient(app)
+
+    ok = client.get(
+        "/custom/auth/vendor-a/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["ok"] is True
+
+    authz = client.get(
+        "/custom/auth/vendor-a/authorize",
+        params={"state": "s", "redirect_uri": "r"},
+    )
+    assert authz.status_code == 200, authz.text
+
+    # Old prefix is gone.
+    gone = client.get(
+        "/api/oauth/vendor-a/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert gone.status_code == 404
+
+
+def test_oauth_router_callback_paths_preserves_legacy_absolute_path():
+    """A provider in callback_paths gets its callback at the exact
+    absolute legacy path, independent of `prefix` — the absorbed-product
+    pre-registered-redirect-URI seam."""
+    captured: list = []
+
+    async def hook(result: OAuthCallbackResult) -> None:
+        captured.append(result)
+
+    yt = FakeOAuthProvider(name="youtube")
+    cal = FakeOAuthProvider(name="calendar")
+    app = FastAPI()
+    app.include_router(
+        oauth_router(
+            yt,
+            cal,
+            on_callback=hook,
+            prefix="/api/oauth",
+            callback_paths={
+                "youtube": "/api/youtube/oauth/callback",
+                "calendar": "/api/calendar/oauth/callback",
+            },
+        )
+    )
+    client = TestClient(app)
+
+    yt_resp = client.get(
+        "/api/youtube/oauth/callback",
+        params={"code": "ytcode", "state": "org:1", "redirect_uri": "r"},
+    )
+    assert yt_resp.status_code == 200, yt_resp.text
+    assert yt_resp.json()["ok"] is True
+    assert yt_resp.json()["provider"] == "youtube"
+
+    cal_resp = client.get(
+        "/api/calendar/oauth/callback",
+        params={"code": "calcode", "state": "org:2", "redirect_uri": "r"},
+    )
+    assert cal_resp.status_code == 200, cal_resp.text
+    assert cal_resp.json()["provider"] == "calendar"
+
+    # Hook fired for both, tokens carried.
+    assert {r.provider for r in captured} == {"youtube", "calendar"}
+    assert all(r.tokens is not None for r in captured)
+
+    # The default <prefix>/{provider}/callback is NOT mounted for an
+    # overridden provider — the legacy path is the only callback surface.
+    default = client.get(
+        "/api/oauth/youtube/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert default.status_code == 404
+
+    # Non-callback endpoints still live under `prefix` for the
+    # overridden provider (only the callback path moves).
+    authz = client.get(
+        "/api/oauth/youtube/authorize",
+        params={"state": "s", "redirect_uri": "r"},
+    )
+    assert authz.status_code == 200, authz.text
+
+
+def test_oauth_router_callback_paths_unknown_provider_raises():
+    """callback_paths referencing an unregistered provider fails loud at
+    construction — not silently ignored."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    with pytest.raises(ValueError, match="unknown provider"):
+        oauth_router(fake, callback_paths={"not-registered": "/x/cb"})
+
+
+def test_oauth_router_callback_paths_default_none_is_full_back_compat():
+    """callback_paths=None (default) → every provider keeps the default
+    <prefix>/{provider}/callback; identical to the pre-seam behavior."""
+    fake = FakeOAuthProvider(name="vendor-a")
+    app = FastAPI()
+    app.include_router(oauth_router(fake, callback_paths=None))
+    client = TestClient(app)
+    resp = client.get(
+        "/api/oauth/vendor-a/callback",
+        params={"code": "c", "state": "s", "redirect_uri": "r"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+
+# ──────────────── Phase 3c: PKCE seam (use_pkce flag) ────────────────────
+# The N=3 worked instance of the absorbed-product-seed-shape-seam pattern
+# (see `KB § PATTERNS/absorbed-product-seed-shape-seam.md`). social-wiring's
+# YouTube OAuth flow had PKCE pre-absorption via the `google_auth_oauthlib`
+# default; the seed `GoogleProvider` was a confidential-client flow without
+# PKCE. The `use_pkce=False` default + this seam restores PKCE for social-
+# wiring (and any future absorbed PKCE consumer) without degrading the
+# seed's security posture or forking the consumer.
+
+
+# Back-compat (use_pkce=False default) — proven, not asserted
+def test_google_provider_default_use_pkce_is_false_back_compat():
+    """Constructor default `use_pkce=False` — existing consumers see
+    bit-identical behavior."""
+    provider = GoogleProvider(client_id="ci", client_secret="cs")
+    # The flag is private; we assert behavior in the URL test below. This
+    # test pins the constructor signature default.
+    import inspect
+
+    sig = inspect.signature(GoogleProvider.__init__)
+    assert sig.parameters["use_pkce"].default is False
+
+
+@pytest.mark.asyncio
+async def test_google_authorization_url_use_pkce_false_omits_pkce_params():
+    """`use_pkce=False` (default) — URL matches the pre-seam shape, no
+    `code_challenge` / `code_challenge_method`; `code_verifier` is None
+    on the returned `AuthorizationURL`."""
+    provider = GoogleProvider(client_id="my-client", client_secret="my-secret")
+    auth = await provider.authorization_url(
+        state="csrf-state",
+        scopes=["openid"],
+        redirect_uri="https://app.test/cb",
+    )
+    qs = parse_qs(urlparse(auth.url).query)
+    assert "code_challenge" not in qs
+    assert "code_challenge_method" not in qs
+    assert auth.code_verifier is None
+
+
+# PKCE-on — authorization_url
+@pytest.mark.asyncio
+async def test_google_authorization_url_use_pkce_true_emits_challenge_and_verifier():
+    """`use_pkce=True` → URL carries `code_challenge` +
+    `code_challenge_method=S256`; the verifier comes back to the consumer
+    on `AuthorizationURL.code_verifier` for replay at exchange time."""
+    provider = GoogleProvider(
+        client_id="my-client", client_secret="my-secret", use_pkce=True
+    )
+    auth = await provider.authorization_url(
+        state="csrf-state",
+        scopes=["openid"],
+        redirect_uri="https://app.test/cb",
+    )
+    qs = parse_qs(urlparse(auth.url).query)
+    assert qs["code_challenge_method"] == ["S256"]
+    challenge = qs["code_challenge"][0]
+    # Base64url-no-padding of a SHA256 digest → 43 chars
+    assert len(challenge) == 43
+    # Only the unreserved-no-padding alphabet
+    assert all(c.isalnum() or c in "-_" for c in challenge)
+    # Verifier comes back; RFC 7636 §4.1 length 43-128
+    assert auth.code_verifier is not None
+    assert 43 <= len(auth.code_verifier) <= 128
+    assert all(c.isalnum() or c in "-._~" for c in auth.code_verifier)
+
+
+@pytest.mark.asyncio
+async def test_google_authorization_url_use_pkce_true_verifier_matches_challenge():
+    """The `code_verifier` returned MUST hash to the embedded
+    `code_challenge` per RFC 7636 §4.2 (sha256 + base64url-no-padding)."""
+    import base64
+    import hashlib
+
+    provider = GoogleProvider(
+        client_id="ci", client_secret="cs", use_pkce=True
+    )
+    auth = await provider.authorization_url(
+        state="s", scopes=["openid"], redirect_uri="https://app.test/cb"
+    )
+    assert auth.code_verifier is not None
+    expected_challenge = (
+        base64.urlsafe_b64encode(
+            hashlib.sha256(auth.code_verifier.encode("ascii")).digest()
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    qs = parse_qs(urlparse(auth.url).query)
+    assert qs["code_challenge"] == [expected_challenge]
+
+
+@pytest.mark.asyncio
+async def test_google_authorization_url_each_call_generates_fresh_pkce_pair():
+    """A fresh verifier MUST be generated per call — never reused across
+    flows. (Anti-pattern: instance-level caching of the verifier.)"""
+    provider = GoogleProvider(
+        client_id="ci", client_secret="cs", use_pkce=True
+    )
+    a = await provider.authorization_url(
+        state="s1", scopes=["openid"], redirect_uri="r"
+    )
+    b = await provider.authorization_url(
+        state="s2", scopes=["openid"], redirect_uri="r"
+    )
+    assert a.code_verifier != b.code_verifier
+
+
+# PKCE-on — exchange_code
+@pytest.mark.asyncio
+async def test_google_exchange_code_use_pkce_true_includes_verifier_in_body():
+    """`exchange_code(..., code_verifier=<v>)` on a PKCE-mode provider
+    posts the verifier in the token body per RFC 7636 §4.5."""
+    payload = {
+        "access_token": "ya29.access",
+        "refresh_token": "1//refresh",
+        "expires_in": 3599,
+        "scope": "openid",
+        "token_type": "Bearer",
+    }
+    mock_client = _mock_async_client_returning(payload)
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        provider = GoogleProvider(
+            client_id="cid", client_secret="cs", use_pkce=True
+        )
+        await provider.exchange_code(
+            code="auth-code-xyz",
+            state="s",
+            redirect_uri="https://app/cb",
+            code_verifier="verifier-abc-123",
+        )
+    body = mock_client.post.await_args.kwargs["data"]
+    assert body == {
+        "code": "auth-code-xyz",
+        "client_id": "cid",
+        "client_secret": "cs",
+        "redirect_uri": "https://app/cb",
+        "grant_type": "authorization_code",
+        "code_verifier": "verifier-abc-123",
+    }
+
+
+@pytest.mark.asyncio
+async def test_google_exchange_code_use_pkce_true_missing_verifier_raises_loud():
+    """PKCE-mode provider + missing verifier ⇒ ValueError at the
+    consumer's call site (loud, before any network attempt). Without this
+    the token endpoint returns Google's `invalid_grant: Missing code
+    verifier` and the consumer has to chase the failure across logs."""
+    provider = GoogleProvider(
+        client_id="cid", client_secret="cs", use_pkce=True
+    )
+    with pytest.raises(ValueError, match="code_verifier"):
+        await provider.exchange_code(
+            code="c", state="s", redirect_uri="r"
+        )
+    with pytest.raises(ValueError, match="code_verifier"):
+        await provider.exchange_code(
+            code="c", state="s", redirect_uri="r", code_verifier=""
+        )
+
+
+@pytest.mark.asyncio
+async def test_google_exchange_code_use_pkce_true_mismatched_verifier_fails_per_google_contract():
+    """Mismatched verifier ⇒ Google returns 400 with
+    `invalid_grant`. The provider surfaces this as an
+    `httpx.HTTPStatusError` (the router wraps it in
+    `OAuthCallbackResult.error`)."""
+    payload = {"error": "invalid_grant", "error_description": "Bad code verifier"}
+    mock_client = _mock_async_client_returning(payload, status_code=400)
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        provider = GoogleProvider(
+            client_id="cid", client_secret="cs", use_pkce=True
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.exchange_code(
+                code="c",
+                state="s",
+                redirect_uri="r",
+                code_verifier="wrong-verifier",
+            )
+
+
+# Fake parity — same shape as Real
+@pytest.mark.asyncio
+async def test_fake_provider_use_pkce_default_false_back_compat():
+    """`FakeOAuthProvider()` default — `use_pkce=False`, URL has no PKCE
+    params, `code_verifier` is None. Existing consumer tests using the
+    Fake see zero change."""
+    fake = FakeOAuthProvider()
+    auth = await fake.authorization_url(
+        state="s", scopes=["scope.a"], redirect_uri="https://x.test/cb"
+    )
+    assert auth.code_verifier is None
+    qs = parse_qs(urlparse(auth.url).query)
+    assert "code_challenge" not in qs
+    assert "code_challenge_method" not in qs
+
+
+@pytest.mark.asyncio
+async def test_fake_provider_use_pkce_true_mirrors_real_shape():
+    """`FakeOAuthProvider(use_pkce=True)` mirrors `GoogleProvider`'s
+    PKCE shape — same `code_challenge_method=S256`, verifier returned,
+    verifier hashes to challenge. Consumer tests using the Fake exercise
+    the same code-paths the Real does."""
+    import base64
+    import hashlib
+
+    fake = FakeOAuthProvider(use_pkce=True)
+    auth = await fake.authorization_url(
+        state="s", scopes=["openid"], redirect_uri="https://x.test/cb"
+    )
+    qs = parse_qs(urlparse(auth.url).query)
+    assert qs["code_challenge_method"] == ["S256"]
+    assert auth.code_verifier is not None
+    assert 43 <= len(auth.code_verifier) <= 128
+    expected_challenge = (
+        base64.urlsafe_b64encode(
+            hashlib.sha256(auth.code_verifier.encode("ascii")).digest()
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    assert qs["code_challenge"] == [expected_challenge]
+
+
+@pytest.mark.asyncio
+async def test_fake_provider_use_pkce_true_round_trip_carries_verifier_in_raw():
+    """Round-trip via the Fake: authorize → persist verifier →
+    exchange_code with it. Verifier rides into `TokenSet.raw` so a
+    consumer test can assert end-to-end shape parity."""
+    fake = FakeOAuthProvider(use_pkce=True)
+    auth = await fake.authorization_url(
+        state="csrf", scopes=["openid"], redirect_uri="https://x.test/cb"
+    )
+    assert auth.code_verifier is not None
+    tokens = await fake.exchange_code(
+        code="ac", state="csrf", redirect_uri="https://x.test/cb",
+        code_verifier=auth.code_verifier,
+    )
+    assert tokens.raw["code_verifier"] == auth.code_verifier
+
+
+@pytest.mark.asyncio
+async def test_fake_provider_use_pkce_true_missing_verifier_raises_loud():
+    """Fake mirrors Real's loud failure: PKCE-on Fake + missing
+    verifier ⇒ ValueError, same message-shape as the Real."""
+    fake = FakeOAuthProvider(use_pkce=True)
+    with pytest.raises(ValueError, match="code_verifier"):
+        await fake.exchange_code(code="c", state="s", redirect_uri="r")
+
+
+def test_authorization_url_dataclass_has_default_none_code_verifier():
+    """`AuthorizationURL(url, state)` (no `code_verifier`) MUST still
+    construct — the field defaults to `None` so existing pre-PKCE
+    constructors keep working without change."""
+    au = AuthorizationURL(url="https://x", state="s")
+    assert au.code_verifier is None

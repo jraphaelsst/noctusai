@@ -37,10 +37,13 @@ from noctusai_lib.integrations.youtube.types import (
     TITLE_MAX_LEN,
     UPLOAD_QUOTA_UNITS,
     Channel,
+    ChannelInfo,
     ListResult,
     Playlist,
     PrivacyStatus,
+    ProcessingStatus,
     Video,
+    VideoFull,
     VideoUpload,
 )
 
@@ -59,6 +62,8 @@ class FakeYoutubeClient:
         channels: dict[str, Channel] | None = None,
         videos: dict[str, Video] | None = None,
         playlists: dict[str, Playlist] | None = None,
+        owned_channel_info: ChannelInfo | None = None,
+        owned_videos: list[VideoFull] | None = None,
     ) -> None:
         self.channels: dict[str, Channel] = dict(channels or {})
         self.videos: dict[str, Video] = dict(videos or {})
@@ -68,6 +73,26 @@ class FakeYoutubeClient:
         """Every `upload_video` call appends here, in order — tests
         assert against it without going near googleapiclient."""
         self._upload_seq: int = 0
+        self.thumbnails_set: list[dict[str, str]] = []
+        """Every `set_thumbnail` call appends a ``{video_id, thumbnail_path,
+        mime_type}`` dict here, in order — tests assert against it
+        without going near googleapiclient."""
+        self.processing_states: dict[str, ProcessingStatus] = {}
+        """Seed per-video processing state. When ``video_id`` is absent,
+        :meth:`get_processing_status` returns the default
+        "uploaded + processing + private" state (matches the YouTube
+        behavior immediately after `videos.insert`). Tests pre-populate
+        this dict to assert terminal states."""
+        self.owned_channel_info: ChannelInfo | None = owned_channel_info
+        """Seeded OAuth-authenticated channel metadata for
+        :meth:`get_channel_info_mine`. ``None`` mimics the
+        "OAuth account has no associated YT channel" branch — the
+        method raises :class:`ValueError` to match the Real adapter."""
+        self.owned_videos: list[VideoFull] = list(owned_videos or [])
+        """Seeded OAuth-owned video corpus for
+        :meth:`list_owned_videos`. Paged in insertion order — first
+        :attr:`PAGE_SIZE` items are page 1. Tests append in the order
+        they expect to see in pagination."""
 
     # ---- Quota helper ----------------------------------------------------
 
@@ -79,15 +104,22 @@ class FakeYoutubeClient:
 
     def _page(
         self,
-        items: list[Video],
+        items: list,
         page_token: str | None,
-    ) -> tuple[list[Video], str | None]:
-        """Slice `items` into a page of size `PAGE_SIZE`. `page_token`
-        is the integer offset (as a string), `None` for the first page.
-        Returns `(page_items, next_page_token)` — `next_page_token`
-        is `None` on the last page."""
+        page_size: int | None = None,
+    ) -> tuple[list, str | None]:
+        """Slice `items` into a page of size `page_size` (default
+        :attr:`PAGE_SIZE`). `page_token` is the integer offset (as a
+        string), `None` for the first page. Returns
+        `(page_items, next_page_token)` — `next_page_token` is `None`
+        on the last page.
+
+        `page_size` is honoured per-call to support
+        :meth:`list_owned_videos` exposing the YT-API `maxResults`
+        knob; existing callers omit it and inherit `PAGE_SIZE`."""
+        size = page_size if page_size is not None else self.PAGE_SIZE
         offset = int(page_token) if page_token else 0
-        end = offset + self.PAGE_SIZE
+        end = offset + size
         page_items = items[offset:end]
         next_token = str(end) if end < len(items) else None
         return page_items, next_token
@@ -153,6 +185,61 @@ class FakeYoutubeClient:
             quota_units_consumed=cost,
         )
 
+    async def get_video_full(self, video_id: str) -> VideoFull | None:
+        """1 quota unit (mirrors `videos.list?part=snippet,statistics,
+        status,contentDetails`). Resolves against :attr:`owned_videos`
+        by id (the rich projection lives there, not on the lean
+        :attr:`videos` dict). Returns ``None`` when not present."""
+        self._charge(1)
+        for v in self.owned_videos:
+            if v.id == video_id:
+                return v
+        return None
+
+    async def get_channel_info_mine(self) -> ChannelInfo:
+        """1 quota unit (mirrors `channels.list?mine=True`).
+
+        Returns the seeded :attr:`owned_channel_info`. Raises
+        :class:`ValueError` when none was seeded — mirrors the Real
+        adapter's "OAuth account has no associated YT channel"
+        branch."""
+        self._charge(1)
+        if self.owned_channel_info is None:
+            raise ValueError(
+                "channels.list?mine=True returned no items — the OAuth "
+                "account has no associated YouTube channel."
+            )
+        return self.owned_channel_info
+
+    async def list_owned_videos(
+        self,
+        *,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> ListResult[VideoFull]:
+        """101 quota units / page (mirrors `search.list?forMine` (100)
+        + `videos.list` (1)). When the page has no ids, only 100 is
+        charged (the `videos.list` step is skipped — matches the Real
+        adapter).
+
+        Pages :attr:`owned_videos` in insertion order. ``page_size`` is
+        honoured per-call (the test fixture can use a small value to
+        exercise pagination without seeding 50 entries)."""
+        page_items, next_token = self._page(
+            self.owned_videos, page_token, page_size=page_size
+        )
+        if not page_items:
+            cost = self._charge(100)
+            return ListResult(
+                items=[], next_page_token=next_token, quota_units_consumed=cost
+            )
+        cost = self._charge(101)
+        return ListResult(
+            items=list(page_items),
+            next_page_token=next_token,
+            quota_units_consumed=cost,
+        )
+
     async def upload_video(
         self,
         *,
@@ -182,7 +269,65 @@ class FakeYoutubeClient:
             quota_units_consumed=UPLOAD_QUOTA_UNITS,
         )
         self.uploaded.append(result)
+        # Seed a default "uploaded + processing" state so a follow-up
+        # get_processing_status sees the newly-uploaded video by id
+        # without the caller having to pre-populate processing_states.
+        self.processing_states.setdefault(
+            video_id,
+            ProcessingStatus(
+                video_id=video_id,
+                upload_status="uploaded",
+                processing_status="processing",
+                privacy_status=privacy_status,
+            ),
+        )
         return result
+
+    async def set_thumbnail(
+        self,
+        *,
+        video_id: str,
+        thumbnail_path: str,
+        mime_type: str = "image/jpeg",
+    ) -> None:
+        """50 quota units (mirrors `thumbnails.set`).
+
+        The fake never touches the filesystem — `thumbnail_path` is
+        recorded verbatim on `self.thumbnails_set` for post-hoc
+        assertions, alongside `video_id` + `mime_type`."""
+        self._charge(50)
+        self.thumbnails_set.append(
+            {
+                "video_id": video_id,
+                "thumbnail_path": thumbnail_path,
+                "mime_type": mime_type,
+            }
+        )
+
+    async def get_processing_status(self, video_id: str) -> ProcessingStatus:
+        """1 quota unit (mirrors `videos.list?part=status,processingDetails`).
+
+        Returns a pre-populated state from `self.processing_states`
+        when one was seeded for ``video_id``; otherwise returns a
+        sensible "freshly uploaded" default
+        (``upload_status="uploaded"``, ``processing_status="processing"``,
+        ``privacy_status="private"``). Raises ``ValueError`` when the
+        video id is the explicit sentinel ``"<missing>"`` — used by
+        tests asserting the missing-video branch."""
+        self._charge(1)
+        if video_id == "<missing>":
+            raise ValueError(
+                f"videos.list returned no items for video_id={video_id!r}"
+            )
+        state = self.processing_states.get(video_id)
+        if state is not None:
+            return state
+        return ProcessingStatus(
+            video_id=video_id,
+            upload_status="uploaded",
+            processing_status="processing",
+            privacy_status="private",
+        )
 
 
 __all__ = ["FakeYoutubeClient"]

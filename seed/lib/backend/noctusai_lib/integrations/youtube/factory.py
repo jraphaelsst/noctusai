@@ -41,6 +41,8 @@ def make_youtube_client(
             channels=seed.get("channels"),
             videos=seed.get("videos"),
             playlists=seed.get("playlists"),
+            owned_channel_info=seed.get("owned_channel_info"),
+            owned_videos=seed.get("owned_videos"),
         )
 
     # Lazy import — googleapiclient is heavy.

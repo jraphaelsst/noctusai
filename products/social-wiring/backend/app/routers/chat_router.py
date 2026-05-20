@@ -28,12 +28,12 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.dependencies import get_admin_client
 from app.services.chatbot_service import ChatbotService
-from app.services.credential_store import CredentialStore, EncryptionNotConfigured
+from app.services.credential_vault import CredentialStore, EncryptionNotConfigured, build_credential_store
 from app.services.crm_service import CRMNotConfigured, CRMService
 from app.services.media_service import make_media_service
-from app.services.upload_service import stage_browser_upload
+from app.modules.youtube.services.upload import stage_browser_upload
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
-from app.services.youtube_service import YouTubeService, YouTubeServiceError
+from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def _build_intake() -> WhatsAppIntakeService:
 
     youtube: YouTubeService | None = None
     try:
-        store = CredentialStore(admin_supabase, settings.encryption_key)
+        store = build_credential_store(admin_supabase)
         youtube = YouTubeService(
             client_id=settings.youtube_client_id,
             client_secret=settings.youtube_client_secret,

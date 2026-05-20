@@ -35,6 +35,9 @@ logic lives, since persistence is the consumer's concern.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
@@ -53,6 +56,32 @@ GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 # `timeout=15`. Match the seed convention.
 _DEFAULT_TIMEOUT = 15.0
 
+# RFC 7636 §4.1 — verifier MUST be 43–128 chars from the unreserved set
+# [A-Z a-z 0-9 - . _ ~]. `secrets.token_urlsafe(n)` returns
+# 4*ceil(n/3) base64url chars from a strict subset of that alphabet
+# (no padding), satisfying both length + character-class constraints.
+# 64 bytes → 86 chars: well above the 43-char minimum, well below the
+# 128-char maximum, ~512 bits of entropy.
+_PKCE_VERIFIER_BYTES = 64
+
+
+def _generate_pkce_pair() -> tuple[str, str]:
+    """Return `(code_verifier, code_challenge)` per RFC 7636 §4.
+
+    The verifier is the high-entropy random secret the consumer
+    persists between authorize-redirect and callback-exchange. The
+    challenge — `base64url(sha256(verifier))`, no padding — is what
+    we embed in the auth URL as `code_challenge` with
+    `code_challenge_method=S256`.
+
+    Implementation note: stdlib only (`secrets` + `hashlib` + `base64`)
+    so the seed grows zero new dependencies.
+    """
+    verifier = secrets.token_urlsafe(_PKCE_VERIFIER_BYTES)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
 
 class GoogleProvider:
     """Google OAuth 2.0 provider.
@@ -69,6 +98,23 @@ class GoogleProvider:
         http_client: optional injected `httpx.AsyncClient`. When
             supplied, the caller owns its lifecycle (we don't close
             it). When None, a short-lived client is created per call.
+        use_pkce: opt-in to RFC 7636 PKCE (Proof Key for Code
+            Exchange). Default `False` reproduces the original
+            confidential-client behavior verbatim — existing
+            consumers see zero observable change. When `True`,
+            `authorization_url(...)` generates a fresh
+            `code_verifier`, returns it on the `AuthorizationURL`
+            DTO, and appends `code_challenge=<base64url-sha256>`
+            + `code_challenge_method=S256` to the consent URL;
+            `exchange_code(..., code_verifier=<v>)` then includes
+            the verifier in the token POST per RFC 7636 §4.5.
+            Defense-in-depth even for confidential clients per
+            OAuth 2.1 / Google guidance. Codified under
+            `KB § PATTERNS/absorbed-product-seed-shape-seam.md` —
+            the N=3 worked instance of the absorbed-product-seed-
+            shape-seam pattern (the social-wiring YouTube flow
+            had PKCE pre-absorption; this seam restores it
+            without forking).
     """
 
     name: str = "google"
@@ -79,6 +125,7 @@ class GoogleProvider:
         client_secret: str,
         *,
         http_client: httpx.AsyncClient | None = None,
+        use_pkce: bool = False,
     ) -> None:
         if not client_id:
             raise ValueError("GoogleProvider requires a non-empty client_id")
@@ -87,6 +134,7 @@ class GoogleProvider:
         self._client_id = client_id
         self._client_secret = client_secret
         self._http_client = http_client
+        self._use_pkce = use_pkce
 
     # ─── authorization_url ────────────────────────────────────────────────
 
@@ -103,6 +151,13 @@ class GoogleProvider:
         for the gotcha). `include_granted_scopes=true` is the
         recommended Google flag — lets the user incrementally upgrade
         scopes without revoking previous grants.
+
+        When `use_pkce=True` (constructor flag), generates a fresh
+        RFC 7636 PKCE verifier + challenge per call, appends
+        `code_challenge`/`code_challenge_method=S256` to the URL, and
+        returns the verifier on `AuthorizationURL.code_verifier` for
+        the consumer to persist (keyed by `state`) and replay at
+        `exchange_code(...)` time.
         """
         params = {
             "client_id": self._client_id,
@@ -114,9 +169,15 @@ class GoogleProvider:
             "include_granted_scopes": "true",
             "state": state,
         }
+        code_verifier: str | None = None
+        if self._use_pkce:
+            code_verifier, code_challenge = _generate_pkce_pair()
+            params["code_challenge"] = code_challenge
+            params["code_challenge_method"] = "S256"
         return AuthorizationURL(
             url=f"{GOOGLE_AUTH_URL}?{urlencode(params)}",
             state=state,
+            code_verifier=code_verifier,
         )
 
     # ─── exchange_code ────────────────────────────────────────────────────
@@ -126,12 +187,22 @@ class GoogleProvider:
         code: str,
         state: str,
         redirect_uri: str,
+        code_verifier: str | None = None,
     ) -> TokenSet:
         """POST to the Google token endpoint with `grant_type=authorization_code`.
 
         Returns the canonical `TokenSet`. Raises `httpx.HTTPStatusError`
         on non-2xx — the router catches it and wraps in
         `OAuthCallbackResult(error=...)`.
+
+        When the provider is in PKCE mode (`use_pkce=True` at construction),
+        a non-empty `code_verifier` MUST be supplied; we include it in the
+        token POST body per RFC 7636 §4.5. Google rejects PKCE-issued
+        codes when the verifier is missing or doesn't match the original
+        challenge (`invalid_grant: Missing code verifier` /
+        `Bad Request — invalid grant`). For non-PKCE consumers (default),
+        `code_verifier=None` is correct and the body matches the
+        pre-seam shape exactly.
         """
         body = {
             "code": code,
@@ -140,6 +211,19 @@ class GoogleProvider:
             "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",
         }
+        if self._use_pkce:
+            if not code_verifier:
+                raise ValueError(
+                    "GoogleProvider(use_pkce=True).exchange_code() requires a "
+                    "non-empty code_verifier — pass the one returned by "
+                    "authorization_url(...).code_verifier."
+                )
+            body["code_verifier"] = code_verifier
+        # Non-PKCE path (use_pkce=False, the default): body is
+        # bit-identical to the pre-seam shape regardless of whether the
+        # caller passes a verifier — we deliberately drop a stray
+        # `code_verifier` on a non-PKCE provider so the body asserted
+        # by existing back-compat tests stays untouched.
         data = await self._post(GOOGLE_TOKEN_URL, body)
         return _token_response_to_set(data)
 

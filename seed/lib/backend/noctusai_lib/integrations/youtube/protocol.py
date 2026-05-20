@@ -17,9 +17,12 @@ from typing import Protocol
 
 from noctusai_lib.integrations.youtube.types import (
     Channel,
+    ChannelInfo,
     ListResult,
     PrivacyStatus,
+    ProcessingStatus,
     Video,
+    VideoFull,
     VideoUpload,
 )
 
@@ -45,6 +48,8 @@ class YoutubeClient(Protocol):
     | `get_video` | 1 | `videos.list` with one ID is 1 unit. |
     | `search` | **100** | `search.list` is 100 units per page (1% of daily quota per call). PREFER `list_channel_videos` for channel-scoped listings. |
     | `upload_video` | **1600** | `videos.insert` (resumable) — the single most expensive call in the API; ≈6 uploads exhaust a fresh 10,000/day quota. Requires OAuth (an API key cannot write). |
+    | `set_thumbnail` | **50** | `thumbnails.set` (resumable). Custom-thumbnail permission required (most channels have it; brand-new channels need verification). Requires OAuth (write). |
+    | `get_processing_status` | 1 | `videos.list?part=status,processingDetails&id=<vid>` — same cost as `get_video`; the `part` selection doesn't change the cost. |
 
     The `ListResult.quota_units_consumed` field carries the per-call
     cost so consumers can budget against the daily quota."""
@@ -99,6 +104,88 @@ class YoutubeClient(Protocol):
         cheaper."""
         ...
 
+    async def get_channel_info_mine(self) -> ChannelInfo:
+        """Fetch the OAuth-authenticated channel's metadata + engagement
+        counters.
+
+        **Quota cost: 1 unit** (`channels.list?mine=True&part=snippet,
+        statistics`). The OAuth-authenticated variant of
+        :meth:`get_channel` — the `mine=True` flag tells YT to resolve
+        the channel from the credentials instead of from a `channel_id`,
+        so this method only makes sense on an OAuth-backed client.
+
+        Distinct from :meth:`get_channel` because (a) it doesn't take an
+        id (resolves via OAuth context), (b) the response includes
+        `statistics` (subscriber / video / view counts) rather than
+        `contentDetails` (uploads playlist id), and (c) the return type
+        is :class:`ChannelInfo` (engagement-counters projection) rather
+        than :class:`Channel` (uploads-playlist projection).
+
+        Raises:
+            ValueError: when `channels.list?mine=True` returns no items
+                (the OAuth account has no associated YT channel —
+                the operator surface should redirect the user back to
+                consent with a different Google account). Surfaced as
+                an explicit exception rather than a sentinel so the
+                caller branches on a real signal."""
+        ...
+
+    async def get_video_full(self, video_id: str) -> VideoFull | None:
+        """Fetch a single video with the rich projection.
+
+        **Quota cost: 1 unit** (`videos.list?part=snippet,statistics,
+        status,contentDetails&id=<video_id>`). Same cost as
+        :meth:`get_video` because YouTube charges per call regardless
+        of which `part=` pieces are requested.
+
+        Distinct from :meth:`get_video` only in the return type — use
+        this when the wider field set (`thumbnail_url`, `tags`,
+        `like_count`, `comment_count`, `privacy_status`, etc.) is
+        needed. When only id/title/view_count/duration matter, prefer
+        :meth:`get_video` — the lean projection makes consumer code
+        loud about which fields it depends on.
+
+        Returns `None` when the video doesn't exist or has been
+        removed (mirrors :meth:`get_video`)."""
+        ...
+
+    async def list_owned_videos(
+        self,
+        *,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> ListResult[VideoFull]:
+        """List the OAuth-authenticated channel's videos (including
+        private + unlisted) with the full projection.
+
+        **Quota cost: 101 units / page** — `search.list?forMine=True`
+        (100 units) followed by `videos.list?part=snippet,statistics,
+        status,contentDetails&id=...` (1 unit) for the page batch.
+
+        Distinct from :meth:`list_channel_videos` because that method
+        walks `playlistItems.list` on the channel's auto-`uploads`
+        playlist which exposes ONLY public videos (the cheap path costs
+        ~2 units / 50 videos but private + unlisted uploads are
+        invisible there). For the operator surface that owns the
+        channel + needs to see every upload, the expensive
+        `search.list?forMine=True` is the canonical YT API path —
+        documented here so consumers reading the surface understand
+        the per-call cost trade-off.
+
+        Args:
+            page_token: opaque YT pagination token; `None` for the
+                first page.
+            page_size: `maxResults` (1-50). YT caps at 50; the seed
+                forwards the value verbatim.
+
+        Returns:
+            `ListResult[VideoFull]` — `next_page_token` is `None` when
+            the underlying API stops returning `nextPageToken`.
+            `quota_units_consumed` reflects the per-call cost (101 for
+            the standard 2-API-call path; 100 when the search page
+            returns no ids and `videos.list` is skipped)."""
+        ...
+
     async def upload_video(
         self,
         *,
@@ -136,6 +223,66 @@ class YoutubeClient(Protocol):
 
         Returns a `VideoUpload` with the new `video_id`, canonical
         watch `url`, and `quota_units_consumed=1600`."""
+        ...
+
+    async def set_thumbnail(
+        self,
+        *,
+        video_id: str,
+        thumbnail_path: str,
+        mime_type: str = "image/jpeg",
+    ) -> None:
+        """Upload a custom thumbnail for ``video_id`` via
+        ``thumbnails.set``.
+
+        **Quota cost: 50 units.** Custom-thumbnail permission is
+        required on the channel (most channels carry it; brand-new
+        channels require Google verification first). Image format must
+        be JPEG/PNG/BMP; YouTube enforces a 2MB ceiling server-side.
+
+        **Requires OAuth** — ``thumbnails.set`` is a write; an
+        API-key-only client cannot upload thumbnails. The Real adapter
+        raises ``ValueError`` at call time if no OAuth credentials were
+        supplied (fail loud, per the no-silent-errors rule).
+
+        Args:
+            video_id: YouTube video id whose thumbnail is being set.
+            thumbnail_path: Absolute path to the local thumbnail image
+                file. The Real adapter streams it via
+                ``MediaFileUpload`` (matches the upload_video shape).
+            mime_type: Image MIME type. Default ``"image/jpeg"``;
+                ``"image/png"`` / ``"image/bmp"`` also accepted by
+                YouTube. The adapter passes it through to the
+                ``MediaFileUpload`` mimetype kwarg so YT routes the
+                upload correctly.
+
+        Returns ``None``; success is the absence of an exception.
+        ``HttpError`` is logged at WARN+ and re-raised."""
+        ...
+
+    async def get_processing_status(self, video_id: str) -> ProcessingStatus:
+        """Probe YouTube's processing-pipeline state for ``video_id``.
+
+        **Quota cost: 1 unit** (``videos.list?part=status,processingDetails``).
+
+        Used by upload pipelines that need to wait until a freshly
+        inserted video is actually playable before surfacing the URL
+        to the operator. ``videos.insert`` returns once YT has received
+        the bytes, but transcoding then runs asynchronously — the
+        video is not shareable until ``upload_status == "processed"``
+        AND ``processing_status == "succeeded"``.
+
+        Returns:
+            A :class:`ProcessingStatus` with ``video_id`` echoed back +
+            the three pipeline-state fields. Unknown / API-omitted
+            values are surfaced as the explicit ``"unknown"`` literal
+            so consumers branch on the value rather than truthy-check
+            (no silent-errors).
+
+        Raises:
+            ValueError: when ``videos.list`` returns no items
+                (deleted / never finished uploading); the seed surfaces
+                this explicitly rather than returning a sentinel."""
         ...
 
 

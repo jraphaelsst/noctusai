@@ -68,6 +68,7 @@ class OAuthProvider(Protocol):
         code: str,
         state: str,
         redirect_uri: str,
+        code_verifier: str | None = None,
     ) -> TokenSet:
         """Exchange an authorization code for an access + refresh token.
 
@@ -76,6 +77,14 @@ class OAuthProvider(Protocol):
         redirect. The implementation POSTs to the token endpoint and
         returns the canonical `TokenSet`. `redirect_uri` MUST match the
         one used to obtain the code — providers reject mismatches.
+
+        `code_verifier` is the RFC 7636 PKCE verifier the consumer
+        persisted at `authorization_url(...)` time. Required when the
+        issuing provider is in PKCE mode (it was the verifier whose
+        SHA256 was sent as `code_challenge` on the auth URL). For
+        non-PKCE providers (the historical default), leave `None`. See
+        `KB § PATTERNS/absorbed-product-seed-shape-seam.md` for the
+        seed-shape-seam pattern (the additive opt-in).
         """
         ...
 

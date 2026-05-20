@@ -31,6 +31,35 @@ nothing goes public unless the caller explicitly opts in (matches the
 validated workspace rule: "se o usuário não pedir explicitamente
 'público' ou 'não listado', suba como private")."""
 
+UploadStatus = Literal[
+    "uploaded",
+    "processed",
+    "failed",
+    "rejected",
+    "deleted",
+    "unknown",
+]
+"""YouTube ``status.uploadStatus`` — the lifecycle state of the upload
+itself. ``"unknown"`` is the seed's safe-default when the API omits the
+field (never raises; consumers branch on the explicit literal).
+
+Terminal "ready-to-share" state is ``"processed"`` AND
+:data:`ProcStatus` ``"succeeded"``. ``"failed"`` / ``"rejected"`` /
+``"deleted"`` are unrecoverable; the operator surface should mark the
+job failed."""
+
+ProcStatus = Literal[
+    "processing",
+    "succeeded",
+    "failed",
+    "terminated",
+    "unknown",
+]
+"""YouTube ``processingDetails.processingStatus`` — distinct from
+:data:`UploadStatus` because YT can have *uploaded* bytes that are
+still transcoding. ``"unknown"`` is the seed's safe-default. Pair with
+:data:`UploadStatus` to decide "is the video shareable?"."""
+
 TITLE_MAX_LEN = 100
 """YouTube hard limit on `snippet.title`. Longer titles are rejected
 by `videos.insert`; callers should truncate before calling."""
@@ -76,6 +105,81 @@ class Video:
 
 
 @dataclass(frozen=True)
+class VideoFull:
+    """Richer YouTube video projection — wraps `videos.list?part=snippet,
+    statistics,status,contentDetails`.
+
+    Distinct from :class:`Video` because consumer UI surfaces frequently
+    need the wider field set (thumbnail URL, raw ISO-8601 duration, full
+    engagement metrics, privacy state, tags, category). Splitting from
+    `Video` rather than widening it keeps the cheap-quota
+    `list_channel_videos` value-object lean (the wide projection costs
+    nothing extra in YT-API units — `part=` selection is free — but
+    callers reading the type surface should see at a glance which
+    projection a method emits).
+
+    Seed convention (matches :class:`Video`):
+    - `duration_seconds` is the parsed ISO-8601 integer-second value.
+    - `duration_iso` is the raw ISO-8601 string echoed back (so callers
+      that round-trip to an external client get the same shape YT emits).
+    - `published_at` is timezone-aware UTC.
+    - Numeric fields default to 0 when the API omits them (no Optional
+      ints — keeps consumer arithmetic loud-failure-free).
+    - `tags` is `()` (empty tuple) when absent, never `None` — frozen
+      to match the dataclass frozen contract.
+    - `privacy_status` reuses :data:`PrivacyStatus` with `"unknown"` as
+      the API-omitted-the-field carve-out (mirrors
+      :class:`ProcessingStatus.privacy_status`)."""
+
+    id: str
+    title: str
+    description: str
+    channel_id: str
+    published_at: datetime
+    duration_seconds: int
+    """Parsed from ISO-8601 `contentDetails.duration` (e.g. `PT5M30S`)."""
+    duration_iso: str
+    """Raw ISO-8601 `contentDetails.duration` string echoed back
+    (e.g. `"PT5M30S"`). Empty string when the API omits it."""
+    thumbnail_url: str
+    """Highest-resolution thumbnail URL the API returned. Picked in
+    order: `maxres` → `high` → `medium` → `default`. Empty string when
+    no thumbnails are present."""
+    privacy_status: PrivacyStatus | Literal["unknown"]
+    """`"unknown"` is the API-omitted-the-field carve-out, mirroring
+    :class:`ProcessingStatus.privacy_status`."""
+    view_count: int
+    like_count: int
+    comment_count: int
+    tags: tuple[str, ...] = ()
+    """Frozen-tuple to satisfy the dataclass `frozen=True` constraint
+    (lists are unhashable in a frozen context). Empty when absent."""
+    category_id: str = ""
+
+
+@dataclass(frozen=True)
+class ChannelInfo:
+    """Authenticated-channel metadata — wraps `channels.list?mine=True&
+    part=snippet,statistics`.
+
+    Distinct from :class:`Channel` because the OAuth-authenticated
+    `mine=True` call returns the engagement counters (subscriber /
+    video / view) the operator surface displays, but does NOT include
+    `contentDetails.relatedPlaylists.uploads` (the API surfaces those
+    on different `part=` selections). Splitting types keeps each
+    projection self-describing.
+
+    Numeric fields default to 0 when the API omits them (no Optional —
+    keeps consumer arithmetic loud-failure-free)."""
+
+    channel_id: str
+    title: str
+    subscriber_count: int
+    video_count: int
+    view_count: int
+
+
+@dataclass(frozen=True)
 class Playlist:
     """YouTube playlist — minimal projection (id + title)."""
 
@@ -101,6 +205,35 @@ class VideoUpload:
     quota_units_consumed: int = UPLOAD_QUOTA_UNITS
 
 
+@dataclass(frozen=True)
+class ProcessingStatus:
+    """YouTube post-upload processing state, mirroring
+    ``videos.list?part=status,processingDetails`` for one video.
+
+    Distinct from :class:`VideoUpload` because the `videos.insert` call
+    returns once YT has *received* the bytes — transcoding then runs
+    asynchronously on YT-side and a separate poll is required before
+    the video is shareable. Used by upload pipelines that surface
+    "your video is ready" only when the operator can actually share
+    the URL.
+
+    Terminal "ready" state: ``upload_status == "processed"`` AND
+    ``processing_status == "succeeded"``. ``"unknown"`` literals carry
+    the API-omitted-the-field case explicitly so consumers branch on
+    the value rather than truthy-check (no silent-errors)."""
+
+    video_id: str
+    upload_status: UploadStatus
+    processing_status: ProcStatus
+    privacy_status: PrivacyStatus | Literal["unknown"]
+    """``"unknown"`` is the API-omitted-the-field case (post-revoke /
+    deleted videos). Keeping it explicit here mirrors
+    :data:`UploadStatus` / :data:`ProcStatus`."""
+    quota_units_consumed: int = 1
+    """1 unit (`videos.list?id=<video_id>` is 1 unit regardless of
+    ``part`` selection)."""
+
+
 T = TypeVar("T")
 
 
@@ -124,9 +257,14 @@ __all__ = [
     "TITLE_MAX_LEN",
     "UPLOAD_QUOTA_UNITS",
     "Channel",
+    "ChannelInfo",
     "ListResult",
     "Playlist",
     "PrivacyStatus",
+    "ProcStatus",
+    "ProcessingStatus",
+    "UploadStatus",
     "Video",
+    "VideoFull",
     "VideoUpload",
 ]

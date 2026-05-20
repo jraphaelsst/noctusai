@@ -128,6 +128,88 @@ class CredentialStoreCalendarResolver:
         return OAuthCalendarCredentials(**kwargs)
 
 
+class CredentialStoreDriveResolver:
+    """Build `google.oauth2.credentials.Credentials` for the seed
+    `RealDriveReader` from a `CredentialStore` row.
+
+    Drive consent in social-wiring is BUNDLED with the Calendar
+    consent (the same OAuth flow asks for both scopes + persists
+    under the `CALENDAR_PROVIDER` row). This bridge reads that row
+    and returns a `Credentials` object configured for refresh — pass
+    it to `RealDriveReader(oauth_credentials=...)` (or `make_drive_reader`).
+
+    `client_id` / `client_secret` are the product's OAuth-client app
+    identity (NOT per-tenant) so they're constructor args, not stored
+    in the per-tenant bundle. `scopes` extends the stored Calendar
+    scopes with `drive.readonly` so the seed adapter can read Drive
+    even when the stored bundle's `scope` field doesn't echo Drive
+    (Google's token endpoint returns the union of all consented
+    scopes regardless of what we ask for here).
+
+    Returns `None` when no stored credential exists — the consumer
+    factory then falls back to `FakeDriveReader`."""
+
+    def __init__(
+        self,
+        store: CredentialStore,
+        *,
+        client_id: str,
+        client_secret: str,
+        provider: str = CALENDAR_PROVIDER,
+        extra_scopes: tuple[str, ...] = (
+            "https://www.googleapis.com/auth/drive.readonly",
+        ),
+    ) -> None:
+        self._store = store
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._provider = provider
+        self._extra_scopes = tuple(extra_scopes)
+
+    def get_credentials(self, tenant_id: str | None = None):
+        """Return a `google.oauth2.credentials.Credentials` or `None`.
+
+        Lazily imports `google.oauth2.credentials` so this module
+        stays importable in slim envs without `google-auth` installed
+        (mirrors `OAuthCalendarCredentials` lazy import elsewhere)."""
+        if tenant_id is None:
+            return None
+        stored = self._store.get(tenant_id, self._provider)
+        if stored is None:
+            return None
+        tokens = stored.tokens
+        refresh_token = tokens.get("refresh_token")
+        if not refresh_token:
+            logger.warning(
+                "stored drive credential for org=%s has no refresh_token; "
+                "treating as not-connected",
+                tenant_id,
+            )
+            return None
+
+        # Lazy import — kept out of module-load so slim envs without
+        # `google-auth` keep importing the rest of `credential_resolvers`.
+        from google.oauth2.credentials import Credentials
+
+        stored_scopes = (
+            list(stored.metadata.get("scopes") or [])
+            if stored.metadata
+            else []
+        )
+        # Union with Drive scopes so the underlying API call has the
+        # scope set it expects; Google issues tokens carrying the union
+        # of consented scopes regardless.
+        scopes = list(dict.fromkeys(stored_scopes + list(self._extra_scopes)))
+        return Credentials(
+            token=tokens.get("access_token"),
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+            scopes=scopes,
+        )
+
+
 class CredentialStoreMetaResolver:
     """Satisfies `MetaCredentialResolver` from a `CredentialStore`.
 
@@ -229,6 +311,7 @@ def make_token_persisting_callback(
 __all__ = [
     "CALENDAR_PROVIDER",
     "CredentialStoreCalendarResolver",
+    "CredentialStoreDriveResolver",
     "CredentialStoreMetaResolver",
     "DRIVE_PROVIDER",
     "META_PROVIDER",

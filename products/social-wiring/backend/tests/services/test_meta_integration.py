@@ -297,7 +297,7 @@ class TestFactory:
         from uuid import uuid4
 
         class _NoRowStore:
-            def get(self, *, org_id, provider):  # noqa: ARG002
+            def get(self, org_id, provider):  # noqa: ARG002
                 return None
 
         class _Settings:
@@ -463,7 +463,7 @@ class TestSystemUserToken:
             class _Stored:
                 tokens = {"access_token": "USER-OAUTH-TOKEN"}
 
-            def get(self, *, org_id, provider):  # noqa: ARG002
+            def get(self, org_id, provider):  # noqa: ARG002
                 return self._Stored()
 
         adapter = MetaOAuthAdapter(

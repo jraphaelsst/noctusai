@@ -17,6 +17,7 @@ swallowed (per the no-silent-errors rule).
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,9 +29,12 @@ from noctusai_lib.integrations.youtube.types import (
     TITLE_MAX_LEN,
     UPLOAD_QUOTA_UNITS,
     Channel,
+    ChannelInfo,
     ListResult,
     PrivacyStatus,
+    ProcessingStatus,
     Video,
+    VideoFull,
     VideoUpload,
 )
 
@@ -118,6 +122,115 @@ def _video_from_api(item: dict[str, Any]) -> Video:
         duration_seconds=_parse_iso8601_duration(content_details.get("duration", "")),
         view_count=int(statistics.get("viewCount", 0) or 0),
     )
+
+
+def _pick_thumbnail_url(thumbnails: dict[str, Any]) -> str:
+    """Highest-resolution → fallback walk: `maxres` → `high` → `medium`
+    → `default`. Returns ``""`` when no thumbnail block is present
+    (matches the `VideoFull.thumbnail_url` contract)."""
+    for key in ("maxres", "high", "medium", "default"):
+        block = thumbnails.get(key) or {}
+        url = block.get("url")
+        if url:
+            return url
+    return ""
+
+
+def _video_full_from_api(item: dict[str, Any]) -> VideoFull:
+    """Map a `videos.list?part=snippet,statistics,status,contentDetails`
+    item to a :class:`VideoFull`. Mirrors `_video_from_api` for the
+    base fields + adds the wider projection. Missing-field defaults
+    match the seed convention (0 for ints, ``""`` for strings, ``()``
+    for tags, ``"unknown"`` for privacy_status — never None)."""
+    snippet = item.get("snippet", {}) or {}
+    content_details = item.get("contentDetails", {}) or {}
+    statistics = item.get("statistics", {}) or {}
+    status = item.get("status", {}) or {}
+    duration_iso = content_details.get("duration", "") or ""
+    raw_tags = snippet.get("tags") or []
+    return VideoFull(
+        id=item["id"],
+        title=snippet.get("title", ""),
+        description=snippet.get("description", ""),
+        channel_id=snippet.get("channelId", ""),
+        published_at=_parse_published_at(snippet.get("publishedAt", "")),
+        duration_seconds=_parse_iso8601_duration(duration_iso),
+        duration_iso=duration_iso,
+        thumbnail_url=_pick_thumbnail_url(snippet.get("thumbnails", {}) or {}),
+        privacy_status=status.get("privacyStatus") or "unknown",
+        view_count=int(statistics.get("viewCount", 0) or 0),
+        like_count=int(statistics.get("likeCount", 0) or 0),
+        comment_count=int(statistics.get("commentCount", 0) or 0),
+        tags=tuple(raw_tags),
+        category_id=snippet.get("categoryId", "") or "",
+    )
+
+
+def _channel_info_from_api(item: dict[str, Any]) -> ChannelInfo:
+    """Map a `channels.list?mine=True&part=snippet,statistics` item to
+    a :class:`ChannelInfo`. Numeric fields default to 0 when omitted."""
+    snippet = item.get("snippet", {}) or {}
+    statistics = item.get("statistics", {}) or {}
+    return ChannelInfo(
+        channel_id=item["id"],
+        title=snippet.get("title", ""),
+        subscriber_count=int(statistics.get("subscriberCount", 0) or 0),
+        video_count=int(statistics.get("videoCount", 0) or 0),
+        view_count=int(statistics.get("viewCount", 0) or 0),
+    )
+CHUNK_RETRY_MAX_ATTEMPTS = 3
+"""Max retries per chunk (4 total attempts: 1 initial + 3 retries). Resets
+to 0 on each successful chunk."""
+
+CHUNK_RETRY_BASE_DELAY_S = 1.0
+"""Exponential-backoff base — 1s, 2s, 4s for attempts 1/2/3."""
+
+CHUNK_RETRY_MAX_DELAY_S = 4.0
+"""Cap the per-attempt sleep so a long backoff doesn't stall the operator."""
+
+
+def _is_quota_exceeded(exc: HttpError) -> bool:
+    """Detect the `quotaExceeded` sub-error in an `HttpError` body.
+
+    Google returns 403 with `reason="quotaExceeded"` (or
+    `"dailyLimitExceeded"`) when the daily quota is hit. The status code
+    alone (403) can't distinguish quota-exhaustion from
+    permission-denied — we have to inspect the JSON body.
+
+    Returns `False` on any decode error (no silent swallow — the WARN
+    log lives at the call site)."""
+    try:
+        content = (
+            exc.content.decode("utf-8")
+            if isinstance(exc.content, bytes)
+            else str(exc.content or "")
+        )
+    except (UnicodeDecodeError, AttributeError):
+        return False
+    lowered = content.lower()
+    return (
+        "quotaexceeded" in lowered
+        or "dailylimitexceeded" in lowered
+        or ("ratelimitexceeded" in lowered and getattr(exc.resp, "status", 0) == 403)
+    )
+
+
+def _is_transient_http_error(exc: HttpError) -> bool:
+    """`5xx` server errors + `429` rate-limit are transient; everything
+    else is permanent. `quotaExceeded` is special-cased UP at the call
+    site (raised immediately, never retried)."""
+    status = getattr(exc.resp, "status", 0)
+    return status == 429 or 500 <= status < 600
+
+
+def _is_transient_network_error(exc: BaseException) -> bool:
+    """Transport-layer transients that the resumable upload loop can
+    retry from. Kept separate from `_is_transient_http_error` because
+    these don't carry an HTTP status code at all."""
+    import socket
+    import ssl
+
+    return isinstance(exc, (ConnectionError, TimeoutError, socket.error, ssl.SSLError))
 
 
 # ---- RealYoutubeClient -----------------------------------------------------
@@ -346,6 +459,146 @@ class RealYoutubeClient:
             quota_units_consumed=100,
         )
 
+    async def get_video_full(self, video_id: str) -> VideoFull | None:
+        """**1 quota unit** (`videos.list?part=snippet,statistics,
+        status,contentDetails&id=<video_id>`). Same cost as
+        :meth:`get_video` (the `part=` selection does not change the
+        per-call cost)."""
+        try:
+            response = (
+                self._service()
+                .videos()
+                .list(
+                    part="snippet,statistics,status,contentDetails",
+                    id=video_id,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.get_video_full_http_error video_id=%s status=%s",
+                video_id,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        items = response.get("items", [])
+        if not items:
+            return None
+        return _video_full_from_api(items[0])
+
+    async def get_channel_info_mine(self) -> ChannelInfo:
+        """**1 quota unit** (`channels.list?mine=True&part=snippet,
+        statistics`). OAuth-only — the `mine=True` flag resolves the
+        channel from the credentials, so an API-key-only client cannot
+        call this. Raises `ValueError` at call time when no OAuth
+        credentials were supplied (fail loud, per the no-silent-errors
+        rule)."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.get_channel_info_mine requires "
+                "oauth_credentials (channels.list?mine=True needs an "
+                "authenticated context — an API key cannot resolve "
+                "'the current user')"
+            )
+        try:
+            response = (
+                self._service()
+                .channels()
+                .list(part="snippet,statistics", mine=True)
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.get_channel_info_mine_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        items = response.get("items") or []
+        if not items:
+            raise ValueError(
+                "channels.list?mine=True returned no items — the OAuth "
+                "account has no associated YouTube channel."
+            )
+        return _channel_info_from_api(items[0])
+
+    async def list_owned_videos(
+        self,
+        *,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> ListResult[VideoFull]:
+        """**101 quota units / page** — `search.list?forMine=True` (100)
+        + `videos.list?part=snippet,statistics,status,contentDetails`
+        (1). OAuth-only — `forMine=True` resolves the channel from the
+        credentials. Raises `ValueError` at call time when no OAuth
+        credentials were supplied."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.list_owned_videos requires "
+                "oauth_credentials (search.list?forMine=True needs an "
+                "authenticated context — an API key cannot resolve "
+                "'the current user')"
+            )
+
+        try:
+            search_response = (
+                self._service()
+                .search()
+                .list(
+                    part="id",
+                    forMine=True,
+                    type="video",
+                    maxResults=page_size,
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.list_owned_videos_search_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        video_ids = [
+            item["id"]["videoId"]
+            for item in search_response.get("items", [])
+            if item.get("id", {}).get("videoId")
+        ]
+        next_page_token = search_response.get("nextPageToken")
+        if not video_ids:
+            # Only spent 100 (search.list); videos.list skipped.
+            return ListResult(
+                items=[], next_page_token=next_page_token, quota_units_consumed=100
+            )
+
+        try:
+            videos_response = (
+                self._service()
+                .videos()
+                .list(
+                    part="snippet,statistics,status,contentDetails",
+                    id=",".join(video_ids),
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.list_owned_videos_videos_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        videos = [_video_full_from_api(item) for item in videos_response.get("items", [])]
+        return ListResult(
+            items=videos,
+            next_page_token=next_page_token,
+            # 100 (search.list?forMine) + 1 (videos.list) = 101.
+            quota_units_consumed=101,
+        )
+
     async def upload_video(
         self,
         *,
@@ -363,7 +616,25 @@ class RealYoutubeClient:
         call time when no OAuth credentials were supplied (fail loud,
         per the no-silent-errors rule). The local file is streamed via
         a resumable `MediaFileUpload` so large videos don't buffer in
-        memory."""
+        memory.
+
+        **Per-chunk retry on transient failures.** Transient HTTP errors
+        (5xx, 429) and transport-level network errors (ConnectionError,
+        TimeoutError, SSLError) trigger a bounded retry of the SAME
+        chunk (the resumable upload URI is preserved on the `request`
+        object, so `next_chunk()` resumes from the last successful byte
+        offset — no restart-from-zero).
+
+        - Up to `CHUNK_RETRY_MAX_ATTEMPTS` (3) retries per chunk.
+        - Retry budget **resets on every successful chunk** so a 50-
+          chunk upload over a flaky network produces many short retries
+          rather than exhausting a global budget at chunk 4.
+        - Exponential backoff: 1s, 2s, 4s (capped at
+          `CHUNK_RETRY_MAX_DELAY_S`).
+        - `quotaExceeded` / `dailyLimitExceeded` (403 with the matching
+          sub-error) is **NEVER retried** — propagates immediately as
+          `HttpError` so the consumer's quota-handling layer can
+          translate it to a "tomorrow / retry-in-6h" message."""
         if self._oauth_credentials is None:
             raise ValueError(
                 "RealYoutubeClient.upload_video requires oauth_credentials "
@@ -383,25 +654,15 @@ class RealYoutubeClient:
             body["snippet"]["tags"] = tags
 
         media = MediaFileUpload(file_path, resumable=True)
-        try:
-            request = (
-                self._service()
-                .videos()
-                .insert(part="snippet,status", body=body, media_body=media)
-            )
-            response: dict[str, Any] | None = None
-            while response is None:
-                # Resumable upload: drive the chunked transfer to
-                # completion. next_chunk() returns (status, response);
-                # response stays None until the final chunk lands.
-                _status, response = request.next_chunk()
-        except HttpError as exc:
-            logger.warning(
-                "youtube.upload_video_http_error title=%r status=%s",
-                clipped_title,
-                getattr(exc.resp, "status", "?"),
-            )
-            raise
+        request = (
+            self._service()
+            .videos()
+            .insert(part="snippet,status", body=body, media_body=media)
+        )
+
+        response = self._drive_resumable_upload(
+            request, log_label=f"upload_video title={clipped_title!r}"
+        )
 
         video_id = response.get("id", "")
         return VideoUpload(
@@ -411,6 +672,173 @@ class RealYoutubeClient:
             privacy_status=privacy_status,
             quota_units_consumed=UPLOAD_QUOTA_UNITS,
         )
+
+    async def set_thumbnail(
+        self,
+        *,
+        video_id: str,
+        thumbnail_path: str,
+        mime_type: str = "image/jpeg",
+    ) -> None:
+        """**50 quota units** (`thumbnails.set`).
+
+        Requires OAuth credentials — `thumbnails.set` is a write call;
+        an API-key-only client cannot upload thumbnails. Raises
+        `ValueError` at call time when no OAuth credentials were
+        supplied (fail loud, per the no-silent-errors rule).
+
+        The local file is streamed via a `MediaFileUpload` matching the
+        `upload_video` shape so memory pressure stays bounded for the
+        2MB ceiling YouTube enforces server-side."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.set_thumbnail requires oauth_credentials "
+                "(thumbnails.set is a write; an API key cannot upload)"
+            )
+
+        media = MediaFileUpload(thumbnail_path, mimetype=mime_type, resumable=False)
+        try:
+            self._service().thumbnails().set(
+                videoId=video_id, media_body=media
+            ).execute()
+        except HttpError as exc:
+            logger.warning(
+                "youtube.set_thumbnail_http_error video_id=%s status=%s",
+                video_id,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+    async def get_processing_status(self, video_id: str) -> ProcessingStatus:
+        """**1 quota unit** (`videos.list?part=status,processingDetails&id=<vid>`).
+
+        Returns a :class:`ProcessingStatus` echoing the queried
+        ``video_id``. Unknown / API-omitted field values are surfaced
+        as the explicit ``"unknown"`` literal. Raises ``ValueError``
+        when ``videos.list`` returns no items (deleted / never finished
+        uploading) so the caller branches on a real exception, not a
+        sentinel."""
+        try:
+            response = (
+                self._service()
+                .videos()
+                .list(part="status,processingDetails", id=video_id)
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.get_processing_status_http_error video_id=%s status=%s",
+                video_id,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        items = response.get("items") or []
+        if not items:
+            raise ValueError(
+                f"videos.list returned no items for video_id={video_id!r} — "
+                "may have been deleted or never finished uploading."
+            )
+        item = items[0]
+        status_block = item.get("status", {}) or {}
+        proc_block = item.get("processingDetails", {}) or {}
+        return ProcessingStatus(
+            video_id=video_id,
+            upload_status=status_block.get("uploadStatus") or "unknown",
+            processing_status=proc_block.get("processingStatus") or "unknown",
+            privacy_status=status_block.get("privacyStatus") or "unknown",
+        )
+
+    def _drive_resumable_upload(
+        self, request: Any, *, log_label: str
+    ) -> dict[str, Any]:
+        """Drive a googleapiclient resumable upload to completion with
+        per-chunk retry on transient failures.
+
+        Algorithm (lifted from product `_resumable_upload_with_chunk_retry`,
+        Phase 4 fix-on-contact — see module docstring above):
+
+        - Keep the same `request` object across retries so its
+          `resumable_uri` (encoding the upload-session URI + byte offset
+          on YT's side) stays valid and `next_chunk()` resumes from the
+          last successful byte rather than restarting from zero.
+        - Per-chunk retry budget (`CHUNK_RETRY_MAX_ATTEMPTS`) **resets on
+          every successful chunk** so a long upload with multiple flaky
+          moments doesn't exhaust the budget on the first hiccup.
+        - `quotaExceeded` / `dailyLimitExceeded` (403) → NO retry,
+          propagate immediately as `HttpError` (consumer's quota layer
+          translates it to a user-facing message).
+        - Other transient HTTP errors (5xx, 429) and transport-level
+          errors (ConnectionError, TimeoutError, SSLError) → exponential
+          backoff (1s, 2s, 4s) then re-attempt the same chunk.
+        - Non-transient errors propagate immediately."""
+        response: dict[str, Any] | None = None
+        attempts_this_chunk = 0
+        while response is None:
+            try:
+                _status, response = request.next_chunk()
+                attempts_this_chunk = 0  # reset on chunk success
+            except HttpError as exc:
+                if _is_quota_exceeded(exc):
+                    logger.warning(
+                        "youtube.%s.quota_exceeded status=%s",
+                        log_label,
+                        getattr(exc.resp, "status", "?"),
+                    )
+                    raise
+                if not _is_transient_http_error(exc):
+                    logger.warning(
+                        "youtube.%s.non_transient_http_error status=%s",
+                        log_label,
+                        getattr(exc.resp, "status", "?"),
+                    )
+                    raise
+                attempts_this_chunk += 1
+                if attempts_this_chunk > CHUNK_RETRY_MAX_ATTEMPTS:
+                    logger.warning(
+                        "youtube.%s.chunk_retries_exhausted attempts=%d",
+                        log_label,
+                        CHUNK_RETRY_MAX_ATTEMPTS,
+                    )
+                    raise
+                delay = min(
+                    CHUNK_RETRY_BASE_DELAY_S * (2 ** (attempts_this_chunk - 1)),
+                    CHUNK_RETRY_MAX_DELAY_S,
+                )
+                logger.warning(
+                    "youtube.%s.transient_http_retry attempt=%d/%d delay=%.1fs status=%s",
+                    log_label,
+                    attempts_this_chunk,
+                    CHUNK_RETRY_MAX_ATTEMPTS,
+                    delay,
+                    getattr(exc.resp, "status", "?"),
+                )
+                time.sleep(delay)
+            except Exception as exc:
+                if not _is_transient_network_error(exc):
+                    raise
+                attempts_this_chunk += 1
+                if attempts_this_chunk > CHUNK_RETRY_MAX_ATTEMPTS:
+                    logger.warning(
+                        "youtube.%s.chunk_network_retries_exhausted attempts=%d",
+                        log_label,
+                        CHUNK_RETRY_MAX_ATTEMPTS,
+                    )
+                    raise
+                delay = min(
+                    CHUNK_RETRY_BASE_DELAY_S * (2 ** (attempts_this_chunk - 1)),
+                    CHUNK_RETRY_MAX_DELAY_S,
+                )
+                logger.warning(
+                    "youtube.%s.transient_network_retry attempt=%d/%d delay=%.1fs err=%s",
+                    log_label,
+                    attempts_this_chunk,
+                    CHUNK_RETRY_MAX_ATTEMPTS,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+        return response
 
 
 __all__ = ["RealYoutubeClient"]

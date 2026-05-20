@@ -45,10 +45,8 @@ from app.services.calendar import (
     GoogleCalendarOAuthAdapter,
     get_calendar_adapter,
 )
-from app.services.credential_store import (
-    CredentialStore,
-    EncryptionNotConfigured,
-)
+from app.services.credential_vault import (
+    CredentialStore, EncryptionNotConfigured, build_credential_store)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +73,7 @@ class CalendarOAuthStartResponse(BaseModel):
 # ─── Helpers ───────────────────────────────────────────────────────────
 def _build_store() -> CredentialStore:
     try:
-        return CredentialStore(get_admin_client(), settings.encryption_key)
+        return build_credential_store(get_admin_client())
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -326,14 +324,8 @@ def calendar_oauth_callback(
         "token_type": bundle.get("token_type", "Bearer"),
         "account_email": account_email,
     }
-    store.upsert(
-        org_id=org_id,
-        provider=CALENDAR_PROVIDER,
-        tokens=stored_tokens,
-        channel_id=None,
-        channel_title=account_email,
-        scopes=requested_scopes,
-    )
+    store.put(
+        str(org_id), CALENDAR_PROVIDER, stored_tokens, metadata={"channel_id": None, "channel_title": account_email, "scopes": requested_scopes})
 
     # Redirect back to the frontend if we have one configured; otherwise
     # return a small confirmation JSON so the operator sees a successful

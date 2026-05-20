@@ -24,7 +24,18 @@ class SocialWiringSettings(ProductSettings):
     # ─── YouTube OAuth ─────────────────────────────────────────────────
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
-    youtube_redirect_uri: str = "http://localhost:8010/api/youtube/oauth/callback"
+    youtube_redirect_uri: str = "http://localhost:8011/api/youtube/oauth/callback"
+    # When set, derives youtube/google_oauth/meta redirect URIs from
+    # this base + canonical paths — collapses 3 env vars into 1 for the
+    # tunneled-dev OAuth workflow (e.g. OAUTH_REDIRECT_BASE_URL=
+    # https://abc.trycloudflare.com → all 3 URIs auto-route through the
+    # tunnel; matching consents must be registered in Google Cloud
+    # Console). Empty (default) ⇒ falls back to `tunnel_hostname` if
+    # set, else the 3 per-URI defaults stand (today's behavior).
+    # Per-URI env vars (YOUTUBE_REDIRECT_URI / GOOGLE_OAUTH_REDIRECT_URI
+    # / META_OAUTH_REDIRECT_URI) still override individually when the
+    # base is empty. See `redirect_uri` resolution in `model_post_init`.
+    oauth_redirect_base_url: str = ""
     frontend_base_url: str = ""
 
     # ─── OpenAI chatbot orchestration ─────────────────────────────────
@@ -161,7 +172,7 @@ class SocialWiringSettings(ProductSettings):
     # Where Google should redirect after consent. Synced by
     # `refresh_cf_tunnel.sh` to the tunnel URL + /api/calendar/oauth/callback
     # when running behind the proxy.
-    google_oauth_redirect_uri: str = "http://localhost:8010/api/calendar/oauth/callback"
+    google_oauth_redirect_uri: str = "http://localhost:8011/api/calendar/oauth/callback"
     # Scope resolution strategy (parallels META_OAUTH_SCOPES):
     #   "auto" (default) — use GOOGLE_KITCHEN_SINK_SCOPES (Calendar +
     #     Drive + identity, covers every adapter this product ships).
@@ -215,7 +226,7 @@ class SocialWiringSettings(ProductSettings):
     # sistema → [new user] → Gerar token → pick the app + scopes.
     # Long-lived (never expires while the System User has access).
     meta_system_user_token: str = ""
-    meta_oauth_redirect_uri: str = "http://localhost:8010/api/meta/oauth/callback"
+    meta_oauth_redirect_uri: str = "http://localhost:8011/api/meta/oauth/callback"
     # Graph API version pinned per release. v21.0 is the current stable
     # as of Jan 2026; v22.0 ships in May 2026. Pin explicitly so a
     # silent upstream rollout doesn't break us.
@@ -242,6 +253,18 @@ class SocialWiringSettings(ProductSettings):
             self.crm_base_url = self.vista_base_url
         if not self.crm_api_key and self.vista_api_key:
             self.crm_api_key = self.vista_api_key
+        # OAuth redirect URIs — derive from oauth_redirect_base_url (or
+        # tunnel_hostname fallback) when set; preserves today's behavior
+        # otherwise (per-URI defaults / env vars). The derivation always
+        # wins when an explicit base is set — predictable, no surprise
+        # mix of base + per-URI overrides. Same back-compat-defaulted
+        # shape as the seed seams (KB § PATTERNS/absorbed-product-seed-shape-seam.md).
+        oauth_base = self.oauth_redirect_base_url or self.tunnel_hostname
+        if oauth_base:
+            base = oauth_base.rstrip("/")
+            self.youtube_redirect_uri = f"{base}/api/youtube/oauth/callback"
+            self.google_oauth_redirect_uri = f"{base}/api/calendar/oauth/callback"
+            self.meta_oauth_redirect_uri = f"{base}/api/meta/oauth/callback"
 
 
 settings = SocialWiringSettings()

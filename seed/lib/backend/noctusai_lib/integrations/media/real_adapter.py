@@ -343,32 +343,17 @@ class OpenAIMediaResolver:
 
     @staticmethod
     def _pdf_text_layer(content: bytes) -> tuple[str, bool]:
-        """Return (extracted_text, tooling_available). PyMuPDF first
-        (noc certidoes_service convention), pdfminer secondary."""
-        try:
-            import fitz  # type: ignore  # PyMuPDF
+        """Return (extracted_text, tooling_available).
 
-            doc = fitz.open(stream=content, filetype="pdf")
-            try:
-                chunks = [doc[i].get_text().strip() for i in range(len(doc))]
-            finally:
-                doc.close()
-            return ("\n".join(c for c in chunks if c), True)
-        except ModuleNotFoundError:
-            pass
-        except Exception:  # noqa: BLE001 — fall through to pdfminer
-            logger.debug("PyMuPDF get_text failed; trying pdfminer", exc_info=True)
-        try:
-            from io import BytesIO
+        Single-sourced 2026-05-19 to the public
+        `noctusai_lib.integrations.media.pdf_text` module — same PyMuPDF-first
+        / pdfminer-fallback logic, now also consumed by
+        `DriveFileContent.text` for `application/pdf` (Phase 6a-drive)."""
+        from noctusai_lib.integrations.media.pdf_text import (
+            _extract_pdf_text_with_signal,
+        )
 
-            from pdfminer.high_level import extract_text  # type: ignore
-
-            return (extract_text(BytesIO(content)) or "", True)
-        except ModuleNotFoundError:
-            return ("", False)
-        except Exception:  # noqa: BLE001
-            logger.debug("pdfminer extract_text failed", exc_info=True)
-            return ("", True)
+        return _extract_pdf_text_with_signal(content)
 
     @staticmethod
     def _pdf_rasterize(content: bytes) -> list[bytes]:

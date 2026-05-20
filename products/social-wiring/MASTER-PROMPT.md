@@ -69,6 +69,16 @@ scheduling appointments. RLS scoped to the product.
 
 ## Seed seams consumed (do NOT re-implement product-locally)
 
+> **Status (2026-05-19, post `social-wiring-google-seed-consume`):** the
+> **Google stack** rows below are **TRUE** — youtube / Calendar / Drive /
+> OAuth-lifecycle / Fernet vault all consume the seed seams; ~3.5k LoC of
+> product fork retired; the prior drift marker is removed (project closed).
+> **Meta** is still hand-rolled (~1302 LoC `services/meta/*`) — tracked in
+> `products/social-wiring/projects/social-wiring-meta-seed-consume/`; that row
+> becomes TRUE when the follow-up closes. Non-Google rows (chatbot, whatsapp,
+> multimodal media, frontend hooks) are not re-verified by this pass —
+> agents editing them should re-confirm against the tree.
+
 - Chatbot orchestrator + message_store + response_registry — `noctusai_lib.domain.chatbot`
 - WhatsApp WAHA connector + @lid auth + SETNX dedup — `noctusai_lib.integrations.whatsapp`
 - Google Calendar/Maps/Drive + scope-discovery — `noctusai_lib.integrations.google_*`

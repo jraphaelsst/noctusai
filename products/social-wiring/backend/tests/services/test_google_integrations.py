@@ -19,7 +19,7 @@ from app.services.calendar import (
     EventInput,
     FakeCalendarAdapter,
 )
-from app.services.calendar.mappers import (
+from noctusai_lib.integrations.google_calendar.mappers import (
     event_to_google_body,
     google_body_to_created_event,
     parse_google_datetime,

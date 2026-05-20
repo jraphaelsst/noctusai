@@ -37,10 +37,20 @@ class AuthorizationURL:
     callback query string — the consumer is responsible for persisting
     it (typically per-tenant + CSRF nonce) before redirect, and
     verifying it on callback.
+
+    `code_verifier` is populated when the issuing provider is in PKCE
+    mode (RFC 7636) — see `KB § PATTERNS/absorbed-product-seed-shape-seam.md`
+    for the absorbed-product-seed-shape-seam pattern that motivates the
+    seam. Non-PKCE providers (today's default) leave it `None`; the
+    consumer persists the value alongside `state` (e.g. Redis keyed by
+    `state` with a short TTL) and replays it at `exchange_code(...,
+    code_verifier=<v>)`. Additive-default `None` ⇒ existing
+    non-PKCE consumers see no observable change.
     """
 
     url: str
     state: str
+    code_verifier: str | None = None
 
 
 @dataclass(frozen=True)

@@ -61,14 +61,38 @@ class SupabaseCredentialStore(CredentialStore):
         table: physical table name. Defaults to ``oauth_credentials``.
             Pass a schema-qualified name (``"social_wiring.oauth_credentials"``)
             if the client is not already schema-bound.
+        metadata_column: name of the ``jsonb`` column that holds the
+            (unmapped) plaintext metadata blob. Default ``"metadata"``
+            reproduces the historical behavior exactly. Pass ``None`` for
+            absorbed tables that have NO metadata column — ``put()`` then
+            omits the column from the payload and ``get()`` does not read
+            it (any unmapped metadata key with ``metadata_column is None``
+            raises ``ValueError`` — fail-loud, never a silent drop).
+        metadata_columns: optional ``{metadata_key: physical_column}`` map
+            for absorbed tables that denormalized specific metadata keys
+            into discrete columns (e.g.
+            ``{"channel_id": "channel_id", "scopes": "scopes"}``).
+            ``put()`` flattens mapped keys into their own columns (NOT the
+            JSON blob); ``get()`` re-inflates those columns back into
+            ``StoredCredential.metadata``. Default ``None`` = no mapping.
     """
 
-    def __init__(self, client, fernet_key: bytes, *, table: str = DEFAULT_TABLE) -> None:
+    def __init__(
+        self,
+        client,
+        fernet_key: bytes,
+        *,
+        table: str = DEFAULT_TABLE,
+        metadata_column: Optional[str] = "metadata",
+        metadata_columns: Optional[dict] = None,
+    ) -> None:
         if not fernet_key:
             raise ValueError("SupabaseCredentialStore requires a non-empty fernet_key")
         self._client = client
         self._key = fernet_key
         self._table = table
+        self._metadata_column = metadata_column
+        self._metadata_columns = dict(metadata_columns or {})
 
     def get(self, org_id: str, provider: str) -> Optional[StoredCredential]:
         resp = (
@@ -99,13 +123,31 @@ class SupabaseCredentialStore(CredentialStore):
             raise CredentialDecryptError(
                 f"cannot decrypt stored credential for ({org_id}, {provider})"
             ) from exc
+        return self._row_to_stored(org_id, provider, tokens, row)
+
+    def _row_to_stored(
+        self, org_id: str, provider: str, tokens: dict, row: dict
+    ) -> StoredCredential:
+        """Re-inflate ``.metadata`` from the JSON blob + any mapped columns.
+
+        The JSON blob is read only when ``metadata_column`` is set;
+        ``metadata_columns`` entries are pulled back from their discrete
+        physical columns. Mapped keys win over the JSON blob if both are
+        somehow present (the mapped column is the canonical home).
+        """
+        metadata: dict = {}
+        if self._metadata_column is not None:
+            metadata.update(row.get(self._metadata_column) or {})
+        for meta_key, col in self._metadata_columns.items():
+            if col in row and row[col] is not None:
+                metadata[meta_key] = row[col]
         return StoredCredential(
             org_id=org_id,
             provider=provider,
             tokens=tokens,
             created_at=_parse_ts(row.get("created_at")),
             updated_at=_parse_ts(row.get("updated_at")),
-            metadata=row.get("metadata") or {},
+            metadata=metadata,
         )
 
     def put(
@@ -118,13 +160,33 @@ class SupabaseCredentialStore(CredentialStore):
     ) -> StoredCredential:
         now = datetime.now(timezone.utc)
         encrypted = encrypt(json.dumps(tokens, separators=(",", ":")), self._key)
+        meta = dict(metadata or {})
         payload = {
             "org_id": org_id,
             "provider": provider,
             "encrypted_tokens": encrypted,
-            "metadata": dict(metadata or {}),
             "updated_at": now.isoformat(),
         }
+        # Flatten mapped metadata keys into their own discrete columns —
+        # they do NOT also go into the JSON blob.
+        unmapped: dict = {}
+        for key, value in meta.items():
+            col = self._metadata_columns.get(key)
+            if col is not None:
+                payload[col] = value
+            else:
+                unmapped[key] = value
+        if self._metadata_column is not None:
+            payload[self._metadata_column] = unmapped
+        elif unmapped:
+            # No JSON metadata column on this table and an unmapped key
+            # was supplied — refuse to silently drop it (fail-loud).
+            raise ValueError(
+                "token_store: metadata keys "
+                f"{sorted(unmapped)} have no destination — metadata_column "
+                "is None and they are not in metadata_columns; either map "
+                "them or configure a metadata_column"
+            )
         # UPSERT on the (org_id, provider) natural key — re-consent
         # overwrites in place rather than accumulating rows.
         (
@@ -138,7 +200,7 @@ class SupabaseCredentialStore(CredentialStore):
             tokens=dict(tokens),
             created_at=now,
             updated_at=now,
-            metadata=dict(metadata or {}),
+            metadata=meta,
         )
 
     def delete(self, org_id: str, provider: str) -> bool:
