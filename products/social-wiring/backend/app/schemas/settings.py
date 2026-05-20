@@ -1,8 +1,14 @@
 """Pydantic schemas for the Settings router.
 
 Boundary types — never let the credential bundle (refresh_token,
-access_token) leak into a response model. The ``YouTubeStatus`` /
-``KeysStatus`` shapes are deliberately read-only.
+access_token) leak into a response model. The ``KeysStatus`` shape is
+deliberately read-only.
+
+NOTE — the YouTube-specific schemas (``YouTubeStatus`` / ``YouTubeAuthURL``)
+moved to ``app.modules.youtube.schemas.settings`` in Phase 8 alongside
+the YouTube routes. ``KeysStatus`` stays here because it enumerates
+secrets for every integration (YouTube, Vista, Waha, Email, OpenAI, ...)
+— a cross-domain shape, not a YouTube-domain one.
 """
 from __future__ import annotations
 
@@ -10,27 +16,6 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
-
-
-# ─── YouTube tab ───────────────────────────────────────────────────────
-class YouTubeStatus(BaseModel):
-    """Connection state for the Settings → YouTube tab."""
-
-    connected: bool
-    channel_id: str | None = None
-    channel_title: str | None = None
-    subscriber_count: int | None = None
-    video_count: int | None = None
-    view_count: int | None = None
-    scopes: list[str] = Field(default_factory=list)
-    connected_at: datetime | None = None
-
-
-class YouTubeAuthURL(BaseModel):
-    """Response for GET /settings/youtube/auth-url."""
-
-    auth_url: str
-    state: str
 
 
 # ─── Notifications tab — recipients ────────────────────────────────────

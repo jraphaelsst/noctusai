@@ -131,9 +131,9 @@ class TestRetryEndpoint:
     def test_retry_returns_404_for_missing_job(self, client, monkeypatch):
         self._setup_creds(monkeypatch)
         with patch(
-            "app.services.upload_service.UploadService.retry_failed_job",
+            "app.modules.youtube.services.upload.UploadService.retry_failed_job",
             side_effect=__import__(
-                "app.services.upload_service", fromlist=["UploadServiceError"]
+                "app.modules.youtube.services.upload", fromlist=["UploadServiceError"]
             ).UploadServiceError("job xyz not found"),
         ):
             resp = client.post(
@@ -145,9 +145,9 @@ class TestRetryEndpoint:
     def test_retry_returns_409_for_non_failed_job(self, client, monkeypatch):
         self._setup_creds(monkeypatch)
         with patch(
-            "app.services.upload_service.UploadService.retry_failed_job",
+            "app.modules.youtube.services.upload.UploadService.retry_failed_job",
             side_effect=__import__(
-                "app.services.upload_service", fromlist=["UploadServiceError"]
+                "app.modules.youtube.services.upload", fromlist=["UploadServiceError"]
             ).UploadServiceError(
                 "job xyz is in status='uploading'; retry only works on failed jobs."
             ),

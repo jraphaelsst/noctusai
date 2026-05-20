@@ -6,7 +6,7 @@ import pytest
 
 from noctusai_lib.integrations.youtube import VideoFull
 from noctusai_lib.security.token_store import make_credential_store
-from app.services.youtube_service import (
+from app.modules.youtube.services.youtube import (
     YOUTUBE_SCOPES,
     YouTubeService,
     YouTubeServiceError,

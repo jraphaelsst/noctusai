@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from app.services.upload_queue import (
+from app.modules.youtube.services.upload_queue import (
     QueueError,
     STALE_AFTER_SECONDS,
     UploadQueue,

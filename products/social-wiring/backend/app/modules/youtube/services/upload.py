@@ -33,9 +33,9 @@ from pathlib import Path
 from typing import Any, Iterator, TYPE_CHECKING
 from uuid import UUID
 
-from app.schemas.upload import UploadMetadata
+from app.modules.youtube.schemas.upload import UploadMetadata
 from app.services import gdrive_service
-from app.services.youtube_service import (
+from app.modules.youtube.services.youtube import (
     YouTubeNotConnected,
     YouTubeService,
     YouTubeServiceError,
@@ -262,7 +262,7 @@ class UploadService:
         if self._redis_client is None:
             return False
         from app.config import settings
-        from app.services.upload_queue import UploadQueue
+        from app.modules.youtube.services.upload_queue import UploadQueue
 
         queue = UploadQueue(self._redis_client)
         max_concurrent = max(1, getattr(settings, "upload_max_concurrent", 1))
@@ -297,7 +297,7 @@ class UploadService:
         if not was_acquired or self._redis_client is None:
             return
         try:
-            from app.services.upload_queue import UploadQueue
+            from app.modules.youtube.services.upload_queue import UploadQueue
 
             UploadQueue(self._redis_client).release(str(job_id))
         except Exception:
@@ -750,7 +750,7 @@ class UploadService:
         # held when it failed. Safe-when-absent; idempotent.
         if self._redis_client is not None:
             try:
-                from app.services.upload_queue import UploadQueue
+                from app.modules.youtube.services.upload_queue import UploadQueue
 
                 UploadQueue(self._redis_client).release(str(job_id))
             except Exception:

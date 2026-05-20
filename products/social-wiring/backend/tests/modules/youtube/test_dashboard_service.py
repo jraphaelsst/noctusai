@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.dashboard_service import DashboardService
+from app.modules.youtube.services.dashboard import DashboardService
 
 
 class TestClassifyDelivery:

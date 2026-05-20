@@ -29,11 +29,11 @@ from app.dependencies import (
     get_current_user_org,
     get_user_client,
 )
-from app.schemas.video import VideoListResponse, VideoOut, VideoSyncResult
+from app.modules.youtube.schemas.video import VideoListResponse, VideoOut, VideoSyncResult
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured, build_credential_store)
-from app.services.video_cache_service import VideoCacheError, VideoCacheService
-from app.services.youtube_service import (
+from app.modules.youtube.services.video_cache import VideoCacheError, VideoCacheService
+from app.modules.youtube.services.youtube import (
     YouTubeNotConnected,
     YouTubeService,
     YouTubeServiceError,

@@ -2115,7 +2115,7 @@ class WhatsAppIntakeService:
         # Lazy-imported here to avoid a circular: upload_queue → settings
         # → app.config, while intake imports app.config + this poller
         # would otherwise reach back into upload_queue at module load.
-        from app.services.upload_queue import UploadQueue
+        from app.modules.youtube.services.upload_queue import UploadQueue
 
         queue = UploadQueue(self._redis)
         max_concurrent = max(1, settings.upload_max_concurrent)
@@ -2192,10 +2192,10 @@ class WhatsAppIntakeService:
         ``web:``) skip the WhatsApp send — the UI polls the upload job
         + the pending state directly.
         """
-        from app.schemas.upload import UploadMetadata
+        from app.modules.youtube.schemas.upload import UploadMetadata
         from app.services.credential_vault import CredentialStore, build_credential_store
         from app.services.notification_service import NotificationService
-        from app.services.upload_service import (
+        from app.modules.youtube.services.upload import (
             UploadService,
             rename_for_job,
         )
@@ -2308,7 +2308,7 @@ class WhatsAppIntakeService:
                 # Drive download cache (F1). Re-runs (retry, multi-job,
                 # multi-candidate) hit the cache and skip the network
                 # round-trip when the local files are still on disk.
-                from app.services.download_cache import (
+                from app.modules.youtube.services.download_cache import (
                     CachedCandidate,
                     DownloadCache,
                 )

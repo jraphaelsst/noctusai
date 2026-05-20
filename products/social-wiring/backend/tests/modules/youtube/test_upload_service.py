@@ -7,15 +7,15 @@ from uuid import uuid4
 
 import pytest
 
-from app.schemas.upload import UploadMetadata
+from app.modules.youtube.schemas.upload import UploadMetadata
 from app.services import gdrive_service
-from app.services.upload_service import (
+from app.modules.youtube.services.upload import (
     UploadService,
     UploadServiceError,
     rename_for_job,
     stage_browser_upload,
 )
-from app.services.youtube_service import YouTubeNotConnected, YouTubeServiceError
+from app.modules.youtube.services.youtube import YouTubeNotConnected, YouTubeServiceError
 
 
 def _make_metadata(**overrides) -> UploadMetadata:

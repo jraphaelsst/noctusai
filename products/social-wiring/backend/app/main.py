@@ -13,7 +13,7 @@ auto-wires credential resolution + the default multi-provider LLMConfig.
 
 ────────────────────────────────────────────────────────────────────────
 MODULE-REGISTRATION SEAM (W2.1 contract — for W2.2 email_marketing /
-W2.3 scheduling)
+W2.3 scheduling / Phase 8 youtube)
 ────────────────────────────────────────────────────────────────────────
 ``main.py`` does NOT hard-list routers. It iterates ``MODULES`` — a list
 of zero-arg callables, one per product module, each returning a
@@ -25,11 +25,13 @@ needs). A new module is added by:
   2. Appending ``from app.modules.<name> import register as _<name>``
      + ``_<name>`` to ``MODULES`` below.
 
-W2.2 / W2.3 add their module WITHOUT editing the assembly logic — only
-the ``MODULES`` list grows. Their migration tables go into the single
-canonical ``migrations/001_social-wiring.sql`` under the
+W2.2 / W2.3 / Phase 8 add their module WITHOUT editing the assembly
+logic — only the ``MODULES`` list grows. Their migration tables go into
+the single canonical ``migrations/001_social-wiring.sql`` under the
 ``-- W2.2 email_marketing`` / ``-- W2.3 scheduling`` section markers
-already present in that file.
+already present in that file. The Phase 8 ``youtube`` module adds no new
+DDL — it folds existing W2.1 tables (``video_cache``, ``upload_jobs``)
+unchanged.
 
 ``ModuleRegistration``:
   - ``routers``: list[APIRouter] — included after the standard routers.
@@ -66,26 +68,22 @@ class ModuleRegistration:
 
 def _register_media_wiring() -> ModuleRegistration:
     """The W2.1 base module — chatbot / WhatsApp / Google / Meta /
-    upload / videos / dashboard / intake-monitor / settings."""
+    intake-monitor / non-youtube settings.
+
+    YouTube footprint (videos / upload / dashboard / YouTube tab + OAuth
+    callback) moved to ``app.modules.youtube`` in Phase 8 and is
+    registered as its own ``MODULES`` entry below."""
     from app.routers.calendar_router import router as calendar_router
     from app.routers.chat_router import router as chat_router
-    from app.routers.dashboard_router import router as dashboard_router
     from app.routers.google_router import router as google_router
     from app.routers.intake_monitor_router import router as intake_monitor_router
     from app.routers.meta_router import router as meta_router
-    from app.routers.settings_router import oauth_router
     from app.routers.settings_router import router as settings_router
-    from app.routers.upload_router import router as upload_router
-    from app.routers.videos_router import router as videos_router
     from app.routers.whatsapp_router import router as whatsapp_router
 
     return ModuleRegistration(
         routers=[
             settings_router,
-            oauth_router,
-            upload_router,
-            videos_router,
-            dashboard_router,
             whatsapp_router,
             intake_monitor_router,
             chat_router,
@@ -99,11 +97,14 @@ def _register_media_wiring() -> ModuleRegistration:
 
 from app.modules.email_marketing import register as _register_email_marketing
 from app.modules.scheduling import register as _scheduling
+from app.modules.youtube import register as _youtube
 
-# Append W2.2 (email_marketing) / W2.3 (scheduling) module ``register``
-# callables here — the assembly loop below needs NO edit.
+# Append W2.2 (email_marketing) / W2.3 (scheduling) / Phase 8 (youtube)
+# module ``register`` callables here — the assembly loop below needs NO
+# edit.
 MODULES = [
     _register_media_wiring,
+    _youtube,
     _register_email_marketing,
     _scheduling,
 ]

@@ -31,9 +31,9 @@ from app.services.chatbot_service import ChatbotService
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured, build_credential_store
 from app.services.crm_service import CRMNotConfigured, CRMService
 from app.services.media_service import make_media_service
-from app.services.upload_service import stage_browser_upload
+from app.modules.youtube.services.upload import stage_browser_upload
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
-from app.services.youtube_service import YouTubeService, YouTubeServiceError
+from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
 

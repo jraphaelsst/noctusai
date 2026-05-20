@@ -11,12 +11,12 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.video_cache_service import (
+from app.modules.youtube.services.video_cache import (
     SyncOutcome,
     VideoCacheError,
     VideoCacheService,
 )
-from app.services.youtube_service import VideoSummary, YouTubeServiceError
+from app.modules.youtube.services.youtube import VideoSummary, YouTubeServiceError
 
 
 # ─── Lean Supabase stub ────────────────────────────────────────────────

@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from app.services.youtube_service import (
+from app.modules.youtube.services.youtube import (
     VideoSummary,
     YouTubeService,
     YouTubeServiceError,

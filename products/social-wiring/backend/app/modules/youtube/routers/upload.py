@@ -44,7 +44,7 @@ from app.dependencies import (
     get_current_user_org,
     get_user_client,
 )
-from app.schemas.upload import (
+from app.modules.youtube.schemas.upload import (
     GdriveUploadRequest,
     UploadJobCreated,
     UploadJobOut,
@@ -53,13 +53,13 @@ from app.schemas.upload import (
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured, build_credential_store)
 from app.services.notification_service import NotificationService
-from app.services.upload_service import (
+from app.modules.youtube.services.upload import (
     UploadService,
     UploadServiceError,
     rename_for_job,
     stage_browser_upload,
 )
-from app.services.youtube_service import YouTubeService, YouTubeServiceError
+from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
 

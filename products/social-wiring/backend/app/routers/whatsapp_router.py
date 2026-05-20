@@ -39,7 +39,7 @@ from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.waha_response_registry import record_waha_sample
 from app.services.whatsapp_chatbot_service import WhatsAppChatbotService
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
-from app.services.youtube_service import YouTubeService, YouTubeServiceError
+from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
 

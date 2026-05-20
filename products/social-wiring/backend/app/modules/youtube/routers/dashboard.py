@@ -27,7 +27,7 @@ from app.dependencies import (
     get_current_user_org,
     get_user_client,
 )
-from app.schemas.dashboard import (
+from app.modules.youtube.schemas.dashboard import (
     KpiStats,
     QueueEntry,
     QueueState,
@@ -36,7 +36,7 @@ from app.schemas.dashboard import (
 )
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured, build_credential_store)
-from app.services.dashboard_service import DashboardService
+from app.modules.youtube.services.dashboard import DashboardService
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ def get_queue_state(
         import json as _json
         import redis as _redis
 
-        from app.services.upload_queue import UploadQueue, _QUEUE_KEY  # type: ignore
+        from app.modules.youtube.services.upload_queue import UploadQueue, _QUEUE_KEY  # type: ignore
 
         redis_client = _redis.from_url(settings.redis_url, decode_responses=True)
         redis_client.ping()

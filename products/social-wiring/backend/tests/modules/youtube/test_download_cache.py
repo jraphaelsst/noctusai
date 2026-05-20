@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from app.services.download_cache import (
+from app.modules.youtube.services.download_cache import (
     CachedCandidate,
     DownloadCache,
 )
