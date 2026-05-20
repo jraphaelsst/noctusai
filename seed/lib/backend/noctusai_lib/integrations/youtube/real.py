@@ -17,6 +17,7 @@ swallowed (per the no-silent-errors rule).
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -177,6 +178,59 @@ def _channel_info_from_api(item: dict[str, Any]) -> ChannelInfo:
         video_count=int(statistics.get("videoCount", 0) or 0),
         view_count=int(statistics.get("viewCount", 0) or 0),
     )
+CHUNK_RETRY_MAX_ATTEMPTS = 3
+"""Max retries per chunk (4 total attempts: 1 initial + 3 retries). Resets
+to 0 on each successful chunk."""
+
+CHUNK_RETRY_BASE_DELAY_S = 1.0
+"""Exponential-backoff base — 1s, 2s, 4s for attempts 1/2/3."""
+
+CHUNK_RETRY_MAX_DELAY_S = 4.0
+"""Cap the per-attempt sleep so a long backoff doesn't stall the operator."""
+
+
+def _is_quota_exceeded(exc: HttpError) -> bool:
+    """Detect the `quotaExceeded` sub-error in an `HttpError` body.
+
+    Google returns 403 with `reason="quotaExceeded"` (or
+    `"dailyLimitExceeded"`) when the daily quota is hit. The status code
+    alone (403) can't distinguish quota-exhaustion from
+    permission-denied — we have to inspect the JSON body.
+
+    Returns `False` on any decode error (no silent swallow — the WARN
+    log lives at the call site)."""
+    try:
+        content = (
+            exc.content.decode("utf-8")
+            if isinstance(exc.content, bytes)
+            else str(exc.content or "")
+        )
+    except (UnicodeDecodeError, AttributeError):
+        return False
+    lowered = content.lower()
+    return (
+        "quotaexceeded" in lowered
+        or "dailylimitexceeded" in lowered
+        or ("ratelimitexceeded" in lowered and getattr(exc.resp, "status", 0) == 403)
+    )
+
+
+def _is_transient_http_error(exc: HttpError) -> bool:
+    """`5xx` server errors + `429` rate-limit are transient; everything
+    else is permanent. `quotaExceeded` is special-cased UP at the call
+    site (raised immediately, never retried)."""
+    status = getattr(exc.resp, "status", 0)
+    return status == 429 or 500 <= status < 600
+
+
+def _is_transient_network_error(exc: BaseException) -> bool:
+    """Transport-layer transients that the resumable upload loop can
+    retry from. Kept separate from `_is_transient_http_error` because
+    these don't carry an HTTP status code at all."""
+    import socket
+    import ssl
+
+    return isinstance(exc, (ConnectionError, TimeoutError, socket.error, ssl.SSLError))
 
 
 # ---- RealYoutubeClient -----------------------------------------------------
@@ -562,7 +616,25 @@ class RealYoutubeClient:
         call time when no OAuth credentials were supplied (fail loud,
         per the no-silent-errors rule). The local file is streamed via
         a resumable `MediaFileUpload` so large videos don't buffer in
-        memory."""
+        memory.
+
+        **Per-chunk retry on transient failures.** Transient HTTP errors
+        (5xx, 429) and transport-level network errors (ConnectionError,
+        TimeoutError, SSLError) trigger a bounded retry of the SAME
+        chunk (the resumable upload URI is preserved on the `request`
+        object, so `next_chunk()` resumes from the last successful byte
+        offset — no restart-from-zero).
+
+        - Up to `CHUNK_RETRY_MAX_ATTEMPTS` (3) retries per chunk.
+        - Retry budget **resets on every successful chunk** so a 50-
+          chunk upload over a flaky network produces many short retries
+          rather than exhausting a global budget at chunk 4.
+        - Exponential backoff: 1s, 2s, 4s (capped at
+          `CHUNK_RETRY_MAX_DELAY_S`).
+        - `quotaExceeded` / `dailyLimitExceeded` (403 with the matching
+          sub-error) is **NEVER retried** — propagates immediately as
+          `HttpError` so the consumer's quota-handling layer can
+          translate it to a "tomorrow / retry-in-6h" message."""
         if self._oauth_credentials is None:
             raise ValueError(
                 "RealYoutubeClient.upload_video requires oauth_credentials "
@@ -582,25 +654,15 @@ class RealYoutubeClient:
             body["snippet"]["tags"] = tags
 
         media = MediaFileUpload(file_path, resumable=True)
-        try:
-            request = (
-                self._service()
-                .videos()
-                .insert(part="snippet,status", body=body, media_body=media)
-            )
-            response: dict[str, Any] | None = None
-            while response is None:
-                # Resumable upload: drive the chunked transfer to
-                # completion. next_chunk() returns (status, response);
-                # response stays None until the final chunk lands.
-                _status, response = request.next_chunk()
-        except HttpError as exc:
-            logger.warning(
-                "youtube.upload_video_http_error title=%r status=%s",
-                clipped_title,
-                getattr(exc.resp, "status", "?"),
-            )
-            raise
+        request = (
+            self._service()
+            .videos()
+            .insert(part="snippet,status", body=body, media_body=media)
+        )
+
+        response = self._drive_resumable_upload(
+            request, log_label=f"upload_video title={clipped_title!r}"
+        )
 
         video_id = response.get("id", "")
         return VideoUpload(
@@ -686,6 +748,97 @@ class RealYoutubeClient:
             processing_status=proc_block.get("processingStatus") or "unknown",
             privacy_status=status_block.get("privacyStatus") or "unknown",
         )
+
+    def _drive_resumable_upload(
+        self, request: Any, *, log_label: str
+    ) -> dict[str, Any]:
+        """Drive a googleapiclient resumable upload to completion with
+        per-chunk retry on transient failures.
+
+        Algorithm (lifted from product `_resumable_upload_with_chunk_retry`,
+        Phase 4 fix-on-contact — see module docstring above):
+
+        - Keep the same `request` object across retries so its
+          `resumable_uri` (encoding the upload-session URI + byte offset
+          on YT's side) stays valid and `next_chunk()` resumes from the
+          last successful byte rather than restarting from zero.
+        - Per-chunk retry budget (`CHUNK_RETRY_MAX_ATTEMPTS`) **resets on
+          every successful chunk** so a long upload with multiple flaky
+          moments doesn't exhaust the budget on the first hiccup.
+        - `quotaExceeded` / `dailyLimitExceeded` (403) → NO retry,
+          propagate immediately as `HttpError` (consumer's quota layer
+          translates it to a user-facing message).
+        - Other transient HTTP errors (5xx, 429) and transport-level
+          errors (ConnectionError, TimeoutError, SSLError) → exponential
+          backoff (1s, 2s, 4s) then re-attempt the same chunk.
+        - Non-transient errors propagate immediately."""
+        response: dict[str, Any] | None = None
+        attempts_this_chunk = 0
+        while response is None:
+            try:
+                _status, response = request.next_chunk()
+                attempts_this_chunk = 0  # reset on chunk success
+            except HttpError as exc:
+                if _is_quota_exceeded(exc):
+                    logger.warning(
+                        "youtube.%s.quota_exceeded status=%s",
+                        log_label,
+                        getattr(exc.resp, "status", "?"),
+                    )
+                    raise
+                if not _is_transient_http_error(exc):
+                    logger.warning(
+                        "youtube.%s.non_transient_http_error status=%s",
+                        log_label,
+                        getattr(exc.resp, "status", "?"),
+                    )
+                    raise
+                attempts_this_chunk += 1
+                if attempts_this_chunk > CHUNK_RETRY_MAX_ATTEMPTS:
+                    logger.warning(
+                        "youtube.%s.chunk_retries_exhausted attempts=%d",
+                        log_label,
+                        CHUNK_RETRY_MAX_ATTEMPTS,
+                    )
+                    raise
+                delay = min(
+                    CHUNK_RETRY_BASE_DELAY_S * (2 ** (attempts_this_chunk - 1)),
+                    CHUNK_RETRY_MAX_DELAY_S,
+                )
+                logger.warning(
+                    "youtube.%s.transient_http_retry attempt=%d/%d delay=%.1fs status=%s",
+                    log_label,
+                    attempts_this_chunk,
+                    CHUNK_RETRY_MAX_ATTEMPTS,
+                    delay,
+                    getattr(exc.resp, "status", "?"),
+                )
+                time.sleep(delay)
+            except Exception as exc:
+                if not _is_transient_network_error(exc):
+                    raise
+                attempts_this_chunk += 1
+                if attempts_this_chunk > CHUNK_RETRY_MAX_ATTEMPTS:
+                    logger.warning(
+                        "youtube.%s.chunk_network_retries_exhausted attempts=%d",
+                        log_label,
+                        CHUNK_RETRY_MAX_ATTEMPTS,
+                    )
+                    raise
+                delay = min(
+                    CHUNK_RETRY_BASE_DELAY_S * (2 ** (attempts_this_chunk - 1)),
+                    CHUNK_RETRY_MAX_DELAY_S,
+                )
+                logger.warning(
+                    "youtube.%s.transient_network_retry attempt=%d/%d delay=%.1fs err=%s",
+                    log_label,
+                    attempts_this_chunk,
+                    CHUNK_RETRY_MAX_ATTEMPTS,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+        return response
 
 
 __all__ = ["RealYoutubeClient"]

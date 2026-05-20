@@ -1484,3 +1484,346 @@ def test_video_full_default_tags_and_category() -> None:
     )
     assert v.tags == ()
     assert v.category_id == ""
+
+
+# ============================================================================
+# Chunked-upload retry — Real (Phase 7)
+# ============================================================================
+#
+# Per-chunk retry for the resumable `videos.insert` loop. Lifted from the
+# social-wiring product's Phase 4 fix-on-contact removal. Algorithm:
+# - up to 3 retries per chunk, budget resets on each successful chunk;
+# - quotaExceeded (403 with body sub-error) propagates immediately (no retry);
+# - 5xx / 429 / network errors retry with exponential backoff (1s/2s/4s).
+#
+# Network-free: googleapiclient is fully mocked at the boundary; `time.sleep`
+# is patched so backoff doesn't slow the suite.
+
+
+def _make_quota_exceeded_error() -> "HttpError":  # noqa: F821
+    """Build a 403 HttpError whose body carries the canonical
+    `quotaExceeded` sub-error so `_is_quota_exceeded` matches."""
+    from googleapiclient.errors import HttpError
+
+    resp = MagicMock()
+    resp.status = 403
+    return HttpError(
+        resp=resp,
+        content=b'{"error":{"errors":[{"reason":"quotaExceeded"}],"code":403}}',
+    )
+
+
+def _make_transient_http_error(status: int = 503) -> "HttpError":  # noqa: F821
+    from googleapiclient.errors import HttpError
+
+    resp = MagicMock()
+    resp.status = status
+    return HttpError(resp=resp, content=b'{"error":{"code":%d}}' % status)
+
+
+def _make_non_transient_http_error(status: int = 404) -> "HttpError":  # noqa: F821
+    from googleapiclient.errors import HttpError
+
+    resp = MagicMock()
+    resp.status = status
+    return HttpError(resp=resp, content=b'{"error":{"code":%d}}' % status)
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_single_chunk_happy_path_unchanged() -> None:
+    """Back-compat: a 1-chunk upload (next_chunk returns the final
+    response immediately) round-trips with no retry attempts."""
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    insert_request.next_chunk.side_effect = [(MagicMock(), {"id": "vidSingle"})]
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch("noctusai_lib.integrations.youtube.real.MediaFileUpload"), patch(
+        "noctusai_lib.integrations.youtube.real.time.sleep"
+    ) as sleep_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        result = await client.upload_video(file_path="/tmp/v.mp4", title="single")
+
+    assert result.video_id == "vidSingle"
+    assert insert_request.next_chunk.call_count == 1
+    assert sleep_mock.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_multi_chunk_happy_path() -> None:
+    """Back-compat: a 10-chunk upload (9 partial + 1 final) round-trips
+    with no retries."""
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    # 9× (status, None) partial chunks + 1× (status, response) final.
+    insert_request.next_chunk.side_effect = (
+        [(MagicMock(), None)] * 9 + [(MagicMock(), {"id": "vidMulti"})]
+    )
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch("noctusai_lib.integrations.youtube.real.MediaFileUpload"), patch(
+        "noctusai_lib.integrations.youtube.real.time.sleep"
+    ) as sleep_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        result = await client.upload_video(file_path="/tmp/v.mp4", title="multi")
+
+    assert result.video_id == "vidMulti"
+    assert insert_request.next_chunk.call_count == 10
+    assert sleep_mock.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_chunk_3_of_10_retries_transient_503_and_succeeds() -> None:
+    """A mid-stream 503 on chunk 3 triggers a retry → next attempt
+    succeeds → upload completes normally."""
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    # Chunks 1,2 succeed (partial) → chunk 3 raises 503 → retry succeeds →
+    # remaining 7 partial chunks → final.
+    sequence = [
+        (MagicMock(), None),  # chunk 1
+        (MagicMock(), None),  # chunk 2
+        _make_transient_http_error(503),  # chunk 3 — raises
+        (MagicMock(), None),  # chunk 3 retry — succeeds
+    ]
+    # Chunks 4..9 partial + chunk 10 final.
+    sequence.extend([(MagicMock(), None)] * 6)
+    sequence.append((MagicMock(), {"id": "vidRetry"}))
+    insert_request.next_chunk.side_effect = sequence
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch("noctusai_lib.integrations.youtube.real.MediaFileUpload"), patch(
+        "noctusai_lib.integrations.youtube.real.time.sleep"
+    ) as sleep_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        result = await client.upload_video(file_path="/tmp/v.mp4", title="retry-ok")
+
+    assert result.video_id == "vidRetry"
+    # 11 next_chunk calls (10 chunks + 1 retry on chunk 3).
+    assert insert_request.next_chunk.call_count == 11
+    # Exactly 1 backoff sleep, with the 1s base delay (2^0 * 1.0).
+    assert sleep_mock.call_count == 1
+    assert sleep_mock.call_args.args[0] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_quota_exceeded_propagates_without_retry() -> None:
+    """403 with `quotaExceeded` sub-error → propagates immediately as
+    HttpError; NO retry attempted; NO backoff sleep."""
+    from googleapiclient.errors import HttpError
+
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    insert_request.next_chunk.side_effect = [
+        (MagicMock(), None),  # chunk 1 partial
+        (MagicMock(), None),  # chunk 2 partial
+        _make_quota_exceeded_error(),  # chunk 3 → quotaExceeded
+    ]
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch("noctusai_lib.integrations.youtube.real.MediaFileUpload"), patch(
+        "noctusai_lib.integrations.youtube.real.time.sleep"
+    ) as sleep_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        with pytest.raises(HttpError):
+            await client.upload_video(file_path="/tmp/v.mp4", title="quota")
+
+    # No retry attempted: 3 next_chunk calls (chunks 1, 2, 3-raise) only.
+    assert insert_request.next_chunk.call_count == 3
+    # No backoff (quota path short-circuits before sleep).
+    assert sleep_mock.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_chunk_503_three_times_then_fails() -> None:
+    """A chunk that raises 503 on every retry exhausts the 3-retry
+    budget (4 attempts total) and propagates the HttpError."""
+    from googleapiclient.errors import HttpError
+
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    insert_request.next_chunk.side_effect = [
+        (MagicMock(), None),  # chunk 1 partial
+        (MagicMock(), None),  # chunk 2 partial
+        _make_transient_http_error(503),  # chunk 3 attempt 1 — raises
+        _make_transient_http_error(503),  # chunk 3 retry 1 — raises
+        _make_transient_http_error(503),  # chunk 3 retry 2 — raises
+        _make_transient_http_error(503),  # chunk 3 retry 3 — raises
+    ]
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch("noctusai_lib.integrations.youtube.real.MediaFileUpload"), patch(
+        "noctusai_lib.integrations.youtube.real.time.sleep"
+    ) as sleep_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        with pytest.raises(HttpError):
+            await client.upload_video(file_path="/tmp/v.mp4", title="exhaust")
+
+    # 6 next_chunk calls (2 partial + 1 initial-fail + 3 retry-fail).
+    assert insert_request.next_chunk.call_count == 6
+    # 3 backoff sleeps before the 4th attempt that finally exhausts the budget.
+    assert sleep_mock.call_count == 3
+    # Backoff sequence: 1s, 2s, 4s.
+    delays = [c.args[0] for c in sleep_mock.call_args_list]
+    assert delays == [1.0, 2.0, 4.0]
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_retry_budget_resets_between_chunks() -> None:
+    """Critical invariant: chunk 3 succeeds-after-1-retry must NOT
+    leave residue that prevents chunk 7 from succeeding-after-2-retries.
+
+    Without budget reset, the 2nd retry on chunk 7 would exhaust a
+    global 3-attempt budget already partially consumed by chunk 3."""
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    sequence = [
+        (MagicMock(), None),  # chunk 1
+        (MagicMock(), None),  # chunk 2
+        _make_transient_http_error(503),  # chunk 3 attempt 1 — raises
+        (MagicMock(), None),  # chunk 3 retry 1 — succeeds
+        (MagicMock(), None),  # chunk 4
+        (MagicMock(), None),  # chunk 5
+        (MagicMock(), None),  # chunk 6
+        _make_transient_http_error(503),  # chunk 7 attempt 1 — raises
+        _make_transient_http_error(503),  # chunk 7 retry 1 — raises
+        (MagicMock(), None),  # chunk 7 retry 2 — succeeds (budget reset proved)
+        (MagicMock(), None),  # chunk 8
+        (MagicMock(), None),  # chunk 9
+        (MagicMock(), {"id": "vidReset"}),  # chunk 10 final
+    ]
+    insert_request.next_chunk.side_effect = sequence
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch("noctusai_lib.integrations.youtube.real.MediaFileUpload"), patch(
+        "noctusai_lib.integrations.youtube.real.time.sleep"
+    ) as sleep_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        result = await client.upload_video(file_path="/tmp/v.mp4", title="reset")
+
+    assert result.video_id == "vidReset"
+    # All 13 next_chunk calls consumed (the entire seeded sequence).
+    assert insert_request.next_chunk.call_count == 13
+    # 1 sleep for chunk 3 (1s) + 2 sleeps for chunk 7 (1s, 2s) = 3 total.
+    assert sleep_mock.call_count == 3
+    delays = [c.args[0] for c in sleep_mock.call_args_list]
+    assert delays == [1.0, 1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_non_transient_http_propagates_without_retry() -> None:
+    """A non-transient HTTP error (e.g. 404, 401) propagates
+    immediately — no retry attempted."""
+    from googleapiclient.errors import HttpError
+
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    insert_request.next_chunk.side_effect = [
+        (MagicMock(), None),  # chunk 1 partial
+        _make_non_transient_http_error(404),  # chunk 2 — non-transient
+    ]
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch("noctusai_lib.integrations.youtube.real.MediaFileUpload"), patch(
+        "noctusai_lib.integrations.youtube.real.time.sleep"
+    ) as sleep_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        with pytest.raises(HttpError):
+            await client.upload_video(file_path="/tmp/v.mp4", title="notfound")
+
+    # Only 2 calls: chunk 1 + chunk 2 (the failure). No retry.
+    assert insert_request.next_chunk.call_count == 2
+    assert sleep_mock.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_real_upload_video_transient_network_error_retried() -> None:
+    """Transport-layer ConnectionError (no HTTP status) is retried
+    via the same per-chunk budget as HTTP transients."""
+    creds = MagicMock()
+    service = MagicMock()
+    insert_request = MagicMock()
+    insert_request.next_chunk.side_effect = [
+        (MagicMock(), None),  # chunk 1 partial
+        ConnectionError("flaky network"),  # chunk 2 attempt 1 — raises
+        (MagicMock(), None),  # chunk 2 retry — succeeds
+        (MagicMock(), {"id": "vidNet"}),  # chunk 3 final
+    ]
+    service.videos.return_value.insert.return_value = insert_request
+
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ), patch("noctusai_lib.integrations.youtube.real.MediaFileUpload"), patch(
+        "noctusai_lib.integrations.youtube.real.time.sleep"
+    ) as sleep_mock:
+        client = RealYoutubeClient(oauth_credentials=creds)
+        result = await client.upload_video(file_path="/tmp/v.mp4", title="net")
+
+    assert result.video_id == "vidNet"
+    assert insert_request.next_chunk.call_count == 4
+    assert sleep_mock.call_count == 1
+    assert sleep_mock.call_args.args[0] == 1.0
+
+
+# ---- _is_quota_exceeded helper coverage ------------------------------------
+
+
+def test_is_quota_exceeded_matches_quotaExceeded_reason() -> None:
+    from noctusai_lib.integrations.youtube.real import _is_quota_exceeded
+
+    err = _make_quota_exceeded_error()
+    assert _is_quota_exceeded(err) is True
+
+
+def test_is_quota_exceeded_matches_dailyLimitExceeded_reason() -> None:
+    from googleapiclient.errors import HttpError
+
+    from noctusai_lib.integrations.youtube.real import _is_quota_exceeded
+
+    resp = MagicMock()
+    resp.status = 403
+    err = HttpError(
+        resp=resp,
+        content=b'{"error":{"errors":[{"reason":"dailyLimitExceeded"}]}}',
+    )
+    assert _is_quota_exceeded(err) is True
+
+
+def test_is_quota_exceeded_false_for_generic_403_permission_denied() -> None:
+    from noctusai_lib.integrations.youtube.real import _is_quota_exceeded
+
+    # Body lacks the quotaExceeded marker → not a quota error.
+    err = _make_non_transient_http_error(403)
+    assert _is_quota_exceeded(err) is False
+
+
+def test_is_transient_http_error_classifications() -> None:
+    from noctusai_lib.integrations.youtube.real import _is_transient_http_error
+
+    assert _is_transient_http_error(_make_transient_http_error(500)) is True
+    assert _is_transient_http_error(_make_transient_http_error(503)) is True
+    assert _is_transient_http_error(_make_transient_http_error(429)) is True
+    assert _is_transient_http_error(_make_non_transient_http_error(404)) is False
+    assert _is_transient_http_error(_make_non_transient_http_error(401)) is False
+    assert _is_transient_http_error(_make_non_transient_http_error(403)) is False
