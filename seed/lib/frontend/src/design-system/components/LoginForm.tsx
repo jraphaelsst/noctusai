@@ -8,6 +8,12 @@
  * Core platform does NOT use this — it has its own REST-based login.
  * SSO-only products (ERP, PF) don't use this either.
  *
+ * Wave-3 dual-mode (platform-auth-modernization 2026-05-20):
+ *   Pass `useSessionAuth` (no `supabase`) to use the HttpOnly-cookie
+ *   `/api/auth/login` flow instead of Supabase. The two paths cannot
+ *   be mixed in one mount: `useSessionAuth=true` implies session mode
+ *   end-to-end and the `supabase` prop is ignored.
+ *
  * Zero external dependencies beyond React + sonner + supabase + lucide.
  * Uses plain useState for form state (no react-hook-form dependency).
  */
@@ -15,6 +21,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import type { LucideIcon } from "lucide-react";
 import { Loader2 } from "lucide-react";
+
+import { loginWithSession, type SessionAuthData } from "../../auth";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -26,10 +34,27 @@ export interface LoginFormProps {
   brandTitle: string;
   /** Optional subtitle below the title */
   brandSubtitle?: string;
-  /** Supabase client instance for authentication */
-  supabase: AnySupabaseClient;
+  /**
+   * Supabase client instance for authentication.
+   * Required UNLESS `useSessionAuth=true`.
+   */
+  supabase?: AnySupabaseClient;
+  /**
+   * Use HttpOnly-cookie session login (`/api/auth/login`) instead of
+   * Supabase. Default false. When true the `supabase` prop is ignored
+   * and `onSessionSuccess` (if provided) receives the `{user, org}`
+   * payload before `onSuccess()` fires.
+   */
+  useSessionAuth?: boolean;
   /** Called after successful login */
   onSuccess: () => void;
+  /**
+   * Optional callback fired (before `onSuccess`) in session-auth mode
+   * with the `{user, org}` payload from `/api/auth/login`. Use this
+   * to populate your auth store with the freshly-signed-in user
+   * before navigating away.
+   */
+  onSessionSuccess?: (data: SessionAuthData) => void;
   /** Show "Forgot password?" link (default false) */
   showForgotPassword?: boolean;
   /** Path for forgot password link (default "/forgot-password") */
@@ -53,7 +78,9 @@ export function LoginForm({
   brandTitle,
   brandSubtitle,
   supabase,
+  useSessionAuth = false,
   onSuccess,
+  onSessionSuccess,
   showForgotPassword = false,
   forgotPasswordPath = "/forgot-password",
   showRegisterLink = false,
@@ -91,6 +118,23 @@ export function LoginForm({
 
     setIsLoading(true);
     try {
+      if (useSessionAuth) {
+        // HttpOnly-cookie path — browser stores the session cookie
+        // automatically; FE never sees the token.
+        const data = await loginWithSession({ email, password });
+        onSessionSuccess?.(data);
+        toast.success("Login realizado com sucesso!");
+        onSuccess();
+        return;
+      }
+
+      if (!supabase) {
+        // Misconfiguration — caller forgot to pass either `supabase`
+        // or `useSessionAuth`. Loud so it can't ship silently.
+        toast.error("Erro de configuração: nenhum provedor de autenticação");
+        return;
+      }
+
       const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
@@ -100,8 +144,9 @@ export function LoginForm({
 
       toast.success("Login realizado com sucesso!");
       onSuccess();
-    } catch {
-      toast.error("Erro inesperado ao entrar");
+    } catch (err) {
+      const description = err instanceof Error ? err.message : undefined;
+      toast.error("Erro ao entrar", { description });
     } finally {
       setIsLoading(false);
     }

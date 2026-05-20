@@ -121,3 +121,156 @@ export function useSupabaseAuthInit(
     return () => subscription.unsubscribe();
   }, [supabase, setUser, setInitialized]);
 }
+
+// ---------------------------------------------------------------------------
+// Session-cookie auth (Wave-3, platform-auth-modernization)
+// ---------------------------------------------------------------------------
+//
+// HttpOnly-cookie session-based auth — paired with the backend's
+// `/api/auth/{login,me,logout}` triplet. The FE never sees the session
+// token; the browser attaches `nai_session` automatically when fetch
+// is called with `credentials: 'include'`.
+//
+// Why dual-mode at the seed level: other products keep the legacy
+// localStorage/Supabase-JS path during the transition. The two shapes
+// ship side-by-side and consumers (product Login.tsx + AuthProvider)
+// pick which to call. Default-OFF: a product that imports nothing new
+// keeps its Supabase flow.
+
+/** Minimal user shape returned by `/api/auth/me` + `/api/auth/login`. */
+export interface SessionUser {
+  id: string;
+  email: string;
+}
+
+/** Minimal org shape returned by `/api/auth/me` + `/api/auth/login`. */
+export interface SessionOrg {
+  id: string;
+  name: string;
+}
+
+/** Response payload of `/api/auth/me` and `/api/auth/login`. */
+export interface SessionAuthData {
+  user: SessionUser;
+  org: SessionOrg;
+}
+
+/**
+ * Boot-time session restore — GET `/api/auth/me`.
+ *
+ * Mirrors `useSupabaseAuthInit` shape so it slots into the same
+ * AuthProvider seam (`{ setUser, setInitialized }`). 200 → setUser
+ * with the user payload; 401 → setUser(null); either resolves
+ * `markAuthReady()` so data hooks gated on it stop deferring.
+ *
+ * Subscription / onAuthStateChange is deliberately absent — the
+ * session lives server-side, so the FE has no equivalent of
+ * Supabase's onAuthStateChange. `loginWithSession` / `logoutSession`
+ * are the only state transitions; consumers call them and update the
+ * store directly.
+ */
+export function useSessionAuthInit(
+  setUser: (user: SessionUser | null) => void,
+  setInitialized?: () => void,
+) {
+  useEffect(() => {
+    if (env.DEV_AUTOLOGIN) {
+      // Loud, unmissable — must never ship to prod unnoticed.
+      // eslint-disable-next-line no-console
+      console.warn(
+        '%c[DEV AUTOLOGIN]%c synthetic session active as dev@noctusai.local — ' +
+          'this MUST be off in production (VITE_DEV_AUTOLOGIN).',
+        'background:#b91c1c;color:#fff;padding:2px 6px;border-radius:3px',
+        'color:#b91c1c',
+      );
+      const u = devAutologinUser();
+      setUser({ id: u.id, email: u.email ?? '' });
+      setInitialized?.();
+      markAuthReady();
+      return;
+    }
+
+    let cancelled = false;
+    fetch('/api/auth/me', {
+      method: 'GET',
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    })
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.ok) {
+          const data: SessionAuthData = await res.json();
+          setUser(data.user);
+        } else {
+          // 401 (auth required) is the expected "no session" path; any
+          // other error also collapses to "no user" so the UI renders
+          // the Landing/Login flow rather than spinning forever.
+          setUser(null);
+        }
+      })
+      .catch(() => {
+        // Network failure: treat as "no session" so the boot completes.
+        // The user can retry login; data hooks gating on `useAuthReady`
+        // stop deferring.
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setInitialized?.();
+        markAuthReady();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setUser, setInitialized]);
+}
+
+/**
+ * POST `/api/auth/login` — submits credentials, browser stores the
+ * resulting HttpOnly cookie. Returns the `{ user, org }` payload on
+ * success; throws an `Error` with the server-supplied detail (or a
+ * generic message) on 401 / network failure.
+ *
+ * The caller is responsible for pushing the returned user into its
+ * auth store. This helper does not touch any module-level state.
+ */
+export async function loginWithSession(
+  credentials: { email: string; password: string },
+): Promise<SessionAuthData> {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(credentials),
+  });
+  if (!res.ok) {
+    let detail = 'invalid credentials';
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      // Non-JSON error body — fall back to the default detail.
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as SessionAuthData;
+}
+
+/**
+ * POST `/api/auth/logout` — deletes the session cookie server-side
+ * (the response Set-Cookie clears it). Resolves on 204; throws on
+ * non-2xx (so callers can surface failure if needed).
+ */
+export async function logoutSession(): Promise<void> {
+  const res = await fetch('/api/auth/logout', {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    throw new Error(`logout failed: ${res.status}`);
+  }
+}

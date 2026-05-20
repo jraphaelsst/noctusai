@@ -1,12 +1,26 @@
 import { useNavigate, Link } from "react-router-dom";
 import { Share2 } from "lucide-react";
 import { LoginForm } from "@noctusai/lib/design-system";
-import { supabase } from '@noctusai/seed/infra';
+import { useAuthStore } from '@noctusai/seed/infra';
 
 const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
 
+/**
+ * Social Wiring login — uses the HttpOnly-cookie session flow
+ * (`/api/auth/{login,me,logout}`) introduced by Wave 3 of
+ * platform-auth-modernization. The seed `LoginForm` operates in
+ * `useSessionAuth` mode here; the rest of the platform stays on the
+ * legacy Supabase path via the same component.
+ *
+ * After login succeeds, `onSessionSuccess` pushes the user into the
+ * shared `useAuthStore` so the rest of the app sees the authenticated
+ * state immediately — without needing a separate `/api/auth/me`
+ * round-trip (the AuthProvider's boot-time `useSessionAuthInit` covers
+ * page reloads).
+ */
 export default function Login() {
   const navigate = useNavigate();
+  const setUser = useAuthStore((s) => s.setUser);
 
   return (
     <div className="relative">
@@ -14,7 +28,8 @@ export default function Login() {
         brandIcon={Share2}
         brandTitle="Social Wiring"
         brandSubtitle="A minimal NoctusAI product"
-        supabase={supabase}
+        useSessionAuth
+        onSessionSuccess={({ user }) => setUser(user)}
         onSuccess={() => navigate("/")}
         showForgotPassword
         renderLink={({ to, className, children }) => (
