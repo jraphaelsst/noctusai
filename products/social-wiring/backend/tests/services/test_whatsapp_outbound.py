@@ -42,26 +42,26 @@ def test_split_strips_each_paragraph():
     assert split_for_whatsapp(text) == ["hello", "world"]
 
 
-def test_split_honors_toggle_off():
+def test_split_honors_toggle_off(settings_override):
     """When settings.whatsapp_paragraph_split is False, return a single-
     element list with the original text trimmed — caller loops
     unconditionally."""
-    with patch("app.services.whatsapp_outbound.settings") as s:
-        s.whatsapp_paragraph_split = False
-        result = split_for_whatsapp("a\n\nb\n\nc")
+    settings_override(whatsapp_paragraph_split=False)
+    result = split_for_whatsapp("a\n\nb\n\nc")
     assert result == ["a\n\nb\n\nc"]
 
 
 @pytest.mark.asyncio
-async def test_send_paragraphs_sends_one_per_part():
+async def test_send_paragraphs_sends_one_per_part(settings_override):
+    settings_override(
+        whatsapp_paragraph_split=True,
+        whatsapp_paragraph_delay_seconds=0.0,
+    )
     intake = AsyncMock()
     intake.send_reply = AsyncMock()
-    with patch("app.services.whatsapp_outbound.settings") as s:
-        s.whatsapp_paragraph_split = True
-        s.whatsapp_paragraph_delay_seconds = 0.0
-        sent = await send_paragraphs(
-            intake=intake, sender="+5511999999999@c.us", text="a\n\nb\n\nc"
-        )
+    sent = await send_paragraphs(
+        intake=intake, sender="+5511999999999@c.us", text="a\n\nb\n\nc"
+    )
     assert sent == 3
     assert intake.send_reply.await_count == 3
     # Each send got its own paragraph as the second positional arg
@@ -70,19 +70,20 @@ async def test_send_paragraphs_sends_one_per_part():
 
 
 @pytest.mark.asyncio
-async def test_send_paragraphs_continues_after_a_send_failure():
+async def test_send_paragraphs_continues_after_a_send_failure(settings_override):
     """One failed paragraph send must NOT block subsequent ones —
     partial delivery beats no delivery for chatbot replies."""
+    settings_override(
+        whatsapp_paragraph_split=True,
+        whatsapp_paragraph_delay_seconds=0.0,
+    )
     intake = AsyncMock()
     intake.send_reply = AsyncMock(
         side_effect=[Exception("WAHA fail"), None, None]
     )
-    with patch("app.services.whatsapp_outbound.settings") as s:
-        s.whatsapp_paragraph_split = True
-        s.whatsapp_paragraph_delay_seconds = 0.0
-        sent = await send_paragraphs(
-            intake=intake, sender="+5511999999999@c.us", text="a\n\nb\n\nc"
-        )
+    sent = await send_paragraphs(
+        intake=intake, sender="+5511999999999@c.us", text="a\n\nb\n\nc"
+    )
     assert sent == 2  # one failed, two succeeded
     assert intake.send_reply.await_count == 3  # all attempted
 

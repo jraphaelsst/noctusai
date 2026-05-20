@@ -116,7 +116,12 @@ class TestEmailDispatch:
         }])
 
         svc = _service(admin)
-        with patch("app.services.notification_service.EmailService") as email_cls:
+        # EmailService is our thin SMTP wrapper; patching at the
+        # consumer-side import binding substitutes the smtplib boundary
+        # per KB § PATTERNS/di-test-seam.md Pattern-2. Real-DI follow-up =
+        # social-wiring-settings-di-rewrite (introduce email_service_factory
+        # kwarg on NotificationService).
+        with patch("app.services.notification_service.EmailService") as email_cls:  # self-patch-ok: external-boundary
             email_inst = MagicMock()
             email_inst.send_email = AsyncMock()
             email_cls.return_value = email_inst
@@ -237,7 +242,8 @@ class TestFanout:
         }])
 
         svc = _service(admin)
-        with patch("app.services.notification_service.EmailService") as email_cls:
+        # Same external-boundary rationale as the single-channel email test above.
+        with patch("app.services.notification_service.EmailService") as email_cls:  # self-patch-ok: external-boundary
             email_inst = MagicMock()
             email_inst.send_email = AsyncMock()
             email_cls.return_value = email_inst

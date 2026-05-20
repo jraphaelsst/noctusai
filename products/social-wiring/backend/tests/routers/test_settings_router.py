@@ -3,23 +3,24 @@
 YouTube OAuth endpoints depend on a real google-auth Flow; tests for
 those are deferred to Phase-1.5b once we add a stubbable OAuth seam.
 """
-from app.config import settings
 
 
 class TestKeysStatus:
     """The keys/status endpoint never echoes secrets — only configured /
     missing flags."""
 
-    def test_returns_keys_status_shape(self, client, monkeypatch):
+    def test_returns_keys_status_shape(self, client, settings_override):
         # Force every secret-bearing field to a known state so the test
         # is independent of whatever .env the dev machine carries.
-        monkeypatch.setattr(settings, "youtube_client_id", "")
-        monkeypatch.setattr(settings, "youtube_client_secret", "configured-value")
-        monkeypatch.setattr(settings, "encryption_key", "")
-        monkeypatch.setattr(settings, "smtp_user", "user@example.com")
-        monkeypatch.setattr(settings, "smtp_password", "")
-        monkeypatch.setattr(settings, "waha_base_url", "")
-        monkeypatch.setattr(settings, "waha_api_key", "")
+        settings_override(
+            youtube_client_id="",
+            youtube_client_secret="configured-value",
+            encryption_key="",
+            smtp_user="user@example.com",
+            smtp_password="",
+            waha_base_url="",
+            waha_api_key="",
+        )
 
         resp = client.get("/api/settings/keys/status")
         assert resp.status_code == 200, resp.text

@@ -174,9 +174,12 @@ class TestCampaignDebriefAuditWiring:
         # Inject the real seed-backed writer in place of the lazy noop hook
         # (audit_hook.get_audit_writer is the seam; substituting the SEAM,
         # not patching our redaction/record-build logic, which is what runs).
+        # get_audit_writer is the module-level audit-writer factory (the
+        # lazy noop hook is the production default); test substitutes the
+        # SEAM not the logic.
         import unittest.mock as _m
 
-        with _m.patch.object(cds, "get_audit_writer", lambda: capturing_writer):
+        with _m.patch.object(cds, "get_audit_writer", lambda: capturing_writer):  # self-patch-ok: di-seam-substitute
             cds._record_audit(
                 "mailing.campaign_debrief",
                 "campaign_debrief",
@@ -230,10 +233,11 @@ class TestCampaignDebriefAuditWiring:
         async def _fake_narrative(*, fallback, **_kw):
             return fallback  # external LLM "unavailable" path
 
-        with _m.patch.object(cds, "digest_narrative", _fake_narrative), \
-             _m.patch.object(
-                 cds, "get_audit_writer", lambda: captured.append
-             ):
+        # digest_narrative wraps the external LLM boundary (chat_completion);
+        # patching it at the consumer-side import binding substitutes the LLM
+        # boundary per KB § PATTERNS/di-test-seam.md Pattern-2. get_audit_writer
+        # is the audit-writer factory seam (Pattern-1 DI default).
+        with _m.patch.object(cds, "digest_narrative", _fake_narrative), _m.patch.object(cds, "get_audit_writer", lambda: captured.append):  # self-patch-ok: di-seam-substitute
             out = await cds._generate_narrative(
                 campaign_name="Promo X",
                 metrics=metrics,

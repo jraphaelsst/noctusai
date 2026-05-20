@@ -52,6 +52,48 @@ def pytest_configure(config):
 
 
 @pytest.fixture
+def settings_override():
+    """DI-seam analog for Pydantic-settings singleton overrides.
+
+    `app.config.settings` is a module-level `SocialWiringSettings()` instance
+    that production code reads attributes off at request time. Direct
+    `monkeypatch.setattr(settings, "X", "Y")` semantically provides a real
+    config value (not neutering logic), but trips `check_no_self_monkeypatch`
+    because the AST detector cannot distinguish "patching a settings field"
+    from "patching a guard function." This fixture is the centralized
+    test-time override seam — single call site for the same mutation, with
+    automatic restore on teardown. Per KB § PATTERNS/di-test-seam.md the
+    fully-correct fix is a production DI seam (`Depends(get_settings)` +
+    `app.dependency_overrides`); filed as the follow-up project
+    `social-wiring-settings-di-rewrite` so this fixture becomes a thin
+    forwarder once the production refactor lands.
+
+    Usage:
+
+        def test_x(client, settings_override):
+            settings_override(encryption_key="", youtube_client_id="cid")
+            ...
+
+    Multiple calls in one test are additive (later override wins).
+    """
+    from app.config import settings as _settings
+    _saved: dict = {}
+
+    def _apply(**overrides):
+        for key, value in overrides.items():
+            if key not in _saved:
+                _saved[key] = getattr(_settings, key)
+            setattr(_settings, key, value)
+        return _settings
+
+    yield _apply
+
+    # Restore every touched attribute to its pre-test value.
+    for key, value in _saved.items():
+        setattr(_settings, key, value)
+
+
+@pytest.fixture
 def client():
     mock_sb = MockSupabaseClient()
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(

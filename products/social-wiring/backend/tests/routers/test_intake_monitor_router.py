@@ -48,7 +48,12 @@ def _pending(state: str, code: str = "ONE9967", **extra) -> str:
 def fake_redis_with(monkeypatch):
     def _install(store: dict[str, str]):
         fr = FakeRedis(store)
-        monkeypatch.setattr(mod, "_redis_client", lambda: fr)
+        # mod._redis_client is a module-level factory function (the
+        # production DI seam analogous to _resolve_core_db in
+        # therapy-platform/ai_pipeline.py per KB § PATTERNS/di-test-seam.md).
+        # Substituting the seam IS the blessed test pattern; Real-DI
+        # follow-up = social-wiring-settings-di-rewrite (Depends-able).
+        monkeypatch.setattr(mod, "_redis_client", lambda: fr)  # self-patch-ok: di-seam-substitute
         return fr
 
     return _install

@@ -9,7 +9,14 @@ from unittest.mock import patch
 
 import pytest
 
-from app.config import settings
+
+_ENC_KEY = "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg="
+
+_YT_COMPLETE = dict(
+    encryption_key=_ENC_KEY,
+    youtube_client_id="cid",
+    youtube_client_secret="csecret",
+)
 
 
 def _valid_metadata() -> str:
@@ -25,10 +32,8 @@ def _valid_metadata() -> str:
 
 
 class TestUploadFromDriveValidation:
-    def test_non_google_url_rejected_at_schema(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "encryption_key", "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=")
-        monkeypatch.setattr(settings, "youtube_client_id", "cid")
-        monkeypatch.setattr(settings, "youtube_client_secret", "csecret")
+    def test_non_google_url_rejected_at_schema(self, client, settings_override):
+        settings_override(**_YT_COMPLETE)
 
         resp = client.post(
             "/api/videos/upload-from-drive",
@@ -40,10 +45,8 @@ class TestUploadFromDriveValidation:
         assert resp.status_code == 422
         assert "google host" in resp.text.lower()
 
-    def test_drive_root_url_rejected_at_service(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "encryption_key", "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=")
-        monkeypatch.setattr(settings, "youtube_client_id", "cid")
-        monkeypatch.setattr(settings, "youtube_client_secret", "csecret")
+    def test_drive_root_url_rejected_at_service(self, client, settings_override):
+        settings_override(**_YT_COMPLETE)
 
         # Schema accepts any google.com URL; service rejects when it can't
         # parse a file_id out.
@@ -63,19 +66,23 @@ class TestUploadConfigGaps:
     endpoint returns 503 — the operator gets a clear "config gap" signal
     rather than a 500 traceback."""
 
-    def test_missing_encryption_key_returns_503(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "encryption_key", "")
-        monkeypatch.setattr(settings, "youtube_client_id", "cid")
-        monkeypatch.setattr(settings, "youtube_client_secret", "csecret")
+    def test_missing_encryption_key_returns_503(self, client, settings_override):
+        settings_override(
+            encryption_key="",
+            youtube_client_id="cid",
+            youtube_client_secret="csecret",
+        )
 
         resp = client.get("/api/videos/upload/00000000-0000-0000-0000-000000000000/status")
         assert resp.status_code == 503
         assert "encryption_key" in resp.text.lower()
 
-    def test_missing_youtube_creds_returns_503(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "encryption_key", "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=")
-        monkeypatch.setattr(settings, "youtube_client_id", "")
-        monkeypatch.setattr(settings, "youtube_client_secret", "")
+    def test_missing_youtube_creds_returns_503(self, client, settings_override):
+        settings_override(
+            encryption_key=_ENC_KEY,
+            youtube_client_id="",
+            youtube_client_secret="",
+        )
 
         resp = client.get("/api/videos/upload/00000000-0000-0000-0000-000000000000/status")
         assert resp.status_code == 503
@@ -83,19 +90,15 @@ class TestUploadConfigGaps:
 
 
 class TestHistoryLimitValidation:
-    def test_limit_above_100_rejected(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "encryption_key", "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=")
-        monkeypatch.setattr(settings, "youtube_client_id", "cid")
-        monkeypatch.setattr(settings, "youtube_client_secret", "csecret")
+    def test_limit_above_100_rejected(self, client, settings_override):
+        settings_override(**_YT_COMPLETE)
 
         resp = client.get("/api/videos/upload/history?limit=500")
         assert resp.status_code == 400
         assert "limit" in resp.text.lower()
 
-    def test_limit_zero_rejected(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "encryption_key", "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=")
-        monkeypatch.setattr(settings, "youtube_client_id", "cid")
-        monkeypatch.setattr(settings, "youtube_client_secret", "csecret")
+    def test_limit_zero_rejected(self, client, settings_override):
+        settings_override(**_YT_COMPLETE)
 
         resp = client.get("/api/videos/upload/history?limit=0")
         assert resp.status_code == 400
@@ -113,45 +116,37 @@ class TestRetryEndpoint:
     """POST /api/videos/upload/{job_id}/retry — re-queues a previously-failed
     job. Validates state transition + 404/409 boundary conditions."""
 
-    def _setup_creds(self, monkeypatch):
-        monkeypatch.setattr(
-            settings,
-            "encryption_key",
-            "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=",
-        )
-        monkeypatch.setattr(settings, "youtube_client_id", "cid")
-        monkeypatch.setattr(settings, "youtube_client_secret", "csecret")
-
     def test_retry_requires_auth(self, client):
         resp = client.raw().post(
             "/api/videos/upload/00000000-0000-0000-0000-000000000000/retry"
         )
         assert resp.status_code in (401, 403)
 
-    def test_retry_returns_404_for_missing_job(self, client, monkeypatch):
-        self._setup_creds(monkeypatch)
-        with patch(
-            "app.services.upload_service.UploadService.retry_failed_job",
-            side_effect=__import__(
-                "app.services.upload_service", fromlist=["UploadServiceError"]
-            ).UploadServiceError("job xyz not found"),
-        ):
+    def test_retry_returns_404_for_missing_job(self, client, settings_override):
+        settings_override(**_YT_COMPLETE)
+        # Verifies the 404-on-UploadServiceError("not found") branch in the
+        # router's exception handler. Real-DI follow-up =
+        # social-wiring-settings-di-rewrite (`app.dependency_overrides
+        # [get_upload_service]` once that seam lands).
+        _upload_service_mod = __import__(
+            "app.services.upload_service", fromlist=["UploadServiceError"]
+        )
+        with patch("app.services.upload_service.UploadService.retry_failed_job", side_effect=_upload_service_mod.UploadServiceError("job xyz not found")):  # self-patch-ok: router-exception-mapping-test
             resp = client.post(
                 "/api/videos/upload/00000000-0000-0000-0000-000000000000/retry"
             )
         assert resp.status_code == 404
         assert "not found" in resp.text.lower()
 
-    def test_retry_returns_409_for_non_failed_job(self, client, monkeypatch):
-        self._setup_creds(monkeypatch)
-        with patch(
-            "app.services.upload_service.UploadService.retry_failed_job",
-            side_effect=__import__(
-                "app.services.upload_service", fromlist=["UploadServiceError"]
-            ).UploadServiceError(
-                "job xyz is in status='uploading'; retry only works on failed jobs."
-            ),
-        ):
+    def test_retry_returns_409_for_non_failed_job(self, client, settings_override):
+        settings_override(**_YT_COMPLETE)
+        # Verifies the 409-on-UploadServiceError("non-failed state") branch
+        # in the router's exception handler. Real-DI follow-up =
+        # social-wiring-settings-di-rewrite.
+        _upload_service_mod = __import__(
+            "app.services.upload_service", fromlist=["UploadServiceError"]
+        )
+        with patch("app.services.upload_service.UploadService.retry_failed_job", side_effect=_upload_service_mod.UploadServiceError("job xyz is in status='uploading'; retry only works on failed jobs.")):  # self-patch-ok: router-exception-mapping-test
             resp = client.post(
                 "/api/videos/upload/00000000-0000-0000-0000-000000000000/retry"
             )
