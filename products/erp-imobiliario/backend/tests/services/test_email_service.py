@@ -2,7 +2,7 @@
 Unit tests for EmailService — template rendering, email stats, history.
 """
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 
@@ -122,36 +122,45 @@ class TestEnviar:
 
     @pytest.mark.asyncio
     async def test_creates_email_record(self):
+        # `enviar` calls `_get_resend_config` → `resolve_credential`. Without
+        # configured Tier 1/2 the seed module tries to materialize a real
+        # Supabase client (configure_credentials had empty URL at boot). Patch
+        # the seed boundary `_get_public_client` to a mock so credential
+        # lookups fall through (no resend key → dry-run path, what these
+        # service-level tests pin).
         record = {"id": "e1", "status": "enviado", "destinatario": "test@x.com"}
         db = MockSupabaseClient(data=record)
 
         from app.services.email_service import EmailService
         svc = EmailService(db, "user-1")
 
-        result = await svc.enviar(
-            destinatario="test@x.com",
-            assunto="Teste",
-            corpo="Corpo do email",
-        )
+        with patch("noctusai_lib.config.credentials._get_public_client", return_value=db):
+            result = await svc.enviar(
+                destinatario="test@x.com",
+                assunto="Teste",
+                corpo="Corpo do email",
+            )
 
         assert result is not None
 
     @pytest.mark.asyncio
     async def test_optional_fields(self):
+        # Same seed-boundary patch as test_creates_email_record above.
         record = {"id": "e1", "status": "enviado"}
         db = MockSupabaseClient(data=record)
 
         from app.services.email_service import EmailService
         svc = EmailService(db, "user-1")
 
-        result = await svc.enviar(
-            destinatario="test@x.com",
-            assunto="Teste",
-            corpo="Corpo",
-            cliente_id="c1",
-            corpo_html="<p>Corpo</p>",
-            template_id="t1",
-        )
+        with patch("noctusai_lib.config.credentials._get_public_client", return_value=db):
+            result = await svc.enviar(
+                destinatario="test@x.com",
+                assunto="Teste",
+                corpo="Corpo",
+                cliente_id="c1",
+                corpo_html="<p>Corpo</p>",
+                template_id="t1",
+            )
 
         assert result is not None
 

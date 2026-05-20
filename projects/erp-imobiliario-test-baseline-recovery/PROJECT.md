@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-20
 - **Last updated:** 2026-05-20
-- **Status:** 📋 **FILED** — baseline-red sweep; classify-then-fix; size unknown until P0.
+- **Status:** ✅ **READY-FOR-COMMIT** — Engineer-G (REDISPATCH) drained all 31 baseline-red failures inline; 2075 pass / 0 fail / 34 skip stable across 2 runs.
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · architect
 - **Related docs:**
   - `products/erp-imobiliario/backend/` test suite
@@ -66,11 +66,21 @@ This is product-local (ERP-specific tests). Per-product code count in seed = 0 L
 
 ## 6. Phases
 
-- **P0 ⏳** — Classify: read each of the 31 failing tests, group by root-cause cluster. Output: `findings.md` cluster table.
-- **P1 ⏳** — Drain cluster A (largest first; likely whatsapp_webhook ∨ certidoes).
-- **P2 ⏳** — Drain cluster B.
-- **P3 ⏳** — Drain cluster C (and beyond, as needed).
-- **P4 ⏳** — Verify: `pytest` from `products/erp-imobiliario/backend/` ALL green; document any genuinely-orphaned tests deleted with rationale.
+- **P0 ✅** — Classify: 31 failures across 11 files; cluster table in `findings.md`. Matches brief hypothesis (whatsapp_webhook count was 10 not 8 — the 2 HMAC tests folded into the same root cause).
+  **Improvements:**
+  - The 986-TypeError-storm Engineer E observed was orthogonal env noise (stale starlette in shared site-packages), NOT a regression class. Real baseline = 31 fails, env-refresh did not change the count.
+- **P1 ✅** — Drain whatsapp_webhook (10 tests). Root cause: mock-skew (fixtures missing 3 predicate fields). Fix: libcst AST transform across 16 `set_table_data("whatsapp_config", ...)` call-sites.
+  **Improvements:**
+  - libcst transformer is reusable for any fixture-row-augmentation pattern; surfaced as candidate for `noctus.dev.scan_mock_predicate_skew` MCP keeper (see findings.md § Methodology improvement).
+- **P2 ✅** — Drain certidoes (8 tests). Root cause: seed-boundary `_get_public_client` was constructing real Supabase clients in test paths that hit `resolve_credential`. Fix: conftest `client` fixture now patches `noctusai_lib.config.credentials._get_public_client` → mock_sb (precedent: `test_standard_llm_smoke.py`'s `llm_client` fixture). Same patch transparently drained `emails` cluster.
+  **Improvements:**
+  - The conftest-level patch is structurally correct; the previous per-fixture (`llm_client`) pattern was scoped to one test file but the seed-boundary applies product-wide. Three-way-sync candidate: KB § PATTERNS/testing.md could document "seed-boundary credential patches go in product conftest, not per-test."
+- **P3 ✅** — Drain remaining clusters: configuracoes (code-drift to seed `chat_completion`), gamificacao/clientes/matching/portais/site_imoveis/bi_dashboard (mock-skew shape), email_service (same shape as P2 but tests don't use `client` fixture → per-test patch).
+  **Improvements:**
+  - The configuracoes cluster surfaces a pattern: when production code is refactored to consume a new seed surface, the tests that mock the OLD path silently start matching the WRONG outcome branch (here LLMNotConfigured returned "API Key inválida" instead of the expected "sucesso"). Test-side mock-skew is hard to spot via grep; the only oracle is the test failing.
+- **P4 ✅** — Verify: `pytest` from `products/erp-imobiliario/backend/` returns **2075 passed, 34 skipped, 0 failed, 1 warning in 36.64s**. Stable across 2 consecutive full-suite runs. NO tests deleted as orphaned (all 31 were salvageable via fixture/mock updates).
+  **Improvements:**
+  - The 1 lingering warning (`'_delayed_tjsp_process' was never awaited` in `test_certidoes_service.py::TestScheduleTjspForOrg::test_idempotent_when_task_in_flight`) pre-exists this work. Not a regression. Candidate for a follow-up fix-on-contact if the architect green-lights touching that test file.
 
 ---
 
@@ -94,3 +104,5 @@ This is product-local (ERP-specific tests). Per-product code count in seed = 0 L
 | Date | Entry | By |
 |---|---|---|
 | 2026-05-20 | Filed from ERP-D dispatch finding. 31 pre-existing failures, ~8 files, ~5 clusters expected. Out-of-safe-scope for D; sweep recovery project. | Architect |
+| 2026-05-20 | Engineer-E first dispatch returned BLOCKED on env-drift (shared site-packages had stale starlette pinned to dead worktree → 986 router-init TypeErrors masking the real 31) + missing PROJECT.md on `origin/main`. Both architect-resolved. | Engineer-E + Architect |
+| 2026-05-20 | Engineer-G (REDISPATCH) ran the real baseline (`venv/bin/pytest`, 31 failures confirmed); classified 11 clusters across same-shape mock-skew (9) / code-drift (1) / seed-boundary-mock-missing (2 cascading via shared conftest patch). Drained all clusters inline within engineer-default scope (test files only). Final: **2075 passed / 0 failed / 34 skipped** stable. NO seed/app/migration touches. 10 staged files. | Engineer-G |

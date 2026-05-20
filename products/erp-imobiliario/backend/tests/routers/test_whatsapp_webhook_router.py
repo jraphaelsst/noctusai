@@ -30,7 +30,7 @@ class TestWAHAWebhook:
         """Incoming message event creates a whatsapp_messages record."""
         # Config lookup returns a matching org
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
         # Client lookup by phone
         client._mock_supabase.set_table_data("clientes", [
@@ -55,7 +55,7 @@ class TestWAHAWebhook:
     def test_incoming_message_no_client_match(self, client):
         """Message from unknown phone still stores with cliente_id=None."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
         client._mock_supabase.set_table_data("clientes", [])
         client._mock_supabase.set_table_data("whatsapp_messages", [])
@@ -75,7 +75,7 @@ class TestWAHAWebhook:
     def test_incoming_message_empty_body_ignored(self, client):
         """Empty message body is ignored."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = self._post_webhook(client, {
@@ -94,7 +94,7 @@ class TestWAHAWebhook:
     def test_incoming_message_no_from_ignored(self, client):
         """Missing 'from' field is ignored."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = self._post_webhook(client, {
@@ -112,7 +112,7 @@ class TestWAHAWebhook:
     def test_ack_updates_status_to_read(self, client):
         """ACK level 3 maps to 'read' status."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
         client._mock_supabase.set_table_data("whatsapp_messages", [])
 
@@ -132,7 +132,7 @@ class TestWAHAWebhook:
     def test_ack_updates_status_to_delivered(self, client):
         """ACK level 2 maps to 'delivered'."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
         client._mock_supabase.set_table_data("whatsapp_messages", [])
 
@@ -150,7 +150,7 @@ class TestWAHAWebhook:
     def test_ack_updates_status_to_sent(self, client):
         """ACK level 1 maps to 'sent'."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
         client._mock_supabase.set_table_data("whatsapp_messages", [])
 
@@ -168,7 +168,7 @@ class TestWAHAWebhook:
     def test_ack_unknown_level_ignored(self, client):
         """Unknown ACK level (e.g. 0 or 5) is ignored."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = self._post_webhook(client, {
@@ -186,7 +186,7 @@ class TestWAHAWebhook:
     def test_ack_no_msg_id_ignored(self, client):
         """ACK without message ID is ignored."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = self._post_webhook(client, {
@@ -203,7 +203,7 @@ class TestWAHAWebhook:
     def test_session_status_event(self, client):
         """session.status events are acknowledged."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = self._post_webhook(client, {
@@ -217,7 +217,7 @@ class TestWAHAWebhook:
     def test_unhandled_event_type(self, client):
         """Unknown event types are ignored gracefully."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = self._post_webhook(client, {
@@ -263,7 +263,7 @@ class TestWebhookHMACVerification:
         sig = "sha256=" + hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
 
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": secret},
+            {"org_id": "org-1", "webhook_secret": secret, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = client._tc.post(
@@ -279,7 +279,7 @@ class TestWebhookHMACVerification:
     def test_invalid_signature_rejected(self, client):
         """Request with wrong HMAC signature returns 401."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": "real-secret"},
+            {"org_id": "org-1", "webhook_secret": "real-secret", "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = client._tc.post(
@@ -299,7 +299,7 @@ class TestWebhookHMACVerification:
     def test_missing_signature_when_secret_configured_rejected(self, client):
         """Missing x-hub-signature header when secret is configured returns 401."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": "secret-value"},
+            {"org_id": "org-1", "webhook_secret": "secret-value", "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
 
         resp = self._post_webhook_raw(client, {
@@ -312,7 +312,7 @@ class TestWebhookHMACVerification:
     def test_no_verification_when_no_secret(self, client):
         """No verification is done when webhook_secret is not configured."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"org_id": "org-1", "webhook_secret": None},
+            {"org_id": "org-1", "webhook_secret": None, "waha_session_name": "default", "provider": "waha", "is_active": True},
         ])
         client._mock_supabase.set_table_data("clientes", [])
         client._mock_supabase.set_table_data("whatsapp_messages", [])
@@ -373,7 +373,7 @@ class TestWAHASessions:
     def test_iniciar_session_no_waha_url(self, client):
         """POST /api/whatsapp/sessions/start fails when waha_api_url is empty."""
         client._mock_supabase.set_table_data("whatsapp_config", [
-            {"id": "cfg-1", "provider": "waha", "waha_api_url": None, "waha_api_key": None},
+            {"id": "cfg-1", "provider": "waha", "waha_api_url": None, "waha_api_key": None, "waha_session_name": "default", "is_active": True},
         ])
 
         resp = client.post("/api/whatsapp/sessions/start", json={

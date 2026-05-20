@@ -239,15 +239,21 @@ class TestSitePublico:
 
 class TestSiteImovelDetalhe:
     def test_imovel_detalhe_success(self, client):
+        # Router filters site_config by `.eq("slug", slug).eq("is_active", True)` and
+        # ativos by `.eq("id", imovel_id).eq("org_id", org_id)...` — fixtures need to
+        # carry those fields for the chained predicates to match.
         client._mock_supabase.set_table_data("site_config", {
             "id": "sc1",
             "org_id": "org1",
+            "slug": "imob-abc",
+            "is_active": True,
             "whatsapp": "11999999999",
             "telefone": "1133334444",
             "email_contato": "contato@test.com",
         })
         client._mock_supabase.set_table_data("ativos", {
             "id": "a1",
+            "org_id": "org1",
             "tipo_imovel": "apartamento",
             "valor": 500000,
             "cidade": "Sao Paulo",

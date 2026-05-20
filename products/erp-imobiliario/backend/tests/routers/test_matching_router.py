@@ -152,8 +152,11 @@ class TestEmbedBatch:
 
     def test_embed_batch_endpoint(self, client):
         """Verify batch endpoint processes ativos without embeddings."""
+        # Router filters `.is_("embedding", "null").eq("status", "ativo")` —
+        # seeded rows must satisfy both predicates so embed_ativos_batch is invoked.
         client._mock_supabase.set_table_data("ativos", [
-            {"id": "a1"}, {"id": "a2"},
+            {"id": "a1", "embedding": None, "status": "ativo"},
+            {"id": "a2", "embedding": None, "status": "ativo"},
         ])
 
         with patch("app.services.embedding_service.embed_ativos_batch", new_callable=AsyncMock) as mock_batch:

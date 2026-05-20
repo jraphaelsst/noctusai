@@ -80,9 +80,14 @@ class TestGerarFeed:
 
     def test_gerar_feed_with_properties(self, client):
         from unittest.mock import MagicMock
+        # Router filters `.eq("natureza", "imovel").eq("pronto_para_portais", True).eq("status", "ativo")`
+        # — fixture rows must carry all three for the chained predicates to match.
         imoveis = [
             {
                 "id": f"a{i}",
+                "natureza": "imovel",
+                "pronto_para_portais": True,
+                "status": "ativo",
                 "tipo_imovel": "apartamento",
                 "titulo_anuncio": f"Apto {i}",
                 "cidade": "SP",

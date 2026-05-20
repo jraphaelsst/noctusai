@@ -32,11 +32,14 @@ class TestDashboardResumo:
             {"id": "l1", "tipo": "receita", "status": "pago", "valor": 5000, "data_vencimento": "2026-02-15"},
         ])
         client._mock_supabase.set_table_data("contratos", [
-            {"id": "ct1", "status": "ativo", "valor_total": 500000},
+            # Router filters `.gte("created_at", year_start)`; fixture row needs created_at
+            # within the current year window for the year-to-date predicate to match.
+            {"id": "ct1", "status": "ativo", "valor_total": 500000, "created_at": "2026-02-01T10:00:00"},
         ])
         client._mock_supabase.set_table_data("eventos", [])
         client._mock_supabase.set_table_data("negociacoes", [
-            {"id": "n1", "status_etapa": "negociacao"},
+            # Router filters `.gte("created_at", year_start)`; same shape as `contratos` above.
+            {"id": "n1", "status_etapa": "negociacao", "created_at": "2026-02-01T10:00:00"},
         ])
 
         resp = client.get("/api/bi/dashboard")

@@ -105,7 +105,8 @@ class TestExcluirCliente:
 
 class TestArquivarCliente:
     def test_toggle_archive(self, client):
-        client._mock_supabase.set_table_data("clientes", {"arquivado": False, "nome": "Test"})
+        # Router fetches `.eq("id", cliente_id).single()` — fixture row needs `id` to match.
+        client._mock_supabase.set_table_data("clientes", {"id": "c1", "arquivado": False, "nome": "Test"})
         resp = client.post("/api/clientes/c1/arquivar")
         assert resp.status_code == 200
 

@@ -20,30 +20,23 @@ class TestTestarCredencial:
         assert "não está configurada" in resp.json()["error"]["message"]
 
     def test_openai_sucesso(self, client):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
+        # Router was refactored 2026-05-11 to route via `noctusai_lib.integrations.llm.chat_completion`
+        # (LLM-ERP Step A); the previous raw httpx /v1/models probe is gone. Mock the seed
+        # entry point — that's the external-LLM-API boundary, allowed by the no-monkey-patching rule
+        # (`KB § PATTERNS/testing.md` — external integrations).
         with patch(_RESOLVE_CRED, return_value="sk-test123"), \
-             patch("app.routers.configuracoes.httpx.AsyncClient", return_value=mock_client):
+             patch("noctusai_lib.integrations.llm.chat_completion", new=AsyncMock(return_value={"choices": [{"message": {"content": "ok"}}]})):
             resp = client.post("/api/configuracoes/testar-credencial/openai_api_key")
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["success"] is True
 
     def test_openai_chave_invalida(self, client):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
+        # Same refactor as test_openai_sucesso. LLMAPIError carrying "401" maps to
+        # "API Key inválida ou expirada." per configuracoes.py:83-88.
+        from noctusai_lib.integrations.llm.exceptions import LLMAPIError
         with patch(_RESOLVE_CRED, return_value="sk-bad"), \
-             patch("app.routers.configuracoes.httpx.AsyncClient", return_value=mock_client):
+             patch("noctusai_lib.integrations.llm.chat_completion", new=AsyncMock(side_effect=LLMAPIError("openai", "401 Unauthorized: invalid_api_key", 401))):
             resp = client.post("/api/configuracoes/testar-credencial/openai_api_key")
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -51,13 +44,10 @@ class TestTestarCredencial:
         assert "inválida" in data["message"]
 
     def test_openai_erro_conexao(self, client):
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=Exception("Connection refused"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
+        # Same refactor as above. A raw Exception (non-LLM-typed) falls through to the
+        # bare `except Exception` branch → "Erro de conexão: …" per configuracoes.py:94-103.
         with patch(_RESOLVE_CRED, return_value="sk-test"), \
-             patch("app.routers.configuracoes.httpx.AsyncClient", return_value=mock_client):
+             patch("noctusai_lib.integrations.llm.chat_completion", new=AsyncMock(side_effect=Exception("Connection refused"))):
             resp = client.post("/api/configuracoes/testar-credencial/openai_api_key")
         assert resp.status_code == 200
         data = resp.json()["data"]

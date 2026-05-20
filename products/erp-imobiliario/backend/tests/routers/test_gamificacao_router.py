@@ -91,8 +91,10 @@ class TestMinhasConquistas:
             assert badge["desbloqueada"] is False
 
     def test_conquistas_unlocked_has_date(self, client):
+        # Router filters `.eq("user_id", user.id)`; fixture needs user_id matching the
+        # MockUser default ("test-user-123") so the row is returned in `unlocked`.
         client._mock_supabase.set_table_data("conquistas", [
-            {"tipo": "primeiro_passo", "desbloqueada_em": "2026-01-15T10:00:00"},
+            {"tipo": "primeiro_passo", "user_id": "test-user-123", "desbloqueada_em": "2026-01-15T10:00:00"},
         ])
         resp = client.get("/api/gamificacao/conquistas")
         assert resp.status_code == 200
