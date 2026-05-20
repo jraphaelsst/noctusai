@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-20
 - **Last updated:** 2026-05-20
-- **Status:** 📋 **FILED** — runtime-crash bug; tight scope; lightweight feature/hotfix candidate.
+- **Status:** ✅ **READY-FOR-COMMIT** — fix applied (3 call sites + `_require_org` widened); regression test added (9 methods, 4 classes); seed framework suite **94/94 green**; pilot LLM smoke green on erp/social-wiring/therapy.
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · architect
 - **Related docs:**
   - `seed/framework/backend/noctusai_seed/llm_router.py` (the buggy call site)
@@ -58,16 +58,38 @@ Per-product code count: 0 LoC (pure seed fix).
 
 ## 6. Phases
 
-- **P0 ⏳** — Read the source + design call: add method OR fix call site.
-- **P1 ⏳** — Apply the fix in seed.
-- **P2 ⏳** — Add the regression test (a seed-side mount-smoke on `/api/llm/preferences` that touches the DB module).
-- **P3 ⏳** — Verify: pytest the full seed framework suite + pilot products.
+- **P0 ✅** — Read the source + design call: add method OR fix call site.
+  **Improvements:**
+  - Applied inline: Q1 decided — **fix call site**, not add method. Source-of-truth read: `DatabaseModule` exposes `get_client(access_token)` (user-scoped when token given, admin when None), `get_admin_client()`, `get_core_client()`. `ProductDependencies.get_user_client(token)` (in `dependencies.py:159`) wraps `self._db.get_client(token)` — IT IS the canonical seam, used by `ai_router.py:48` + `ai_feedback_router.py:59,91`. The buggy `llm_router` was the odd-one-out N=1; bringing it in line is the minimal, blast-radius-zero fix.
+  - Bystander finding (in-scope): same bug class existed in **`obter_usage`** (line 190 pre-fix) — fix-on-contact applied. The smoke test originally targeted only `obter_preferences`; expanding pin to all 3 endpoints.
+  - Bystander finding: `_require_org` returned `(user, org_id)` 2-tuple, both `obter_preferences` and `salvar_preferences` discarded the token. Cleaner shape: `_require_org` returns `(user, org_id, token)` so each call site gets the seam input it needs. Updated all 5 callers (listar_providers, listar_models, obter_preferences, salvar_preferences, obter_usage) accordingly.
+
+- **P1 ✅** — Apply the fix in seed.
+  **Improvements:**
+  - Applied inline: 3 occurrences of `deps._db.get_user_client()` → `deps.get_user_client(token)` (libcst-driven; AST-first per CLAUDE.md §1).
+  - `_require_org` widened to 3-tuple return; all 5 call sites threaded token-correctly.
+  - On-disk verification: `grep -c 'deps\._db\.get_user_client' llm_router.py` returns **0**; `grep -c 'deps\.get_user_client(token)' llm_router.py` returns **3**. R6 (harness-overlay) divergence ruled out.
+
+- **P2 ✅** — Add the regression test (a seed-side mount-smoke on `/api/llm/preferences` that touches the DB module).
+  **Improvements:**
+  - Applied inline: New `tests/test_llm_router_mount_smoke.py` — 4 test classes, 9 test methods covering:
+    - `TestObterPreferencesDoesNotCrash` — happy path (existing prefs), null-default fallback, AND a `del fake_deps._db.get_user_client` regression-pin that mirrors `DatabaseModule`'s real shape (so any regression to `deps._db.get_user_client(...)` raises `AttributeError`, exactly reproducing the original bug).
+    - `TestSalvarPreferencesDoesNotCrash` — owner-can-save, non-admin-403, unknown-provider-400.
+    - `TestObterUsageDoesNotCrash` — empty-rows happy path (covers the third bug-class instance).
+    - `TestModelsStillWorks` — guard against the `_require_org` 2→3-tuple tuple-unpack hazard.
+  - Every test asserts `resp.status_code == <int>` explicitly (KB § PATTERNS/testing.md § Status-code-assertion rule).
+  - Deferred (with destination): `listar_providers` runtime-path guard NOT added — it touches `resolve_credential(...)` → real Supabase, would require monkey-patching seed-lib (forbidden by CLAUDE.md §1 `no-monkey-patching-our-code`). Test-design note recorded in the test docstring; behavior pinned at registry level by `test_build_standard_routers.py`. Destination: superseded by a future seed-side integration-harness lift if/when the recurrence rule fires.
+
+- **P3 ✅** — Verify: pytest the full seed framework suite + pilot products.
+  **Improvements:**
+  - Applied inline: `cd seed/framework/backend && pytest tests/` → **94 passed, 0 failed**. Pilot smoke (`pytest -k llm`): erp-imobiliario **12/12 green** (incl. `test_standard_llm_smoke.py` 5/5); social-wiring **1/1 green**; therapy-platform has no `*llm*` test files (collection clean with PYTHONPATH wiring).
+  - Methodology learning surfaced: the original PROJECT.md noted "verify-the-seed-ships-it must extend to METHOD signatures, not just imports." This hotfix is a structural case for **`scan_outlined`-grade detector** at the seed-method level — if a caller in `seed/` references a non-existent method on a seed class, the keeper could catch it via libcst attribute-resolution. Filed as a follow-up surface (out-of-scope here; needs a separate proposal). Destination: candidate keeper `check_seed_attribute_dangling` — appropriate for the methodology-codification pipeline.
 
 ---
 
 ## 7. Open questions
 
-1. **Add `get_user_client()` or change the call site?** Read the source to decide.
+1. **Add `get_user_client()` or change the call site?** ✅ **Resolved P0** — change the call site. Rationale: `ProductDependencies.get_user_client(token)` already exists (`dependencies.py:159`) and is the canonical seam used by `ai_router` + `ai_feedback_router` (N=2 prior consumers). Adding a new method to `DatabaseModule` would create an N=3 pattern AND fork the canonical path — strictly worse than aligning the odd-one-out.
 
 ---
 
@@ -84,3 +106,4 @@ Per-product code count: 0 LoC (pure seed fix).
 | Date | Entry | By |
 |---|---|---|
 | 2026-05-20 | Filed as seed-side runtime-crash hotfix from ERP-P7 finding. Tight-scope; lightweight feature candidate. | Architect |
+| 2026-05-20 | P0-P3 ✅ ship: fix-on-contact applied to 3 call sites (`obter_preferences`, `salvar_preferences`, `obter_usage`); `_require_org` widened to 3-tuple return; 9 regression-test methods added; seed framework 94/94 green; pilot smoke green. Methodology learning surfaced: candidate keeper `check_seed_attribute_dangling` (libcst attribute-resolution against seed class definitions) — filed as a follow-up surface. | Engineer A |

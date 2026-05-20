@@ -70,8 +70,8 @@ def create_llm_router(deps) -> APIRouter:
     router = APIRouter(prefix="/api/llm", tags=["LLM"])
 
     async def _require_org(authorization):
-        user, _ = await deps.get_current_user(authorization)
-        return user, deps.get_org_id(user)
+        user, token = await deps.get_current_user(authorization)
+        return user, deps.get_org_id(user), token
 
     @router.get("/providers", response_model=list[ProviderInfo])
     async def listar_providers(authorization: Optional[str] = Header(None)):
@@ -79,7 +79,7 @@ def create_llm_router(deps) -> APIRouter:
         for the caller's org. A provider is `configured=true` when
         `resolve_credential("<provider>_api_key", org_id)` returns non-empty
         (any tier: org / platform / env)."""
-        user, org_id = await _require_org(authorization)
+        user, org_id, _token = await _require_org(authorization)
 
         result: list[ProviderInfo] = []
         for provider in all_providers():
@@ -117,8 +117,8 @@ def create_llm_router(deps) -> APIRouter:
     async def obter_preferences(authorization: Optional[str] = Header(None)):
         """Return the caller's org's LLM preferences, or null values if
         not set (implying the product's defaults apply)."""
-        user, org_id = await _require_org(authorization)
-        db = deps._db.get_user_client()  # product-schema client, RLS-scoped
+        user, org_id, token = await _require_org(authorization)
+        db = deps.get_user_client(token)
         result = (
             db.table("llm_preferences")
             .select("provider, chat_model, embedding_model")
@@ -136,7 +136,7 @@ def create_llm_router(deps) -> APIRouter:
         """Upsert the caller's org's LLM preferences. Only owners/admins/managers
         may change them (anyone-can-set would let any team member redirect
         the org's LLM spend)."""
-        user, org_id = await _require_org(authorization)
+        user, org_id, token = await _require_org(authorization)
         role = deps.get_user_role(user)
         if role not in ("platform_admin", "owner", "admin", "manager"):
             raise HTTPException(status_code=403, detail="Permissão insuficiente")
@@ -147,8 +147,7 @@ def create_llm_router(deps) -> APIRouter:
                 status_code=400,
                 detail=f"Provider desconhecido: {body.provider}",
             )
-
-        db = deps._db.get_user_client()
+        db = deps.get_user_client(token)
         db.table("llm_preferences").upsert(
             {
                 "org_id": org_id,
@@ -180,14 +179,13 @@ def create_llm_router(deps) -> APIRouter:
         at `limit`), `aggregate` is a grouped summary totalling calls,
         tokens, and estimated cost.
         """
-        await _require_org(authorization)
+        user, org_id, token = await _require_org(authorization)
 
         # Resolve date window.
         now = datetime.now(tz=timezone.utc)
         start = _parse_iso(from_) or (now - timedelta(days=30))
         end = _parse_iso(to) or now
-
-        db = deps._db.get_user_client()
+        db = deps.get_user_client(token)
         rows = (
             db.table("llm_usage")
             .select("*")
