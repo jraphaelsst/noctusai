@@ -61,7 +61,6 @@ fi
 echo "==> Posting fan-out request (product_code=$PRODUCT_CODE)..."
 RESP=$(curl -sS -X POST "$HOST/api/videos/upload/drive-folder" \
     -H "Authorization: Bearer $SOCIAL_WIRING_API_TOKEN" \
-    -H "X-Org-Id: $SOCIAL_WIRING_ORG_ID" \
     -H "Content-Type: application/json" \
     -d "{
         \"drive_folder_url\": \"$DRIVE_FOLDER\",

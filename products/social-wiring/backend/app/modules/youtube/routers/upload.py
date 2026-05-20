@@ -81,9 +81,24 @@ _UPLOAD_DIR = Path("/tmp/uploads")
 def _build_upload_service(token: str) -> UploadService:
     """Wire the upload service together. Mirrors the settings_router
     helper's 503-on-config-gap shape so the operator gets an actionable
-    error instead of a 500."""
-    user_supabase = get_user_client(token)
+    error instead of a 500.
+
+    When `token` is a Supabase JWT (legacy bearer or session-cookie bridge),
+    the user-scoped supabase client RLS-bounds the inserts. When `token`
+    is an ApiToken row id (caller_kind="product"; not a JWT — Supabase
+    `set_session` would error parsing it), we fall back to the admin
+    client for both sides. The product caller is trusted by definition
+    (the token holder has org-scoped permission stored at issuance time),
+    so RLS bypass is semantically correct here — org_id is enforced
+    explicitly in every insert via the AuthContext."""
     admin_supabase = get_admin_client()
+    # Heuristic: a real Supabase JWT has at least 2 dots ("header.payload.sig").
+    # ApiToken row ids are bare UUIDs — no dots. Use that to decide which
+    # client backs the "user" side.
+    if token and token.count(".") >= 2:
+        user_supabase = get_user_client(token)
+    else:
+        user_supabase = admin_supabase
 
     try:
         store = build_credential_store(admin_supabase)
