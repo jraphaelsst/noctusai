@@ -13,8 +13,8 @@
 > `[A]` accept. Recurrence: `N=2` ⇒ triage; `N≥3` ⇒ MUST formalize.
 
 - **Created:** 2026-05-17
-- **Last updated:** 2026-05-17
-- **Status:** Filed (follow-up; not interrogated; not scheduled)
+- **Last updated:** 2026-05-20 (§7 defaults locked-in by user authorization)
+- **Status:** ⏳ **DESIGN LOCKED** — §7 defaults adopted by user 2026-05-20. Ready for P2 dispatch.
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · architect
 - **Related docs:** `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § PATTERNS/seed-fake-real-adapter.md` · `KB § GUIDES/google-oauth-setup.md`
 - **Project slug:** `gmail-seed-lift` at `projects/gmail-seed-lift/` (cross-product platform-infra: a new seed integration package, not single-product)
@@ -44,17 +44,11 @@ inherits a tested adapter instead of forking one.
 
 ## 2. Confirmed constraints
 
-> **None confirmed yet — this is a filed stub.** The following are
-> OPEN until the user is interrogated (§7). Do not treat as locked.
+**Locked by user 2026-05-20** (§7 defaults adopted verbatim):
 
-- **Read vs send scope** — unknown. *(Drives whether v1 is send-only,
-  read-only, or both; gates which OAuth scopes / App Review path.)*
-- **Per-user OAuth vs workspace service-account** — unknown.
-  *(Gmail API has no system-user analogue like Meta; likely per-user
-  OAuth refresh-token via the existing `CredentialStore`.)*
-- **Driving consumer** — unknown (N=0 today). *(Seed-ahead-of-consumer
-  is acceptable only with explicit user authorization, per the
-  youtube/drive precedent — confirm before lifting.)*
+- **v1 scope: SEND-ONLY.** No inbox read in v1. Smaller App-Review surface; matches the common "send from the user's Gmail" need. Read path is out-of-scope-with-destination (a future `gmail-seed-read-extend` follow-up if/when a consumer surfaces).
+- **Per-user OAuth refresh-token** via existing `noctusai_lib.security.token_store.CredentialStore`. No workspace SA (Gmail API has no system-user; SA needs Workspace DWD which most tenants lack). Same shape as `google_calendar` / `youtube` / `google_drive`.
+- **Seed-ahead authorized** by user — no consumer exists today (N=0). Mirrors the youtube/drive precedent. Lift now, consume later.
 
 ---
 
@@ -114,16 +108,24 @@ follow-up once a consumer exists, unless user authorizes seed-ahead).
 
 ## 6. Phases
 
-> Placeholder — re-plan after §7 interrogation. Do NOT execute as-is.
-
-- **P1 🅿️** — interrogate user (read vs send, per-user vs SA, driving
-  consumer, seed-ahead authorization). Lock §2.
-- **P2 🔒** — Protocol + value objects + Fake + factory + tests (no
-  network).
-- **P3 🔒** — Real adapter (`googleapiclient` Gmail v1) + error mapping
-  + credentials resolver wiring through `CredentialStore`.
-- **P4 🔒** — `KB § INTEGRATIONS/google.md` §6 + INDEX/CLAUDE/memory
-  three-way sync.
+- **P1 ✅** — §7 interrogation. User locked design 2026-05-20: send-only v1, per-user OAuth via `CredentialStore`, seed-ahead authorized.
+- **P2 ⏳** — Protocol + value objects + Fake + factory + tests (no network):
+  - `noctusai_lib/integrations/gmail/protocol.py` — `GmailSender` Protocol (single method: `send(*, from_addr: EmailAddress, to: list[EmailAddress], subject: str, body_html: str, body_text: str | None, ...) → GmailSendResult`).
+  - `noctusai_lib/integrations/gmail/value_objects.py` — `EmailAddress`, `GmailSendResult`, `GmailSendError` (typed errors: `AuthExpired`, `QuotaExceeded`, `RecipientRejected`, `Transient`).
+  - `noctusai_lib/integrations/gmail/fake.py` — `FakeGmailSender` (in-memory; `sent_messages` introspection; configurable error injection per error type).
+  - `noctusai_lib/integrations/gmail/factory.py` — `get_gmail_sender(*, credentials_resolver, store) → GmailSender` (Fake when no creds resolved + factory_mode=auto; else Real).
+  - `noctusai_lib/integrations/gmail/credentials.py` — `GmailCredentialResolver` Protocol mirroring `CalendarCredentialResolver`.
+  - Tests at `seed/lib/backend/tests/integrations/gmail/` — Protocol shape, Fake behavior, factory routing.
+- **P3 ⏳** — Real adapter:
+  - `noctusai_lib/integrations/gmail/real.py` — `RealGmailSender` wrapping `googleapiclient.discovery.build('gmail', 'v1', credentials=...).users().messages().send(...)`.
+  - Error mapping: Gmail API errors → typed `GmailSendError` subclasses (401 → AuthExpired; 403 quota → QuotaExceeded; 400 invalid → RecipientRejected; 5xx → Transient with retry policy).
+  - Credentials wiring: resolver lookup → `CredentialStore.get_or_refresh(...)` → `google.oauth2.credentials.Credentials`.
+  - Real-path tests with HTTP mocking (httpretty / responses library).
+- **P4 ⏳** — Three-way sync:
+  - `KB § INTEGRATIONS/google.md` — add §6 Gmail (consume-side recipe, `__all__`, auth modes, send-only-v1 destination for read).
+  - `KNOWLEDGE-BASE/INDEX.md` — add `gmail` row under Integrations.
+  - `CLAUDE.md` §2 — pointer to the gmail integration page.
+  - Memory entry: `feedback_gmail_seed_send_only_v1` (one-line cross-product seed: send-only v1; per-user OAuth via CredentialStore; seed-ahead precedent confirmed for N=4 Google adapters).
 
 ---
 
@@ -149,3 +151,4 @@ follow-up once a consumer exists, unless user authorizes seed-ahead).
   `KB § INTEGRATIONS/google.md`: `noctusai_lib.integrations.email` is
   Resend (digest/invitation), NOT Gmail; no Gmail adapter in seed.
   Status=Filed; not interrogated; not scheduled.
+- **2026-05-20** — §7 defaults locked-in by user authorization. §2 constraints + §6 phases promoted from placeholder to concrete sub-tasks. P1 ✅; P2 dispatch ready. Architect.
