@@ -598,6 +598,7 @@ The "five layers" table at the top is the **target shape** every product should 
 | Component tests | ❌ 0/7 | No component-level vitest specs anywhere — only the AI hook is tested. |
 | Page tests | ❌ 0/7 | Pages are exercised only via Playwright (where it exists) — see next row. |
 | Playwright E2E | ⚠️ 2/7 wired, **0 specs** | `playwright.config.ts` exists in core + erp-imobiliario frontends. **Neither has any actual `*.spec.ts` files** — the dependency is dormant. Other 5 products: not even wired. |
+| **Boundary-contract tests** (added 2026-05-20) | ⚠️ 2/5 boundaries covered | Named class for "tests-green-dashboard-red" bugs — full spec at `KB § PATTERNS/boundary-contract-tests.md`. **B1** build-injection (vite `define` → bundle literals) — ✅ covered at source by `check_seed_canonical_default`; bundle-side assertion still open. **B2** HTTP schema (FE↔BE cap drift e.g. `le=20`-vs-top-50) — ❌ accept-w/-destination, file `<product>-fe-be-schema-contract` on N=2. **B3** third-party library contract (TanStack v5 `queryFn` return-type) — ✅ Stage-4 `check_query_fn_returns_undefined`. **B4** container env propagation (`.env`→stage→runtime) — ❌ accept-w/-destination, file `smoke-fleet-env-propagation` on N=2 (manual `KB § PATTERNS/containerization.md § 12b` today). **B5** library-default propagation (seed default → N consumers) — ✅ same detector as B1. Authoring-time discipline: every PR adds a "if this contract drifts, what existing test fails?" line per touched seam. |
 
 ### Ratchet plan (filling each gap)
 
@@ -612,6 +613,7 @@ Each row below names a follow-up project slug + its trigger to start. **No proje
 | Mutation / property-based testing | When a product's bug class is "happy-path tests pass but edge values break it" — typically math-heavy services (PF, ERP metas) | `mutation-test-pilot` (one product, one service, prove the pattern) |
 | Self-monkeypatch debt | Per-product cleanup; ratchet detector severity to `high` when count = 0 | `<product>-tests-no-self-patch` |
 | B4 row-seeding (only therapy uses it) | When a product's autouse-fixture pattern misses a consent-revocation path | per-product, no umbrella project — small refactor |
+| Boundary-contract tests — open boundaries (B2 HTTP schema, B4 container env) | N=2 surfacing of the same shape (per `KB § PATTERNS/boundary-contract-tests.md` recurrence rule) | `<product>-fe-be-schema-contract` (B2) / `smoke-fleet-env-propagation` (B4) |
 
 **Anti-pattern to avoid:** filing a "frontend test coverage" umbrella project that tries to fix every gap at once. Each gap above has a different trigger and a different shape; bundling them produces a project no one finishes. Pick by trigger, not by aspiration.
 

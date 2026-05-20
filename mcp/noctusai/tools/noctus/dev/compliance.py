@@ -5995,6 +5995,230 @@ def check_seed_canonical_default(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_query_fn_returns_undefined` — TanStack Query v5 contract: a
+# `queryFn` MUST NOT return `undefined`. v5 surfaces "data is undefined"
+# as the consumer's error — exactly the toast a 404-swallow path is
+# usually trying to suppress.
+#
+# Class (B3 in `KB § PATTERNS/boundary-contract-tests.md`): a third-party
+# library contract that crosses the seed/product → React Query Provider
+# boundary. Unit tests typically mock `useQuery({ data })` and miss the
+# real-Provider + real-queryFn + 404-response path.
+#
+# N=1 evidence (2026-05-20): `seed/lib/frontend/src/design-system/ai/
+# useLLMSpend.ts` returned `undefined` on 404 → `<LLMSpendBadge/>`-mounted
+# layout toasted `["admin","llm-spend","<org>"] data is undefined` on
+# every dashboard render. Sibling `useConsents` was already correct —
+# returned `EMPTY_CATALOG` sentinel. Audit across all 297 `queryFn:`
+# sites in seed+products at ship time: zero remaining instances. Keeper
+# locks in the baseline.
+#
+# Per `KB § PATTERNS/boundary-contract-tests.md` § 5 +
+# `feedback_query_fn_never_returns_undefined.md`.
+#
+# Severity: `warning` (zero-baseline already proven; promote to `high`
+# at the next platform-compliance gate refresh).
+# ---------------------------------------------------------------------------
+
+
+# Scope: every FE source tree. TanStack v5 may be consumed by any layer
+# that imports `@tanstack/react-query`, so the predicate runs over all
+# frontends rather than only seed (B3 isn't a seed-only class — any
+# product hook that swallows a 404 by `return undefined` reproduces the
+# bug).
+_QUERY_FN_FE_BASE_PARENTS: tuple[str, ...] = (
+    "seed/lib/frontend",
+    "seed/framework/frontend",
+)
+_QUERY_FN_FE_EXTS: tuple[str, ...] = (".ts", ".tsx")
+_QUERY_FN_EXCLUDED_PARTS: set[str] = {
+    "node_modules", "dist", "build", ".git", ".turbo", "coverage",
+}
+
+# Opener of an arrow function body assigned to `queryFn:`. The body must
+# be a brace block — expression-body forms like `queryFn: () => api.get(...)`
+# can't `return undefined` literally and are out of scope.
+_QUERY_FN_BODY_RE = re.compile(
+    r"queryFn\s*:\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>\s*\{"
+)
+# Inside the body: literal `return undefined` (with word boundaries so
+# `return undefinedFoo` doesn't false-flag).
+_RETURN_UNDEFINED_RE = re.compile(r"\breturn\s+undefined\b")
+# Bare `return;` — also `undefined` per JS semantics. Anchored to line
+# start (after leading whitespace) so a `return;` in a string or a
+# nested `if (x) return;` on its own line is caught; but `if (x)
+# return;` on a single line shared with the `if` is fine to flag too —
+# the rule is conservative.
+_BARE_RETURN_RE = re.compile(r"^\s*return\s*;\s*$")
+# Escape hatch — `query-fn-undefined-ok` token in a same-line or 5-line
+# preceding comment accepts the literal. Use only when the v5 contract
+# has been read and a defensible reason exists.
+_QUERY_FN_RATIONALE_RE = re.compile(r"query-fn-undefined-ok", re.IGNORECASE)
+_QUERY_FN_RATIONALE_WINDOW: int = 5
+
+
+def _query_fn_product_fe_bases(root: Path) -> list[str]:
+    """Enumerate every `products/<slug>/frontend` base on disk.
+
+    Walks the products dir directly rather than parsing the registry
+    because every product on disk gets scanned (even pre-registration);
+    the goal is "every FE source tree", not "every registered product."
+    """
+    products_dir = root / "products"
+    if not products_dir.is_dir():
+        return []
+    bases: list[str] = []
+    for child in sorted(products_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        if not (child / "frontend").is_dir():
+            continue
+        bases.append(f"products/{child.name}/frontend")
+    return bases
+
+
+def _find_query_fn_body_ranges(code_only_text: str) -> list[tuple[int, int]]:
+    """Return ``(start_line, end_line)`` pairs for every queryFn arrow body.
+
+    Both line indices are 1-indexed. ``start_line`` is the line of the
+    `queryFn:` token; ``end_line`` is the line of the matching ``}``.
+    Brace walking happens over the comment/string-stripped text so
+    string-or-comment braces don't throw off the depth count.
+    """
+    ranges: list[tuple[int, int]] = []
+    for match in _QUERY_FN_BODY_RE.finditer(code_only_text):
+        body_open = match.end() - 1  # position of the opening `{`
+        depth = 0
+        body_close: int | None = None
+        for i in range(body_open, len(code_only_text)):
+            ch = code_only_text[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    body_close = i
+                    break
+        if body_close is None:
+            # Unterminated body (malformed or scan window too small) —
+            # don't crash, just skip. The compiler will catch the syntax
+            # error elsewhere.
+            continue
+        start_line = code_only_text.count("\n", 0, match.start()) + 1
+        end_line = code_only_text.count("\n", 0, body_close) + 1
+        ranges.append((start_line, end_line))
+    return ranges
+
+
+def check_query_fn_returns_undefined(repo_root: Path | None = None) -> list[dict]:
+    """Detect TanStack Query v5 `queryFn` bodies that return `undefined`.
+
+    Two patterns flagged inside each `queryFn: (...) => { ... }` arrow
+    body:
+      - `return undefined;` (literal — what `useLLMSpend` had before the
+        2026-05-20 fix).
+      - Bare `return;` (also `undefined` per JS semantics, same v5
+        contract violation).
+
+    The right shape for a "no data" path is `return null` or a sentinel
+    object (e.g. `EMPTY_CATALOG`) — never `undefined`. v5 treats an
+    `undefined` `queryFn` return as a developer error and surfaces
+    "data is undefined" to the consumer, exactly the toast the
+    404-swallow / topology-degrade path is usually trying to prevent.
+
+    Per `KB § PATTERNS/boundary-contract-tests.md` § 5 (B3 — third-party
+    library contract) + memory
+    `feedback_query_fn_never_returns_undefined.md`.
+
+    Escape hatch: `query-fn-undefined-ok` on the same line or any of the
+    5 preceding lines accepts the literal. Use rarely — usually the
+    right answer is `return null` + `useQuery<T | null, Error>`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    bases: list[str] = list(_QUERY_FN_FE_BASE_PARENTS) + _query_fn_product_fe_bases(root)
+
+    for base_rel in bases:
+        base = root / base_rel
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix not in _QUERY_FN_FE_EXTS:
+                continue
+            if any(p in _QUERY_FN_EXCLUDED_PARTS for p in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            if "queryFn" not in content:
+                # Cheap pre-filter — most FE files don't touch TanStack.
+                continue
+            try:
+                relative = str(path.relative_to(root))
+            except ValueError:
+                logger.debug("compliance: file outside repo root: %s", path)
+                continue
+            lines = content.splitlines()
+            # `_strip_for_scan` returns parallel line lists with comments
+            # and strings/template-literals blanked. We reconstruct a
+            # code-only text (joining lines_code_only with newlines) so
+            # the brace walk is reliable across multi-line bodies.
+            _lines_nc, lines_code_only = _strip_for_scan(content, path.suffix)
+            code_only_text = "\n".join(lines_code_only)
+            ranges = _find_query_fn_body_ranges(code_only_text)
+            if not ranges:
+                continue
+            for start_line, end_line in ranges:
+                for idx in range(start_line, end_line + 1):
+                    if idx - 1 >= len(lines_code_only):
+                        break
+                    code_line = lines_code_only[idx - 1]
+                    if not code_line.strip():
+                        continue
+                    matched: str | None = None
+                    if _RETURN_UNDEFINED_RE.search(code_line):
+                        matched = "literal `return undefined`"
+                    elif _BARE_RETURN_RE.search(code_line):
+                        matched = "bare `return;` (implicit undefined)"
+                    if matched is None:
+                        continue
+                    # Rationale escape hatch — search raw lines (not
+                    # stripped) so the keyword can sit in a comment.
+                    window_start = max(0, idx - 1 - _QUERY_FN_RATIONALE_WINDOW)
+                    window = lines[window_start:idx]
+                    if any(_QUERY_FN_RATIONALE_RE.search(ln) for ln in window):
+                        continue
+                    issues.append({
+                        "product": "<seed>" if base_rel.startswith("seed/") else base_rel.split("/")[1],
+                        "file": relative,
+                        "issue": (
+                            f"`{relative}:{idx}` queryFn body has "
+                            f"{matched}. TanStack Query v5 surfaces an "
+                            f"`undefined` queryFn return as `data is "
+                            f"undefined` to the consumer (the toast a "
+                            f"404-swallow path usually wants to "
+                            f"prevent). Return `null` (and type the "
+                            f"query `<T | null, Error>`) or a sentinel "
+                            f"object instead. Per "
+                            f"`KB § PATTERNS/boundary-contract-tests.md` "
+                            f"§ 5. Escape hatch: add "
+                            f"`query-fn-undefined-ok` to a same-line or "
+                            f"preceding-line comment."
+                        ),
+                        "severity": "warning",
+                    })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -6313,6 +6537,12 @@ def check_all_products() -> tuple[int, list]:
     # consumer-#1-coincidence port literals as `||`/`??` fallbacks in
     # seed source (URL form + numeric-port-from-registry form).
     all_issues.extend(check_seed_canonical_default())
+    # boundary-contract-tests B3 (2026-05-20) — TanStack Query v5
+    # contract: a `queryFn` body MUST NOT return `undefined`. Catches
+    # the `useLLMSpend` shape on the next instance (the toast was the
+    # only signal because no unit test exercises the real Provider +
+    # real queryFn + real 404 response).
+    all_issues.extend(check_query_fn_returns_undefined())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

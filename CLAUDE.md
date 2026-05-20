@@ -105,6 +105,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
 - Logging convention → `KB § PATTERNS/logging.md`
 - Seed-lib layout (6 layers) → `KB § PATTERNS/seed-lib-layout.md`
 - Seed canonical defaults (seed fallback literals must be the architectural canonical answer, never a consumer-#1 coincidence; paired multi-stage Dockerfile inheritance rule; worked examples table + N=2 codification status) → `KB § PATTERNS/seed-canonical-defaults.md`
+- Boundary-contract tests (named class for "tests-green-dashboard-red" bugs — five recurring boundaries B1-B5: build-injection / HTTP schema / third-party library contract / container env / library-default propagation; authoring-time discipline + per-boundary detector status; Stage-4 keeper `check_query_fn_returns_undefined` covers B3 TanStack v5 contract — `queryFn` body returning `undefined` surfaces "data is undefined" to the consumer) → `KB § PATTERNS/boundary-contract-tests.md`
 - AST-driven code edits → `KB § PATTERNS/ast.md`
 - Agent reading & research discipline → `KB § PATTERNS/agent-reading-discipline.md`
 - Webhook signature verification → `KB § PATTERNS/webhook-signatures.md`

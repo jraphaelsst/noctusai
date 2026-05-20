@@ -18,6 +18,7 @@ from tools.noctus.dev.compliance import (
     check_section_7_placeholder_consistency,
     check_slowapi_with_pep563,
     check_seed_canonical_default,
+    check_query_fn_returns_undefined,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -1147,6 +1148,233 @@ class TestCheckSeedCanonicalDefault:
         issues = check_seed_canonical_default(tmp)
         # URL form still fires; numeric form skipped.
         assert any("URL literal as `||`/`??` fallback" in i["issue"] for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# `check_query_fn_returns_undefined` — TanStack v5 contract; `queryFn` body
+# may not return `undefined` (B3 in KB § PATTERNS/boundary-contract-tests.md).
+# ---------------------------------------------------------------------------
+
+
+class TestCheckQueryFnReturnsUndefined:
+    def _mk(self, content: str, rel_path: str) -> Path:
+        """Drop a fake FE file at ``rel_path`` and return the temp repo root."""
+        tmp = Path(tempfile.mkdtemp(prefix="query_fn_undefined_test_"))
+        target = tmp / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+        return tmp
+
+    # ── Flag cases ─────────────────────────────────────────────────────
+
+    def test_flags_literal_return_undefined(self):
+        repo = self._mk(
+            "import { useQuery } from '@tanstack/react-query';\n"
+            "export function useThing() {\n"
+            "  return useQuery({\n"
+            "    queryKey: ['thing'],\n"
+            "    queryFn: async () => {\n"
+            "      try {\n"
+            "        return await api.get('/thing');\n"
+            "      } catch (err) {\n"
+            "        return undefined;\n"
+            "      }\n"
+            "    },\n"
+            "  });\n"
+            "}\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert len(issues) == 1
+        assert "literal `return undefined`" in issues[0]["issue"]
+        assert issues[0]["severity"] == "warning"
+        assert issues[0]["product"] == "<seed>"
+
+    def test_flags_bare_return_in_query_fn(self):
+        repo = self._mk(
+            "import { useQuery } from '@tanstack/react-query';\n"
+            "export function useThing() {\n"
+            "  return useQuery({\n"
+            "    queryKey: ['thing'],\n"
+            "    queryFn: async () => {\n"
+            "      if (!orgId) {\n"
+            "        return;\n"
+            "      }\n"
+            "      return await api.get('/thing');\n"
+            "    },\n"
+            "  });\n"
+            "}\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert len(issues) == 1
+        assert "bare `return;`" in issues[0]["issue"]
+
+    def test_flags_async_with_typed_params(self):
+        # `queryFn: async (params) => { ... }` shape — the param list
+        # must not throw off the opener regex.
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async (ctx: QueryFunctionContext) => {\n"
+            "    return undefined;\n"
+            "  },\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.tsx",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert len(issues) == 1
+
+    def test_flags_inside_product_fe(self):
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async () => { return undefined; },\n"
+            "});\n",
+            "products/social-wiring/frontend/src/hooks/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert len(issues) == 1
+        assert issues[0]["product"] == "social-wiring"
+
+    # ── No-flag cases ──────────────────────────────────────────────────
+
+    def test_does_not_flag_return_null(self):
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async () => {\n"
+            "    try { return await api.get('/x'); }\n"
+            "    catch (err) { return null; }\n"
+            "  },\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    def test_does_not_flag_sentinel_object(self):
+        repo = self._mk(
+            "const EMPTY = { items: [] };\n"
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async () => {\n"
+            "    try { return await api.get('/x'); }\n"
+            "    catch (err) { return EMPTY; }\n"
+            "  },\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    def test_does_not_flag_expression_body(self):
+        # `queryFn: () => api.get(...)` — no braces, can't return
+        # undefined literally; out of scope.
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: () => api.get('/x'),\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    def test_does_not_flag_return_undefined_in_comment(self):
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async () => {\n"
+            "    // historical bug: used to `return undefined` here\n"
+            "    return null;\n"
+            "  },\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    def test_does_not_flag_return_undefined_in_string(self):
+        # An error-message string mentioning the rule should not trip
+        # the detector.
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async () => {\n"
+            "    throw new Error('do not return undefined here');\n"
+            "  },\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    def test_does_not_flag_non_query_fn_arrow(self):
+        # A `return undefined` inside an arrow function that is NOT a
+        # `queryFn:` body is fine — only the v5 contract is at stake.
+        repo = self._mk(
+            "const helper = () => {\n"
+            "  return undefined;\n"
+            "};\n"
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: () => api.get('/x'),\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    def test_skips_node_modules(self):
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async () => { return undefined; },\n"
+            "});\n",
+            "seed/lib/frontend/node_modules/foo/index.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    def test_skips_backend_python(self):
+        # Detector scopes to FE; a Python file is never scanned even if
+        # it textually contains `queryFn`.
+        repo = self._mk(
+            'queryFn = "noise"  # return undefined\n',
+            "seed/lib/backend/noctusai_lib/example.py",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    # ── Rationale escape hatch ─────────────────────────────────────────
+
+    def test_rationale_same_line_accepted(self):
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async () => {\n"
+            "    return undefined; // query-fn-undefined-ok: legacy, see #123\n"
+            "  },\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
+
+    def test_rationale_preceding_line_accepted(self):
+        repo = self._mk(
+            "useQuery({\n"
+            "  queryKey: ['x'],\n"
+            "  queryFn: async () => {\n"
+            "    // query-fn-undefined-ok: defensible reason\n"
+            "    return undefined;\n"
+            "  },\n"
+            "});\n",
+            "seed/lib/frontend/src/useThing.ts",
+        )
+        issues = check_query_fn_returns_undefined(repo)
+        assert issues == []
 
 
 # ---------------------------------------------------------------------------
