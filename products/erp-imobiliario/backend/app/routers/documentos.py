@@ -36,7 +36,7 @@ import logging
 from typing import Optional, Literal, Dict
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import Field
-from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none, require_role
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.document_service import DocumentService
 from app.config import settings
@@ -77,6 +77,18 @@ class GenerateDocumentRequest(StrictHttpModel):
     imovel_id: Optional[str] = None
     cliente_id: Optional[str] = None
     proposta_id: Optional[str] = None
+
+
+class DocumentoCompartilhamentoBody(StrictHttpModel):
+    """Body for the admin-side portal-sharing toggle."""
+
+    shared: bool = Field(
+        ...,
+        description=(
+            "True = compartilhado com portal-cliente; False = privado. "
+            "LGPD-aligned per-document gate."
+        ),
+    )
 
 
 # --- Document Endpoints ---
@@ -257,6 +269,47 @@ async def gerar_documento(body: GenerateDocumentRequest, auth = Depends(get_curr
                f"Gerou documento a partir do template {body.template_id}")
 
     return success_response(result)
+
+
+@router.patch("/{documento_id}/compartilhamento")
+async def toggle_compartilhamento(
+    documento_id: str,
+    body: DocumentoCompartilhamentoBody,
+    auth = Depends(get_current_user),
+    _role = Depends(require_role("platform_admin", "owner", "admin", "manager")),
+):
+    """Toggle the LGPD per-document portal-sharing flag.
+
+    Admin opt-in flow for `GET /api/portal/{portal_token}/documentos`. Each
+    toggle is audit-logged via `log_action(..., 'documento_compartilhamento')`
+    so the cliente can exercise Art. 18 right-to-know on exposure-history.
+    Role-gated to platform_admin/owner/admin/manager — corretor/user denied.
+    """
+    user, token = auth
+    db = get_user_client(token)
+
+    result = db.table("documentos").update(
+        {"compartilhado_portal": body.shared}
+    ).eq("id", documento_id).execute()
+    row = first_or_none(result)
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+
+    log_action(
+        user.id,
+        "atualizar",
+        "documento_compartilhamento",
+        documento_id,
+        (
+            f"Documento marcado como compartilhado=True no portal-cliente"
+            if body.shared
+            else f"Documento removido do portal-cliente (compartilhado=False)"
+        ),
+        {"shared": body.shared},
+    )
+
+    return success_response(row)
 
 
 @router.delete("/{documento_id}")

@@ -172,3 +172,95 @@ class TestCriarTemplate:
             "conteudo": "Conteudo",
         })
         assert resp.status_code == 422
+
+
+# --- LGPD per-document portal-sharing toggle (PATCH /{id}/compartilhamento) ---
+
+
+class TestToggleCompartilhamento:
+    """Pin the LGPD per-document portal-sharing admin toggle.
+
+    Migration `031_documentos_compartilhado_portal.sql` ships the column;
+    `documentos.py:toggle_compartilhamento` exposes the admin opt-in path.
+    Role-gated to platform_admin/owner/admin/manager.
+    """
+
+    def _promote(self, client, role: str) -> None:
+        user = client._mock_supabase.auth.get_user.return_value.user
+        user.user_metadata = {**(user.user_metadata or {}), "erp_role": role}
+
+    def test_toggle_to_shared_as_admin(self, client):
+        """Admin marks doc shared → 200 + flag flipped True."""
+        self._promote(client, "admin")
+        client._mock_supabase.set_table_data("documentos", {
+            "id": "d1", "nome": "Contrato.pdf", "tipo": "contrato",
+            "compartilhado_portal": True,
+        })
+        resp = client.patch("/api/documentos/d1/compartilhamento",
+                            json={"shared": True})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["id"] == "d1"
+
+    def test_toggle_to_private_as_owner(self, client):
+        """Owner marks doc private → 200; cliente loses portal visibility."""
+        self._promote(client, "owner")
+        client._mock_supabase.set_table_data("documentos", {
+            "id": "d2", "nome": "RG.pdf", "tipo": "outro",
+            "compartilhado_portal": False,
+        })
+        resp = client.patch("/api/documentos/d2/compartilhamento",
+                            json={"shared": False})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["id"] == "d2"
+
+    def test_toggle_as_manager_allowed(self, client):
+        """Manager role is in the gate (admin opt-in includes managers)."""
+        self._promote(client, "manager")
+        client._mock_supabase.set_table_data("documentos", {
+            "id": "d3", "compartilhado_portal": True,
+        })
+        resp = client.patch("/api/documentos/d3/compartilhamento",
+                            json={"shared": True})
+        assert resp.status_code == 200
+
+    def test_toggle_as_corretor_forbidden(self, client):
+        """Non-admin role (corretor) is denied — 403."""
+        self._promote(client, "corretor")
+        client._mock_supabase.set_table_data("documentos", {
+            "id": "d4", "compartilhado_portal": False,
+        })
+        resp = client.patch("/api/documentos/d4/compartilhamento",
+                            json={"shared": True})
+        assert resp.status_code == 403
+
+    def test_toggle_as_default_user_forbidden(self, client):
+        """Default user role (no erp_role) is denied — 403."""
+        client._mock_supabase.set_table_data("documentos", {
+            "id": "d5", "compartilhado_portal": False,
+        })
+        resp = client.patch("/api/documentos/d5/compartilhamento",
+                            json={"shared": True})
+        assert resp.status_code == 403
+
+    def test_toggle_missing_body_field(self, client):
+        """Missing required `shared` → 422 (StrictHttpModel enforces)."""
+        self._promote(client, "admin")
+        resp = client.patch("/api/documentos/d-any/compartilhamento", json={})
+        assert resp.status_code == 422
+
+    def test_toggle_unknown_field_rejected(self, client):
+        """Unknown body field → 422 (StrictHttpModel extra='forbid')."""
+        self._promote(client, "admin")
+        resp = client.patch("/api/documentos/d-any/compartilhamento",
+                            json={"shared": True, "extra": "leak"})
+        assert resp.status_code == 422
+
+    def test_toggle_not_found(self, client):
+        """No matching doc → 404."""
+        self._promote(client, "admin")
+        client._mock_supabase.set_table_data("documentos", [])
+        resp = client.patch("/api/documentos/nonexistent/compartilhamento",
+                            json={"shared": True})
+        assert resp.status_code == 404

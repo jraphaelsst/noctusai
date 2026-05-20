@@ -288,7 +288,17 @@ async def portal_contratos(request: Request, portal_token: str):
 @router.get("/{portal_token}/documentos")
 @limiter.limit(DEFAULT_PORTAL_RL)
 async def portal_documentos(request: Request, portal_token: str):
-    """Retorna documentos compartilhados com o proprietário ou locatário."""
+    """Retorna documentos COMPARTILHADOS com o proprietário ou locatário.
+
+    LGPD gate (Art. 5 + Art. 11 + Art. 18): only rows explicitly marked
+    `compartilhado_portal = true` are visible to the bearer-token holder.
+    Default is FALSE (migration `031_documentos_compartilhado_portal.sql`),
+    so admin must opt-in per-document via `PATCH /api/documentos/{id}/
+    compartilhamento` before the cliente sees anything.
+
+    Every successful read is logged via `log_action(..., 'documento_portal_acesso')`
+    so the cliente can exercise Art. 18 right-to-know about exposure history.
+    """
     token_data = _validate_token(portal_token)
 
     admin = _get_admin()
@@ -296,6 +306,28 @@ async def portal_documentos(request: Request, portal_token: str):
         "org_id", token_data["org_id"]
     ).eq(
         "cliente_id", token_data["pessoa_id"]
+    ).eq(
+        "compartilhado_portal", True
     ).order("created_at", desc=True).execute()
 
-    return success_response(result.data or [])
+    rows = result.data or []
+
+    # LGPD Art. 18 audit-log — record every portal-side READ. Uses the
+    # token-issuing user.id is NOT available here (portal access is public-
+    # by-token); we audit under the cliente's own pessoa_id so the data-
+    # subject access path can reconstruct exposure history per-cliente.
+    log_action(
+        token_data["pessoa_id"],
+        "ler",
+        "documento_portal_acesso",
+        token_data.get("id"),
+        f"Cliente acessou {len(rows)} documento(s) via portal "
+        f"({token_data['tipo']})",
+        {
+            "documento_ids": [r.get("id") for r in rows if r.get("id")],
+            "org_id": token_data["org_id"],
+            "portal_token_id": token_data.get("id"),
+        },
+    )
+
+    return success_response(rows)

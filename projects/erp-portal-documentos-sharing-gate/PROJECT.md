@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-20
 - **Last updated:** 2026-05-20
-- **Status:** 📋 **FILED** — design needs interrogation; NOT a 1-line hotfix as initially scoped.
+- **Status:** ⏳ **IN PROGRESS** — P0+P1+P2 ✅ landed by Engineer D 2026-05-20; P3/P4/P5 deferred to next-wave dispatch.
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · architect
 - **Related docs:**
   - `LGPD-WARNINGS.md` entry: "Public bearer-token endpoint surfaces full documentos rows without filter on document sensitivity / sharing-status flag"
@@ -62,12 +62,30 @@ Litmus: per-product code in seed = 0 LoC. This is properly product-local.
 
 ## 6. Phases
 
-- **P0 ⏳** — Design interrogation. Confirm: backfill policy default (FALSE-safer-by-default ∨ TRUE-preserve-behavior); FE UX (per-document toggle ∨ bulk-share-on-portal-issue ∨ inherit-from-contract); audit-log scope.
-- **P1 ⏳** — Migration (add column + default + backfill SQL). Mirror in Supabase MCP.
-- **P2 ⏳** — Backend filter + admin toggle endpoint + audit-log.
-- **P3 ⏳** — Frontend: admin UI + portal-cliente view sync.
-- **P4 ⏳** — Tests aligned to real schema; production-path pins.
-- **P5 ⏳** — Verify: pytest green, vite build green, keeper review, LGPD-WARNINGS.md entry resolved.
+- **P0 ✅** — Design interrogation. Architect-locked (2026-05-20): backfill = FALSE (safer-by-default, LGPD-aligned Art. 7 §3 + Art. 18); FE UX = per-document toggle in admin documents table (bulk-mark deferred to v2); audit-log = every portal-side READ + every admin-side toggle via `log_action()`.
+
+  **Improvements:**
+  - Applied inline: schema gap re-confirmed via grep — column genuinely absent at `001_erp_imobiliario.sql:1656` ∧ `004_mvp_expansion.sql:282`; partial index `idx_documentos_compartilhado_portal WHERE compartilhado_portal=true` added to support the hot portal read path without indexing dead rows.
+  - Bystander: `portal_cliente.py` follow-up (`erp-imobiliario-dto-contract`) carries the parallel DTO-whitelist work; no scope creep here.
+
+- **P1 ✅** — Migration `031_documentos_compartilhado_portal.sql` at `products/erp-imobiliario/backend/migrations/`. Adds `compartilhado_portal boolean NOT NULL DEFAULT false` + partial index. Mirror to Supabase MCP deferred to architect at landing time (engineer has no project_id binding in this dispatch).
+
+  **Improvements:**
+  - Applied inline: prelude shape mirrors `030_tool_call_audits.sql` (file-header `--` block + `SET search_path = erp, public;` + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`). `IF NOT EXISTS` makes the migration idempotent against partial rollouts.
+  - Deferred to architect: Supabase MCP mirror (`mcp__claude_ai_Supabase__apply_migration`) — destination = architect's commit-time landing step; engineer surfaces the migration filename in return.
+
+- **P2 ✅** — Backend filter + admin toggle endpoint + audit-log.
+  - `portal_externo.py:portal_documentos` adds `.eq("compartilhado_portal", True)` + `log_action(..., 'documento_portal_acesso')` capturing cliente_id, doc_id list, portal_token_id.
+  - `documentos.py:toggle_compartilhamento` ships `PATCH /api/documentos/{documento_id}/compartilhamento` with `DocumentoCompartilhamentoBody { shared: bool }`; role-gated `Depends(require_role("platform_admin", "owner", "admin", "manager"))`; logs `log_action(..., 'documento_compartilhamento')`.
+
+  **Improvements:**
+  - Applied inline: portal-side audit uses `pessoa_id` as the actor (the cliente, not the agent that issued the token) — this is what the Art. 18 right-to-know subject-access path needs to surface "who saw what about me." `detalhes` carries `documento_ids` + `org_id` + `portal_token_id` for cross-join reconstruction.
+  - Applied inline: `DocumentoCompartilhamentoBody` extends `StrictHttpModel` → unknown fields → 422 (pinned in `test_toggle_unknown_field_rejected`).
+  - Bystander: tests cover 7 status pins (admin-200 × 3 roles, corretor-403, default-user-403, missing-field-422, unknown-field-422, not-found-404) + filter-pin (shared+private both seeded → only shared returned). Status-code-assertion rule satisfied for every body assertion.
+
+- **P3 ⏳** — Frontend: admin UI per-document toggle in admin documents table + portal-cliente view sync + one-time admin alert post-deploy ("N documents currently private; review and opt-in for portal sharing"). **Destination = next-wave dispatch** (engineer-default §6 — out of this dispatch's brief; FE was explicitly out-of-scope).
+- **P4 ⏳** — Tests aligned to real schema; production-path pins. **Partially complete** in P2 (the filter + toggle paths pinned with 10 new tests). **Destination = next-wave dispatch** for the full sweep: align ALL test fixtures that seed `documentos` rows to the new schema column, add Supabase-MCP integration test that runs the migration against a clean DB and re-runs the suite.
+- **P5 ⏳** — Verify: pytest green (this dispatch ⏳ — engineer runs locally), vite build green (FE wave), keeper review (cross-product), LGPD-WARNINGS.md entry resolved ✅ (this dispatch). **Destination = next-wave dispatch** for the keeper + vite gates after FE lands.
 
 ---
 
@@ -94,3 +112,4 @@ Litmus: per-product code in seed = 0 LoC. This is properly product-local.
 | Date | Entry | By |
 |---|---|---|
 | 2026-05-20 | Filed as the P0 LGPD follow-up from erp-wiring Phase 6. Re-audit revealed it's a multi-phase project (column doesn't exist yet), not a 1-line hotfix. Architect. | Architect |
+| 2026-05-20 | P0+P1+P2 landed by Engineer D: migration `031_documentos_compartilhado_portal.sql` + `portal_externo.py:portal_documentos` filter + audit-log + `documentos.py:toggle_compartilhamento` admin endpoint + 10 backend tests pinning filter/role-gate/422/404 paths. LGPD-WARNINGS.md entry resolved. P3/P4/P5 deferred to next-wave dispatch (destination = follow-up architect dispatch). | Engineer D |

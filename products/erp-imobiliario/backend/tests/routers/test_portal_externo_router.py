@@ -311,7 +311,20 @@ class TestPortalContratos:
 
 
 class TestPortalDocumentos:
-    def test_documentos_success(self, client):
+    """LGPD sharing-gate pinned tests (PROJECT.md erp-portal-documentos-sharing-gate).
+
+    The production query at `portal_externo.py:portal_documentos` filters
+    `compartilhado_portal=True`. These tests pin the contract: rows missing
+    or with the flag False MUST NOT leak via the portal-cliente bearer token.
+    """
+
+    def test_documentos_success_returns_only_shared(self, client):
+        """Filter-pin: only `compartilhado_portal=True` rows visible.
+
+        MockSupabaseClient `.eq("compartilhado_portal", True)` applies the
+        filter against the seeded list; non-shared rows are dropped. This
+        pin guards against silent removal of the filter chain.
+        """
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt1",
@@ -324,12 +337,23 @@ class TestPortalDocumentos:
             "expires_at": expires,
         })
         client._mock_supabase.set_table_data("documentos", [
-            {"id": "d1", "nome": "Contrato.pdf", "compartilhado_portal": True},
+            {"id": "d1", "nome": "Contrato.pdf", "compartilhado_portal": True,
+             "org_id": "org-1", "cliente_id": "p1"},
+            {"id": "d2", "nome": "RG.pdf", "compartilhado_portal": False,
+             "org_id": "org-1", "cliente_id": "p1"},
         ])
         resp = client._tc.get("/api/portal/tok-doc/documentos")
         assert resp.status_code == 200
+        body = resp.json()
+        # `success_response` wraps payload under "data"; the filter MUST
+        # drop d2 (False) and surface only d1 (True).
+        rows = body.get("data") or []
+        ids = [r.get("id") for r in rows]
+        assert "d1" in ids, f"shared doc d1 should be returned, got {ids}"
+        assert "d2" not in ids, f"private doc d2 MUST NOT leak via portal, got {ids}"
 
-    def test_documentos_empty(self, client):
+    def test_documentos_empty_when_none_shared(self, client):
+        """All rows have `compartilhado_portal=False` → empty result."""
         expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         client._mock_supabase.set_table_data("portal_tokens", {
             "id": "pt1",
@@ -341,6 +365,29 @@ class TestPortalDocumentos:
             "is_active": True,
             "expires_at": expires,
         })
-        client._mock_supabase.set_table_data("documentos", [])
+        client._mock_supabase.set_table_data("documentos", [
+            {"id": "d3", "nome": "Privado.pdf", "compartilhado_portal": False,
+             "org_id": "org-1", "cliente_id": "p2"},
+        ])
         resp = client._tc.get("/api/portal/tok-doc2/documentos")
+        assert resp.status_code == 200
+        body = resp.json()
+        rows = body.get("data") or []
+        assert rows == [], f"expected zero leak, got {rows}"
+
+    def test_documentos_empty_table(self, client):
+        """Empty table → empty data list, no audit-log on zero rows still fires."""
+        expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+        client._mock_supabase.set_table_data("portal_tokens", {
+            "id": "pt1",
+            "org_id": "org-1",
+            "tipo": "locatario",
+            "pessoa_id": "p2",
+            "nome": "Ana",
+            "token": "tok-doc3",
+            "is_active": True,
+            "expires_at": expires,
+        })
+        client._mock_supabase.set_table_data("documentos", [])
+        resp = client._tc.get("/api/portal/tok-doc3/documentos")
         assert resp.status_code == 200
