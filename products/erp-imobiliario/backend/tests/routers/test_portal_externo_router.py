@@ -128,6 +128,57 @@ class TestListarTokens:
         resp = client.get("/api/portal/tokens")
         assert resp.status_code == 200
 
+    def test_list_tokens_hides_raw_token(self, client):
+        """SECURITY (Phase 6, N=2 absorption of Phase 3b portal_cliente defense):
+        admin listing MUST NOT expose raw bearer tokens. Re-issue via /gerar-link.
+        """
+        client._mock_supabase.set_table_data("portal_tokens", [
+            {
+                "id": "pt1",
+                "tipo": "proprietario",
+                "pessoa_id": "p1",
+                "nome": "Carlos",
+                "email": "carlos@test.com",
+                "token": "MUST-NEVER-APPEAR-IN-LIST",
+                "is_active": True,
+                "expires_at": "2026-08-11T00:00:00Z",
+                "created_at": "2026-05-11",
+            },
+        ])
+        resp = client.get("/api/portal/tokens")
+        assert resp.status_code == 200
+        body = resp.json()
+        rows = body.get("data") or []
+        assert rows, "expected at least one token in the listing"
+        for row in rows:
+            assert "token" not in row, (
+                "PORTAL TOKEN LEAK at router boundary — admin listing "
+                "/api/portal/tokens must hide raw bearer tokens."
+            )
+
+    def test_gerar_link_response_includes_token(self, client):
+        """The one-shot issue at POST /gerar-link IS the only surface that shows
+        the raw token. Pin that contract so admin listing absorption doesn't
+        accidentally also hide it at issue time.
+        """
+        client._mock_supabase.set_table_data("portal_tokens", {
+            "id": "pt1",
+            "tipo": "proprietario",
+            "pessoa_id": "p1",
+            "nome": "Carlos",
+            "token": "ISSUED-AT-ONE-SHOT",
+            "is_active": True,
+        })
+        resp = client.post("/api/portal/gerar-link", json={
+            "tipo": "proprietario",
+            "pessoa_id": "p1",
+            "nome": "Carlos",
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert "token" in data
+        assert "link" in data
+
 
 class TestRevogarToken:
     def test_revoke_success(self, client):

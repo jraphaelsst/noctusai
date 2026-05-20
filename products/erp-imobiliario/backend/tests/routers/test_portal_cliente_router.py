@@ -61,6 +61,31 @@ class TestListarAcessos:
         resp = client.get("/api/portal-cliente/acessos?cliente_id=c1")
         assert resp.status_code == 200
 
+    def test_list_acessos_hides_raw_token(self, client):
+        """SECURITY (Phase 3b → Phase 6 router-boundary pin):
+        admin /acessos listing MUST NOT expose raw portal bearer tokens.
+        Re-issue via POST /gerar-acesso instead.
+        """
+        client._mock_supabase.set_table_data("portal_acessos", [
+            {
+                "id": "pa1",
+                "cliente_id": "c1",
+                "token": "MUST-NEVER-APPEAR-IN-LIST",
+                "ativo": True,
+                "created_at": "2026-05-11",
+            },
+        ])
+        resp = client.get("/api/portal-cliente/acessos")
+        assert resp.status_code == 200
+        body = resp.json()
+        rows = body.get("data") or []
+        assert rows, "expected at least one acesso in the listing"
+        for row in rows:
+            assert "token" not in row, (
+                "PORTAL TOKEN LEAK at router boundary — admin listing "
+                "/api/portal-cliente/acessos must hide raw bearer tokens."
+            )
+
 
 class TestRevogarAcesso:
     def test_revoke_success(self, client):

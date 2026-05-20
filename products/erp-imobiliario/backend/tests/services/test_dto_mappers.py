@@ -56,6 +56,13 @@ from app.services.portal_cliente_service import (
     portal_acesso_listing_rows_to_dto,
     portal_acesso_listing_to_dto,
 )
+from app.routers.portal_externo import (
+    _PORTAL_TOKEN_ISSUED_FIELDS,
+    _PORTAL_TOKEN_LISTING_FIELDS,
+    portal_token_issued_to_dto,
+    portal_token_listing_rows_to_dto,
+    portal_token_listing_to_dto,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -360,3 +367,82 @@ class TestChamadoPortal:
     def test_rows_to_dto(self):
         dtos = chamado_portal_rows_to_dto([{"id": "ch1", "leak": "x"}])
         assert dtos == [{"id": "ch1"}]
+
+
+# ---------------------------------------------------------------------------
+# Portal externo (portal_tokens) — TOKEN SECURITY (Phase 6 N=2 absorption of
+# Phase 3b token-leak defense). Listing must hide raw bearer tokens; the
+# one-shot issue at POST /gerar-link is the only token-shown surface.
+# ---------------------------------------------------------------------------
+
+class TestPortalTokenListing:
+    def test_listing_hides_token(self):
+        """SECURITY: admin listing endpoints MUST NOT leak portal bearer tokens."""
+        row = {
+            "id": "pt1",
+            "tipo": "proprietario",
+            "pessoa_id": "p1",
+            "nome": "Carlos",
+            "email": "carlos@test.com",
+            "token": "SECRET-EXTERNO-TOKEN-MUST-NEVER-LEAK",
+            "expires_at": "2026-08-11T00:00:00Z",
+            "is_active": True,
+            "created_at": "2026-05-11",
+        }
+        dto = portal_token_listing_to_dto(row)
+        assert "token" not in dto, (
+            "PORTAL TOKEN LEAK in listing — admin listing must hide raw bearer "
+            "tokens. Re-issue via POST /gerar-link instead."
+        )
+        assert dto["nome"] == "Carlos"
+
+    def test_listing_rows_hide_tokens(self):
+        rows = [
+            {"id": "pt1", "tipo": "proprietario", "nome": "Carlos", "token": "tok-1"},
+            {"id": "pt2", "tipo": "locatario", "nome": "Ana", "token": "tok-2"},
+        ]
+        dtos = portal_token_listing_rows_to_dto(rows)
+        assert all("token" not in d for d in dtos)
+        assert [d["id"] for d in dtos] == ["pt1", "pt2"]
+
+    def test_listing_whitelist(self):
+        row = {k: 1 for k in _PORTAL_TOKEN_LISTING_FIELDS}
+        row["token"] = "MUST-STRIP"
+        row["org_id"] = "MUST-STRIP"
+        dto = portal_token_listing_to_dto(row)
+        assert "token" not in dto
+        assert "org_id" not in dto
+        assert set(dto.keys()) == set(_PORTAL_TOKEN_LISTING_FIELDS)
+
+    def test_none_passthrough(self):
+        assert portal_token_listing_to_dto(None) is None
+        assert portal_token_listing_rows_to_dto(None) == []
+        assert portal_token_listing_rows_to_dto([]) == []
+
+
+class TestPortalTokenIssued:
+    def test_issued_includes_token(self):
+        """POST /gerar-link is the one-shot token issue moment."""
+        row = {
+            "id": "pt1",
+            "tipo": "proprietario",
+            "pessoa_id": "p1",
+            "nome": "Carlos",
+            "token": "FRESH-EXTERNO-TOKEN",
+            "expires_at": "2026-08-11T00:00:00Z",
+            "is_active": True,
+            "created_at": "2026-05-11",
+            "org_id": "MUST-STRIP",
+        }
+        dto = portal_token_issued_to_dto(row)
+        assert dto["token"] == "FRESH-EXTERNO-TOKEN"
+        assert "org_id" not in dto
+
+    def test_issued_whitelist(self):
+        row = {k: 1 for k in _PORTAL_TOKEN_ISSUED_FIELDS}
+        row["leak"] = 1
+        dto = portal_token_issued_to_dto(row)
+        assert set(dto.keys()) == set(_PORTAL_TOKEN_ISSUED_FIELDS)
+
+    def test_none_passthrough(self):
+        assert portal_token_issued_to_dto(None) is None

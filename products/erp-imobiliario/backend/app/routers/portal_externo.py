@@ -19,10 +19,10 @@ Agents generate portal links; owners/tenants access data without full auth.
 """
 import logging
 import secrets
-from typing import Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
@@ -34,6 +34,57 @@ from noctusai_lib.api.rate_limit_policies import DEFAULT_PORTAL_RL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portal", tags=["Portal Externo"])
+
+
+# ---------------------------------------------------------------------------
+# DTO mappers — token-leak defense (mirrors portal_cliente Phase 3b shape)
+# ---------------------------------------------------------------------------
+# Admin listing (`GET /api/portal/tokens`) INTENTIONALLY hides raw bearer tokens
+# to prevent shoulder-surf leak from the agents UI. Re-issue via `POST /gerar-link`
+# remains the one-shot share moment (which includes `token` + `link`).
+_PORTAL_TOKEN_LISTING_FIELDS: tuple = (
+    "id",
+    "tipo",
+    "pessoa_id",
+    "nome",
+    "email",
+    "expires_at",
+    "is_active",
+    "created_at",
+)
+
+_PORTAL_TOKEN_ISSUED_FIELDS: tuple = (
+    "id",
+    "tipo",
+    "pessoa_id",
+    "nome",
+    "email",
+    "token",
+    "expires_at",
+    "is_active",
+    "created_at",
+)
+
+
+def portal_token_listing_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a portal_tokens row for ADMIN LISTING (token hidden)."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _PORTAL_TOKEN_LISTING_FIELDS if k in row}
+
+
+def portal_token_listing_rows_to_dto(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Project a list of portal_tokens rows for ADMIN LISTING (tokens hidden)."""
+    if not rows:
+        return []
+    return [portal_token_listing_to_dto(r) for r in rows]
+
+
+def portal_token_issued_to_dto(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Project a portal_tokens row for the ONE-SHOT ISSUE moment (token shown)."""
+    if not row:
+        return row
+    return {k: row.get(k) for k in _PORTAL_TOKEN_ISSUED_FIELDS if k in row}
 
 
 # ---------------------------------------------------------------------------
@@ -109,8 +160,9 @@ async def gerar_link(body: GerarLinkBody, auth = Depends(get_current_user)):
     log_action(user.id, "criar", "portal_token", row["id"],
                f"Gerou link de portal ({body.tipo}) para {body.nome}")
 
+    issued = portal_token_issued_to_dto(row) or {}
     return success_response({
-        **row,
+        **issued,
         "link": f"/portal/{portal_token}",
     })
 
@@ -135,7 +187,13 @@ async def listar_tokens(
         "created_at", desc=True
     ).range(offset, offset + validated_page_size - 1).execute()
 
-    return paginated_response(result.data or [], total, validated_page, validated_page_size)
+    # SECURITY: listing intentionally hides raw bearer tokens. Re-issue via gerar-link.
+    return paginated_response(
+        portal_token_listing_rows_to_dto(result.data or []),
+        total,
+        validated_page,
+        validated_page_size,
+    )
 
 
 @router.delete("/tokens/{token_id}")

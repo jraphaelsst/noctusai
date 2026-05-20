@@ -5,7 +5,10 @@ import { api, useAuthStore } from '@noctusai/seed/infra';
 export interface PortalAcesso {
   id: string;
   cliente_id: string;
-  token: string;
+  // SECURITY: `token` is ONLY populated at the one-shot issue moment
+  // (POST /gerar-acesso). The admin listing endpoint hides it; re-issue via
+  // gerar-acesso to get a fresh token. See Phase 3b token-leak defense.
+  token?: string;
   ativo: boolean;
   data_expiracao?: string;
   ultimo_acesso?: string;
@@ -131,6 +134,99 @@ export function useUpdateChamado() {
     },
     onError: (error: Error) => {
       toast.error('Erro ao atualizar chamado', { description: error.message });
+    },
+  });
+}
+
+
+// ---------------------------------------------------------------------------
+// Public client-portal hooks (no Bearer auth — uses portal token in URL).
+// Mirrors the shape of `usePortalExterno` public hooks: a plain `fetch` against
+// VITE_BACKEND_API_URL bypasses the seed `api.*` helper because the seed helper
+// injects Bearer auth, which the public endpoints intentionally reject/ignore.
+// LGPD-flag note: each of these endpoints is gated by the portal token + slowapi
+// rate-limit (`DEFAULT_PORTAL_RL`). Cataloged in PROJECT.md Phase 6 + LGPD.
+// ---------------------------------------------------------------------------
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8001';
+
+async function fetchPublicClientPortal(path: string, init?: RequestInit) {
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND_URL}${path}`, init);
+  } catch {
+    throw new Error(`Servidor indisponível (${path}). Verifique se o backend está rodando.`);
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    const message = data?.error?.message || data?.detail || `Erro HTTP ${response.status}`;
+    throw new Error(`[${response.status}] ${message}`);
+  }
+  return response.json();
+}
+
+export interface PortalDashboard {
+  contratos: unknown[];
+  financeiro: unknown[];
+  documentos: unknown[];
+}
+
+export function usePortalClienteDashboard(token?: string) {
+  return useQuery({
+    queryKey: ['portal-cliente-dashboard', token],
+    queryFn: async () => {
+      if (!token) return null;
+      const result = await fetchPublicClientPortal(`/api/portal-cliente/${token}/dashboard`);
+      return result.data as PortalDashboard;
+    },
+    enabled: !!token,
+    retry: false,
+  });
+}
+
+export function usePortalClienteFinanceiro(token?: string) {
+  return useQuery({
+    queryKey: ['portal-cliente-financeiro', token],
+    queryFn: async () => {
+      if (!token) return [];
+      const result = await fetchPublicClientPortal(`/api/portal-cliente/${token}/financeiro`);
+      return (result.data || []) as unknown[];
+    },
+    enabled: !!token,
+  });
+}
+
+export function usePortalClienteChamados(token?: string) {
+  return useQuery({
+    queryKey: ['portal-cliente-chamados', token],
+    queryFn: async () => {
+      if (!token) return [];
+      const result = await fetchPublicClientPortal(`/api/portal-cliente/${token}/chamados`);
+      return (result.data || []) as ChamadoPortal[];
+    },
+    enabled: !!token,
+  });
+}
+
+export function useCriarChamadoCliente(token: string | undefined) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { assunto: string; descricao: string; prioridade?: string }) => {
+      if (!token) throw new Error('Token de portal requerido');
+      const result = await fetchPublicClientPortal(`/api/portal-cliente/${token}/chamados`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      return result.data as ChamadoPortal;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['portal-cliente-chamados', token] });
+      toast.success('Chamado criado com sucesso!');
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao criar chamado', { description: error.message });
     },
   });
 }

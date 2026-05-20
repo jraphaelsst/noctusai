@@ -30,7 +30,7 @@ and client-facing endpoints (token-based, no Bearer auth) for client self-servic
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
