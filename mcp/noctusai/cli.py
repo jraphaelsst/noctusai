@@ -65,6 +65,9 @@ def main():
     parser.add_argument("--validate", action="store_true", help="Check seed compliance")
     parser.add_argument("--check-phase-state", action="store_true", help="Check §6 ↔ §11 phase-state consistency across PROJECT.md files. Exits 1 on any high-severity issue. Used by the pre-commit hook to block commits that ship mismatch.")
     parser.add_argument("--refs", metavar="PATTERN", help="Find every reference to PATTERN (literal string) across CLAUDE.md / KB / projects / mcp / seed / products. Replaces the manual `grep -rln` ritual.")
+    parser.add_argument("--graph-build", nargs="?", const="repo", metavar="SCOPE", help="Build the noc knowledge graph and write `.noc-graph/{graph.json,graph.html,REPORT.md}`. Scope: `repo` (default), `product:<slug>`, `seed`, `kb`. Materializes the implicit relational index (AST + authored prose; no LLM). Backed by noctusai_lib.graph + the noctus.graph.* MCP umbrella.")
+    parser.add_argument("--graph-output", metavar="DIR", help="With --graph-build: write artifacts to DIR (default `<repo>/.noc-graph`).")
+    parser.add_argument("--graph-memory-root", metavar="DIR", help="With --graph-build: include agent memory dir (e.g. `~/.claude/projects/<workspace>/memory`).")
     parser.add_argument("--build", action="store_true", help="Run `npx vite build` across product frontends in parallel. Combine with `--changed` to scope to git-changed products + `--product P` to scope to one.")
     parser.add_argument("--changed", action="store_true", help="With --build / --test: scope to products with changes since HEAD (uses `git diff --name-only HEAD`).")
     parser.add_argument("--status", action="store_true", help="Cross-project state digest. Walks every PROJECT.md + reports status / sub-task progress / last-updated / flags.")
@@ -249,6 +252,27 @@ def main():
                     print(f"    {ln}: {text[:140]}")
                 if len(grouped[file]) > 8:
                     print(f"    … {len(grouped[file]) - 8} more matches")
+
+    elif args.graph_build:
+        from tools.noctus.graph.build import build_and_write
+        result = build_and_write(
+            scope=args.graph_build,
+            output_dir=args.graph_output,
+            memory_root=args.graph_memory_root,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"  {BOLD}Scope:{RESET} {result['scope']}")
+            print(f"  {BOLD}Nodes:{RESET} {result['nodes_count']}")
+            print(f"  {BOLD}Edges:{RESET} {result['edges_count']}")
+            print(f"  {BOLD}Clustering:{RESET} {result['clustering']}")
+            print(f"  {BOLD}Took:{RESET} {result['took_seconds']}s")
+            print(f"  {BOLD}Output:{RESET} {result['output_dir']}")
+            print(f"    {GREEN}graph.json{RESET}  {result['paths']['json']}")
+            print(f"    {GREEN}graph.html{RESET}  {result['paths']['html']}")
+            print(f"    {GREEN}REPORT.md{RESET}   {result['paths']['report']}")
+            print(f"\n  Open `{result['paths']['html']}` in a browser. Or query via MCP: `noctus.graph.query`.")
 
     elif args.build:
         from tools.noctus.dev.build import build_products

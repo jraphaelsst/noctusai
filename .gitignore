@@ -36,6 +36,10 @@ build/
 # Artifacts (Gemini)
 .gemini/
 
+# noc-graph — derive-only artifact cache (`.noc-graph/graph.{json,html}` + REPORT.md)
+# Regenerable via `python mcp/noctusai/cli.py --graph-build` or `noctus.graph.build`.
+.noc-graph/
+
 # Playwright
 test-results/
 playwright-report/
