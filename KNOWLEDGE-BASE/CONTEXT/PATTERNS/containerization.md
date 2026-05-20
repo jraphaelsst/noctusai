@@ -370,6 +370,95 @@ iteration on a real interpreter is still the fastest inner loop.
 
 ---
 
+## 5c · Sync runbook — getting fixes into running containers
+
+The agent-facing runbook for "I (or someone) edited code; how do I make sure the running container actually serves it?" Authoritative procedure — every other doc points here.
+
+### 5c.1 · Quick decision tree
+
+```
+Did the edit touch CODE that the running container serves?
+├─ No (docs, KB, memory, .md, test fixtures): nothing to do; container is unchanged.
+└─ Yes:
+   ├─ Is the file inside a bind-mounted dir?  ──→ check `docker inspect <c>`
+   │  ├─ Yes (under /app/seed or /app/products/<slug>/{backend,frontend}):
+   │  │   ├─ Is it Python?       → uvicorn --reload picks it up (sub-second). Verify with `docker logs --tail 5 <c>` (look for "Detected file change").
+   │  │   ├─ Is it FE source?    → vite --watch picks it up (~1–3s). Browser auto-reloads with same-origin define.
+   │  │   └─ Is it the Dockerfile / package.json / requirements.txt?
+   │  │       → bind-mount can't help (build-time). `docker compose up -d --build <slug>` from the canonical clone.
+   │  └─ No (e.g. base image, /app/seed/lib/.../node_modules):
+   │      → `docker compose up -d --build <slug>` from the canonical clone.
+   └─ Is the bind-mount source the canonical clone?
+      ├─ Yes: reload as above.
+      └─ No: multi-clone drift → § 12b.1 procedure (also `up -d --build`, but from the right clone).
+```
+
+### 5c.2 · The four-step container-freshness probe — what every agent runs before saying "ready to test"
+
+```bash
+# 1. Bind-mount source: must be under the canonical clone.
+docker inspect <container> --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{println}}{{end}}{{end}}'
+
+# 2. Watched directories: confirm uvicorn reloads on the dir you edited.
+docker logs <container> 2>&1 | grep "Will watch"
+
+# 3. Trigger reload. Source bind-mounted + watched → uvicorn auto-reloads on save.
+#    Otherwise:
+docker restart <container>                # bind mount + new process (fast, ~3s)
+# OR
+docker compose up -d --build <slug>       # image rebuild (slow, ~1–2 min; only when deps/Dockerfile changed)
+
+# 4. Live-probe the endpoint that exercises the fix.
+curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:<port>/<path>
+```
+
+Tests green + build green ≠ runtime green when a container is in front. Step 4 is the only one that distinguishes them. → § 12b for the philosophy.
+
+### 5c.3 · "I see drift across products" — the consolidation drill
+
+Symptom: `docker inspect` shows containers bind-mounting a *sibling clone* (e.g. `noctus-fleet/seed` when you're editing in `noctusai/seed`). Cure per § 12b.1:
+
+```bash
+# Repeat per slug. The three commands are atomic (each rebuild flips
+# all three bind mounts and rebakes the image from the canonical source).
+docker compose stop <slug>
+docker compose rm -f <slug>
+docker compose up -d --build <slug>
+```
+
+For the fleet you can parallelize: fire one shell per product (docker daemon handles concurrent builds; ~1–2 min total wall-clock for the typical 4-product set, vs ~5–8 min sequential). On a Mac the daemon may serialize image-export at the end — expected.
+
+**Sanity check after.** Run the audit yourself:
+
+```bash
+docker inspect $(docker ps -q --filter "name=noctus-") \
+  --format '{{.Name}} {{range .Mounts}}{{if eq .Type "bind"}}{{.Source}} {{end}}{{end}}' \
+  | sed 's|/host_mnt||g'
+```
+
+Every Source containing `/NoctusAI/` must be under the canonical clone path (your repo root). `start.sh` performs this check automatically on every Docker-mode invocation (§ 12b.1 *Structural guarantee*), but running it manually is the explicit confirmation.
+
+### 5c.4 · "I shipped a fix mid-session" — keep-in-sync during active work
+
+You committed a seed/product code change while a container is running. Two scenarios:
+
+| Scenario | What auto-recovers | What you do |
+|---|---|---|
+| Edited `.py` under `/app/seed` or `/app/products/<slug>/backend` | uvicorn `--reload` detects + restarts the process | Wait ~2s. `docker logs --tail 10 <c>` shows the reload. Probe the endpoint. |
+| Edited `.ts/.tsx/.css` under `/app/products/<slug>/frontend/src` | `vite --watch` rebuilds `dist/` | Wait ~3s. Hard-refresh the browser. |
+| Edited `Dockerfile` / `requirements.txt` / `package.json` / non-bind-mounted file | Nothing — those are baked at build | `docker compose up -d --build <slug>` |
+| Edited `start.sh` / `docker-compose.yml` / `seed/docker/*` | Nothing — these are read at process-start by docker itself | `docker compose up -d <slug>` (no `--build` needed unless you also changed an image input) |
+
+**Heuristic.** If in doubt, `docker compose up -d --build <slug>` — slower (~1–2 min) but covers every case.
+
+### 5c.5 · The structural guarantee
+
+`start.sh` runs `audit_clone_alignment` before any `compose up`. If any running `noctus-*` container has a bind-mount Source outside `$ROOT_DIR` (the canonical clone), start.sh prints the offender list with per-slug remediation commands and exits 1. This catches: post-pull drift, sibling-clone drift, stale-container-from-other-checkout drift. **No docker entry point in this repo bypasses it.** Future products inherit start.sh automatically — the guarantee extends to anything we add.
+
+To opt out (do not, except in a real bypass scenario): invoke `docker compose` directly, not through `start.sh`. You then own the audit yourself per 5c.2.
+
+---
+
 ## 5b · Cloudflare tunnel — online testing without deploy
 
 For a public URL pointing at a local product — OAuth callbacks
@@ -658,6 +747,59 @@ compose must be the canonical single-service shape, override-free.
 > was refactored to the house model as the final absorption gate. Dated
 > fact recorded in-line on purpose — do not anchor it to a `projects/` or
 > `archive/` folder (not persisted long-term).
+
+---
+
+## 12b · Validation-freshness contract — the live container is part of "ready to test"
+
+`pytest` green + `vite build` clean ≠ "the running container reflects the fix." A long-running container that was started before today's commits — or one whose bind-mount source points at a *parallel* repo path (a sibling worktree, a second clone, an older `noctus-fleet/` checkout while you've been editing `noctusai/`) — serves stale code. Declaring "ready to test" without confirming runtime parity sets the user up to manually exercise code from yesterday.
+
+**Trigger.** Any time the [Finish-the-session checklist](project-execution.md) runs while a product container is up AND the session changed code that container serves (seed/, product backend, product frontend, any module imported at request time). Fix-on-contact debt fixes are the highest-risk class — a fix you applied two minutes ago is *not yet running*.
+
+**Procedure.** Four cheap steps that catch every common drift shape:
+
+1. **Confirm the bind-mount source.** `docker inspect <container> --format '{{json .Mounts}}'` — note the host path under `Source` for `/app/seed` and `/app/products/<slug>/{backend,frontend}`. If it's not the repo you've been editing, your fix is invisible to this container. Reconcile (copy the fix into the bind-mounted tree, or recreate the container from the right project root) before continuing.
+2. **Confirm the watched directories.** `docker logs <container> | grep "Will watch"` — uvicorn `--reload` only reacts to changes inside those dirs. Touching code outside the watch set is a no-op; you need a restart.
+3. **Trigger the reload.** Edits inside a watched bind-mount → uvicorn reloads on save (sub-second). Otherwise: `docker restart <container>` (bind-mount + new process), or `docker compose up -d --build <slug>` if the change is in deps or anything *not* bind-mounted (rare; the runtime-watch model bind-mounts almost everything).
+4. **Live-probe the endpoint that exercises the fix.** `curl http://localhost:<port>/<path>` — confirm the new behavior end-to-end. This is the only step that distinguishes "tests green" from "user about to manually test will see the fix."
+
+**Anti-pattern.** Reporting "ready to test" after only `pytest`/`vite build` green when a container is running. Subtypes:
+- *13h-uptime drift*: container started before this session's commits, never restarted.
+- *Parallel-repo drift*: bind-mount source is `noctus-fleet/` (or a worktree, or a second clone) while edits landed in `noctusai/`. The two trees have diverged commits.
+- *Outside-watch drift*: code edited in a dir uvicorn doesn't watch; container ran the old code until the next manual restart.
+
+**Bit.** 2026-05-20 social-wiring validation — 384 backend tests passed + frontend build clean, but the user opened the Dashboard and hit "Servidor indisponivel" toasts on `/api/me/consents` + `/api/admin/llm-spend/<uuid>`. Two compounding causes: (a) container was up 13h, predating commit `63b98284` which added the `is_api_or_ops` SPA guard; (b) container bind-mounted `/Users/rapha/.../noctus-fleet/seed`, not the `/noctusai/seed` we'd been editing. Fix was applied to the *wrong tree* relative to the live runtime.
+
+**Doc anchors.** `feedback_container_freshness_on_validate` (memory) · sibling of `feedback_finish_session`.
+
+### 12b.1 · Multi-clone drift — when "the bind-mount sits on a *second* clone of the same repo"
+
+This is a degenerate special case of the freshness contract worth calling out because the symptom is the same ("container runs stale code") but the cure is different.
+
+A workstation that holds two clones of the same `origin` — e.g. `~/.../NoctusAI/noctusai/` AND `~/.../NoctusAI/noctus-fleet/` — accumulates divergent local commits in each tree because nothing forces convergence. When a docker bind mount silently anchors to one of them while the operator edits the other, fixes shipped to the "active" tree are invisible to the running runtime no matter how many `pytest` runs go green. Subset of [[feedback_concurrent_agents_never_share_checkout]] for *worktrees*, but distinct: worktrees share `.git` and the divergence is explicit; second-clones share nothing and the divergence is silent.
+
+**Detect.** Run this fleet-wide bind-mount audit before any validation:
+
+```bash
+docker inspect $(docker ps -q) --format \
+  '{{.Name}} {{range .Mounts}}{{if eq .Type "bind"}}{{.Source}} {{end}}{{end}}'
+```
+
+Any `Source` outside the canonical clone is a drift hazard. Resolve immediately — do **not** patch the divergent tree to mirror the canonical one (a `feedback_no_quick_fixes` slip).
+
+**Resolve.** From the canonical clone:
+
+```bash
+docker compose stop <slug>
+docker compose rm -f <slug>
+docker compose up -d --build <slug>
+```
+
+The rebuild repoints all three bind mounts (`/app/seed`, `/app/products/<slug>/backend`, `/app/products/<slug>/frontend`) at the canonical clone and rebakes the image from the right source. Verified on social-wiring 2026-05-20.
+
+**Prevent.** One canonical checkout per machine. Sanctioned exceptions are explicit and read-only: per-agent worktrees (`KB § PATTERNS/branching-and-merging.md`), template/sibling workspaces consuming noc read-only (`KB § PATTERNS/template-workspace.md`, with chmod -R a-w). Anything else is a second clone, and a second clone is a drift hazard.
+
+**Bit (2026-05-20).** Session edited `noctusai/`, shipped commit `63b98284` (SPA-fallback fix). All four product containers (core/social-wiring/erp/seed) bind-mounted `noctus-fleet/seed`. The fix was invisible to every running runtime. First-attempt surgical patch to `noctus-fleet/seed/app.py` worked but tolerated the underlying drift; the right fix was `compose up -d --build social-wiring` from `noctusai/`, which flipped all mounts atomically. User then asked to consolidate the remaining three.
 
 ---
 

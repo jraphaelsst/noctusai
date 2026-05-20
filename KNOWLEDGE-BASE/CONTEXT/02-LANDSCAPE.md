@@ -39,15 +39,15 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 7 | 17 | 220 |
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 10 | 37 | 13 | 7 | 33 | 344 |
-| **Total** | **170** | **188** | **242** | **136** | **388** | **4,772** |
+| Social Wiring | 10 | 37 | 14 | 8 | 37 | 366 |
+| **Total** | **170** | **188** | **243** | **137** | **392** | **4,794** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (9):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 298** distributed across the schemas.
+- **Tables: 302** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

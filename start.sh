@@ -100,6 +100,55 @@ else
     exit 1
   fi
 
+  # ── Multi-clone drift audit (KB § PATTERNS/containerization.md § 12b.1). ──
+  # Any running noctus-* container whose bind-mount Source is OUTSIDE
+  # $ROOT_DIR (this script's repo) means a sibling clone owns the runtime.
+  # Edits in THIS clone are invisible to that container — a silent stale-
+  # code hazard. Refuse to proceed; the user fixes by either recreating
+  # the offending container from here (`docker compose up -d --build
+  # <slug>`) or invoking start.sh from the canonical clone instead.
+  audit_clone_alignment() {
+    local offenders=()
+    local containers
+    containers="$(docker ps --filter "name=noctus-" --format '{{.Names}}' 2>/dev/null || true)"
+    [[ -z "$containers" ]] && return 0
+    while IFS= read -r c; do
+      [[ -z "$c" ]] && continue
+      # Bind-mount Source paths for this container — newline-separated.
+      local sources
+      sources="$(docker inspect "$c" --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{println}}{{end}}{{end}}' 2>/dev/null || true)"
+      while IFS= read -r src; do
+        [[ -z "$src" ]] && continue
+        # Docker Desktop on macOS reports bind Sources prefixed with
+        # /host_mnt (the VM bridge). Normalize so the prefix-comparison
+        # against $ROOT_DIR matches the underlying host path.
+        local norm="${src#/host_mnt}"
+        # Allow infra mounts (host paths under /var, /tmp, /Users/*/Library, etc.
+        # are not repo clones). Only flag sources that LOOK like a clone of this
+        # repo: contain "/NoctusAI/" but don't start with $ROOT_DIR.
+        if [[ "$norm" == *"/NoctusAI/"* && "$norm" != "$ROOT_DIR"/* ]]; then
+          offenders+=("$c  ←  $src")
+        fi
+      done <<< "$sources"
+    done <<< "$containers"
+    if [[ ${#offenders[@]} -gt 0 ]]; then
+      echo "" >&2
+      echo "ERRO: multi-clone drift detected — containers bind-mount a SIBLING clone:" >&2
+      printf '  %s\n' "${offenders[@]}" >&2
+      echo "" >&2
+      echo "  Canonical clone (this script): $ROOT_DIR" >&2
+      echo "  Each offender runs code from a different tree than you edit here." >&2
+      echo "  Fix per KB § PATTERNS/containerization.md § 12b.1:" >&2
+      for line in "${offenders[@]}"; do
+        local slug="${line%%  *}"; slug="${slug#noctus-}"
+        echo "    docker compose stop $slug && docker compose rm -f $slug && docker compose up -d --build $slug" >&2
+      done
+      echo "" >&2
+      exit 1
+    fi
+  }
+  audit_clone_alignment
+
   PRODUCTS_COMPOSE=(compose -f "$ROOT_DIR/docker-compose.yml")     # noctusai-products
   INFRA_COMPOSE=(compose -f "$ROOT_DIR/docker-compose.infra.yml")  # noctusai-infra
 

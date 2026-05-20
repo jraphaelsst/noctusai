@@ -50,8 +50,18 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
   // Auth store
   const useAuthStore = createAuthStore();
 
-  // API client — backend URL injected by createViteConfig via envDir
-  const backendUrl = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:8000";
+  // API client — house single-container model: uvicorn serves SPA + API
+  // on ONE port via the seed `serve_spa` seam, so the default is
+  // **same-origin** (empty string → fetch sees a relative URL → same
+  // host:port the page loaded from). `VITE_BACKEND_API_URL` overrides
+  // for bare-vite-dev (`vite dev` on the frontend port talks to a
+  // separately-run backend) or staging that points elsewhere.
+  //
+  // Historic bug (fixed 2026-05-20): the default was `http://localhost:8000`
+  // which silently routed every non-core product's FE at CORE — CORS
+  // blocked, fetch threw, every endpoint toasted "Servidor indisponivel".
+  // Core happened to work only because its BE is also on :8000.
+  const backendUrl = import.meta.env.VITE_BACKEND_API_URL ?? "";
   const api = createApiClient({
     getBaseUrl: () => backendUrl,
     getAuthToken: async () => {

@@ -123,4 +123,15 @@ RUN chmod +x /usr/local/bin/local-watch \
     && chown -R noctus:noctus /app
 USER noctus
 ENV PRODUCT_SLUG=seed PRODUCT_PORT=8004
+# Same-origin SPA, single-container — local-watch builds the SPA via
+# `vite build --watch` at container-start; vite's `define` rewrites
+# `import.meta.env.VITE_BACKEND_API_URL` to `window.location.origin`
+# ONLY when this env is set. Without it the build falls back to a
+# PRODUCT_MAP lookup → defaults to http://localhost:8000 for products
+# whose FE port isn't in the map → silent cross-product CORS failures.
+# The `frontend-build` stage already sets this; runtime-watch must too
+# because it rebuilds the bundle on every container start. (Bit
+# 2026-05-20 on social-wiring.) Placed AFTER all RUN layers so a future
+# toggle invalidates only this trivial layer, not the apt+npm cache.
+ENV VITE_SAME_ORIGIN=1
 ENTRYPOINT ["/usr/local/bin/local-watch"]
