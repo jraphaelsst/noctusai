@@ -5,7 +5,10 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import Response
-from app.dependencies import get_current_user, get_user_client, get_org_id, log_action
+from app.dependencies import get_current_user, get_user_client, get_org_id, log_action, require_role
+
+# erp-financial-surfaces-role-gate (2026-05-20): fiscal exports → accounting-tier roles.
+_DIMOB_ROLES = ("platform_admin", "owner", "admin", "contador")
 from app.responses import success_response
 from app.services.dimob_service import preview_dimob, generate_dimob_xml, validate_dimob_data
 
@@ -16,13 +19,17 @@ router = APIRouter(prefix="/api/dimob", tags=["DIMOB"])
 @router.get("/preview")
 async def preview(
     ano: int = Query(..., ge=2000, le=2100, description="Ano de referência"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_DIMOB_ROLES))):
     """Preview DIMOB data for a given year before generating XML."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     org_id = get_org_id(user)
     data = preview_dimob(org_id, ano, db)
+
+    # erp-financial-surfaces-role-gate: fiscal-PII export → audit log.
+    log_action(user.id, "ler", "dimob_preview", None,
+               f"Pré-visualizou DIMOB para o ano {ano}")
 
     return success_response(data)
 
@@ -30,14 +37,18 @@ async def preview(
 @router.get("/validate")
 async def validate(
     ano: int = Query(..., ge=2000, le=2100, description="Ano de referência"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_DIMOB_ROLES))):
     """Validate data completeness for DIMOB generation."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     org_id = get_org_id(user)
     data = preview_dimob(org_id, ano, db)
     warnings = validate_dimob_data(data)
+
+    # erp-financial-surfaces-role-gate: fiscal-PII access → audit log.
+    log_action(user.id, "ler", "dimob_validate", None,
+               f"Validou dados DIMOB para o ano {ano}")
 
     return success_response({
         "ano": ano,
@@ -50,9 +61,9 @@ async def validate(
 @router.post("/generate")
 async def generate(
     ano: int = Query(..., ge=2000, le=2100, description="Ano de referência"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_DIMOB_ROLES))):
     """Generate DIMOB XML file for download."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     org_id = get_org_id(user)

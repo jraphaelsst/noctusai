@@ -8,18 +8,34 @@ IMPORTANT: The mock data below must match the actual database schema:
   valor_estimado, etapa_atual, updated_at, etc.
 - Rental data comes from `contratos_locacao` table (NOT 'locacoes')
 - Rental table uses `valor_aluguel` column (NOT 'valor_mensal')
+
+erp-financial-surfaces-role-gate (2026-05-20): DIMOB endpoints are now
+role-gated to ("platform_admin", "owner", "admin", "contador"). The
+autouse fixture below promotes the default mock user to "contador" so
+these business-logic tests stay green. The gate contract itself lives in
+`test_dimob_role_gate.py`.
 """
 import pytest
 from unittest.mock import MagicMock, PropertyMock
+
+
+@pytest.fixture(autouse=True)
+def _contador_default_role(client):
+    """Promote default mock user to contador so non-gate tests stay green."""
+    user = client._mock_supabase.auth.get_user.return_value.user
+    user.user_metadata = {**(user.user_metadata or {}), "erp_role": "contador"}
+    yield
 
 
 def _patch_user_metadata(client):
     """
     Add user_metadata to the mock user so the DIMOB router can
     access user.user_metadata.get("org_id").
+
+    Merges into existing user_metadata (preserves the autouse role injection).
     """
     mock_user = client._mock_supabase.auth.get_user.return_value.user
-    mock_user.user_metadata = {"org_id": "org-test-123"}
+    mock_user.user_metadata = {**(mock_user.user_metadata or {}), "org_id": "org-test-123"}
 
 
 def _setup_dimob_mocks(client, profiles=None, clientes=None, contratos_locacao=None):

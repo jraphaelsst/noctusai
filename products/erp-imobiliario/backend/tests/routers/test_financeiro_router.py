@@ -1,10 +1,25 @@
 """
 Tests for the Financeiro CRUD router.
 Covers list, create, read, update, delete, resumo, and fluxo de caixa.
+
+erp-financial-surfaces-role-gate (2026-05-20): financeiro reads are now
+role-gated to ("platform_admin", "owner", "admin", "manager"). The default
+mock user has no `erp_role`, so an autouse fixture promotes it to "admin"
+to preserve every existing test's contract (which tests business logic,
+not the gate). The dedicated gate contract lives in
+`test_financeiro_role_gate.py`.
 """
 import pytest
 
 from tests.conftest import MockSupabaseResponse
+
+
+@pytest.fixture(autouse=True)
+def _admin_default_role(client):
+    """Promote default mock user to admin so non-gate tests stay green."""
+    user = client._mock_supabase.auth.get_user.return_value.user
+    user.user_metadata = {**(user.user_metadata or {}), "erp_role": "admin"}
+    yield
 
 
 class TestListarLancamentos:

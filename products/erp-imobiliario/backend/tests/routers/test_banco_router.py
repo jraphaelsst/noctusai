@@ -1,8 +1,22 @@
 """
 Tests for Banco router — /api/banco
 Covers statement import, extratos listing, reconciliation, and remittance generation.
+
+erp-financial-surfaces-role-gate (2026-05-20): banco endpoints are now
+role-gated to ("platform_admin", "owner", "admin", "manager"). The
+autouse fixture below promotes the default mock user to "admin" so
+business-logic tests stay green. The gate contract lives in
+`test_banco_role_gate.py`.
 """
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _admin_default_role(client):
+    """Promote default mock user to admin so non-gate tests stay green."""
+    user = client._mock_supabase.auth.get_user.return_value.user
+    user.user_metadata = {**(user.user_metadata or {}), "erp_role": "admin"}
+    yield
 
 
 class TestImportarExtrato:

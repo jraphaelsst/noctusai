@@ -1,8 +1,22 @@
 """
 Tests for Impostos router — /api/impostos
 Covers list, resumo, get by id, create, update, delete tax records.
+
+erp-financial-surfaces-role-gate (2026-05-20): impostos reads are now
+role-gated to ("platform_admin", "owner", "admin", "contador"). The
+autouse fixture below promotes the default mock user to "contador" so
+business-logic tests stay green. The gate contract lives in
+`test_impostos_role_gate.py`.
 """
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _contador_default_role(client):
+    """Promote default mock user to contador so non-gate tests stay green."""
+    user = client._mock_supabase.auth.get_user.return_value.user
+    user.user_metadata = {**(user.user_metadata or {}), "erp_role": "contador"}
+    yield
 
 
 class TestListarImpostos:

@@ -45,7 +45,10 @@ import logging
 from typing import Optional, Literal, List
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import Field
-from app.dependencies import get_current_user, get_user_client, log_action
+from app.dependencies import get_current_user, get_user_client, log_action, require_role
+
+# erp-financial-surfaces-role-gate (2026-05-20): bank data → general financial roles.
+_BANCO_ROLES = ("platform_admin", "owner", "admin", "manager")
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.banco_service import BancoService
 from app.config import settings
@@ -92,9 +95,11 @@ class GerarRemessaRequest(StrictHttpModel):
 # ---------- Endpoints ----------
 
 @router.post("/importar")
-async def importar_extrato(body: ImportarExtratoRequest, auth = Depends(get_current_user)):
+async def importar_extrato(
+    body: ImportarExtratoRequest,
+    auth_role = Depends(require_role(*_BANCO_ROLES))):
     """Import a bank statement with its movimentacoes."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     service = BancoService(db, user.id)
@@ -130,10 +135,15 @@ async def listar_extratos(
     banco: Optional[str] = Query(None, description="Filtrar por banco"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_BANCO_ROLES))):
     """List imported bank statements with pagination."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
+    # erp-financial-surfaces-role-gate: aggregate bank-extrato view → audit log.
+    log_action(
+        user.id, "ler", "banco_extratos", None,
+        f"Listou extratos bancarios (banco={banco}, page={page})",
+    )
 
     validated_page, validated_page_size, offset = calculate_pagination(
         page, page_size, settings.max_page_size
@@ -163,10 +173,15 @@ async def listar_pendentes_conciliacao(
     extrato_id: Optional[str] = Query(None, description="Filtrar por extrato"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_BANCO_ROLES))):
     """Get movimentacoes pending reconciliation (conciliado=false)."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
+    # erp-financial-surfaces-role-gate: aggregate bank-reconciliation view → audit log.
+    log_action(
+        user.id, "ler", "banco_conciliacao", None,
+        f"Listou movimentacoes pendentes de conciliacao (extrato_id={extrato_id}, page={page})",
+    )
 
     validated_page, validated_page_size, offset = calculate_pagination(
         page, page_size, settings.max_page_size
@@ -197,9 +212,11 @@ async def listar_pendentes_conciliacao(
 
 
 @router.post("/conciliar")
-async def conciliar_movimentacao(body: ConciliarRequest, auth = Depends(get_current_user)):
+async def conciliar_movimentacao(
+    body: ConciliarRequest,
+    auth_role = Depends(require_role(*_BANCO_ROLES))):
     """Manually reconcile a bank movimentacao with a lancamento financeiro."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     service = BancoService(db, user.id)
@@ -221,9 +238,11 @@ async def conciliar_movimentacao(body: ConciliarRequest, auth = Depends(get_curr
 
 
 @router.post("/gerar-remessa")
-async def gerar_remessa(body: GerarRemessaRequest, auth = Depends(get_current_user)):
+async def gerar_remessa(
+    body: GerarRemessaRequest,
+    auth_role = Depends(require_role(*_BANCO_ROLES))):
     """Generate a CNAB remittance file (240 or 400 format)."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     service = BancoService(db, user.id)
@@ -249,9 +268,11 @@ async def gerar_remessa(body: GerarRemessaRequest, auth = Depends(get_current_us
 
 
 @router.get("/retorno/{remessa_id}")
-async def obter_retorno_remessa(remessa_id: str, auth = Depends(get_current_user)):
+async def obter_retorno_remessa(
+    remessa_id: str,
+    auth_role = Depends(require_role(*_BANCO_ROLES))):
     """Get remittance status and return information."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     result = db.table("remessas").select("*").eq("id", remessa_id).single().execute()

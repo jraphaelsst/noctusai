@@ -32,7 +32,10 @@ from dateutil.relativedelta import relativedelta
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import Field
-from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none, require_role
+
+# erp-financial-surfaces-role-gate (2026-05-20): reads gated to financial-tier roles.
+_FINANCEIRO_READ_ROLES = ("platform_admin", "owner", "admin", "manager")
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.financeiro_service import (
     FinanceiroService,
@@ -92,9 +95,9 @@ async def listar_lancamentos(
     categoria: Optional[str] = Query(None, description="Filtrar por categoria"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_FINANCEIRO_READ_ROLES))):
     """List financial transactions with filters and pagination."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -142,10 +145,15 @@ async def listar_lancamentos(
 async def resumo_financeiro(
     data_inicio: Optional[str] = Query(None, description="Data início (YYYY-MM-DD)"),
     data_fim: Optional[str] = Query(None, description="Data fim (YYYY-MM-DD)"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_FINANCEIRO_READ_ROLES))):
     """Get financial summary: total receitas, despesas, saldo, and overdue count."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
+    # erp-financial-surfaces-role-gate: aggregate-shape read → audit log.
+    log_action(
+        user.id, "ler", "financeiro_resumo", None,
+        f"Consultou resumo financeiro (data_inicio={data_inicio}, data_fim={data_fim})",
+    )
 
     service = FinanceiroService(db, user.id)
 
@@ -175,10 +183,15 @@ async def resumo_financeiro(
 @router.get("/fluxo-caixa")
 async def fluxo_caixa(
     meses: int = Query(12, ge=1, le=24, description="Número de meses"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_FINANCEIRO_READ_ROLES))):
     """Get cash flow by month for the last N months."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
+    # erp-financial-surfaces-role-gate: aggregate-shape read → audit log.
+    log_action(
+        user.id, "ler", "financeiro_fluxo_caixa", None,
+        f"Consultou fluxo de caixa (meses={meses})",
+    )
 
     service = FinanceiroService(db, user.id)
 
@@ -199,9 +212,11 @@ async def fluxo_caixa(
 
 
 @router.get("/{lancamento_id}")
-async def obter_lancamento(lancamento_id: str, auth = Depends(get_current_user)):
+async def obter_lancamento(
+    lancamento_id: str,
+    auth_role = Depends(require_role(*_FINANCEIRO_READ_ROLES))):
     """Get a single financial transaction by ID."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     result = db.table("lancamentos").select("*").eq("id", lancamento_id).single().execute()

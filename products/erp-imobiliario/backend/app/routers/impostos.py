@@ -28,7 +28,10 @@ import logging
 from typing import Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import Field
-from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
+from app.dependencies import get_current_user, get_user_client, log_action, first_or_none, require_role
+
+# erp-financial-surfaces-role-gate (2026-05-20): tax/fiscal data → accounting-tier roles.
+_IMPOSTOS_ROLES = ("platform_admin", "owner", "admin", "contador")
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.services.impostos_service import ImpostosService
 from app.config import settings
@@ -82,9 +85,9 @@ async def listar_impostos(
     status: Optional[str] = Query(None, description="Filtrar por status"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_IMPOSTOS_ROLES))):
     """List tax records with filters and pagination."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(
@@ -128,10 +131,15 @@ async def listar_impostos(
 async def resumo_impostos(
     ano: Optional[int] = Query(None, description="Ano de referência"),
     imovel_id: Optional[str] = Query(None, description="Filtrar por imóvel"),
-    auth = Depends(get_current_user)):
+    auth_role = Depends(require_role(*_IMPOSTOS_ROLES))):
     """Get annual tax summary: total due, paid, pending, overdue by year or property."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
+    # erp-financial-surfaces-role-gate: aggregate fiscal view → audit log.
+    log_action(
+        user.id, "ler", "impostos_resumo", None,
+        f"Consultou resumo de impostos (ano={ano}, imovel_id={imovel_id})",
+    )
 
     service = ImpostosService(db, user.id)
 
@@ -156,9 +164,11 @@ async def resumo_impostos(
 
 
 @router.get("/{imposto_id}")
-async def obter_imposto(imposto_id: str, auth = Depends(get_current_user)):
+async def obter_imposto(
+    imposto_id: str,
+    auth_role = Depends(require_role(*_IMPOSTOS_ROLES))):
     """Get a single tax record by ID."""
-    user, token = auth
+    user, token, _role = auth_role
     db = get_user_client(token)
 
     result = db.table("impostos").select("*").eq("id", imposto_id).single().execute()
