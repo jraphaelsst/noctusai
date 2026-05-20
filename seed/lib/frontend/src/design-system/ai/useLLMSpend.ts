@@ -43,19 +43,24 @@ export const LLM_SPEND_REFETCH_INTERVAL_MS = 5 * 60_000;
  * `/api/admin/llm-spend/{org_id}` is a **Core-platform** endpoint. On a
  * standalone (no-Core) deploy or any product that doesn't mount the
  * admin spend router, the endpoint returns a real 404. Swallow it
- * (resolves to `undefined` → `<LLMSpendBadge/>` null-renders) instead
- * of surfacing as a toast — mirrors the [[useConsents]] 404-swallow
+ * (resolves to `null` → `<LLMSpendBadge/>` null-renders) instead of
+ * surfacing as a toast — mirrors the [[useConsents]] 404-swallow
  * pattern. A transient error (500, network) still surfaces.
+ *
+ * MUST return `null` rather than `undefined`: TanStack Query v5 treats
+ * an `undefined` `queryFn` return as a contract violation and surfaces
+ * "data is undefined" — exactly the toast this hook is trying to
+ * suppress (2026-05-20 bit).
  */
 export function useLLMSpend(orgId: string | null | undefined, isAdmin: boolean) {
-  return useQuery<LLMSpendResponse | undefined, Error>({
+  return useQuery<LLMSpendResponse | null, Error>({
     queryKey: ['admin', 'llm-spend', orgId ?? '_none'],
     queryFn: async () => {
       try {
         return await api.get<LLMSpendResponse>(`/api/admin/llm-spend/${encodeURIComponent(orgId!)}`);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith('[404]')) {
-          return undefined;
+          return null;
         }
         throw err;
       }
