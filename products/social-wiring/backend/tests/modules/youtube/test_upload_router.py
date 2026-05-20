@@ -58,6 +58,46 @@ class TestUploadFromDriveValidation:
         assert "file id" in resp.text.lower()
 
 
+class TestUploadFromDriveFolderValidation:
+    """Boundary checks for POST /api/videos/upload/drive-folder
+    (youtube-drive-folder-fanout Phase 3). Schema-level rejection +
+    service-level URL parse failure + service-level "no videos found"
+    422 path are exercised here; the happy-path multi-row insert lives
+    in `test_upload_service.TestQueueDriveFolderUpload`."""
+
+    def test_non_google_url_rejected_at_schema(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "encryption_key", "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=")
+        monkeypatch.setattr(settings, "youtube_client_id", "cid")
+        monkeypatch.setattr(settings, "youtube_client_secret", "csecret")
+
+        resp = client.post(
+            "/api/videos/upload/drive-folder",
+            json={
+                "drive_folder_url": "https://example.com/folder",
+                "metadata": json.loads(_valid_metadata()),
+            },
+        )
+        assert resp.status_code == 422
+        assert "google host" in resp.text.lower()
+
+    def test_drive_root_url_rejected_at_service(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "encryption_key", "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=")
+        monkeypatch.setattr(settings, "youtube_client_id", "cid")
+        monkeypatch.setattr(settings, "youtube_client_secret", "csecret")
+
+        # Schema accepts any google.com URL; service rejects when it
+        # can't extract a folder_id (no `/folders/<id>` segment).
+        resp = client.post(
+            "/api/videos/upload/drive-folder",
+            json={
+                "drive_folder_url": "https://drive.google.com/",
+                "metadata": json.loads(_valid_metadata()),
+            },
+        )
+        assert resp.status_code == 400
+        assert "folder" in resp.text.lower()
+
+
 class TestUploadConfigGaps:
     """When ENCRYPTION_KEY or YOUTUBE_CLIENT_* are missing, every upload
     endpoint returns 503 — the operator gets a clear "config gap" signal

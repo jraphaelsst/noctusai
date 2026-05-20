@@ -142,6 +142,18 @@ CREATE TABLE social_wiring.upload_jobs (
     notify_recipients UUID[] NOT NULL DEFAULT '{}',
     product_code TEXT,                            -- folded from 006
     thumbnail_url TEXT,                           -- folded from 008
+    -- youtube-drive-folder-fanout (2026-05-20): per-video classification
+    -- stamped by the worker (vertical → 'shorts', horizontal → 'youtube',
+    -- ambiguous → 'unknown'). NULL on legacy rows + on queued-but-not-yet
+    -- -classified rows (worker fills before upload). Distinct from
+    -- `category_id` (YT category) and `source_type` (browser vs gdrive).
+    target_format TEXT
+        CHECK (target_format IS NULL OR target_format IN ('youtube', 'shorts', 'unknown')),
+    -- youtube-drive-folder-fanout (2026-05-20): siblings of one
+    -- Drive-folder fan-out share a batch_id so the dashboard can group
+    -- them (N videos in one folder → N rows, one batch_id). NULL for
+    -- single-file uploads.
+    batch_id UUID,
     created_by UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -170,6 +182,78 @@ CREATE INDEX idx_sw_upload_jobs_org ON social_wiring.upload_jobs(org_id);
 CREATE INDEX idx_sw_upload_jobs_status ON social_wiring.upload_jobs(org_id, status);
 CREATE INDEX idx_sw_upload_jobs_created ON social_wiring.upload_jobs(org_id, created_at DESC);
 CREATE INDEX idx_sw_upload_jobs_product_code ON social_wiring.upload_jobs(org_id, product_code);
+-- youtube-drive-folder-fanout (2026-05-20): batched fan-out lookup.
+-- Partial index because the vast majority of rows pre-fanout have
+-- batch_id IS NULL — the index stays small + the dashboard's batch
+-- grouping query hits it directly.
+CREATE INDEX idx_sw_upload_jobs_batch
+    ON social_wiring.upload_jobs(org_id, batch_id, created_at DESC)
+    WHERE batch_id IS NOT NULL;
+
+
+-- ============================================================================
+-- API tokens — opaque bearer credentials for product/automation triggers
+-- (n8n, MCP, cron, agent live tests, internal cross-product calls).
+--
+-- youtube-drive-folder-fanout/platform-auth-modernization (2026-05-20):
+-- ApiToken table for product/automation triggers (n8n, MCP, cron, agent
+-- live tests, internal cross-product calls). Opaque secret hashed at
+-- rest; token_prefix kept plaintext for UI display ("pk_abc12345…").
+-- RLS: per-org SELECT/INSERT/UPDATE for authenticated users with
+-- owner/admin role; service_role full.
+-- ============================================================================
+
+CREATE TABLE social_wiring.api_tokens (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id           UUID NOT NULL,
+    label            TEXT NOT NULL,
+    token_hash       TEXT NOT NULL UNIQUE,
+    token_prefix     TEXT NOT NULL,
+    scopes           TEXT[] NOT NULL DEFAULT '{}',
+    created_by       UUID,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at     TIMESTAMPTZ,
+    revoked_at       TIMESTAMPTZ
+);
+
+ALTER TABLE social_wiring.api_tokens ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "api_tokens_select_own_org" ON social_wiring.api_tokens
+    FOR SELECT TO authenticated
+    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+
+-- INSERT + UPDATE limited to owner/admin org_role (matches the platform's
+-- convention for sensitive config; org_role lives in noctus_users).
+CREATE POLICY "api_tokens_insert_own_org_admin" ON social_wiring.api_tokens
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid
+        AND EXISTS (
+            SELECT 1 FROM public.noctus_users nu
+            WHERE nu.id = (SELECT auth.uid())
+              AND nu.org_id = social_wiring.api_tokens.org_id
+              AND nu.org_role IN ('owner', 'admin')
+        )
+    );
+
+CREATE POLICY "api_tokens_update_own_org_admin" ON social_wiring.api_tokens
+    FOR UPDATE TO authenticated
+    USING (
+        org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid
+        AND EXISTS (
+            SELECT 1 FROM public.noctus_users nu
+            WHERE nu.id = (SELECT auth.uid())
+              AND nu.org_id = social_wiring.api_tokens.org_id
+              AND nu.org_role IN ('owner', 'admin')
+        )
+    );
+
+CREATE POLICY "api_tokens_service_role" ON social_wiring.api_tokens
+    FOR ALL TO service_role
+    USING (true) WITH CHECK (true);
+
+CREATE INDEX idx_sw_api_tokens_org ON social_wiring.api_tokens(org_id) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX idx_sw_api_tokens_hash_active ON social_wiring.api_tokens(token_hash) WHERE revoked_at IS NULL;
 
 
 -- ============================================================================

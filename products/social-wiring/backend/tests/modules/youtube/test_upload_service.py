@@ -186,6 +186,399 @@ class TestQueueDriveUpload:
             )
 
 
+class _CountingMockSupabase(_MockSupabase):
+    """Mock that returns a fresh job id per insert (needed for batch
+    fan-out tests where N inserts must yield N distinct UUIDs)."""
+
+    def execute(self):
+        if self.inserted_payloads and not self._select_response:
+            # Return a fresh id per insert call. We track how many
+            # inserts have happened via len(inserted_payloads); the
+            # response always corresponds to the LATEST insert.
+            return MagicMock(data=[{"id": str(uuid4())}])
+        return MagicMock(data=self._select_response)
+
+
+def _install_fake_gdown(
+    monkeypatch,
+    files_to_create: list[tuple[str, bytes]] | None = None,
+    *,
+    raises: Exception | None = None,
+):
+    """Install a fake ``gdown`` module that materialises files under
+    ``output/drive-folder-root/...``. Mirrors the pattern in
+    test_gdrive_service.TestIterDriveFolderVideos so the upload service
+    can be exercised end-to-end against the real
+    ``iter_drive_folder_videos`` integration."""
+    import sys
+    import types
+
+    materialise = files_to_create or []
+
+    def fake_download_folder(*, id, output, quiet, **_kwargs):
+        if raises is not None:
+            raise raises
+        output_dir = Path(output)
+        root = output_dir / "drive-folder-root"
+        root.mkdir(parents=True, exist_ok=True)
+        written: list[str] = []
+        for relpath, content in materialise:
+            target = root / relpath
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            written.append(str(target))
+        return written
+
+    fake_module = types.SimpleNamespace(download_folder=fake_download_folder)
+    monkeypatch.setitem(sys.modules, "gdown", fake_module)
+
+
+class TestQueueDriveFolderUpload:
+    """Phase 3 of youtube-drive-folder-fanout: one Drive folder URL →
+    N upload_jobs rows sharing one batch_id, each with the file already
+    on disk in the canonical `<job_id>__<file_name>` browser-source
+    location ready for the worker."""
+
+    _FOLDER_URL = "https://drive.google.com/drive/folders/1abc23DEF456ghi789JKL012mno345PQ"
+
+    def _make_service(self, upload_dir, yt_mock):
+        sb = _CountingMockSupabase()
+        admin = _MockSupabase()
+        svc = UploadService(
+            user_supabase=sb,
+            admin_supabase=admin,
+            upload_dir=upload_dir,
+            youtube_service=yt_mock,
+        )
+        return svc, sb, admin
+
+    def test_flat_folder_two_videos_creates_two_rows(
+        self, upload_dir, yt_mock, monkeypatch
+    ):
+        """2 videos in folder → 2 rows, shared batch_id, both files staged."""
+        _install_fake_gdown(monkeypatch, [
+            ("horizontal.mp4", b"x" * 100),
+            ("vertical.mp4", b"y" * 200),
+        ])
+
+        svc, sb, _admin = self._make_service(upload_dir, yt_mock)
+
+        result = svc.queue_drive_folder_upload(
+            org_id=uuid4(),
+            created_by=None,
+            metadata=_make_metadata(),
+            drive_folder_url=self._FOLDER_URL,
+        )
+
+        assert len(result.children) == 2
+        # Same batch_id across siblings (the dashboard grouping key).
+        batch_ids_inserted = {p["batch_id"] for p in sb.inserted_payloads}
+        assert batch_ids_inserted == {str(result.batch_id)}
+        # Both child files are now at the canonical browser-source path.
+        for child in result.children:
+            canonical = upload_dir / f"{child.job_id}__{child.file_name}"
+            assert canonical.exists(), (
+                f"expected staged file at {canonical} after fan-out rename"
+            )
+
+    def test_payload_carries_browser_source_type_and_folder_audit_url(
+        self, upload_dir, yt_mock, monkeypatch
+    ):
+        """The DB row uses source_type='browser' (file already on disk)
+        but records the originating folder URL in source_url for audit."""
+        _install_fake_gdown(monkeypatch, [("clip.mp4", b"x" * 10)])
+
+        svc, sb, _ = self._make_service(upload_dir, yt_mock)
+
+        svc.queue_drive_folder_upload(
+            org_id=uuid4(),
+            created_by=None,
+            metadata=_make_metadata(),
+            drive_folder_url=self._FOLDER_URL,
+        )
+
+        assert len(sb.inserted_payloads) == 1
+        payload = sb.inserted_payloads[0]
+        assert payload["source_type"] == "browser"
+        assert payload["source_url"] == self._FOLDER_URL
+        # Worker stamps target_format later; queue-time row has no value
+        # for it (omitted from payload so DB default NULL applies).
+        assert "target_format" not in payload
+        # file_size known at queue time for folder fan-out (unlike the
+        # single-file Drive path which leaves it NULL until download).
+        assert payload["file_size_bytes"] == 10
+
+    def test_subfolder_parent_label_propagated(
+        self, upload_dir, yt_mock, monkeypatch
+    ):
+        """A subfolder-nested video carries its subfolder name on the ref."""
+        _install_fake_gdown(monkeypatch, [
+            ("Episode 3/cut.mp4", b"x" * 10),
+            ("master.mp4", b"y" * 10),
+        ])
+
+        svc, _, _ = self._make_service(upload_dir, yt_mock)
+
+        result = svc.queue_drive_folder_upload(
+            org_id=uuid4(),
+            created_by=None,
+            metadata=_make_metadata(),
+            drive_folder_url=self._FOLDER_URL,
+        )
+
+        by_name = {c.file_name: c for c in result.children}
+        assert by_name["cut.mp4"].parent_subfolder == "Episode 3"
+        assert by_name["master.mp4"].parent_subfolder is None
+
+    def test_invalid_folder_url_raises_before_download(
+        self, upload_dir, yt_mock
+    ):
+        """Bad URL → UploadServiceError BEFORE any Drive download."""
+        svc, _, _ = self._make_service(upload_dir, yt_mock)
+
+        with pytest.raises(UploadServiceError):
+            svc.queue_drive_folder_upload(
+                org_id=uuid4(),
+                created_by=None,
+                metadata=_make_metadata(),
+                drive_folder_url="https://drive.google.com/",
+            )
+
+    def test_empty_folder_raises(self, upload_dir, yt_mock, monkeypatch):
+        """gdown returning [] → UploadServiceError (wraps GoogleDriveError)."""
+        _install_fake_gdown(monkeypatch, [])
+
+        svc, _, _ = self._make_service(upload_dir, yt_mock)
+
+        with pytest.raises(UploadServiceError, match="fanout failed"):
+            svc.queue_drive_folder_upload(
+                org_id=uuid4(),
+                created_by=None,
+                metadata=_make_metadata(),
+                drive_folder_url=self._FOLDER_URL,
+            )
+
+    def test_folder_with_only_non_videos_raises(
+        self, upload_dir, yt_mock, monkeypatch
+    ):
+        """Folder existed but had nothing to upload → UploadServiceError."""
+        _install_fake_gdown(monkeypatch, [
+            ("README.txt", b"hi"),
+        ])
+
+        svc, _, _ = self._make_service(upload_dir, yt_mock)
+
+        with pytest.raises(UploadServiceError, match="fanout failed"):
+            svc.queue_drive_folder_upload(
+                org_id=uuid4(),
+                created_by=None,
+                metadata=_make_metadata(),
+                drive_folder_url=self._FOLDER_URL,
+            )
+
+
+class TestGetBatchStatus:
+    """Phase 5 — aggregate status read for a fan-out batch."""
+
+    def _make_service(self, upload_dir, yt_mock, rows):
+        sb = _MockSupabase(select_response=rows)
+        admin = _MockSupabase()
+        svc = UploadService(
+            user_supabase=sb,
+            admin_supabase=admin,
+            upload_dir=upload_dir,
+            youtube_service=yt_mock,
+        )
+        return svc
+
+    def test_returns_none_when_batch_unknown(self, upload_dir, yt_mock):
+        svc = self._make_service(upload_dir, yt_mock, rows=[])
+        out = svc.get_batch_status(org_id=uuid4(), batch_id=uuid4())
+        assert out is None
+
+    def test_counts_aggregate_across_statuses(self, upload_dir, yt_mock):
+        batch_id = uuid4()
+        rows = [
+            {"id": str(uuid4()), "status": "published", "batch_id": str(batch_id)},
+            {"id": str(uuid4()), "status": "published", "batch_id": str(batch_id)},
+            {"id": str(uuid4()), "status": "uploading", "batch_id": str(batch_id)},
+            {"id": str(uuid4()), "status": "failed",    "batch_id": str(batch_id)},
+            {"id": str(uuid4()), "status": "queued",    "batch_id": str(batch_id)},
+        ]
+        svc = self._make_service(upload_dir, yt_mock, rows=rows)
+        out = svc.get_batch_status(org_id=uuid4(), batch_id=batch_id)
+        assert out is not None
+        assert out["total"] == 5
+        assert out["counts"]["published"] == 2
+        assert out["counts"]["uploading"] == 1
+        assert out["counts"]["failed"] == 1
+        assert out["counts"]["queued"] == 1
+        # Untouched buckets stay zero.
+        assert out["counts"]["downloading"] == 0
+        assert out["counts"]["notified"] == 0
+
+    def test_unknown_status_does_not_break_counts(self, upload_dir, yt_mock):
+        """A row with an unexpected status (forward-compat) is counted
+        in `total` but doesn't blow up the per-status buckets."""
+        batch_id = uuid4()
+        rows = [
+            {"id": str(uuid4()), "status": "exotic-new-state", "batch_id": str(batch_id)},
+            {"id": str(uuid4()), "status": "published",        "batch_id": str(batch_id)},
+        ]
+        svc = self._make_service(upload_dir, yt_mock, rows=rows)
+        out = svc.get_batch_status(org_id=uuid4(), batch_id=batch_id)
+        assert out is not None
+        assert out["total"] == 2
+        assert out["counts"]["published"] == 1
+        # Unknown statuses simply not bucketed → all other counts are 0.
+        assert sum(out["counts"].values()) == 1
+
+
+class TestShortsAwareDescription:
+    """Phase 4 helper — pure function, no IO."""
+
+    def test_horizontal_passthrough(self):
+        out = UploadService._shorts_aware_description(
+            description="my long-form video", target_format="youtube"
+        )
+        assert out == "my long-form video"
+
+    def test_unknown_passthrough(self):
+        out = UploadService._shorts_aware_description(
+            description="ambiguous video", target_format="unknown"
+        )
+        assert out == "ambiguous video"
+
+    def test_none_target_format_passthrough(self):
+        out = UploadService._shorts_aware_description(
+            description="legacy row no classification", target_format=None
+        )
+        assert out == "legacy row no classification"
+
+    def test_shorts_appends_tag(self):
+        out = UploadService._shorts_aware_description(
+            description="my vertical video", target_format="shorts"
+        )
+        assert out == "my vertical video\n\n#Shorts"
+
+    def test_shorts_idempotent_when_tag_already_present(self):
+        out = UploadService._shorts_aware_description(
+            description="already tagged #Shorts here", target_format="shorts"
+        )
+        assert out == "already tagged #Shorts here"
+
+    def test_shorts_idempotent_lowercase_tag(self):
+        out = UploadService._shorts_aware_description(
+            description="lowercase #shorts also counts", target_format="shorts"
+        )
+        assert out == "lowercase #shorts also counts"
+
+    def test_shorts_empty_description_becomes_just_tag(self):
+        out = UploadService._shorts_aware_description(
+            description="", target_format="shorts"
+        )
+        assert out == "#Shorts"
+
+
+class TestClassifyAndStampTargetFormat:
+    """Phase 4 worker classification: after the file is on disk, the
+    pipeline stamps `target_format` so the upload step + the dashboard
+    know what the row is. Best-effort: a classify failure stamps
+    'unknown' rather than failing the upload."""
+
+    def _make_service(self, upload_dir, yt_mock):
+        sb = _MockSupabase()
+        admin = _MockSupabase()
+        svc = UploadService(
+            user_supabase=sb,
+            admin_supabase=admin,
+            upload_dir=upload_dir,
+            youtube_service=yt_mock,
+        )
+        return svc, admin
+
+    def test_existing_value_is_idempotent(self, upload_dir, yt_mock):
+        """Re-running on a row that already has target_format does NOT
+        re-classify or re-write — retries stay clean."""
+        svc, admin = self._make_service(upload_dir, yt_mock)
+        local = upload_dir / "video.mp4"
+        local.write_bytes(b"\x00" * 10)
+
+        out = svc._classify_and_stamp_target_format(
+            job_id=uuid4(), local_path=local, existing="youtube"
+        )
+        assert out == "youtube"
+        assert admin.updated_payloads == [], (
+            "idempotent path must NOT write to the DB"
+        )
+
+    def test_classify_reels_is_mapped_to_shorts(
+        self, upload_dir, yt_mock, monkeypatch
+    ):
+        """classify_video_format returns 'reels' → DB column gets 'shorts'."""
+        monkeypatch.setattr(gdrive_service, "classify_video_format", lambda p: "reels")
+
+        svc, admin = self._make_service(upload_dir, yt_mock)
+        local = upload_dir / "vertical.mp4"
+        local.write_bytes(b"\x00" * 10)
+
+        out = svc._classify_and_stamp_target_format(
+            job_id=uuid4(), local_path=local, existing=None
+        )
+        assert out == "shorts"
+        assert admin.updated_payloads
+        assert admin.updated_payloads[0]["target_format"] == "shorts"
+
+    def test_classify_youtube_stamped_directly(
+        self, upload_dir, yt_mock, monkeypatch
+    ):
+        monkeypatch.setattr(gdrive_service, "classify_video_format", lambda p: "youtube")
+        svc, admin = self._make_service(upload_dir, yt_mock)
+        local = upload_dir / "horizontal.mp4"
+        local.write_bytes(b"\x00" * 10)
+
+        out = svc._classify_and_stamp_target_format(
+            job_id=uuid4(), local_path=local, existing=None
+        )
+        assert out == "youtube"
+        assert admin.updated_payloads[0]["target_format"] == "youtube"
+
+    def test_classify_failure_stamps_unknown(
+        self, upload_dir, yt_mock, monkeypatch
+    ):
+        """A raise from classify_video_format → stamp 'unknown', no abort."""
+        def boom(_p):
+            raise RuntimeError("ffprobe gone wild")
+
+        monkeypatch.setattr(gdrive_service, "classify_video_format", boom)
+        svc, admin = self._make_service(upload_dir, yt_mock)
+        local = upload_dir / "video.mp4"
+        local.write_bytes(b"\x00" * 10)
+
+        out = svc._classify_and_stamp_target_format(
+            job_id=uuid4(), local_path=local, existing=None
+        )
+        assert out == "unknown"
+        assert admin.updated_payloads[0]["target_format"] == "unknown"
+
+    def test_unexpected_classify_value_defensive_unknown(
+        self, upload_dir, yt_mock, monkeypatch
+    ):
+        """If classify_video_format ever returns a NEW value we don't
+        recognise, the stamp falls back to 'unknown' so the DB CHECK
+        constraint is never violated."""
+        monkeypatch.setattr(gdrive_service, "classify_video_format", lambda p: "experimental")
+        svc, admin = self._make_service(upload_dir, yt_mock)
+        local = upload_dir / "weird.mp4"
+        local.write_bytes(b"\x00" * 10)
+
+        out = svc._classify_and_stamp_target_format(
+            job_id=uuid4(), local_path=local, existing=None
+        )
+        assert out == "unknown"
+        assert admin.updated_payloads[0]["target_format"] == "unknown"
+
+
 class TestRunUploadJob:
     """End-to-end pipeline with mocked youtube service + admin Supabase."""
 

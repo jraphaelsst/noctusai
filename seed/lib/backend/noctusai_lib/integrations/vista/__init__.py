@@ -35,6 +35,9 @@ Public surface:
   `ShowcaseUsuario`, `ShowcaseAgencia`
 - Constants: `DEFAULT_TIMEOUT_SECONDS`, `DEFAULT_PAGE_SIZE`, `PAGINATION_KEYS`
 """
+from noctusai_lib.domain.real_estate import PropertyData
+
+from .adapter_factory import get_vista_adapter
 from .client import (
     DEFAULT_PAGE_SIZE,
     DEFAULT_TIMEOUT_SECONDS,
@@ -52,12 +55,15 @@ from .client import (
 )
 from .factory import make_vista_client
 from .fake import FakeVistaClient
+from .fake_adapter import FakeVistaAdapter
 from .normalizers import (
     vista_agencia_to_showcase,
     vista_imovel_detalhes_to_showcase,
     vista_imovel_to_showcase,
     vista_usuario_to_showcase,
 )
+from .protocol import VistaCRMAdapter
+from .real import VistaNotConfigured, VistaRESTAdapter
 from .types import (
     ShowcaseAgencia,
     ShowcaseImovel,
@@ -94,4 +100,15 @@ __all__ = [
     "ShowcaseImovelDetalhes",
     "ShowcaseUsuario",
     "ShowcaseAgencia",
+    # High-level CRM adapter layer (social-wiring-vista-seed-lift 2026-05-20).
+    # Property-by-code adapter on top of the low-level client; returns the
+    # cross-CRM domain shape `PropertyData` from `noctusai_lib.domain.real_estate`.
+    "VistaCRMAdapter",
+    "FakeVistaAdapter",
+    "VistaRESTAdapter",
+    "get_vista_adapter",
+    "VistaNotConfigured",
+    # Re-exported for ergonomics — callers building a Fake or asserting on
+    # `get_property` results don't need a second import.
+    "PropertyData",
 ]

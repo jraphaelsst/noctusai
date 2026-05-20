@@ -105,6 +105,21 @@ scheduling appointments. RLS scoped to the product.
 - Do NOT bake `VITE_BACKEND_API_URL` (runtime-detected). DO pass `VITE_SUPABASE_*` as Docker build-args in the image stage that runs `vite build`.
 - pt-BR UI copy preserved; integrations stay independent seed modules — cross-integration workflows compose at the chatbot-tool / product layer.
 
+## YouTube upload — endpoints
+
+Single-file (existing):
+- `POST /api/videos/upload` (multipart, browser drag-drop) → 202 + `job_id`
+- `POST /api/videos/upload-from-drive` (JSON, single Drive file URL) → 202 + `job_id`
+- `GET  /api/videos/upload/{job_id}/status` → polled by UI every ~2s
+- `POST /api/videos/upload/{job_id}/retry` → re-queue a `failed` job
+- `GET  /api/videos/upload/history?limit=N` → recent jobs
+
+Drive folder fan-out (`youtube-drive-folder-fanout` project, 2026-05-20):
+- `POST /api/videos/upload/drive-folder` — body `{drive_folder_url, metadata}`; downloads every video in the folder (one level of subfolders recursed), creates one `upload_jobs` row per video sharing a `batch_id`, returns 202 + `{batch_id, jobs[]}`.
+  - Each child's `target_format` is stamped at worker time after `classify_video_format` (vertical → `shorts`, horizontal → `youtube`, ambiguous → `unknown`). Vertical descriptions get `#Shorts` appended idempotently.
+  - YT auto-classifies vertical+≤180s uploads as Shorts; the `#Shorts` description tag is the ranking signal — no separate Shorts upload endpoint exists.
+- `GET  /api/videos/upload/batch/{batch_id}` → aggregate `{total, counts: {<status>: <n>}, jobs[]}`; 404 outside the caller's org.
+
 ## Testing
 
 ```bash

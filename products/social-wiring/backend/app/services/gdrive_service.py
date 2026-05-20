@@ -729,3 +729,172 @@ def pick_youtube_video(
         all_files=all_names,
     )
 
+
+# ─── Multi-video fan-out enumeration (project: youtube-drive-folder-fanout) ──
+
+@dataclass(frozen=True)
+class DriveFolderVideoRef:
+    """One video discovered by ``iter_drive_folder_videos``.
+
+    Returned per video file so the batch fan-out can insert one
+    ``upload_jobs`` row per ref. Sibling of :class:`FolderPickResult` /
+    :class:`VideoCandidate`, but unfiltered — verticals are kept (the
+    new pipeline routes them to YouTube Shorts), unknown-aspect files
+    are kept (worker decides), only oversized + non-video files are
+    dropped.
+
+    Attributes:
+        local_path: where the file lives on disk after gdown finished.
+        file_name: bare filename (``video.mp4``), suitable for the
+            ``upload_jobs.file_name`` column.
+        file_size_bytes: actual on-disk size; the fan-out endpoint puts
+            this in the row at queue-time (already known, unlike the
+            single-file gdrive path that backfills it during download).
+        parent_subfolder: the name of the subfolder inside the Drive
+            root this file came from, or ``None`` if it sat directly in
+            the root. Used purely for human-readable batch display
+            (``"Episode 3/clip.mp4"`` vs ``"clip.mp4"``); not a
+            functional key.
+    """
+
+    local_path: Path
+    file_name: str
+    file_size_bytes: int
+    parent_subfolder: str | None
+
+
+def iter_drive_folder_videos(
+    *,
+    folder_url: str,
+    target_dir: Path,
+    recurse_one_level: bool = True,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+) -> list[DriveFolderVideoRef]:
+    """Download a Drive folder + enumerate every video file inside.
+
+    The fan-out twin of :func:`pick_youtube_video` — returns *every*
+    video (no silent filtering of verticals) so the batch endpoint can
+    create one upload job per file.
+
+    Strategy:
+      1. ``gdown.download_folder`` materializes everything (one level of
+         subfolders preserved as subdirs).
+      2. Walk the result; for each video file:
+         - drop non-video extensions silently;
+         - drop files past one-level depth + clean them up
+           (when ``recurse_one_level`` is True — the default + only
+           supported mode today);
+         - drop files past ``max_bytes`` + clean them up (oversized
+           sibling rule, mirrors :func:`list_youtube_candidates`);
+         - keep the rest with a ``parent_subfolder`` annotation for
+           display.
+
+    Raises:
+        :class:`InvalidDriveURL` — folder URL doesn't parse.
+        :class:`GoogleDriveError` — gdown not installed, gdown returned
+            nothing (usually a sharing-permissions issue), or the folder
+            had no accepted videos at all.
+
+    Caller owns cleanup of the returned refs' local files (matches the
+    :func:`list_youtube_candidates` contract).
+    """
+    folder_id = parse_folder_id(folder_url)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import gdown
+    except ImportError as exc:
+        raise GoogleDriveError(
+            "gdown isn't installed. `pip install gdown` and retry."
+        ) from exc
+
+    try:
+        downloaded_paths = gdown.download_folder(
+            id=folder_id,
+            output=str(target_dir),
+            quiet=True,
+        )
+    except Exception as exc:
+        raise GoogleDriveError(
+            f"folder download failed for folder_id={folder_id}: {exc}"
+        ) from exc
+
+    if not downloaded_paths:
+        raise GoogleDriveError(
+            f"gdown returned no files for folder_id={folder_id} — "
+            "usually a permissions issue (not publicly shared)."
+        )
+
+    target_resolved = target_dir.resolve()
+    refs: list[DriveFolderVideoRef] = []
+
+    for path_str in downloaded_paths:
+        path = Path(path_str)
+        if not path.exists():
+            # gdown sometimes lists a path it didn't actually write
+            # (interrupted partial — best to skip silently).
+            continue
+        if path.suffix.lower() not in ACCEPTED_VIDEO_EXTENSIONS:
+            # Non-video bystander (image / pdf / docx etc.) — leave on
+            # disk (caller's tmp area gets swept), just don't queue it.
+            continue
+
+        # Depth relative to target_dir:
+        #   target_dir/<root_folder>/file.mp4        → parts=(root,file), depth=2
+        #   target_dir/<root_folder>/<sub>/file.mp4  → parts=(root,sub,file), depth=3
+        # gdown wraps everything under <root_folder>; we treat depth=2
+        # as "directly in the root folder" (no real subfolder), depth=3
+        # as "one subfolder deep", deeper than 3 = past the one-level
+        # recursion contract.
+        try:
+            relative = path.resolve().relative_to(target_resolved)
+        except ValueError:
+            # gdown returned an absolute path outside target_dir —
+            # treat as top-level by filename only.
+            relative = Path(path.name)
+
+        parts = relative.parts
+        depth = len(parts)
+
+        if recurse_one_level and depth > 3:
+            logger.debug(
+                "iter_drive_folder_videos: skipping %s — depth %d past "
+                "one-level recursion contract",
+                path, depth,
+            )
+            cleanup(path)
+            continue
+
+        parent_subfolder: str | None = None
+        if depth >= 3:
+            # parts[-2] is the immediate subfolder name; parts[0] is the
+            # gdown-wrapper root-folder dir we ignore.
+            parent_subfolder = parts[-2]
+
+        size = path.stat().st_size
+        if size > max_bytes:
+            logger.info(
+                "iter_drive_folder_videos: dropping oversized %s (%d bytes > %d cap)",
+                path.name, size, max_bytes,
+            )
+            cleanup(path)
+            continue
+
+        refs.append(
+            DriveFolderVideoRef(
+                local_path=path,
+                file_name=path.name,
+                file_size_bytes=size,
+                parent_subfolder=parent_subfolder,
+            )
+        )
+
+    if not refs:
+        raise GoogleDriveError(
+            f"No accepted video files found in folder_id={folder_id} "
+            f"(at most one subfolder deep). Accepted extensions: "
+            f"{sorted(ACCEPTED_VIDEO_EXTENSIONS)}"
+        )
+
+    return refs
+

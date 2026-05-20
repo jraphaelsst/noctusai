@@ -188,3 +188,204 @@ class TestCleanup:
     def test_silent_when_file_missing(self, tmp_path: Path):
         # Should not raise — best-effort.
         gdrive_service.cleanup(tmp_path / "ghost.mp4")
+
+
+# ─── iter_drive_folder_videos — Phase 1 of youtube-drive-folder-fanout ──
+
+class TestIterDriveFolderVideos:
+    """Tests for the multi-video Drive-folder enumerator.
+
+    Strategy: monkeypatch ``gdown.download_folder`` to simulate disk
+    layouts (gdown is an external library — patching it is allowed per
+    ``KB § PATTERNS/testing.md § external-boundary-only patches``). The
+    fake materialises the requested files on disk inside ``tmp_path`` so
+    the function's downstream walk + classify + size logic sees a real
+    filesystem, exactly as it would in production.
+    """
+
+    _FOLDER_URL = "https://drive.google.com/drive/folders/1abc23DEF456ghi789JKL012mno345PQ"
+
+    @staticmethod
+    def _install_fake_gdown(
+        monkeypatch,
+        files_to_create: list[tuple[str, bytes]] | None = None,
+        *,
+        raises: Exception | None = None,
+    ):
+        """Install a fake ``gdown`` module in ``sys.modules`` so the
+        production code's lazy ``import gdown`` picks it up. Materialises
+        ``files_to_create`` under ``output/drive-folder-root/...`` (the
+        same shape ``gdown.download_folder`` produces in production) and
+        returns the resulting paths. ``raises`` short-circuits with an
+        error to exercise the ``GoogleDriveError`` wrapping branch.
+
+        Allowed-shape monkeypatch: ``gdown`` is an external library, not
+        our own code (per ``KB § PATTERNS/testing.md`` external-boundary
+        rule)."""
+        import sys
+        import types
+
+        materialise = files_to_create or []
+
+        def fake_download_folder(*, id, output, quiet, **_kwargs):
+            if raises is not None:
+                raise raises
+            output_dir = Path(output)
+            root = output_dir / "drive-folder-root"
+            root.mkdir(parents=True, exist_ok=True)
+            written: list[str] = []
+            for relpath, content in materialise:
+                target = root / relpath
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+                written.append(str(target))
+            return written
+
+        fake_module = types.SimpleNamespace(download_folder=fake_download_folder)
+        monkeypatch.setitem(sys.modules, "gdown", fake_module)
+
+    def test_flat_folder_two_videos(self, monkeypatch, tmp_path):
+        """Folder w/ two top-level videos → two refs, parent_subfolder=None."""
+        self._install_fake_gdown(monkeypatch, [
+            ("horizontal.mp4", b"x" * 100),
+            ("vertical.mp4", b"y" * 200),
+        ])
+
+        refs = gdrive_service.iter_drive_folder_videos(
+            folder_url=self._FOLDER_URL,
+            target_dir=tmp_path,
+        )
+
+        assert len(refs) == 2
+        names = sorted(r.file_name for r in refs)
+        assert names == ["horizontal.mp4", "vertical.mp4"]
+        for r in refs:
+            assert r.parent_subfolder is None
+            assert r.local_path.exists()
+            assert r.file_size_bytes > 0
+
+    def test_subfolder_one_level(self, monkeypatch, tmp_path):
+        """One subfolder → ref's parent_subfolder is the subfolder name."""
+        self._install_fake_gdown(monkeypatch, [
+            ("Episode 3/clip.mp4", b"x" * 50),
+        ])
+
+        refs = gdrive_service.iter_drive_folder_videos(
+            folder_url=self._FOLDER_URL,
+            target_dir=tmp_path,
+        )
+
+        assert len(refs) == 1
+        assert refs[0].file_name == "clip.mp4"
+        assert refs[0].parent_subfolder == "Episode 3"
+
+    def test_mixed_root_and_subfolder(self, monkeypatch, tmp_path):
+        """Root file + subfolder file both surface; parent labels differ."""
+        self._install_fake_gdown(monkeypatch, [
+            ("master.mp4", b"x" * 10),
+            ("Shorts/cut.mp4", b"y" * 10),
+        ])
+
+        refs = gdrive_service.iter_drive_folder_videos(
+            folder_url=self._FOLDER_URL,
+            target_dir=tmp_path,
+        )
+
+        assert len(refs) == 2
+        by_name = {r.file_name: r for r in refs}
+        assert by_name["master.mp4"].parent_subfolder is None
+        assert by_name["cut.mp4"].parent_subfolder == "Shorts"
+
+    def test_non_video_files_silently_skipped(self, monkeypatch, tmp_path):
+        """README/thumbnail bystanders are ignored, videos kept."""
+        self._install_fake_gdown(monkeypatch, [
+            ("video.mp4", b"x" * 10),
+            ("README.txt", b"hi"),
+            ("thumb.png", b"\x89PNG"),
+        ])
+
+        refs = gdrive_service.iter_drive_folder_videos(
+            folder_url=self._FOLDER_URL,
+            target_dir=tmp_path,
+        )
+
+        assert [r.file_name for r in refs] == ["video.mp4"]
+
+    def test_empty_folder_raises(self, monkeypatch, tmp_path):
+        """gdown returning [] → GoogleDriveError (permission hint)."""
+        self._install_fake_gdown(monkeypatch, [])  # no files
+
+        with pytest.raises(gdrive_service.GoogleDriveError, match="no files"):
+            gdrive_service.iter_drive_folder_videos(
+                folder_url=self._FOLDER_URL,
+                target_dir=tmp_path,
+            )
+
+    def test_folder_with_only_non_videos_raises(self, monkeypatch, tmp_path):
+        """Folder downloaded but no accepted videos → GoogleDriveError."""
+        self._install_fake_gdown(monkeypatch, [
+            ("README.txt", b"hi"),
+            ("notes.docx", b"\x00"),
+        ])
+
+        with pytest.raises(gdrive_service.GoogleDriveError, match="No accepted video"):
+            gdrive_service.iter_drive_folder_videos(
+                folder_url=self._FOLDER_URL,
+                target_dir=tmp_path,
+            )
+
+    def test_depth_two_subfolder_is_pruned(self, monkeypatch, tmp_path):
+        """File two subfolders deep is dropped + cleaned up per the
+        one-level recursion contract."""
+        self._install_fake_gdown(monkeypatch, [
+            ("root.mp4", b"x" * 10),
+            ("Sub1/Sub2/deep.mp4", b"x" * 10),
+        ])
+
+        refs = gdrive_service.iter_drive_folder_videos(
+            folder_url=self._FOLDER_URL,
+            target_dir=tmp_path,
+        )
+
+        names = sorted(r.file_name for r in refs)
+        assert names == ["root.mp4"]
+        # And the pruned file was actually deleted (not just skipped).
+        deep = tmp_path / "drive-folder-root" / "Sub1" / "Sub2" / "deep.mp4"
+        assert not deep.exists()
+
+    def test_oversized_file_dropped(self, monkeypatch, tmp_path):
+        """A video exceeding max_bytes is dropped + cleaned up; others kept."""
+        self._install_fake_gdown(monkeypatch, [
+            ("small.mp4", b"x" * 10),
+            ("huge.mp4", b"x" * 5000),
+        ])
+
+        refs = gdrive_service.iter_drive_folder_videos(
+            folder_url=self._FOLDER_URL,
+            target_dir=tmp_path,
+            max_bytes=100,
+        )
+
+        assert [r.file_name for r in refs] == ["small.mp4"]
+        huge = tmp_path / "drive-folder-root" / "huge.mp4"
+        assert not huge.exists()
+
+    def test_invalid_folder_url_raises(self, tmp_path):
+        """Bad URL → InvalidDriveURL BEFORE gdown is touched."""
+        with pytest.raises(gdrive_service.InvalidDriveURL):
+            gdrive_service.iter_drive_folder_videos(
+                folder_url="https://drive.google.com/",
+                target_dir=tmp_path,
+            )
+
+    def test_gdown_failure_wrapped(self, monkeypatch, tmp_path):
+        """gdown raising any error → GoogleDriveError with folder_id."""
+        self._install_fake_gdown(
+            monkeypatch, raises=RuntimeError("network unreachable")
+        )
+
+        with pytest.raises(gdrive_service.GoogleDriveError, match="folder download failed"):
+            gdrive_service.iter_drive_folder_videos(
+                folder_url=self._FOLDER_URL,
+                target_dir=tmp_path,
+            )

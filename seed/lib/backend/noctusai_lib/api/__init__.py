@@ -30,6 +30,34 @@ dep-direction rule.)
 
 See `KB § PATTERNS/seed-lib-layout.md` for the full layer model.
 """
+from noctusai_lib.api.auth.session import (
+    ApiTokenResolver,
+    AuthContext,
+    CallerKind,
+    ExpiredSessionError,
+    FakeApiTokenResolver,
+    FakeSessionStore,
+    InvalidCredentialsError,
+    LegacyJwtResolver,
+    RevokedApiTokenError,
+    SessionStore,
+    hash_token,
+    make_get_auth_context,
+)
 from noctusai_lib.api.schemas import StrictHttpModel
 
-__all__ = ["StrictHttpModel"]
+__all__ = [
+    "ApiTokenResolver",
+    "AuthContext",
+    "CallerKind",
+    "ExpiredSessionError",
+    "FakeApiTokenResolver",
+    "FakeSessionStore",
+    "InvalidCredentialsError",
+    "LegacyJwtResolver",
+    "RevokedApiTokenError",
+    "SessionStore",
+    "StrictHttpModel",
+    "hash_token",
+    "make_get_auth_context",
+]

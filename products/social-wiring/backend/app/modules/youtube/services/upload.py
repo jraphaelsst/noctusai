@@ -27,11 +27,11 @@ import asyncio
 import logging
 import shutil
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.modules.youtube.schemas.upload import UploadMetadata
 from app.services import gdrive_service
@@ -74,6 +74,29 @@ class QueuedJob:
 
     job_id: UUID
     status: str = "queued"
+
+
+@dataclass(frozen=True)
+class BatchChild:
+    """One child job queued by ``queue_drive_folder_upload``."""
+
+    job_id: UUID
+    file_name: str
+    parent_subfolder: str | None
+
+
+@dataclass
+class BatchQueued:
+    """What ``queue_drive_folder_upload`` returns to the router.
+
+    ``batch_id`` lets the dashboard group siblings; ``children`` is the
+    per-video list the router uses to spawn one BackgroundTask each. An
+    empty ``children`` list is never returned — if no videos were found
+    the service raises :class:`UploadServiceError` BEFORE inserting
+    anything (mirrors the single-file path's pre-insert validation)."""
+
+    batch_id: UUID
+    children: list[BatchChild] = field(default_factory=list)
 
 
 class UploadService:
@@ -193,6 +216,8 @@ class UploadService:
         source_url: str | None,
         file_name: str,
         file_size_bytes: int | None,
+        batch_id: UUID | None = None,
+        target_format: str | None = None,
     ) -> QueuedJob:
         payload = {
             "org_id": str(org_id),
@@ -210,6 +235,13 @@ class UploadService:
             "thumbnail_url": metadata.thumbnail_url,
             "created_by": str(created_by) if created_by else None,
         }
+        # youtube-drive-folder-fanout columns — omitted from payload when
+        # None so legacy callers + the single-file paths don't accidentally
+        # spam NULLs (the columns default to NULL in the DB anyway).
+        if batch_id is not None:
+            payload["batch_id"] = str(batch_id)
+        if target_format is not None:
+            payload["target_format"] = target_format
 
         response = (
             self._user
@@ -224,6 +256,144 @@ class UploadService:
             )
         row = response.data[0]
         return QueuedJob(job_id=UUID(row["id"]))
+
+    # ─── Drive-folder fan-out (youtube-drive-folder-fanout) ─────────────
+    def queue_drive_folder_upload(
+        self,
+        *,
+        org_id: UUID,
+        created_by: UUID | None,
+        metadata: UploadMetadata,
+        drive_folder_url: str,
+    ) -> BatchQueued:
+        """Download a Drive folder + queue one row per video found.
+
+        Strategy:
+          1. Parse the folder URL upfront (cheap; bad URL → 4xx without
+             touching disk).
+          2. Call :func:`gdrive_service.iter_drive_folder_videos` which
+             downloads everything via gdown and returns one ref per
+             accepted video (one level of subfolder recursion; oversized
+             + non-video files dropped on the floor).
+          3. For each ref, insert an ``upload_jobs`` row sharing the
+             same ``batch_id`` then **rename** the on-disk file into the
+             canonical ``<job_id>__<file_name>`` shape that the existing
+             browser-source ``_materialise_source`` path knows how to
+             find. Source type stays ``"browser"`` (the file is already
+             on disk — re-fetching from Drive would be wasteful) and
+             ``source_url`` records the originating folder for audit.
+          4. Worker classifies each video at run time and stamps
+             ``target_format``; Shorts-tagged videos get a ``#Shorts``
+             description suffix before the YT upload call.
+
+        Raises:
+            :class:`UploadServiceError` — the folder URL is unparseable,
+                the Drive download failed, the folder contained no
+                accepted videos, OR no row could be inserted (RLS / DB
+                gap). The exception wraps the underlying message so the
+                router can translate to the right HTTP status.
+
+        Sibling failure isolation: once at least one row is inserted,
+        per-row failures (e.g. one rename hitting EEXIST) mark THAT
+        child failed and continue with the rest — matches the
+        "each job independent" contract.
+        """
+        # Pre-flight URL parse so a typo never costs a Drive download.
+        try:
+            gdrive_service.parse_folder_id(drive_folder_url)
+        except gdrive_service.InvalidDriveURL as exc:
+            raise UploadServiceError(str(exc)) from exc
+
+        batch_id = uuid4()
+        target_dir = self._upload_dir / "drive-batch" / str(batch_id)
+
+        try:
+            refs = gdrive_service.iter_drive_folder_videos(
+                folder_url=drive_folder_url,
+                target_dir=target_dir,
+            )
+        except gdrive_service.GoogleDriveError as exc:
+            raise UploadServiceError(
+                f"Drive folder fanout failed: {exc}"
+            ) from exc
+
+        children: list[BatchChild] = []
+        first_error: Exception | None = None
+        for ref in refs:
+            try:
+                queued = self._insert_job(
+                    org_id=org_id,
+                    created_by=created_by,
+                    metadata=metadata,
+                    source_type="browser",
+                    # source_url records the original folder for audit
+                    # — it is NOT what `_materialise_source` looks at
+                    # (the worker uses the canonical on-disk path).
+                    source_url=drive_folder_url,
+                    file_name=ref.file_name,
+                    file_size_bytes=ref.file_size_bytes,
+                    batch_id=batch_id,
+                )
+            except UploadServiceError as exc:
+                # Insert failure: drop this ref's file (the worker would
+                # never get to it) and remember the first error so we
+                # can re-raise if ALL inserts failed.
+                gdrive_service.cleanup(ref.local_path)
+                first_error = first_error or exc
+                logger.exception(
+                    "queue_drive_folder_upload: insert failed for %s in batch %s",
+                    ref.file_name, batch_id,
+                )
+                continue
+
+            # Move from drive-batch/<batch_id>/.../<name> to the canonical
+            # browser-upload location so `_materialise_source` (source_type
+            # ="browser") finds it deterministically. Use rename_for_job
+            # to share the same naming convention as browser uploads.
+            try:
+                rename_for_job(
+                    ref.local_path,
+                    queued.job_id,
+                    ref.file_name,
+                    target_dir=self._upload_dir,
+                )
+            except OSError as exc:
+                # File-system gap (disk full, permission). Mark the row
+                # failed so the dashboard reflects it; the sibling jobs
+                # keep running.
+                logger.exception(
+                    "queue_drive_folder_upload: rename failed for job %s (file %s)",
+                    queued.job_id, ref.file_name,
+                )
+                self._mark_failed(
+                    queued.job_id,
+                    f"failed to stage Drive file on disk: {exc}",
+                )
+                continue
+
+            children.append(
+                BatchChild(
+                    job_id=queued.job_id,
+                    file_name=ref.file_name,
+                    parent_subfolder=ref.parent_subfolder,
+                )
+            )
+
+        if not children:
+            # Every ref hit an insert error — surface the first one so
+            # the router returns a meaningful detail.
+            if first_error is not None:
+                raise UploadServiceError(
+                    f"all {len(refs)} Drive folder rows failed to queue: {first_error}"
+                ) from first_error
+            # Defensive: refs was non-empty (iter_drive_folder_videos
+            # raises otherwise) so we shouldn't reach here. Surface a
+            # loud signal if we ever do.
+            raise UploadServiceError(
+                "Drive folder fanout produced no queued jobs (unreachable branch)"
+            )
+
+        return BatchQueued(batch_id=batch_id, children=children)
 
     # ─── Run (background; uses service-role client) ────────────────────
     def run_upload_job(self, *, job_id: UUID) -> None:
@@ -316,13 +486,31 @@ class UploadService:
             self._mark_failed(job_id, f"Drive download failed: {exc}")
             return
 
+        # youtube-drive-folder-fanout Phase 4 — classify + stamp
+        # target_format AFTER the file is on disk. Skipped on retries
+        # where the row already carries a value (idempotent).
+        target_format = self._classify_and_stamp_target_format(
+            job_id=job_id,
+            local_path=local_path,
+            existing=job.get("target_format"),
+        )
+
+        # Shorts-aware description: when YT auto-detects vertical+≤3min
+        # as a Short on its side, the `#Shorts` tag in the description
+        # is a documented ranking signal. Idempotent — never duplicates
+        # the tag if it's already present.
+        description = self._shorts_aware_description(
+            description=job.get("description") or "",
+            target_format=target_format,
+        )
+
         try:
             self._update_status(job_id, status="uploading", progress_percent=20)
             video_id = self._youtube.upload_video(
                 org_id=UUID(job["org_id"]),
                 file_path=str(local_path),
                 title=job["title"],
-                description=job.get("description") or "",
+                description=description,
                 tags=job.get("tags") or [],
                 privacy_status=job.get("privacy_status") or "private",
                 category_id=job.get("category_id") or "22",
@@ -473,6 +661,56 @@ class UploadService:
             .execute()
         )
         return list(response.data or [])
+
+    def get_batch_status(
+        self, *, org_id: UUID, batch_id: UUID
+    ) -> dict[str, Any] | None:
+        """Aggregate state of one Drive-folder fan-out batch.
+
+        Returns ``None`` when no rows match (404 → caller's
+        responsibility). RLS-bounded via the user client; an explicit
+        ``org_id`` filter belt-and-braces against policy misconfig.
+
+        Returns:
+            ``{ "batch_id": UUID, "total": N, "counts": {<status>: <n>},
+                "jobs": [<row>] }`` — counts always include every
+                status key with a default of 0 so the UI can render a
+                uniform table.
+        """
+        response = (
+            self._user
+            .schema(_SCHEMA)
+            .table(_TABLE)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("batch_id", str(batch_id))
+            .order("created_at", desc=False)
+            .execute()
+        )
+        rows = list(response.data or [])
+        if not rows:
+            return None
+
+        counts: dict[str, int] = {
+            "queued": 0,
+            "downloading": 0,
+            "uploading": 0,
+            "processing": 0,
+            "published": 0,
+            "notified": 0,
+            "failed": 0,
+        }
+        for row in rows:
+            st = row.get("status")
+            if st in counts:
+                counts[st] += 1
+
+        return {
+            "batch_id": batch_id,
+            "total": len(rows),
+            "counts": counts,
+            "jobs": rows,
+        }
 
     # ─── Internals (admin-client paths) ────────────────────────────────
     def _fetch_job(self, job_id: UUID) -> dict[str, Any] | None:
@@ -699,6 +937,65 @@ class UploadService:
             "yt-processing: timeout after %ds (video_id=%s) — proceeding to publish.",
             YT_PROCESSING_TIMEOUT_S, video_id,
         )
+
+    # ─── youtube-drive-folder-fanout Phase 4 helpers ───────────────────
+    @staticmethod
+    def _shorts_aware_description(*, description: str, target_format: str | None) -> str:
+        """Append ``#Shorts`` to vertical-video descriptions, idempotently.
+
+        YouTube auto-promotes vertical + ≤3-min uploads as Shorts on
+        their side; the ``#Shorts`` description tag is the documented
+        ranking signal that helps the algorithm pick them up faster.
+        For horizontal / unknown / pre-existing-tag descriptions the
+        function is a pass-through."""
+        if target_format != "shorts":
+            return description
+        if "#Shorts" in description or "#shorts" in description:
+            return description
+        if description:
+            return f"{description}\n\n#Shorts"
+        return "#Shorts"
+
+    def _classify_and_stamp_target_format(
+        self,
+        *,
+        job_id: UUID,
+        local_path: Path,
+        existing: str | None,
+    ) -> str:
+        """Classify the on-disk video + stamp ``target_format`` on the row.
+
+        Idempotent: if the row already carries a non-NULL value (retry
+        path, or batch-fanout with a pre-stamped row), returns it
+        without re-classifying. Maps ``gdrive_service.classify_video_format``'s
+        ``"reels"`` → ``"shorts"`` (the DB CHECK constraint values are
+        ``youtube`` / ``shorts`` / ``unknown``).
+
+        Best-effort: ANY classification failure stamps ``"unknown"``
+        rather than failing the upload — a misclassified Shorts goes
+        through as long-form (still uploads, just doesn't get the
+        Shorts ranking nudge) which is far less bad than aborting.
+        """
+        if existing:
+            return existing
+
+        try:
+            raw = gdrive_service.classify_video_format(local_path)
+        except Exception:
+            logger.exception(
+                "classify_video_format raised for job %s (path=%s) — stamping 'unknown'",
+                job_id, local_path,
+            )
+            raw = "unknown"
+
+        target = "shorts" if raw == "reels" else raw
+        if target not in ("youtube", "shorts", "unknown"):
+            # Defensive — keeps the DB CHECK happy if classify ever
+            # returns a new value we didn't expect.
+            target = "unknown"
+
+        self._update_row(job_id, target_format=target)
+        return target
 
     def _mark_failed(self, job_id: UUID, error_message: str) -> None:
         self._update_row(

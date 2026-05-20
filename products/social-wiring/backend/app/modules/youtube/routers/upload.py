@@ -45,6 +45,11 @@ from app.dependencies import (
     get_user_client,
 )
 from app.modules.youtube.schemas.upload import (
+    BatchChildOut,
+    BatchStatusCounts,
+    BatchStatusOut,
+    BatchUploadCreated,
+    GdriveFolderUploadRequest,
     GdriveUploadRequest,
     UploadJobCreated,
     UploadJobOut,
@@ -145,6 +150,7 @@ def _row_to_out(row: dict[str, Any]) -> UploadJobOut:
     """Database row → UploadJobOut. Centralised so the shape stays
     consistent across single-job + history endpoints."""
     notify_recipients = row.get("notify_recipients") or []
+    raw_batch_id = row.get("batch_id")
     return UploadJobOut(
         id=UUID(row["id"]),
         status=row["status"],
@@ -159,8 +165,78 @@ def _row_to_out(row: dict[str, Any]) -> UploadJobOut:
         privacy_status=row.get("privacy_status", "private"),
         notify_recipient_count=len(notify_recipients),
         product_code=row.get("product_code"),
+        target_format=row.get("target_format"),
+        batch_id=UUID(raw_batch_id) if raw_batch_id else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+async def _resolve_metadata_from_product_code(
+    *,
+    product_code: str,
+    privacy_status: str,
+) -> UploadMetadata:
+    """Vista CRM lookup → UploadMetadata. Mirrors the chatbot intake's
+    enrichment path (``whatsapp_intake_service.prepare_upload_request``)
+    so a curl/dashboard caller gets the same title/description shape
+    the WhatsApp flow produces.
+
+    HTTP error map (raised as `HTTPException`, not return values):
+      - 422: invalid product code format.
+      - 503: CRM not configured (`crm_base_url`/`crm_api_key` empty).
+      - 404: code valid + CRM up, but no property found.
+      - 502: CRM returned an unexpected error.
+    """
+    from app.services.crm_service import (
+        CRMNotConfigured,
+        CRMService,
+        CRMServiceError,
+        build_youtube_metadata,
+        validate_product_code,
+    )
+
+    code = (product_code or "").strip().upper()
+    if not validate_product_code(code):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"invalid product_code format: {code!r}",
+        )
+
+    try:
+        crm = CRMService(
+            base_url=settings.crm_base_url,
+            api_key=settings.crm_api_key,
+        )
+    except CRMNotConfigured as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        prop = await crm.get_property(code)
+    except CRMServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"CRM lookup failed: {exc}",
+        ) from exc
+
+    if prop is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"no property found for product_code={code}",
+        )
+
+    yt_meta = build_youtube_metadata(prop, code)
+    return UploadMetadata(
+        title=yt_meta["title"],
+        description=yt_meta["description"],
+        tags=yt_meta["tags"],
+        privacy_status=privacy_status,
+        category_id="22",
+        notify_recipients=[],
+        product_code=code,
     )
 
 
@@ -288,6 +364,101 @@ async def upload_from_drive(
     return UploadJobCreated(job_id=queued.job_id, status=queued.status)
 
 
+# ─── POST /drive-folder — multi-video fan-out (youtube-drive-folder-fanout)
+@router.post(
+    "/drive-folder",
+    response_model=BatchUploadCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_from_drive_folder(
+    payload: GdriveFolderUploadRequest,
+    background: BackgroundTasks,
+    auth: tuple = Depends(get_current_user_org),
+) -> BatchUploadCreated:
+    """Queue a Drive **folder** as a batch of independent upload jobs.
+
+    Every video in the folder (recursing one level into subfolders)
+    becomes its own ``upload_jobs`` row sharing one ``batch_id``. The
+    worker classifies each video at run time — vertical files get the
+    Shorts treatment automatically (no separate endpoint needed).
+
+    Two input modes (validated by the schema):
+      - ``metadata`` set → manual mode; title/description/tags travel
+        with the request.
+      - ``product_code`` set → Vista CRM lookup mode; server fetches
+        property data + builds the same metadata shape used by the
+        chatbot intake (``build_youtube_metadata(prop, code)``).
+
+    Returns 202 + the batch_id + the list of child jobs.
+
+    HTTP error map:
+      - 400: invalid folder URL / parse failure / `UploadServiceError`
+        wrapping a bad operator-side input.
+      - 404: ``product_code`` mode but Vista returned no property for
+        the code.
+      - 422: well-formed URL but Drive returned no acceptable videos
+        (empty folder, only non-videos, sharing-permission gap, …).
+      - 503: credential-store config gap OR Vista not configured when
+        ``product_code`` mode was requested.
+    """
+    user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    service = _build_upload_service(token)
+
+    # Resolve metadata: either explicit (manual mode) or Vista lookup.
+    if payload.metadata is not None:
+        resolved_metadata = payload.metadata
+    else:
+        resolved_metadata = await _resolve_metadata_from_product_code(
+            product_code=payload.product_code or "",
+            privacy_status=payload.privacy_status,
+        )
+
+    try:
+        batch = service.queue_drive_folder_upload(
+            org_id=org_id,
+            created_by=_user_id(user),
+            metadata=resolved_metadata,
+            drive_folder_url=str(payload.drive_folder_url),
+        )
+    except UploadServiceError as exc:
+        msg = str(exc)
+        # Distinguish "no videos found / Drive permission" (caller fixable
+        # at the folder level) from "URL malformed" (caller fixable at the
+        # input level). The phrase fingerprints below come from
+        # `iter_drive_folder_videos` + `parse_folder_id`.
+        no_videos = any(
+            tok in msg for tok in (
+                "No accepted video",
+                "no files",
+                "fanout failed",
+            )
+        )
+        raise HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_ENTITY
+                if no_videos
+                else status.HTTP_400_BAD_REQUEST
+            ),
+            detail=msg,
+        ) from exc
+
+    for child in batch.children:
+        background.add_task(service.run_upload_job, job_id=child.job_id)
+
+    return BatchUploadCreated(
+        batch_id=batch.batch_id,
+        jobs=[
+            BatchChildOut(
+                job_id=child.job_id,
+                file_name=child.file_name,
+                parent_subfolder=child.parent_subfolder,
+            )
+            for child in batch.children
+        ],
+    )
+
+
 # ─── GET /{id}/status ──────────────────────────────────────────────────
 @router.get("/{job_id}/status", response_model=UploadJobOut)
 async def get_upload_status(
@@ -352,6 +523,35 @@ async def retry_upload(
 
     background.add_task(service.run_upload_job, job_id=job_id)
     return _row_to_out(refreshed)
+
+
+# ─── GET /batch/{batch_id} — aggregate status of a fan-out batch ──────
+@router.get("/batch/{batch_id}", response_model=BatchStatusOut)
+async def get_batch_status(
+    batch_id: UUID,
+    auth: tuple = Depends(get_current_user_org),
+) -> BatchStatusOut:
+    """Aggregate state of one Drive-folder fan-out batch.
+
+    Returns 404 when no rows match the batch_id within the caller's
+    org — RLS-bounded so a guess can't leak another org's batch."""
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    service = _build_upload_service(token)
+
+    snapshot = service.get_batch_status(org_id=org_id, batch_id=batch_id)
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"no batch with id={batch_id} in this org",
+        )
+
+    return BatchStatusOut(
+        batch_id=snapshot["batch_id"],
+        total=snapshot["total"],
+        counts=BatchStatusCounts(**snapshot["counts"]),
+        jobs=[_row_to_out(r) for r in snapshot["jobs"]],
+    )
 
 
 # ─── GET /history ──────────────────────────────────────────────────────
