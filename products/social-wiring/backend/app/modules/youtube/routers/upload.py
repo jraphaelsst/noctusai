@@ -42,6 +42,7 @@ from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
     get_current_user_org,
+    get_current_user_org_unified,
     get_user_client,
 )
 from app.modules.youtube.schemas.upload import (
@@ -375,7 +376,7 @@ async def upload_from_drive(
 async def upload_from_drive_folder(
     payload: GdriveFolderUploadRequest,
     background: BackgroundTasks,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
 ) -> BatchUploadCreated:
     """Queue a Drive **folder** as a batch of independent upload jobs.
 
@@ -531,7 +532,7 @@ async def retry_upload(
 @router.get("/batch/{batch_id}", response_model=BatchStatusOut)
 async def get_batch_status(
     batch_id: UUID,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
 ) -> BatchStatusOut:
     """Aggregate state of one Drive-folder fan-out batch.
 

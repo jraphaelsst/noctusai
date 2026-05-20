@@ -30,6 +30,8 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
+from fastapi import Depends
+
 from noctusai_seed import create_database_module, create_dependencies
 from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
@@ -283,6 +285,23 @@ def auth_context_to_legacy_tuple(ctx: AuthContext):
     return user, ctx.raw_token, str(ctx.org_id)
 
 
+# ─── Opt-in unified dep for selective route migration ────────────────
+#
+# Routes can opt INTO the unified resolver by depending on
+# `get_current_user_org_unified` instead of `get_current_user_org`.
+# This accepts the legacy Supabase JWT AND `pk_*` ApiToken bearers AND
+# cookie sessions, projecting to the same `(user, token, org_id)` tuple
+# the original returns. The youtube-drive-folder-fanout endpoints use
+# this so automation/n8n/agent live-tests can hit them with an ApiToken;
+# unrelated routes stay on the legacy JWT-only dep until their own
+# per-route migration projects fire (avoids broad regression risk on
+# test fixtures that mock only the legacy bridge).
+async def get_current_user_org_unified(
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    return auth_context_to_legacy_tuple(ctx)
+
+
 __all__ = [
     "AuthContext",
     "auth_context_to_legacy_tuple",
@@ -292,6 +311,7 @@ __all__ = [
     "get_auth_context",
     "get_current_user",
     "get_current_user_org",
+    "get_current_user_org_unified",
     "get_org_id",
     "get_user_client",
     "get_user_role",
