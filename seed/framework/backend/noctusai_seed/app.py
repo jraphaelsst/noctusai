@@ -354,20 +354,29 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
       (Registered ops routes like ``/_health`` already win via route order;
       the prefix guard also covers the case where ops routes are missing.)
 
-    Fail-soft: a misconfigured ``serve_spa`` (no ``index.html``) logs a
-    WARNING and leaves the API mounted — no crash, no silent pass.
+    **Race-safe (the startup-only-resilience fix, 2026-05-19):** always
+    mount, never early-return. `runtime-watch`'s `vite --watch` can
+    briefly empty `dist/` on its initial pass AFTER `local-watch.sh`'s
+    blocking build — racing this startup check. The old startup-only
+    decision left `/` permanently unrouted for the container's life even
+    when `dist` filled seconds later. Now the mount is registered with
+    `check_dir=False`, the StaticFiles per-request FS read does the
+    real work, and the extension-less fallback re-checks `index.html`
+    at request time. dist appearing/disappearing/rebuilding is
+    transparent. Fail-loud at startup (operator sees the warning) but
+    never skip the mount.
     """
     index_file = spa_dir / "index.html"
     if not (spa_dir.is_dir() and index_file.is_file()):
         logger.warning(
-            "serve_spa=%s but %s is missing — SPA not mounted; API still served",
+            "serve_spa=%s but %s currently missing — mounting anyway "
+            "(runtime-watch race-safe; will serve when dist appears)",
             spa_dir,
             index_file,
         )
-        return
 
     from starlette.exceptions import HTTPException as StarletteHTTPException
-    from starlette.responses import FileResponse
+    from starlette.responses import FileResponse, PlainTextResponse
     from starlette.staticfiles import StaticFiles
 
     class _SPAStaticFiles(StaticFiles):
@@ -375,13 +384,31 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
             try:
                 return await super().get_response(path, scope)
             except StarletteHTTPException as exc:
+                # Compose both protections:
+                # - api/ and _ops paths NEVER get HTML-rescued (prevents
+                #   the SyntaxError-parsing-HTML class on a stale FE
+                #   bundle hitting an unknown API route).
+                # - Per-request index.html re-check — dist may have just
+                #   been rewritten by vite --watch; if absent at request
+                #   time, 503 (build-in-progress) is honest, not 404.
                 is_api_or_ops = path.startswith("api/") or path.startswith("_")
                 if exc.status_code == 404 and not PurePosixPath(path).suffix and not is_api_or_ops:
-                    return FileResponse(index_file)
+                    if index_file.is_file():
+                        return FileResponse(index_file)
+                    return PlainTextResponse(
+                        "SPA bundle not yet built (vite build in progress).",
+                        status_code=503,
+                    )
                 raise
 
-    app.mount("/", _SPAStaticFiles(directory=str(spa_dir), html=True), name="spa")
-    logger.info("SPA served from %s (single-container mode)", spa_dir)
+    # check_dir=False — let an absent-at-startup directory still mount;
+    # StaticFiles probes per-request and returns 404 cleanly if absent.
+    app.mount(
+        "/",
+        _SPAStaticFiles(directory=str(spa_dir), html=True, check_dir=False),
+        name="spa",
+    )
+    logger.info("SPA mount registered for %s (single-container mode)", spa_dir)
 
 
 def _is_coroutine(fn) -> bool:
