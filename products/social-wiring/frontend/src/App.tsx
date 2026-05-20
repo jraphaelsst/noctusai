@@ -28,6 +28,7 @@ import {
   Activity,
   Upload as UploadIcon,
   Share2,
+  Wand2,
 } from "lucide-react";
 
 // Pages
@@ -43,6 +44,7 @@ const Upload = lazy(() => import("@/pages/Upload"));
 const Videos = lazy(() => import("@/pages/Videos"));
 const Conexao = lazy(() => import("@/pages/Conexao"));
 const Monitor = lazy(() => import("@/pages/Monitor"));
+const MediaCreation = lazy(() => import("@/pages/MediaCreation"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
 // Nav
@@ -55,6 +57,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Agente", href: "/chat", icon: MessageCircle, route: "chat" },
+      { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
       { name: "Vídeos", href: "/videos", icon: PlaySquare, route: "videos" },
       { name: "Upload", href: "/upload", icon: UploadIcon, route: "upload" },
     ],
@@ -90,6 +93,7 @@ const NAV_FALLBACK: NavGroup[] = [
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Agente", href: "/chat", icon: MessageCircle },
+      { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
       { name: "Vídeos", href: "/videos", icon: PlaySquare },
       { name: "Upload", href: "/upload", icon: UploadIcon },
     ],
@@ -128,6 +132,7 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
+    { path: "/media-creation", component: MediaCreation },
     { path: "/videos", component: Videos },
     { path: "/upload", component: Upload },
     { path: "/conexao", component: Conexao },

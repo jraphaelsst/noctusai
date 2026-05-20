@@ -98,14 +98,16 @@ def _register_media_wiring() -> ModuleRegistration:
 
 
 from app.modules.email_marketing import register as _register_email_marketing
+from app.modules.media_creation import register as _register_media_creation
 from app.modules.scheduling import register as _scheduling
 
-# Append W2.2 (email_marketing) / W2.3 (scheduling) module ``register``
-# callables here — the assembly loop below needs NO edit.
+# Append W2.2 (email_marketing) / W2.3 (scheduling) / W2.4 (media_creation)
+# module ``register`` callables here — the assembly loop below needs NO edit.
 MODULES = [
     _register_media_wiring,
     _register_email_marketing,
     _scheduling,
+    _register_media_creation,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───

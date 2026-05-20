@@ -853,6 +853,139 @@ CREATE INDEX ix_sw_sched_tca_conv ON social_wiring.sched_tool_call_audits(conver
 -- ─── end W2.3 ───
 
 
+-- ─── W2.4 media_creation tables — ADD BELOW (do not edit above) ──────────────
+-- (Brand kits + references + posts + slides — the media-creation arm of the
+-- social-media automation ecosystem. Mirrors the sibling media-creator/ repo's
+-- skill-based pipeline (storyboard / image-prompt / copy) as DB-backed,
+-- org-scoped artifacts. See products/social-wiring/projects/media-creator-w2-4/
+-- PROJECT.md for design.)
+
+CREATE OR REPLACE FUNCTION social_wiring.set_updated_at_media_creation()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = social_wiring, public
+AS $$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $$;
+
+-- Brand kit — one row holds the org's persona + design system text blobs.
+-- An org can have multiple kits (e.g. one per brand it manages).
+CREATE TABLE social_wiring.mc_brand_kits (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        UUID NOT NULL,
+    name          TEXT NOT NULL,
+    persona       TEXT NOT NULL DEFAULT '',
+    design_system TEXT NOT NULL DEFAULT '',
+    default_lang  TEXT NOT NULL DEFAULT 'pt-BR',
+    created_by    UUID,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE social_wiring.mc_brand_kits ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "mc_brand_kits_select_own_org" ON social_wiring.mc_brand_kits
+    FOR SELECT TO authenticated
+    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+CREATE POLICY "service_role_bypass" ON social_wiring.mc_brand_kits
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE INDEX ix_sw_mc_brand_kits_org ON social_wiring.mc_brand_kits(org_id);
+CREATE OR REPLACE TRIGGER set_updated_at_mc_brand_kits
+    BEFORE UPDATE ON social_wiring.mc_brand_kits
+    FOR EACH ROW EXECUTE FUNCTION social_wiring.set_updated_at_media_creation();
+
+-- Brand references — uploaded brand assets (model posts / palettes / type
+-- samples / prompt examples). Stored as URLs (operator uploads via Supabase
+-- Storage); v1 keeps blob bytes out of the DB.
+CREATE TABLE social_wiring.mc_brand_references (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id       UUID NOT NULL,
+    brand_kit_id UUID NOT NULL REFERENCES social_wiring.mc_brand_kits(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL CHECK (kind IN ('model','prompt','palette','typography')),
+    label        TEXT NOT NULL,
+    asset_url    TEXT,
+    notes        TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE social_wiring.mc_brand_references ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "mc_brand_references_select_own_org" ON social_wiring.mc_brand_references
+    FOR SELECT TO authenticated
+    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+CREATE POLICY "service_role_bypass" ON social_wiring.mc_brand_references
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE INDEX ix_sw_mc_brand_refs_kit ON social_wiring.mc_brand_references(brand_kit_id);
+CREATE INDEX ix_sw_mc_brand_refs_org ON social_wiring.mc_brand_references(org_id);
+
+-- Posts — one row per "post in flight". Holds the operator's idea + generated
+-- storyboard JSON + copy fields (caption / hashtags / alt / first_comment).
+-- Slides live in mc_post_slides (one-to-many).
+CREATE TABLE social_wiring.mc_posts (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             UUID NOT NULL,
+    brand_kit_id       UUID NOT NULL REFERENCES social_wiring.mc_brand_kits(id) ON DELETE RESTRICT,
+    title              TEXT NOT NULL,
+    idea               TEXT NOT NULL,
+    format             TEXT NOT NULL DEFAULT 'carousel' CHECK (format IN ('carousel','single','video')),
+    variant            TEXT NOT NULL DEFAULT 'premium',
+    slide_count        INT  NOT NULL DEFAULT 5 CHECK (slide_count BETWEEN 1 AND 20),
+    cta                TEXT,
+    audience           TEXT,
+    key_message        TEXT,
+    status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','ready','published')),
+    storyboard         JSONB,
+    copy_caption       TEXT,
+    copy_hashtags      TEXT[],
+    copy_alt_text      TEXT,
+    copy_first_comment TEXT,
+    created_by         UUID,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE social_wiring.mc_posts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "mc_posts_select_own_org" ON social_wiring.mc_posts
+    FOR SELECT TO authenticated
+    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+CREATE POLICY "service_role_bypass" ON social_wiring.mc_posts
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE INDEX ix_sw_mc_posts_org ON social_wiring.mc_posts(org_id);
+CREATE INDEX ix_sw_mc_posts_kit ON social_wiring.mc_posts(brand_kit_id);
+CREATE INDEX ix_sw_mc_posts_status ON social_wiring.mc_posts(org_id, status);
+CREATE OR REPLACE TRIGGER set_updated_at_mc_posts
+    BEFORE UPDATE ON social_wiring.mc_posts
+    FOR EACH ROW EXECUTE FUNCTION social_wiring.set_updated_at_media_creation();
+
+-- Slides — one row per slide in a carousel (or one row for single-format
+-- posts). Holds the storyboard's per-slide spec + three renderer-flavored
+-- prompts (Nano Banana / GalilAI / Midjourney) so the operator picks. The
+-- image_url + image_renderer columns are populated when the (phase-2)
+-- image-gen seed adapter ships.
+CREATE TABLE social_wiring.mc_post_slides (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             UUID NOT NULL,
+    post_id            UUID NOT NULL REFERENCES social_wiring.mc_posts(id) ON DELETE CASCADE,
+    slide_n            INT  NOT NULL,
+    role               TEXT NOT NULL CHECK (role IN ('cover','develop','insight','cta')),
+    headline           TEXT,
+    body               TEXT,
+    visual_brief       TEXT,
+    prompt_nano_banana TEXT,
+    prompt_galilai     TEXT,
+    prompt_midjourney  TEXT,
+    image_url          TEXT,
+    image_renderer     TEXT,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (post_id, slide_n)
+);
+ALTER TABLE social_wiring.mc_post_slides ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "mc_post_slides_select_own_org" ON social_wiring.mc_post_slides
+    FOR SELECT TO authenticated
+    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+CREATE POLICY "service_role_bypass" ON social_wiring.mc_post_slides
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE INDEX ix_sw_mc_post_slides_post ON social_wiring.mc_post_slides(post_id);
+CREATE INDEX ix_sw_mc_post_slides_org ON social_wiring.mc_post_slides(org_id);
+CREATE OR REPLACE TRIGGER set_updated_at_mc_post_slides
+    BEFORE UPDATE ON social_wiring.mc_post_slides
+    FOR EACH ROW EXECUTE FUNCTION social_wiring.set_updated_at_media_creation();
+-- ─── end W2.4 ───
+
+
 -- ============================================================================
 -- Seed pages (status_pagina) — consolidated from reference 001–004
 -- ============================================================================
