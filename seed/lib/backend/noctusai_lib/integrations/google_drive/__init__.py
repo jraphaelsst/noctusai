@@ -46,6 +46,21 @@ description forbids the model from recounting long structured data).
     content = await reader.read_file(hit.id)              # Sheets->CSV
     stats = compute_content_stats(content.data.decode(),
                                   rendered_as=content.rendered_as)
+
+**Projection-enrichment + sync facade (added 2026-05-19,
+`social-wiring-google-seed-consume` Phase 6a-drive — the
+`absorbed-product-seed-shape-seam` pattern):** the `DriveReader`
+projection grew to absorb the social-wiring chatbot's full field set
+(`parents` / `owners` / `icon_link` / `is_folder` / `raw`; `file_id`
+alias; `modified_at: datetime` derived property; `DriveFileContent.text`
+with lazy PDF extraction via the `media` seam) — all ADDITIVE, no
+break to the existing youtube-crawler download consumer. A
+`SyncDriveReader` sync facade lets sync FastAPI handlers avoid
+`asyncio.to_thread(adapter.search, ...)` boilerplate (async-native
+consumers continue `await adapter.search(...)` directly):
+
+    sync = make_sync_drive_reader(oauth_credentials=creds)
+    hit = sync.search("cronograma").hits[0]    # no await, no to_thread
 """
 
 from noctusai_lib.integrations.google_drive.content_stats import (
@@ -58,10 +73,22 @@ from noctusai_lib.integrations.google_drive.mappers import parse_drive_url
 from noctusai_lib.integrations.google_drive.protocol import DriveDownloader
 from noctusai_lib.integrations.google_drive.reader_factory import make_drive_reader
 from noctusai_lib.integrations.google_drive.reader_types import (
+    FOLDER_MIME,
+    RENDERED_AS_BINARY,
+    RENDERED_AS_CANONICAL,
+    RENDERED_AS_CSV,
+    RENDERED_AS_PASSTHROUGH,
+    RENDERED_AS_PDF_TEXT,
+    RENDERED_AS_TEXT,
     DriveFileContent,
     DriveReader,
     DriveSearchHit,
     DriveSearchResult,
+    translate_rendered_as,
+)
+from noctusai_lib.integrations.google_drive.sync_facade import (
+    SyncDriveReader,
+    make_sync_drive_reader,
 )
 from noctusai_lib.integrations.google_drive.types import DriveFile
 
@@ -72,7 +99,7 @@ __all__ = [
     "FakeDriveDownloader",
     "make_drive_downloader",
     "parse_drive_url",
-    # Read/inspection surface (added 2026-05-16).
+    # Read/inspection surface (added 2026-05-16; enriched 2026-05-19).
     "DriveReader",
     "DriveSearchHit",
     "DriveSearchResult",
@@ -80,4 +107,16 @@ __all__ = [
     "FakeDriveReader",
     "make_drive_reader",
     "compute_content_stats",
+    # Vocabulary constants + translation (Phase 6a-drive 2026-05-19).
+    "FOLDER_MIME",
+    "RENDERED_AS_CSV",
+    "RENDERED_AS_TEXT",
+    "RENDERED_AS_PASSTHROUGH",
+    "RENDERED_AS_BINARY",
+    "RENDERED_AS_PDF_TEXT",
+    "RENDERED_AS_CANONICAL",
+    "translate_rendered_as",
+    # Sync facade (Phase 6a-drive 2026-05-19).
+    "SyncDriveReader",
+    "make_sync_drive_reader",
 ]

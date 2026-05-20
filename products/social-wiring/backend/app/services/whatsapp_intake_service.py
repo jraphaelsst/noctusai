@@ -120,28 +120,37 @@ _FILE_REGISTRY_TTL_SECONDS = 4 * 60 * 60  # 4 hours — generous for slow upload
 def _compute_content_stats(text: str, rendered_as: str) -> dict[str, Any]:
     """Deterministic aggregates the LLM can quote without counting.
 
-    LLMs misjudge totals over long structured payloads; precompute
-    line/char/code counts here and the model just relays them.
+    Composes the seed ``noctusai_lib.integrations.google_drive.compute_content_stats``
+    (generic line/char/CSV-shape counts, single-sourced) + appends the
+    real-estate-specific ONE-code regex extraction (the user's
+    domain — stays per-product per the seed module's own note that
+    "the real-estate-specific 'ONE-code' regex stays a per-product
+    concern").
+
+    `rendered_as` accepts BOTH seed-canonical (``"text/csv"`` /
+    ``"text/plain"``) and the absorbed product's legacy shorthand
+    (``"csv"`` / ``"text"``) — translated via
+    :func:`translate_rendered_as` so existing tool-description prose
+    that says ``"csv"`` keeps working alongside the seed-canonical
+    surface.
     """
-    if not text:
-        return {
-            "total_chars": 0,
-            "total_lines": 0,
-        }
-    lines = text.splitlines()
-    total_lines = len(lines)
-    # Skip blank lines for the "non-empty" count.
-    non_empty = sum(1 for ln in lines if ln.strip())
-
-    base: dict[str, Any] = {
-        "total_chars": len(text),
-        "total_lines": total_lines,
-        "non_empty_lines": non_empty,
-    }
-
-    # Real-estate-specific: count ONE codes (the user's domain).
     import re
 
+    from noctusai_lib.integrations.google_drive import (
+        compute_content_stats as _seed_compute_content_stats,
+        translate_rendered_as,
+    )
+
+    if not text:
+        return {"total_chars": 0, "total_lines": 0}
+
+    # Translate to canonical so the seed helper's CSV branch matches
+    # regardless of which vocabulary the caller passes.
+    canonical = translate_rendered_as(rendered_as, to="canonical")
+    base = dict(_seed_compute_content_stats(text, rendered_as=canonical))
+
+    # Real-estate-specific: count ONE codes (the user's domain — kept
+    # per-product per the seed `content_stats.py` docstring).
     code_pattern = re.compile(r"\bONE\d{3,6}\b")
     matches = code_pattern.findall(text)
     if matches:
@@ -150,14 +159,6 @@ def _compute_content_stats(text: str, rendered_as: str) -> dict[str, Any]:
         base["unique_one_codes"] = len(unique)
         base["one_codes_sample"] = unique[:20]
 
-    if rendered_as == "csv":
-        # Treat first non-empty line as header; data rows = total - 1.
-        header_line = lines[0] if lines else ""
-        base["csv_header"] = header_line
-        # crude column count
-        base["csv_column_count"] = max(1, header_line.count(",") + 1) if header_line else 0
-        # CSV data rows = non-empty lines minus header
-        base["csv_data_rows"] = max(0, non_empty - 1) if header_line else non_empty
     return base
 
 
@@ -1402,7 +1403,7 @@ class WhatsAppIntakeService:
         matches with metadata the chatbot can show inline."""
         from app.services.credential_vault import (
             CredentialStore, EncryptionNotConfigured, build_credential_store)
-        from app.services.drive_api import GoogleDriveOAuthAdapter, get_drive_adapter
+        from app.services.drive_api import get_drive_adapter, is_oauth_backed
 
         if not query:
             return {"ok": False, "error": "missing_query"}
@@ -1413,9 +1414,11 @@ class WhatsAppIntakeService:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
         try:
-            result = await asyncio.to_thread(
-                adapter.search,
-                query=query,
+            # Seed `DriveReader` Protocol is async-native; call directly
+            # (the sync facade still works but `await` from this `async
+            # def` consumer skips the worker-thread hop).
+            result = await adapter.reader.search(
+                query,
                 mime_type=mime_type,
                 folder_id=folder_id,
                 page_size=page_size,
@@ -1428,7 +1431,7 @@ class WhatsAppIntakeService:
             "ok": True,
             "count": len(result.files),
             "query": query,
-            "adapter": type(adapter).__name__,
+            "adapter": type(adapter.reader).__name__,
             "files": [
                 {
                     "file_id": f.file_id,
@@ -1444,7 +1447,7 @@ class WhatsAppIntakeService:
             ],
             "scope_note": (
                 "OAuth adapter — busca o Drive inteiro do usuario consentido."
-                if isinstance(adapter, GoogleDriveOAuthAdapter)
+                if is_oauth_backed(adapter)
                 else (
                     "Service-account adapter — so encontra arquivos "
                     "explicitamente compartilhados com a conta de servico."
@@ -1456,7 +1459,7 @@ class WhatsAppIntakeService:
         """List the most recently modified files."""
         from app.services.credential_vault import (
             CredentialStore, EncryptionNotConfigured, build_credential_store)
-        from app.services.drive_api import GoogleDriveOAuthAdapter, get_drive_adapter
+        from app.services.drive_api import get_drive_adapter, is_oauth_backed
 
         store: CredentialStore | None
         try:
@@ -1465,14 +1468,14 @@ class WhatsAppIntakeService:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
         try:
-            result = await asyncio.to_thread(adapter.list_recent, page_size=page_size)
+            result = await adapter.reader.list_recent(page_size=page_size)
         except Exception as exc:
             logger.exception("drive list_recent failed")
             return {"ok": False, "error": "drive_api_error", "detail": str(exc)[:300]}
         return {
             "ok": True,
             "count": len(result.files),
-            "adapter": type(adapter).__name__,
+            "adapter": type(adapter.reader).__name__,
             "files": [
                 {
                     "file_id": f.file_id,
@@ -1488,7 +1491,7 @@ class WhatsAppIntakeService:
             ],
             "scope_note": (
                 "OAuth adapter — Drive inteiro."
-                if isinstance(adapter, GoogleDriveOAuthAdapter)
+                if is_oauth_backed(adapter)
                 else "Service-account adapter — apenas itens compartilhados."
             ),
         }
@@ -1524,6 +1527,7 @@ class WhatsAppIntakeService:
         from app.services.credential_vault import (
             CredentialStore, EncryptionNotConfigured, build_credential_store)
         from app.services.drive_api import get_drive_adapter
+        from noctusai_lib.integrations.google_drive import translate_rendered_as
 
         if not file_id:
             return {"ok": False, "error": "missing_file_id"}
@@ -1534,13 +1538,14 @@ class WhatsAppIntakeService:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
         try:
-            content = await asyncio.to_thread(adapter.read_content, file_id)
+            content = await adapter.reader.read_file(file_id)
         except Exception as exc:
             logger.exception("drive read_content failed in query_drive_sheet")
             return {"ok": False, "error": "drive_api_error", "detail": str(exc)[:300]}
         if content is None:
             return {"ok": False, "error": "not_found", "file_id": file_id}
-        if content.rendered_as not in {"csv", "text"}:
+        # Accept both seed-canonical and legacy rendered_as shorthand.
+        if translate_rendered_as(content.rendered_as, to="legacy") not in {"csv", "text"}:
             return {
                 "ok": False,
                 "error": "not_a_sheet",
@@ -1617,6 +1622,7 @@ class WhatsAppIntakeService:
         from app.services.credential_vault import (
             CredentialStore, EncryptionNotConfigured, build_credential_store)
         from app.services.drive_api import get_drive_adapter
+        from noctusai_lib.integrations.google_drive import translate_rendered_as
 
         if not file_id:
             return {"ok": False, "error": "missing_file_id"}
@@ -1627,9 +1633,7 @@ class WhatsAppIntakeService:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
         try:
-            content = await asyncio.to_thread(
-                adapter.read_content, file_id, max_bytes=max_bytes
-            )
+            content = await adapter.reader.read_file(file_id, max_bytes=max_bytes)
         except Exception as exc:
             logger.exception("drive read_content failed")
             return {"ok": False, "error": "drive_api_error", "detail": str(exc)[:300]}
@@ -1642,12 +1646,19 @@ class WhatsAppIntakeService:
         # verbatim and call them facts.
         stats = _compute_content_stats(content.text, content.rendered_as)
 
+        # Surface `rendered_as` in the LEGACY vocabulary (`csv` / `text`
+        # / `pdf-text` / `binary`) so the chatbot tool descriptions
+        # (which the LLM was prompted with) match the value it sees.
+        legacy_rendered_as = translate_rendered_as(
+            content.rendered_as, to="legacy"
+        )
+
         return {
             "ok": True,
             "file_id": content.file_id,
             "name": content.name,
             "mime_type": content.mime_type,
-            "rendered_as": content.rendered_as,
+            "rendered_as": legacy_rendered_as,
             "bytes_read": content.bytes_read,
             "is_truncated": content.is_truncated,
             "stats": stats,
@@ -1669,7 +1680,7 @@ class WhatsAppIntakeService:
             store = None
         adapter = get_drive_adapter(org_id=self._org_id, credential_store=store)
         try:
-            f = await asyncio.to_thread(adapter.get_file, file_id)
+            f = await adapter.reader.get_file(file_id)
         except Exception as exc:
             logger.exception("drive get_file failed")
             return {"ok": False, "error": "drive_api_error", "detail": str(exc)[:300]}

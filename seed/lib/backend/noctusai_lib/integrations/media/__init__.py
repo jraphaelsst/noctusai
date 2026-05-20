@@ -35,6 +35,10 @@ Heavy deps (PyMuPDF / pdfminer) + the `ffmpeg` binary are lazily
 imported/shelled, so the Fake path stays importable in slim environments.
 """
 from noctusai_lib.integrations.media.fake_adapter import FakeMediaResolver
+from noctusai_lib.integrations.media.pdf_text import (
+    extract_pdf_text,
+    pdf_text_tooling_available,
+)
 from noctusai_lib.integrations.media.types import (
     InboundMedia,
     MediaKind,
@@ -88,5 +92,7 @@ __all__ = [
     "MediaResolver",
     "FakeMediaResolver",
     "classify_media_kind",
+    "extract_pdf_text",
     "get_media_resolver",
+    "pdf_text_tooling_available",
 ]

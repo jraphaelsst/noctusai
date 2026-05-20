@@ -16,6 +16,7 @@ from noctusai_lib.integrations.credential_resolvers import (
     CALENDAR_PROVIDER,
     META_PROVIDER,
     CredentialStoreCalendarResolver,
+    CredentialStoreDriveResolver,
     CredentialStoreMetaResolver,
     make_token_persisting_callback,
 )
@@ -159,3 +160,83 @@ class TestTokenPersistingCallback:
             )
         )
         assert store.get("orgM", "meta") is not None
+
+
+class TestDriveResolver:
+    """Phase 6a-drive 2026-05-19: bridge from `CredentialStore` row
+    (the `CALENDAR_PROVIDER` row that bundles Drive scope) to a
+    `google.oauth2.credentials.Credentials` for the seed
+    `RealDriveReader`."""
+
+    def test_returns_credentials_with_drive_scope_appended(self):
+        store = FakeCredentialStore()
+        store.put(
+            "orgD",
+            CALENDAR_PROVIDER,
+            {"access_token": "AT", "refresh_token": "RT"},
+            metadata={
+                "scopes": [
+                    "https://www.googleapis.com/auth/calendar.events"
+                ]
+            },
+        )
+        r = CredentialStoreDriveResolver(
+            store, client_id="cid", client_secret="csec"
+        )
+        creds = r.get_credentials("orgD")
+        # `Credentials` is the google.oauth2 type; assert by attrs to
+        # stay shape-coupled, not type-coupled (the test must run in
+        # any env with `google-auth` installed — the seed deps do
+        # ship it).
+        assert creds is not None
+        assert creds.refresh_token == "RT"
+        assert creds.token == "AT"
+        assert "https://www.googleapis.com/auth/drive.readonly" in creds.scopes
+        # Calendar scope is preserved alongside Drive (dedup so a
+        # double-Drive-scope from re-running migrations doesn't bloat).
+        assert (
+            "https://www.googleapis.com/auth/calendar.events" in creds.scopes
+        )
+
+    def test_no_row_returns_none(self):
+        r = CredentialStoreDriveResolver(
+            FakeCredentialStore(), client_id="c", client_secret="s"
+        )
+        assert r.get_credentials("absent") is None
+
+    def test_no_tenant_returns_none(self):
+        r = CredentialStoreDriveResolver(
+            FakeCredentialStore(), client_id="c", client_secret="s"
+        )
+        assert r.get_credentials(None) is None
+
+    def test_missing_refresh_token_returns_none(self):
+        store = FakeCredentialStore()
+        store.put("o", CALENDAR_PROVIDER, {"access_token": "AT"})
+        r = CredentialStoreDriveResolver(
+            store, client_id="c", client_secret="s"
+        )
+        assert r.get_credentials("o") is None
+
+    def test_extra_scopes_override(self):
+        store = FakeCredentialStore()
+        store.put(
+            "org1",
+            CALENDAR_PROVIDER,
+            {"access_token": "AT", "refresh_token": "RT"},
+            metadata={"scopes": []},
+        )
+        r = CredentialStoreDriveResolver(
+            store,
+            client_id="c",
+            client_secret="s",
+            extra_scopes=("https://www.googleapis.com/auth/drive",),
+        )
+        creds = r.get_credentials("org1")
+        assert creds is not None
+        assert "https://www.googleapis.com/auth/drive" in creds.scopes
+        # Default drive.readonly NOT included when overridden.
+        assert (
+            "https://www.googleapis.com/auth/drive.readonly"
+            not in creds.scopes
+        )
