@@ -36,6 +36,50 @@ The `"http://localhost:8000"` default worked for **core only** (whose backend is
 
 ---
 
+## 2a · The 2026-05-20 second bit — vite factory PRODUCT_MAP + `|| 8000` fallback (N=3)
+
+Even after fixing `infra.tsx` + the 9 `runtime-watch` envs, social-wiring's container **still** served a bundle with `localhost:8000` baked into `VITE_BACKEND_API_URL`. The dashboard kept toasting `Servidor indisponivel (/api/notificacoes/contagem)` etc. Same symptom, deeper root.
+
+`seed/framework/frontend/vite.config.factory.ts`:
+
+```ts
+const PRODUCT_MAP: Record<number, { backend: number; schema: string }> = {
+  5173: { backend: 8000, schema: "public" },           // core
+  8080: { backend: 8001, schema: "erp" },              // erp-imobiliario
+  8090: { backend: 8002, schema: "personal-finance" }, // personal-finance
+  8095: { backend: 8003, schema: "therapy" },          // therapy-platform
+  8100: { backend: 8004, schema: "seed" },             // seed
+  8110: { backend: 8005, schema: "daily_life" },       // daily-life
+  8130: { backend: 8007, schema: "adconnect" },        // adconnect
+  // ⚠ MISSING: 8160 (social-wiring), W2.x ports, dev-team — when a
+  //   product's FE port isn't here, the fallback hits.
+};
+
+// WRONG — `|| 8000` is a consumer-#1 coincidence: 8000 is CORE's backend
+// port. Any non-mapped product falls through to core, then `define`
+// injects `JSON.stringify("http://localhost:8000")` into every literal
+// `import.meta.env.VITE_BACKEND_API_URL` in product+seed code → bundle
+// hardcodes core's port at every consumer.
+const resolvedBackendPort = backendPort || productInfo?.backend || 8000;
+```
+
+**Two compounding canonical-coincidence bugs**:
+1. **`PRODUCT_MAP` drift** — every new product needs an entry added; an unmapped product silently falls to core's port. Same shape as [[KB § PATTERNS/feedback_hardcoded_product_slug_set_keeper]].
+2. **`|| 8000` fallback** — even if `PRODUCT_MAP` were exhaustive, the seed fallback for an unknown port should NOT be a per-product literal at all. The architecturally-correct fallback is throw / typed-error (so adding a product without registering it is a loud build failure, not silent misroute).
+
+The bug stayed hidden because `VITE_SAME_ORIGIN=1` (when set) short-circuits the PRODUCT_MAP lookup entirely (`window.location.origin` injected raw). The `infra.tsx` fix worked for products that built with `VITE_SAME_ORIGIN=1`; products whose `runtime-watch` lost the env got the second bug.
+
+**Live remediation in this session** (in-flight, one container): rebuilt social-wiring's FE bundle inside the container with `VITE_SAME_ORIGIN=1` explicitly — bundle now contains 3× `window.location.origin` and zero `VITE_BACKEND_API_URL:"..."` literals. Dashboard works.
+
+**Structural remediation pending** (filed as follow-up project `vite-factory-product-map-canonical-fix`):
+- Add missing ports to `PRODUCT_MAP` (social-wiring 8160, W2.x batch, dev-team, etc.) — derive from `parse_products_registry()` per [[feedback_hardcoded_product_slug_set_keeper]] rather than literal map.
+- Replace `|| 8000` fallback with `throw new Error("FE port not in PRODUCT_MAP — register the product or pass backendPort explicitly")`.
+- Audit why some `runtime-watch` containers seemed to lose `VITE_SAME_ORIGIN=1` during the initial `npm run build` (entrypoint env propagation gap; possibly `npm run` strips it through one layer).
+
+→ This recurrence (third instance of seed-default-is-consumer-#1-coincidence) trips the §6 N=3 threshold below. Status flips: `[A]` accept → **`[F]` formalize**. The follow-up project files the keeper.
+
+---
+
 ## 3 · The canonical-default test (apply before writing any seed literal)
 
 Before adding `|| "X"` / `getenv(..., "X")` / `config.X if config else "X"` in seed code, ask:
@@ -47,6 +91,8 @@ Worked examples:
 | Seed seam | Wrong default (consumer-#1 coincidence) | Right default (canonical) |
 |---|---|---|
 | HTTP base URL in single-container model | `"http://localhost:8000"` (core's port) | `""` → same-origin / relative URL |
+| Vite factory fallback backend port for unmapped FE port | `\|\| 8000` (core's port) | `throw "register the product in PRODUCT_MAP"` — typed error |
+| Vite factory product registry | hand-maintained `PRODUCT_MAP` literal | derived from `parse_products_registry()` (single source) |
 | DB schema in multi-product schema-isolation | `"public"` | injected via product factory; no literal |
 | Auth provider | `SupabaseAuth()` | injected via named seam; no literal |
 | LLM model | `"gpt-4o-mini"` | product's configured model |
@@ -95,9 +141,12 @@ def check_seed_canonical_default(file):
                             "(consumer-#1 coincidence). Use same-origin '' instead.")
 ```
 
-**Current recurrence count: N=2** — this (`VITE_BACKEND_API_URL` 2026-05-20) + the [[KB § PATTERNS/pydantic-strict-http.md]] silent-drop sibling shape (loose hook + strict default).
+**Current recurrence count: N=3** —
+1. `infra.tsx` `|| "http://localhost:8000"` default (§2, 2026-05-20 morning)
+2. [[KB § PATTERNS/pydantic-strict-http.md]] silent-drop sibling shape (loose hook + strict default)
+3. `vite.config.factory.ts` PRODUCT_MAP + `|| 8000` fallback (§2a, 2026-05-20 evening — same day, deeper layer)
 
-**Status: [A] accept-with-rationale at the memory level** until N=3 triggers Stage-4 codification ([[KB § PATTERNS/methodology-codification-pipeline.md]]). Filed: `seed-canonical-defaults-keeper` (follow-up project on N=3 trigger).
+**Status: [F] formalize** (N=3 trigger fired). Stage-4 codification project filed: `seed-canonical-defaults-keeper` — keeper detector scans seed `*.ts` / `*.tsx` / `*.py` for `(\|\||??)\s*"http://localhost:\d+"` and `\|\|\s*\d{4,5}` (port literal in `or` fallback). Pre-commit warn; promote to block after a green pass across the seed tree.
 
 ---
 
