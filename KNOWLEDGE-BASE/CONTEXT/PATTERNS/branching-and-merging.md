@@ -1321,6 +1321,52 @@ The dispatched dependency team is itself a normal engineer dispatch (briefed, sc
 - **Combining concerns because dispatch is "expensive".** Token cost is not the constraint; quality is. The user has explicitly authorized higher token spend in exchange for higher quality.
 - **One mega-engineer for the whole project.** Defeats the purpose of orchestration — at that point the orchestrator IS the engineer, with no parallelism leverage.
 
+### 18.2.1 — Inline cutoff: where split-by-default stops paying (NEW 2026-05-20)
+
+**The orthogonal rule.** §18.2's "split rather than combine" assumes the work is **large enough to amortize a subagent's contextualization tax**. Below a threshold, the tax dominates the work — and that threshold has now been measured.
+
+**Measured engineer-default contextualization cost (per spawn):**
+- `CLAUDE.md` auto-load (the router file): ~30k tokens
+- `.claude/agents/engineer-default.md` (the protocol doc engineers inherit): ~5–10k tokens
+- The brief text the architect writes: ~1–2k tokens
+- Task-specific reads (PROJECT.md + the source files the engineer must touch): ~5–15k tokens
+
+**≈ 45–60k tokens before any productive work happens, × N parallel engineers** = a real economic event for small tasks. The methodology's "token cost is acceptable" bet (§18.2) was made about *200-LoC focused briefs*; it does NOT extend to 20-LoC trivial fixes where the tax is 5–10× the work.
+
+**The cutoff (evidence-based estimate, per [[KB § 01-PHILOSOPHY § Estimate off evidence]]):**
+
+| Task shape | Where it lands |
+|---|---|
+| <100 LoC ∧ <3 files ∧ single-phase reasoning | **Inline** — architect does it directly with `Edit`/`Read`/`Bash`, no `Agent` dispatch. |
+| ≥100 LoC ∨ ≥3 files ∨ multi-phase (design + apply + test) | **Dispatch** — engineer-default subagent, §18.2 bet holds. |
+| 2+ small file-disjoint tasks (each under the cutoff) | **Compound brief** — ONE engineer, multiple deliverables in the same brief ("Engineer X — three small fixes: A in file_1, B in file_2, C in file_3"). One contextualization, N deliverables. |
+
+**How to estimate at dispatch time.** *Open the files the change would touch before deciding* (per [[KB § 01-PHILOSOPHY § Estimate off evidence]] — same rule that governs A/B/C session-size estimation; the only new piece is applying it at *dispatch sizing*).
+
+**Decision pseudocode:**
+```
+for each candidate dispatch chunk:
+    LoC = estimate(open files actually touched)
+    files = count(distinct files in scope)
+    phases = count(design ∨ apply ∨ test as distinct mental modes)
+
+    if LoC < 100 AND files < 3 AND phases == 1:
+        → inline (architect does it)
+    elif there exist 2+ other chunks under cutoff AND scope is file-disjoint:
+        → compound brief (one engineer, multiple chunks)
+    else:
+        → dispatch (§18.2 standard)
+```
+
+**Slip shape (the 2026-05-20 wave that surfaced this).** Four engineers dispatched in parallel for follow-ups; A (seed llm_router fix — 1-2 files, ~20 LoC + 1 test) and B (4 conftests byte-identical mirror — ~40 LoC total) were both *under* the cutoff. Combined contextualization tax on A+B alone (~100–120k tokens) exceeded what either's actual work needed. The "split-by-default" reflex bypassed the evidence-based estimate. C and D in the same wave were correctly dispatched (each ≥500 LoC + multi-phase). **The fix is not "stop splitting"; the fix is "estimate at dispatch time."**
+
+**Anti-patterns specific to this cutoff:**
+- **Reflex-parallelizing the smalls because the bigs are parallel.** A wave with 2 large + 2 tiny tasks ≠ 4 parallel engineers. It's 2 parallel engineers + the architect doing the smalls inline.
+- **Compounding incompatible-scope smalls into one brief.** The compound-mode escape valve only fires when scopes are file-disjoint AND the briefs are mechanically similar (mirrors of one fix, multiple byte-identical edits). Mixing concerns into one brief reintroduces the §18.2 "broad brief" failure mode.
+- **Inflating a small task to clear the cutoff.** If the task is genuinely small, don't pad it with bystander cleanup just to justify a dispatch. Use the architect's bystander-fix discipline ([[KB § 01-PHILOSOPHY § Fix-on-contact for pre-existing debt]]) inline instead.
+
+**Methodology codification:** memory [[feedback_dispatch_cutoff_inline_threshold]] + this pattern doc + CLAUDE.md §1 branching-first bullet pointer; Stage-3 (judgment-dependent — the threshold is calibrated, not deterministic; a Stage-4 detector would need accurate task-size estimation which is fundamentally the architect's call). If the slip recurs at N≥3, candidate for a softer pre-dispatch advisory (e.g., a `dispatch_preflight` MCP-tool warning when fewer than ~100 LoC are touched per chunk).
+
 ### 18.3 — Wave-based execution: group by dependency depth, gate Wave N+1 on Wave N merge
 
 **The shape.** The orchestrator decomposes the work into a **dependency-depth-ordered DAG**:
