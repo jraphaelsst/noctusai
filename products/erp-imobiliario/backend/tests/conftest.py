@@ -45,9 +45,19 @@ Once reconciled, flip this to `validate_schema=True, schema="erp"`.
 """
 import sys
 from pathlib import Path
-_LIB = Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
-if str(_LIB) not in sys.path:
-    sys.path.insert(0, str(_LIB))
+_REPO = Path(__file__).resolve().parents[4]
+_LIB = _REPO / "seed" / "lib" / "backend"
+_FRAMEWORK = _REPO / "seed" / "framework" / "backend"
+# Inject BOTH seed package roots: the purge helper drops sibling-worktree
+# editable finders (correct behaviour), but the conftest must ALSO ensure
+# THIS worktree's own seed source trees are importable via sys.path —
+# otherwise `import noctusai_seed` fails with no fallback after the purge.
+# The post-axis-swap (2026-05-16) helper already handles each package
+# against its own legitimate in-repo root; sys.path is the consumer-side
+# half of the same contract.
+for _p in (_LIB, _FRAMEWORK):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 import importlib.util as _ilu  # noqa: E402
 _spec = _ilu.spec_from_file_location(
     "_bootstrap_conftest_helpers",

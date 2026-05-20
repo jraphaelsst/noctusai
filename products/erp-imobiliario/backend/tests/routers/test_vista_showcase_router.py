@@ -99,6 +99,59 @@ class TestAdminGating:
         resp = admin_client.get("/api/vista-showcase/tabs")
         assert resp.status_code == 200
 
+    # ------------------------------------------------------------------
+    # SSO short-circuit gap tests (Phase 7 vista_showcase audit)
+    # ------------------------------------------------------------------
+    # `resolve_sso_role(user)` (seed `noctusai_lib.api.auth:118`) has TWO
+    # short-circuit paths to `"platform_admin"`:
+    #
+    #   Path 1: `user_metadata.org_role in ("owner", "admin")`
+    #   Path 2: `user_metadata.noctus_role == "admin"`
+    #
+    # Phase 0 audit + Phase 3 wiring (PROJECT.md Q-B / Q-F): the bespoke
+    # `require_admin` body was retired in favor of the seed
+    # `make_require_role(get_current_user, get_erp_user_role)` composition.
+    # `get_erp_user_role` (`app/dependencies.py:99`) calls `resolve_sso_role`
+    # FIRST so the SSO short-circuit composes with the role gate.
+    #
+    # Existing `test_platform_admin_allowed` exercises Path 2 only. The
+    # following two tests close the Path 1 gap (org_role=owner / admin)
+    # + pin the negative case (no SSO + no erp_role → 403). Without these,
+    # a regression that disabled `resolve_sso_role`'s Path 1 would land
+    # silently — admin owners coming via Core SSO would lose vista
+    # access without any test catching it.
+
+    def test_sso_org_role_owner_allowed(self, client, monkeypatch):
+        """SSO Path 1a: `org_role == "owner"` → short-circuit to
+        `platform_admin` → `require_role(*ALLOWED_ADMIN_ROLES)` passes."""
+        _set_vista_settings(monkeypatch)
+        user = client._mock_supabase.auth.get_user.return_value.user
+        # Only org_role set — NO erp_role/noctus_role. Tests Path 1 in
+        # isolation from Path 2.
+        user.user_metadata = {"org_role": "owner"}
+        resp = client.get("/api/vista-showcase/tabs")
+        assert resp.status_code == 200
+
+    def test_sso_org_role_admin_allowed(self, client, monkeypatch):
+        """SSO Path 1b: `org_role == "admin"` → short-circuit to
+        `platform_admin` → admin gate passes (org-tier admin, not a
+        NoctusAI platform admin)."""
+        _set_vista_settings(monkeypatch)
+        user = client._mock_supabase.auth.get_user.return_value.user
+        user.user_metadata = {"org_role": "admin"}
+        resp = client.get("/api/vista-showcase/tabs")
+        assert resp.status_code == 200
+
+    def test_no_role_metadata_blocked(self, client, monkeypatch):
+        """Negative pin: a user with NO `org_role`, NO `noctus_role`,
+        NO `erp_role` is rejected with 403. `get_erp_user_role` returns
+        the `"user"` sentinel which is not in `ALLOWED_ADMIN_ROLES`."""
+        _set_vista_settings(monkeypatch)
+        user = client._mock_supabase.auth.get_user.return_value.user
+        user.user_metadata = {}  # explicit empty — no SSO, no ERP role
+        resp = client.get("/api/vista-showcase/tabs")
+        assert resp.status_code == 403
+
 
 # ---------------------------------------------------------------------------
 # Tabs catalog
