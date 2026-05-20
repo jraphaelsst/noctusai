@@ -81,7 +81,23 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       throw new Error(`[${response.status}] ${message}`);
     }
     if (response.status === 204) return null as T;
-    return response.json();
+    // 200 OK with non-JSON body is the classic SPA-fallback-eats-API shape
+    // (proxy mis-route, container drift, FE/BE version skew). The seed
+    // _SPAStaticFiles carve-out (`/api/*` returns real 404) cures the
+    // primary cause, but proxy edges still produce this — turn the raw
+    // JS engine SyntaxError ("Unexpected token '<', '<!doctype ...' is
+    // not valid JSON") into a typed error that names what's actually wrong.
+    try {
+      return await response.json();
+    } catch (err) {
+      const path = new URL(response.url).pathname;
+      const ct = response.headers.get('content-type') || 'unknown';
+      throw new Error(
+        `[${response.status}] Resposta nao-JSON em ${path} ` +
+        `(content-type=${ct}). Provavel: deploy desatualizado ou ` +
+        `descompasso FE/BE — verifique se a rota existe na imagem ativa.`,
+      );
+    }
   }
 
   async function safeFetch(url: string, init: RequestInit): Promise<Response> {

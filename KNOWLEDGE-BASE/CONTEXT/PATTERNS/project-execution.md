@@ -650,6 +650,35 @@ User directives, verbatim:
 
 ---
 
+## 2.14 Baseline-recovery briefs embed env-fingerprint at surfacing time (2026-05-20)
+
+**Rule.** A *-recovery / baseline-drain / "N pre-existing failures" brief MUST embed the surfacing-engineer's env-fingerprint at the moment of the baseline observation. The fingerprint pins **interpreter path + ≥4 watchlist packages**: `python --version`, `pip show {starlette, fastapi, supabase, pydantic, noctusai-lib}` (Editable Location row included). A downstream engineer reads the fingerprint FIRST and aborts P0-classification if their env differs — recovery briefs are about counting + classifying real failures, and **the failure-count is meaningless across env-drift boundaries**.
+
+**The discriminator.** *"Could a 1-line env-drift between baseline-observation and re-observation explain N of these failures?"* — yes for every recovery brief by construction; embed the fingerprint and the next engineer can decide before burning P0 time.
+
+**Why.** Engineer E (2026-05-20, `agent-a406e9d56a43de586`) ran against the test-baseline-recovery brief filed for "31 pre-existing failures" surfaced by Engineer D. The shared `/opt/homebrew/lib/python3.11/site-packages` had a stale editable `noctusai-lib` pointing at a long-dead worktree, and `starlette==1.0.0` resolved into the venv before the seed cap (`<0.39.0`) landed. Result: the same suite produced **986 router-init TypeErrors** — every test that constructed an APIRouter at module load failed identically, masking the actual 31 product failures. E correctly surfaced + refused to expand scope; the diagnosis took ~10 min, but the dispatch itself paid the full engineer contextualization tax (~45-60k tokens — `KB § PATTERNS/branching-and-merging.md § 18.2.1`) on what was structurally an env-drift incident, not a recovery one.
+
+**How to apply (authoring a recovery brief).**
+
+```markdown
+## Baseline env-fingerprint (observed at <slug> filing)
+
+- Interpreter: /Users/.../venv/bin/python (Python 3.11.6)
+- starlette==0.38.6  / fastapi==0.115.2  / supabase==2.9.1  / pydantic==2.13.4
+- noctusai-lib editable @ /Users/.../seed/lib/backend  (commit <sha>)
+
+**Pre-flight required before P0:** if your `pip show <pkg>` differs from any
+of the above, STOP and surface — the failure-count below is env-bound.
+```
+
+**Structural cure (Stage-4).** `noctus.dev.dispatch_preflight` detects env-pin drift against `seed/lib/backend/pyproject.toml` on the active interpreter (K-1 — added 2026-05-20). Running preflight before a recovery dispatch surfaces the drift before the engineer pays contextualization. **Best-practice:** always include `noctus.dev.dispatch_preflight(target_paths=[...], project_slug="<slug>", check_env_pins=True)` in the dispatch checklist for recovery briefs.
+
+**Anti-patterns.** Filing "N failures across ~M files" without the env fingerprint. Re-running the recovery brief without re-verifying baseline against the embedded fingerprint. Treating cluster counts in a recovery brief as ground truth when the env has shifted since filing.
+
+**Three-way-synced 2026-05-20**: this §2.14 + memory `feedback_recovery_brief_env_fingerprint.md` + MEMORY.md line. Companion: `KB § PATTERNS/methodology-codification-pipeline.md` (s2-s4 codification of the env-drift class), `noctus.dev.dispatch_preflight` (the deterministic predicate that backs the rule). Sibling rule for the doc-side dispatch slip: K-3 is structurally cured by the same preflight tool's `project_slug` argument (`projects/<slug>/PROJECT.md` auto-include).
+
+---
+
 ## 3. Phase-by-phase cadence
 
 Default cadence: **execute exactly one phase, then stop.** Wait for the user to say "continue" / "next phase" / "do phase N" before advancing.

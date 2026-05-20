@@ -344,6 +344,15 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
       e.g. ``/assets/app-abc123.js``) → real 404. Returning ``index.html``
       for a missing ``.js`` would hand the browser HTML with a JS MIME type
       and produce a confusing parse error instead of a clean 404.
+    - An unknown ``/api/...`` or ``/_<ops>`` path → real 404, NEVER
+      ``index.html``. Without this carve-out a stale FE bundle calling a
+      route the deployed backend doesn't have triggers the SPA fallback
+      (200 + HTML), which the shared API client tries to ``response.json()``
+      and explodes with ``SyntaxError: Unexpected token '<', "<!doctype "...``.
+      Identified 2026-05-20 — an FE shipped a new ``GET /api/profiles/me/roles``
+      hook that hit a stale image and broke every Dashboard query.
+      (Registered ops routes like ``/_health`` already win via route order;
+      the prefix guard also covers the case where ops routes are missing.)
 
     Fail-soft: a misconfigured ``serve_spa`` (no ``index.html``) logs a
     WARNING and leaves the API mounted — no crash, no silent pass.
@@ -366,10 +375,8 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
             try:
                 return await super().get_response(path, scope)
             except StarletteHTTPException as exc:
-                # Only rescue genuine "no such path" 404s, and only when the
-                # request is for a client route (no file extension). Real
-                # missing assets keep their 404.
-                if exc.status_code == 404 and not PurePosixPath(path).suffix:
+                is_api_or_ops = path.startswith("api/") or path.startswith("_")
+                if exc.status_code == 404 and not PurePosixPath(path).suffix and not is_api_or_ops:
                     return FileResponse(index_file)
                 raise
 

@@ -115,6 +115,43 @@ def test_missing_asset_is_real_404_not_index(settings, spa_dir):
     assert "SPA-ROOT" not in r.text
 
 
+def test_unknown_api_path_is_real_404_not_index(settings, spa_dir):
+    """Unknown ``/api/...`` path → real 404, NEVER ``index.html``.
+
+    Regression guard for the 2026-05-20 incident: a stale FE bundle calling
+    ``GET /api/profiles/me/roles`` against a deployed image that didn't have
+    the route landed in the SPA fallback. The 200 + HTML response made
+    every shared-api-client ``response.json()`` throw ``SyntaxError:
+    Unexpected token '<', "<!doctype "...`` and tripped the global
+    QueryCache.onError toast ``Erro ao carregar dados`` on every Dashboard
+    query. The fix in ``_mount_spa`` carves ``/api/...`` (and ``/_*`` ops
+    surfaces) out of the extension-less SPA fallback so unknown API paths
+    always 404.
+    """
+    client = TestClient(_app(settings, serve_spa=str(spa_dir)))
+    r = client.get("/api/this-route-does-not-exist")
+    assert r.status_code == 404
+    assert "SPA-ROOT" not in r.text
+    # Nested unknown api path too
+    r = client.get("/api/profiles/me/roles")
+    assert r.status_code == 404
+    assert "SPA-ROOT" not in r.text
+
+
+def test_unknown_ops_path_is_real_404_not_index(settings, spa_dir):
+    """Unknown ``/_<ops>`` path → real 404, NEVER ``index.html``.
+
+    Registered ops endpoints like ``/_health`` already win via route order
+    (covered by ``test_api_route_wins_over_spa_mount``). This guards the
+    *missing* ops case — e.g. probing ``/_metrics`` against a product that
+    doesn't ship it must not return HTML.
+    """
+    client = TestClient(_app(settings, serve_spa=str(spa_dir)))
+    r = client.get("/_does-not-exist")
+    assert r.status_code == 404
+    assert "SPA-ROOT" not in r.text
+
+
 def test_api_route_wins_over_spa_mount(settings, spa_dir):
     """`/_health` is registered before the `/` mount → API still answers."""
     client = TestClient(_app(settings, serve_spa=str(spa_dir)))
