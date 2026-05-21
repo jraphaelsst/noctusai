@@ -808,6 +808,92 @@ stays admin-only until proper consent gating lands.
 
 ---
 
+## 6a. High-level adapter layer + real-estate domain (consume side)
+
+> Added 2026-05-20 by `products/social-wiring/projects/social-wiring-vista-seed-lift/`. Composes on top of §5's low-level `VistaClient` to ship a thin product-facing surface the YouTube upload pipeline (and any future real-estate-shaped consumer) uses without re-implementing the Vista REST handshake.
+
+### Adapter surface — `noctusai_lib.integrations.vista`
+
+```python
+from noctusai_lib.integrations.vista import (
+    VistaCRMAdapter,        # Protocol — async get_property(code) -> PropertyData | None
+    FakeVistaAdapter,       # in-memory; dev/test default
+    VistaRESTAdapter,       # Real; wraps the Vista REST `/imoveis/detalhes` endpoint
+    get_vista_adapter,      # factory: base_url/api_key/fake → adapter
+    VistaError,             # transport / auth / 5xx
+    VistaNotConfigured,     # aliased to VistaConfigError from §5 client.py
+    PropertyData,           # re-exported from domain.real_estate for ergonomics
+)
+```
+
+Factory contract:
+
+```python
+get_vista_adapter(
+    *,
+    base_url: str | None,
+    api_key:  str | None,
+    fake:     bool = False,
+) -> VistaCRMAdapter
+```
+
+- `fake=True` → `FakeVistaAdapter` (constructor takes `dict[code, PropertyData]`).
+- `base_url+api_key both set + fake=False` → `VistaRESTAdapter`.
+- `base_url or api_key empty + fake=False` → raises `VistaNotConfigured`.
+
+### Domain surface — `noctusai_lib.domain.real_estate`
+
+Pure logic; no IO. The YT metadata shape is real-estate-specific (could come from any CRM, not just Vista) — sits in `domain/`, not `integrations/`.
+
+```python
+from noctusai_lib.domain.real_estate import (
+    PropertyData,              # @dataclass(frozen=True) — title/address/price/bedrooms/area_sqm/description/…
+    build_youtube_metadata,    # (prop, code) → {title, description, tags}
+    validate_product_code,     # (code) -> bool — ONE\d+ pattern check
+)
+```
+
+`build_youtube_metadata` output shape:
+
+- `title`: `f"{product_code} — {prop.title}"[:100]` (YT title cap honored)
+- `description`: multi-line with 📍/💰/🛏️/📐 emoji block + full property description, capped at 5000 chars
+- `tags`: `[product_code, address, "imóvel", "real estate", "imobiliária"]`
+
+### Consume recipe (social-wiring is the first consumer)
+
+```python
+# whatsapp_intake_service.py / routers/upload.py / any consumer
+from noctusai_lib.integrations.vista import (
+    VistaRESTAdapter as CRMService,           # alias keeps caller-side naming stable
+    VistaError as CRMServiceError,
+    VistaNotConfigured as CRMNotConfigured,
+)
+from noctusai_lib.domain.real_estate import (
+    PropertyData,
+    build_youtube_metadata,
+    validate_product_code,
+)
+
+# Construct + call:
+crm = CRMService(base_url=settings.crm_base_url, api_key=settings.crm_api_key)
+prop = await crm.get_property("ONE10010")
+if prop is not None:
+    metadata = build_youtube_metadata(prop, "ONE10010")
+    # → metadata["title"], metadata["description"], metadata["tags"]
+```
+
+### Composition vs §5 low-level client
+
+The new adapter and §5's `VistaClient` co-exist. The adapter is consumer-facing; the client is endpoint-level. Today the adapter re-implements the `/imoveis/detalhes` HTTP call (byte-for-byte port of the original `products/social-wiring/.../crm_service.py`). **Triage:** [R] refactor — at N=2 (next consumer joins) the adapter should compose `VistaClient.detalhes_imovel(...)` + `vista_imovel_detalhes_to_showcase` + a small showcase→PropertyData mapper, eliminating the duplicated httpx code path. Tracked as a follow-up; not blocking.
+
+### What's deliberately NOT here
+
+- **MCP exposure** — §7 covers the future MCP server design; this adapter is library-only.
+- **Per-tenant calibration** — §6 is the pre-existing gap; the adapter inherits the same constants.
+- **Other CRMs / a `RealEstateCRMAdapter` superclass** — N=1 (Vista only). If a second CRM appears, refactor at that point per the recurrence rule.
+
+---
+
 ## 7. Future MCP design notes
 
 When an in-repo MCP server is built (or the external-environment one
@@ -837,6 +923,19 @@ ships):
 ---
 
 ## 8. Change log
+
+### 2026-05-20 — High-level adapter layer + real-estate domain (vista-seed-lift)
+
+Lifted the social-wiring product-local `app/services/crm_service.py` into two seed modules:
+
+1. `noctusai_lib.integrations.vista` — added the adapter layer (`VistaCRMAdapter` Protocol + `FakeVistaAdapter` + `VistaRESTAdapter` + `get_vista_adapter` factory) alongside the pre-existing `VistaClient` low-level surface. See §6a for the consume recipe.
+2. `noctusai_lib.domain.real_estate` — new module ships `PropertyData` + `build_youtube_metadata` + `validate_product_code` (pure functions; the YT metadata shape is real-estate-specific, not Vista-specific).
+
+Product-local `crm_service.py` deleted (zero local copy). All callers consume from seed. Live-validated against ONE10010 (Casa em Alphaville).
+
+Follow-up filed: refactor `VistaRESTAdapter` to compose `VistaClient.detalhes_imovel(...)` at N=2 (DRY).
+
+### Older entries
 
 | Date | Change | By |
 |---|---|---|

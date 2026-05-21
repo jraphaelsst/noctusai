@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-20
 - **Last updated:** 2026-05-20
-- **Status:** Design locked → Wave 1 dispatch ready
+- **Status:** ✅ Wave 1-2 shipped. Seed `noctusai_lib.integrations.vista` adapter layer + `noctusai_lib.domain.real_estate` modules in place. Product-local `crm_service.py` deleted; all callers (chat_router, settings_router, whatsapp_router, whatsapp_intake_service, modules/youtube/routers/upload.py) consume from seed. Vista live-validated against ONE10010. Engineer surfaced pre-existing low-level `VistaClient` — deviation ratified (composes alongside, not replaces; the high-level adapter is the consumer-facing surface). Follow-up: refactor `VistaRESTAdapter` to compose `VistaClient` (DRY at N=2).
 - **Owner / stakeholders:** rapha · seed maintainers
 - **Related projects:** `projects/platform-auth-modernization/` (file-disjoint sibling — both land before youtube-drive-folder-fanout live test); `products/social-wiring/projects/youtube-drive-folder-fanout/`
 - **Project slug:** `social-wiring-vista-seed-lift`
@@ -186,3 +186,6 @@ from noctusai_lib.integrations.vista import (
 ## 11. Change Log
 
 - **2026-05-20** — Project filed. Two-module split designed (integrations/vista + domain/real_estate). Wave 1 dispatch ready.
+- **2026-05-20** — Wave 1 ✅ E-VISTA created the adapter layer (`VistaCRMAdapter` Protocol + `FakeVistaAdapter` + `VistaRESTAdapter` + `get_vista_adapter` factory + `noctusai_lib.domain.real_estate` w/ `PropertyData` + `build_youtube_metadata` + `validate_product_code`). 23 new tests; full seed-lib suite 1761/1761. Engineer surfaced the pre-existing `VistaClient` lower-level module — adapter composes alongside (preserves existing low-level surface).
+- **2026-05-20** — Wave 2 ✅ E-SW-VISTA migrated 4 caller files to seed imports (chat_router, settings_router, whatsapp_router, whatsapp_intake_service). Architect inline-handled the 5th caller (`modules/youtube/routers/upload.py`, file-disjoint hard rule) + deleted `products/social-wiring/backend/app/services/crm_service.py` (zero local copy now). 465/465 social-wiring backend green.
+- **2026-05-20** — Live validation: `await crm.get_property("ONE10010")` returns the real property (Casa em Alphaville, 6 quartos, 835m², R$ 7.200.000,00). `build_youtube_metadata` produces a 99-char YT title, emoji-rich description, and tag set including the product_code. Vista consume-from-seed proven end-to-end via Python REPL against the live Vista REST API.

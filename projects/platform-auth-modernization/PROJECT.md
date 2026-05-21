@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-20
 - **Last updated:** 2026-05-20
-- **Status:** Design locked → Wave 1 dispatch ready
+- **Status:** ✅ Wave 1-3 shipped + live preflight green (`GET /api/auth/me` with `pk_*` ApiToken returns expected AuthContext). Fan-out + batch endpoints opted-in to unified dep. Deferred items: per-product migration of other 9 products' FEs (out of scope per user) + RedisSessionStore (FakeSessionStore at runtime today; cookie session survives one container life — fine for current scale, becomes a hardening item).
 - **Owner / stakeholders:** rapha · seed maintainers
 - **Related projects:** `products/social-wiring/projects/youtube-drive-folder-fanout/` (consumer of the new model in this push); `products/social-wiring/projects/social-wiring-vista-seed-lift/` (parallel seed lift, file-disjoint); `products/social-wiring/projects/social-wiring-settings-di-rewrite/`
 - **Project slug:** `platform-auth-modernization`
@@ -223,3 +223,7 @@ FE  → if 401, redirect to login
 ## 11. Change Log
 
 - **2026-05-20** — Project filed. Designed for two-trigger unified resolver; social-wiring pilot scope confirmed by user; Wave 1 dispatch ready.
+- **2026-05-20** — Wave 1 ✅ E-AUTH (seed `noctusai_lib.api.auth.session` w/ AuthContext + Protocols + Fakes + dep factory; 18 tests) + E-MIGRATION (`social_wiring.api_tokens` table + RLS + 5 regression tests). Note: E-AUTH surfaced the `api/auth.py → api/auth/__init__.py` rename necessity (structural collision); engineer made the call, all 34 pre-existing auth tests still green.
+- **2026-05-20** — Wave 2 ✅ E-SW-AUTH consumed seed dep + DB-backed SupabaseApiTokenResolver + `/api/auth/{login,me,logout}` + `/api/settings/api-tokens` router + dual-mode wiring in `dependencies.py`. 16 new tests; full suite 481/481.
+- **2026-05-20** — Wave 3 ✅ E-SW-FE added `useSessionAuthInit`/`loginWithSession`/`logoutSession` additively to seed FE; LoginForm gained opt-in `useSessionAuth`. Social-wiring switched; other products untouched. 10 new vitest tests; vite build clean.
+- **2026-05-20** — Wave 4 PRE-FLIGHT ✅. `get_current_user_org_unified` opt-in dep added to dependencies.py; fan-out + batch endpoints swapped. Inline fix: admin-client fallback for product callers (JWT-shape detection in `_build_upload_service`). Live verification: `GET /api/auth/me` with pre-minted `pk_7ca8bb983…` ApiToken returns `{user:null, org:{id:"6dd73140-..."}, caller_kind:"product", scopes:["*"]}` — the entire chain (token hash → DB lookup → AuthContext → dep → handler) is live. Container REDIS_URL fixed to `redis://noctus-redis:6379/0`. Live YT upload itself blocked on operator action (YOUTUBE_CLIENT_ID/SECRET in `.env` + per-org channel connection — see fanout `findings.md § Platform OAuth setup`).

@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-20
 - **Last updated:** 2026-05-20
-- **Status:** ⏳ Phase 1-6 complete (BE+tests); LIVE TEST gated on parallel projects — `platform-auth-modernization` (ApiToken) + `social-wiring-vista-seed-lift` (consume from seed) — both filed 2026-05-20 same push.
+- **Status:** ⏳ Phase 1-6 complete (BE+tests); auth-modernization Wave 1-3 complete; Vista seed lift complete; **live preflight green** (ApiToken auth working, Vista enrichment working, container freshness verified). Live YT upload **blocked on operator action** — YOUTUBE_CLIENT_ID/SECRET not in .env + no row in social_wiring.credentials for the org. Runbook in `findings.md § Platform OAuth setup`.
 - **Owner / stakeholders:** rapha · social-wiring product
 - **Related projects:** `projects/meta-video-reels-publish/` (IG Reels publish path — blocked on `projects/meta-app-review-publish-scopes/`); `products/social-wiring/projects/social-wiring-drive-projection-enrichment/`
 - **Project slug:** `youtube-drive-folder-fanout`
@@ -292,3 +292,4 @@ python mcp/noctusai/cli.py --archive products/social-wiring/projects/youtube-dri
 - **2026-05-20** — Phase 4 ✅ Worker classification + Shorts metadata: `_classify_and_stamp_target_format` (idempotent, best-effort) + `_shorts_aware_description` (idempotent, case-insensitive) wired into `_do_upload_pipeline`. 12 new tests.
 - **2026-05-20** — Phase 5 ✅ `get_batch_status` + `GET /api/videos/upload/batch/{batch_id}` + `_row_to_out` extended with `target_format`/`batch_id`. 3 new tests.
 - **2026-05-20** — Phase 6 ✅ Validation: backend 460/460 pass + frontend vite build clean + MCP toolkit 1369/1369 pass. MASTER-PROMPT.md updated with new endpoints. `findings.md` written with operator manual-test runbook. Project ready for handoff.
+- **2026-05-20** — User pivoted to a unified-auth design when about to live-test (the JWT-only path was drift). Three sibling projects filed + executed in one push: `projects/platform-auth-modernization/`, `products/social-wiring/projects/social-wiring-vista-seed-lift/`. Both run through Wave 1-3 in isolated worktrees with parallel engineers. Live preflight (`GET /api/auth/me` with `pk_*` ApiToken) returns the expected `AuthContext`. Fan-out endpoint + batch endpoint opted into the new `get_current_user_org_unified` dep so they accept ApiToken / cookie / legacy JWT alike. Admin-client fallback for product callers landed (JWT-shape detection in `_build_upload_service`). Vista CRM consume-from-seed proven via live `await crm.get_property("ONE10010")`. **Single remaining blocker is operator-action**: `YOUTUBE_CLIENT_ID/SECRET` in `.env` + per-org channel connection. Runbook at `findings.md § Platform OAuth setup`. Tests: 481/481 social-wiring backend; 1761/1761 seed-lib; vite build clean.
