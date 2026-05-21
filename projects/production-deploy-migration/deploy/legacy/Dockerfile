@@ -74,7 +74,10 @@ WORKDIR /app
 
 # Install backend deps first (cache layer).
 COPY backend/requirements.txt ./backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt
+# Pillow is NOT in requirements.txt but Django's ImageField (authsys.Profile.image)
+# requires it — Replit's packager auto-installed it without writing it back (same
+# class as the frontend @supabase root-hoist). Add it explicitly. See KB GUIDE §6.
+RUN pip install --no-cache-dir -r backend/requirements.txt "Pillow>=10.0"
 
 # Copy the Django project.
 COPY backend/ ./backend/
@@ -87,6 +90,9 @@ COPY --from=frontend-build /app/frontend/build/ ./backend/frontend_build/
 # NOTE: migrations are run at DEPLOY time (compose entrypoint / one-off), NOT
 # here — the database is external (Supabase) and may be unreachable at build.
 WORKDIR /app/backend
+# STATICFILES_DIRS references backend/static (run.sh creates it); make it so
+# collectstatic doesn't warn (staticfiles.W004).
+RUN mkdir -p static
 # settings_prod requires SECRET_KEY at import — pass a THROWAWAY one just for the
 # build-time collectstatic (it's never used at runtime; the container gets the
 # real key from the compose env_file). collectstatic doesn't need ALLOWED_HOSTS.

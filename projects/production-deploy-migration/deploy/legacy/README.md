@@ -38,7 +38,7 @@ from its **public** repo, drop in the prod shim, then build:
 cd /opt/noctus
 git clone https://github.com/jraphaelsst/one-permutas.git legacy-src
 NOC=/opt/noctus/noctusai/projects/production-deploy-migration/deploy/legacy
-cp "$NOC/settings_prod.py" legacy-src/backend/        # the env-driven prod shim
+cp "$NOC/settings_prod.py" legacy-src/backend/backend/   # the env-driven prod shim → the Django CONFIG package (next to settings.py), so DJANGO_SETTINGS_MODULE=backend.settings_prod resolves
 cp "$NOC/.env.example" legacy-src/.env                 # then fill REAL values (SECRET_KEY!, SUPABASE_DB_URL, CELERY_*)
 cd legacy-src
 docker compose -f "$NOC/compose.legacy.yml" --env-file .env build   # CRA REACT_APP_* baked from .env
