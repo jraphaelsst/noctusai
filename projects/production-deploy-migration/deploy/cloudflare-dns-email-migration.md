@@ -34,6 +34,8 @@ Captured via `dig`. This is the checklist the Cloudflare zone MUST match
 | A | `legacy.noctusai.com` | `72.61.28.36` | VPS / Caddy | **DNS-only (grey)** |
 
 No `AAAA`, no `CAA`, no `www`, no `MX`. Current NS: `ns{1cny,2ckr,3jkl,4hny}.name.com`.
+name.com also carries stale `api` + `coolify` A → `72.61.28.36` (Replit/Coolify-era; Caddy serves
+neither, 0 repo refs) — intentionally **not** mirrored to CF (and the leftover `api` was deleted there).
 
 **🔴 The grey-cloud rule is non-negotiable here.** All 7 VPS hosts (apex +
 core/erp/social/n8n/waha/legacy) run **Caddy with its own Let's Encrypt
@@ -68,6 +70,19 @@ they're quick, ask them to hold until we say go.
 When the domain was added to Cloudflare, CF auto-imported the existing records.
 That import is **not trustworthy**: it can miss records and it defaults A/CNAME
 to **proxied (orange)**. So Phase 0 is *verify + correct*, not blind trust.
+
+> **✅ Phase 0 DONE — 2026-05-21 (applied via CF API; zone still `pending` → zero live impact).**
+> The auto-import was indeed partial — it held only `apex` / `n8n` / `api` (all 🟠 orange) + the 2
+> TXT. Corrected to a complete **grey** mirror of Caddy's 7 served vhosts:
+> - **Greyed** `noctusai.com` (apex) + `n8n` (were orange → would have broken Caddy's LE).
+> - **Added grey** `core` · `erp` · `social` · `waha` · `legacy` (were missing → would have gone dark on flip).
+> - **Deleted** stale `api` (Caddy serves no `api` vhost; 0 repo refs; Replit/Coolify leftover).
+>   `coolify` was never imported — left out by design (decommissioned).
+> Verified against the assigned CF nameservers directly (they answer authoritatively pre-delegation):
+> `dig @clyde.ns.cloudflare.com / @lina.ns.cloudflare.com A <host>` → all 7 → `72.61.28.36`; `api`
+> empty; both TXT present.
+> **The NS have NOT flipped yet** (`dig NS noctusai.com` → `*.name.com`). Replit supplied an EPP
+> *transfer* code, not an NS change — the sole remaining blocker is the NS repoint to `clyde`/`lina`.
 
 1. In the CF zone for `noctusai.com`, confirm **all 9 rows** in the table exist,
    values exact.
@@ -166,10 +181,11 @@ Deferred until sending is actually needed. Receiving (Phase 2) stands alone.
 
 ## What needs CF API access (so the agent can execute Phase 0)
 
-**Status 2026-05-21:** `mcp/cloudflare/.env` now holds a **working** scoped
+**Status 2026-05-21:** `mcp/cloudflare/.env` holds a **working** scoped
 `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (token verified `active`). The
 zone for `noctusai.com` already exists on CF — status **`pending`**, CF
 nameservers **`clyde.ns.cloudflare.com` + `lina.ns.cloudflare.com`** — and goes
-*Active* the moment the registrar repoints NS to those two. Phase 0 can run via
-the API (token scoped **Zone → DNS Edit** + **Zone → Read**) or by hand in the
-dashboard. The connector itself stays user-gated in `.mcp.json` (MCP keep-list).
+*Active* the moment the registrar repoints NS to those two. **Phase 0 has now been
+run via the API** (Zone → DNS Edit token; see the ✅ callout above) and verified
+against `clyde`/`lina` directly. The connector itself stays user-gated in
+`.mcp.json` (MCP keep-list), so the edit ran against the raw CF API with this token.
