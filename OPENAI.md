@@ -34,6 +34,7 @@ Open only what the current task needs.
 - **Project execution** → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/project-execution.md`
 - **Proposals and improvements** → `KNOWLEDGE-BASE/CONTEXT/PATTERNS/proposals-and-improvements.md`
 - **Creating a new product** → `KNOWLEDGE-BASE/CONTEXT/GUIDES/new-product.md`
+- **Production deploy of the fleet to a VPS** (git deploy-key → build-on-VPS → `noctus-net` → Caddy-on-real-subdomains or CF named tunnel; volume-preserving PaaS decommission; LE/compose/cloudflared/OpenAI-LLM lessons) → `KNOWLEDGE-BASE/CONTEXT/GUIDES/production-deploy.md`
 
 ## 3 · Documentation Workflow
 

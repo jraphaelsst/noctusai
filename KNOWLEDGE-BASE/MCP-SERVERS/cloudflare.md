@@ -66,10 +66,10 @@ from an agent.
   `result` record · DELETE → `result:{id}` · tunnel create
   `{name,config_src:"cloudflare"}` → `result` tunnel (incl. runnable
   `token`) · configs PUT `{config:{ingress:[...]}}` · verify →
-  `result:{id,status:"active"}`. ⚠️ **LIVE validation deferred** — the
-  token slot was EMPTY at build (user pastes a scoped token later), so
-  no live probe ran; run `connection_status` + the read tools once the
-  token is added (rotation runbook §4).
+  `result:{id,status:"active"}`. ✅ **LIVE-validated 2026-05-21** — during
+  the `noctusai.com` production deploy this connector listed zones + **created
+  the `noctusai-prod` named tunnel** (`config_src:"local"`) that cloudflared
+  runs on the VPS. See `KB § GUIDES/production-deploy.md` (edge option B).
 
 ## Architecture
 
