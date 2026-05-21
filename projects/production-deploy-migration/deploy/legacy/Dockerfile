@@ -57,9 +57,13 @@ RUN apt-get update \
        build-essential libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
+# DJANGO_SETTINGS_MODULE points at the prod SHIM (deploy/legacy/settings_prod.py),
+# which the deploy step copies into backend/ before build (see README). The shim
+# imports the read-only base settings + overrides SECRET_KEY/DEBUG/ALLOWED_HOSTS
+# /CSRF from env (the reference's hardcoded insecure key is never used).
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DJANGO_SETTINGS_MODULE=backend.settings
+    DJANGO_SETTINGS_MODULE=backend.settings_prod
 
 WORKDIR /app
 
@@ -78,7 +82,10 @@ COPY --from=frontend-build /app/frontend/build/ ./backend/frontend_build/
 # NOTE: migrations are run at DEPLOY time (compose entrypoint / one-off), NOT
 # here — the database is external (Supabase) and may be unreachable at build.
 WORKDIR /app/backend
-RUN python manage.py collectstatic --noinput
+# settings_prod requires SECRET_KEY at import — pass a THROWAWAY one just for the
+# build-time collectstatic (it's never used at runtime; the container gets the
+# real key from the compose env_file). collectstatic doesn't need ALLOWED_HOSTS.
+RUN SECRET_KEY=build-only-collectstatic-not-used-at-runtime python manage.py collectstatic --noinput
 
 # Non-root runtime user; own the app tree (frontend_build, staticfiles, media).
 RUN useradd --create-home --uid 10001 appuser \

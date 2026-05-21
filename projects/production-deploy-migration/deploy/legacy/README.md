@@ -29,10 +29,31 @@ the shared `noctus-net` network so the Cloudflare named tunnel can route to it.
   Redis = the shared fleet Redis (via `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`).
   Neither is a container in this compose.
 
-## Build & run
+## Deploy on the VPS (the source is NOT in the noc repo)
 
-The build context is the legacy app **source root** (the read-only reference
-clone). Paths below are written for running from THIS directory.
+`one-permutas` is a gitignored read-only reference locally → on the VPS, clone it
+from its **public** repo, drop in the prod shim, then build:
+
+```bash
+cd /opt/noctus
+git clone https://github.com/jraphaelsst/one-permutas.git legacy-src
+NOC=/opt/noctus/noctusai/projects/production-deploy-migration/deploy/legacy
+cp "$NOC/settings_prod.py" legacy-src/backend/        # the env-driven prod shim
+cp "$NOC/.env.example" legacy-src/.env                 # then fill REAL values (SECRET_KEY!, SUPABASE_DB_URL, CELERY_*)
+cd legacy-src
+docker compose -f "$NOC/compose.legacy.yml" --env-file .env build   # CRA REACT_APP_* baked from .env
+docker compose -f "$NOC/compose.legacy.yml" --env-file .env up -d
+docker compose -f "$NOC/compose.legacy.yml" --env-file .env run --rm legacy python manage.py migrate --noinput
+```
+Then the **edge**: add `A legacy → <VPS-IP>` at the registrar **FIRST**, *then*
+add `legacy.noctusai.com { reverse_proxy legacy:5000 }` to `../caddy/Caddyfile`
++ `docker exec noctus-caddy caddy reload …`. **Never add the host to Caddy before
+its A-record resolves** — it poisons LE's negative-cache (`KB § GUIDES/production-deploy.md §6`).
+(When the domain later moves to Cloudflare, route via the tunnel ingress instead.)
+
+## Build & run (reference — paths relative to THIS directory)
+
+The build context is the legacy app **source root** (the cloned reference).
 
 ```bash
 # 1. Configure
@@ -79,13 +100,13 @@ See `.env.example` for the full, commented list. Summary:
 
 ## GAP / assumptions (read before deploying)
 
-1. **`SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS` are HARDCODED in `settings.py`** in
-   the current reference code — they are NOT read from the environment, and
-   `DEBUG = True` is the committed default. For a real production deploy,
-   `settings.py` MUST be patched to read these from env and ship `DEBUG=False`
-   plus `ALLOWED_HOSTS=['legacy.noctusai.com']`. The reference clone is
-   read-only here, so that patch is a **deploy-time task owned by the migration**.
-   The `.env.example` includes the standard names so the patch can wire to them.
+1. **`SECRET_KEY`/`DEBUG`/`ALLOWED_HOSTS` ✅ RESOLVED via `settings_prod.py`.**
+   The reference `settings.py` hardcodes an insecure key + `DEBUG=True`; rather
+   than edit the read-only reference, the deploy ships a shim (`settings_prod.py`
+   in this dir) that imports the base + overrides SECRET_KEY/DEBUG/ALLOWED_HOSTS
+   /CSRF from env + adds `SECURE_PROXY_SSL_HEADER`. The build sets
+   `DJANGO_SETTINGS_MODULE=backend.settings_prod`. **You MUST set a fresh
+   `SECRET_KEY=` in `.env`** — the committed dev literal is public (forgery risk).
 2. **Supabase Postgres** is configured via `SUPABASE_DB_URL` parsed by
    `dj-database-url` (`sslmode=require`, `conn_max_age=600`, health checks). The
    app does NOT use a `DATABASE_URL` name. If unset, Django silently falls back
