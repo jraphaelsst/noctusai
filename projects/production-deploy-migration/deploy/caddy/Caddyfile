@@ -4,18 +4,24 @@
 # issues per-host certs. cloudflared/CF is NOT in front yet (interim) — when the
 # domain's nameservers move to Cloudflare, this is swapped for the named tunnel
 # (deploy/tunnel/) and Caddy retires. Reaches containers by name over noctus-net.
+#
+# Public hostname → in-network service. The user owns the slug naming and chose
+# short names (core / erp / social); the container/service names stay the
+# product slugs (core / erp-imobiliario / social-wiring). This file is the one
+# place the public→service map lives for the Caddy interim (mirrors the tunnel's
+# ingress.yml single-source intent).
 {
 	email joaoraphaelsst@gmail.com
 }
 
-# ── products ───────────────────────────────────────────────────────────
+# ── products (short public slugs the user created) ─────────────────────
 core.noctusai.com {
 	reverse_proxy core:8000
 }
-erp-imobiliario.noctusai.com {
+erp.noctusai.com {
 	reverse_proxy erp-imobiliario:8001
 }
-social-wiring.noctusai.com {
+social.noctusai.com {
 	reverse_proxy social-wiring:8011
 }
 
