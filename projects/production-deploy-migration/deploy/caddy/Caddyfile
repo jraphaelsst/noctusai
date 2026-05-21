@@ -33,3 +33,8 @@ n8n.noctusai.com {
 waha.noctusai.com {
 	reverse_proxy waha:3000
 }
+
+# ── legacy standalone app (one-permutas) → its own :5000 container ──────
+legacy.noctusai.com {
+	reverse_proxy legacy:5000
+}

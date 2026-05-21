@@ -45,7 +45,9 @@ services:
       - noctus-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:5000/"]
+      # send the real Host — ALLOWED_HOSTS=legacy.noctusai.com → a bare localhost
+      # request 400s (Django DisallowedHost). This curl matches the served host.
+      test: ["CMD", "curl", "-fsS", "-H", "Host: legacy.noctusai.com", "http://localhost:5000/"]
       interval: 30s
       timeout: 5s
       retries: 3
