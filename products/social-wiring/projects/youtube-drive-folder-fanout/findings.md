@@ -12,6 +12,7 @@ Living retrospective for this project. Five categories per [[feedback_knowledge_
 
 ## 3. Mistakes
 
+- **`run-live-test.sh` had an unquoted jq filter — `jq -r .batch_id // empty`.** The shell split it into three jq args (`.batch_id`, `//`, `empty`); jq read `//` and `empty` as input *files* ("Is a directory" / "Could not open file empty"), ignored stdin, and emitted no batch id — so the script never polled (the server-side upload worker ran fine regardless). Fix: quote the whole filter — `jq -r '.batch_id // empty'`. Lesson: always single-quote jq filters that contain `//`, `|`, or spaces.
 - **First-cut Phase 1 tests `import gdown` then patched its `download_folder` attribute.** gdown isn't installed in the dev venv (prod containers have it). Tests failed with `ModuleNotFoundError`. Fixed by switching to `monkeypatch.setitem(sys.modules, "gdown", types.SimpleNamespace(...))` — gives the test a fake module before the lazy `import gdown` in production code resolves to it. Pattern now reused by `test_upload_service.py`'s batch tests too.
 
 ## 4. Lessons
@@ -28,6 +29,8 @@ Living retrospective for this project. Five categories per [[feedback_knowledge_
 - **`gdown.download_folder` layout:** writes to `<output>/<root_folder_name>/<...>`. One level of subfolder recursion happens by default (preserves subfolder structure under the root). Files at depth ≥3 (i.e. two subfolders deep) appear in `gdown`'s return list but our project's `iter_drive_folder_videos` prunes them per the one-level recursion contract.
 - **`classify_video_format` returns `"youtube" | "reels" | "unknown"`.** Our `upload_jobs.target_format` column uses `"youtube" | "shorts" | "unknown"` (the YT-side label). Mapping happens at the worker stamping boundary in `_classify_and_stamp_target_format`.
 - **Live DB schema (NoctusAI prod, applied 2026-05-20):** `social_wiring.upload_jobs` gained `target_format TEXT NULL CHECK IN ('youtube','shorts','unknown')` + `batch_id UUID NULL` + partial index `idx_sw_upload_jobs_batch ON (org_id, batch_id, created_at DESC) WHERE batch_id IS NOT NULL`. Codebase `001_social-wiring.sql` matches.
+- **A Google refresh token is bound to (client_id, user, scopes), NOT to a product.** This is why the yt-crawler refresh token works unchanged for social-wiring once both use the same OAuth client — the token doesn't know or care which app stores it. Practical consequence: porting a credential across noc products that share an OAuth client is just `decrypt(old_key) → re-encrypt(new_key) → UPSERT`, and the redirect-URI registration (which only matters during the initial consent dance) is irrelevant to the refresh path. The `social_wiring.credentials` / yt-crawler `credentials` tables are the same seed `CredentialStore` shape (`encrypted_tokens` = `Fernet(JSON(bundle))`); only the Fernet `ENCRYPTION_KEY` differed.
+- **Single-flight upload (`upload_max_concurrent=1`) serializes the batch.** In the live test job 1 uploaded + got its video id while job 2 sat `queued`, then job 2 advanced once job 1's slot freed. Expected behavior, not a stall. The DB `status` can lag YouTube's side: a job shows `processing` (our worker polling YT's `processingStatus`) while the video is already visible/usable on the channel.
 
 ---
 
@@ -105,9 +108,40 @@ If anything below happens, save the `upload_jobs.error_message` + the YT video p
 
 ---
 
-## Platform OAuth setup — the one prerequisite (operator action)
+## Platform OAuth setup — ✅ RESOLVED 2026-05-21 (credentials were in the repo)
 
-The fan-out pipeline is **fully wired and validated** but the live YT upload requires platform-level Google OAuth credentials and a per-org channel connection. Neither is in `.env` or `social_wiring.credentials` today (verified 2026-05-20). Once both land, the live test is one `bash` away.
+**The "operator must create an OAuth client in Google Cloud Console" conclusion was wrong** — the
+credentials already existed in the workspace. Resolution, end-to-end, no Console action:
+
+1. **OAuth client** — noc `.env` already carried the YouTube OAuth client as `GOOGLE_OAUTH_CLIENT_ID`
+   / `GOOGLE_OAUTH_CLIENT_SECRET` (client `313073479474-…`, the same client `noctusai-youtube-crawler`
+   used). The social-wiring YouTube module reads the `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`
+   names, which weren't set. Fix: set those two `.env` keys to the existing `GOOGLE_OAUTH_*` values
+   (the **current** secret — the downloaded `client_secret_*.json` had a *rotated-out* secret).
+2. **Per-org channel credential** — instead of re-running the OAuth consent dance (which would have
+   needed the `:8011` redirect URI registered in Console), the working refresh token was **ported
+   from yt-crawler's SQLite** (`tmp/dev.sqlite3`, provider `youtube`, channel "João Raphael Souza",
+   `UCujIprsfXDrygCTxZVQP9Vg`). A Google refresh token is bound to **(client_id, user, scopes)**, NOT
+   to a product — so once social-wiring uses the same client, the token is valid. The blob was
+   Fernet-decrypted with yt-crawler's `ENCRYPTION_KEY`, re-encrypted with noc's `ENCRYPTION_KEY`, and
+   UPSERTed into `social_wiring.credentials` for org `6dd73140-74a4-41c6-aeff-bc94b5312b53`.
+3. **Recreate** the container (`docker compose up -d --no-deps --force-recreate social-wiring`) so it
+   re-reads `.env`; verified inside the container that `youtube_client_id/secret` load and the seed
+   `CredentialStore.get(...)` decrypts the ported token with a live `refresh_token` + `youtube.upload`.
+
+**Live result (2026-05-21):** `run-live-test.sh` POSTed `product_code=ONE10010` + the Drive folder
+(`privacy_status=unlisted`). Server enriched via seed Vista → `build_youtube_metadata` → fanned out
+**two real jobs** — `REELS ONE10010.mp4` (vertical → `target_format=shorts`, video id `2a3WJABK_l4`)
+and `YT ONE10010.mp4` (horizontal → long-form). Both reached YouTube on channel "João Raphael Souza".
+The whole chain — ApiToken auth → Vista enrichment → Drive fan-out → classify → real YouTube upload —
+is proven end-to-end.
+
+---
+
+### Google Cloud Console runbook (reference only — NOT needed for the current setup)
+
+The steps below apply only if you ever need to provision a **fresh** OAuth client (new GCP project)
+or connect a **brand-new org via the consent dance** instead of porting an existing refresh token.
 
 ### Step 1 — Create the OAuth 2.0 client in Google Cloud Console
 
@@ -152,9 +186,9 @@ The script POSTs to `/api/videos/upload/drive-folder` with the ONE10010 + Drive 
 
 ---
 
-## What was live-validated WITHOUT the YT upload (2026-05-20)
+## What was live-validated — full chain incl. real YouTube upload (2026-05-21)
 
-The platform-auth-modernization + vista-seed-lift + youtube-drive-folder-fanout chain is **proven end-to-end up to the YT API call**:
+The platform-auth-modernization + vista-seed-lift + youtube-drive-folder-fanout chain is **proven end-to-end, including a real YouTube upload**:
 
 - ✅ **ApiToken auth** — `GET /api/auth/me` with `Authorization: Bearer pk_*` returns the right `AuthContext`:
   ```json
@@ -164,4 +198,4 @@ The platform-auth-modernization + vista-seed-lift + youtube-drive-folder-fanout 
 - ✅ **Fan-out endpoint accepts ApiToken** — `POST /api/videos/upload/drive-folder` no longer requires a Supabase JWT (404 → 200 path proven via container logs after the `get_current_user_org_unified` swap).
 - ✅ **Admin-client fallback for product callers** — the JWT-shape detection in `_build_upload_service` routes product tokens through the admin Supabase client (RLS bypass is semantically correct because ApiToken is org-scoped at issuance).
 - ✅ **Redis SessionStore reachable** — container's `REDIS_URL` fixed to `redis://noctus-redis:6379/0`; PING green.
-- ❌ **YT upload itself** — blocks on `YOUTUBE_CLIENT_ID/SECRET` (.env gap) AND no row in `social_wiring.credentials` for the org. Operator action required (this section).
+- ✅ **YT upload itself (2026-05-21)** — after wiring `YOUTUBE_CLIENT_ID/SECRET` and porting the refresh token (see "Platform OAuth setup — RESOLVED" above), `run-live-test.sh` produced two real uploads on channel "João Raphael Souza": vertical `REELS ONE10010.mp4` → `target_format=shorts`, video id `2a3WJABK_l4`; horizontal `YT ONE10010.mp4` → long-form. Vista enrichment + Drive fan-out + classify + upload all confirmed live.

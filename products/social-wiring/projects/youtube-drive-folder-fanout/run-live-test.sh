@@ -70,7 +70,7 @@ RESP=$(curl -sS -X POST "$HOST/api/videos/upload/drive-folder" \
 
 echo "Response: $RESP"
 
-BATCH_ID=$(echo "$RESP" | jq -r .batch_id // empty)
+BATCH_ID=$(echo "$RESP" | jq -r '.batch_id // empty')
 if [[ -z "$BATCH_ID" || "$BATCH_ID" == "null" ]]; then
     echo "ERROR: no batch_id in response — auth or schema-validation failure" >&2
     exit 1

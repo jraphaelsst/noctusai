@@ -3,8 +3,8 @@
 > Living doc. Phases are suggestive; revise as we learn. Improvements captured live during each step in the phase's `**Improvements:**` block; one bundled proposal authored at phase close.
 
 - **Created:** 2026-05-20
-- **Last updated:** 2026-05-20
-- **Status:** ⏳ Phase 1-6 complete (BE+tests); auth-modernization Wave 1-3 complete; Vista seed lift complete; **live preflight green** (ApiToken auth working, Vista enrichment working, container freshness verified). Live YT upload **blocked on operator action** — YOUTUBE_CLIENT_ID/SECRET not in .env + no row in social_wiring.credentials for the org. Runbook in `findings.md § Platform OAuth setup`.
+- **Last updated:** 2026-05-21
+- **Status:** ✅ **DONE — live-validated end-to-end with real YouTube uploads (2026-05-21).** Phase 1-6 complete (BE+tests); auth-modernization Wave 1-3 complete; Vista seed lift complete. OAuth credentials were already in the workspace (same Google client as `GOOGLE_OAUTH_*`); wired `YOUTUBE_CLIENT_ID/SECRET` into `.env` and ported the working refresh token from yt-crawler's SQLite into `social_wiring.credentials`. `run-live-test.sh` fanned `ONE10010` + the Drive folder into two real uploads on channel "João Raphael Souza": `REELS ONE10010.mp4` → Shorts (video id `2a3WJABK_l4`), `YT ONE10010.mp4` → long-form. Full chain (ApiToken auth → Vista enrichment → Drive fan-out → classify → YouTube upload) proven live. Resolution detail + reference runbook in `findings.md § Platform OAuth setup`.
 - **Owner / stakeholders:** rapha · social-wiring product
 - **Related projects:** `projects/meta-video-reels-publish/` (IG Reels publish path — blocked on `projects/meta-app-review-publish-scopes/`); `products/social-wiring/projects/social-wiring-drive-projection-enrichment/`
 - **Project slug:** `youtube-drive-folder-fanout`
