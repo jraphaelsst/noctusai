@@ -59,6 +59,66 @@ docker build --target runtime -f products/<slug>/backend/Dockerfile \
 
 > ⚠️ **`VITE_*` are BAKED at build time** (Vite inlines `import.meta.env.VITE_*`). `VITE_CORE_URL`/`VITE_CORE_API_URL` MUST be the **public** URL where `core` is served — `core`'s own FE reads `VITE_CORE_API_URL` for its API (`products/core/frontend/src/lib/api.ts`); other products' own API is same-origin (`VITE_BACKEND_API_URL` define-injected to `window.location.origin`). Bake `localhost` → broken public app; rebuild to fix. (`KB § PATTERNS/boundary-contract-tests.md` B1.)
 
+## 2a · Safe ongoing code-sync — the "pull" drill (the VPS checkout is PRODUCTION)
+
+The VPS clone is a **production artifact, not a workspace.** Code reaches it ONLY by `git pull` of *pushed* commits; secrets + runtime-config live in **deploy-local files** that are gitignored or filled in-place on the box (`deploy/tunnel/config.yml`, the tunnel creds `<id>.json`, the root `.env`, `.env.services`) — a sync MUST always preserve them. Two invariants make it safe: **ff-only** (the merge refuses anything that isn't a clean fast-forward — that refusal IS the safety net) ∧ **inspect → decide → act → verify** (never move HEAD blind). 🔴 NEVER `git reset --hard origin/main` ∨ `git checkout -- <deploy-local-file>` on the VPS — those silently nuke deploy-local state. NEVER edit code on the VPS (it's not a dev box; deploy-local files are the *only* sanctioned divergence).
+
+**The drill** (run in `/opt/noctus/<repo>`; deploy key pinned per §6 `core.sshCommand`):
+
+```bash
+# 0) PUSH FIRST (on your machine): `git log origin/main..HEAD` must be empty.
+# 1) INSPECT — before moving HEAD
+git log  --oneline -1                       # current deployed HEAD
+git fetch origin                            # refs only — does NOT move HEAD
+git status --short                          # ⭐ RECORD the deploy-local state to preserve (M / ??)
+git log  --oneline HEAD..origin/main        # incoming commits
+git diff --name-only HEAD..origin/main      # incoming files
+# 2) DECIDE — cross-check incoming files vs the M/?? set from `status`:
+#    no overlap → clean FF (safe).   overlap → STOP, resolve deliberately (never reset / checkout-over).
+# 3) ACT — ff-only (refuses a non-fast-forward; never plain `git pull`, which can merge-commit)
+git merge --ff-only origin/main
+# 4) VERIFY
+git log  --oneline -1                       # == the pushed sha
+git status --short                          # SAME deploy-local files still M / ?? (preserved)
+grep -c "<marker-from-new-commit>" <a-changed-file>   # the change actually landed on disk
+```
+
+**Then rebuild ONLY if the running container serves what changed** (validation-freshness, §6 + `KB § PATTERNS/containerization.md § 12b`):
+- **docs / project files only** → nothing to do; the running fleet is untouched (the 2026-05-21 doc syncs were exactly this — pull, no rebuild).
+- **product code / Dockerfile / compose changed** → rebuild the slim `runtime` image on the VPS (§2) + restart that product, then live-probe the endpoint. Single-file bind-mounts (`config.yml`, `Caddyfile`) need `docker restart` (stale-inode, §6), not `reload`.
+
+Why `--ff-only` over `git pull`: a plain pull can create a merge commit (diverging the VPS from `origin/main`) or fail confusingly against deploy-local edits; `--ff-only` either advances cleanly or **refuses and leaves you to decide** — never a surprise mutation of production.
+
+### Safety-net stack — defense in depth (the production code is a diamond)
+
+The drill is the *procedure*; these are the *structural* nets that make it hard to get wrong. Layered **preventive → detective → corrective** so no single human/agent mistake can damage, reverse, or half-deploy production. Status: ✅ live · ⏳ to-implement (tracked in `projects/deploy-hardening-and-dev-isolation/PROJECT.md`).
+
+**Preventive — a bad state can't even be created**
+- **P1 · `--ff-only` only** ✅ — the VPS HEAD can only ADVANCE along pushed history; never diverges, rewinds, or merge-commits. A non-FF is *refused*, not forced.
+- **P2 · read-only deploy key** ✅ — the VPS key pulls, never pushes ⇒ the VPS can never mutate the remote (no broken local state escaping upward). Verify write-access is OFF on the GitHub deploy key.
+- **P3 · protected `prod` promote-branch** ⏳ — the VPS tracks `origin/prod`, never `main`; code reaches prod only by a *deliberate* FF of `prod` from a blessed `main` sha. GitHub branch-protection on `prod`+`main`: require PR + green checks, **block force-push, block deletion**.
+- **P4 · deploy-local files GITIGNORED, never tracked** ⏳ — the cleanest preservation is *nothing to clobber*: `deploy/tunnel/config.yml` → gitignore it + track `config.yml.template`, render the real file on deploy from `.env`. Then a pull cannot touch deploy-local state *by construction*. (Today `config.yml` is tracked + edited-in-place — the fragile shape every pull has to dance around; this is the root fix for that whole class.)
+- **P5 · pre-deploy verification gate** ⏳ — only code that builds the slim `runtime` image + passes tests may be promoted/restarted ("always-only functional code online"). The pre-deploy tool (Phase 4) is this gate.
+
+**Detective — a bad state is caught immediately**
+- **D1 · inspect-before-HEAD-move** ✅ (drill §1–2).
+- **D2 · verify-after** ✅ (drill §4): HEAD == expected sha, deploy-local files still present, marker landed on disk.
+- **D3 · deploy-state manifest** ⏳ — `deploy/STATE.json` records {deployed sha, image digests, sha256 of each deploy-local file}; the drill diffs against it → catches drift between "what git says" and "what's actually running/mounted".
+- **D4 · health-probe after restart** ✅ (validation-freshness, §6): the container must serve the new code or it's not a successful deploy.
+
+**Corrective — any mistake is reversible**
+- **C1 · backup ref before any HEAD move** ⏳ — `git tag -f backup/predeploy-<utc> HEAD` + tar deploy-local files to `deploy/backups/<utc>.tgz`. One command restores last-known-good.
+- **C2 · atomic image rollback** ⏳ — keep the prior image tagged `:previous`; on post-restart health failure, swap back ⇒ prod is never left on a broken image.
+- **C3 · reflog is the time machine** ✅ — commits are never lost; recovery = `git reflog` → `git reset --hard <sha>` is the **ONE** sanctioned hard-reset (recovery onto a backup, *never* as a sync step).
+
+**🔴 The destructive-command ban (and the single exception).** As a *sync* step, NEVER run any of these on the VPS — each destroys exactly what it should preserve:
+- `git reset --hard origin/*` → discards the in-place deploy-local edits (`config.yml`) ∧ can rewind HEAD below the deployed sha.
+- `git checkout -- <deploy-local-file>` / `git restore <…>` → overwrites the filled deploy file with the tracked placeholder.
+- `git clean -fdx` → deletes the untracked creds `.json` ∧ `.env`.
+- `git push --force` → impossible with the read-only key (P2), and never from anywhere.
+
+The ONLY sanctioned `reset --hard` is **C3 recovery** onto a `backup/` ref after a *verified* mistake — never to "make the pull work". If a pull won't fast-forward, that is the safety net doing its job: STOP and diagnose, do not force.
+
 ## 3 · Bring up (infra + products on `noctus-net`)
 
 ```bash
