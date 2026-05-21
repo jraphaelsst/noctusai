@@ -1,0 +1,32 @@
+# compose.caddy.yml — interim reverse proxy replacing Coolify's Traefik on 80/443.
+# Serves the fleet on real noctusai.com subdomains with auto-TLS (Let's Encrypt).
+# Joins the external noctus-net so it reaches every container by service name.
+# Retired when the domain's nameservers move to Cloudflare → the named tunnel
+# (deploy/tunnel/) takes over. Bring up ON THE VPS (after Coolify's Traefik is
+# stopped to free 80/443):
+#   docker compose -f compose.caddy.yml up -d
+name: noctus-caddy
+
+services:
+  caddy:
+    image: caddy:2
+    container_name: noctus-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # LE certs persist here across restarts
+      - caddy_config:/config
+    networks:
+      - noctus-net
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true

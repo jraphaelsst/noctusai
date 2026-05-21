@@ -1,0 +1,29 @@
+# Caddyfile — interim reverse proxy on the VPS, replacing Coolify's Traefik.
+# Serves the fleet on real noctusai.com subdomains with auto-TLS (Let's Encrypt
+# HTTP-01). Each subdomain's A-record points at the VPS (72.61.28.36), so LE
+# issues per-host certs. cloudflared/CF is NOT in front yet (interim) — when the
+# domain's nameservers move to Cloudflare, this is swapped for the named tunnel
+# (deploy/tunnel/) and Caddy retires. Reaches containers by name over noctus-net.
+{
+	email joaoraphaelsst@gmail.com
+}
+
+# ── products ───────────────────────────────────────────────────────────
+core.noctusai.com {
+	reverse_proxy core:8000
+}
+erp-imobiliario.noctusai.com {
+	reverse_proxy erp-imobiliario:8001
+}
+social-wiring.noctusai.com {
+	reverse_proxy social-wiring:8011
+}
+
+# ── workflow + WhatsApp (same hostnames Coolify/Traefik served — no n8n config
+#    change needed; n8n WEBHOOK_URL=https://n8n.noctusai.com stays valid) ──────
+n8n.noctusai.com {
+	reverse_proxy n8n:5678
+}
+waha.noctusai.com {
+	reverse_proxy waha:3000
+}
