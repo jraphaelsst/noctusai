@@ -14,6 +14,13 @@
 	email joaoraphaelsst@gmail.com
 }
 
+# ── apex → core (noctusai.com IS the platform's front door). Same container as
+#    core.noctusai.com; core's FE calls its backend same-origin (window.location
+#    .origin), so serving it here needs NO core rebuild and triggers no CORS. ──
+noctusai.com {
+	reverse_proxy core:8000
+}
+
 # ── products (short public slugs the user created) ─────────────────────
 core.noctusai.com {
 	reverse_proxy core:8000
