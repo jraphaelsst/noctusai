@@ -30,7 +30,12 @@ WORKDIR /app/frontend
 # Install deps from the lockfile first (cache layer). The frontend ships its
 # own package-lock.json, so `npm ci` is reproducible.
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+# @supabase/supabase-js lives in the MONOREPO ROOT package.json (Replit dep
+# hoisting), NOT frontend/package.json — but frontend/src/lib/supabase.ts imports
+# it. Install it explicitly so the CRA/TS build resolves it. It is the ONLY
+# root-hoisted dep the frontend uses (verified against frontend/src imports;
+# pin matches the root package.json `^2.90.1`).
+RUN npm ci && npm install --no-save @supabase/supabase-js@^2.90.1
 
 # Build-time React config — CRA inlines these into the static bundle.
 # Empty defaults keep the build green; pass real values via --build-arg.
