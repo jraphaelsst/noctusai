@@ -1,0 +1,121 @@
+# Raw docker-compose for the stateful services currently managed by Coolify.
+# Replaces the Coolify-managed n8n / waha / postgres / redis with plain compose,
+# REUSING the EXISTING named volumes so n8n workflows + the WhatsApp session survive.
+#
+# Migration = stop Coolify's containers → `docker compose -f compose.services.yml up -d`
+# (same volumes attach to the new containers). Routing for n8n/waha then comes from
+# the Cloudflare named tunnel (deploy/tunnel/), NOT Coolify's Traefik.
+#
+# Secrets come from .env.services (gitignored, created ON the VPS) — see .env.services.example.
+# Bring up:  docker compose --env-file .env.services -f compose.services.yml up -d
+name: noctus-services
+
+networks:
+  noctus-net:
+    external: true        # created once by the fleet (start.sh) — shared with products + tunnel
+
+volumes:
+  # external:true → reuse Coolify's existing data volumes verbatim (NO data loss).
+  n8n-data:
+    external: true
+    name: r8co0gwsw8g4gggcc0sko8ko_n8n-data
+  waha-sessions:
+    external: true
+    name: r8co0gwsw8g4gggcc0sko8ko_waha-sessions
+  waha-media:
+    external: true
+    name: r8co0gwsw8g4gggcc0sko8ko_waha-media
+  pgdata:
+    external: true
+    name: r8co0gwsw8g4gggcc0sko8ko_pgdata
+  redis-data:
+    external: true
+    name: r8co0gwsw8g4gggcc0sko8ko_redis-data
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    networks:
+      noctus-net:
+        aliases: [postgres]            # other containers reach it as host `postgres`
+    environment:
+      # Only consumed on FIRST init; pgdata is already initialized, so these just
+      # document the existing creds. Real value of POSTGRES_PASSWORD lives in .env.services.
+      POSTGRES_DB: ${POSTGRES_DB:-default}
+      POSTGRES_USER: ${POSTGRES_USER:-default}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.services}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-default} -d ${POSTGRES_DB:-default}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:latest
+    restart: unless-stopped
+    networks:
+      noctus-net:
+        aliases: [redis]
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]   # persist to redis-data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    networks:
+      noctus-net:
+        aliases: [n8n]                 # tunnel ingress points n8n.noctusai.com -> http://n8n:5678
+    environment:
+      # Hostnames stay identical → existing webhook URLs keep working once the tunnel serves them.
+      N8N_HOST: n8n.noctusai.com
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: https://n8n.noctusai.com
+      WEBHOOK_URL: https://n8n.noctusai.com/
+      N8N_SECURE_COOKIE: "true"
+      GENERIC_TIMEZONE: America/Sao_Paulo
+      N8N_LOG_LEVEL: info
+      N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
+      # NOTE: this n8n stores its DB as SQLite inside n8n-data (no DB_POSTGRESDB_* in the
+      # Coolify config). The postgres service above is preserved but n8n does NOT use it —
+      # verify what (if anything) uses postgres before final Coolify teardown.
+    volumes:
+      - n8n-data:/home/node/.n8n
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  waha:
+    image: devlikeapro/waha:latest
+    restart: unless-stopped
+    networks:
+      noctus-net:
+        aliases: [waha]                # tunnel ingress points waha.noctusai.com -> http://waha:3000
+    environment:
+      WHATSAPP_HOOK_URL: https://n8n.noctusai.com/webhook/webhook
+      WHATSAPP_HOOK_EVENTS: message
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:?set WHATSAPP_API_KEY in .env.services}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-jraphaelsst}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?set WAHA_DASHBOARD_PASSWORD in .env.services}
+      WAHA_GOWS_PATH: /app/gows
+      WAHA_GOWS_SOCKET: /tmp/gows.sock
+      WAHA_ZIPPER: ZIPUNZIP
+      # Coolify set --max-old-space-size=16384 (16 GB) — nonsensical on an 8 GB box; it's only a
+      # V8 heap CEILING (not a reservation) but kept lower here to avoid runaway OOM of the host.
+      NODE_OPTIONS: --max-old-space-size=2048
+    volumes:
+      - waha-sessions:/app/.sessions
+      - waha-media:/app/.media
+    depends_on:
+      redis:
+        condition: service_healthy

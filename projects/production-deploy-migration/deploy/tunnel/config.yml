@@ -1,0 +1,57 @@
+# config.yml — cloudflared NAMED-tunnel config (template + worked example).
+#
+# This is the file cloudflared reads inside the container
+# (`tunnel --no-autoupdate run`, mounted at /etc/cloudflared/config.yml).
+# It is DERIVED from ingress.yml — when you remap a slug there, regenerate
+# the `ingress:` block below and re-apply (see README.md).
+#
+# Replace the two <PLACEHOLDERS>:
+#   <TUNNEL_ID>  — UUID printed by `cloudflared tunnel create <name>`.
+#   <PATH>       — path to the tunnel credentials JSON (in-container path).
+#
+# `protocol: http2` is carried over from the quick-tunnel rule
+# (KB § PATTERNS/containerization.md § "The --protocol http2 rule"):
+# cloudflared's default `auto` opens QUIC/UDP, which NATs drop in ~5–10min
+# and cannot re-register. HTTP2-over-TCP is stable for a long-lived VPS
+# tunnel. Keep this pin.
+
+tunnel: <TUNNEL_ID>
+credentials-file: <PATH>      # e.g. /etc/cloudflared/<TUNNEL_ID>.json
+protocol: http2
+no-autoupdate: true
+
+# ── ingress (generated from ingress.yml, snapshot 2026-05-21) ──────────
+# Order matters: cloudflared matches top-to-bottom; the final catch-all
+# MUST be last. The service target is the in-network name on noctus-net
+# (== compose service == noctus-<slug> container), reached by name because
+# cloudflared shares the network — never a published host port.
+ingress:
+  # apex → core
+  - hostname: noctusai.com
+    service: http://core:8000
+
+  # per-product subdomains
+  - hostname: core.noctusai.com
+    service: http://core:8000
+  - hostname: erp-imobiliario.noctusai.com
+    service: http://erp-imobiliario:8001
+  - hostname: personal-finance.noctusai.com
+    service: http://personal-finance:8002
+  - hostname: therapy-platform.noctusai.com
+    service: http://therapy-platform:8003
+  # (seed omitted — template, not deployed)
+  - hostname: daily-life.noctusai.com
+    service: http://daily-life:8005
+  - hostname: adconnect.noctusai.com
+    service: http://adconnect:8007
+  - hostname: dev-team.noctusai.com
+    service: http://dev-team:8009
+  - hostname: social-wiring.noctusai.com
+    service: http://social-wiring:8011
+
+  # legacy standalone container on :5000 (must be attached to noctus-net)
+  - hostname: legacy.noctusai.com
+    service: http://legacy:5000
+
+  # catch-all — REQUIRED, MUST be the last rule. Unmatched host → 404.
+  - service: http_status:404

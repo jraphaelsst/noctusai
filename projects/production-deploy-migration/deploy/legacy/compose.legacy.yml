@@ -1,0 +1,71 @@
+# Legacy app compose — "Sistema de Permutas Imobiliárias" (legacy.noctusai.com).
+#
+# Two services share ONE built image (the Dockerfile in this dir):
+#   legacy         → gunicorn on :5000 (Django + WhiteNoise-served SPA)
+#   legacy-celery  → celery -A backend worker (async bilateral matching)
+# Without the worker, async match processing silently fails (see the app's
+# .replit / CLAUDE.md). Both MUST run.
+#
+# Redis  : EXTERNAL/shared — provided via env (CELERY_BROKER_URL /
+#          CELERY_RESULT_BACKEND). No Redis container here; reuse the fleet's
+#          noctusai-infra Redis (reachable on noctus-net as e.g. redis://redis:6379/N).
+# Postgres: EXTERNAL — Supabase, via SUPABASE_DB_URL. No DB container here.
+# Network : `noctus-net` is EXTERNAL (created once by the fleet's start.sh:
+#           `docker network create noctus-net`). Joining it lets the Cloudflare
+#           named tunnel route legacy.noctusai.com → http://legacy:5000.
+#
+# Build context = the legacy app source root (the read-only reference clone).
+# Adjust `build.context` to wherever that source lives on the VPS.
+# REACT_APP_* are BUILD args (CRA inlines them) — set them in the shell env or
+# a .env beside this file before `docker compose build`.
+#
+# Bring up (from this directory):
+#   docker compose -f compose.legacy.yml --env-file .env build
+#   docker compose -f compose.legacy.yml --env-file .env up -d
+# Run migrations once after the DB is reachable (deploy-time, not build-time):
+#   docker compose -f compose.legacy.yml run --rm legacy python manage.py migrate --noinput
+
+services:
+  legacy:
+    build:
+      context: ../../reference/one-permutas
+      dockerfile: ../../deploy/legacy/Dockerfile
+      args:
+        # CRA inlines these at build time — empty ⇒ blank Supabase client.
+        REACT_APP_SUPABASE_URL: ${REACT_APP_SUPABASE_URL:-}
+        REACT_APP_SUPABASE_ANON_KEY: ${REACT_APP_SUPABASE_ANON_KEY:-}
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-}
+    image: legacy-permutas:latest
+    container_name: legacy-permutas
+    env_file:
+      - .env
+    expose:
+      - "5000"
+    networks:
+      - noctus-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  legacy-celery:
+    # Reuse the SAME built image (no second build); override the command to run
+    # the Celery worker instead of gunicorn.
+    image: legacy-permutas:latest
+    container_name: legacy-permutas-celery
+    command: ["celery", "-A", "backend", "worker", "--loglevel=info", "--concurrency=2"]
+    env_file:
+      - .env
+    depends_on:
+      - legacy
+    networks:
+      - noctus-net
+    restart: unless-stopped
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true

@@ -1,0 +1,92 @@
+# NoctusAI — PRODUCTION infra (compose project: noctusai-infra-prod).
+#
+# Project: production-deploy-migration. The prod sibling of the root
+# docker-compose.infra.yml. Shared backing services the product fleet
+# (docker-compose.prod.yml) talks to over the external noctus-net.
+#
+# What the prod fleet actually needs (per the deploy audit):
+#   • Redis   — ALWAYS. The chatbot buffer/worker + rate-limiter use it.
+#               Products fall back to in-memory only in tests; prod needs
+#               a real Redis. NOT profile-gated here — it always comes up.
+#   • WAHA    — OPTIONAL. WhatsApp HTTP API for chatbot-using products.
+#               Profile-gated behind `waha`; absent ⇒ FakeWahaClient
+#               fallback (WAHA_BASE_URL empty), non-chatbot products
+#               unaffected. Only `up` it once a real WhatsApp number is
+#               provisioned.
+#   • Postgres— NOT here. Prod uses remote Supabase (root .env
+#               SUPABASE_URL). The root infra file's local postgres is a
+#               dev/offline convenience only.
+#
+# Why a separate prod infra file (not just reuse the root one): the root
+# docker-compose.infra.yml PUBLISHES host ports (6379, 3000, 5432) for
+# local dev convenience. In prod nothing should be on the host — Redis is
+# reached service-name → service-name across noctus-net, and WAHA's
+# dashboard is reached only through the named tunnel. So this file uses
+# expose: (internal) instead of ports: (host-published). Redis stays
+# unpublished; if you must reach the WAHA dashboard from the VPS host for
+# QR-pairing, route it through deploy/tunnel/ rather than publishing 3000.
+#
+# Network: noctus-net is EXTERNAL — same shared fabric as the product
+# fleet + named tunnel + legacy container. Create once before `up`:
+#   docker network create noctus-net
+#
+# Usage on the VPS:
+#   docker compose -f compose.infra.prod.yml up -d            # Redis only
+#   docker compose -f compose.infra.prod.yml --profile waha up -d   # + WAHA
+
+name: noctusai-infra-prod
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: noctus-redis
+    # Internal only — products reach it as redis://noctus-redis:6379 over
+    # noctus-net. No host port published in prod.
+    expose:
+      - "6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - noctus-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  waha:
+    # WhatsApp HTTP API — profile-gated. Absent ⇒ FakeWahaClient fallback.
+    # On a Linux x86 VPS the default amd64 image runs native (no override
+    # needed). WAHA_API_KEY / dashboard creds come from the root .env.
+    image: ${WAHA_IMAGE:-devlikeapro/waha:latest}
+    platform: ${WAHA_PLATFORM:-linux/amd64}
+    container_name: noctus-waha
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+    # Internal only — products reach it as http://noctus-waha:3000 over
+    # noctus-net; the dashboard (for QR-pairing) is reachable through the
+    # named tunnel rather than a published host port.
+    expose:
+      - "3000"
+    volumes:
+      - waha_sessions:/app/.sessions
+    networks:
+      - noctus-net
+    restart: unless-stopped
+    profiles:
+      - waha
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true
+
+volumes:
+  redis_data:
+  waha_sessions:

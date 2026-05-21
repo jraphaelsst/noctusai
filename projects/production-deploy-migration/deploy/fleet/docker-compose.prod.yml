@@ -1,0 +1,177 @@
+# NoctusAI — PRODUCTION fleet (compose project: noctusai-products-prod).
+#
+# Project: production-deploy-migration. This is the PRODUCTION shape of the
+# 8-product fleet for a single VPS. It is deliberately DIFFERENT from the
+# checked-in per-product products/<slug>/docker-compose.yml files:
+#
+#   products/<slug>/docker-compose.yml  =  DEV shape
+#     build: target runtime-watch + source bind-mounts + host port publish
+#     (vite build --watch + uvicorn --reload — live local feedback).
+#
+#   THIS file                           =  PROD shape
+#     image: ghcr.io/... (NO build, NO bind-mounts, slim `runtime` target,
+#     baked dist, node-absent) + expose-only (no host port publish — the
+#     Cloudflare named tunnel reaches each container over noctus-net) +
+#     restart: unless-stopped + healthcheck on /api/health.
+#
+# Images are pulled from GHCR; build + push them with build-and-push.sh
+# (which bakes the per-product VITE_* build args). NOTHING here builds.
+#
+# Network: noctus-net is EXTERNAL — the same shared fabric the dev fleet,
+# the infra project (compose.infra.prod.yml), the named tunnel
+# (deploy/tunnel/) and the legacy container (deploy/legacy/) all join.
+# Create it ONCE on the VPS before `up`:
+#   docker network create noctus-net
+#
+# Ports are INTERNAL (expose:, not ports:) — nothing is published to the
+# VPS host. The named tunnel routes hostname → http://<service>:<port>
+# across noctus-net. core (8000) is the APEX product.
+#
+# Usage on the VPS (full runbook: README.md):
+#   echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Image tag defaults to :latest in prod (CI moves :latest on each main
+# push; pin NOCTUS_IMAGE_TAG=<git-sha> in .env for an immutable deploy).
+
+name: noctusai-products-prod
+
+# Shared per-service prod defaults (YAML anchor — DRY across 8 services).
+# env_file the root .env (one source of runtime config + secrets);
+# restart unless-stopped; join the external noctus-net.
+x-prod-defaults: &prod-defaults
+  env_file:
+    - ../../../../.env
+  restart: unless-stopped
+  networks:
+    - noctus-net
+
+services:
+  # ── core 8000 — APEX product (the platform shell) ──────────────────
+  core:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-core:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-core
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── erp-imobiliario 8001 ───────────────────────────────────────────
+  erp-imobiliario:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-erp-imobiliario:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-erp-imobiliario
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── personal-finance 8002 ──────────────────────────────────────────
+  personal-finance:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-personal-finance:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-personal-finance
+    expose:
+      - "8002"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8002/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── therapy-platform 8003 ──────────────────────────────────────────
+  therapy-platform:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-therapy-platform:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-therapy-platform
+    expose:
+      - "8003"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8003/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── daily-life 8005 ────────────────────────────────────────────────
+  daily-life:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-daily-life:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-daily-life
+    expose:
+      - "8005"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8005/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── adconnect 8007 ─────────────────────────────────────────────────
+  adconnect:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-adconnect:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-adconnect
+    expose:
+      - "8007"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8007/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── dev-team 8009 — needs ANTHROPIC_API_KEY (the agno "switch") ─────
+  # The engine (dev_team/) is BAKED into the image at build time
+  #   (Dockerfile: `COPY dev_team /opt/dev_team` + `pip install -e`),
+  # so NO /opt/dev_team bind-mount is needed in prod — it ships in the
+  # image. ANTHROPIC_API_KEY is read at runtime via os.getenv
+  #   (backend/app/services/agno_health.py); it comes from the root .env
+  # through env_file. If unset, dev-team runs healthy but returns
+  #   {status: "switch-not-flipped"} on /api/run (graceful, by design).
+  # `environment:` re-asserts it explicitly for operator visibility — it
+  # is already present via env_file; this just documents the dependency.
+  dev-team:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-dev-team:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-dev-team
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    expose:
+      - "8009"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8009/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── social-wiring 8011 ─────────────────────────────────────────────
+  social-wiring:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-social-wiring:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-social-wiring
+    expose:
+      - "8011"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8011/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true

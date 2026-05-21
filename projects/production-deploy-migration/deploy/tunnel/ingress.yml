@@ -1,0 +1,63 @@
+# ingress.yml — SINGLE SOURCE OF TRUTH for public-hostname → local-service routing.
+#
+# To remap a slug, edit ONE line here, then re-run the sync (cloudflared config + DNS route).
+#   See README.md → "Apply an ingress change".
+#
+# This file is the ONE declarative map the user maintains. Two derived
+# artifacts are generated from it (never hand-edit those — edit here):
+#   1. config.yml `ingress:` block   — what cloudflared serves.
+#   2. the DNS CNAMEs                 — `cloudflared tunnel route dns <tunnel> <hostname>`.
+#
+# WHY a single source: the user WILL rename slugs in the future. With the
+# mapping hand-spread across N per-product files, a rename means N edits +
+# easy drift. Here it is one line → re-apply → done. The route target is
+# the in-network service name on `noctus-net` (== compose service ==
+# `noctus-<slug>` container_name), NOT a published host port — cloudflared
+# shares the network and reaches containers by name.
+#
+# ── Field shape ───────────────────────────────────────────────────────
+#   - hostname: <public DNS name>
+#     service:  http://<in-network-service-name>:<internal-port>
+#   (internal-port == the product's backend_port from start.sh registry;
+#    uvicorn serves API + SPA on that one port — single-container model.)
+#
+# Derived from start.sh BEGIN/END_PRODUCTS_REGISTRY + products/*/docker-compose.yml
+# (snapshot 2026-05-21). When the registry changes, regenerate this map.
+
+routes:
+  # ── Apex → core ──────────────────────────────────────────────────────
+  - hostname: noctusai.com
+    service:  http://core:8000
+    note:     apex → core product (backend_port 8000)
+
+  # ── Per-product subdomains: <slug>.noctusai.com → noctus-<slug>:<port> ─
+  # core is also reachable at its subdomain for symmetry / direct access.
+  - hostname: core.noctusai.com
+    service:  http://core:8000
+
+  - hostname: erp-imobiliario.noctusai.com
+    service:  http://erp-imobiliario:8001
+
+  - hostname: personal-finance.noctusai.com
+    service:  http://personal-finance:8002
+
+  - hostname: therapy-platform.noctusai.com
+    service:  http://therapy-platform:8003
+
+  # (seed.noctusai.com intentionally omitted — `seed` is the template, not deployed)
+  - hostname: daily-life.noctusai.com
+    service:  http://daily-life:8005
+
+  - hostname: adconnect.noctusai.com
+    service:  http://adconnect:8007
+
+  - hostname: dev-team.noctusai.com
+    service:  http://dev-team:8009
+
+  - hostname: social-wiring.noctusai.com
+    service:  http://social-wiring:8011
+
+  # ── Legacy standalone container (NOT a registry product) ─────────────
+  - hostname: legacy.noctusai.com
+    service:  http://legacy:5000
+    note:     standalone legacy container on :5000 (must share noctus-net)

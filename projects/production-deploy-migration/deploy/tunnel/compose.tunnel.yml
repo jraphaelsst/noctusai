@@ -1,0 +1,46 @@
+# compose.tunnel.yml — the NAMED cloudflared tunnel service for the VPS.
+#
+# Runs ONE persistent named tunnel that fronts the WHOLE fleet (apex +
+# every <slug>.noctusai.com + legacy.noctusai.com), routing per config.yml.
+# This is the production analogue of the per-product profile-gated quick
+# tunnels in products/*/docker-compose.yml — but ONE long-lived tunnel
+# with a STABLE hostname set, not N ephemeral *.trycloudflare.com URLs.
+#
+# Bring it up alongside the fleet ON THE VPS:
+#   docker network create noctus-net          # one-time (start.sh also does this)
+#   ./start.sh                                  # the product fleet (separate project)
+#   docker compose -f deploy/tunnel/compose.tunnel.yml up -d
+#
+# It joins the SAME external noctus-net, so it reaches every product
+# container by its in-network service name (core, social-wiring, …) exactly
+# as the config.yml `ingress:` targets specify.
+#
+# ── Required host files (bind-mounted read-only into the container) ─────
+#   ./config.yml                  → /etc/cloudflared/config.yml
+#   ./<TUNNEL_ID>.json            → /etc/cloudflared/<TUNNEL_ID>.json
+# Produce both per README.md (login → create → fill config.yml).
+
+name: noctusai-tunnel
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: noctus-tunnel
+    # Named-tunnel run: reads config.yml (tunnel id + credentials + ingress).
+    # `--protocol http2` is also pinned in config.yml; passing it here too is
+    # belt-and-suspenders against the QUIC-dropout failure mode.
+    command: tunnel --no-autoupdate --protocol http2 run
+    volumes:
+      # The config + credentials. Keep the credentials JSON 0600 on the host.
+      - ./config.yml:/etc/cloudflared/config.yml:ro
+      # Mount the whole dir read-only so the <TUNNEL_ID>.json credentials-file
+      # (referenced in config.yml) resolves at /etc/cloudflared/<TUNNEL_ID>.json.
+      - ./:/etc/cloudflared:ro
+    networks:
+      - noctus-net
+    restart: unless-stopped
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true

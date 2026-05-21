@@ -13,7 +13,8 @@ venv/
 .env
 .env.local
 .env.*.local
-# NOTE: .env.example is NOT ignored — it's a template with placeholder values, not secrets
+.env.services
+# NOTE: .env.example / .env.services.example are NOT ignored — templates with placeholder values, not secrets
 
 # Build
 dist/
@@ -79,3 +80,8 @@ scripts/mole-last-sweep.log
 scripts/archive-clean-last-sweep.log
 
 .claude/secrets-ignored/
+
+# Migration reference — external read-only repo snapshot (the `one-permutas` legacy app).
+# Brought in for the production-deploy-migration project as reference only; NOT noc code
+# (117M of upstream-committed venv/staticfiles/frontend_build). See that project's PROJECT.md.
+projects/production-deploy-migration/reference/
