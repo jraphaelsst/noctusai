@@ -118,6 +118,10 @@ def main():
     parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
     parser.add_argument("--predeploy-check", metavar="PRODUCT", help="Pre-deploy gate for a product: framework-dep parity + frontend build + backend pytest; classify failures, auto-fix the framework-dep class (with --fix), report+learn unknowns. Exit 0 ready / 1 blocked. MCP: noctus.dev.predeploy_check.")
     parser.add_argument("--fix", action="store_true", help="With --predeploy-check: auto-fix the safe (framework-dep) failure class in-process.")
+    parser.add_argument("--deploy-pull", action="store_true", help="Run the §2a safe-pull drill on the deploy target over SSH (inspect→decide→backup→ff-only→verify). DRY-RUN unless --deploy-confirm; refuses non-FF / deploy-local overlap; never emits reset/checkout/clean/push. MCP: noctus.dev.deploy_pull.")
+    parser.add_argument("--deploy-confirm", action="store_true", help="With --deploy-pull: actually perform the ff-only merge (a production action). Without it, plan/dry-run only.")
+    parser.add_argument("--deploy-target", default="origin/prod", help="With --deploy-pull: the ref the VPS fast-forwards to (default origin/prod).")
+    parser.add_argument("--deploy-host", default="noctus-vps", help="With --deploy-pull: the SSH host alias for the deploy target (default noctus-vps).")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--improvements", metavar="PROJECT", help="Regenerate improvements.md next to the project file (run after ticking a phase header to [x]). Captures improvement opportunities discovered during each completed phase — NOT a preview of upcoming phases.")
     parser.add_argument("--lgpd-flag", action="store_true", help="Record an LGPD concern in LGPD-WARNINGS.md. Requires --lgpd-concern, --lgpd-path, --lgpd-reason; --lgpd-mitigation optional. Does NOT block.")
@@ -817,6 +821,16 @@ def main():
     elif args.predeploy_check:
         from tools.noctus.dev.predeploy_check import predeploy_check
         r = predeploy_check(args.predeploy_check, auto_fix=bool(getattr(args, "fix", False)))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.deploy_pull:
+        from tools.noctus.dev.deploy_pull import deploy_pull
+        r = deploy_pull(
+            target=args.deploy_target,
+            ssh_host=args.deploy_host,
+            confirm=bool(getattr(args, "deploy_confirm", False)),
+        )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
 

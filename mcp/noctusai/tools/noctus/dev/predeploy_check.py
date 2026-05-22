@@ -29,6 +29,7 @@ pattern). The default `run_check` shells out (mirrors `noctus.dev.vite_build`
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import pathlib
 import re
 import subprocess
@@ -41,7 +42,12 @@ from . import check_framework_deps as _cfd
 from . import phase_learnings as _pl
 
 # Default deploy-relevant checks, in run order. Each is (name, kind).
-DEFAULT_CHECKS: list[str] = ["framework_deps", "frontend_build", "backend_tests"]
+DEFAULT_CHECKS: list[str] = [
+    "framework_deps",
+    "frontend_build",
+    "backend_tests",
+    "deploy_local_gitignored",  # D3 — every deploy-local file in STATE.json is gitignored
+]
 
 PROJECT_SLUG = "deploy-hardening-and-dev-isolation"
 
@@ -101,6 +107,25 @@ _KNOWN: list[dict[str, Any]] = [
         "suggested_fix": "Run check_framework_deps with fix=True (or predeploy_check auto_fix=True).",
         "auto_fixable": True,
     },
+    {
+        "class_id": "deploy_local_tracked",
+        "rx": re.compile(
+            r"D3 deploy-local invariant VIOLATED|is TRACKED — must be gitignored|NOT gitignored — a future write"
+        ),
+        "boundary": "D3 deploy-state manifest",
+        "explanation": (
+            "A deploy-local file (filled-in-place on the VPS — tunnel config.yml, "
+            "creds *.json, root .env) is git-tracked or not gitignored, so a "
+            "`git pull` on the production box could clobber it (the §2a P4/D3 net). "
+            "The invariant lives in deploy/STATE.json."
+        ),
+        "suggested_fix": (
+            "git rm --cached <path> + add the path (or its **/ glob) to .gitignore, "
+            "then re-render the file in-place on the box. See deploy/STATE.json + "
+            "KB § GUIDES/production-deploy.md § 2a (P4/D3)."
+        ),
+        "auto_fixable": False,
+    },
 ]
 
 
@@ -121,6 +146,64 @@ def classify_failure(output: str) -> dict[str, Any] | None:
                 "matched": hit,
             }
     return None
+
+
+# ── D3 deploy-state manifest assertion (deploy/STATE.json) ─────────
+# The §2a safety-net D3: every deploy-local file (filled-in-place on the VPS)
+# MUST be gitignored so a pull cannot touch it BY CONSTRUCTION. This makes
+# predeploy_check actually ASSERT the manifest the Phase-2 work shipped
+# (previously read "conceptually" but never enforced).
+def _default_run_git(root: pathlib.Path, args: list[str]) -> tuple[int, str]:
+    """(returncode, stdout) for `git -C <root> <args>`. Injectable in
+    audit_deploy_local so the test exercises every branch with zero real git."""
+    r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    return r.returncode, (r.stdout or "")
+
+
+def _find_state_json(root: pathlib.Path) -> pathlib.Path | None:
+    """Locate the deploy-state manifest (`**/deploy/STATE.json`), skipping
+    archive/ and agent worktrees so we read the live one. None if absent."""
+    for cand in sorted(root.glob("**/deploy/STATE.json")):
+        s = str(cand)
+        if "/archive/" in s or "/.claude/worktrees/" in s:
+            continue
+        return cand
+    return None
+
+
+def audit_deploy_local(
+    root: pathlib.Path,
+    run_git: Callable[[pathlib.Path, list[str]], tuple[int, str]] | None = None,
+    state_path: str | None = None,
+) -> dict[str, Any]:
+    """Assert every `deploy_local_files[].path` (with must_be_gitignored) in
+    STATE.json is (a) NOT tracked and (b) covered by a gitignore rule. Glob
+    paths (e.g. `tunnel/*.json`) are handled — ls-files glob-expands, and the
+    ignore probe substitutes a placeholder for `*`. Returns
+    {manifest, checked, violations}. No manifest ⇒ checked=0 (caller skips)."""
+    run = run_git or _default_run_git
+    state = pathlib.Path(state_path) if state_path else _find_state_json(root)
+    if state is None or not state.exists():
+        return {"manifest": None, "checked": 0, "violations": []}
+    try:
+        data = json.loads(state.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return {"manifest": str(state), "checked": 0, "violations": [f"STATE.json unreadable: {e}"]}
+    entries = [e for e in data.get("deploy_local_files", []) if e.get("must_be_gitignored")]
+    violations: list[str] = []
+    for e in entries:
+        path = (e.get("path") or "").strip()
+        if not path:
+            continue
+        _rc_ls, out_ls = run(root, ["ls-files", "--", path])
+        if out_ls.strip():
+            violations.append(f"{path} is TRACKED — must be gitignored (D3)")
+            continue
+        probe = path.replace("*", "__probe__")
+        rc_ci, _ = run(root, ["check-ignore", "-q", "--", probe])
+        if rc_ci != 0:
+            violations.append(f"{path} is NOT gitignored — a future write could be committed (D3)")
+    return {"manifest": str(state), "checked": len(entries), "violations": violations}
 
 
 def _default_run_check(check: str, product: str, root: pathlib.Path) -> tuple[bool, str]:
@@ -145,6 +228,14 @@ def _default_run_check(check: str, product: str, root: pathlib.Path) -> tuple[bo
             return True, f"no backend dir for {product} (skipped)"
         r = subprocess.run([resolve_test_python(), "-m", "pytest", "-q"], cwd=be, capture_output=True, text=True)
         return r.returncode == 0, (r.stdout + r.stderr)
+    if check == "deploy_local_gitignored":
+        # Platform-wide invariant (product arg unused): D3 manifest assertion.
+        audit = audit_deploy_local(root)
+        if audit["manifest"] is None:
+            return True, "no deploy/STATE.json manifest found — D3 deploy-local invariant not asserted"
+        if audit["violations"]:
+            return False, "D3 deploy-local invariant VIOLATED: " + "; ".join(audit["violations"])
+        return True, f"D3 ok — {audit['checked']} deploy-local file(s) gitignored ({audit['manifest']})"
     return False, f"unknown check '{check}'"
 
 
@@ -272,7 +363,8 @@ def register(server) -> None:
         description=(
             "Pre-deploy verification + learning gate (deploy-hardening P5). "
             "For a product, runs the deploy-relevant checks (framework-dep "
-            "parity, frontend vite build, backend pytest), CLASSIFIES any "
+            "parity, frontend vite build, backend pytest, and the D3 "
+            "deploy-local-gitignored manifest assertion), CLASSIFIES any "
             "failure against the known boundary-contract classes, AUTO-FIXES "
             "the framework-dep class when auto_fix=True (composes "
             "check_framework_deps), and for an UNKNOWN failure writes "
@@ -294,6 +386,7 @@ def register(server) -> None:
 __all__ = [
     "predeploy_check",
     "classify_failure",
+    "audit_deploy_local",
     "DEFAULT_CHECKS",
     "PROJECT_SLUG",
     "register",
