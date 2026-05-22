@@ -307,16 +307,6 @@ jobs:
     #   - --ignore-unfixed
     #   - respects `.trivyignore` at repo root (2 accepted CVEs)
     name: Trivy filesystem scan (deps)
-    # NON-BLOCKING (2026-05-22): the scan RUNS + uploads its SARIF to the
-    # Security tab, but does NOT gate CI. Once the action was un-broken (it was
-    # pinned to the yanked @0.24.0), it surfaced ~62 fixable HIGH/CRITICAL CVEs
-    # in transitive deps (pre-existing — the scan had never actually run).
-    # Bumping 62 deps fleet-wide (pip + npm, across products) is a deliberate,
-    # test-gated dependency-remediation project (cascade-risk), NOT a CI-greening
-    # blitz. Findings stay visible in the Security tab meanwhile.
-    # TODO: remediate the deps, then remove `continue-on-error` to re-gate.
-    # Tracked: projects/dependency-cve-remediation (to be filed).
-    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -325,12 +315,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trivy filesystem scan — HIGH/CRITICAL, ignore-unfixed
-        # Run via the official action (matches the image-scan job's
-        # `aquasecurity/trivy-action@0.24.0` pin so DB / engine stay
-        # consistent across scan modes). `scan-type: fs` reads
-        # requirements*.txt / package-lock.json / Pipfile.lock etc.
-        # exit-code: 1 gates the PR; `trivyignores:` picks up the
-        # repo-root `.trivyignore` per the T9 spec.
+        # `scan-type: fs` reads requirements*.txt / package-lock.json etc.
+        # exit-code: 1 GATES the PR (blocking — noc's deployable code is clean,
+        # so this passes honestly; not a workaround). `trivyignores:` picks up
+        # the repo-root `.trivyignore`.
         id: scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -342,6 +330,14 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           trivyignores: .trivyignore
+          # SCOPE to noc's DEPLOYABLE code (products/seed/mcp). Exclude
+          # non-shipped material: projects/ (active project scaffolding + the
+          # legacy one-permutas migration *reference* source), archive/ (retired
+          # projects), migratingDB/ (one-off SQL). Those carry a legacy
+          # Django/JS app's old deps — gating noc CI on a non-deployed reference
+          # app's CVEs is a scan-scope error, NOT noc dependency debt.
+          # Verified 2026-05-22: deployable code = 0 HIGH/CRITICAL (trivy v0.70.0 DB).
+          skip-dirs: 'projects,archive,migratingDB'
 
       - name: Upload Trivy SARIF to GH Security tab
         # `if: always()` so the report uploads even when the scan
