@@ -1,0 +1,87 @@
+# Build & Push product images to GHCR (the §2 ② "GHCR-pull" delivery layer).
+#
+# WHAT THIS IS — the BUILD/DELIVER layer. It builds the slim `--target runtime`
+# product images off-box (here, on a GitHub runner) and pushes them to GHCR as
+# immutable `:<sha>` artifacts + a moving `:latest`. It does NOT deploy.
+#
+# HOW IT COMPOSES (does NOT supersede the deploy tooling):
+#   • THIS workflow   → builds + pushes the artifact (the §2 ② model).
+#   • noctus.dev.deploy_image --source pull  → the DEPLOY/ROLLBACK-SAFETY layer:
+#       snapshot → swap → health-probe → rollback, on the VPS (KB §2a C2).
+#   • The `prod` promote-branch gate is unchanged — building on `main` does NOT
+#       auto-deploy to prod. You still promote + run deploy_image deliberately.
+#   The durable `:<sha>` tags ALSO make rollback/DR robust (pull an old sha)
+#   instead of relying only on the in-place commit-snapshot.
+#
+# REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
+#   • VITE_SUPABASE_URL              — baked into the FE bundle at build time
+#   • VITE_SUPABASE_PUBLISHABLE_KEY  — baked into the FE bundle at build time
+#   (VITE_CORE_URL is the public domain, set as env below — not a secret.)
+#   GHCR auth uses the built-in GITHUB_TOKEN (no PAT to manage/rotate).
+#
+# NOTE — the VPS pulls PRIVATE GHCR packages, so it needs a read:packages token
+#   (or make the packages public). Until images exist here, the live fleet stays
+#   on the build-on-VPS model (§2 ①) — this workflow is what activates §2 ②.
+name: Build & Push Images (GHCR)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "products/**"
+      - "seed/**"
+      - "projects/production-deploy-migration/deploy/fleet/build-and-push.sh"
+      - "scripts/infra/build-base-images.sh"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag (default: short git sha). :latest is always moved too."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-push-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-push:
+    name: Build + push fleet images
+    runs-on: ubuntu-latest
+    env:
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_CORE_URL: https://core.noctusai.com
+      VITE_CORE_API_URL: https://core.noctusai.com
+      GHCR_USERNAME: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Require VITE secrets (fail-closed — never push a broken-FE image)
+        run: |
+          if [ -z "${VITE_SUPABASE_URL}" ] || [ -z "${VITE_SUPABASE_PUBLISHABLE_KEY}" ]; then
+            echo "::error::VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY repo secrets are empty — refusing to build (a build without them bakes a broken FE; the seed FE inlines VITE_* at build time). Add them in Settings → Secrets and variables → Actions, then re-run."
+            exit 1
+          fi
+
+      - name: Build + push (seed bases + 8 product images)
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::12}"; fi
+          echo "Building + pushing fleet at tag: $TAG (+ :latest)"
+          NOCTUS_IMAGE_TAG="$TAG" bash projects/production-deploy-migration/deploy/fleet/build-and-push.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Build & Push" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed \`ghcr.io/jraphaelsst/noctus-<slug>\` at \`${GITHUB_SHA::12}\` + \`:latest\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy with \`noctus.dev.deploy_image <product> --source pull\` (C2 snapshot/health/rollback)." >> "$GITHUB_STEP_SUMMARY"

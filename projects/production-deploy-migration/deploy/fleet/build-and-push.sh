@@ -145,8 +145,15 @@ if [[ "$PUSH" == "1" ]]; then
     image="${REGISTRY}/noctus-${slug}:${TAG}"
     echo "[fleet] pushing ${image}"
     docker push "${image}"
+    # When TAG is an immutable id (e.g. a git sha from CI), ALSO move the
+    # convenience :latest to it — one run yields both the durable rollback
+    # artifact (:sha, persists in GHCR) and the moving deploy tag (:latest).
+    if [[ "$TAG" != "latest" ]]; then
+      docker tag "${image}" "${REGISTRY}/noctus-${slug}:latest"
+      docker push "${REGISTRY}/noctus-${slug}:latest"
+    fi
   done
-  echo "[fleet] pushed ${#ALL_SLUGS[@]} product images at tag ${TAG}"
+  echo "[fleet] pushed ${#ALL_SLUGS[@]} product images at tag ${TAG}$( [[ "$TAG" != "latest" ]] && echo ' (+ :latest)' )"
 else
   echo "[fleet] --no-push: built ${#ALL_SLUGS[@]} product images locally (tag ${TAG}), not pushed"
 fi
